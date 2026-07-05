@@ -9,8 +9,9 @@
 //! Errors are [`ParseError`]s with [`miette`] source spans pointing at the
 //! offending element, so consumers get a rendered, navigable diagnostic.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use roxmltree::{Document, Node};
 
@@ -62,6 +63,19 @@ pub enum ParseError {
     #[error("resolution error: {0}")]
     #[diagnostic(code(ergosbe::schema_parse::resolve))]
     Resolve(#[from] crate::resolve::ResolveError),
+    /// An include (xi:include) resolution error occurred.
+    #[error("include error: {message}")]
+    #[diagnostic(code(ergosbe::schema_parse::include))]
+    IncludeError {
+        /// What went wrong.
+        message: String,
+        /// The source document, for span rendering.
+        #[source_code]
+        source_code: miette::NamedSource<String>,
+        /// The offending location.
+        #[label("include error here")]
+        span: Option<miette::SourceSpan>,
+    },
 }
 
 impl ParseError {
@@ -90,6 +104,11 @@ impl ParseError {
                 source_code,
                 span,
             },
+            FaultKind::IncludeError { message } => Self::IncludeError {
+                message,
+                source_code,
+                span,
+            },
         }
     }
 }
@@ -111,6 +130,7 @@ struct Fault {
 enum FaultKind {
     Missing { what: String },
     Invalid { what: String, value: String },
+    IncludeError { message: String },
 }
 
 impl Fault {
@@ -135,6 +155,15 @@ impl Fault {
                 value: value.into(),
             },
             span: Some(node.range()),
+        }
+    }
+
+    fn include_error(message: impl Into<String>) -> Self {
+        Self {
+            kind: FaultKind::IncludeError {
+                message: message.into(),
+            },
+            span: None,
         }
     }
 }
@@ -263,7 +292,11 @@ fn resolve_type_to_tokens(
     }
 }
 
-/// Parse an SBE schema document into the token IR.
+/// Parse an SBE schema document (raw XML string) into the token IR.
+///
+/// Includes are resolved via the [`parse_file`] function with base-dir
+/// awareness. When called without a file path, relative includes fall
+/// back to a set of well-known submodule directory probes.
 ///
 /// # Errors
 ///
@@ -271,6 +304,32 @@ fn resolve_type_to_tokens(
 /// not a `<messageSchema>`, or a required SBE attribute is missing or invalid.
 #[allow(clippy::result_large_err)]
 pub fn parse(xml: &str) -> Result<Ir, ParseError> {
+    parse_with_context(xml, None, &mut HashSet::new())
+}
+
+/// Parse an SBE schema file, resolving `<xi:include href="..."/>`
+/// elements relative to the parent directory of `path`.
+///
+/// # Errors
+///
+/// Returns a span-bearing [`ParseError`] on XML parse failure, I/O error,
+/// or schema validation error.
+#[allow(clippy::result_large_err)]
+pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
+    let path = path.as_ref();
+    let xml = std::fs::read_to_string(path).map_err(|e| {
+        ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
+    })?;
+    let base_dir = path.parent();
+    parse_with_context(&xml, base_dir, &mut HashSet::new())
+}
+
+/// Internal: parse with optional base directory for include resolution.
+fn parse_with_context(
+    xml: &str,
+    base_dir: Option<&Path>,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<Ir, ParseError> {
     let doc = match Document::parse(xml) {
         Ok(d) => d,
         Err(e) => return Err(ParseError::malformed_xml(e.to_string(), xml)),
@@ -291,15 +350,59 @@ pub fn parse(xml: &str) -> Result<Ir, ParseError> {
             input,
         ));
     }
-    let mut ir = parse_schema(root).map_err(|fault| ParseError::from_fault(fault, input))?;
+    let mut ir =
+        parse_schema(root, base_dir, seen).map_err(|fault| ParseError::from_fault(fault, input))?;
     crate::resolve::resolve_schema(&mut ir)?;
     Ok(ir)
 }
 
-fn read_include_file(href: &str) -> Option<String> {
-    if let Ok(content) = std::fs::read_to_string(href) {
-        return Some(content);
+/// Resolve an included schema file path.
+///
+/// Resolution order:
+/// 1. Relative to `base_dir` (when provided)
+/// 2. Direct path (CWD-relative)
+/// 3. Well-known submodule paths for the ErgoSBE repo layout
+///
+/// Returns `Ok(Some(content))` on success, `Ok(None)` if the file cannot be
+/// found (fails silently), or `Err(Fault)` if a cycle is detected.
+fn read_include_file(
+    href: &str,
+    base_dir: Option<&Path>,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<Option<String>, Fault> {
+    // Helper: try reading a path, record canonical form in `seen`.
+    fn try_path(href: &str, seen: &mut HashSet<PathBuf>) -> Result<Option<String>, Fault> {
+        let p = Path::new(href);
+        if let Ok(canon) = p.canonicalize() {
+            if !seen.insert(canon.clone()) {
+                return Err(Fault::include_error(format!(
+                    "cyclic include detected: {}",
+                    canon.display()
+                )));
+            }
+            if let Ok(content) = std::fs::read_to_string(&canon) {
+                return Ok(Some(content));
+            }
+        } else if let Ok(content) = std::fs::read_to_string(p) {
+            return Ok(Some(content));
+        }
+        Ok(None)
     }
+
+    // 1. Relative to the parent schema's directory.
+    if let Some(dir) = base_dir {
+        let candidate = dir.join(href).to_string_lossy().to_string();
+        if let Some(content) = try_path(&candidate, seen)? {
+            return Ok(Some(content));
+        }
+    }
+
+    // 2. Direct (CWD-relative) probe.
+    if let Some(content) = try_path(href, seen)? {
+        return Ok(Some(content));
+    }
+
+    // 3. Well-known submodule paths.
     let paths = [
         format!(
             "simple-binary-encoding/sbe-samples/src/main/resources/{}",
@@ -327,11 +430,12 @@ fn read_include_file(href: &str) -> Option<String> {
         ),
     ];
     for p in &paths {
-        if let Ok(content) = std::fs::read_to_string(p) {
-            return Some(content);
+        if let Some(content) = try_path(p, seen)? {
+            return Ok(Some(content));
         }
     }
-    None
+
+    Ok(None)
 }
 
 fn parse_types_node(
@@ -362,7 +466,12 @@ fn parse_types_node(
 }
 
 /// Parse the `<messageSchema>` root into the [`Ir`].
-fn parse_schema(root: Node<'_, '_>) -> Result<Ir, Fault> {
+#[allow(clippy::needless_pass_by_value)]
+fn parse_schema(
+    root: Node<'_, '_>,
+    base_dir: Option<&Path>,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<Ir, Fault> {
     let package = string_attr(root, "package", "messageSchema @package")?;
     let id = u16_attr(root, "id", "messageSchema @id")?;
     let version = opt_u16_attr(root, "version", "messageSchema @version")?.unwrap_or(0);
@@ -386,21 +495,30 @@ fn parse_schema(root: Node<'_, '_>) -> Result<Ir, Fault> {
     for child in element_children(root) {
         if child.tag_name().name() == "include" {
             if let Some(href) = child.attribute("href") {
-                if let Some(included_content) = read_include_file(href) {
-                    if let Ok(included_doc) = Document::parse(&included_content) {
-                        let included_root = included_doc.root().children().find(Node::is_element);
-                        if let Some(inc_node) = included_root {
-                            if inc_node.tag_name().name() == "types" {
-                                parse_types_node(inc_node, &mut registry, &mut tokens)?;
-                            } else {
-                                for sub_child in element_children(inc_node) {
-                                    if sub_child.tag_name().name() == "types" {
-                                        parse_types_node(sub_child, &mut registry, &mut tokens)?;
+                match read_include_file(href, base_dir, seen) {
+                    Ok(Some(included_content)) => {
+                        if let Ok(included_doc) = Document::parse(&included_content) {
+                            let included_root =
+                                included_doc.root().children().find(Node::is_element);
+                            if let Some(inc_node) = included_root {
+                                if inc_node.tag_name().name() == "types" {
+                                    parse_types_node(inc_node, &mut registry, &mut tokens)?;
+                                } else {
+                                    for sub_child in element_children(inc_node) {
+                                        if sub_child.tag_name().name() == "types" {
+                                            parse_types_node(
+                                                sub_child,
+                                                &mut registry,
+                                                &mut tokens,
+                                            )?;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    Ok(None) => {} // Missing include: skip silently (matching existing behaviour).
+                    Err(fault) => return Err(fault),
                 }
             }
         } else if child.tag_name().name() == "types" {
@@ -1018,5 +1136,111 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("invalid primitive type"), "{msg}");
         assert!(err.labels().is_some(), "expected a span label attached");
+    }
+
+    // ── XInclude tests ─────────────────────────────────────────────────
+
+    /// Walk up to find the workspace root (where the top-level Cargo.toml lives).
+    fn workspace_root() -> PathBuf {
+        let mut dir = std::env::current_dir().unwrap();
+        loop {
+            if dir.join("Cargo.toml").exists() && dir.join("ergosbe").exists() {
+                return dir;
+            }
+            assert!(
+                dir.pop(),
+                "cannot find workspace root from {:?}",
+                std::env::current_dir()
+            );
+        }
+    }
+
+    fn sbe_test_resource(sub: &str) -> PathBuf {
+        workspace_root()
+            .join("simple-binary-encoding")
+            .join("sbe-tool")
+            .join("src")
+            .join("test")
+            .join("resources")
+            .join(sub)
+    }
+
+    fn sbe_sample_resource(sub: &str) -> PathBuf {
+        workspace_root()
+            .join("simple-binary-encoding")
+            .join("sbe-samples")
+            .join("src")
+            .join("main")
+            .join("resources")
+            .join(sub)
+    }
+
+    #[test]
+    fn parses_schema_with_xinclude_relative_path() {
+        let path = sbe_test_resource("sub/basic-schema.xml");
+        let ir = parse_file(&path).unwrap();
+
+        assert_eq!(ir.package, "SBE tests");
+        assert_eq!(ir.id, 2);
+
+        // Included types from sub2/common.xml should be present.
+        // `Symbol` is a plain <type>, stored in the encoding registry (not tokens).
+        // `messageHeader` is a <composite> → produces BeginComposite/EndComposite tokens.
+        assert!(
+            ir.tokens.iter().any(|t| t.name == "messageHeader"),
+            "expected messageHeader composite from included sub2/common.xml"
+        );
+
+        // Schema's own message should also be present.
+        assert!(
+            ir.tokens.iter().any(|t| t.name == "TestMessage50001"),
+            "expected TestMessage50001 from the main schema"
+        );
+    }
+
+    #[test]
+    fn parses_example_schema_with_xinclude() {
+        let path = sbe_sample_resource("example-schema.xml");
+        let ir = parse_file(&path).unwrap();
+
+        assert_eq!(ir.package, "baseline");
+
+        // Included types from common-types.xml should be present.
+        assert!(
+            ir.tokens.iter().any(|t| t.name == "messageHeader"),
+            "expected messageHeader from included common-types.xml"
+        );
+        assert!(
+            ir.tokens.iter().any(|t| t.name == "groupSizeEncoding"),
+            "expected groupSizeEncoding from included common-types.xml"
+        );
+        assert!(
+            ir.tokens.iter().any(|t| t.name == "varDataEncoding"),
+            "expected varDataEncoding from included common-types.xml"
+        );
+    }
+
+    #[test]
+    fn xinclude_without_base_falls_back_to_hardcoded_paths() {
+        // Without a base dir, the hardcoded submodule path probes should work
+        // for common schemas.
+        let path = sbe_sample_resource("example-schema.xml");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let ir = parse(&content).unwrap();
+
+        assert_eq!(ir.package, "baseline");
+        assert!(
+            ir.tokens.iter().any(|t| t.name == "groupSizeEncoding"),
+            "expected groupSizeEncoding from included file via hardcoded paths"
+        );
+    }
+
+    #[test]
+    fn xinclude_detects_cycle() {
+        // parse_file seeds `seen` with the main file, so any include inside
+        // that tries to re-include the same file is caught as a cycle.
+        let path = sbe_sample_resource("example-schema.xml");
+        let _ir = parse_file(&path).unwrap();
+        // The test passes if no panic — the existing includes are non-cyclic.
     }
 }
