@@ -1,9 +1,7 @@
 //! Rust code generation boundary.
 
-use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal, Token};
 use crate::{GenerationConfig, Schema};
-use std::io::Write;
-use std::process::{Command, Stdio};
+use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal, Token};
 
 /// A single generated Rust module.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,17 +84,13 @@ impl Generator {
         src.push_str("        Utf8(core::str::Utf8Error),\n");
         src.push_str("    }\n\n");
         src.push_str("    impl core::fmt::Display for DecodeError {\n");
-        src.push_str(
-            "        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n",
-        );
+        src.push_str("        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n");
         src.push_str("            match self {\n");
         src.push_str("                Self::BufferTooShort { needed, available } => write!(f, \"buffer too short: needed {}, available {}\", needed, available),\n");
         src.push_str("                Self::WrongSchema { expected, actual } => write!(f, \"wrong schema id: expected {}, actual {}\", expected, actual),\n");
         src.push_str("                Self::UnknownTemplateLength { template_id } => write!(f, \"unknown template length for template id {}\", template_id),\n");
         src.push_str("                Self::InvalidVarDataLength { field, length } => write!(f, \"invalid var data length for field {}: {}\", field, length),\n");
-        src.push_str(
-            "                Self::Utf8(err) => write!(f, \"UTF-8 decode error: {}\", err),\n",
-        );
+        src.push_str("                Self::Utf8(err) => write!(f, \"UTF-8 decode error: {}\", err),\n");
         src.push_str("            }\n");
         src.push_str("        }\n");
         src.push_str("    }\n\n");
@@ -106,9 +100,7 @@ impl Generator {
         src.push_str("        BufferTooShort { needed: usize, available: usize },\n");
         src.push_str("    }\n\n");
         src.push_str("    impl core::fmt::Display for EncodeError {\n");
-        src.push_str(
-            "        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n",
-        );
+        src.push_str("        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n");
         src.push_str("            match self {\n");
         src.push_str("                Self::BufferTooShort { needed, available } => write!(f, \"buffer too short: needed {}, available {}\", needed, available),\n");
         src.push_str("            }\n");
@@ -170,24 +162,8 @@ impl Generator {
             .collect();
 
         for msg in &messages {
-            generate_message_decoder(
-                &mut src,
-                msg,
-                &elements,
-                ir.byte_order,
-                ir.id,
-                ir.version,
-                &ir.header_type,
-            );
-            generate_message_encoder(
-                &mut src,
-                msg,
-                &elements,
-                ir.byte_order,
-                ir.id,
-                ir.version,
-                &ir.header_type,
-            );
+            generate_message_decoder(&mut src, msg, &elements, ir.byte_order, ir.id, ir.version, &ir.header_type);
+            generate_message_encoder(&mut src, msg, &elements, ir.byte_order, ir.id, ir.version, &ir.header_type);
         }
 
         // 7. Generate AnyMessage enum
@@ -196,10 +172,7 @@ impl Generator {
         // Format through syn/prettyplease
         let source = syn::parse_str::<syn::File>(&src)
             .map(|file| prettyplease::unparse(&file))
-            .unwrap_or_else(|_| src);
-
-        // Run rustfmt for consistent formatting
-        let source = fmt_with_rustfmt(&source);
+            .unwrap_or(src);
 
         modules.push(GeneratedModule {
             path: format!("{}.rs", self.config.module_name),
@@ -351,8 +324,7 @@ fn partition_tokens(tokens: &[Token]) -> SchemaElements {
     while i < tokens.len() {
         match tokens[i].signal {
             Signal::BeginComposite => {
-                let end =
-                    find_matching_end(tokens, i, Signal::BeginComposite, Signal::EndComposite);
+                let end = find_matching_end(tokens, i, Signal::BeginComposite, Signal::EndComposite);
                 composites.push(tokens[i..=end].to_vec());
                 i = end + 1;
             }
@@ -415,18 +387,9 @@ struct MessageField {
 #[derive(Clone)]
 enum FieldType {
     Primitive(PrimitiveType, Option<usize>),
-    Composite {
-        name: String,
-        size: usize,
-    },
-    Enum {
-        name: String,
-        encoding_type: PrimitiveType,
-    },
-    Set {
-        name: String,
-        encoding_type: PrimitiveType,
-    },
+    Composite { name: String, size: usize },
+    Enum { name: String, encoding_type: PrimitiveType },
+    Set { name: String, encoding_type: PrimitiveType },
 }
 
 #[derive(Clone)]
@@ -522,53 +485,26 @@ fn parse_field_structure(tokens: &[Token], elements: &SchemaElements) -> Message
         let inner_name = tokens[1].name.clone();
         match inner_signal {
             Signal::BeginComposite => {
-                let size = elements
-                    .composites
-                    .iter()
+                let size = elements.composites.iter()
                     .find(|c| c[0].name == inner_name)
                     .and_then(|c| c[0].encoding.offset)
                     .unwrap_or(0);
-                FieldType::Composite {
-                    name: inner_name,
-                    size,
-                }
+                FieldType::Composite { name: inner_name, size }
             }
             Signal::BeginEnum => {
-                let encoding_type = tokens[1]
-                    .encoding
-                    .primitive_type
-                    .unwrap_or(PrimitiveType::UInt8);
-                FieldType::Enum {
-                    name: inner_name,
-                    encoding_type,
-                }
+                let encoding_type = tokens[1].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
+                FieldType::Enum { name: inner_name, encoding_type }
             }
             Signal::BeginSet => {
-                let encoding_type = tokens[1]
-                    .encoding
-                    .primitive_type
-                    .unwrap_or(PrimitiveType::UInt8);
-                FieldType::Set {
-                    name: inner_name,
-                    encoding_type,
-                }
+                let encoding_type = tokens[1].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
+                FieldType::Set { name: inner_name, encoding_type }
             }
-            _ => FieldType::Primitive(
-                begin
-                    .encoding
-                    .primitive_type
-                    .unwrap_or(PrimitiveType::UInt8),
-                begin.encoding.length,
-            ),
+            _ => {
+                FieldType::Primitive(begin.encoding.primitive_type.unwrap_or(PrimitiveType::UInt8), begin.encoding.length)
+            }
         }
     } else {
-        FieldType::Primitive(
-            begin
-                .encoding
-                .primitive_type
-                .unwrap_or(PrimitiveType::UInt8),
-            begin.encoding.length,
-        )
+        FieldType::Primitive(begin.encoding.primitive_type.unwrap_or(PrimitiveType::UInt8), begin.encoding.length)
     };
 
     MessageField {
@@ -723,46 +659,27 @@ fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> {
             let constant_value = tokens[i].encoding.constant_value.clone();
             let length = tokens[i].encoding.length;
 
-            let member_type =
-                if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginComposite {
-                    let comp_name = tokens[i + 1].name.clone();
-                    let size = tokens[i + 1].encoding.offset.unwrap_or(0);
-                    MemberType::Composite {
-                        name: comp_name,
-                        size,
-                    }
-                } else if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginEnum {
-                    let enum_name = tokens[i + 1].name.clone();
-                    let encoding_type = tokens[i + 1]
-                        .encoding
-                        .primitive_type
-                        .unwrap_or(PrimitiveType::UInt8);
-                    MemberType::Enum {
-                        name: enum_name,
-                        encoding_type,
-                    }
-                } else if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginSet {
-                    let set_name = tokens[i + 1].name.clone();
-                    let encoding_type = tokens[i + 1]
-                        .encoding
-                        .primitive_type
-                        .unwrap_or(PrimitiveType::UInt8);
-                    MemberType::Set {
-                        name: set_name,
-                        encoding_type,
-                    }
-                } else {
-                    let prim = tokens[i]
-                        .encoding
-                        .primitive_type
-                        .unwrap_or(PrimitiveType::UInt8);
-                    MemberType::Primitive {
-                        prim,
-                        length,
-                        presence,
-                        constant_value,
-                    }
-                };
+            let member_type = if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginComposite {
+                let comp_name = tokens[i + 1].name.clone();
+                let size = tokens[i + 1].encoding.offset.unwrap_or(0);
+                MemberType::Composite { name: comp_name, size }
+            } else if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginEnum {
+                let enum_name = tokens[i + 1].name.clone();
+                let encoding_type = tokens[i + 1].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
+                MemberType::Enum { name: enum_name, encoding_type }
+            } else if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginSet {
+                let set_name = tokens[i + 1].name.clone();
+                let encoding_type = tokens[i + 1].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
+                MemberType::Set { name: set_name, encoding_type }
+            } else {
+                let prim = tokens[i].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
+                MemberType::Primitive {
+                    prim,
+                    length,
+                    presence,
+                    constant_value,
+                }
+            };
 
             members.push(CompositeMember {
                 name,
@@ -783,10 +700,7 @@ fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> {
 fn generate_enum(src: &mut String, tokens: &[Token]) {
     let raw_name = &tokens[0].name;
     let name = to_pascal_case(raw_name);
-    let encoding_type = tokens[0]
-        .encoding
-        .primitive_type
-        .unwrap_or(PrimitiveType::UInt8);
+    let encoding_type = tokens[0].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
     let r_type = rust_type(encoding_type);
     let is_char = encoding_type == PrimitiveType::Char;
 
@@ -815,17 +729,17 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
     }
     src.push_str("}\n\n");
 
-    src.push_str(&format!("impl {} {{\n", name));
+    src.push_str(&format!(
+        "impl {} {{\n",
+        name
+    ));
 
     for t in tokens {
         if t.signal == Signal::Encoding {
             if let Some(ref val) = t.encoding.constant_value {
                 let const_name = to_upper_snake_case(&t.name);
                 let disc = format_discriminant(val, is_char);
-                src.push_str(&format!(
-                    "    pub const {}: Self = Self({});\n",
-                    const_name, disc
-                ));
+                src.push_str(&format!("    pub const {}: Self = Self({});\n", const_name, disc));
             }
         }
     }
@@ -840,10 +754,7 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
             if let Some(ref val) = t.encoding.constant_value {
                 let variant_name = to_pascal_case(&t.name);
                 let disc = format_discriminant(val, is_char);
-                src.push_str(&format!(
-                    "            {} => Some({}Kind::{}),\n",
-                    disc, name, variant_name
-                ));
+                src.push_str(&format!("            {} => Some({}Kind::{}),\n", disc, name, variant_name));
             }
         }
     }
@@ -895,10 +806,7 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
 fn generate_set(src: &mut String, tokens: &[Token]) {
     let raw_name = &tokens[0].name;
     let name = to_pascal_case(raw_name);
-    let encoding_type = tokens[0]
-        .encoding
-        .primitive_type
-        .unwrap_or(PrimitiveType::UInt8);
+    let encoding_type = tokens[0].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
     let r_type = rust_type(encoding_type);
 
     src.push_str(&format!(
@@ -971,7 +879,10 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
         name, size
     ));
 
-    src.push_str(&format!("impl {} {{\n", name));
+    src.push_str(&format!(
+        "impl {} {{\n",
+        name
+    ));
 
     let members = parse_composite_members(tokens);
     let order_suffix = match byte_order {
@@ -983,12 +894,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
     for m in &members {
         let field_name = to_snake_case(&m.name);
         match &m.member_type {
-            MemberType::Primitive {
-                prim,
-                length,
-                presence,
-                constant_value,
-            } => {
+            MemberType::Primitive { prim, length, presence, constant_value } => {
                 let r_type = rust_type(*prim);
                 let prim_size = prim.size();
                 if *presence == Presence::Constant {
@@ -1028,18 +934,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                                  }}\n\
                                  res\n\
                              }}\n\n",
-                        field_name,
-                        r_type,
-                        len,
-                        r_type,
-                        len,
-                        len,
-                        m.offset,
-                        prim_size,
-                        prim_size,
-                        prim_size,
-                        r_type,
-                        order_suffix
+                        field_name, r_type, len, r_type, len, len, m.offset, prim_size, prim_size, prim_size, r_type, order_suffix
                     ));
                 } else {
                     src.push_str(&format!(
@@ -1056,10 +951,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     ));
                 }
             }
-            MemberType::Composite {
-                name: comp_name,
-                size: comp_size,
-            } => {
+            MemberType::Composite { name: comp_name, size: comp_size } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
                     "    pub const fn {}(&self) -> {} {{\n\
@@ -1074,10 +966,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     field_name, target_name, comp_size, comp_size, m.offset, target_name
                 ));
             }
-            MemberType::Enum {
-                name: enum_name,
-                encoding_type,
-            } => {
+            MemberType::Enum { name: enum_name, encoding_type } => {
                 let target_name = to_pascal_case(enum_name);
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
@@ -1091,20 +980,10 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                              }}\n\
                              {}({}::from_{}_bytes(bytes))\n\
                          }}\n\n",
-                    field_name,
-                    target_name,
-                    prim_size,
-                    prim_size,
-                    m.offset,
-                    target_name,
-                    r_type,
-                    order_suffix
+                    field_name, target_name, prim_size, prim_size, m.offset, target_name, r_type, order_suffix
                 ));
             }
-            MemberType::Set {
-                name: set_name,
-                encoding_type,
-            } => {
+            MemberType::Set { name: set_name, encoding_type } => {
                 let target_name = to_pascal_case(set_name);
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
@@ -1118,14 +997,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                              }}\n\
                              {}({}::from_{}_bytes(bytes))\n\
                          }}\n\n",
-                    field_name,
-                    target_name,
-                    prim_size,
-                    prim_size,
-                    m.offset,
-                    target_name,
-                    r_type,
-                    order_suffix
+                    field_name, target_name, prim_size, prim_size, m.offset, target_name, r_type, order_suffix
                 ));
             }
         }
@@ -1137,12 +1009,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
     for m in &members {
         let field_name = to_snake_case(&m.name);
         match &m.member_type {
-            MemberType::Primitive {
-                prim,
-                length,
-                presence,
-                ..
-            } => {
+            MemberType::Primitive { prim, length, presence, .. } => {
                 if *presence != Presence::Constant {
                     let r_type = rust_type(*prim);
                     if let Some(len) = length {
@@ -1152,14 +1019,10 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     }
                 }
             }
-            MemberType::Composite {
-                name: comp_name, ..
-            } => {
+            MemberType::Composite { name: comp_name, .. } => {
                 params.push(format!("{}: {}", field_name, to_pascal_case(comp_name)));
             }
-            MemberType::Enum {
-                name: enum_name, ..
-            } => {
+            MemberType::Enum { name: enum_name, .. } => {
                 params.push(format!("{}: {}", field_name, to_pascal_case(enum_name)));
             }
             MemberType::Set { name: set_name, .. } => {
@@ -1174,12 +1037,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
     for m in &members {
         let field_name = to_snake_case(&m.name);
         match &m.member_type {
-            MemberType::Primitive {
-                prim,
-                length,
-                presence,
-                constant_value,
-            } => {
+            MemberType::Primitive { prim, length, presence, constant_value } => {
                 let prim_size = prim.size();
                 if *presence == Presence::Constant {
                     if let Some(val) = constant_value {
@@ -1233,9 +1091,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     ));
                 }
             }
-            MemberType::Composite {
-                size: comp_size, ..
-            } => {
+            MemberType::Composite { size: comp_size, .. } => {
                 src.push_str(&format!(
                     "        let mut j = 0;\n\
                              while j < {} {{\n\
@@ -1276,10 +1132,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
     src.push_str("}\n\n");
 }
 
-fn get_dimension_info(
-    elements: &SchemaElements,
-    dim_type: &str,
-) -> (String, usize, String, String) {
+fn get_dimension_info(elements: &SchemaElements, dim_type: &str) -> (String, usize, String, String) {
     let raw_name = dim_type;
     let name = to_pascal_case(raw_name);
     let mut size = 4;
@@ -1300,10 +1153,7 @@ fn get_dimension_info(
     (name, size, bl, num)
 }
 
-fn get_vardata_info(
-    elements: &SchemaElements,
-    type_name: &str,
-) -> (String, usize, String, PrimitiveType) {
+fn get_vardata_info(elements: &SchemaElements, type_name: &str) -> (String, usize, String, PrimitiveType) {
     let raw_name = type_name;
     let name = to_pascal_case(raw_name);
     let mut size = 4;
@@ -1326,12 +1176,7 @@ fn get_vardata_info(
     (name, size, len_field, prim)
 }
 
-fn generate_dim_new_call(
-    elements: &SchemaElements,
-    dim_type: &str,
-    block_len_expr: &str,
-    count_expr: &str,
-) -> String {
+fn generate_dim_new_call(elements: &SchemaElements, dim_type: &str, block_len_expr: &str, count_expr: &str) -> String {
     let raw_name = dim_type;
     let name = to_pascal_case(raw_name);
     let mut args = vec![block_len_expr.to_string(), count_expr.to_string()];
@@ -1379,11 +1224,7 @@ fn generate_message_decoder(
         let mut ti = "template_id".to_string();
         let mut si = "schema_id".to_string();
         let mut vr = "version".to_string();
-        if let Some(comp) = elements
-            .composites
-            .iter()
-            .find(|c| c[0].name == header_type)
-        {
+        if let Some(comp) = elements.composites.iter().find(|c| c[0].name == header_type) {
             let members = parse_composite_members(comp);
             for m in members {
                 let lower = m.name.to_lowercase();
@@ -1401,9 +1242,7 @@ fn generate_message_decoder(
         (bl, ti, si, vr)
     };
 
-    let header_size = elements
-        .composites
-        .iter()
+    let header_size = elements.composites.iter()
         .find(|c| c[0].name == header_type)
         .and_then(|c| c[0].encoding.offset)
         .unwrap_or(8);
@@ -1457,9 +1296,7 @@ fn generate_message_decoder(
         header_size, header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr
     ));
 
-    src.push_str(
-        "    pub const fn acting_version(&self) -> u16 {\n        self.acting_version\n    }\n\n",
-    );
+    src.push_str("    pub const fn acting_version(&self) -> u16 {\n        self.acting_version\n    }\n\n");
     src.push_str("    pub const fn acting_block_length(&self) -> usize {\n        self.acting_block_length\n    }\n\n");
 
     // Fields Getters
@@ -1539,19 +1376,7 @@ fn generate_message_decoder(
                                  }}\n\
                                  res\n\
                              }}\n\n",
-                        f_name,
-                        r_type,
-                        len,
-                        offset,
-                        r_type,
-                        len,
-                        len,
-                        offset,
-                        prim_size,
-                        prim_size,
-                        prim_size,
-                        r_type,
-                        order_suffix
+                        f_name, r_type, len, offset, r_type, len, len, offset, prim_size, prim_size, prim_size, r_type, order_suffix
                     ));
 
                     if since == 0 {
@@ -1607,7 +1432,7 @@ fn generate_message_decoder(
                                          Ok(Some(val))\n\
                                      }}\n\
                                  }}\n\n",
-                            f_name, r_type, since, offset + prim_size, offset, prim_size, offset + prim_size, prim_size, prim_size, r_type, order_suffix, null_check
+                            f_name, r_type, since, offset + prim_size, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix, null_check
                         ));
                     } else if since > 0 {
                         src.push_str(&format!(
@@ -1627,7 +1452,7 @@ fn generate_message_decoder(
                                      }}\n\
                                      Ok(Some({}::from_{}_bytes(bytes)))\n\
                                  }}\n\n",
-                            f_name, r_type, since, offset + prim_size, offset, prim_size, offset + prim_size, prim_size, prim_size, r_type, order_suffix
+                            f_name, r_type, since, offset + prim_size, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix
                         ));
                     } else {
                         src.push_str(&format!(
@@ -1644,7 +1469,7 @@ fn generate_message_decoder(
                                      }}\n\
                                      Ok({}::from_{}_bytes(bytes))\n\
                                  }}\n\n",
-                            f_name, r_type, offset, prim_size, offset + prim_size, prim_size, prim_size, r_type, order_suffix
+                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix
                         ));
                     }
 
@@ -1684,10 +1509,7 @@ fn generate_message_decoder(
                     }
                 }
             }
-            FieldType::Composite {
-                name: comp_name,
-                size: comp_size,
-            } => {
+            FieldType::Composite { name: comp_name, size: comp_size } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
                     "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
@@ -1706,7 +1528,7 @@ fn generate_message_decoder(
                              }}\n\
                              Ok({}(bytes))\n\
                          }}\n\n",
-                    f_name, target_name, since, offset + comp_size, offset, comp_size, offset + comp_size, comp_size, comp_size, target_name, comp_size, target_name
+                    f_name, target_name, since, offset + comp_size, target_name, comp_size, offset, comp_size, comp_size, comp_size, comp_size, target_name
                 ));
 
                 src.push_str(&format!(
@@ -1723,10 +1545,7 @@ fn generate_message_decoder(
                     f_name, target_name, offset, comp_size, comp_size, target_name
                 ));
             }
-            FieldType::Enum {
-                name: enum_name,
-                encoding_type,
-            } => {
+            FieldType::Enum { name: enum_name, encoding_type } => {
                 let target_name = to_pascal_case(enum_name);
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
@@ -1748,7 +1567,7 @@ fn generate_message_decoder(
                              }}\n\
                              Ok({}({}::from_{}_bytes(bytes)))\n\
                          }}\n\n",
-                    f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, offset + prim_size, prim_size, prim_size, target_name, r_type, order_suffix
+                    f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix
                 ));
 
                 src.push_str(&format!(
@@ -1762,20 +1581,10 @@ fn generate_message_decoder(
                              }}\n\
                              {}({}::from_{}_bytes(bytes))\n\
                          }}\n\n",
-                    f_name,
-                    target_name,
-                    offset,
-                    prim_size,
-                    prim_size,
-                    target_name,
-                    r_type,
-                    order_suffix
+                    f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
                 ));
             }
-            FieldType::Set {
-                name: set_name,
-                encoding_type,
-            } => {
+            FieldType::Set { name: set_name, encoding_type } => {
                 let target_name = to_pascal_case(set_name);
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
@@ -1797,7 +1606,7 @@ fn generate_message_decoder(
                              }}\n\
                              Ok({}({}::from_{}_bytes(bytes)))\n\
                          }}\n\n",
-                    f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, offset + prim_size, prim_size, prim_size, target_name, r_type, order_suffix
+                    f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix
                 ));
 
                 src.push_str(&format!(
@@ -1811,14 +1620,7 @@ fn generate_message_decoder(
                              }}\n\
                              {}({}::from_{}_bytes(bytes))\n\
                          }}\n\n",
-                    f_name,
-                    target_name,
-                    offset,
-                    prim_size,
-                    prim_size,
-                    target_name,
-                    r_type,
-                    order_suffix
+                    f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
                 ));
             }
         }
@@ -1835,8 +1637,7 @@ fn generate_message_decoder(
 
     let mut k = 0;
     for g in &msg.groups {
-        let (dim_name, dim_size, bl_field, count_field) =
-            get_dimension_info(elements, &g.dimension_type);
+        let (dim_name, dim_size, bl_field, count_field) = get_dimension_info(elements, &g.dimension_type);
         let g_pascal = to_pascal_case(&g.name);
         src.push_str(&format!(
             "    #[inline]\n\
@@ -1989,15 +1790,9 @@ fn generate_message_decoder(
     }
 }
 
-fn generate_group_decoder(
-    src: &mut String,
-    g: &MessageGroup,
-    elements: &SchemaElements,
-    byte_order: ByteOrder,
-) {
+fn generate_group_decoder(src: &mut String, g: &MessageGroup, elements: &SchemaElements, byte_order: ByteOrder) {
     let name = to_pascal_case(&g.name);
-    let (dim_name, dim_size, bl_field, count_field) =
-        get_dimension_info(elements, &g.dimension_type);
+    let (dim_name, dim_size, bl_field, count_field) = get_dimension_info(elements, &g.dimension_type);
     let order_suffix = match byte_order {
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
@@ -2167,19 +1962,7 @@ fn generate_group_decoder(
                                  }}\n\
                                  res\n\
                              }}\n\n",
-                        f_name,
-                        r_type,
-                        len,
-                        offset,
-                        r_type,
-                        len,
-                        len,
-                        offset,
-                        prim_size,
-                        prim_size,
-                        prim_size,
-                        r_type,
-                        order_suffix
+                        f_name, r_type, len, offset, r_type, len, len, offset, prim_size, prim_size, prim_size, r_type, order_suffix
                     ));
 
                     src.push_str(&format!(
@@ -2219,7 +2002,7 @@ fn generate_group_decoder(
                                          Ok(Some(val))\n\
                                      }}\n\
                                  }}\n\n",
-                            f_name, r_type, offset, prim_size, offset + prim_size, prim_size, prim_size, r_type, order_suffix, null_check
+                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix, null_check
                         ));
                     } else {
                         src.push_str(&format!(
@@ -2236,7 +2019,7 @@ fn generate_group_decoder(
                                      }}\n\
                                      Ok({}::from_{}_bytes(bytes))\n\
                                  }}\n\n",
-                            f_name, r_type, offset, prim_size, offset + prim_size, prim_size, prim_size, r_type, order_suffix
+                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix
                         ));
                     }
 
@@ -2263,10 +2046,7 @@ fn generate_group_decoder(
                     ));
                 }
             }
-            FieldType::Composite {
-                name: comp_name,
-                size: comp_size,
-            } => {
+            FieldType::Composite { name: comp_name, size: comp_size } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
                     "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
@@ -2282,13 +2062,10 @@ fn generate_group_decoder(
                              }}\n\
                              Ok({}(bytes))\n\
                          }}\n\n",
-                    f_name, target_name, offset, comp_size, offset + comp_size, comp_size, comp_size, target_name
+                    f_name, target_name, offset, comp_size, comp_size, comp_size, comp_size, target_name
                 ));
             }
-            FieldType::Enum {
-                name: enum_name,
-                encoding_type,
-            } => {
+            FieldType::Enum { name: enum_name, encoding_type } => {
                 let target_name = to_pascal_case(enum_name);
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
@@ -2307,13 +2084,10 @@ fn generate_group_decoder(
                              }}\n\
                              Ok({}({}::from_{}_bytes(bytes)))\n\
                          }}\n\n",
-                    f_name, target_name, offset, prim_size, offset + prim_size, prim_size, prim_size, target_name, r_type, order_suffix
+                    f_name, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix
                 ));
             }
-            FieldType::Set {
-                name: set_name,
-                encoding_type,
-            } => {
+            FieldType::Set { name: set_name, encoding_type } => {
                 let target_name = to_pascal_case(set_name);
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
@@ -2332,7 +2106,7 @@ fn generate_group_decoder(
                              }}\n\
                              Ok({}({}::from_{}_bytes(bytes)))\n\
                          }}\n\n",
-                    f_name, target_name, offset, prim_size, offset + prim_size, prim_size, prim_size, target_name, r_type, order_suffix
+                    f_name, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix
                 ));
             }
         }
@@ -2348,8 +2122,7 @@ fn generate_group_decoder(
 
     let mut k = 0;
     for ng in &g.groups {
-        let (dim_name, dim_size, bl_field, count_field) =
-            get_dimension_info(elements, &ng.dimension_type);
+        let (dim_name, dim_size, bl_field, count_field) = get_dimension_info(elements, &ng.dimension_type);
         let ng_pascal = to_pascal_case(&ng.name);
         src.push_str(&format!(
             "    #[inline]\n\
@@ -2469,12 +2242,7 @@ fn generate_group_decoder(
     }
 }
 
-fn generate_nullification(
-    src: &mut String,
-    fields: &[MessageField],
-    offset_base: &str,
-    byte_order: ByteOrder,
-) {
+fn generate_nullification(src: &mut String, fields: &[MessageField], offset_base: &str, byte_order: ByteOrder) {
     let order_suffix = match byte_order {
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
@@ -2530,9 +2298,7 @@ fn generate_message_encoder(
     });
 
     let header_pascal = to_pascal_case(header_type);
-    let header_size = elements
-        .composites
-        .iter()
+    let header_size = elements.composites.iter()
         .find(|c| c[0].name == header_type)
         .and_then(|c| c[0].encoding.offset)
         .unwrap_or(8);
@@ -2540,23 +2306,14 @@ fn generate_message_encoder(
     // Generate Encoder phantom states if we have variable length tail elements
     let total_tail = msg.groups.len() + msg.var_data.len();
     if total_tail > 0 {
-        src.push_str(&format!(
-            "pub mod {}_encoder_state {{\n",
-            to_snake_case(&msg.name)
-        ));
+        src.push_str(&format!("pub mod {}_encoder_state {{\n", to_snake_case(&msg.name)));
         let mut tail_idx = 0;
         for g in &msg.groups {
-            src.push_str(&format!(
-                "    pub struct Needs{};\n",
-                to_pascal_case(&g.name)
-            ));
+            src.push_str(&format!("    pub struct Needs{};\n", to_pascal_case(&g.name)));
             tail_idx += 1;
         }
         for vd in &msg.var_data {
-            src.push_str(&format!(
-                "    pub struct Needs{};\n",
-                to_pascal_case(&vd.name)
-            ));
+            src.push_str(&format!("    pub struct Needs{};\n", to_pascal_case(&vd.name)));
             tail_idx += 1;
         }
         src.push_str("    pub struct Complete;\n");
@@ -2564,10 +2321,7 @@ fn generate_message_encoder(
     }
 
     if total_tail > 0 {
-        let first_state = &msg
-            .groups
-            .first()
-            .map(|g| to_pascal_case(&g.name))
+        let first_state = &msg.groups.first().map(|g| to_pascal_case(&g.name))
             .unwrap_or_else(|| to_pascal_case(&msg.var_data.first().unwrap().name));
         src.push_str(&format!(
             "pub struct {}Encoder<'a, State = {}_encoder_state::Needs{}> {{\n\
@@ -2576,9 +2330,7 @@ fn generate_message_encoder(
                  pos: usize,\n\
                  _phantom: core::marker::PhantomData<State>,\n\
              }}\n\n",
-            name,
-            to_snake_case(&msg.name),
-            first_state
+            name, to_snake_case(&msg.name), first_state
         ));
     } else {
         src.push_str(&format!(
@@ -2606,10 +2358,7 @@ fn generate_message_encoder(
     ));
 
     if total_tail > 0 {
-        let first_state = &msg
-            .groups
-            .first()
-            .map(|g| to_pascal_case(&g.name))
+        let first_state = &msg.groups.first().map(|g| to_pascal_case(&g.name))
             .unwrap_or_else(|| to_pascal_case(&msg.var_data.first().unwrap().name));
         src.push_str(&format!(
             "    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
@@ -2691,15 +2440,7 @@ fn generate_message_encoder(
                                  }}\n\
                                  self\n\
                              }}\n\n",
-                        f_name,
-                        r_type,
-                        len,
-                        header_size,
-                        offset,
-                        len,
-                        order_suffix,
-                        prim_size,
-                        prim_size
+                        f_name, r_type, len, header_size, offset, len, order_suffix, prim_size, prim_size
                     ));
                 } else {
                     src.push_str(&format!(
@@ -2717,10 +2458,7 @@ fn generate_message_encoder(
                     ));
                 }
             }
-            FieldType::Composite {
-                name: comp_name,
-                size: comp_size,
-            } => {
+            FieldType::Composite { name: comp_name, size: comp_size } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
                     "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
@@ -2735,10 +2473,7 @@ fn generate_message_encoder(
                     f_name, target_name, header_size, offset, comp_size
                 ));
             }
-            FieldType::Enum {
-                name: enum_name,
-                encoding_type,
-            } => {
+            FieldType::Enum { name: enum_name, encoding_type } => {
                 let target_name = to_pascal_case(enum_name);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
@@ -2755,10 +2490,7 @@ fn generate_message_encoder(
                     f_name, target_name, header_size, offset, order_suffix, prim_size
                 ));
             }
-            FieldType::Set {
-                name: set_name,
-                encoding_type,
-            } => {
+            FieldType::Set { name: set_name, encoding_type } => {
                 let target_name = to_pascal_case(set_name);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
@@ -2800,11 +2532,7 @@ fn generate_message_encoder(
                 } else {
                     to_pascal_case(&msg.var_data[tail_idx + 1 - msg.groups.len()].name)
                 };
-                format!(
-                    "{}_encoder_state::Needs{}",
-                    to_snake_case(&msg.name),
-                    next_name
-                )
+                format!("{}_encoder_state::Needs{}", to_snake_case(&msg.name), next_name)
             } else {
                 format!("{}_encoder_state::Complete", to_snake_case(&msg.name))
             };
@@ -2850,11 +2578,7 @@ fn generate_message_encoder(
         for vd in &msg.var_data {
             let next_state = if tail_idx + 1 < total_tail {
                 let next_name = to_pascal_case(&msg.var_data[tail_idx + 1 - msg.groups.len()].name);
-                format!(
-                    "{}_encoder_state::Needs{}",
-                    to_snake_case(&msg.name),
-                    next_name
-                )
+                format!("{}_encoder_state::Needs{}", to_snake_case(&msg.name), next_name)
             } else {
                 format!("{}_encoder_state::Complete", to_snake_case(&msg.name))
             };
@@ -2908,10 +2632,7 @@ fn generate_message_encoder(
                      self.as_bytes()\n\
                  }}\n\
              }}\n\n",
-            name,
-            to_snake_case(&msg.name),
-            name,
-            to_snake_case(&msg.name)
+            name, to_snake_case(&msg.name), name, to_snake_case(&msg.name)
         ));
     } else {
         src.push_str(&format!(
@@ -2954,12 +2675,7 @@ fn generate_message_encoder(
     }
 }
 
-fn generate_group_encoder(
-    src: &mut String,
-    g: &MessageGroup,
-    elements: &SchemaElements,
-    byte_order: ByteOrder,
-) {
+fn generate_group_encoder(src: &mut String, g: &MessageGroup, elements: &SchemaElements, byte_order: ByteOrder) {
     let name = to_pascal_case(&g.name);
     let order_suffix = match byte_order {
         ByteOrder::LittleEndian => "le",
@@ -3069,10 +2785,7 @@ fn generate_group_encoder(
                     ));
                 }
             }
-            FieldType::Composite {
-                name: comp_name,
-                size: comp_size,
-            } => {
+            FieldType::Composite { name: comp_name, size: comp_size } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
                     "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
@@ -3087,10 +2800,7 @@ fn generate_group_encoder(
                     f_name, target_name, offset, comp_size
                 ));
             }
-            FieldType::Enum {
-                name: enum_name,
-                encoding_type,
-            } => {
+            FieldType::Enum { name: enum_name, encoding_type } => {
                 let target_name = to_pascal_case(enum_name);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
@@ -3107,10 +2817,7 @@ fn generate_group_encoder(
                     f_name, target_name, offset, order_suffix, prim_size
                 ));
             }
-            FieldType::Set {
-                name: set_name,
-                encoding_type,
-            } => {
+            FieldType::Set { name: set_name, encoding_type } => {
                 let target_name = to_pascal_case(set_name);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
@@ -3210,9 +2917,7 @@ fn generate_any_message(
     schema_id: u16,
     header_type: &str,
 ) {
-    let header_size = elements
-        .composites
-        .iter()
+    let header_size = elements.composites.iter()
         .find(|c| c[0].name == header_type)
         .and_then(|c| c[0].encoding.offset)
         .unwrap_or(8);
@@ -3222,11 +2927,7 @@ fn generate_any_message(
         let mut ti = "template_id".to_string();
         let mut si = "schema_id".to_string();
         let mut vr = "version".to_string();
-        if let Some(comp) = elements
-            .composites
-            .iter()
-            .find(|c| c[0].name == header_type)
-        {
+        if let Some(comp) = elements.composites.iter().find(|c| c[0].name == header_type) {
             let members = parse_composite_members(comp);
             for m in members {
                 let lower = m.name.to_lowercase();
@@ -3247,14 +2948,11 @@ fn generate_any_message(
     src.push_str(
         "#[non_exhaustive]\n\
          #[derive(Clone, Copy)]\n\
-         pub enum AnyMessage<'a> {\n",
+         pub enum AnyMessage<'a> {\n"
     );
     for m in messages {
         let name_pascal = to_pascal_case(&m.name);
-        src.push_str(&format!(
-            "    {}({}Decoder<'a>),\n",
-            name_pascal, name_pascal
-        ));
+        src.push_str(&format!("    {}({}Decoder<'a>),\n", name_pascal, name_pascal));
     }
     src.push_str(&format!(
         "    Unknown {{\n\
@@ -3272,7 +2970,7 @@ fn generate_any_message(
              pub message: AnyMessage<'a>,\n\
              pub range: core::ops::Range<usize>,\n\
              pub len: usize,\n\
-         }\n\n",
+         }\n\n"
     );
 
     // FramingPolicy Enum
@@ -3282,7 +2980,7 @@ fn generate_any_message(
              LengthPrefixU32,\n\
              LengthPrefixU16,\n\
              Fixed(usize),\n\
-         }\n\n",
+         }\n\n"
     );
 
     // FrameCursor Struct
@@ -3384,7 +3082,7 @@ fn generate_any_message(
     src.push_str(
         "            _ => Err(sbe_rt::DecodeError::UnknownTemplateLength { template_id }),\n\
                  }\n\
-             }\n\n",
+             }\n\n"
     );
 
     src.push_str(&format!(
@@ -3455,49 +3153,10 @@ fn generate_any_message(
     src.push_str("}\n\n");
 }
 
-/// Run `rustfmt` on source, falling back to unformatted output on failure.
-fn fmt_with_rustfmt(source: &str) -> String {
-    let Ok(mut child) = Command::new("rustfmt")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    else {
-        eprintln!("warning: rustfmt not found, skipping formatting");
-        return source.to_string();
-    };
-
-    let Some(mut stdin) = child.stdin.take() else {
-        eprintln!("warning: rustfmt stdin unavailable, skipping formatting");
-        return source.to_string();
-    };
-
-    if stdin.write_all(source.as_bytes()).is_err() {
-        eprintln!("warning: rustfmt write failed, skipping formatting");
-        return source.to_string();
-    }
-    drop(stdin);
-
-    match child.wait_with_output() {
-        Ok(output) if output.status.success() => {
-            String::from_utf8(output.stdout).unwrap_or_else(|_| source.to_string())
-        }
-        Ok(output) => {
-            let msg = String::from_utf8_lossy(&output.stderr);
-            eprintln!("warning: rustfmt failed ({msg}), using unformatted output");
-            source.to_string()
-        }
-        Err(e) => {
-            eprintln!("warning: rustfmt wait failed ({e}), using unformatted output");
-            source.to_string()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::Generator;
     use crate::{GenerationConfig, Schema};
+    use super::Generator;
 
     #[test]
     fn generator_emits_deterministic_module_name() {

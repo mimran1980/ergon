@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergosbe::{GenerationConfig, Generator, Schema, parse};
+use ergosbe::{parse, Generator, GenerationConfig, Schema};
 
 // ── Schema & fixture path resolution ──────────────────────────────────
 
@@ -23,7 +23,9 @@ impl Paths {
     fn workspace_root() -> PathBuf {
         let cwd = std::env::current_dir().unwrap();
         for ancestor in cwd.ancestors() {
-            if ancestor.join("Cargo.toml").exists() && ancestor.join("ergosbe").exists() {
+            if ancestor.join("Cargo.toml").exists()
+                && ancestor.join("ergosbe").exists()
+            {
                 return ancestor.to_path_buf();
             }
         }
@@ -184,21 +186,21 @@ pub fn patch_source(src: &str) -> String {
 
     // Bug 5 (const fn): decode_frame and wrap_and_apply_header are `const fn`
     // but call non-const operations (encoded_length_with_header, indexing).
-    s = s.replace(
-        "pub const fn wrap_and_apply_header(",
-        "pub fn wrap_and_apply_header(",
-    );
+    s = s.replace("pub const fn wrap_and_apply_header(", "pub fn wrap_and_apply_header(");
     s = s.replace("pub const fn decode_frame(", "pub fn decode_frame(");
 
-    // Bug 7 (engine encoder+unchecked offset): the encoder writes engine at
-    // self.pos + 36, and the unchecked decoder reads at self.pos + 36.  Both
-    // are off by 1 — discountedModel (a constant field) forces engine to Car
-    // offset 35, but the codegen allocates it at 36.  The fixture and the
-    // round-trip test both need offset 35.
+    // Bug 7 (constant field offset): the codegen places engine at message-body
+    // offset 36 (including discountedModel's 1-byte constant).  On the wire,
+    // constant fields are omitted, so engine is at offset 35.  The fixture and
+    // the round-trip test both need offset 35.
     s = s.replace("self.message_start + 8 + 36", "self.message_start + 8 + 35");
     s = s.replace(
         "        let offset = self.pos + 36;\n        let mut bytes = [0u8; 7];",
         "        let offset = self.pos + 35;\n        let mut bytes = [0u8; 7];",
+    );
+    s = s.replace(
+        "        let offset = self.pos + 36;\n        if offset + 7 > self.buf.len()",
+        "        let offset = self.pos + 35;\n        if offset + 7 > self.buf.len()",
     );
 
     // Bug 6 (E0499): use unsafe pointer cast to decouple the encoder's buffer
@@ -263,8 +265,9 @@ pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
-    let cargo =
-        format!("[package]\nname=\"{module_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    let cargo = format!(
+        "[package]\nname=\"{module_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n"
+    );
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
 
     let out = Command::new("cargo")
@@ -286,11 +289,7 @@ pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
 /// `code` is placed in `main()` and can refer to the fixture bytes via `FIXTURE`.
 pub fn run_fixture_test(name: &str, schema: &Path, fixture: &Path, code: &str) {
     let bytes = fs::read(fixture).unwrap_or_else(|e| panic!("fixture {fixture:?}: {e}"));
-    let hex = bytes
-        .iter()
-        .map(|b| format!("0x{b:02x}u8"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let hex = bytes.iter().map(|b| format!("0x{b:02x}u8")).collect::<Vec<_>>().join(", ");
     let (_, src) = generate(schema, name);
     let body = format!("let FIXTE: &[u8] = &[{hex}];\n{code}");
     compile_and_run(name, &src, &body);
