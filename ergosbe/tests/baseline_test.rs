@@ -15,7 +15,7 @@
 //! is impossible today.  We test what does work and document the gaps.
 
 mod common;
-use common::{assert_source_ok, generate, run_fixture_test, Paths};
+use common::{Paths, assert_source_ok, generate, run_fixture_test};
 
 const MODULE: &str = "car_example";
 

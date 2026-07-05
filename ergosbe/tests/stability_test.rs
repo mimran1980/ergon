@@ -5,7 +5,7 @@
 use std::fs;
 
 mod common;
-use common::{generate, Paths};
+use common::{Paths, generate};
 
 #[test]
 fn generated_output_matches_golden() {

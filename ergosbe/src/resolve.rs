@@ -61,12 +61,14 @@ pub fn resolve_schema(ir: &mut Ir) -> Result<(), ResolveError> {
     while i < ir.tokens.len() {
         match ir.tokens[i].signal {
             Signal::BeginComposite => {
-                let end_idx = find_matching_end(&ir.tokens, i, Signal::BeginComposite, Signal::EndComposite);
+                let end_idx =
+                    find_matching_end(&ir.tokens, i, Signal::BeginComposite, Signal::EndComposite);
                 resolve_composite_offsets(&mut ir.tokens[i..=end_idx])?;
                 i = end_idx + 1;
             }
             Signal::BeginMessage => {
-                let end_idx = find_matching_end(&ir.tokens, i, Signal::BeginMessage, Signal::EndMessage);
+                let end_idx =
+                    find_matching_end(&ir.tokens, i, Signal::BeginMessage, Signal::EndMessage);
                 resolve_message_offsets(&mut ir.tokens[i..=end_idx])?;
                 i = end_idx + 1;
             }
@@ -113,12 +115,17 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
             } else {
                 // Primitive field
                 let count = tokens[start].encoding.length.unwrap_or(1);
-                let size = tokens[start].encoding.primitive_type.map_or(0, |p| p.size()) * count;
+                let size = tokens[start]
+                    .encoding
+                    .primitive_type
+                    .map_or(0, |p| p.size())
+                    * count;
                 (size, end_idx + 1)
             }
         }
         Signal::BeginComposite => {
-            let end_idx = find_matching_end(tokens, start, Signal::BeginComposite, Signal::EndComposite);
+            let end_idx =
+                find_matching_end(tokens, start, Signal::BeginComposite, Signal::EndComposite);
             let mut size = 0;
             let mut j = start + 1;
             while j < end_idx {
@@ -129,15 +136,26 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
             (size, end_idx + 1)
         }
         Signal::BeginEnum | Signal::BeginSet => {
-            let end_idx = find_matching_end(tokens, start, tokens[start].signal, match tokens[start].signal {
-                Signal::BeginEnum => Signal::EndEnum,
-                _ => Signal::EndSet,
-            });
-            let size = tokens[start].encoding.primitive_type.map_or(0, |p| p.size());
+            let end_idx = find_matching_end(
+                tokens,
+                start,
+                tokens[start].signal,
+                match tokens[start].signal {
+                    Signal::BeginEnum => Signal::EndEnum,
+                    _ => Signal::EndSet,
+                },
+            );
+            let size = tokens[start]
+                .encoding
+                .primitive_type
+                .map_or(0, |p| p.size());
             (size, end_idx + 1)
         }
         Signal::Encoding => {
-            let size = tokens[start].encoding.primitive_type.map_or(0, |p| p.size());
+            let size = tokens[start]
+                .encoding
+                .primitive_type
+                .map_or(0, |p| p.size());
             (size, start + 1)
         }
         _ => (0, start + 1),
@@ -148,25 +166,25 @@ fn resolve_composite_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
     let mut current_offset = 0;
     let mut i = 1; // skip BeginComposite
     let end_limit = tokens.len() - 1; // skip EndComposite
-    
+
     while i < end_limit {
         let (size, next_i) = get_token_block_size(tokens, i);
-        
+
         // Resolve offset
         let resolved_offset = if let Some(off) = tokens[i].encoding.offset {
             off
         } else {
             current_offset
         };
-        
+
         tokens[i].encoding.offset = Some(resolved_offset);
-        
+
         // For nested composite tokens, we need to cascade offsets relative to parent if needed,
         // but inside SBE all member offsets are absolute or sequential.
         current_offset = resolved_offset + size;
         i = next_i;
     }
-    
+
     // Set total block length/size on BeginComposite
     let composite_size = current_offset;
     tokens[0].encoding.offset = Some(composite_size);
@@ -177,7 +195,7 @@ fn resolve_message_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
     let mut current_offset = 0;
     let mut i = 1; // skip BeginMessage
     let end_limit = tokens.len() - 1; // skip EndMessage
-    
+
     while i < end_limit {
         // If we hit variable-length tail elements (Signal::BeginGroup, Signal::BeginVarData),
         // we stop sequential fixed offset calculation because they are placed in the tail.
@@ -188,7 +206,8 @@ fn resolve_message_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
                 resolve_group_offsets(&mut tokens[i..=end_idx])?;
                 i = end_idx + 1;
             } else {
-                let end_idx = find_matching_end(tokens, i, Signal::BeginVarData, Signal::EndVarData);
+                let end_idx =
+                    find_matching_end(tokens, i, Signal::BeginVarData, Signal::EndVarData);
                 resolve_vardata_offsets(&mut tokens[i..=end_idx])?;
                 i = end_idx + 1;
             }
@@ -196,19 +215,19 @@ fn resolve_message_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
         }
 
         let (size, next_i) = get_token_block_size(tokens, i);
-        
+
         // Resolve offset
         let resolved_offset = if let Some(off) = tokens[i].encoding.offset {
             off
         } else {
             current_offset
         };
-        
+
         tokens[i].encoding.offset = Some(resolved_offset);
         current_offset = resolved_offset + size;
         i = next_i;
     }
-    
+
     // Set total block length/size on BeginMessage
     let block_length = current_offset;
     tokens[0].encoding.offset = Some(block_length);
@@ -236,7 +255,8 @@ fn resolve_group_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
                 resolve_group_offsets(&mut tokens[i..=end_idx])?;
                 i = end_idx + 1;
             } else {
-                let end_idx = find_matching_end(tokens, i, Signal::BeginVarData, Signal::EndVarData);
+                let end_idx =
+                    find_matching_end(tokens, i, Signal::BeginVarData, Signal::EndVarData);
                 resolve_vardata_offsets(&mut tokens[i..=end_idx])?;
                 i = end_idx + 1;
             }
@@ -299,7 +319,7 @@ fn default_min(prim: PrimitiveType) -> Option<u64> {
         PrimitiveType::Int64 => Some(-9223372036854775807i64 as u64),
         PrimitiveType::UInt64 => Some(0),
         PrimitiveType::Float => Some(f32::MIN.to_bits() as u64), // neg max float
-        PrimitiveType::Double => Some(f64::MIN.to_bits()), // neg max double
+        PrimitiveType::Double => Some(f64::MIN.to_bits()),       // neg max double
     }
 }
 
@@ -315,6 +335,6 @@ fn default_max(prim: PrimitiveType) -> Option<u64> {
         PrimitiveType::Int64 => Some(9223372036854775807),
         PrimitiveType::UInt64 => Some(18446744073709551614),
         PrimitiveType::Float => Some(f32::MAX.to_bits() as u64), // max float
-        PrimitiveType::Double => Some(f64::MAX.to_bits()), // max double
+        PrimitiveType::Double => Some(f64::MAX.to_bits()),       // max double
     }
 }

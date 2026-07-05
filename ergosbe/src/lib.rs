@@ -14,6 +14,6 @@ pub mod xml;
 pub use codegen::{GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{CompatibilityMode, GenerationConfig};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
-pub use resolve::{resolve_schema, ResolveError};
+pub use resolve::{ResolveError, resolve_schema};
 pub use schema::{Schema, SchemaSource};
 pub use xml::{ParseError, parse};

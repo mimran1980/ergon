@@ -301,12 +301,30 @@ fn read_include_file(href: &str) -> Option<String> {
         return Some(content);
     }
     let paths = [
-        format!("simple-binary-encoding/sbe-samples/src/main/resources/{}", href),
-        format!("simple-binary-encoding/sbe-benchmarks/src/main/resources/{}", href),
-        format!("simple-binary-encoding/sbe-tool/src/test/resources/{}", href),
-        format!("../simple-binary-encoding/sbe-samples/src/main/resources/{}", href),
-        format!("../simple-binary-encoding/sbe-benchmarks/src/main/resources/{}", href),
-        format!("../simple-binary-encoding/sbe-tool/src/test/resources/{}", href),
+        format!(
+            "simple-binary-encoding/sbe-samples/src/main/resources/{}",
+            href
+        ),
+        format!(
+            "simple-binary-encoding/sbe-benchmarks/src/main/resources/{}",
+            href
+        ),
+        format!(
+            "simple-binary-encoding/sbe-tool/src/test/resources/{}",
+            href
+        ),
+        format!(
+            "../simple-binary-encoding/sbe-samples/src/main/resources/{}",
+            href
+        ),
+        format!(
+            "../simple-binary-encoding/sbe-benchmarks/src/main/resources/{}",
+            href
+        ),
+        format!(
+            "../simple-binary-encoding/sbe-tool/src/test/resources/{}",
+            href
+        ),
     ];
     for p in &paths {
         if let Ok(content) = std::fs::read_to_string(p) {
@@ -411,7 +429,9 @@ fn parse_schema(root: Node<'_, '_>) -> Result<Ir, Fault> {
 
 /// Parse a `<type>` element.
 fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<Encoding, Fault> {
-    let primitive = node.attribute("primitiveType").or_else(|| node.attribute("type"));
+    let primitive = node
+        .attribute("primitiveType")
+        .or_else(|| node.attribute("type"));
     let primitive_type = primitive
         .map(|s| parse_primitive_type(node, s))
         .transpose()?;
@@ -427,11 +447,14 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
     let description = node.attribute("description").map(str::to_string);
     let length = opt_usize_attr(node, "length", "length")?;
 
-    let null_value = node.attribute("nullValue")
+    let null_value = node
+        .attribute("nullValue")
         .and_then(|s| parse_u64_val(s, primitive_type));
-    let min_value = node.attribute("minValue")
+    let min_value = node
+        .attribute("minValue")
         .and_then(|s| parse_u64_val(s, primitive_type));
-    let max_value = node.attribute("maxValue")
+    let max_value = node
+        .attribute("maxValue")
         .and_then(|s| parse_u64_val(s, primitive_type));
 
     let constant_value = if presence == Presence::Constant {
@@ -481,11 +504,15 @@ fn parse_composite(
     for child in element_children(node) {
         if child.tag_name().name() == "type" {
             let member_name = string_attr(child, "name", "composite member @name")?;
-            let type_name = child.attribute("type").or_else(|| child.attribute("primitiveType"));
+            let type_name = child
+                .attribute("type")
+                .or_else(|| child.attribute("primitiveType"));
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
 
             if let Some(t_name) = type_name {
-                if let Some(resolved) = resolve_type_to_tokens(&member_name, t_name, None, registry, since_val) {
+                if let Some(resolved) =
+                    resolve_type_to_tokens(&member_name, t_name, None, registry, since_val)
+                {
                     composite_tokens.extend(resolved);
                 } else {
                     let encoding = parse_type_element(child, registry)?;
@@ -522,7 +549,9 @@ fn parse_composite(
 
     composite_tokens.push(structural(&name, Signal::EndComposite));
 
-    registry.registry.insert(name.clone(), composite_tokens.clone());
+    registry
+        .registry
+        .insert(name.clone(), composite_tokens.clone());
     tokens.extend(composite_tokens);
     Ok(())
 }
@@ -537,7 +566,9 @@ fn parse_enum(
     let encoding_type_name = string_attr(node, "encodingType", "enum @encodingType")?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
 
-    let encoding_type = registry.encodings.get(&encoding_type_name)
+    let encoding_type = registry
+        .encodings
+        .get(&encoding_type_name)
         .and_then(|e| e.primitive_type)
         .ok_or_else(|| Fault::invalid(node, "enum encodingType", &encoding_type_name))?;
 
@@ -592,7 +623,9 @@ fn parse_set(
     let encoding_type_name = string_attr(node, "encodingType", "set @encodingType")?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
 
-    let encoding_type = registry.encodings.get(&encoding_type_name)
+    let encoding_type = registry
+        .encodings
+        .get(&encoding_type_name)
         .and_then(|e| e.primitive_type)
         .ok_or_else(|| Fault::invalid(node, "set encodingType", &encoding_type_name))?;
 
@@ -679,7 +712,9 @@ fn parse_message_child(
             let id = u16_attr(node, "id", "field @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
 
-            if let Some(resolved) = resolve_type_to_tokens(&field_name, &type_name, Some(id), registry, since_version) {
+            if let Some(resolved) =
+                resolve_type_to_tokens(&field_name, &type_name, Some(id), registry, since_version)
+            {
                 let mut inlined = resolved;
                 if let Some(offset_str) = node.attribute("offset") {
                     if let Ok(offset) = offset_str.parse::<usize>() {
@@ -697,7 +732,9 @@ fn parse_message_child(
             let group_name = string_attr(node, "name", "group @name")?;
             let id = u16_attr(node, "id", "group @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let dimension_type = node.attribute("dimensionType").unwrap_or("groupSizeEncoding");
+            let dimension_type = node
+                .attribute("dimensionType")
+                .unwrap_or("groupSizeEncoding");
 
             tokens.push(Token {
                 id: Some(id),
@@ -867,7 +904,12 @@ mod tests {
         }
     }
 
-    fn field(name: &str, id: Option<u16>, primitive: PrimitiveType, offset: Option<usize>) -> [Token; 2] {
+    fn field(
+        name: &str,
+        id: Option<u16>,
+        primitive: PrimitiveType,
+        offset: Option<usize>,
+    ) -> [Token; 2] {
         let encoding = Encoding {
             primitive_type: Some(primitive),
             offset,
@@ -916,7 +958,7 @@ mod tests {
         expected.extend(field("schemaId", None, PrimitiveType::UInt16, None));
         expected.extend(field("version", None, PrimitiveType::UInt16, None));
         expected.push(structural("messageHeader", Signal::EndComposite));
-        
+
         expected.push(Token {
             id: Some(1),
             name: "Car".to_string(),
@@ -928,7 +970,12 @@ mod tests {
                 ..Encoding::default()
             },
         });
-        expected.extend(field("serialNumber", Some(1), PrimitiveType::UInt64, Some(0)));
+        expected.extend(field(
+            "serialNumber",
+            Some(1),
+            PrimitiveType::UInt64,
+            Some(0),
+        ));
         expected.extend(field("modelYear", Some(2), PrimitiveType::UInt16, Some(8)));
         expected.extend(field("available", Some(3), PrimitiveType::UInt8, Some(10)));
         expected.push(structural("Car", Signal::EndMessage));

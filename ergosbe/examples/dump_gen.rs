@@ -1,5 +1,5 @@
+use ergosbe::{GenerationConfig, Generator, Schema, parse};
 use std::fs;
-use ergosbe::{parse, Generator, GenerationConfig, Schema};
 
 fn main() {
     let xml_path = "simple-binary-encoding/sbe-samples/src/main/resources/example-schema.xml";
