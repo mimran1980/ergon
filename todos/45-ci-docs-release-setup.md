@@ -18,7 +18,7 @@ components = ["rustfmt", "clippy", "rust-analyzer"]
 profile = "minimal"
 ```
 
-- [ ] `rust-toolchain.toml` at workspace root
+- [x] `rust-toolchain.toml` at workspace root
 - [ ] Channel = current stable (1.88 at time of writing)
 - [ ] `rustfmt` + `clippy` + `rust-analyzer` components
 

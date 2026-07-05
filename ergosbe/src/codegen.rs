@@ -2,6 +2,8 @@
 
 use crate::{GenerationConfig, Schema};
 use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal, Token};
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 /// A single generated Rust module.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -172,7 +174,10 @@ impl Generator {
         // Format through syn/prettyplease
         let source = syn::parse_str::<syn::File>(&src)
             .map(|file| prettyplease::unparse(&file))
-            .unwrap_or(src);
+            .unwrap_or_else(|_| src);
+
+        // Run rustfmt for consistent formatting
+        let source = fmt_with_rustfmt(&source);
 
         modules.push(GeneratedModule {
             path: format!("{}.rs", self.config.module_name),
@@ -3151,6 +3156,45 @@ fn generate_any_message(
     );
 
     src.push_str("}\n\n");
+}
+
+/// Run `rustfmt` on source, falling back to unformatted output on failure.
+fn fmt_with_rustfmt(source: &str) -> String {
+    let Ok(mut child) = Command::new("rustfmt")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    else {
+        eprintln!("warning: rustfmt not found, skipping formatting");
+        return source.to_string();
+    };
+
+    let Some(mut stdin) = child.stdin.take() else {
+        eprintln!("warning: rustfmt stdin unavailable, skipping formatting");
+        return source.to_string();
+    };
+
+    if stdin.write_all(source.as_bytes()).is_err() {
+        eprintln!("warning: rustfmt write failed, skipping formatting");
+        return source.to_string();
+    }
+    drop(stdin);
+
+    match child.wait_with_output() {
+        Ok(output) if output.status.success() => {
+            String::from_utf8(output.stdout).unwrap_or_else(|_| source.to_string())
+        }
+        Ok(output) => {
+            let msg = String::from_utf8_lossy(&output.stderr);
+            eprintln!("warning: rustfmt failed ({msg}), using unformatted output");
+            source.to_string()
+        }
+        Err(e) => {
+            eprintln!("warning: rustfmt wait failed ({e}), using unformatted output");
+            source.to_string()
+        }
+    }
 }
 
 #[cfg(test)]

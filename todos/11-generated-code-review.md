@@ -24,7 +24,7 @@ and ask: is this idiomatic, performant, and maintainable Rust?
 
 ## Acceptance criteria
 
-- [ ] Generate the full Car example and read every line of output
+- [x] Generate the full Car example and read every line of output
 - [ ] Compare side-by-side with upstream Rust generator output
 - [ ] List every improvement opportunity, categorised as: quick win, medium
       effort, deferred

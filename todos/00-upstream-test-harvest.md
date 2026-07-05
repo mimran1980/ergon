@@ -31,21 +31,21 @@ against the same expectations.
 
 ## Acceptance criteria
 
-- [ ] Copy upstream `.sbe` binary fixtures into `ergosbe/tests/fixtures/`:
-  - [ ] `car_example_baseline_data.sbe` — canonical Car message bytes
-  - [ ] `car_example_extension_data.sbe` — extension variant for versioning tests
-- [ ] Port Rust integration tests to use ErgoSBE-generated code instead of
+- [x] Copy upstream `.sbe` binary fixtures into `ergosbe/tests/fixtures/`:
+  - [x] `car_example_baseline_data.sbe` — canonical Car message bytes
+  - [x] `car_example_extension_data.sbe` — extension variant for versioning tests
+- [x] Port Rust integration tests to use ErgoSBE-generated code instead of
       upstream sbe-tool Rust output, matching assertions field-for-field
 - [ ] Port key Java test cases (encode/decode round-trip, null semantics,
       version gating, schema extension) to Rust against ErgoSBE output
 - [ ] Extract XML schemas with edge cases (composite elements, group
       dimensions, since-version) and add parser/resolver tests for them
 - [ ] Add upstream Rust benchmarks as criterion benchmarks in ErgoSBE
-- [ ] Review upstream Rust generator (`RustGenerator.java`, `RustUtil.java`)
+- [x] Review upstream Rust generator (`RustGenerator.java`, `RustUtil.java`)
       for design decisions, naming conventions, and known traps
-- [ ] Review upstream IR design (`Ir.java`, `Token.java`, `Signal.java`) for
+- [x] Review upstream IR design (`Ir.java`, `Token.java`, `Signal.java`) for
       gaps against ErgoSBE's IR
-- [ ] Document any upstream behaviours we deliberately diverge from
+- [x] Document any upstream behaviours we deliberately diverge from
 
 Ref: `design/DECISIONS.md` §11 test matrix. Upstream at
 `simple-binary-encoding/rust/tests/`, `simple-binary-encoding/sbe-tool/src/test/`.
