@@ -6,8 +6,14 @@
 
 pub mod codegen;
 pub mod config;
+pub mod ir;
+pub mod resolve;
 pub mod schema;
+pub mod xml;
 
 pub use codegen::{GeneratedModule, GeneratedModuleSet, Generator};
-pub use config::{CompatibilityMode, GenerationConfig, OwnershipMode};
+pub use config::{CompatibilityMode, GenerationConfig};
+pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
+pub use resolve::{resolve_schema, ResolveError};
 pub use schema::{Schema, SchemaSource};
+pub use xml::{ParseError, parse};

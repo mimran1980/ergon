@@ -1,0 +1,3 @@
+[submodule "simple-binary-encoding"]
+	path = simple-binary-encoding
+	url = https://github.com/aeron-io/simple-binary-encoding.git

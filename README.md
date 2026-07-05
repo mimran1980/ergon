@@ -19,9 +19,15 @@ ErgoSBE will focus on:
 
 - XML schema parsing into a small Rust-first intermediate representation.
 - Generated encoders and decoders that preserve official SBE wire layout.
-- Borrowed, low-allocation access patterns by default.
+- Borrowed, zero-allocation hot-path access patterns by default.
+- Version-aware decoding with explicit optional/null handling and raw scalar
+  accessors for latency-sensitive code.
+- Feed-friendly framing helpers for externally framed SBE buffers, including
+  unknown-template forwarding when the caller supplies frame length.
+- HFT-oriented generated surfaces: fixed-entry group fast paths, semantic
+  newtypes for trading domains, and schema fingerprints for deployment checks.
 - Predictable code generation suitable for review, benchmarking, and audit.
-- Benchmarks against realistic market-data style message layouts.
+- Benchmarks and no-allocation perf gates against realistic market-data layouts.
 
 ## Current Status
 

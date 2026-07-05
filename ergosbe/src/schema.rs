@@ -23,6 +23,8 @@ impl<'a> SchemaSource<'a> {
     }
 }
 
+use crate::ir::{ByteOrder, Ir};
+
 /// Minimal normalized schema metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Schema {
@@ -32,16 +34,40 @@ pub struct Schema {
     pub id: u16,
     /// SBE schema version.
     pub version: u16,
+    /// SBE schema token IR.
+    pub ir: Ir,
 }
 
 impl Schema {
     /// Create schema metadata.
     #[must_use]
     pub fn new(package: impl Into<String>, id: u16, version: u16) -> Self {
+        let package_str = package.into();
         Self {
-            package: package.into(),
+            package: package_str.clone(),
             id,
             version,
+            ir: Ir {
+                package: package_str,
+                id,
+                version,
+                byte_order: ByteOrder::LittleEndian,
+                description: None,
+                semantic_version: None,
+                header_type: "messageHeader".to_string(),
+                tokens: Vec::new(),
+            },
+        }
+    }
+
+    /// Create schema metadata from IR.
+    #[must_use]
+    pub fn from_ir(ir: Ir) -> Self {
+        Self {
+            package: ir.package.clone(),
+            id: ir.id,
+            version: ir.version,
+            ir,
         }
     }
 }
