@@ -77,7 +77,7 @@ impl Generator {
         src.push_str("pub mod sbe_rt {\n");
         src.push_str("    #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
         src.push_str("    pub enum DecodeError {\n");
-        src.push_str("        BufferTooShort { needed: usize, available: usize },\n");
+        src.push_str("        BufferTooShort { field: &'static str, needed: usize, available: usize },\n");
         src.push_str("        WrongSchema { expected: u16, actual: u16 },\n");
         src.push_str("        UnknownTemplateLength { template_id: u16 },\n");
         src.push_str("        InvalidVarDataLength { field: &'static str, length: u32 },\n");
@@ -88,7 +88,7 @@ impl Generator {
             "        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n",
         );
         src.push_str("            match self {\n");
-        src.push_str("                Self::BufferTooShort { needed, available } => write!(f, \"buffer too short: needed {}, available {}\", needed, available),\n");
+        src.push_str("                Self::BufferTooShort { field, needed, available } => write!(f, \"field '{}': needed {} bytes, {} available\", field, needed, available),\n");
         src.push_str("                Self::WrongSchema { expected, actual } => write!(f, \"wrong schema id: expected {}, actual {}\", expected, actual),\n");
         src.push_str("                Self::UnknownTemplateLength { template_id } => write!(f, \"unknown template length for template id {}\", template_id),\n");
         src.push_str("                Self::InvalidVarDataLength { field, length } => write!(f, \"invalid var data length for field {}: {}\", field, length),\n");
@@ -102,6 +102,7 @@ impl Generator {
         src.push_str("    #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
         src.push_str("    pub enum EncodeError {\n");
         src.push_str("        BufferTooShort { needed: usize, available: usize },\n");
+        src.push_str("        VarDataTooLong { field: &'static str, max_length: usize, actual: usize },\n");
         src.push_str("    }\n\n");
         src.push_str("    impl core::fmt::Display for EncodeError {\n");
         src.push_str(
@@ -109,6 +110,7 @@ impl Generator {
         );
         src.push_str("            match self {\n");
         src.push_str("                Self::BufferTooShort { needed, available } => write!(f, \"buffer too short: needed {}, available {}\", needed, available),\n");
+        src.push_str("                Self::VarDataTooLong { field, max_length, actual } => write!(f, \"var data too long for field {}: max {}, actual {}\", field, max_length, actual),\n");
         src.push_str("            }\n");
         src.push_str("        }\n");
         src.push_str("    }\n\n");
@@ -444,6 +446,7 @@ struct MessageVarData {
     since_version: u16,
     description: Option<String>,
     type_name: String,
+    max_length: Option<usize>,
 }
 
 fn parse_message_structure(tokens: &[Token], elements: &SchemaElements) -> MessageStructure {
@@ -647,8 +650,20 @@ fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
     let description = begin.encoding.description.clone();
 
     let mut type_name = "varDataEncoding".to_string();
+    let mut max_length = None;
     if tokens.len() > 2 && tokens[1].signal == Signal::BeginComposite {
         type_name = tokens[1].name.clone();
+        // Scan composite members for the length field's max_value.
+        let comp_end =
+            find_matching_end(tokens, 1, Signal::BeginComposite, Signal::EndComposite);
+        let mut i = 2;
+        while i < comp_end {
+            if tokens[i].signal == Signal::BeginField && tokens[i].name == "length" {
+                max_length = tokens[i].encoding.max_value.map(|v| v as usize);
+                break;
+            }
+            i += 1;
+        }
     }
 
     MessageVarData {
@@ -657,6 +672,7 @@ fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
         since_version,
         description,
         type_name,
+        max_length,
     }
 }
 
@@ -1435,7 +1451,7 @@ fn generate_message_decoder(
              }}\n\n\
              pub const fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
                  if pos + {} > buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: pos + {}, available: buf.len() }});\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"message header\", needed: pos + {}, available: buf.len() }});\n\
                  }}\n\
                  let mut header_bytes = [0u8; {}];\n\
                  let mut j = 0;\n\
@@ -1496,7 +1512,7 @@ fn generate_message_decoder(
                                  let offset = self.pos + {};\n\
                                  let size = {};\n\
                                  if offset + size > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + size, available: self.buf.len() }});\n\
+                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: offset + size, available: self.buf.len() }});\n\
                                  }}\n\
                                  let mut res = [0 as {}; {}];\n\
                                  let mut idx = 0;\n\
@@ -1513,7 +1529,8 @@ fn generate_message_decoder(
                                  }}\n\
                                  Ok(res)\n\
                              }}\n\n",
-                        f_name, r_type, len, since, offset + prim_size * len, r_type, len, offset, prim_size * len, r_type, len, len, offset, prim_size, prim_size, prim_size, r_type, order_suffix
+                        f_name, r_type, len, since, offset + prim_size * len, r_type, len, offset, prim_size * len, r_type, len, len, offset, prim_size, prim_size, prim_size, r_type, order_suffix,
+                        field_name = f.name
                     ));
 
                     src.push_str(&format!(
@@ -1587,7 +1604,7 @@ fn generate_message_decoder(
                                      }}\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: offset + {}, available: self.buf.len() }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -1602,7 +1619,8 @@ fn generate_message_decoder(
                                          Ok(Some(val))\n\
                                      }}\n\
                                  }}\n\n",
-                            f_name, r_type, since, offset + prim_size, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix, null_check
+                            f_name, r_type, since, offset + prim_size, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix, null_check,
+                            field_name = f.name
                         ));
                     } else if since > 0 {
                         src.push_str(&format!(
@@ -1612,7 +1630,7 @@ fn generate_message_decoder(
                                      }}\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: offset + {}, available: self.buf.len() }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -1622,14 +1640,15 @@ fn generate_message_decoder(
                                      }}\n\
                                      Ok(Some({}::from_{}_bytes(bytes)))\n\
                                  }}\n\n",
-                            f_name, r_type, since, offset + prim_size, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix
+                            f_name, r_type, since, offset + prim_size, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix,
+                            field_name = f.name
                         ));
                     } else {
                         src.push_str(&format!(
                             "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: offset + {}, available: self.buf.len() }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -1639,7 +1658,8 @@ fn generate_message_decoder(
                                      }}\n\
                                      Ok({}::from_{}_bytes(bytes))\n\
                                  }}\n\n",
-                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix
+                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix,
+                            field_name = f.name
                         ));
                     }
 
@@ -1691,7 +1711,7 @@ fn generate_message_decoder(
                              }}\n\
                              let offset = self.pos + {};\n\
                              if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
+                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: offset + {}, available: self.buf.len() }});\n\
                              }}\n\
                              let mut bytes = [0u8; {}];\n\
                              let mut j = 0;\n\
@@ -1701,7 +1721,8 @@ fn generate_message_decoder(
                              }}\n\
                              Ok({}(bytes))\n\
                          }}\n\n",
-                    f_name, target_name, since, offset + comp_size, target_name, comp_size, offset, comp_size, comp_size, comp_size, comp_size, target_name
+                    f_name, target_name, since, offset + comp_size, target_name, comp_size, offset, comp_size, comp_size, comp_size, comp_size, target_name,
+                    field_name = f.name
                 ));
 
                 src.push_str(&format!(
@@ -2245,7 +2266,7 @@ fn generate_group_decoder(
                             "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: offset + {}, available: self.buf.len() }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -2255,7 +2276,8 @@ fn generate_group_decoder(
                                      }}\n\
                                      Ok({}::from_{}_bytes(bytes))\n\
                                  }}\n\n",
-                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix
+                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix,
+                            field_name = f.name
                         ));
                     }
 
@@ -2883,34 +2905,55 @@ fn generate_message_encoder(
             let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
             let len_rust_type = rust_type(len_type);
 
+            // Build the method body, conditionally including max_length check
+            let mut method_body = String::new();
+            if let Some(max) = vd.max_length {
+                method_body.push_str(&format!(
+                    "if data.len() > {} {{\n\
+                         return Err(sbe_rt::EncodeError::VarDataTooLong {{ field: \"{}\", max_length: {}, actual: data.len() }});\n\
+                     }}\n",
+                    max, vd.name, max
+                ));
+            }
+            method_body.push_str(&format!(
+                "let needed = self.pos + {} + data.len();\n\
+                 if needed > self.buf.len() {{\n\
+                     return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() }});\n\
+                 }}\n\
+                 let len_bytes = (data.len() as {}).to_{}_bytes();\n\
+                 let mut j = 0;\n\
+                 while j < {} {{\n\
+                     self.buf[self.pos + j] = len_bytes[j];\n\
+                     j += 1;\n\
+                 }}\n\
+                 let start = self.pos + {};\n\
+                 let mut d = 0;\n\
+                 while d < data.len() {{\n\
+                     self.buf[start + d] = data[d];\n\
+                     d += 1;\n\
+                 }}\n\
+                 Ok({}Encoder {{\n\
+                     buf: self.buf,\n\
+                     message_start: self.message_start,\n\
+                     pos: start + data.len(),\n\
+                     _phantom: core::marker::PhantomData,\n\
+                 }})",
+                prefix_size, len_rust_type, order_suffix, prefix_size, prefix_size, name
+            ));
+
             src.push_str(&format!(
                 "impl<'a> {}Encoder<'a, {}_encoder_state::Needs{}> {{\n\
                      pub fn {}(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
-                         let needed = self.pos + {} + data.len();\n\
-                         if needed > self.buf.len() {{\n\
-                             return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() }});\n\
-                         }}\n\
-                         let len_bytes = (data.len() as {}).to_{}_bytes();\n\
-                         let mut j = 0;\n\
-                         while j < {} {{\n\
-                             self.buf[self.pos + j] = len_bytes[j];\n\
-                             j += 1;\n\
-                         }}\n\
-                         let start = self.pos + {};\n\
-                         let mut d = 0;\n\
-                         while d < data.len() {{\n\
-                             self.buf[start + d] = data[d];\n\
-                             d += 1;\n\
-                         }}\n\
-                         Ok({}Encoder {{\n\
-                             buf: self.buf,\n\
-                             message_start: self.message_start,\n\
-                             pos: start + data.len(),\n\
-                             _phantom: core::marker::PhantomData,\n\
-                         }})\n\
+                         {}\
                      }}\n\
                  }}\n\n",
-                name, to_snake_case(&msg.name), vd_pascal, vd_snake, name, next_state, prefix_size, len_rust_type, order_suffix, prefix_size, prefix_size, name
+                name,
+                to_snake_case(&msg.name),
+                vd_pascal,
+                vd_snake,
+                name,
+                next_state,
+                method_body
             ));
             tail_idx += 1;
         }
