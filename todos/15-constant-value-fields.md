@@ -9,12 +9,14 @@ return the typed value. DECISIONS.md §4.
 
 ## Acceptance criteria
 
-- [ ] Parse `presence="constant"` and `constantValue` from XML
+- [ ] Parse `presence="constant"` and `constantValue` from XML (needed for enum/set constant fields via `valueRef`)
 - [ ] Constant string fields: `pub const fn foo(&self) -> &'static str { "value" }`
 - [ ] Constant numeric fields: `pub const fn foo(&self) -> T { value }`
 - [ ] Constant char fields > 1 byte return `&'static str`
-- [ ] Constant-value field does not advance the offset counter
-- [ ] Test: `constant-enum-fields.xml` schema
+- [x] Constant-value field does not advance the offset counter
+- [x] Codegen: Enum decoder arm emits `const fn` for constant fields
+- [x] Codegen: Set decoder arm emits `const fn` for constant fields
+- [ ] Test: `constant-enum-fields.xml` schema (blocked by XML parsing of `valueRef` + `presence="constant"` on field elements)
 - [ ] Test: `basic-schema-constant-header-field.xml` schema
 - [ ] Test: `group-with-constant-fields.xml` schema (constant fields in groups)
 

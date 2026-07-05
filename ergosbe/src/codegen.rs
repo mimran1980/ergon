@@ -1726,46 +1726,58 @@ fn generate_message_decoder(
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
 
-                src.push_str(&format!(
-                    "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
-                             if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                 return Ok({}(0 as {}));\n\
-                             }}\n\
-                             let offset = self.pos + {};\n\
-                             if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
-                             }}\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.buf[offset + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             Ok({}({}::from_{}_bytes(bytes)))\n\
-                         }}\n\n",
-                    f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix
-                ));
+                if f.presence == Presence::Constant {
+                    if let Some(ref val) = f.constant_value {
+                        let variant = val.rsplit('.').next().unwrap_or(val);
+                        src.push_str(&format!(
+                            "    pub const fn {}(&self) -> {} {{\n\
+                                     {}::{}\n\
+                                 }}\n\n",
+                            f_name, target_name, target_name, variant
+                        ));
+                    }
+                } else {
+                    src.push_str(&format!(
+                        "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
+                                     return Ok({}(0 as {}));\n\
+                                 }}\n\
+                                 let offset = self.pos + {};\n\
+                                 if offset + {} > self.buf.len() {{\n\
+                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
+                                 }}\n\
+                                 let mut bytes = [0u8; {}];\n\
+                                 let mut j = 0;\n\
+                                 while j < {} {{\n\
+                                     bytes[j] = self.buf[offset + j];\n\
+                                     j += 1;\n\
+                                 }}\n\
+                                 Ok({}({}::from_{}_bytes(bytes)))\n\
+                             }}\n\n",
+                        f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix
+                    ));
 
-                src.push_str(&format!(
-                    "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = *self.buf.as_ptr().add(offset + j);\n\
-                                 j += 1;\n\
-                             }}\n\
-                             {}({}::from_{}_bytes(bytes))\n\
-                         }}\n\n",
-                    f_name,
-                    target_name,
-                    offset,
-                    prim_size,
-                    prim_size,
-                    target_name,
-                    r_type,
-                    order_suffix
-                ));
+                    src.push_str(&format!(
+                        "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                                 let offset = self.pos + {};\n\
+                                 let mut bytes = [0u8; {}];\n\
+                                 let mut j = 0;\n\
+                                 while j < {} {{\n\
+                                     bytes[j] = *self.buf.as_ptr().add(offset + j);\n\
+                                     j += 1;\n\
+                                 }}\n\
+                                 {}({}::from_{}_bytes(bytes))\n\
+                             }}\n\n",
+                        f_name,
+                        target_name,
+                        offset,
+                        prim_size,
+                        prim_size,
+                        target_name,
+                        r_type,
+                        order_suffix
+                    ));
+                }
             }
             FieldType::Set {
                 name: set_name,
@@ -1775,46 +1787,58 @@ fn generate_message_decoder(
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
 
-                src.push_str(&format!(
-                    "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
-                             if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                 return Ok({}(0 as {}));\n\
-                             }}\n\
-                             let offset = self.pos + {};\n\
-                             if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
-                             }}\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.buf[offset + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             Ok({}({}::from_{}_bytes(bytes)))\n\
-                         }}\n\n",
-                    f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix
-                ));
+                if f.presence == Presence::Constant {
+                    if let Some(ref val) = f.constant_value {
+                        let bits: u8 = val.parse().unwrap_or(0);
+                        src.push_str(&format!(
+                            "    pub const fn {}(&self) -> {} {{\n\
+                                     {}({})\n\
+                                 }}\n\n",
+                            f_name, target_name, target_name, bits
+                        ));
+                    }
+                } else {
+                    src.push_str(&format!(
+                        "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
+                                     return Ok({}(0 as {}));\n\
+                                 }}\n\
+                                 let offset = self.pos + {};\n\
+                                 if offset + {} > self.buf.len() {{\n\
+                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ needed: offset + {}, available: self.buf.len() }});\n\
+                                 }}\n\
+                                 let mut bytes = [0u8; {}];\n\
+                                 let mut j = 0;\n\
+                                 while j < {} {{\n\
+                                     bytes[j] = self.buf[offset + j];\n\
+                                     j += 1;\n\
+                                 }}\n\
+                                 Ok({}({}::from_{}_bytes(bytes)))\n\
+                             }}\n\n",
+                        f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix
+                    ));
 
-                src.push_str(&format!(
-                    "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = *self.buf.as_ptr().add(offset + j);\n\
-                                 j += 1;\n\
-                             }}\n\
-                             {}({}::from_{}_bytes(bytes))\n\
-                         }}\n\n",
-                    f_name,
-                    target_name,
-                    offset,
-                    prim_size,
-                    prim_size,
-                    target_name,
-                    r_type,
-                    order_suffix
-                ));
+                    src.push_str(&format!(
+                        "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                                 let offset = self.pos + {};\n\
+                                 let mut bytes = [0u8; {}];\n\
+                                 let mut j = 0;\n\
+                                 while j < {} {{\n\
+                                     bytes[j] = *self.buf.as_ptr().add(offset + j);\n\
+                                     j += 1;\n\
+                                 }}\n\
+                                 {}({}::from_{}_bytes(bytes))\n\
+                             }}\n\n",
+                        f_name,
+                        target_name,
+                        offset,
+                        prim_size,
+                        prim_size,
+                        target_name,
+                        r_type,
+                        order_suffix
+                    ));
+                }
             }
         }
     }
