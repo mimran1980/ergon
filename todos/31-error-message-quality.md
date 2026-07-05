@@ -7,7 +7,7 @@ answer: what failed, where in the buffer, and what to do about it.
 
 ## DecodeError improvements
 
-- [ ] `BufferTooShort` carries field name:
+- [x] `BufferTooShort` carries field name:
   ```rust
   BufferTooShort {
       field: &'static str,    // "modelYear", "engine.capacity"
@@ -18,7 +18,7 @@ answer: what failed, where in the buffer, and what to do about it.
   Currently: anonymous `needed`/`available` with no field context.
 
 - [ ] `BufferTooShort` message reads like: `"modelYear at offset 8: needed 2 bytes, 1 available"`.
-  Not: `"buffer too short: needed 18, available 17"` (wrong calculation — see `27-fix-buffer-too-short-needed`)
+  Current: `"field '<name>': needed N bytes, M available"`. Needs offset info per `27-fix-buffer-too-short-needed`.
 
 - [ ] `WrongSchema` includes both expected and actual schema IDs in Display:
   `"wrong schema: expected id 1 (Car), got id 99"`. Include the human-readable
