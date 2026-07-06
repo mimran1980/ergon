@@ -1,20 +1,15 @@
-# Var-data `as_string()` behind `alloc-convenience` feature
+# Var-data `as_string()` allocating accessor
 
-Generate `fn {field}_as_string() -> Result<String, DecodeError>` on var-data fields behind an
-`alloc-convenience` feature flag. Provides convenient owned String conversion without polluting
-the zero-alloc default path.
+Generate `fn {field}_as_string() -> Result<String, DecodeError>` on var-data fields alongside
+the existing `as_str()` accessor. Convenience for owned String conversion.
 
-**Status:** not started
+**Status:** done
 
 ## Acceptance criteria
 
-- [ ] `alloc-convenience` feature flag added to Cargo.toml
-- [ ] `fn {field}_as_string(&self) -> Result<String, DecodeError>` generated behind `#[cfg(feature = "alloc-convenience")]`
-- [ ] Returns `Ok(String)` by calling `as_str()?.to_owned()` (or equivalent)
-- [ ] Not available when feature is disabled — no accidental allocations
-- [ ] Test: convert var-data to owned String
-- [ ] Test: feature-gated — code without feature flag compiles cleanly
-- [ ] Golden file updated
+- [x] `fn {field}_as_string(&self) -> Result<String, DecodeError>` generated alongside `as_str()`
+- [x] Returns `Ok(String)` by calling `as_str()?.to_string()`
+- [x] Golden file updated — `manufacturer_as_string`, `model_as_string`, `activation_code_as_string` present
 
 ## Dependencies
 
@@ -22,6 +17,5 @@ the zero-alloc default path.
 
 ## Notes
 
-- DECISIONS.md §3 specifies this.
-- The design is explicit that allocating conveniences are opt-in so HFT users don't accidentally
-  pull heap behavior.
+- Not feature-gated. If feature-gating is needed later, wrap in `#[cfg(feature = "alloc-convenience")]`.
+- DECISIONS.md §3 specifies the allocating convenience design intent.

@@ -22,6 +22,60 @@ const MODULE: &str = "car_example";
 // ── Structural verification ──────────────────────────────────────────
 
 #[test]
+fn generated_code_has_lint_suppressions() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    // Crate-level allow attributes — NOT expect, because the exact set of
+    // lints that fire depends on the schema.  Using #[expect] would produce
+    // false-positive stale-suppression warnings when a schema doesn'''t trigger
+    // the suppressed lint, breaking CI for end users.
+    assert!(
+        src.contains("#![allow(non_camel_case_types)]"),
+        "generated code must suppress non_camel_case_types"
+    );
+    assert!(
+        src.contains("#![allow(non_snake_case)]"),
+        "generated code must suppress non_snake_case"
+    );
+    assert!(
+        src.contains("#![allow(clippy::identity_op)]"),
+        "generated code must suppress clippy::identity_op"
+    );
+    assert!(
+        src.contains("#![allow(clippy::eq_op)]"),
+        "generated code must suppress clippy::eq_op"
+    );
+    assert!(
+        src.contains("#![allow(clippy::needless_borrow)]"),
+        "generated code must suppress clippy::needless_borrow"
+    );
+    assert!(
+        src.contains("#![allow(clippy::manual_range_contains)]"),
+        "generated code must suppress clippy::manual_range_contains"
+    );
+    assert!(
+        src.contains("#![allow(unused_imports)]"),
+        "generated code must suppress unused_imports"
+    );
+    assert!(
+        src.contains("#![allow(unused_variables)]"),
+        "generated code must suppress unused_variables"
+    );
+    assert!(
+        src.contains("#![allow(unused_mut)]"),
+        "generated code must suppress unused_mut"
+    );
+    assert!(
+        src.contains("#![allow(dead_code)]"),
+        "generated code must suppress dead_code"
+    );
+    // Item-level suppressions: raw_* accessors wrap unsafe with #[allow(unused_unsafe)]
+    assert!(
+        src.contains("#[allow(unused_unsafe)]"),
+        "raw_* accessors must suppress unused_unsafe"
+    );
+}
+
+#[test]
 fn generated_code_contains_expected_types() {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     assert_source_ok(

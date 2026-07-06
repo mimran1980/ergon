@@ -1193,6 +1193,10 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
     #[inline]
+    pub fn manufacturer_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
+        Ok(self.manufacturer_as_str()?.to_string())
+    }
+    #[inline]
     pub fn manufacturer_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         self.manufacturer()
     }
@@ -1218,6 +1222,10 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
     #[inline]
+    pub fn model_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
+        Ok(self.model_as_str()?.to_string())
+    }
+    #[inline]
     pub fn model_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         self.model()
     }
@@ -1241,6 +1249,10 @@ impl<'a> CarDecoder<'a> {
     pub fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
+    }
+    #[inline]
+    pub fn activation_code_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
+        Ok(self.activation_code_as_str()?.to_string())
     }
     #[inline]
     pub fn activation_code_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {

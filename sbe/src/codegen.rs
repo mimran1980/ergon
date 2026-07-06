@@ -2264,6 +2264,14 @@ fn generate_message_decoder(
             vd_snake, vd_snake
         ));
 
+        // Allocating String convenience accessor
+        src.push_str(&format!(
+            "#[inline]\n    pub fn {}_as_string(&self) -> Result<String, sbe_rt::DecodeError> {{\n\
+                     Ok(self.{}_as_str()?.to_string())\
+                 }}\n\n",
+            vd_snake, vd_snake
+        ));
+
         // Raw slice accessor for further decoding
         src.push_str(&format!(
             "#[inline]\n    pub fn {}_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
