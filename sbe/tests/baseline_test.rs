@@ -515,9 +515,7 @@ fn generated_code_has_const_assertions() {
         "generated code must have a compile-time assertion for ENCODED_LENGTH >= BLOCK_LENGTH"
     );
     assert!(
-        src.contains(
-            "const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == "
-        ),
+        src.contains("const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == "),
         "generated code must have a compile-time assertion for HEADER_TEMPLATE length"
     );
     assert!(
@@ -528,13 +526,13 @@ fn generated_code_has_const_assertions() {
     );
 }
 
-// ── BooleanType from-primitive impls (todo 58) ─────────────────────────
+// ── BooleanType support (todo 58) ─────────────────────────────────────
 
 #[test]
 fn generated_code_has_boolean_from_impls() {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+
     // BooleanType implements From<u8> (the underlying encoding type).
-    // Future enhancement: add From<bool> so users can pass true/false directly.
     assert!(
         src.contains("impl From<u8> for BooleanType"),
         "BooleanType must implement From<u8>"
@@ -542,6 +540,38 @@ fn generated_code_has_boolean_from_impls() {
     assert!(
         src.contains("impl From<BooleanType> for u8"),
         "BooleanType must implement From<BooleanType> for u8"
+    );
+
+    // From<bool> conversion (todo 58)
+    assert!(
+        src.contains("impl From<bool> for BooleanType"),
+        "BooleanType must implement From<bool>"
+    );
+    assert!(
+        src.contains("impl From<BooleanType> for bool"),
+        "BooleanType must implement From<BooleanType> for bool"
+    );
+
+    // TRUE / FALSE constants (todo 58)
+    assert!(
+        src.contains("pub const TRUE: Self = Self(1);"),
+        "BooleanType must have TRUE = Self(1)"
+    );
+    assert!(
+        src.contains("pub const FALSE: Self = Self(0);"),
+        "BooleanType must have FALSE = Self(0)"
+    );
+
+    // Encoder bool setter (todo 58)
+    assert!(
+        src.contains("available_bool"),
+        "Car encoder must have available_bool"
+    );
+
+    // Decoder bool getter (todo 58)
+    assert!(
+        src.contains("available_bool"),
+        "Car decoder must have available_bool"
     );
 }
 
@@ -552,9 +582,7 @@ fn generated_code_has_vardata_maxlength() {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     // EncodeError must have VarDataTooLong variant
     assert!(
-        src.contains(
-            "VarDataTooLong { field: &'static str, max_length: usize, actual: usize }"
-        ),
+        src.contains("VarDataTooLong { field: &'static str, max_length: usize, actual: usize }"),
         "EncodeError must have VarDataTooLong variant"
     );
     // Encoder methods must emit a max_length check that returns VarDataTooLong

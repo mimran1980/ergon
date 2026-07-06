@@ -1110,6 +1110,58 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
         })
         .collect();
 
+    // Detect boolean enum type (name convention or semanticType="Boolean")
+    let is_bool = tokens[0].name == "BooleanType"
+        || tokens[0].encoding.semantic_type.as_deref() == Some("Boolean");
+
+    // Compute FALSE/TRUE discriminant literals from actual enum definitions
+    let (false_lit, true_lit) = if is_bool {
+        let f = variants
+            .iter()
+            .find(|v| v.disc.to_string() == "0")
+            .map(|v| v.disc.clone())
+            .unwrap_or_else(|| quote::quote! { 0 });
+        let t = variants
+            .iter()
+            .find(|v| v.disc.to_string() == "1")
+            .map(|v| v.disc.clone())
+            .unwrap_or_else(|| quote::quote! { 1 });
+        (f, t)
+    } else {
+        (quote::quote! {}, quote::quote! {})
+    };
+
+    // Extra consts for boolean types (TRUE / FALSE aliases)
+    let boolean_consts = if is_bool {
+        quote::quote! {
+            pub const FALSE: Self = Self(#false_lit);
+            pub const TRUE: Self = Self(#true_lit);
+        }
+    } else {
+        quote::quote! {}
+    };
+
+    // Extra From<bool> / From<Name> for bool impls for boolean types
+    let from_bool_impl = if is_bool {
+        quote::quote! {
+            impl From<bool> for #name_ident {
+                #[inline(always)]
+                fn from(val: bool) -> Self {
+                    if val { Self(#true_lit) } else { Self(#false_lit) }
+                }
+            }
+
+            impl From<#name_ident> for bool {
+                #[inline(always)]
+                fn from(val: #name_ident) -> bool {
+                    val.raw() != 0
+                }
+            }
+        }
+    } else {
+        quote::quote! {}
+    };
+
     let tokens = quote::quote! {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         #[repr(transparent)]
@@ -1125,6 +1177,8 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
             #(
                 pub const #const_names: Self = Self(#variant_discs);
             )*
+
+            #boolean_consts
 
             pub const fn kind(self) -> Option<#kind_ident> {
                 match self.0 {
@@ -1163,6 +1217,8 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
                 val.kind().ok_or(())
             }
         }
+
+        #from_bool_impl
     };
 
     let formatted = syn::parse_str::<syn::File>(&tokens.to_string())
@@ -3010,6 +3066,13 @@ fn generate_group_decoder(
                          }}\n\n",
                     f_name, r_type, f_name
                 ));
+                // Boolean fields get an additional getter that returns bool directly
+                if enum_name == "BooleanType" {
+                    src.push_str(&format!(
+                        "#[inline]\n    pub const fn {f}_bool(&self) -> Result<bool, sbe_rt::DecodeError> {{\n                         match self.{f}() {{\n                             Ok(v) => Ok(v.raw() != 0),\n                             Err(e) => Err(e),\n                         }}\n                     }}\n\n",
+                        f = f_name,
+                    ));
+                }
             }
             FieldType::Set {
                 name: set_name,
@@ -3517,6 +3580,14 @@ fn generate_message_encoder(
                          }}\n\n",
                         f_name, target_name, header_size, offset, order_suffix, prim_size
                     ));
+                    // Boolean fields get an additional setter that accepts bool directly
+                    if enum_name == "BooleanType" {
+                        src.push_str(&format!(
+                            "#[must_use]\n    pub fn {f_name}_bool(&mut self, val: bool) -> &mut Self {{\n    let offset = self.message_start + {header_size} + {offset};\n    let enum_val: {target_name} = val.into();\n    let val_bytes = enum_val.0.to_{order_suffix}_bytes();\n    self.buf[offset..offset + {prim_size}].copy_from_slice(&val_bytes);\n    self\n                         }}\n\n",
+                            f_name=f_name, header_size=header_size, offset=offset,
+                            target_name=target_name, order_suffix=order_suffix, prim_size=prim_size,
+                        ));
+                    }
                 }
             }
             FieldType::Set {

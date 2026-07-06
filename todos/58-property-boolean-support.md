@@ -19,15 +19,15 @@ Detect boolean enum types in codegen and generate:
 
 ## Acceptance criteria
 
-- [ ] Detect boolean enum types: `enum` with exactly two valid values that
+- [x] Detect boolean enum types: `enum` with exactly two valid values that
   represent true/false (heuristic: presence of `T`/`F` or `True`/`False` or
   `TRUE`/`FALSE` or `Yes`/`No` variants, or `semanticType="Boolean"`)
-- [ ] `From<bool> for BooleanType` and `From<BooleanType> for bool`
-- [ ] `pub const TRUE: BooleanType = BooleanType(1);` (or whatever the T discriminant is)
-- [ ] `pub const FALSE: BooleanType = BooleanType(0);`
-- [ ] Encoder setter: `pub fn set_foo(&mut self, val: bool)` calls `From<bool>`
-- [ ] Decoder getter: `pub const fn foo(&self) -> bool` returns `self.raw() != 0`
-- [ ] Existing `BooleanType`/`Model` enums still work unchanged (backward compat)
+- [x] `From<bool> for BooleanType` and `From<BooleanType> for bool`
+- [x] `pub const TRUE: BooleanType = BooleanType(1);` (or whatever the T discriminant is)
+- [x] `pub const FALSE: BooleanType = BooleanType(0);`
+- [x] Encoder setter: `pub fn set_foo(&mut self, val: bool)` calls `From<bool>`
+- [x] Decoder getter: `pub const fn foo(&self) -> bool` returns `self.raw() != 0`
+- [x] Existing `BooleanType`/`Model` enums still work unchanged (backward compat)
 - [x] Tests: verify round-trip `true` → encode → decode → `true`
 
 ## Design rationale
