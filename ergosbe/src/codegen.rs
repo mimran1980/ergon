@@ -290,6 +290,7 @@ fn generate_sbe_rt_src() -> String {
             pub enum EncodeError {
                 BufferTooShort { needed: usize, available: usize },
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
+                GroupFull { declared: u16, attempted: u16 },
             }
 
             impl core::fmt::Display for EncodeError {
@@ -298,6 +299,7 @@ fn generate_sbe_rt_src() -> String {
                     match self {
                         Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
                         Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
+                        Self::GroupFull { declared, attempted } => write!(f, "group full: declared count {}, attempted to write {}", declared, attempted),
                     }
                 }
             }
@@ -2224,8 +2226,8 @@ fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
                     ));
                 } else {
                     src.push_str(&format!(
-                        "        write!(f, \"{}{}: {{}}\", self.raw_{}())?;\n",
-                        sep, snake, snake,
+                        "        if let Ok(v) = self.{}() {{ write!(f, \"{}{}: {{}}\", v)?; }}\n",
+                        snake, sep, snake,
                     ));
                 }
                 out_idx += 1;
@@ -3384,7 +3386,7 @@ fn generate_group_encoder(
                  F: FnOnce(&mut {}EntryEncoder<'a>),\n\
              {{\n\
                  if self.written >= self.count {{\n\
-                     return Ok(());\n\
+                     return Err(sbe_rt::EncodeError::GroupFull {{ declared: self.count, attempted: self.written + 1 }});\n\
                  }}\n\
                  let block_len = Self::ENTRY_BLOCK_LENGTH;\n\
                  if self.pos + block_len > self.buf.len() {{\n\

@@ -48,6 +48,7 @@ pub mod sbe_rt {
     pub enum EncodeError {
         BufferTooShort { needed: usize, available: usize },
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
+        GroupFull { declared: u16, attempted: u16 },
     }
     impl core::fmt::Display for EncodeError {
         #[cold]
@@ -62,6 +63,12 @@ pub mod sbe_rt {
                     write!(
                         f, "var data too long for field {}: max {}, actual {}", field,
                         max_length, actual
+                    )
+                }
+                Self::GroupFull { declared, attempted } => {
+                    write!(
+                        f, "group full: declared count {}, attempted to write {}",
+                        declared, attempted
                     )
                 }
             }
@@ -1189,8 +1196,12 @@ impl<'a> CarDecoder<'a> {
 impl<'a> core::fmt::Display for CarDecoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Car {{ ")?;
-        write!(f, "serial_number: {}", self.raw_serial_number())?;
-        write!(f, ", model_year: {}", self.raw_model_year())?;
+        if let Ok(v) = self.serial_number() {
+            write!(f, "serial_number: {}", v)?;
+        }
+        if let Ok(v) = self.model_year() {
+            write!(f, ", model_year: {}", v)?;
+        }
         match self.available() {
             Ok(e) => {
                 match e.kind() {
@@ -2152,7 +2163,10 @@ impl<'a> FuelFiguresEncoder<'a> {
         F: FnOnce(&mut FuelFiguresEntryEncoder<'a>),
     {
         if self.written >= self.count {
-            return Ok(());
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count,
+                attempted: self.written + 1,
+            });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
@@ -2243,7 +2257,10 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         F: FnOnce(&mut PerformanceFiguresEntryEncoder<'a>),
     {
         if self.written >= self.count {
-            return Ok(());
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count,
+                attempted: self.written + 1,
+            });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
@@ -2331,7 +2348,10 @@ impl<'a> AccelerationEncoder<'a> {
         F: FnOnce(&mut AccelerationEntryEncoder<'a>),
     {
         if self.written >= self.count {
-            return Ok(());
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count,
+                attempted: self.written + 1,
+            });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
