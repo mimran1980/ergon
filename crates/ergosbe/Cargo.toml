@@ -15,5 +15,16 @@ authors.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[[bench]]
+name = "decode_bench"
+harness = false
+
+[[bench]]
+name = "encode_bench"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [lints]
 workspace = true
