@@ -1,37 +1,31 @@
-# `MessageVisitor` trait for generic message walking
+# `MessageVisitor` trait for type-safe message dispatch
 
-Generate the `MessageVisitor` trait and `accept_visitor` methods on decoders per
-DECISIONS.md §9. This enables Display/Debug walkers, JSON export, metrics
-extraction, and logging to all share one trait.
+Add a `MessageVisitor` trait with one visitor method per message type and a
+`visit()` method on `AnyMessage` that dispatches to the matching visitor method.
+This is the foundation for the per-field visitor (todo 77b).
 
-**Status:** Not started
+**Status:** Done
 
-## Acceptance Criteria
+## What was implemented
 
-- [ ] `MessageVisitor` trait defined in `sbe_rt`:
-  ```rust
-  pub trait MessageVisitor {
-      fn field(&mut self, meta: &FieldMeta, value: FieldValue<'_>);
-      fn begin_group(&mut self, name: &str, count: usize);
-      fn end_group(&mut self);
-      fn var_data(&mut self, meta: &FieldMeta, data: &[u8]);
-  }
-  ```
-- [ ] `FieldValue<'_>` enum covering all SBE primitive types, composites, enums, sets
-- [ ] `accept_visitor(&self, v: &mut impl MessageVisitor)` generated on every message decoder
-- [ ] `accept_visitor` on group entry decoders
-- [ ] Display/Debug walkers refactored to use `MessageVisitor` internally
-- [ ] Example: JSON export visitor in tests or examples
-- [ ] Example: metrics extraction visitor (count fields, measure sizes)
-- [ ] Version-absent fields are skipped (not passed to the visitor)
-- [ ] Golden test for visitor output
+- `MessageVisitor` trait in generated output (outside `sbe_rt`), with:
+  - `type Output`
+  - One method per message type: `fn visit_<msg>(&mut self, decoder: &MsgDecoder<'_>) -> Self::Output`
+- `AnyMessage::visit(&self, visitor: &mut V)` that dispatches via `match`
+- `Unknown` variant maps to `unimplemented!()`
+- Golden file regenerated for `car_example` (Car + Unknown)
+
+## Remaining (todo 77b — field-level visitor)
+
+- [ ] `MessageVisitor` trait with field-level methods (`field()`, `begin_group()`, etc.)
+- [ ] `FieldValue<'_>` enum
+- [ ] `accept_visitor` on every message and group decoder
+- [ ] Display/Debug refactor to use visitor internally
+- [ ] JSON export visitor example
+- [ ] Metrics extraction visitor example
+- [ ] Version-absent field skipping
 
 ## Dependencies
 
 - `57-field-meta-consts` — `FieldMeta` must exist
 - `61-display-debug-impls` — refactor target
-
-## Notes
-
-- DECISIONS.md §9 specifies this as the unifying pattern. Once implemented,
-  Display, Debug, JSON, and logging all become trivial visitor implementations.

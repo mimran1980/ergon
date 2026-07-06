@@ -3069,3 +3069,15 @@ impl<'a> AnyMessage<'a> {
         }
     }
 }
+pub trait MessageVisitor {
+    type Output;
+    fn visit_car(&mut self, decoder: &CarDecoder<'_>) -> Self::Output;
+}
+impl<'a> AnyMessage<'a> {
+    pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
+        match self {
+            Self::Car(d) => visitor.visit_car(d),
+            Self::Unknown { .. } => unimplemented!(),
+        }
+    }
+}

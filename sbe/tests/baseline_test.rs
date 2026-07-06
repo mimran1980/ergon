@@ -383,7 +383,10 @@ fn constants_match_upstream() {
 #[test]
 fn group_decoder_is_empty() {
     let (_schema, src) = generate(&Paths::example_schema(), "is_empty_group");
-    compile_and_run("is_empty_group", &src, r#"
+    compile_and_run(
+        "is_empty_group",
+        &src,
+        r#"
         // ── 0 fuel figures → is_empty() == true ──
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
@@ -427,5 +430,6 @@ fn group_decoder_is_empty() {
         let encoded = car.as_bytes();
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         assert!(!car2.fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
-    "#);
+    "#,
+    );
 }

@@ -250,7 +250,14 @@ impl Generator {
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
         // 8. Generate AnyMessage enum (per-schema: only this schema's messages)
-        generate_any_message(&mut src, &messages, &elements, ir.id, &ir.header_type, &ir.package);
+        generate_any_message(
+            &mut src,
+            &messages,
+            &elements,
+            ir.id,
+            &ir.header_type,
+            &ir.package,
+        );
 
         // Format through syn/prettyplease
         syn::parse_str::<syn::File>(&src)
@@ -2216,7 +2223,7 @@ fn generate_message_decoder(
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let vd_snake = to_snake_case(&vd.name);
-                let mut vd_body = format!(
+        let mut vd_body = format!(
             "#[inline]\n    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
                      let offset = self.tail_offset_{}()?;\n\
                      let bytes: [u8; {}] = self.buf[offset..offset + {}].try_into().unwrap();\n\
@@ -2239,7 +2246,6 @@ fn generate_message_decoder(
             prefix_size
         ));
         src.push_str(&vd_body);
-
 
         // UTF-8 str accessor
         src.push_str(&format!(
@@ -4219,6 +4225,46 @@ fn generate_any_message(
     );
 
     src.push_str("}\n\n");
+
+    // ── MessageVisitor trait ──────────────────────────────────────────────
+    let mut visitor_methods = Vec::new();
+    let mut visit_arms = Vec::new();
+
+    for m in messages {
+        let name_pascal = to_pascal_case(&m.name);
+        let name_snake = to_snake_case(&m.name);
+        let method_name = syn::Ident::new(
+            &format!("visit_{name_snake}"),
+            proc_macro2::Span::call_site(),
+        );
+        let decoder_ty: syn::Type = syn::parse_str(&format!("{name_pascal}Decoder<'_>")).unwrap();
+        let variant = syn::Ident::new(&name_pascal, proc_macro2::Span::call_site());
+        visitor_methods.push(quote::quote! {
+            fn #method_name(&mut self, decoder: &#decoder_ty) -> Self::Output;
+        });
+        visit_arms.push(quote::quote! {
+            Self::#variant(d) => visitor.#method_name(d),
+        });
+    }
+
+    let visitor_items = quote::quote! {
+        pub trait MessageVisitor {
+            type Output;
+
+            #(#visitor_methods)*
+        }
+
+        impl<'a> AnyMessage<'a> {
+            pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
+                match self {
+                    #(#visit_arms)*
+                    Self::Unknown { .. } => unimplemented!(),
+                }
+            }
+        }
+    };
+    src.push_str(&visitor_items.to_string());
+    src.push('\n');
 }
 
 /// Compute a deterministic 64-bit hash of the schema identity.
