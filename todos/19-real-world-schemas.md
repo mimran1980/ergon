@@ -6,20 +6,48 @@ Test ErgoSBE against production-grade SBE schemas from real exchanges. These
 are more complex than the Car example — more messages, nested groups,
 multi-byte enums, constant fields, and edge-case layouts.
 
+## Research findings (todo 19 - COMPLETE)
+
+All research results, schema analysis, and recommendations are in:
+`ergosbe/tests/fixtures/schemas/SCHEMA_INVENTORY.md`
+
+Key findings:
+- **6 schemas found in submodule** (see below) + **3 external schemas downloaded**
+- **Two production-grade CME schemas:** `ilinkbinary.xml` (286 KB, 48 messages,
+  33 groups, 50 enums, 27 composites) and `FixBinary.xml` (127 KB, 29 messages,
+  53 groups) from the submodule
+- **CME FTP provides newer version** (templates_FixBinary.xml v13, 2023, 147 KB)
+  vs submodule FixBinary.xml v9 (2018, 127 KB)
+- **Binance Spot API schema** (141 KB, 92 messages, 284 optional fields) from
+  github.com/binance/binance-spot-api-docs
+- **FIX Trading Community v2.0 RC3 examples** with XInclude multi-file patterns
+- No public XML schemas found for Eurex, Euronext, ICE, MOEX (member-only)
+
 ## Source schemas
 
-| Schema | Source | Notes |
-|--------|--------|-------|
-| `FixBinary.xml` | `sbe-tool/src/test/resources/` | FIX protocol binary encoding |
-| `fix-message-samples.xml` | `sbe-benchmarks/src/main/resources/` | FIX message samples with benchmarks |
-| `ilinkbinary.xml` | `sbe-tool/src/test/resources/` | CME iLink binary protocol |
-| `new-order-single-schema.xml` | `sbe-tool/src/test/resources/` | NewOrderSingle (FIX tag subset) |
-| `car.xml` | `sbe-benchmarks/src/main/resources/` | Car example with benchmark harness |
-| `sbe-ir.xml` | `sbe-tool/src/main/resources/` | SBE IR self-describing schema (meta!) |
+### In submodule (Apache 2.0)
+
+| Schema | Source | Size | Notes |
+|--------|--------|------|-------|
+| `FixBinary.xml` | `sbe-tool/src/test/resources/` | 127 KB | CME MDP 3.0 - 29 msgs, 53 groups, 46 sinceVersion |
+| `fix-message-samples.xml` | `sbe-benchmarks/src/main/resources/` | 21 KB | FIX samples with 4 groups, 19 enums, 2 sets |
+| `ilinkbinary.xml` | `sbe-tool/src/test/resources/` | 286 KB | CME iLink3 - 48 msgs, 33 groups, 50 enums, 27 composites |
+| `new-order-single-schema.xml` | `sbe-tool/src/test/resources/` | 3.3 KB | NewOrderSingle (FIX tag subset), 1 message |
+| `car.xml` | `sbe-benchmarks/src/main/resources/` | 4 KB | Car example, nested groups, var-data, enums |
+| `sbe-ir.xml` | `sbe-tool/src/main/resources/` | 7 KB | SBE IR self-describing schema (meta!) |
+
+### Downloaded externally
+
+| Schema | Source | Size | Notes |
+|--------|--------|------|-------|
+| `cme_templates_FixBinary.xml` | CME FTP (anonymous) | 147 KB | CME MDP v13 (2023), newer than submodule v9 |
+| `binance_spot_3_5.xml` | github.com/binance/binance-spot-api-docs | 141 KB | Binance Spot API, 92 msgs, 284 optional, 81 sinceVersion |
+| `fix_examples_v2rc3.xml` + 2 includes | github.com/FIXTradingCommunity/... | 7.5 KB | FIX v2.0 RC3 examples using XInclude |
 
 ## Acceptance criteria
 
-- [ ] All 6 schemas parse without errors (after XInclude support)
+- [x] **RESEARCH COMPLETE** - 9 schemas identified and cataloged
+- [ ] All 6+ schemas parse without errors (after XInclude support)
 - [ ] Generate Rust code for all messages in each schema
 - [ ] Generated code compiles cleanly
 - [ ] Round-trip encode→decode→semantic-equal for at least one message per schema
