@@ -1186,7 +1186,7 @@ mod tests {
     fn workspace_root() -> PathBuf {
         let mut dir = std::env::current_dir().unwrap();
         loop {
-            if dir.join("Cargo.toml").exists() && dir.join("ergosbe").exists() {
+            if dir.join("Cargo.toml").exists() && dir.join("sbe").exists() {
                 return dir;
             }
             assert!(
@@ -1199,21 +1199,19 @@ mod tests {
 
     fn sbe_test_resource(sub: &str) -> PathBuf {
         workspace_root()
-            .join("simple-binary-encoding")
-            .join("sbe-tool")
-            .join("src")
-            .join("test")
-            .join("resources")
+            .join("sbe")
+            .join("tests")
+            .join("fixtures")
+            .join("schemas")
             .join(sub)
     }
 
     fn sbe_sample_resource(sub: &str) -> PathBuf {
         workspace_root()
-            .join("simple-binary-encoding")
-            .join("sbe-samples")
-            .join("src")
-            .join("main")
-            .join("resources")
+            .join("sbe")
+            .join("tests")
+            .join("fixtures")
+            .join("schemas")
             .join(sub)
     }
 

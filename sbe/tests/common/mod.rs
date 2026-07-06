@@ -24,7 +24,7 @@ impl Paths {
         let cwd = std::env::current_dir().unwrap();
         for ancestor in cwd.ancestors() {
             if ancestor.join("Cargo.toml").exists()
-                && (ancestor.join("ergosbe").exists() || ancestor.join("crates/ergosbe").exists())
+                && (ancestor.join("sbe").exists())
             {
                 return ancestor.to_path_buf();
             }
@@ -37,12 +37,12 @@ impl Paths {
         panic!("Cannot find workspace root from {cwd:?}");
     }
 
-    fn ergosbe_dir() -> PathBuf {
+    fn sbe_dir() -> PathBuf {
         let root = Self::workspace_root();
-        if root.join("ergosbe").exists() {
-            root.join("ergosbe")
+        if root.join("sbe").exists() {
+            root.join("sbe")
         } else {
-            root.join("crates/ergosbe")
+            root.join("sbe")
         }
     }
 
@@ -74,7 +74,7 @@ impl Paths {
         if submodule.exists() {
             submodule
         } else {
-            Self::ergosbe_dir()
+            Self::sbe_dir()
                 .join("tests")
                 .join("fixtures")
                 .join("schemas")
@@ -87,7 +87,7 @@ impl Paths {
         if submodule.exists() {
             submodule
         } else {
-            Self::ergosbe_dir()
+            Self::sbe_dir()
                 .join("tests")
                 .join("fixtures")
                 .join("schemas")
@@ -116,14 +116,14 @@ impl Paths {
     }
 
     pub fn baseline_binary() -> PathBuf {
-        Self::ergosbe_dir()
+        Self::sbe_dir()
             .join("tests")
             .join("fixtures")
             .join("car_example_baseline_data.sbe")
     }
 
     pub fn extension_binary() -> PathBuf {
-        Self::ergosbe_dir()
+        Self::sbe_dir()
             .join("tests")
             .join("fixtures")
             .join("car_example_extension_data.sbe")
