@@ -1,7 +1,27 @@
 //! SBE schema validation and reference-resolution pass.
 //!
-//! Resolves offsets, block lengths, default/null/min/max values,
-//! and schema hash before code generation.
+//! This module runs after XML parsing to:
+//!
+//! - Assign default null, min, and max values to every primitive encoding.
+//! - Compute and fill byte offsets for all fields, composites, and groups.
+//! - Compute block lengths for composites and messages.
+//! - Validate the resolved offsets (no overlap, valid alignment).
+//!
+//! The primary entry-point is [`resolve_schema`], which mutates the IR
+//! in-place. It is called automatically by [`parse`](crate::parse) and
+//! [`parse_file`](crate::xml::parse_file) — most users never need to
+//! call it directly.
+//!
+//! # Resolution passes
+//!
+//! 1. **Default values**: every primitive type gets a default null, min, and
+//!    max sentinel (e.g. `uint16` null = `65535`, min = `0`, max = `65534`).
+//! 2. **Offset resolution**: walks composites and messages sequentially,
+//!    assigning offsets to fields that lack an explicit `offset` attribute.
+//!    Nested groups and var-data fields are resolved independently (they live
+//!    in the tail, after the fixed block).
+//! 3. **Block length**: the final offset of each composite/message becomes its
+//!    block length, stored on the `BeginComposite`/`BeginMessage` token.
 
 use crate::ir::{Ir, PrimitiveType, Signal, Token};
 
