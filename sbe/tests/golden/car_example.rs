@@ -57,6 +57,7 @@ pub mod sbe_rt {
         BufferTooShort { needed: usize, available: usize },
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
         GroupFull { declared: u16, attempted: u16 },
+        Decode(DecodeError),
     }
     impl core::fmt::Display for EncodeError {
         #[cold]
@@ -79,10 +80,16 @@ pub mod sbe_rt {
                         declared, attempted
                     )
                 }
+                Self::Decode(e) => write!(f, "decode error: {e}"),
             }
         }
     }
     impl core::error::Error for EncodeError {}
+    impl From<DecodeError> for EncodeError {
+        fn from(e: DecodeError) -> Self {
+            Self::Decode(e)
+        }
+    }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum VerifyError {
         HeaderTooShort,
@@ -3080,6 +3087,20 @@ impl<'a> AnyMessage<'a> {
         match self {
             Self::Car(d) => d.as_bytes(),
             Self::Unknown { payload, .. } => Ok(payload),
+        }
+    }
+    #[inline]
+    pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
+        match self {
+            Self::Car(d) => {
+                let len = d.encoded_length_with_header()?;
+                buf[..len].copy_from_slice(d.as_bytes()?);
+                Ok(len)
+            }
+            Self::Unknown { payload, .. } => {
+                buf[..payload.len()].copy_from_slice(payload);
+                Ok(payload.len())
+            }
         }
     }
 }

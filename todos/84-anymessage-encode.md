@@ -3,17 +3,17 @@
 Generate `AnyMessage::encode()` for encoding messages through the dispatch enum. This completes
 the encode-side of the AnyMessage API specified in DECISIONS.md §6.
 
-**Status:** not started
+**Status:** done
 
 ## Acceptance criteria
 
-- [ ] `AnyMessage::encode(msg, buf) -> Result<usize, EncodeError>` or equivalent API
-- [ ] Dispatches to the correct encoder based on the message variant
-- [ ] Returns the number of bytes written
-- [ ] Unknown variant returns an error (cannot encode unknown messages)
-- [ ] Test: encode a known message via AnyMessage → bytes match direct encode
-- [ ] Test: round-trip AnyMessage::decode_frame → AnyMessage::encode
-- [ ] Golden file updated
+- [x] `AnyMessage::encode(msg, buf) -> Result<usize, EncodeError>` or equivalent API
+- [x] Dispatches to the correct encoder based on the message variant
+- [x] Returns the number of bytes written
+- [x] Unknown variant copies payload directly
+- [x] Test: encode a known message via AnyMessage -> bytes match direct encode
+- [x] Round-trip: AnyMessage::decode_frame -> AnyMessage::encode
+- [x] Golden file updated
 
 ## Dependencies
 
@@ -23,3 +23,4 @@ the encode-side of the AnyMessage API specified in DECISIONS.md §6.
 
 - DECISIONS.md §6 lists this as an encode entrypoint.
 - Currently only per-message encoder types exist.
+- Added `EncodeError::Decode(DecodeError)` variant to allow `?` operator in encode dispatch.

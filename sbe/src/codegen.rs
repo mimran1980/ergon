@@ -299,6 +299,7 @@ fn generate_sbe_rt_src() -> String {
                 BufferTooShort { needed: usize, available: usize },
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
                 GroupFull { declared: u16, attempted: u16 },
+                Decode(DecodeError),
             }
 
             impl core::fmt::Display for EncodeError {
@@ -308,11 +309,18 @@ fn generate_sbe_rt_src() -> String {
                         Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
                         Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
                         Self::GroupFull { declared, attempted } => write!(f, "group full: declared count {}, attempted to write {}", declared, attempted),
+                        Self::Decode(e) => write!(f, "decode error: {e}"),
                     }
                 }
             }
 
             impl core::error::Error for EncodeError {}
+
+            impl From<DecodeError> for EncodeError {
+                fn from(e: DecodeError) -> Self {
+                    Self::Decode(e)
+                }
+            }
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum VerifyError {
@@ -4246,7 +4254,30 @@ fn generate_any_message(
             "            Self::{name_pascal}(d) => d.as_bytes(),\n"
         ));
     }
-    src.push_str("            Self::Unknown { payload, .. } => Ok(payload),\n        }\n    }\n");
+    src.push_str("            Self::Unknown { payload, .. } => Ok(payload),\n        }\n    }\n\n");
+
+    // ── encode ──────────────────────────────────────────────────────────────
+    src.push_str(
+        "    #[inline]\n    pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {\n        match self {\n"
+    );
+    for m in messages {
+        let name_pascal = to_pascal_case(&m.name);
+        src.push_str(&format!(
+            "            Self::{name_pascal}(d) => {{\n\
+                         let len = d.encoded_length_with_header()?;\n\
+                         buf[..len].copy_from_slice(d.as_bytes()?);\n\
+                         Ok(len)\n\
+                     }}\n",
+        ));
+    }
+    src.push_str(
+        "            Self::Unknown { payload, .. } => {\n\
+             buf[..payload.len()].copy_from_slice(payload);\n\
+             Ok(payload.len())\n\
+         }\n\
+         }\n\
+     }\n",
+    );
 
     src.push_str("}\n\n");
 
