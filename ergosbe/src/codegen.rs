@@ -236,17 +236,13 @@ fn generate_sbe_rt_src() -> String {
     s.push_str("        Utf8(core::str::Utf8Error),\n");
     s.push_str("    }\n\n");
     s.push_str("    impl core::fmt::Display for DecodeError {\n");
-    s.push_str(
-        "        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n",
-    );
+    s.push_str("        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n");
     s.push_str("            match self {\n");
     s.push_str("                Self::BufferTooShort { field, needed, available } => write!(f, \"field '{}': needed {} bytes, {} available\", field, needed, available),\n");
     s.push_str("                Self::WrongSchema { expected, actual } => write!(f, \"wrong schema id: expected {}, actual {}\", expected, actual),\n");
     s.push_str("                Self::UnknownTemplateLength { template_id } => write!(f, \"unknown template length for template id {}\", template_id),\n");
     s.push_str("                Self::InvalidVarDataLength { field, length } => write!(f, \"invalid var data length for field {}: {}\", field, length),\n");
-    s.push_str(
-        "                Self::Utf8(err) => write!(f, \"UTF-8 decode error: {}\", err),\n",
-    );
+    s.push_str("                Self::Utf8(err) => write!(f, \"UTF-8 decode error: {}\", err),\n");
     s.push_str("            }\n");
     s.push_str("        }\n");
     s.push_str("    }\n\n");
@@ -259,9 +255,7 @@ fn generate_sbe_rt_src() -> String {
     );
     s.push_str("    }\n\n");
     s.push_str("    impl core::fmt::Display for EncodeError {\n");
-    s.push_str(
-        "        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n",
-    );
+    s.push_str("        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n");
     s.push_str("            match self {\n");
     s.push_str("                Self::BufferTooShort { needed, available } => write!(f, \"buffer too short: needed {}, available {}\", needed, available),\n");
     s.push_str("                Self::VarDataTooLong { field, max_length, actual } => write!(f, \"var data too long for field {}: max {}, actual {}\", field, max_length, actual),\n");
@@ -1388,9 +1382,7 @@ fn get_dim_num_layout(elements: &SchemaElements, dim_type: &str) -> (usize, usiz
             if lower.contains("numingroup") || lower.contains("count") {
                 offset = m.offset;
                 size = match &m.member_type {
-                    MemberType::Primitive {
-                        prim, length, ..
-                    } => prim.size() * length.unwrap_or(1),
+                    MemberType::Primitive { prim, length, .. } => prim.size() * length.unwrap_or(1),
                     _ => 2,
                 };
             }
@@ -1543,12 +1535,7 @@ fn generate_message_decoder(
                  pub const BLOCK_LENGTH: usize = {};\n\
                  /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
                  pub const ENCODED_LENGTH: usize = {};\n\n",
-            name,
-            schema_id,
-            schema_version,
-            msg.id,
-            block_length,
-            encoded_length,
+            name, schema_id, schema_version, msg.id, block_length, encoded_length,
         ));
     } else {
         src.push_str(&format!(
@@ -2767,7 +2754,11 @@ fn generate_message_encoder(
             header_tpl[6..8].copy_from_slice(&schema_version.to_be_bytes());
         }
     }
-    let hdr_repr: String = header_tpl.iter().map(|b| format!("{}", b)).collect::<Vec<_>>().join(", ");
+    let hdr_repr: String = header_tpl
+        .iter()
+        .map(|b| format!("{}", b))
+        .collect::<Vec<_>>()
+        .join(", ");
     src.push_str(&format!(
         "    pub const HEADER_TEMPLATE: [u8; {}] = [{}];\n\n",
         header_size, hdr_repr
@@ -3148,7 +3139,11 @@ fn generate_group_encoder(
             dim_tpl[0..2].copy_from_slice(&(g.block_length as u16).to_be_bytes());
         }
     }
-    let dim_repr: String = dim_tpl.iter().map(|b| format!("{}", b)).collect::<Vec<_>>().join(", ");
+    let dim_repr: String = dim_tpl
+        .iter()
+        .map(|b| format!("{}", b))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     src.push_str(&format!(
         "pub struct {}Encoder<'a> {{\n\
@@ -3629,7 +3624,8 @@ mod tests {
         let schema_a = Schema::new("common.sbe", 1, 0);
         let schema_b = Schema::new("market_data.sbe", 2, 0);
 
-        let modules = generator.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")]);
+        let modules =
+            generator.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")]);
         let collected: Vec<_> = modules.modules().collect();
 
         assert_eq!(collected.len(), 2);
@@ -3643,7 +3639,11 @@ mod tests {
         assert!(!collected[1].source.contains("pub mod sbe_rt"));
 
         // Second module imports from the shared module
-        assert!(collected[1].source.contains("pub use super::common_types::*;"));
+        assert!(
+            collected[1]
+                .source
+                .contains("pub use super::common_types::*;")
+        );
 
         // Each module contains its own schema metadata
         assert!(collected[0].source.contains("common.sbe"));
