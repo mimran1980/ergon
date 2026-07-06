@@ -23,9 +23,7 @@ impl Paths {
     fn workspace_root() -> PathBuf {
         let cwd = std::env::current_dir().unwrap();
         for ancestor in cwd.ancestors() {
-            if ancestor.join("Cargo.toml").exists()
-                && (ancestor.join("sbe").exists())
-            {
+            if ancestor.join("Cargo.toml").exists() && (ancestor.join("sbe").exists()) {
                 return ancestor.to_path_buf();
             }
         }
