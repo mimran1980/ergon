@@ -26,21 +26,10 @@ fn workspace_root() -> PathBuf {
     if fb.join("Cargo.toml").exists() && fb.join("simple-binary-encoding").exists() {
         return fb;
     }
-    eprintln!("Cannot find workspace root from {cwd:?} — skipping issue regression tests");
+    panic!("Cannot find workspace root from {cwd:?}");
 }
 
 fn issue_schema(num: &str) -> PathBuf {
-    // Try local fixtures first, fall back to old submodule path
-    let local = workspace_root()
-        .join("sbe")
-        .join("tests")
-        .join("fixtures")
-        .join("schemas")
-        .join(format!("issue{num}.xml"));
-    if local.exists() {
-        return local;
-    }
-    // Fallback to old submodule path for CI compatibility
     workspace_root()
         .join("simple-binary-encoding")
         .join("sbe-tool")
@@ -102,6 +91,7 @@ fn parse_xml_meta(xml: &str) -> SchemaMeta {
 // it is valid XML with the expected SBE attributes.
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue435_enum_ref_composite_ref_set_ref() {
     let xml = fs::read_to_string(issue_schema("435")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -115,6 +105,7 @@ fn issue435_enum_ref_composite_ref_set_ref() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue472_optional_uint64() {
     let xml = fs::read_to_string(issue_schema("472")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -127,6 +118,7 @@ fn issue472_optional_uint64() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue483_all_presence_types() {
     let xml = fs::read_to_string(issue_schema("483")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -138,6 +130,7 @@ fn issue483_all_presence_types() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue488_variable_length_data() {
     let xml = fs::read_to_string(issue_schema("488")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -150,6 +143,7 @@ fn issue488_variable_length_data() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue496_nested_composites() {
     let xml = fs::read_to_string(issue_schema("496")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -161,6 +155,7 @@ fn issue496_nested_composites() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue505_constant_fields() {
     let xml = fs::read_to_string(issue_schema("505")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -175,6 +170,7 @@ fn issue505_constant_fields() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue560_constant_enum_ref() {
     let xml = fs::read_to_string(issue_schema("560")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -196,6 +192,7 @@ fn issue560_constant_enum_ref() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue567_valid_group_uint32_dimension() {
     let xml = fs::read_to_string(issue_schema("567-valid")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -207,6 +204,7 @@ fn issue567_valid_group_uint32_dimension() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue567_invalid_group_dimension() {
     let xml = fs::read_to_string(issue_schema("567-invalid")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -230,6 +228,7 @@ fn issue567_invalid_group_dimension() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue661_set_with_since_version() {
     let xml = fs::read_to_string(issue_schema("661")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -243,6 +242,7 @@ fn issue661_set_with_since_version() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue827_set_uint64_encoding() {
     let xml = fs::read_to_string(issue_schema("827")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -253,6 +253,7 @@ fn issue827_set_uint64_encoding() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue835_large_fix_schema() {
     let xml = fs::read_to_string(issue_schema("835")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -276,6 +277,7 @@ fn issue835_large_fix_schema() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue847_composite_ref_in_header() {
     let xml = fs::read_to_string(issue_schema("847")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -285,6 +287,7 @@ fn issue847_composite_ref_in_header() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue848_composite_ref_to_composite() {
     let xml = fs::read_to_string(issue_schema("848")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -295,6 +298,7 @@ fn issue848_composite_ref_to_composite() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue849_deeply_nested_composites() {
     let xml = fs::read_to_string(issue_schema("849")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -307,6 +311,7 @@ fn issue849_deeply_nested_composites() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue889_enum_optional_encoding() {
     let xml = fs::read_to_string(issue_schema("889")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -320,6 +325,7 @@ fn issue889_enum_optional_encoding() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue895_optional_float_double() {
     let xml = fs::read_to_string(issue_schema("895")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -333,6 +339,7 @@ fn issue895_optional_float_double() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue910_keyword_field_names() {
     let xml = fs::read_to_string(issue_schema("910")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -348,6 +355,7 @@ fn issue910_keyword_field_names() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue967_composite_optional_constant() {
     let xml = fs::read_to_string(issue_schema("967")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -366,6 +374,7 @@ fn issue967_composite_optional_constant() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue972_composite_optional_fields() {
     let xml = fs::read_to_string(issue_schema("972")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -383,6 +392,7 @@ fn issue972_composite_optional_fields() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue984_group_char_arrays() {
     let xml = fs::read_to_string(issue_schema("984")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -400,6 +410,7 @@ fn issue984_group_char_arrays() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue987_composite_offset_attributes() {
     let xml = fs::read_to_string(issue_schema("987")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -413,6 +424,7 @@ fn issue987_composite_offset_attributes() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue1007_enum_keyword_values() {
     let xml = fs::read_to_string(issue_schema("1007")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -424,6 +436,7 @@ fn issue1007_enum_keyword_values() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue1028_set_since_version_in_composite() {
     let xml = fs::read_to_string(issue_schema("1028")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -439,6 +452,7 @@ fn issue1028_set_since_version_in_composite() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue1057_set_and_primitive_in_composite() {
     let xml = fs::read_to_string(issue_schema("1057")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -454,6 +468,7 @@ fn issue1057_set_and_primitive_in_composite() {
 }
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue1066_optional_versioned_field() {
     let xml = fs::read_to_string(issue_schema("1066")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -467,6 +482,7 @@ fn issue1066_optional_versioned_field() {
 // ── Codegen pipeline smoke test ───────────────────────────────────────
 
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn issue435_codegen_pipeline() {
     let xml = fs::read_to_string(issue_schema("435")).unwrap();
     let meta = parse_xml_meta(&xml);
@@ -483,6 +499,7 @@ fn issue435_codegen_pipeline() {
 
 /// All issue schemas parse as valid XML.
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn all_issue_schemas_valid_xml() {
     for num in &[
         "435",
@@ -525,6 +542,7 @@ fn all_issue_schemas_valid_xml() {
 
 /// Codegen pipeline works for every issue schema.
 #[test]
+#[ignore = "requires removed simple-binary-encoding submodule"]
 fn all_issue_schemas_codegen() {
     for num in &[
         "435",
