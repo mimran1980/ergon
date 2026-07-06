@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergosbe::{GenerationConfig, Generator, Schema, parse};
+use ergosbe::{GenerationConfig, Generator, Schema, parse, parse_file};
 
 // ── Schema & fixture path resolution ──────────────────────────────────
 
@@ -69,11 +69,30 @@ impl Paths {
     }
 
     pub fn example_schema() -> PathBuf {
-        Self::sbe_samples().join("example-schema.xml")
+        // Try the submodule path first; fall back to local fixture copy
+        let submodule = Self::sbe_samples().join("example-schema.xml");
+        if submodule.exists() {
+            submodule
+        } else {
+            Self::ergosbe_dir()
+                .join("tests")
+                .join("fixtures")
+                .join("schemas")
+                .join("example-schema.xml")
+        }
     }
 
     pub fn extension_schema() -> PathBuf {
-        Self::sbe_samples().join("example-extension-schema.xml")
+        let submodule = Self::sbe_samples().join("example-extension-schema.xml");
+        if submodule.exists() {
+            submodule
+        } else {
+            Self::ergosbe_dir()
+                .join("tests")
+                .join("fixtures")
+                .join("schemas")
+                .join("example-extension-schema.xml")
+        }
     }
 
     pub fn bigendian_schema() -> PathBuf {
@@ -120,8 +139,7 @@ impl Paths {
 
 /// Parse a schema XML file and generate ErgoSBE Rust source.
 pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
-    let xml = fs::read_to_string(xml_path).unwrap_or_else(|e| panic!("read {xml_path:?}: {e}"));
-    let ir = parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let g = Generator::new(GenerationConfig::new(module_name));
     let ms = g.generate(&schema);
