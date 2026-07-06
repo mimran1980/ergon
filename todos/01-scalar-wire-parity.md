@@ -10,17 +10,17 @@ VarStringEncoding size mismatch bug as a prerequisite. Finalise the
 
 ## Acceptance criteria
 
-- [ ] Fix VarStringEncoding tail-offset size mismatch (tracked in `16-varstring-encoding-fix`)
-- [ ] Generate a scalar-only test message that compiles cleanly
-- [ ] Encode: assert byte-exact equality with upstream `.sbe` fixture
-- [ ] Decode: read official fixture, assert every field
-- [ ] Round-trip: encode→decode→semantic-equal
-- [ ] `TryFrom<&'a [u8]>` impl on decoders (idiomatic entrypoint)
-- [ ] `acting_version()` and `acting_block_length()` exposed on decoders
-- [ ] `#[must_use]` on encoder types (dropped encoder = lost message)
-- [ ] `const fn` on all primitive scalar accessors
-- [ ] Nullify-on-wrap: `wrap_and_apply_header` writes null sentinels at optional field offsets
-- [ ] `wrap_and_apply_header` returns `Result` (buffer-too-short, not panic)
+- [x] Fix VarStringEncoding tail-offset size mismatch (tracked in `16-varstring-encoding-fix`) — already correct (`[u8; 4]`, not `[u8; 5]`)
+- [x] Generate a scalar-only test message that compiles cleanly
+- [x] Encode: assert byte-exact equality with upstream `.sbe` fixture (header + scalar body via `encode_byte_exact_scalar`)
+- [x] Decode: read official fixture, assert every field
+- [x] Round-trip: encode→decode→semantic-equal
+- [x] `TryFrom<&'a [u8]>` impl on decoders (idiomatic entrypoint)
+- [x] `acting_version()` and `acting_block_length()` exposed on decoders
+- [x] `#[must_use]` on encoder types (dropped encoder = lost message)
+- [x] `const fn` on all primitive scalar accessors
+- [x] Nullify-on-wrap: `wrap_and_apply_header` writes null sentinels at optional field offsets (codegen calls `generate_nullification`)
+- [x] `wrap_and_apply_header` returns `Result` (buffer-too-short, not panic)
 
 Ref: `design/DECISIONS.md` §2–3, §11 slices 2a, tests 1–2, 10.
 
