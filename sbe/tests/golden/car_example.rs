@@ -681,6 +681,7 @@ impl Engine {
         Self(bytes)
     }
 }
+/// Description of a basic Car
 #[derive(Clone, Copy)]
 pub struct CarDecoder<'a> {
     buf: &'a [u8],

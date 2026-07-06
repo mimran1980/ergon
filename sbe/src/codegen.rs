@@ -1712,6 +1712,9 @@ fn generate_message_decoder(
     let max_encoded_length = header_size + block_length + max_tail;
 
     // 1. Decoder Struct
+    if let Some(ref desc) = msg.description {
+        src.push_str(&format!("/// {}\n", desc));
+    }
     src.push_str(&format!(
         "#[derive(Clone, Copy)]\n\
          pub struct {}Decoder<'a> {{\n\
