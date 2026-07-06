@@ -6,9 +6,15 @@ After every push to any branch, verify the CI workflow completes green. Check
 the GitHub Actions tab for failures, investigate any red builds, and fix them
 before proceeding to the next wave of work.
 
+## Setup
+
+- [x] Created `ci-monitor.sh` — checks latest CI runs and reports failed jobs
+- [x] Added `.justfile` with `just ci-status` recipe
+- [x] Tooling uses `gh run list` + `jq` — requires `gh` auth (run outside sandbox)
+
 ## Routine
 
-- [ ] After `git push`, open `https://github.com/mimran1980/ErgoSBE/actions` and wait for CI
+- [ ] After `git push`, run `just ci-status` or `./ci-monitor.sh`
 - [ ] If any job fails, investigate and fix BEFORE dispatching more agents
 - [ ] `lint` job: fmt + clippy + docs must be clean
 - [ ] `test` job: all tests pass
