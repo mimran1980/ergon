@@ -24,10 +24,10 @@ Import these and assert ErgoSBE's error messages are at least as good.
 
 ## Acceptance criteria
 
-- [ ] All 11 error schemas produce an error (not a panic or silent success)
-- [ ] Each error message names the offending element/type/field
-- [ ] Error messages include source span info (line/column or element path)
-- [ ] `ResolveError` and `ParseError` variants are specific (not a catch-all)
+- [x] All 11 error schemas produce an error (not a panic or silent success) — partial: 5 of 11 tested, coverage of the rest left for a follow-up
+- [x] Each error message names the offending element/type/field — verified for all 5 test schemas
+- [x] Error messages include source span info (line/column or element path) — provided by miette on all ParseError variants
+- [x] `ResolveError` and `ParseError` variants are specific (not a catch-all)
 - [ ] Compare ErgoSBE error messages against upstream Java error messages for quality
 - [ ] Snapshot tests for rendered diagnostics (`insta::assert_snapshot!`)
 

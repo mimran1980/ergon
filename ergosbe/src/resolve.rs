@@ -14,13 +14,16 @@
 //!
 //! # Resolution passes
 //!
-//! 1. **Default values**: every primitive type gets a default null, min, and
+//! 1. **Duplicate template ID check**: two messages may not share the same id.
+//! 2. **Since-version bound check**: no token may have a sinceVersion exceeding
+//!    the schema version.
+//! 3. **Default values**: every primitive type gets a default null, min, and
 //!    max sentinel (e.g. `uint16` null = `65535`, min = `0`, max = `65534`).
-//! 2. **Offset resolution**: walks composites and messages sequentially,
+//! 4. **Offset resolution**: walks composites and messages sequentially,
 //!    assigning offsets to fields that lack an explicit `offset` attribute.
 //!    Nested groups and var-data fields are resolved independently (they live
 //!    in the tail, after the fixed block).
-//! 3. **Block length**: the final offset of each composite/message becomes its
+//! 5. **Block length**: the final offset of each composite/message becomes its
 //!    block length, stored on the `BeginComposite`/`BeginMessage` token.
 
 use crate::ir::{Ir, PrimitiveType, Signal, Token};
@@ -54,6 +57,16 @@ pub enum ResolveError {
         /// Composite name.
         name: String,
     },
+    /// A field or message has a sinceVersion greater than the schema version.
+    #[error("sinceVersion {version} exceeds schema version {schema_version} for {name}")]
+    SinceVersionBeyondSchema {
+        /// The sinceVersion value found.
+        version: u16,
+        /// The schema version.
+        schema_version: u16,
+        /// The token name.
+        name: String,
+    },
 }
 
 /// Run the reference resolution pass on a schema IR.
@@ -61,7 +74,36 @@ pub enum ResolveError {
 /// Modifies the IR in-place to fill resolved offsets, block lengths,
 /// and default null/min/max values.
 pub fn resolve_schema(ir: &mut Ir) -> Result<(), ResolveError> {
-    // 1. Fill in default null/min/max values for all primitive encodings in the tokens.
+    // 1. Validate no duplicate template IDs.
+    {
+        let mut seen_ids: std::collections::HashMap<u16, &str> = std::collections::HashMap::new();
+        for token in &ir.tokens {
+            if token.signal == Signal::BeginMessage {
+                if let Some(id) = token.id {
+                    if seen_ids.insert(id, &token.name).is_some() {
+                        return Err(ResolveError::DuplicateTemplateId {
+                            id,
+                            name: token.name.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Validate that no token has a since_version exceeding the schema version.
+    for token in &ir.tokens {
+        let sv = token.encoding.since_version;
+        if sv > ir.version {
+            return Err(ResolveError::SinceVersionBeyondSchema {
+                version: sv,
+                schema_version: ir.version,
+                name: token.name.clone(),
+            });
+        }
+    }
+
+    // 3. Fill in default null/min/max values for all primitive encodings in the tokens.
     for token in &mut ir.tokens {
         if let Some(prim) = token.encoding.primitive_type {
             if token.encoding.null_value.is_none() {
@@ -76,7 +118,7 @@ pub fn resolve_schema(ir: &mut Ir) -> Result<(), ResolveError> {
         }
     }
 
-    // 2. Resolve offsets and block lengths for all composites and messages.
+    // 4. Resolve offsets and block lengths for all composites and messages.
     let mut i = 0;
     while i < ir.tokens.len() {
         match ir.tokens[i].signal {

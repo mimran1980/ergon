@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<messageSchema package="SBE tests" id="105" semanticVersion="5.2"
+               description="Invalid enum validValue test"
+               byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <!-- encodingType references non-existent type => ParseError::Invalid -->
+        <enum name="BadEnum" encodingType="NonExistentEncodingType">
+            <validValue name="Value1">1</validValue>
+        </enum>
+    </types>
+    <message name="TestMessage" id="1">
+        <field name="field1" id="1" type="uint8"/>
+    </message>
+</messageSchema>
