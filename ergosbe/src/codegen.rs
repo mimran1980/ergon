@@ -388,7 +388,6 @@ fn to_upper_snake_case(s: &str) -> String {
     to_snake_case(s).to_uppercase()
 }
 
-
 fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
     match prim {
         PrimitiveType::Char => {
