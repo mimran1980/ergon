@@ -425,32 +425,10 @@ fn read_include_file(
         return Ok(Some(content));
     }
 
-    // 3. Well-known submodule paths.
+    // 3. Local fixtures directory.
     let paths = [
-        format!(
-            "simple-binary-encoding/sbe-samples/src/main/resources/{}",
-            href
-        ),
-        format!(
-            "simple-binary-encoding/sbe-benchmarks/src/main/resources/{}",
-            href
-        ),
-        format!(
-            "simple-binary-encoding/sbe-tool/src/test/resources/{}",
-            href
-        ),
-        format!(
-            "../simple-binary-encoding/sbe-samples/src/main/resources/{}",
-            href
-        ),
-        format!(
-            "../simple-binary-encoding/sbe-benchmarks/src/main/resources/{}",
-            href
-        ),
-        format!(
-            "../simple-binary-encoding/sbe-tool/src/test/resources/{}",
-            href
-        ),
+        format!("sbe/tests/fixtures/schemas/{}", href),
+        format!("../sbe/tests/fixtures/schemas/{}", href),
     ];
     for p in &paths {
         if let Some(content) = try_path(p, seen)? {

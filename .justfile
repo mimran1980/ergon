@@ -18,9 +18,10 @@ fix:
     cargo fmt --all
     cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
 
-# run all tests
+# run all tests (with and without disable-bounds-checks feature)
 test:
-    cargo test --workspace --all-targets -- --nocapture
+    echo "=== default features ===" && cargo test --workspace --all-targets -- --nocapture
+    echo "=== disable-bounds-checks ===" && cargo test --workspace --all-targets --features disable-bounds-checks -- --nocapture
     cargo test --doc
 
 # run benchmarks (once they exist)
