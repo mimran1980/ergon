@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
         BufferTooShort { field: &'static str, needed: usize, available: usize },
