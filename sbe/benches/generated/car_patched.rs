@@ -57,6 +57,7 @@ pub mod sbe_rt {
         BufferTooShort { needed: usize, available: usize },
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
         GroupFull { declared: u16, attempted: u16 },
+        Decode(DecodeError),
     }
     impl core::fmt::Display for EncodeError {
         #[cold]
@@ -79,10 +80,16 @@ pub mod sbe_rt {
                         declared, attempted
                     )
                 }
+                Self::Decode(e) => write!(f, "decode error: {e}"),
             }
         }
     }
     impl core::error::Error for EncodeError {}
+    impl From<DecodeError> for EncodeError {
+        fn from(e: DecodeError) -> Self {
+            Self::Decode(e)
+        }
+    }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum VerifyError {
         HeaderTooShort,
@@ -1186,6 +1193,14 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
     #[inline]
+    pub fn manufacturer_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
+        Ok(self.manufacturer_as_str()?.to_string())
+    }
+    #[inline]
+    pub fn manufacturer_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.manufacturer()
+    }
+    #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
@@ -1207,6 +1222,14 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
     #[inline]
+    pub fn model_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
+        Ok(self.model_as_str()?.to_string())
+    }
+    #[inline]
+    pub fn model_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.model()
+    }
+    #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
@@ -1226,6 +1249,14 @@ impl<'a> CarDecoder<'a> {
     pub fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
+    }
+    #[inline]
+    pub fn activation_code_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
+        Ok(self.activation_code_as_str()?.to_string())
+    }
+    #[inline]
+    pub fn activation_code_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.activation_code()
     }
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -2276,12 +2307,17 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group);
+        let __pos;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut group = FuelFiguresEncoder::wrap(__buf, self.pos + 4, count);
+            f(&mut group);
+            __pos = group.pos;
+        }
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: group.pos,
+            pos: __pos,
             _phantom: core::marker::PhantomData,
         })
     }
@@ -2308,12 +2344,17 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group);
+        let __pos;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut group = PerformanceFiguresEncoder::wrap(__buf, self.pos + 4, count);
+            f(&mut group);
+            __pos = group.pos;
+        }
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: group.pos,
+            pos: __pos,
             _phantom: core::marker::PhantomData,
         })
     }
@@ -2545,10 +2586,13 @@ impl<'a> FuelFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        let mut entry = FuelFiguresEntryEncoder::wrap(self.buf, self.pos);
-        f(&mut entry);
-        self.pos = entry.pos;
-        self.written += 1;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
+            f(&mut entry);
+            self.pos = entry.pos;
+            self.written += 1;
+        }
         Ok(())
     }
 }
@@ -2640,10 +2684,13 @@ impl<'a> PerformanceFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        let mut entry = PerformanceFiguresEntryEncoder::wrap(self.buf, self.pos);
-        f(&mut entry);
-        self.pos = entry.pos;
-        self.written += 1;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
+            f(&mut entry);
+            self.pos = entry.pos;
+            self.written += 1;
+        }
         Ok(())
     }
 }
@@ -2688,9 +2735,12 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&AccelerationEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group);
-        self.pos = group.pos;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut group = AccelerationEncoder::wrap(__buf, self.pos + 4, count);
+            f(&mut group);
+            self.pos = group.pos;
+        }
         Ok(self)
     }
 }
@@ -2732,10 +2782,13 @@ impl<'a> AccelerationEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        let mut entry = AccelerationEntryEncoder::wrap(self.buf, self.pos);
-        f(&mut entry);
-        self.pos = entry.pos;
-        self.written += 1;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut entry = AccelerationEntryEncoder::wrap(__buf, self.pos);
+            f(&mut entry);
+            self.pos = entry.pos;
+            self.written += 1;
+        }
         Ok(())
     }
 }
@@ -2846,6 +2899,12 @@ pub mod car_field_meta {
 }
 pub const SEMANTIC_VERSION: &str = "5.2";
 pub const SCHEMA_HASH: u64 = 11133254787130522899;
+pub const SCHEMA_SHA256: [u8; 32] = [
+    0x87, 0x00, 0x80, 0x7e, 0x31, 0xaa, 0x76, 0x0a, 0xda, 0xcc, 0xdf, 0x31, 0xb4, 0xb9,
+    0xda, 0xae, 0xc3, 0x7c, 0xec, 0x2c, 0x94, 0xb5, 0x7c, 0x76, 0xc8, 0xa6, 0x32, 0x74,
+    0xab, 0x9f, 0x0a, 0x21,
+];
+pub const SCHEMA_SHA256_HEX: &str = "8700807e31aa760adaccdf31b4b9daaec37cec2c94b57c76c8a63274ab9f0a21";
 #[inline]
 pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     if buf.len() < 4 + 2 {
@@ -3047,7 +3106,7 @@ impl<'a> AnyMessage<'a> {
                         available: buf.len() - pos,
                     });
                 }
-                let payload = &buf[body_pos..pos + frame_len];
+                let payload = &buf[pos..pos + frame_len];
                 Ok(DecodedFrame {
                     message: Self::Unknown { header, payload },
                     range: pos..pos + frame_len,
@@ -3056,8 +3115,35 @@ impl<'a> AnyMessage<'a> {
             }
         }
     }
+    #[inline]
+    pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
+        match self {
+            Self::Car(d) => d.encoded_length_with_header(),
+            Self::Unknown { payload, .. } => Ok(payload.len()),
+        }
+    }
+    #[inline]
+    pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        match self {
+            Self::Car(d) => d.as_bytes(),
+            Self::Unknown { payload, .. } => Ok(payload),
+        }
+    }
+    #[inline]
+    pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
+        match self {
+            Self::Car(d) => {
+                let len = d.encoded_length_with_header()?;
+                buf[..len].copy_from_slice(d.as_bytes()?);
+                Ok(len)
+            }
+            Self::Unknown { payload, .. } => {
+                buf[..payload.len()].copy_from_slice(payload);
+                Ok(payload.len())
+            }
+        }
+    }
 }
-
 pub trait MessageVisitor {
     type Output;
     fn visit_car(&mut self, decoder: &CarDecoder<'_>) -> Self::Output;

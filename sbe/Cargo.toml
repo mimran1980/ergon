@@ -27,6 +27,7 @@ syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 prettyplease = "0.2"
+sha2 = "0.10"
 
 [[bench]]
 name = "decode_bench"

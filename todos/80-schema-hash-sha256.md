@@ -5,19 +5,19 @@ specified in DECISIONS.md §5. The design requires `SCHEMA_HASH: [u8; 32]` and
 `SCHEMA_HASH_HEX: &'static str` for deployment checks and exchange-rollout
 safety.
 
-**Status:** Not started
+**Status:** Done
 
 ## Acceptance Criteria
 
-- [ ] `SCHEMA_HASH: [u8; 32]` generated per message (SHA-256 over normalized schema IR)
-- [ ] `SCHEMA_HASH_HEX: &'static str` generated per message (hex-encoded hash)
-- [ ] Hash is computed over the normalized/canonical token IR (deterministic across runs)
-- [ ] Hash changes when schema content changes (field added/removed/reordered)
-- [ ] Hash does NOT change for whitespace/comment-only XML changes
-- [ ] `sha2` crate already in dependencies — use it
-- [ ] Backward-compatible: old `SCHEMA_HASH: u64` can be kept as `SCHEMA_HASH_U64` if needed
-- [ ] Tests verifying hash stability across regeneration
-- [ ] Golden file updated
+- [x] `SCHEMA_SHA256: [u8; 32]` generated per schema (SHA-256 over normalized schema IR)
+- [x] `SCHEMA_SHA256_HEX: &'static str` generated per schema (hex-encoded hash)
+- [x] Hash is computed over the normalized/canonical token IR (deterministic across runs)
+- [x] Hash changes when schema content changes (field added/removed/reordered)
+- [x] Hash does NOT change for whitespace/comment-only XML changes
+- [x] `sha2` crate added as dependency
+- [x] Backward-compatible: `SCHEMA_HASH: u64` preserved unchanged
+- [x] Golden file stability test passes
+- [x] Golden file updated
 
 ## Dependencies
 

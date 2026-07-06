@@ -22,8 +22,9 @@
 
 use std::collections::HashSet;
 
-use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal, Token};
+use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use crate::{GenerationConfig, Schema};
+use sha2::{Digest, Sha256};
 
 /// A single generated Rust module.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -233,7 +234,7 @@ impl Generator {
             generate_message_field_meta(&mut src, msg);
         }
 
-        // 7. Generate schema-level constants — SEMANTIC_VERSION, SCHEMA_HASH
+        // 7. Generate schema-level constants — SEMANTIC_VERSION, SCHEMA_HASH, SCHEMA_SHA256, SCHEMA_SHA256_HEX
         if let Some(ref sem_ver) = schema.ir.semantic_version {
             src.push_str(&format!(
                 "pub const SEMANTIC_VERSION: &str = \"{}\";\n\n",
@@ -245,7 +246,18 @@ impl Generator {
             "pub const SCHEMA_HASH: u64 = {};\n\n",
             schema_hash
         ));
-
+        let sha256_hash = compute_schema_sha256(&schema.ir);
+        src.push_str("pub const SCHEMA_SHA256: [u8; 32] = [");
+        for (i, &b) in sha256_hash.iter().enumerate() {
+            if i > 0 { src.push_str(", "); }
+            src.push_str(&format!("0x{:02x}", b));
+        }
+        src.push_str("];\n\n");
+        let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
+        src.push_str(&format!(
+            "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n",
+            hex
+        ));
         // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
@@ -4352,6 +4364,116 @@ fn compute_schema_hash(package: &str, id: u16, version: u16) -> u64 {
         hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
+}
+
+
+/// Compute SHA-256 hash of the canonical schema IR.
+fn compute_schema_sha256(ir: &Ir) -> [u8; 32] {
+    let canonical = canonical_schema_bytes(ir);
+    let mut hasher = Sha256::new();
+    hasher.update(&canonical);
+    let result = hasher.finalize();
+    result.into()
+}
+
+/// Serialize the schema IR to a canonical byte sequence for hashing.
+/// The output is deterministic for the same IR content.
+fn canonical_schema_bytes(ir: &Ir) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    // Schema identity
+    extend_str(&mut buf, &ir.package);
+    buf.extend_from_slice(&ir.id.to_le_bytes());
+    buf.extend_from_slice(&ir.version.to_le_bytes());
+    buf.push(match ir.byte_order {
+        ByteOrder::LittleEndian => 0,
+        ByteOrder::BigEndian => 1,
+    });
+    extend_opt_str(&mut buf, ir.description.as_deref());
+    extend_opt_str(&mut buf, ir.semantic_version.as_deref());
+    extend_str(&mut buf, &ir.header_type);
+
+    // Tokens
+    for token in &ir.tokens {
+        buf.push(token.signal as u8);
+        extend_str(&mut buf, &token.name);
+        match token.id {
+            Some(id) => {
+                buf.push(1);
+                buf.extend_from_slice(&id.to_le_bytes());
+            }
+            None => buf.push(0),
+        }
+
+        // Encoding
+        match token.encoding.primitive_type {
+            Some(pt) => {
+                buf.push(1);
+                buf.push(pt as u8);
+            }
+            None => buf.push(0),
+        }
+        buf.push(token.encoding.presence as u8);
+        buf.extend_from_slice(&token.encoding.since_version.to_le_bytes());
+        match token.encoding.null_value {
+            Some(nv) => {
+                buf.push(1);
+                buf.extend_from_slice(&nv.to_le_bytes());
+            }
+            None => buf.push(0),
+        }
+        extend_opt_str(&mut buf, token.encoding.character_encoding.as_deref());
+        extend_opt_str(&mut buf, token.encoding.semantic_type.as_deref());
+        match token.encoding.min_value {
+            Some(mv) => {
+                buf.push(1);
+                buf.extend_from_slice(&mv.to_le_bytes());
+            }
+            None => buf.push(0),
+        }
+        match token.encoding.max_value {
+            Some(mv) => {
+                buf.push(1);
+                buf.extend_from_slice(&mv.to_le_bytes());
+            }
+            None => buf.push(0),
+        }
+        extend_opt_str(&mut buf, token.encoding.description.as_deref());
+        extend_opt_str(&mut buf, token.encoding.constant_value.as_deref());
+        match token.encoding.length {
+            Some(len) => {
+                buf.push(1);
+                buf.extend_from_slice(&(len as u64).to_le_bytes());
+            }
+            None => buf.push(0),
+        }
+        match token.encoding.offset {
+            Some(off) => {
+                buf.push(1);
+                buf.extend_from_slice(&(off as u64).to_le_bytes());
+            }
+            None => buf.push(0),
+        }
+    }
+
+    buf
+}
+
+/// Append a null-terminated string to the canonical hash input.
+fn extend_str(buf: &mut Vec<u8>, s: &str) {
+    buf.extend_from_slice(s.as_bytes());
+    buf.push(0);
+}
+
+/// Append an optional null-terminated string (presence-tagged).
+fn extend_opt_str(buf: &mut Vec<u8>, s: Option<&str>) {
+    match s {
+        Some(s) => {
+            buf.push(1);
+            extend_str(buf, s);
+        }
+        None => buf.push(0),
+    }
 }
 
 /// Generate a `field_meta` module for a message, exposing field metadata
