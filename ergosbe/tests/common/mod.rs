@@ -146,18 +146,6 @@ pub fn assert_source_ok(src: &str, expected: &[&str]) {
 pub fn patch_source(src: &str) -> String {
     let mut s = src.to_string();
 
-    // Bug 1: default value has stray offset instead of type name
-    s = s.replace("return Ok(36([0u8; 7]))", "return Ok(Engine([0u8; 7]))");
-
-    // Bug 2: wrong body offset in engine() (43 instead of 35)
-    s = s.replace(
-        "let offset = self.pos + 43;\n        if offset + 7 > self.buf.len()",
-        "let offset = self.pos + 35;\n        if offset + 7 > self.buf.len()",
-    );
-
-    // Bug 3: Engine type used as array length
-    s = s.replace("[0u8; Engine]", "[0u8; 7]");
-
     // Bug 6 (E0499): use unsafe pointer cast to decouple the encoder's buffer
     // lifetime from self.buf, so self.buf is available after the closure.
     // The safety-critical `'a` lifetime parameter makes a normal reborrow
