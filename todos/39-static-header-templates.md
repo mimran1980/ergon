@@ -33,4 +33,4 @@ byte region.
 
 
 ## Verification / Unit Testing
-- [ ] Create unit tests `test_static_header_templates` verifying that `HEADER_TEMPLATE` and `GROUP_DIM_TEMPLATE` contain the correct pre-encoded header bytes.
+- [x] Create unit tests `test_static_header_templates` (`static_header_templates_exist`) verifying that `HEADER_TEMPLATE` and `GROUP_DIM_TEMPLATE` contain the correct pre-encoded header bytes, and that `wrap_and_apply_header` writes them via `copy_from_slice`.

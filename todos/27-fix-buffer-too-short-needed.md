@@ -44,4 +44,4 @@ Discovered by: generated code review agent (todos/11-generated-code-review).
 
 
 ## Verification / Unit Testing
-- [ ] Create unit tests `test_buffer_too_short_exact_needed` verifying that `needed` and `available` are accurately populated in all buffer too short scenarios.
+- [x] Create unit tests `test_buffer_too_short_exact_needed` (`buffer_too_short_needed_delta`) verifying that `needed` and `available` are accurately populated in all buffer too short scenarios.

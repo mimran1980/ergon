@@ -34,4 +34,6 @@ Ref: `design/DECISIONS.md` §10 codegen rules. `simple-binary-encoding/sbe-tool/
 
 
 ## Verification / Unit Testing
+- [x] Verify `#[inline]` annotations exist on decoder field accessors, group decoder methods, and encoder entry points (`generated_code_has_inline_annotations`).
+- [x] Verify `#[must_use]` annotations exist on encoder structs, group encoder structs, setters, and `Result`-returning methods (`generated_code_has_must_use_annotations`).
 - [ ] Verify that the compiler emits unused warnings if an encoder or its return is dropped without calling completion methods.

@@ -867,3 +867,271 @@ fn bounds_checking_switch() {
     compile_and_run("bndchk_off", &src, test_body);
     compile_and_run_with_feature("bndchk_on", &src, test_body, "bound-check-disabled");
 }
+
+// ── BufferTooShort needed: field size, not absolute position (todo 27) ──
+
+#[test]
+fn buffer_too_short_needed_delta() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+
+    // Source-level: ALL BufferTooShort error constructions must use a delta
+    // (field size, block length, etc.) for `needed`, NOT an absolute buffer
+    // position.  Reject patterns like `needed: self.pos + ...` or
+    // `needed: offset + FIELD_SIZE` that would depend on position.
+    for line in src.lines() {
+        if line.contains("BufferTooShort") && line.contains("needed:") {
+            assert!(
+                !line.contains("needed: self.pos") && !line.contains("needed: offset +"),
+                "BufferTooShort `needed` must be field size (delta), \
+                 not an absolute position:\n  {line}"
+            );
+        }
+    }
+
+    // Runtime: verify needed/available at the call site using to_string()
+    // on the error type (Display shows the values).
+    compile_and_run(
+        "bts_delta",
+        &src,
+        r#"
+        // 1. Decoder: header buffer too short (buf has 3 bytes, header needs 8)
+        let buf = vec![0u8; 3];
+        let Err(err) = CarDecoder::wrap_and_apply_header(&buf, 0) else { panic!("expected Err") };
+        let msg = err.to_string();
+        assert!(msg.contains("needed 8"), "header decoder: expected needed 8, got: {msg}");
+        assert!(msg.contains("3 available"), "header decoder: expected 3 available, got: {msg}");
+
+        // 2. Decoder: body field too short.  Header fits in 10 bytes, but
+        //    serial_number (u64 = 8 bytes) needs more.  needed must be the
+        //    field size (8), NOT an absolute position (8+8=16).
+        //    Pre-populate valid header bytes so wrap_and_apply_header
+        //    doesn't fail with WrongSchema.
+        let buf = vec![41u8, 0, 1, 0, 1, 0, 0, 0, 0, 0];
+        let car = CarDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let err = car.serial_number().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("needed 8"), "serial_number: expected needed 8 (u64 field size), got: {msg}");
+        assert!(msg.contains("2 available"), "serial_number: expected 2 available (10-8), got: {msg}");
+
+        // 3. Encoder: header buffer too short.  needed = header + blockLength
+        //    = 8 + 41 = 49, NOT the absolute position.
+        let mut buf = vec![0u8; 3];
+        let Err(err) = CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::wrap_and_apply_header(&mut buf, 0) else { panic!("expected Err") };
+        let msg = err.to_string();
+        assert!(msg.contains("needed 49"), "encode: expected needed 49 (header 8 + blockLength 41), got: {msg}");
+        assert!(msg.contains("available 3"), "encode: expected available 3, got: {msg}");
+    "#,
+    );
+}
+
+// ── #[inline] on generated methods (todo 28) ────────────────────────────
+
+#[test]
+fn generated_code_has_inline_annotations() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+
+    // Count total #[inline] annotations across all generated methods.
+    let count = src.matches("#[inline]").count();
+    assert!(
+        count >= 50,
+        "expected >=50 #[inline] annotations across decoder/encoder/group \
+         methods in the car example, found {count}"
+    );
+
+    // Spot-check that #[inline] precedes key method signatures.
+    // Use line windows to handle varying indentation in the generated source.
+    let lines: Vec<&str> = src.lines().collect();
+    let inline_followed_by: Vec<&str> = lines
+        .windows(2)
+        .filter(|w| w[0].trim() == "#[inline]")
+        .map(|w| w[1].trim())
+        .collect();
+
+    // Decoder checked accessor
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub const fn serial_number(")),
+        "decoder checked accessor `serial_number` missing #[inline]"
+    );
+    // Decoder unchecked accessor
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub const unsafe fn serial_number_unchecked(")),
+        "decoder unchecked accessor `serial_number_unchecked` missing #[inline]"
+    );
+    // Decoder raw accessor
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub const fn raw_serial_number(")),
+        "decoder raw accessor `raw_serial_number` missing #[inline]"
+    );
+
+    // Group decoder methods
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.contains("fn fuel_figures(")),
+        "group decoder accessor `fuel_figures` missing #[inline]"
+    );
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.contains("fn is_empty(")),
+        "group decoder `is_empty` missing #[inline]"
+    );
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.contains("fn as_chunks(")),
+        "group decoder `as_chunks` missing #[inline]"
+    );
+    // Group decoder wrap (function signature is `pub fn wrap(buf: ...)` inside
+    // `impl<...> FuelFiguresDecoder<...>` -- no "Decoder" in the fn line itself)
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| !s.starts_with("pub fn encoded_length")
+                && s.contains("fn wrap(")
+                && s.contains("acting_version")),
+        "group decoder `wrap` missing #[inline]"
+    );
+
+    // Encoder entry-point methods
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.ends_with("fn wrap_and_apply_header(")),
+        "encoder `wrap_and_apply_header` missing #[inline]"
+    );
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub fn encoded_length(")
+                || s.starts_with("pub fn encoded_length_with_header(")),
+        "encoder `encoded_length` missing #[inline]"
+    );
+}
+
+// ── #[must_use] on encoder types and methods (todo 28) ──────────────────
+
+#[test]
+fn generated_code_has_must_use_annotations() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+
+    let count = src.matches("#[must_use]").count();
+    assert!(
+        count >= 20,
+        "expected >=20 #[must_use] annotations on encoder types/methods \
+         in the car example, found {count}"
+    );
+
+    let lines: Vec<&str> = src.lines().collect();
+    let must_use_followed_by: Vec<&str> = lines
+        .windows(2)
+        .filter(|w| w[0].trim() == "#[must_use]")
+        .map(|w| w[1].trim())
+        .collect();
+
+    // #[must_use] on encoder struct type
+    assert!(
+        must_use_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub struct CarEncoder<")),
+        "CarEncoder struct missing #[must_use]"
+    );
+    assert!(
+        must_use_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub struct FuelFiguresEncoder<")),
+        "FuelFiguresEncoder struct missing #[must_use]"
+    );
+
+    // #[must_use] on encoder setters returning &mut Self
+    assert!(
+        must_use_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub fn serial_number(") && s.contains("&mut Self")),
+        "encoder serial_number setter missing #[must_use]"
+    );
+    assert!(
+        must_use_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub fn model_year(") && s.contains("&mut Self")),
+        "encoder model_year setter missing #[must_use]"
+    );
+
+    // #[must_use] on Result-returning encoder methods
+    // After prettyplease formatting, `Result` is on the next line,
+    // so only check for the function name.
+    assert!(
+        must_use_followed_by
+            .iter()
+            .any(|s| s.contains("fn fuel_figures<")),
+        "encoder group method `fuel_figures` missing #[must_use]"
+    );
+    assert!(
+        must_use_followed_by
+            .iter()
+            .any(|s| s.starts_with("pub fn add<") && s.contains("Result")),
+        "group encoder `add()` missing #[must_use]"
+    );
+}
+
+// ── Static HEADER_TEMPLATE and GROUP_DIM_TEMPLATE (todo 39) ──────────
+
+#[test]
+fn static_header_templates_exist() {
+    let (_schema, src) = generate(&Paths::example_schema(), "static_tpl");
+
+    // Source: verify const declarations
+    assert!(
+        src.contains("pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];"),
+        "HEADER_TEMPLATE must contain correct pre-computed header bytes \
+         (blockLength=41, templateId=1, schemaId=1, version=0, little-endian)"
+    );
+    assert!(
+        src.contains("pub const GROUP_DIM_TEMPLATE: [u8; 4] ="),
+        "GROUP_DIM_TEMPLATE must exist as a [u8; 4] constant"
+    );
+
+    // wrap_and_apply_header must use copy_from_slice from HEADER_TEMPLATE
+    assert!(
+        src.contains("buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE)"),
+        "wrap_and_apply_header must use copy_from_slice from HEADER_TEMPLATE"
+    );
+
+    // Group encoder must use copy_from_slice from its GROUP_DIM_TEMPLATE
+    assert!(
+        src.contains(".copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE)"),
+        "group encoder must use copy_from_slice from its GROUP_DIM_TEMPLATE"
+    );
+
+    // Runtime: wrap_and_apply_header writes HEADER_TEMPLATE bytes correctly
+    compile_and_run(
+        "static_tpl",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 512];
+        // Drop the encoder immediately to release the mutable borrow,
+        // then verify header bytes were written correctly.
+        let _ = CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::wrap_and_apply_header(&mut buf, 0).unwrap();
+        assert_eq!(
+            &buf[0..8],
+            &CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::HEADER_TEMPLATE,
+            "wrap_and_apply_header must write HEADER_TEMPLATE bytes"
+        );
+        // Verify the template bytes are semantically correct
+        let block_len = u16::from_le_bytes([buf[0], buf[1]]);
+        let template_id = u16::from_le_bytes([buf[2], buf[3]]);
+        let schema_id = u16::from_le_bytes([buf[4], buf[5]]);
+        let version = u16::from_le_bytes([buf[6], buf[7]]);
+        assert_eq!(block_len, 41, "header blockLength must be 41");
+        assert_eq!(template_id, 1, "header templateId must be 1");
+        assert_eq!(schema_id, 1, "header schemaId must be 1");
+        assert_eq!(version, 0, "header version must be 0");
+    "#,
+    );
+}

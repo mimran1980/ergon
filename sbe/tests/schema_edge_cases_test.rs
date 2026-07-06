@@ -383,4 +383,3 @@ fn constant_enum_fields_types_exist() {
         ],
     );
 }
-
