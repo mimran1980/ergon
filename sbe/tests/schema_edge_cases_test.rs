@@ -303,3 +303,67 @@ fn block_length_schema_types_exist() {
         ],
     );
 }
+
+// ── todo 101: Gap coverage tests ──────────────────────────────────────
+
+/// UTF-16 var-data encoding: verify schema parses and generates valid Rust.
+/// The generated code currently hardcodes `core::str::from_utf8` for var-data
+/// accessors, so UTF-16 decoding will fail at runtime. This test asserts the
+/// structural gap: valid schema, valid Rust output, no UTF-16-specific method.
+#[test]
+fn utf16_encoding_types_exist() {
+    assert_tool_schema(
+        "utf16",
+        "utf16-test-schema.xml",
+        &[
+            "Utf16MessageDecoder",
+            "Utf16MessageEncoder",
+            "VarDataEncoding",
+            "AsciiDataEncoding",
+        ],
+    );
+}
+
+/// Unit attribute: verify schema with `unit` on types parses successfully.
+/// The `unit` attribute is currently NOT stored in the IR or emitted into
+/// generated `field_meta`. This test asserts the schema parses and produces
+/// valid Rust despite the gap. The generated code should include
+/// `FIELD_MIN` / `FIELD_MAX` constants for types with `minValue`/`maxValue`.
+#[test]
+fn unit_attribute_types_exist() {
+    assert_tool_schema(
+        "unit_attr",
+        "unit-attribute-test-schema.xml",
+        &[
+            "TradeMessageDecoder",
+            "TradeMessageEncoder",
+            "PRICE_MIN",
+            "PRICE_MAX",
+            "QUANTITY_MIN",
+            "QUANTITY_MAX",
+            "PERCENTAGE_MIN",
+            "PERCENTAGE_MAX",
+        ],
+    );
+}
+
+/// Group entry with versioned fields: verify schema parses and generates
+/// valid Rust. The generated `EntryDecoder::skip()` currently ignores the
+/// wire `block_len` from the dimension header and uses the compiled
+/// `ENTRY_BLOCK_LENGTH` constant — a classic SBE versioning bug.
+/// This test asserts structural validity; a full wire-parity test will
+/// need a binary fixture encoded at an earlier schema version.
+#[test]
+fn group_extension_types_exist() {
+    assert_tool_schema(
+        "grp_ext",
+        "group-extension-test-schema.xml",
+        &[
+            "GroupExtensionMessageDecoder",
+            "GroupExtensionMessageEncoder",
+            "EntriesDecoder",
+            "EntriesEntryDecoder",
+            "ENTRY_BLOCK_LENGTH",
+        ],
+    );
+}

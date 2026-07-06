@@ -2166,9 +2166,9 @@ fn generate_message_decoder(
                         order_suffix
                     ));
                 }
-                emit_field_consts(src, f);
             }
         }
+        emit_field_consts(src, f);
     }
 
     // Tail Offsets Helpers
@@ -3036,7 +3036,6 @@ fn generate_group_decoder(
                     f_name, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
                     field_name = f.name
                 ));
-                emit_field_consts(src, f);
 
                 src.push_str(&format!(
                     "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
@@ -3059,6 +3058,7 @@ fn generate_group_decoder(
                 ));
             }
         }
+        emit_field_consts(src, f);
     }
 
     // Group entry tail offsets
