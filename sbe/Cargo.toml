@@ -70,5 +70,8 @@ name = "stability_test"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true

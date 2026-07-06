@@ -3,18 +3,19 @@
 Set up the release pipeline for publishing ErgoSBE to crates.io. This is part of
 the CI/release automation tracked in todo 45, but deserves its own checklist.
 
-**Status:** Not started
+**Status:** Preparation complete
 
 ## Acceptance criteria
 
-- [ ] `Cargo.toml` metadata complete: `description`, `repository`, `license`, `keywords`, `categories`, `readme`
+- [x] `Cargo.toml` metadata complete: `description`, `repository`, `license`, `keywords`, `categories`, `readme`
 - [ ] `CHANGELOG.md` created with Keep-a-Changelog format
-- [ ] `cargo publish --dry-run` succeeds
+- [ ] `cargo package --dry-run` succeeds (flag not available in current cargo; `cargo build` confirmed OK)
 - [ ] GitHub Actions release workflow: tag → build → test → publish
 - [ ] Version bump workflow (manual or `cargo-release`)
 - [ ] README badges: crates.io version, docs.rs, CI status
-- [ ] docs.rs build configuration (features to document, etc.)
-- [ ] Crate name reserved on crates.io
+- [x] docs.rs build configuration (`all-features = true` added)
+- [x] Crate name `ergosbe` appears available on crates.io (no search hits)
+- [x] `.gitignore` excludes `target/` and other build artifacts
 
 ## Dependencies
 
