@@ -40,6 +40,33 @@ harness = false
 name = "throughput_bench"
 harness = false
 
+[[test]]
+name = "smoke_test"
+
+[[test]]
+name = "baseline_test"
+
+[[test]]
+name = "benchmark_test"
+
+[[test]]
+name = "error_validation_test"
+
+[[test]]
+name = "integration_tests"
+
+[[test]]
+name = "issue_regression_test"
+
+[[test]]
+name = "proptest_roundtrip"
+
+[[test]]
+name = "schema_edge_cases_test"
+
+[[test]]
+name = "stability_test"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 

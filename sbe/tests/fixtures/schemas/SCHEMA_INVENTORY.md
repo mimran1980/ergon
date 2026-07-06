@@ -161,10 +161,10 @@ Stats:
 - **92 messages** -- REST API responses (NewOrderResponse, ExchangeInfoResponse,
   DepthResponse, etc.) and WebSocket events (ExecutionReportEvent,
   BalanceUpdateEvent, etc.)
+- **57 groups** (message-level repeating groups), **131 var-data fields**
 - **284** `presence="optional"` fields -- heavily uses optional fields with null values
 - **81** elements with `sinceVersion`
 - Uses XInclude for type definitions
-- No groups or var-data fields
 - Schema evolution via both `sinceVersion` on individual fields and
   schema-level `version` attribute
 
@@ -351,7 +351,7 @@ ErgoSBE implementation status. Use this to identify gaps.
 | `presence="constant"` | ilinkbinary, FixBinary, car | Works |
 | Constant enums | All schemas with enums | Works |
 | XInclude | Binance, FIX examples, example-schema | Implemented |
-| Namespace prefixes | FixBinary (ns2:message), ilinkbinary | TBD |
+| Namespace prefixes | FixBinary (ns2:message), ilinkbinary | Works (proven by successful parse) |
 | Big-endian byte order | example-bigendian-test-schema | TBD |
 | Custom header type | custom-header-type.xml | TBD |
 | Custom dimension type | ilinkbinary, various | TBD |
@@ -361,3 +361,43 @@ ErgoSBE implementation status. Use this to identify gaps.
 | Composites with sinceVersion | ilinkbinary | TBD |
 | Individual field with offset | All messages | Works |
 | Embedded dimension type | embedded-length-and-count-schema | TBD |
+
+---
+
+## 8. Smoke Test Verification
+
+A smoke test (`sbe/tests/smoke_test.rs`) iterates over all 19 XML files in the
+fixtures directory and parses each one via `ergosbe::parse_file()`. The test:
+
+- **Parses** 11 schemas successfully (5 intentionally-invalid + 3 include-only fragments
+  are skipped).
+- **Counts** messages, groups, enums, sets, composites, var-data, and total IR tokens.
+- **Verifies** that generated Rust output (`Generator::generate()`) is syntactically valid
+  via `syn::parse_file()` for all 11 schemas.
+
+### Verified parse + codegen results
+
+| Schema | Messages | Groups | Enums | Sets | Composites | Var-data | Tokens | Code size |
+|--------|----------|--------|-------|------|------------|----------|--------|-----------|
+| `ilinkbinary.xml` | 48 | 33 | 311 | 13 | 99 | 3 | 4473 | 2.6 MB |
+| `FixBinary.xml` | 29 | 53 | 73 | 41 | 156 | 0 | 3252 | 1.7 MB |
+| `cme_templates_FixBinary.xml` | 31 | 56 | 90 | 40 | 160 | 0 | 3633 | 1.8 MB |
+| `binance_spot_3_5.xml` | 92 | 57 | 263 | 5 | 200 | 131 | 5655 | 3.2 MB |
+| `fix-message-samples.xml` | 6 | 4 | 57 | 4 | 27 | 0 | 796 | 337 KB |
+| `fix_examples_v2rc3.xml` | 0 | 0 | 6 | 0 | 6 | 0 | 92 | 29 KB |
+| `car.xml` | 1 | 3 | 4 | 2 | 11 | 2 | 148 | 88 KB |
+| `example-schema.xml` | 1 | 3 | 5 | 2 | 15 | 4 | 181 | 96 KB |
+| `nested-group-schema.xml` | 1 | 3 | 0 | 0 | 5 | 0 | 50 | 52 KB |
+| `new-order-single-schema.xml` | 1 | 0 | 4 | 0 | 6 | 0 | 80 | 41 KB |
+| `sbe-ir.xml` | 2 | 0 | 8 | 0 | 18 | 15 | 256 | 128 KB |
+
+Note: enum/composite token counts in parsed IR exceed raw `<enum>`/`<composite>` element
+counts because the IR emits `BeginEnum`/`EndEnum` for every enum *usage* site (including
+references inside composites and messages), not just top-level definitions. The smoke test
+counts IR signals, not XML elements, so these totals represent the full resolved token
+stream.
+
+### Corrected schema stats
+
+The smoke test discovered that the Binance schema contains 57 groups and 131 var-data
+fields — earlier analysis had incorrectly reported "no groups or var-data fields."

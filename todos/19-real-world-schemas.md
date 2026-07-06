@@ -47,12 +47,20 @@ Key findings:
 ## Acceptance criteria
 
 - [x] **RESEARCH COMPLETE** - 9 schemas identified and cataloged
-- [ ] All 6+ schemas parse without errors (after XInclude support)
-- [ ] Generate Rust code for all messages in each schema
-- [ ] Generated code compiles cleanly
+- [x] **All 11 parseable schemas parse without errors** — verified in `sbe/tests/smoke_test.rs`
+  - 6 real-world schemas: ilinkbinary (286 KB, 48 msgs), FixBinary v9 (127 KB, 29 msgs),
+    cme_templates_FixBinary v13 (147 KB, 31 msgs), binance_spot_3_5 (141 KB, 92 msgs),
+    fix-message-samples (21 KB, 6 msgs), fix_examples_v2rc3 with XInclude (7.5 KB)
+  - 5 test schemas: car, example-schema, nested-group-schema, new-order-single, sbe-ir
+  - 5 intentionally-invalid schemas (skip — tested in error_validation_test)
+  - 3 include-only fragments (skip — need a parent schema)
+- [x] **Generate valid Rust for all messages** — verified via `syn::parse_file` on output of
+  all 11 schemas. Binance_spot (92 msgs, 3.2 MB code), ilinkbinary (48 msgs, 2.6 MB),
+  FixBinary (29 msgs, 1.7 MB), cme_FixBinary (31 msgs, 1.8 MB) all produce syntactically-valid Rust.
+- [ ] Generated code compiles cleanly (needs codegen patches applied — see `patch_source()`)
 - [ ] Round-trip encode→decode→semantic-equal for at least one message per schema
 - [ ] Check generated code for hand-audit quality: no `[u8; 0]`, no type-name-as-array-size
-- [ ] Document any schema features that ErgoSBE cannot yet handle
+- [x] **Schema features documented** — see `SCHEMA_INVENTORY.md` §7 for feature checklist
 
 Ref: `simple-binary-encoding/sbe-tool/src/test/resources/`,
 `simple-binary-encoding/sbe-benchmarks/src/main/resources/`.
