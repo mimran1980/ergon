@@ -2792,6 +2792,30 @@ fn generate_group_decoder(
                             f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix, null_check,
                             field_name = f.name
                         ));
+
+                        src.push_str(&format!(
+                            "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> Option<{}> {{\n\
+                                     let offset = self.pos + {};\n\
+                                     let mut bytes = [0u8; {}];
+
+                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                                     let val = {}::from_{}_bytes(bytes);\n\
+                                     if {} {{\n\
+                                         None\n\
+                                     }} else {{\n\
+                                         Some(val)\n\
+                                     }}\n\
+                                 }}\n\n",
+                            f_name, r_type, offset, prim_size, prim_size, r_type, order_suffix, null_check,
+                        ));
+
+                        src.push_str(&format!(
+                            "#[inline]\n    pub const fn raw_{}(&self) -> Option<{}> {{\n\
+                                     #[allow(unused_unsafe)]\n\
+                                     unsafe {{ self.{}_unchecked() }}\n\
+                                 }}\n\n",
+                            f_name, r_type, f_name,
+                        ));
                     } else {
                         src.push_str(&format!(
                             "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
@@ -2810,26 +2834,26 @@ fn generate_group_decoder(
                             f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix,
                             field_name = f.name
                         ));
+
+                        src.push_str(&format!(
+                            "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                                     let offset = self.pos + {};\n\
+                                     let mut bytes = [0u8; {}];
+
+                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                                     {}::from_{}_bytes(bytes)\n\
+                                 }}\n\n",
+                            f_name, r_type, offset, prim_size, prim_size, r_type, order_suffix
+                        ));
+
+                        src.push_str(&format!(
+                            "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
+                                     #[allow(unused_unsafe)]\n\
+                                     unsafe {{ self.{}_unchecked() }}\n\
+                                 }}\n\n",
+                            f_name, r_type, f_name
+                        ));
                     }
-
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                                 let offset = self.pos + {};\n\
-                                 let mut bytes = [0u8; {}];
-
-                                 bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                 {}::from_{}_bytes(bytes)\n\
-                             }}\n\n",
-                        f_name, r_type, offset, prim_size, prim_size, r_type, order_suffix
-                    ));
-
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
-                                 #[allow(unused_unsafe)]\n\
-                                 unsafe {{ self.{}_unchecked() }}\n\
-                             }}\n\n",
-                        f_name, r_type, f_name
-                    ));
                 }
             }
             FieldType::Composite {
@@ -2853,6 +2877,25 @@ fn generate_group_decoder(
                          }}\n\n",
                     f_name, target_name, offset, comp_size, comp_size, comp_size, comp_size, target_name,
                     field_name = f.name
+                ));
+
+                src.push_str(&format!(
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             let mut bytes = [0u8; {}];
+
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                             {}(bytes)\n\
+                         }}\n\n",
+                    f_name, target_name, offset, comp_size, comp_size, target_name
+                ));
+
+                src.push_str(&format!(
+                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
+                             #[allow(unused_unsafe)]\n\
+                             unsafe {{ self.{}_unchecked() }}\n\
+                         }}\n\n",
+                    f_name, target_name, f_name
                 ));
             }
             FieldType::Enum {
@@ -2879,6 +2922,26 @@ fn generate_group_decoder(
                          }}\n\n",
                     f_name, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
                     field_name = f.name
+                ));
+
+                src.push_str(&format!(
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             let mut bytes = [0u8; {}];
+
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                             {}({}::from_{}_bytes(bytes))\n\
+                         }}\n\n",
+                    f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
+                ));
+
+                // raw_ for enum returns the raw discriminant value
+                src.push_str(&format!(
+                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
+                             #[allow(unused_unsafe)]\n\
+                             unsafe {{ self.{}_unchecked().0 }}\n\
+                         }}\n\n",
+                    f_name, r_type, f_name
                 ));
             }
             FieldType::Set {
@@ -2907,6 +2970,26 @@ fn generate_group_decoder(
                     field_name = f.name
                 ));
                 emit_field_consts(src, f);
+
+                src.push_str(&format!(
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             let mut bytes = [0u8; {}];
+
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                             {}({}::from_{}_bytes(bytes))\n\
+                         }}\n\n",
+                    f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
+                ));
+
+                // raw_ for set returns the raw bitmask value
+                src.push_str(&format!(
+                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
+                             #[allow(unused_unsafe)]\n\
+                             unsafe {{ self.{}_unchecked().0 }}\n\
+                         }}\n\n",
+                    f_name, r_type, f_name
+                ));
             }
         }
     }

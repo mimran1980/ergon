@@ -8,10 +8,10 @@ groups need `raw_foo()` accessors that return the raw wire value.
 
 ## Acceptance criteria
 
-- [ ] `raw_foo()` on group entry decoders for composite fields
-- [ ] `raw_foo()` on group entry decoders for enum fields
-- [ ] `raw_foo()` on group entry decoders for set fields
-- [ ] `unsafe fn raw_foo_unchecked()` variants where bounds-check-disabled
-- [ ] Consistent with message-level raw_ accessor naming and semantics
+- [x] `raw_foo()` on group entry decoders for composite fields
+- [x] `raw_foo()` on group entry decoders for enum fields
+- [x] `raw_foo()` on group entry decoders for set fields
+- [x] `unsafe fn raw_foo_unchecked()` variants where bounds-check-disabled
+- [x] Consistent with message-level raw_ accessor naming and semantics
 
 Ref: gap analysis (todo 51), DECISIONS.md §8 (raw accessors in HFT hot loops).
