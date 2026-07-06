@@ -11,14 +11,15 @@ answer: what failed, where in the buffer, and what to do about it.
   ```rust
   BufferTooShort {
       field: &'static str,    // "modelYear", "engine.capacity"
+      offset: usize,          // byte position in the buffer
       needed: usize,           // bytes required starting from field offset
       available: usize,        // bytes remaining in buffer
   }
   ```
   Currently: anonymous `needed`/`available` with no field context.
 
-- [ ] `BufferTooShort` message reads like: `"modelYear at offset 8: needed 2 bytes, 1 available"`.
-  Current: `"field '<name>': needed N bytes, M available"`. Needs offset info per `27-fix-buffer-too-short-needed`.
+- [x] `BufferTooShort` message reads like: `"modelYear at offset 8: needed 2 bytes, 1 available"`.
+  Current: `"field '<name>' at offset N: needed N bytes, M available"`.
 
 - [ ] `WrongSchema` includes both expected and actual schema IDs in Display:
   `"wrong schema: expected id 1 (Car), got id 99"`. Include the human-readable

@@ -21,7 +21,7 @@ Generated once per schema (or shared across schemas with `shared_module`).
 ```rust
 pub mod sbe_rt {
     pub enum DecodeError {
-        BufferTooShort { field: &'static str, needed: usize, available: usize },
+        BufferTooShort { field: &'static str, offset: usize, needed: usize, available: usize },
         WrongSchema { expected: u16, actual: u16 },
         UnknownTemplateLength { template_id: u16 },
         InvalidVarDataLength { field: &'static str, length: u32 },
