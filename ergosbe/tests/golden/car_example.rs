@@ -674,11 +674,10 @@ impl<'a> CarDecoder<'a> {
     pub const unsafe fn serial_number_unchecked(&self) -> u64 {
         let offset = self.pos + 0;
         let mut bytes = [0u8; 8];
-        let mut j = 0;
-        while j < 8 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 8)
+            });
         u64::from_le_bytes(bytes)
     }
     pub const fn raw_serial_number(&self) -> u64 {
@@ -704,11 +703,10 @@ impl<'a> CarDecoder<'a> {
     pub const unsafe fn model_year_unchecked(&self) -> u16 {
         let offset = self.pos + 8;
         let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 2)
+            });
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_model_year(&self) -> u16 {
@@ -737,11 +735,10 @@ impl<'a> CarDecoder<'a> {
     pub const unsafe fn available_unchecked(&self) -> BooleanType {
         let offset = self.pos + 10;
         let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
+            });
         BooleanType(u8::from_le_bytes(bytes))
     }
     pub const fn code(&self) -> Result<Model, sbe_rt::DecodeError> {
@@ -767,11 +764,10 @@ impl<'a> CarDecoder<'a> {
     pub const unsafe fn code_unchecked(&self) -> Model {
         let offset = self.pos + 11;
         let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
+            });
         Model(u8::from_le_bytes(bytes))
     }
     pub const fn some_numbers(&self) -> Result<[u32; 4], sbe_rt::DecodeError> {
@@ -809,11 +805,10 @@ impl<'a> CarDecoder<'a> {
         while idx < 4 {
             let offset = self.pos + 12 + idx * 4;
             let mut bytes = [0u8; 4];
-            let mut j = 0;
-            while j < 4 {
-                bytes[j] = *self.buf.as_ptr().add(offset + j);
-                j += 1;
-            }
+            bytes
+                .copy_from_slice(unsafe {
+                    core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 4)
+                });
             res[idx] = u32::from_le_bytes(bytes);
             idx += 1;
         }
@@ -857,11 +852,10 @@ impl<'a> CarDecoder<'a> {
         while idx < 6 {
             let offset = self.pos + 28 + idx * 1;
             let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = *self.buf.as_ptr().add(offset + j);
-                j += 1;
-            }
+            bytes
+                .copy_from_slice(unsafe {
+                    core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
+                });
             res[idx] = u8::from_le_bytes(bytes);
             idx += 1;
         }
@@ -893,11 +887,10 @@ impl<'a> CarDecoder<'a> {
     pub const unsafe fn extras_unchecked(&self) -> OptionalExtras {
         let offset = self.pos + 34;
         let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
+            });
         OptionalExtras(u8::from_le_bytes(bytes))
     }
     pub const fn discounted_model(&self) -> Result<Model, sbe_rt::DecodeError> {
@@ -923,11 +916,10 @@ impl<'a> CarDecoder<'a> {
     pub const unsafe fn discounted_model_unchecked(&self) -> Model {
         let offset = self.pos + 35;
         let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
+            });
         Model(u8::from_le_bytes(bytes))
     }
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
@@ -953,11 +945,10 @@ impl<'a> CarDecoder<'a> {
     pub const unsafe fn engine_unchecked(&self) -> Engine {
         let offset = self.pos + 36;
         let mut bytes = [0u8; 9];
-        let mut j = 0;
-        while j < 9 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 9)
+            });
         Engine(bytes)
     }
     #[inline]
@@ -974,12 +965,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[start + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_len = header.block_length() as usize;
@@ -1006,12 +992,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[start + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_len = header.block_length() as usize;
@@ -1038,12 +1019,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[start + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
@@ -1065,12 +1041,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[start + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
@@ -1092,12 +1063,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[start + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
@@ -1121,12 +1087,7 @@ impl<'a> CarDecoder<'a> {
     }
     pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2()?;
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         let data_offset = offset + 4;
@@ -1138,12 +1099,7 @@ impl<'a> CarDecoder<'a> {
     }
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         let data_offset = offset + 4;
@@ -1155,12 +1111,7 @@ impl<'a> CarDecoder<'a> {
     }
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         let data_offset = offset + 4;
@@ -1221,12 +1172,7 @@ impl<'a> FuelFiguresDecoder<'a> {
                 available: buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = buf[pos + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -1292,11 +1238,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const unsafe fn speed_unchecked(&self) -> u16 {
         let offset = self.pos + 0;
         let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 2)
+            });
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_speed(&self) -> u16 {
@@ -1322,11 +1267,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const unsafe fn mpg_unchecked(&self) -> f32 {
         let offset = self.pos + 2;
         let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 4)
+            });
         f32::from_le_bytes(bytes)
     }
     pub const fn raw_mpg(&self) -> f32 {
@@ -1346,12 +1290,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
                 available: self.buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[start + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
@@ -1365,12 +1304,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     }
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         let data_offset = offset + 4;
@@ -1409,12 +1343,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
                 available: buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = buf[pos + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -1480,11 +1409,10 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const unsafe fn octane_rating_unchecked(&self) -> u8 {
         let offset = self.pos + 0;
         let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
+            });
         u8::from_le_bytes(bytes)
     }
     pub const fn raw_octane_rating(&self) -> u8 {
@@ -1504,12 +1432,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
                 available: self.buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[start + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_len = header.block_length() as usize;
@@ -1563,12 +1486,7 @@ impl<'a> AccelerationDecoder<'a> {
                 available: buf.len(),
             });
         }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = buf[pos + j];
-            j += 1;
-        }
+        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -1647,11 +1565,10 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const unsafe fn mph_unchecked(&self) -> u16 {
         let offset = self.pos + 0;
         let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 2)
+            });
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_mph(&self) -> u16 {
@@ -1677,11 +1594,10 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const unsafe fn seconds_unchecked(&self) -> f32 {
         let offset = self.pos + 2;
         let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = *self.buf.as_ptr().add(offset + j);
-            j += 1;
-        }
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 4)
+            });
         f32::from_le_bytes(bytes)
     }
     pub const fn raw_seconds(&self) -> f32 {
@@ -1750,51 +1666,31 @@ impl<'a, State> CarEncoder<'a, State> {
             Self::SCHEMA_VERSION,
         );
         let header_bytes = header.0;
-        let mut j = 0;
-        while j < 8 {
-            buf[pos + j] = header_bytes[j];
-            j += 1;
-        }
+        buf[pos..pos + 8].copy_from_slice(&header_bytes);
         Ok(Self::wrap(buf, pos))
     }
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = self.message_start + 8 + 0;
         let val_bytes = val.to_le_bytes();
-        let mut j = 0;
-        while j < 8 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 8].copy_from_slice(&val_bytes);
         self
     }
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = self.message_start + 8 + 8;
         let val_bytes = val.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
         self
     }
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.message_start + 8 + 10;
         let val_bytes = val.0.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.message_start + 8 + 11;
         let val_bytes = val.0.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
@@ -1802,11 +1698,7 @@ impl<'a, State> CarEncoder<'a, State> {
         let mut idx = 0;
         while idx < 4 {
             let val_bytes = val[idx].to_le_bytes();
-            let mut j = 0;
-            while j < 4 {
-                self.buf[offset + idx * 4 + j] = val_bytes[j];
-                j += 1;
-            }
+            self.buf[offset + idx * 4..offset + idx * 4 + 4].copy_from_slice(&val_bytes);
             idx += 1;
         }
         self
@@ -1816,11 +1708,7 @@ impl<'a, State> CarEncoder<'a, State> {
         let mut idx = 0;
         while idx < 6 {
             let val_bytes = val[idx].to_le_bytes();
-            let mut j = 0;
-            while j < 1 {
-                self.buf[offset + idx * 1 + j] = val_bytes[j];
-                j += 1;
-            }
+            self.buf[offset + idx * 1..offset + idx * 1 + 1].copy_from_slice(&val_bytes);
             idx += 1;
         }
         self
@@ -1828,30 +1716,18 @@ impl<'a, State> CarEncoder<'a, State> {
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.message_start + 8 + 34;
         let val_bytes = val.0.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     pub fn discounted_model(&mut self, val: Model) -> &mut Self {
         let offset = self.message_start + 8 + 35;
         let val_bytes = val.0.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.message_start + 8 + 36;
-        let mut j = 0;
-        while j < 9 {
-            self.buf[offset + j] = val.0[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 9].copy_from_slice(&val.0);
         self
     }
     pub fn encoded_length(&self) -> usize {
@@ -1884,11 +1760,7 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
             count,
         );
         let header_bytes = header.0;
-        let mut j = 0;
-        while j < 4 {
-            self.buf[self.pos + j] = header_bytes[j];
-            j += 1;
-        }
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&header_bytes);
         let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
         Ok(CarEncoder {
@@ -1922,11 +1794,7 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
             count,
         );
         let header_bytes = header.0;
-        let mut j = 0;
-        while j < 4 {
-            self.buf[self.pos + j] = header_bytes[j];
-            j += 1;
-        }
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&header_bytes);
         let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
         Ok(CarEncoder {
@@ -1957,17 +1825,9 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            self.buf[self.pos + j] = len_bytes[j];
-            j += 1;
-        }
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
-        let mut d = 0;
-        while d < data.len() {
-            self.buf[start + d] = data[d];
-            d += 1;
-        }
+        self.buf[start..start + data.len()].copy_from_slice(data);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
@@ -1999,17 +1859,9 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            self.buf[self.pos + j] = len_bytes[j];
-            j += 1;
-        }
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
-        let mut d = 0;
-        while d < data.len() {
-            self.buf[start + d] = data[d];
-            d += 1;
-        }
+        self.buf[start..start + data.len()].copy_from_slice(data);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
@@ -2038,17 +1890,9 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            self.buf[self.pos + j] = len_bytes[j];
-            j += 1;
-        }
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
-        let mut d = 0;
-        while d < data.len() {
-            self.buf[start + d] = data[d];
-            d += 1;
-        }
+        self.buf[start..start + data.len()].copy_from_slice(data);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
@@ -2128,21 +1972,13 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
     pub fn speed(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         let val_bytes = val.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
         self
     }
     pub fn mpg(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         let val_bytes = val.to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 4].copy_from_slice(&val_bytes);
         self
     }
     pub fn usage_description(
@@ -2157,17 +1993,9 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            self.buf[self.pos + j] = len_bytes[j];
-            j += 1;
-        }
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
-        let mut d = 0;
-        while d < data.len() {
-            self.buf[start + d] = data[d];
-            d += 1;
-        }
+        self.buf[start..start + data.len()].copy_from_slice(data);
         self.pos = start + data.len();
         Ok(self)
     }
@@ -2226,11 +2054,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     pub fn octane_rating(&mut self, val: u8) -> &mut Self {
         let offset = self.entry_start + 0;
         let val_bytes = val.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     pub fn acceleration<F>(
@@ -2252,11 +2076,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             count,
         );
         let header_bytes = header.0;
-        let mut j = 0;
-        while j < 4 {
-            self.buf[self.pos + j] = header_bytes[j];
-            j += 1;
-        }
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&header_bytes);
         let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
         self.pos = group.pos;
@@ -2317,21 +2137,13 @@ impl<'a> AccelerationEntryEncoder<'a> {
     pub fn mph(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         let val_bytes = val.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
         self
     }
     pub fn seconds(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         let val_bytes = val.to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            self.buf[offset + j] = val_bytes[j];
-            j += 1;
-        }
+        self.buf[offset..offset + 4].copy_from_slice(&val_bytes);
         self
     }
 }
@@ -2380,12 +2192,10 @@ impl<'a> Iterator for FrameCursor<'a> {
                         }),
                     );
                 }
-                let mut bytes = [0u8; 4];
-                let mut j = 0;
-                while j < 4 {
-                    bytes[j] = self.buf[self.pos + j];
-                    j += 1;
-                }
+                let bytes: [u8; 4] = self
+                    .buf[self.pos..self.pos + 4]
+                    .try_into()
+                    .unwrap();
                 let len = u32::from_le_bytes(bytes) as usize;
                 (4, len)
             }
@@ -2399,12 +2209,10 @@ impl<'a> Iterator for FrameCursor<'a> {
                         }),
                     );
                 }
-                let mut bytes = [0u8; 2];
-                let mut j = 0;
-                while j < 2 {
-                    bytes[j] = self.buf[self.pos + j];
-                    j += 1;
-                }
+                let bytes: [u8; 2] = self
+                    .buf[self.pos..self.pos + 2]
+                    .try_into()
+                    .unwrap();
                 let len = u16::from_le_bytes(bytes) as usize;
                 (2, len)
             }

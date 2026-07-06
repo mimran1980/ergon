@@ -638,8 +638,8 @@ fn parse_composite(
                 //
                 // Only use resolve_type_to_tokens for true indirect references:
                 // <type name="..." type="CustomType"/>.
-                let is_indirect_ref = child.attribute("type").is_some()
-                    && !registry.encodings.contains_key(t_name);
+                let is_indirect_ref =
+                    child.attribute("type").is_some() && !registry.encodings.contains_key(t_name);
                 if !is_indirect_ref {
                     let encoding = parse_type_element(child, registry)?;
                     composite_tokens.push(Token {
