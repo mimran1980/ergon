@@ -2348,7 +2348,13 @@ fn generate_group_decoder(
                      return None;\n\
                  }}\n\
                  let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
-                 let size = entry.encoded_length();\n\
+                 let size = match entry.encoded_length() {\n\
+                     Ok(s) => s,\n\
+                     Err(_) => {\n\
+                         self.count = 0;\n\
+                         return Some(entry);\n\
+                     }\n\
+                 };\n\
                  self.pos += size;\n\
                  self.count -= 1;\n\
                  Some(entry)\n\
@@ -2718,8 +2724,8 @@ fn generate_group_decoder(
     }
 
     src.push_str(&format!(
-        "#[inline]\n    pub fn encoded_length(&self) -> usize {{\n\
-                 self.tail_offset_{}().unwrap_or(self.pos + Self::ENTRY_BLOCK_LENGTH) - self.pos\n\
+        "#[inline]\n    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                 Ok(self.tail_offset_{}()? - self.pos)\n\
              }}\n\n",
         total_tail
     ));
