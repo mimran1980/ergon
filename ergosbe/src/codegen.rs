@@ -243,69 +243,79 @@ impl Generator {
 
 /// Generate the inline `sbe_rt` runtime module source.
 fn generate_sbe_rt_src() -> String {
-    let mut s = String::new();
-    s.push_str("pub mod sbe_rt {\n");
-    s.push_str("    #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
-    s.push_str("    pub enum DecodeError {\n");
-    s.push_str(
-        "        BufferTooShort { field: &'static str, needed: usize, available: usize },\n",
-    );
-    s.push_str("        WrongSchema { expected: u16, actual: u16 },\n");
-    s.push_str("        UnknownTemplateLength { template_id: u16 },\n");
-    s.push_str("        InvalidVarDataLength { field: &'static str, length: u32 },\n");
-    s.push_str("        Utf8(core::str::Utf8Error),\n");
-    s.push_str("    }\n\n");
-    s.push_str("    impl core::fmt::Display for DecodeError {\n");
-    s.push_str("        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n");
-    s.push_str("            match self {\n");
-    s.push_str("                Self::BufferTooShort { field, needed, available } => write!(f, \"field '{}': needed {} bytes, {} available\", field, needed, available),\n");
-    s.push_str("                Self::WrongSchema { expected, actual } => write!(f, \"wrong schema id: expected {}, actual {}\", expected, actual),\n");
-    s.push_str("                Self::UnknownTemplateLength { template_id } => write!(f, \"unknown template length for template id {}\", template_id),\n");
-    s.push_str("                Self::InvalidVarDataLength { field, length } => write!(f, \"invalid var data length for field {}: {}\", field, length),\n");
-    s.push_str("                Self::Utf8(err) => write!(f, \"UTF-8 decode error: {}\", err),\n");
-    s.push_str("            }\n");
-    s.push_str("        }\n");
-    s.push_str("    }\n\n");
-    s.push_str("    impl core::error::Error for DecodeError {}\n\n");
-    s.push_str("    #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
-    s.push_str("    pub enum EncodeError {\n");
-    s.push_str("        BufferTooShort { needed: usize, available: usize },\n");
-    s.push_str(
-        "        VarDataTooLong { field: &'static str, max_length: usize, actual: usize },\n",
-    );
-    s.push_str("    }\n\n");
-    s.push_str("    impl core::fmt::Display for EncodeError {\n");
-    s.push_str("        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {\n");
-    s.push_str("            match self {\n");
-    s.push_str("                Self::BufferTooShort { needed, available } => write!(f, \"buffer too short: needed {}, available {}\", needed, available),\n");
-    s.push_str("                Self::VarDataTooLong { field, max_length, actual } => write!(f, \"var data too long for field {}: max {}, actual {}\", field, max_length, actual),\n");
-    s.push_str("            }\n");
-    s.push_str("        }\n");
-    s.push_str("    }\n\n");
-    s.push_str("    impl core::error::Error for EncodeError {}\n\n");
-    s.push_str("    pub trait SbeMessage {\n");
-    s.push_str("        const TEMPLATE_ID: u16;\n");
-    s.push_str("        const BLOCK_LENGTH: usize;\n");
-    s.push_str("        const SCHEMA_ID: u16;\n");
-    s.push_str("        const SCHEMA_VERSION: u16;\n");
-    s.push_str("    }\n\n");
-    s.push_str("    pub mod private {\n");
-    s.push_str("        pub trait Sealed {}\n");
-    s.push_str("    }\n\n");
-    s.push_str("    pub trait EncodeGroupEntry<E> {\n");
-    s.push_str("        fn encode(self, entry: &mut E);\n");
-    s.push_str("    }\n\n");
-    s.push_str("    impl<E, F> EncodeGroupEntry<E> for F\n");
-    s.push_str("    where\n");
-    s.push_str("        F: FnOnce(&mut E),\n");
-    s.push_str("    {\n");
-    s.push_str("        #[inline]\n");
-    s.push_str("        fn encode(self, entry: &mut E) {\n");
-    s.push_str("            self(entry);\n");
-    s.push_str("        }\n");
-    s.push_str("    }\n");
-    s.push_str("}\n\n");
-    s
+    let module = quote::quote! {
+        pub mod sbe_rt {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum DecodeError {
+                BufferTooShort { field: &'static str, needed: usize, available: usize },
+                WrongSchema { expected: u16, actual: u16 },
+                UnknownTemplateLength { template_id: u16 },
+                InvalidVarDataLength { field: &'static str, length: u32 },
+                Utf8(core::str::Utf8Error),
+            }
+
+            impl core::fmt::Display for DecodeError {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    match self {
+                        Self::BufferTooShort { field, needed, available } => write!(f, "field '{}': needed {} bytes, {} available", field, needed, available),
+                        Self::WrongSchema { expected, actual } => write!(f, "wrong schema id: expected {}, actual {}", expected, actual),
+                        Self::UnknownTemplateLength { template_id } => write!(f, "unknown template length for template id {}", template_id),
+                        Self::InvalidVarDataLength { field, length } => write!(f, "invalid var data length for field {}: {}", field, length),
+                        Self::Utf8(err) => write!(f, "UTF-8 decode error: {}", err),
+                    }
+                }
+            }
+
+            impl core::error::Error for DecodeError {}
+
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum EncodeError {
+                BufferTooShort { needed: usize, available: usize },
+                VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
+            }
+
+            impl core::fmt::Display for EncodeError {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    match self {
+                        Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
+                        Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
+                    }
+                }
+            }
+
+            impl core::error::Error for EncodeError {}
+
+            pub trait SbeMessage {
+                const TEMPLATE_ID: u16;
+                const BLOCK_LENGTH: usize;
+                const SCHEMA_ID: u16;
+                const SCHEMA_VERSION: u16;
+            }
+
+            pub mod private {
+                pub trait Sealed {}
+            }
+
+            pub trait EncodeGroupEntry<E> {
+                fn encode(self, entry: &mut E);
+            }
+
+            impl<E, F> EncodeGroupEntry<E> for F
+            where
+                F: FnOnce(&mut E),
+            {
+                #[inline]
+                fn encode(self, entry: &mut E) {
+                    self(entry);
+                }
+            }
+        }
+    };
+
+    // Format the generated module through prettyplease for canonical output
+    syn::parse_str::<syn::File>(&module.to_string())
+        .map(|file| prettyplease::unparse(&file))
+        .unwrap_or_else(|_| module.to_string())
 }
 
 fn to_pascal_case(s: &str) -> String {
