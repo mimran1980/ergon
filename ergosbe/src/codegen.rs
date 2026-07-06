@@ -2471,6 +2471,45 @@ fn generate_group_decoder(
             g.block_length, g.block_length, g.block_length,
             field_name = g.name
         ));
+        // SoA columnar slice access for single-field fixed-size groups.
+        // A group with exactly one non-constant field has that field occupying
+        // the entire entry block, so the field data is contiguous in memory
+        // and we can return a zero-copy &[T] via from_raw_parts.
+        let non_const_count = g.fields.iter().filter(|f| f.presence != Presence::Constant).count();
+        if non_const_count == 1 {
+            for f in &g.fields {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                let f_name = to_snake_case(&f.name);
+                let (f_size, slice_type) = match &f.field_type {
+                    FieldType::Primitive(prim, None) => (prim.size(), rust_type(*prim)),
+                    // Fixed arrays, composites, enums, and sets don't map to a single
+                    // primitive type. Use as_chunks() for bulk entry access instead.
+                    _ => continue,
+                };
+                src.push_str(&format!(
+                    "#[inline]\n\
+                     pub fn {}_as_slice(&self) -> Result<&'a [{}], sbe_rt::DecodeError> {{\n\
+                         let len = self.count * {};\n\
+                         if self.pos + len > self.buf.len() {{\n\
+                             return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{g_name}\", needed: len, available: self.buf.len() - self.pos }});\n\
+                         }}\n\
+                         // SAFETY: SBE message buffers are allocated with sufficient\n\
+                         // alignment for all primitive types. The bounds check above\n\
+                         // guarantees at least count * sizeof(T) readable bytes.\n\
+                         Ok(unsafe {{\n\
+                             core::slice::from_raw_parts(\n\
+                                 self.buf.as_ptr().add(self.pos) as *const {},\n\
+                                 self.count,\n\
+                             )\n\
+                         }})\n\
+                     }}\n\n",
+                    f_name, slice_type, f_size, slice_type,
+                    g_name = g.name
+                ));
+            }
+        }
     }
     src.push_str("}\n\n");
 
