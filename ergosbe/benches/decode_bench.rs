@@ -1,7 +1,8 @@
 //! Decode benchmarks for ErgoSBE-generated Car message codec.
 //!
 //! Measures decode latency for the entry point, individual field accessors
-//! (both checked and raw/unchecked variants), and group iteration.
+//! (both checked and raw/unchecked variants), group iteration, and HFT-specific
+//! tight-loop / field-stride / alloc-free decode patterns.
 
 // Generated code generates lots of diagnostics; suppress across the crate.
 #![allow(unsafe_code, missing_docs, unused_variables, dead_code, unused_mut)]
@@ -14,6 +15,21 @@ use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_mai
 #[path = "_common.rs"]
 mod common;
 use common::BASELINE;
+
+/// Number of messages in the tight-loop / batch benchmarks.
+const HFT_BATCH: usize = 10_000;
+
+/// Pre-allocate a buffer containing `count` copies of the baseline message.
+fn replicate_baseline(count: usize) -> Vec<u8> {
+    let msg_len = BASELINE.len();
+    let mut buf = Vec::with_capacity(count * msg_len);
+    // SAFETY: we immediately fill the capacity with known bytes.
+    unsafe { buf.set_len(count * msg_len) };
+    for chunk in buf.chunks_mut(msg_len) {
+        chunk.copy_from_slice(BASELINE);
+    }
+    buf
+}
 
 // ── Decode entry point ───────────────────────────────────────────────
 
@@ -148,6 +164,112 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
     group.finish();
 }
 
+// ── HFT: tight-loop decode ────────────────────────────────────────
+//
+// Simulates a feed handler: decode 10k messages from a pre-allocated buffer.
+// Each iteration decodes one message and reads a few key fields.
+
+fn bench_hft_tight_loop(c: &mut Criterion) {
+    let batch = replicate_baseline(HFT_BATCH);
+    let msg_len = BASELINE.len();
+
+    let mut group = c.benchmark_group("decode/hft/tight_loop");
+    group.throughput(Throughput::Elements(HFT_BATCH as u64));
+
+    group.bench_function("10k_messages", |b| {
+        b.iter(|| {
+            let mut pos = 0usize;
+            let end = batch.len();
+            let mut sum_serial: u64 = 0;
+            let mut sum_year: u64 = 0;
+            while pos + msg_len <= end {
+                let car = CarDecoder::try_from(black_box(&batch[pos..pos + msg_len])).unwrap();
+                sum_serial += car.raw_serial_number();
+                sum_year += car.raw_model_year() as u64;
+                pos += msg_len;
+            }
+            black_box((sum_serial, sum_year));
+        });
+    });
+
+    group.finish();
+}
+
+// ── HFT: field stride ─────────────────────────────────────────────
+//
+// Measures latency of striding through specific fields in sequence:
+// modelYear, engine.capacity, fuelFigures[0].speed.
+// Each benchmark measures one stride pattern independently.
+
+fn bench_hft_field_stride(c: &mut Criterion) {
+    let car = CarDecoder::try_from(BASELINE).unwrap();
+    let engine = unsafe { car.engine_unchecked() };
+    let ff = car.fuel_figures().unwrap();
+    let first_entry = if ff.len() > 0 {
+        Some(ff.into_iter().next().unwrap())
+    } else {
+        None
+    };
+
+    let mut group = c.benchmark_group("decode/hft/field_stride");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("model_year", |b| {
+        b.iter(|| black_box(car.raw_model_year()));
+    });
+
+    group.bench_function("engine_capacity", |b| {
+        let cap = engine.capacity();
+        b.iter(|| black_box(cap));
+    });
+
+    if let Some(entry) = first_entry {
+        group.bench_function("fuel_figures[0].speed", |b| {
+            b.iter(|| black_box(entry.raw_speed()));
+        });
+
+        group.bench_function("all_three_strided", |b| {
+            b.iter(|| {
+                let m = car.raw_model_year();
+                let e = engine.capacity();
+                let s = entry.raw_speed();
+                black_box((m, e, s));
+            });
+        });
+    }
+
+    group.finish();
+}
+
+// ── HFT: alloc-free stack buffer ──────────────────────────────────
+//
+// Demonstrates that the decoder operates entirely on a stack-allocated
+// buffer with no heap allocation.
+
+fn bench_hft_alloc_free(c: &mut Criterion) {
+    // Stack buffer containing the baseline message.
+    let stack_buf = {
+        let mut buf = [0u8; 1024];
+        buf[..BASELINE.len()].copy_from_slice(BASELINE);
+        buf
+    };
+    let msg_len = BASELINE.len();
+
+    let mut group = c.benchmark_group("decode/hft/alloc_free");
+    group.throughput(Throughput::Bytes(msg_len as u64));
+
+    group.bench_function("decode_from_stack", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(&stack_buf[..msg_len])).unwrap();
+            let s = car.raw_serial_number();
+            let y = car.raw_model_year();
+            black_box((s, y));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_try_from,
@@ -156,5 +278,8 @@ criterion_group!(
     bench_group_iteration,
     bench_full_decode_unchecked,
     bench_decode_checked_vs_unchecked,
+    bench_hft_tight_loop,
+    bench_hft_field_stride,
+    bench_hft_alloc_free,
 );
 criterion_main!(benches);

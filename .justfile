@@ -27,6 +27,11 @@ test:
 bench:
     cargo bench --workspace
 
+# HFT-specific benchmarks: decode tight-loop, field striding, throughput
+bench-hft:
+    cargo bench --bench decode_bench -- hft
+    cargo bench --bench throughput_bench
+
 # open generated docs
 docs:
     cargo doc --no-deps --workspace --open
