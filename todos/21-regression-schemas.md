@@ -65,3 +65,7 @@ Plus the Rust-side integration tests that use them:
 Ref: `simple-binary-encoding/sbe-tool/src/test/resources/issue*.xml`,
 `simple-binary-encoding/rust/tests/issue_*.rs`,
 `crates/ergosbe/tests/issue_regression_test.rs`.
+
+
+## Verification / Unit Testing
+- [ ] Create regression tests for every issue-*.xml schema to ensure they parse and compile cleanly.

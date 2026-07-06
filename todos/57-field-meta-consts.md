@@ -13,11 +13,17 @@ schema validation at startup.
 
 ## Acceptance criteria
 
-- [x] Per-message `field_meta` module with struct-per-field (name, type, offset, sinceVersion, presence)
-- [x] `pub const FIELDS: &[FieldInfo]` array for each message
-- [x] `pub const SEMANTIC_VERSION: &str` from schema attribute
-- [x] `pub const SCHEMA_HASH: u64` computed from canonical schema representation
-- [x] Compile-time values only (no runtime overhead)
-- [x] Tests verify metadata matches schema
+- [ ] Per-message `field_meta` module with struct-per-field (name, type, offset, sinceVersion, presence)
+- [ ] `pub const FIELDS: &[FieldInfo]` array for each message
+- [ ] `pub const SEMANTIC_VERSION: &str` from schema attribute
+- [ ] `pub const SCHEMA_HASH: u64` computed from canonical schema representation
+- [ ] Compile-time values only (no runtime overhead)
+- [ ] Tests verify metadata matches schema
 
 Ref: gap analysis (todo 51), DECISIONS.md §5 field-level metadata.
+
+## Verification / Unit Testing
+- [ ] Write a test `test_field_meta_consts` in `sbe/tests/integration_tests.rs` that:
+  1. Inspects the generated `car_field_meta` (or similar) module.
+  2. Asserts that every field metadata constant (e.g. `car_field_meta::SERIAL_NUMBER`) has the expected `id`, `since_version`, and `offset`.
+  3. Asserts that the hash `SCHEMA_HASH` matches the expected value, and `SEMANTIC_VERSION` is correct.

@@ -63,3 +63,7 @@ Ref: miette crate docs. Already in Cargo.toml with `derive` feature.
   parse-error surface.
 - `resolve_schema()` now accepts `source: Option<&str>` — pass the raw XML text to
   enable source-code diagnostics.
+
+
+## Verification / Unit Testing
+- [ ] Create unit tests verifying miette diagnostics render source code snippets highlighting the exact location of schema parsing errors.

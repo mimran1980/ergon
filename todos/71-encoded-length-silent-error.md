@@ -1,6 +1,6 @@
 # todo 71: encoded_length() silently swallowing errors
 
-## Status: DONE
+## Status: IN PROGRESS
 
 ## Problem
 
@@ -36,6 +36,4 @@ read from the wrong position.
 
 ## Verification
 
-All tests pass: 14 unit, 16 integration, 5 property-based, 1 benchmark,
-1 stability/golden match. The 4 baseline_test failures are CWD-related
-(worktree environment), not related to this change.
+- [ ] Write a test `test_encoded_length_error_propagation` in `sbe/tests/integration_tests.rs` that passes an incomplete/truncated buffer to `encoded_length()` and asserts it returns `Err(DecodeError::BufferTooShort)` instead of returning a garbage size.

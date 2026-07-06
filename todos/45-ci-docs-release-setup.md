@@ -92,3 +92,7 @@ A `just` command runner with common tasks (like rusteron's but Rust-only):
 - [ ] `just check` / `just test` / `just fix` work locally
 - [ ] `cargo doc` produces docs with no warnings
 - [ ] docs.rs shows API docs after first crates.io publish
+
+
+## Verification / Unit Testing
+- [ ] Verify that the build pipeline triggers and completes successfully on pull requests and branch merges.

@@ -31,3 +31,7 @@ and ask: is this idiomatic, performant, and maintainable Rust?
 - [ ] File follow-up todos for any non-trivial improvements discovered
 
 Ref: `design/DECISIONS.md` §2–4, §8–10 for the intended API contract.
+
+
+## Verification / Unit Testing
+- [ ] Verify that all generated code patterns conform to standard Rust formatting and clippy rules without errors.

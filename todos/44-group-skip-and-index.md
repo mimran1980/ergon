@@ -92,3 +92,7 @@ asks.rewind();  // re-read if needed
 - [ ] Test: skip_all() → pos == buf.len()
 - [ ] Test: nth(5) on 100-entry group → correct entry, no iteration overhead
 - [ ] Test: rewind → re-iterate → same values
+
+
+## Verification / Unit Testing
+- [ ] Create unit tests `test_group_skip_and_index` verifying `skip_n()`, `nth()`, `rewind()`, and `as_chunks()` navigate groups correctly and return errors for out of bounds access.

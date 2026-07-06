@@ -52,3 +52,7 @@ Generated `_as_slice()` methods are:
       (deferred -- `as_chunks()` covers this case)
 - [ ] Benchmark: SoA access vs AoS iteration (deferred)
 - [ ] Non-fixed-size groups: iterator fallback (deferred)
+
+
+## Verification / Unit Testing
+- [ ] Create a unit test `test_soa_columnar_views` verifying that calling `{field}_as_slice()` on repeating groups returns the correct zero-copy slice of fields.

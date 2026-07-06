@@ -1,6 +1,6 @@
 # todo 73: Display impl uses unchecked raw_ accessors inconsistently
 
-## Status: DONE
+## Status: IN PROGRESS
 
 ## Problem
 
@@ -29,5 +29,4 @@ matter more than performance here.
 
 ## Verification
 
-All tests pass: 14 unit, 16 integration + 29 issue regression, 5 property-based,
-1 benchmark, 1 stability/golden match, 7 baseline parity tests.
+- [ ] Write a test `test_display_impl_safety` in `sbe/tests/integration_tests.rs` that formats a decoder containing invalid/out-of-bounds data using `format!("{}", decoder)` and verifies that it does not panic and outputs safely, handling formatting errors or missing fields gracefully without using unsafe/unchecked accessors internally.

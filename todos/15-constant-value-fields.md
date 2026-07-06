@@ -21,3 +21,7 @@ return the typed value. DECISIONS.md §4.
 - [ ] Test: `group-with-constant-fields.xml` schema (constant fields in groups)
 
 Ref: `design/DECISIONS.md` §4 constant-value fields.
+
+
+## Verification / Unit Testing
+- [ ] Create a unit test `test_constant_fields` that decodes messages with presence="constant" fields and verifies the returned constant values match the schema without reading from the buffer.

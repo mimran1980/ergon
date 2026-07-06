@@ -1,6 +1,6 @@
 # todo 72: group encoder add() silently exceeding count
 
-## Status: DONE
+## Status: IN PROGRESS
 
 ## Problem
 
@@ -44,7 +44,4 @@ entries were being dropped.
 
 ## Verification
 
-All core tests pass: 7 baseline (decode, encode, display, byte-exact, constants),
-16 integration (block length, extension, group, since, variable, edge cases),
-1 stability/golden match. Proptest failures are pre-existing infrastructure issues
-(sccache/temp dir CWD), unrelated to this change.
+- [ ] Write a test `test_group_encoder_overflow` in `sbe/tests/integration_tests.rs` that wraps an encoder, adds a repeating group, attempts to call `.add()` more times than the declared group count, and asserts that the additional `.add()` calls return `Err(EncodeError::GroupFull { declared, attempted })`.

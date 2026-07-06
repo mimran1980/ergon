@@ -23,3 +23,8 @@ asserting zero heap allocation per operation.
 - [ ] Upstream benchmarks ported: `car_benchmark.rs`, `md_benchmark.rs`
 
 Ref: `design/DECISIONS.md` §11 slice 2b.
+
+
+## Verification / Unit Testing
+- [ ] Add benchmark checks that assert zero heap allocations in the hot path using allocator hooks or a custom test driver.
+- [ ] Verify that code generator performance benchmarks run in CI and fail if threshold regressions occur.

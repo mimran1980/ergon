@@ -33,3 +33,7 @@ Import these and assert ErgoSBE's error messages are at least as good.
 
 Ref: `simple-binary-encoding/sbe-tool/src/test/resources/error-handler-*.xml`,
 `simple-binary-encoding/sbe-tool/src/test/java/uk/co/real_logic/sbe/xml/ErrorHandlerTest.java`.
+
+
+## Verification / Unit Testing
+- [ ] Create tests verifying that malformed XML schemas return ParseError with the correct spans using miette.

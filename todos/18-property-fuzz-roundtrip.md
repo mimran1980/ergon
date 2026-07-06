@@ -52,3 +52,7 @@ Five test functions covering:
   A corpus could be seeded for reproducible regression hunting.
 
 Ref: `design/DECISIONS.md` SS11 test 11. `simple-binary-encoding/sbe-tool/src/propertyTest/`.
+
+
+## Verification / Unit Testing
+- [ ] Add a property test suite `fuzz_roundtrip` using proptest to verify that random valid inputs always round-trip to the exact same bytes.

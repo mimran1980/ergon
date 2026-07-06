@@ -64,3 +64,7 @@ Key findings:
 
 Ref: `simple-binary-encoding/sbe-tool/src/test/resources/`,
 `simple-binary-encoding/sbe-benchmarks/src/main/resources/`.
+
+
+## Verification / Unit Testing
+- [ ] Create integration tests that parse real exchange schemas (CME, Binance, Eurex), generate Rust source, compile them, and verify basic round-trip operations.

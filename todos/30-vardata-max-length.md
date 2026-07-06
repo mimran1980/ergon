@@ -17,3 +17,7 @@ a message that violates the SBE spec.
 - [ ] Test: encode with over-long data via unchecked → no error (caller's responsibility)
 
 Ref: SBE spec requires `maxLength` enforcement. Upstream Java generator validates.
+
+
+## Verification / Unit Testing
+- [ ] Create unit tests `test_vardata_max_length_enforcement` verifying that encoding var-data longer than the maximum length returns an error, while unchecked encoding does not validate.

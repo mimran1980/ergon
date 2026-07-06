@@ -219,6 +219,7 @@ impl Generator {
                 ir.id,
                 ir.version,
                 &ir.header_type,
+                &ir.package,
             );
             generate_message_encoder(
                 &mut src,
@@ -249,7 +250,7 @@ impl Generator {
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
         // 8. Generate AnyMessage enum (per-schema: only this schema's messages)
-        generate_any_message(&mut src, &messages, &elements, ir.id, &ir.header_type);
+        generate_any_message(&mut src, &messages, &elements, ir.id, &ir.header_type, &ir.package);
 
         // Format through syn/prettyplease
         syn::parse_str::<syn::File>(&src)
@@ -265,9 +266,9 @@ fn generate_sbe_rt_src() -> String {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum DecodeError {
                 BufferTooShort { field: &'static str, needed: usize, available: usize },
-                WrongSchema { expected: u16, actual: u16 },
+                WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
                 UnknownTemplateLength { template_id: u16 },
-                InvalidVarDataLength { field: &'static str, length: u32 },
+                InvalidVarDataLength { field: &'static str, length: u32, max_length: u32 },
                 Utf8(core::str::Utf8Error),
             }
 
@@ -276,9 +277,9 @@ fn generate_sbe_rt_src() -> String {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
                         Self::BufferTooShort { field, needed, available } => write!(f, "field '{}': needed {} bytes, {} available", field, needed, available),
-                        Self::WrongSchema { expected, actual } => write!(f, "wrong schema id: expected {}, actual {}", expected, actual),
-                        Self::UnknownTemplateLength { template_id } => write!(f, "unknown template length for template id {}", template_id),
-                        Self::InvalidVarDataLength { field, length } => write!(f, "invalid var data length for field {}: {}", field, length),
+                        Self::WrongSchema { expected, actual, expected_name } => write!(f, "wrong schema: expected id {} ({}), got id {}", expected, expected_name, actual),
+                        Self::UnknownTemplateLength { template_id } => write!(f, "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.", template_id),
+                        Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}: length {} exceeds max {}", field, length, max_length),
                         Self::Utf8(err) => write!(f, "UTF-8 decode error: {}", err),
                     }
                 }
@@ -1615,6 +1616,7 @@ fn generate_message_decoder(
     schema_id: u16,
     schema_version: u16,
     header_type: &str,
+    schema_name: &str,
 ) {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -1740,11 +1742,11 @@ fn generate_message_decoder(
                  }})?.try_into().unwrap();\n\
                  let header = {}(header_bytes);\n\
                  if header.{}() != Self::SCHEMA_ID {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{}() }});\n\
+                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{}() , expected_name: "{}" }});\n\
                  }}\n\
                  Ok(Self::wrap(buf, pos + {}, header.{}() as usize, header.{}()))\n\
              }}\n\n",
-        header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr,
+        header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr, schema_name,
         field_name = "message header"
     ));
 
@@ -2214,17 +2216,30 @@ fn generate_message_decoder(
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let vd_snake = to_snake_case(&vd.name);
-        src.push_str(&format!(
+                let mut vd_body = format!(
             "#[inline]\n    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
                      let offset = self.tail_offset_{}()?;\n\
                      let bytes: [u8; {}] = self.buf[offset..offset + {}].try_into().unwrap();\n\
                      let header = {}(bytes);\n\
-                     let len = header.{}() as usize;\n\
-                     let data_offset = offset + {};\n\
-                     Ok(&self.buf[data_offset .. data_offset + len])\n\
-                 }}\n\n",
-            vd_snake, vd_idx, prefix_size, prefix_size, type_pascal, len_field, prefix_size
+                     let len = header.{}() as usize;\n"
+            vd_snake, vd_idx, prefix_size, prefix_size, type_pascal, len_field
+        );
+        if let Some(max) = vd.max_length {
+            vd_body.push_str(&format!(
+                "                     if len > {} {{\n\
+                                             return Err(sbe_rt::DecodeError::InvalidVarDataLength {{ field: \"{}\", length: len as u32, max_length: {} }});\n\
+                                         }}\n"
+                max, vd_snake, max
+            ));
+        }
+        vd_body.push_str(&format!(
+            "                     let data_offset = offset + {};\n\
+                             Ok(&self.buf[data_offset .. data_offset + len])\n\
+                         }}\n\n"
+            prefix_size
         ));
+        src.push_str(&vd_body);
+
 
         // UTF-8 str accessor
         src.push_str(&format!(
@@ -3964,6 +3979,7 @@ fn generate_any_message(
     elements: &SchemaElements,
     schema_id: u16,
     header_type: &str,
+    schema_name: &str,
 ) {
     let header_size = elements
         .composites
@@ -4112,10 +4128,10 @@ fn generate_any_message(
                  let block_length = header.{}() as usize;\n\
                  let body_pos = pos + {};\n\n\
                  if schema_id != {} {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id }});\n\
+                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id, expected_name: "{}" }});\n\
                  }}\n\n\
                  match template_id {{\n",
-        header_size, header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id,
+        header_size, header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id, schema_name,
         field_name = "message header"
     ));
 
@@ -4145,10 +4161,10 @@ fn generate_any_message(
                  let block_length = header.{}() as usize;\n\
                  let body_pos = pos + {};\n\n\
                  if schema_id != {} {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id }});\n\
+                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id, expected_name: "{}" }});\n\
                  }}\n\n\
                  match template_id {{\n",
-        header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id,
+        header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id, schema_name,
         field_name = "decoded frame"
     ));
 

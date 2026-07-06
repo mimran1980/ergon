@@ -23,3 +23,7 @@ Convert them to `quote!` for readability.
 - [x] Generated output is semantically identical (regen-stability test catches regressions)
 
 Ref: user request. `syn`/`quote` deps already in `Cargo.toml`.
+
+
+## Verification / Unit Testing
+- [ ] Verify the migration by ensuring all modified files compile and pass the regeneration stability test.

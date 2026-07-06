@@ -54,3 +54,7 @@ let modules = generator.generate_multi(&[
 - [ ] Generated code compiles and all messages round-trip
 
 Ref: `design/DECISIONS.md` §10 shared runtime. `simple-binary-encoding/sbe-samples/src/main/resources/` for common-types + example-schema multi-file setup.
+
+
+## Verification / Unit Testing
+- [ ] Create integration tests verifying multi-schema generation produces separate files, deduplicates common types, and compiles cleanly without duplicate symbol errors.

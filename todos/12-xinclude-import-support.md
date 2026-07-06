@@ -18,3 +18,7 @@ schema parses.
 - [ ] Test with `FixBinary.xml` (multi-schema FIX message set)
 
 Ref: upstream schemas at `simple-binary-encoding/sbe-tool/src/test/resources/sub/`.
+
+
+## Verification / Unit Testing
+- [ ] Create a unit test `test_xinclude_resolution` that parses a schema including other files, verifies that cyclic includes return an Error, and that all fields are merged correctly.

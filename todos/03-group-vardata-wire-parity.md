@@ -21,7 +21,12 @@ length handling.
 
 Ref: `design/DECISIONS.md` §3, §6, §11 slices 6–7, test 1–2.
 
-## Verification strategy
+## Verification
+
+### Unit Test Requirements
+- [ ] Create a unit test `test_repeating_groups_and_vardata` that encodes and decodes nested repeating groups and variable-length data, verifying tail offset calculations relative to acting version and wire blockLength.
+- [ ] Add a unit test `test_var_data_as_str` that decodes a var-data field as a string slice and validates correct UTF-8 mapping, and returns a DecodeError on invalid UTF-8.
+ strategy
 
 Same 4-step ladder against the full Car example fixture, which exercises
 repeating groups (fuelFigures, performanceFigures → acceleration) and var-data

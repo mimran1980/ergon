@@ -75,3 +75,7 @@ answer: what failed, where in the buffer, and what to do about it.
 
 Ref: `design/DECISIONS.md` §8b. Upstream Java errors at
 `simple-binary-encoding/sbe-tool/src/main/java/uk/co/real_logic/sbe/`.
+
+
+## Verification / Unit Testing
+- [ ] Create unit tests verifying that all DecodeError and EncodeError variants contain detailed error messages naming the specific fields and offsets.

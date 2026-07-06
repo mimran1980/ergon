@@ -30,3 +30,7 @@ byte region.
 - [ ] Constant-value fields get `const FIELD_TEMPLATE: [u8; N]`
 - [ ] Benchmark: encode throughput improvement from skipping per-field header writes
 - [x] Verify: generated template bytes match upstream fixture bytes
+
+
+## Verification / Unit Testing
+- [ ] Create unit tests `test_static_header_templates` verifying that `HEADER_TEMPLATE` and `GROUP_DIM_TEMPLATE` contain the correct pre-encoded header bytes.

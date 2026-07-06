@@ -16,3 +16,7 @@ DECISIONS.md §12 explicitly requires this. The codegen doesn't emit it anywhere
 - [x] No impact on correctness (annotation only)
 
 Ref: gap analysis (todo 51), DECISIONS.md §12.
+
+
+## Verification / Unit Testing
+- [ ] Create a test verifying that `#[cold]` functions are generated on the error paths in the output.

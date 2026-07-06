@@ -308,3 +308,7 @@ None found. All wire-compat invariants (§7) are covered by existing todos.
 ---
 
 Produced by: Claude Code audit of todos/ against design/DECISIONS.md.
+
+
+## Verification / Unit Testing
+- [ ] Ensure all identified gaps have corresponding todo files with explicit tests.

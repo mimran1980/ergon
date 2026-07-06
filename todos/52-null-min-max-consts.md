@@ -14,3 +14,7 @@ consts alongside the accessor. These are compile-time values from the schema.
 - [ ] Tests: verify consts match schema values
 
 Ref: gap analysis (todo 51), DECISIONS.md §2.
+
+
+## Verification / Unit Testing
+- [ ] Create unit tests `test_null_min_max_constants` verifying that `*_NULL`, `*_MIN`, and `*_MAX` constants are generated for every scalar field and match the SBE defaults or XML overrides.

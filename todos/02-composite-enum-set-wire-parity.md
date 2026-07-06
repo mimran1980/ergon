@@ -19,7 +19,12 @@ and `raw_` accessor tests.
 
 Ref: `design/DECISIONS.md` §4, §11 slices 4–5, test 5.
 
-## Verification strategy
+## Verification
+
+### Unit Test Requirements
+- [ ] Create a unit test `test_composite_enum_set` that encodes and decodes composites, enums, and sets, verifying all discriminants, bitmasks, and field values match the expected SBE specification.
+- [ ] Add a unit test `test_closure_sub_encoders` that exercises composite writing via closures and verifies the output bytes.
+ strategy
 
 Same 4-step ladder as `01-scalar-wire-parity`, but against the full Car example
 fixture which exercises Engine (composite), Booster (enum), Model (enum),

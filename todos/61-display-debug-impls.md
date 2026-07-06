@@ -27,3 +27,7 @@ test assertions.
 - [x] Tests: substring-assertion test verifying Display output format
 
 Ref: common SBE complaint #10 — "no machine-parseable debug format."
+
+
+## Verification / Unit Testing
+- [ ] Create a unit test `test_display_debug_output` verifying that the generated `Display` output matches the expected format, skips absent optionals, and does not allocate.

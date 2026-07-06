@@ -1,0 +1,27 @@
+# `const` assertions in generated code
+
+Emit `const _: () = assert!(...)` assertions for structural invariants in generated
+code. These catch generator bugs at compile time, not runtime. Specified in
+DECISIONS.md §10.
+
+## Status: Not Started
+
+## Acceptance Criteria
+
+- [ ] `const _: () = assert!(core::mem::size_of::<MessageHeader>() == N);` for the resolved header size
+- [ ] `const _: () = assert!(BLOCK_LENGTH == N);` for each message's block length
+- [ ] `const _: () = assert!(HEADER_TEMPLATE.len() == N);` for header template size
+- [ ] `const _: () = assert!(GROUP_DIM_TEMPLATE.len() == N);` for group dimension template size
+- [ ] Assertions compile to nothing in release — zero runtime cost
+- [ ] Test: intentionally wrong value triggers compile error (compile-fail test)
+- [ ] Golden file updated
+
+## Dependencies
+
+- 56-const-assertions (partially done — complete the remaining items)
+
+## Notes
+
+- DECISIONS.md §10 explicitly shows `const _: () = assert!(core::mem::size_of::<MessageHeader>() == 8);`
+  as an example.
+- Todo 56 started this but the `BLOCK_LENGTH` assertion is still missing.

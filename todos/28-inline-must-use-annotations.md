@@ -31,3 +31,7 @@ of propagating. Should return `Result<usize, DecodeError>`.
 - [ ] Benchmark: verify no regression from added attributes (should be zero-cost or improvement)
 
 Ref: `design/DECISIONS.md` §10 codegen rules. `simple-binary-encoding/sbe-tool/src/main/java/uk/co/real_logic/sbe/generation/rust/RustGenerator.java`.
+
+
+## Verification / Unit Testing
+- [ ] Verify that the compiler emits unused warnings if an encoder or its return is dropped without calling completion methods.

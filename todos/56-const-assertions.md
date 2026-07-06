@@ -21,3 +21,7 @@ Catches codegen bugs at compile time rather than at runtime.
 - [x] All existing tests pass
 
 Ref: gap analysis (todo 51), DECISIONS.md §12 "const assertions in generated code".
+
+
+## Verification / Unit Testing
+- [ ] Create a compile-fail test verifying that changing the expected sizes or block lengths of composites in the schema causes a compile error via the generated const assertions.

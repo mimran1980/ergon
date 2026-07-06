@@ -41,3 +41,7 @@ debugging and recovery logic.
 - [x] Array template already correctly uses `size` local variable — verified fixed
 
 Discovered by: generated code review agent (todos/11-generated-code-review).
+
+
+## Verification / Unit Testing
+- [ ] Create unit tests `test_buffer_too_short_exact_needed` verifying that `needed` and `available` are accurately populated in all buffer too short scenarios.

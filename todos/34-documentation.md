@@ -87,3 +87,7 @@ from schema annotations). They are documented at the API level in
 - [ ] IDE hover on `car.model_year()` shows "Model year of the car (semantic type: Year)" *(codegen work)*
 
 Ref: `design/DECISIONS.md` §9 "Schema docs → rustdoc." Rust RFC 1574 (doc comment conventions).
+
+
+## Verification / Unit Testing
+- [ ] Verify that documentation tests (`cargo test --doc`) compile and run successfully for all generated code modules.

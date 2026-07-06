@@ -8,10 +8,16 @@ groups need `raw_foo()` accessors that return the raw wire value.
 
 ## Acceptance criteria
 
-- [x] `raw_foo()` on group entry decoders for composite fields
-- [x] `raw_foo()` on group entry decoders for enum fields
-- [x] `raw_foo()` on group entry decoders for set fields
-- [x] `unsafe fn raw_foo_unchecked()` variants where bounds-check-disabled
-- [x] Consistent with message-level raw_ accessor naming and semantics
+- [ ] `raw_foo()` on group entry decoders for composite fields
+- [ ] `raw_foo()` on group entry decoders for enum fields
+- [ ] `raw_foo()` on group entry decoders for set fields
+- [ ] `unsafe fn raw_foo_unchecked()` variants where bounds-check-disabled
+- [ ] Consistent with message-level raw_ accessor naming and semantics
 
 Ref: gap analysis (todo 51), DECISIONS.md §8 (raw accessors in HFT hot loops).
+
+## Verification / Unit Testing
+- [ ] Write a test `test_raw_accessors_group_entries` in `sbe/tests/integration_tests.rs` that:
+  1. Encodes a message with a repeating group where the entries have enum, set, and composite fields.
+  2. Verifies that the decoder entry has `raw_` accessors for these fields (e.g. `raw_speed()`, `raw_mph()`, etc.) and that they return the raw unmapped integers.
+  3. Asserts that the return value matches the expected bytes exactly without mapping optional null sentinel values.

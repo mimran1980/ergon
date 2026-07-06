@@ -50,3 +50,7 @@ bounds-check elision. Encode shows near parity (unchecked is slightly slower due
 manual header write overhead).
 
 Ref: `design/DECISIONS.md` §8, §11. `simple-binary-encoding/rust/benches/`
+
+
+## Verification / Unit Testing
+- [ ] Add comparative tests and benchmarks verifying performance differences between safe and unsafe accessors.

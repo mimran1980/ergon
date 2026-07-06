@@ -20,3 +20,7 @@ before proceeding to the next wave of work.
 - [ ] `test` job: all tests pass
 - [ ] `build` job: release build succeeds
 - [ ] CI is the gate — no merging worktrees until CI is green on `first_cut`
+
+
+## Verification / Unit Testing
+- [ ] Verify that CI monitoring correctly alerts on failed runs.
