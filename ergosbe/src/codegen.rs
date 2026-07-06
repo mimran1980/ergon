@@ -941,11 +941,15 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
                 quote::quote! { #lit }
             } else {
                 let lit = val.parse::<u64>().map_or_else(
-                    |_| val.parse::<i64>().map(|v| {
-                        syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site())
-                    }).unwrap_or_else(|_| {
-                        syn::LitInt::new(val, proc_macro2::Span::call_site())
-                    }),
+                    |_| {
+                        val.parse::<i64>()
+                            .map(|v| {
+                                syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site())
+                            })
+                            .unwrap_or_else(|_| {
+                                syn::LitInt::new(val, proc_macro2::Span::call_site())
+                            })
+                    },
                     |v| syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site()),
                 );
                 quote::quote! { #lit }
@@ -2658,10 +2662,7 @@ fn generate_nullification(
                     FieldType::Set { encoding_type, .. } => encoding_type.size(),
                 };
 
-                let null_val_expr: syn::Expr = syn::parse_str(
-                    &format!("{null_val}_u64"),
-                )
-                .unwrap();
+                let null_val_expr: syn::Expr = syn::parse_str(&format!("{null_val}_u64")).unwrap();
                 let to_method = syn::Ident::new(
                     &format!("to_{order_suffix}_bytes"),
                     proc_macro2::Span::call_site(),
