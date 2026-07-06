@@ -29,8 +29,6 @@ fn test_generate_car_example() {
     assert!(module.source.contains("pub struct Booster"));
     assert!(module.source.contains("pub struct Engine"));
     assert!(module.source.contains("pub struct OptionalExtras"));
-    assert!(module.source.contains("pub struct Model"));
-    assert!(module.source.contains("pub enum ModelKind"));
-    assert!(module.source.contains("pub struct BooleanType"));
-    assert!(module.source.contains("pub enum BooleanTypeKind"));
+    assert!(module.source.contains("pub enum Model"));
+    assert!(module.source.contains("pub enum BooleanType"));
 }

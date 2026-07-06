@@ -91,9 +91,7 @@ fn generated_code_contains_expected_types() {
             "Booster",
             "OptionalExtras",
             "Model",
-            "ModelKind",
             "BooleanType",
-            "BooleanTypeKind",
             "FuelFiguresDecoder",
             "FuelFiguresEntryDecoder",
             "PerformanceFiguresDecoder",
@@ -555,14 +553,10 @@ fn generated_code_has_boolean_from_impls() {
         "BooleanType must implement From<BooleanType> for bool"
     );
 
-    // TRUE / FALSE constants (todo 58)
+    // From<bool> maps true → Self::T and false → Self::F
     assert!(
-        src.contains("pub const TRUE: Self = Self(1);"),
-        "BooleanType must have TRUE = Self(1)"
-    );
-    assert!(
-        src.contains("pub const FALSE: Self = Self(0);"),
-        "BooleanType must have FALSE = Self(0)"
+        src.contains("if val { Self::T } else { Self::F }"),
+        "BooleanType From<bool> must map true/false to T/F variants"
     );
 
     // Encoder bool setter (todo 58)
@@ -644,8 +638,8 @@ fn composite_ref_gaps_documented() {
     // Percentage is a <type primitiveType="int8"/> that gets inlined
     // as i8 at the use site -- no standalone type is generated for it.
     assert!(
-        src.contains("pub struct BooleanType"),
-        "BooleanType should exist as a top-level struct"
+        src.contains("pub enum BooleanType"),
+        "BooleanType should exist as a top-level enum"
     );
     assert!(
         src.contains("pub struct Booster"),

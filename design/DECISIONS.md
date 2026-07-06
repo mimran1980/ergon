@@ -101,17 +101,26 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
   dual: value or closure.
 - **Fixed arrays** (`int32[8]`, `char[16]`): concrete `[T; N]` returned by value.
   Const generics live only inside the runtime-support read helper, not in user types.
-- **Enums:** E3 — a `#[repr(transparent)] struct X(u8)` newtype that round-trips any
-  byte, plus `X::kind() -> Option<XKind>` returning a `#[repr(u8)] enum` for matching.
-  A bare Rust enum cannot hold an unknown discriminant (trap 2).
+- **Enums:** Aeron-style flat enum with `NullVal` catch-all.
+  A `#[repr(u8)] pub enum X { A = b'A', B = b'B', C = b'C', NullVal }` — the last
+  variant catches unknown wire values. The generated `from_raw()` match handles all
+  known discriminants; everything else falls through to `NullVal`. The old E3 split
+  (newtype + `Kind` enum + `kind()`/`into_kind()`) is removed. Trap 2 is moot because
+  `NullVal` preserves the unknown discriminant as a typed variant, though the original
+  wire byte is lost (acceptable per user — they do not filter on unknown enum values).
+  - `From<X> for u8` / `From<u8> for X` / `const fn from_raw(u8) -> X` / `const fn raw(self) -> u8`
+  - `From<bool>` / `From<X> for bool` for boolean-style enums (F=0, T=1)
+  - `Display` uses `Debug` formatting (the `{e:?}` pattern)
 - **Choices (multi-value bitsets):** hand-rolled `#[repr(transparent)] struct X(u8)`
   newtype with per-flag bool read/write accessors + `raw()`. No `bitflags` crate.
-- **Standard derives** on value types (composites, enum newtypes, choice newtypes):
+- **Standard derives** on value types (composites, enums, choice newtypes):
   `Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord` — Java's
   `equals`/`hashCode`/`compareTo` delivered idiomatically. Float fields skip `Eq`/`Ord`;
   enum `Ord` follows numeric order.
-- **Newtype conversions:** enum/choice newtypes get `From<u8>` + `Into<u8>` + `raw()`
-  + `TryFrom`/`into_kind()`; choices get `Default` (all-zero bits, replaces Java's `clear()`).
+- **Newtype conversions:** choice newtypes get `From<u8>` + `Into<u8>` + `raw()`
+  + `Default` (all-zero bits, replaces Java's `clear()`). Enums get `From<u8>` +
+  `From<EnumType> for u8` + `const fn raw()` + `const fn from_raw()`. Boolean enums
+  additionally get `From<bool>`.
 - **Constant-value fields** (`presence="constant"`) generate a `const fn` returning
   `&'static str` (string constants) or a typed value (numeric constants). No wire
   space consumed; the value is baked from the schema. The accessor is always
@@ -428,8 +437,12 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
 
 1. **Tail offset must use the wire `blockLength`, not compiled.** Using
    `SBE_BLOCK_LENGTH` mis-locates every group when reading a newer version. Test #4.
-2. **A Rust enum cannot hold an unknown discriminant.** So the stored/returned enum
-   type is a newtype (`E3`); a bare enum loses unknown values and breaks round-trip.
+2. **A Rust enum cannot hold an unknown discriminant.** The flat enum with `NullVal`
+   (chosen over the old E3 newtype+Kind split) catches unknown wire values but does
+   not preserve the original byte. The user accepts this trade-off — they do not
+   filter on unknown enum values. If preserving the raw byte becomes a requirement,
+   add a `raw_` accessor or return to the newtype. See `design/DECISIONS.md §4` and
+   `todos/106-flat-enum-nullval.md`.
 3. **`repr(C)` transmute is a trap.** SBE buffers are unaligned (so transmute needs
    `read_unaligned` — no win), `repr(C)` is native-endian (so BE schemas are wrong),
    and `packed` makes `&field` UB. Read field-by-field with `from_{le,be}_bytes`.
@@ -484,7 +497,7 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
 3. Reference-resolution pass: byte order, default/null/min/max values,
    `headerType`, `dimensionType`, block lengths, schema hash, field ids.
 4. Composites (value struct + per-field methods).
-5. Enums (E3) and choices (newtype bitset).
+5. Enums (flat enum with NullVal) and choices (newtype bitset).
 6. Groups (Iterator decode, type-state encode, tail-free fixed-entry fast path).
 7. Var-data (`as_slice`/`as_str`/`as_string` behind feature/`as_decoder`/`as_message`).
 8. Versioning (baseline/extension cross-version tests + official fixtures).

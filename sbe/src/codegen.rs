@@ -552,7 +552,7 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
             let max_val = max_encoding_value(*encoding_type);
             let max_expr = field_const_value_expr(max_val, *encoding_type);
             src.push_str(&format!(
-                "    pub const {upper_name}_NULL: {target_name} = {target_name}({max_expr});\n"
+                "    pub const {upper_name}_NULL: {target_name} = {target_name}::NullVal;\n"
             ));
             any = true;
         }
@@ -1048,13 +1048,11 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
     let is_char = encoding_type == PrimitiveType::Char;
 
     let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-    let kind_ident = syn::Ident::new(&format!("{name}Kind"), proc_macro2::Span::call_site());
     let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
 
     // Collect encoding variants
     struct Variant {
         variant_ident: syn::Ident,
-        const_ident: syn::Ident,
         disc: proc_macro2::TokenStream,
     }
 
@@ -1065,10 +1063,6 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
             let val = t.encoding.constant_value.as_ref()?;
             let variant_ident =
                 syn::Ident::new(&to_pascal_case(&t.name), proc_macro2::Span::call_site());
-            let const_ident = syn::Ident::new(
-                &to_upper_snake_case(&t.name),
-                proc_macro2::Span::call_site(),
-            );
             let disc: proc_macro2::TokenStream = if is_char {
                 let byte = val.as_bytes().first().copied().unwrap_or(0);
                 let lit = syn::LitByte::new(byte, proc_macro2::Span::call_site());
@@ -1090,7 +1084,6 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
             };
             Some(Variant {
                 variant_ident,
-                const_ident,
                 disc,
             })
         })
@@ -1098,15 +1091,14 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
 
     let variant_names: Vec<_> = variants.iter().map(|v| &v.variant_ident).collect();
     let variant_discs: Vec<_> = variants.iter().map(|v| &v.disc).collect();
-    let const_names: Vec<_> = variants.iter().map(|v| &v.const_ident).collect();
 
-    // Build kind match arms: disc => Some(Kind::Variant)
-    let kind_arms: Vec<_> = variants
+    // Build From<r_type> arms: disc => Self::Variant, _ => Self::NullVal
+    let from_raw_arms: Vec<_> = variants
         .iter()
         .map(|v| {
             let disc = &v.disc;
             let vname = &v.variant_ident;
-            quote::quote! { #disc => Some(#kind_ident::#vname) }
+            quote::quote! { #disc => Self::#vname }
         })
         .collect();
 
@@ -1114,47 +1106,35 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
     let is_bool = tokens[0].name == "BooleanType"
         || tokens[0].encoding.semantic_type.as_deref() == Some("Boolean");
 
-    // Compute FALSE/TRUE discriminant literals from actual enum definitions
-    let (false_lit, true_lit) = if is_bool {
+    // Find TRUE/FALSE variant idents for From<bool>
+    let (false_ident, true_ident) = if is_bool {
         let f = variants
             .iter()
             .find(|v| v.disc.to_string() == "0")
-            .map(|v| v.disc.clone())
-            .unwrap_or_else(|| quote::quote! { 0 });
+            .map(|v| v.variant_ident.clone());
         let t = variants
             .iter()
             .find(|v| v.disc.to_string() == "1")
-            .map(|v| v.disc.clone())
-            .unwrap_or_else(|| quote::quote! { 1 });
+            .map(|v| v.variant_ident.clone());
         (f, t)
     } else {
-        (quote::quote! {}, quote::quote! {})
+        (None, None)
     };
 
-    // Extra consts for boolean types (TRUE / FALSE aliases)
-    let boolean_consts = if is_bool {
-        quote::quote! {
-            pub const FALSE: Self = Self(#false_lit);
-            pub const TRUE: Self = Self(#true_lit);
-        }
-    } else {
-        quote::quote! {}
-    };
-
-    // Extra From<bool> / From<Name> for bool impls for boolean types
-    let from_bool_impl = if is_bool {
+    // From<bool> / From<Name> for bool impls for boolean types
+    let from_bool_impl = if let (Some(ref fv), Some(ref tv)) = (false_ident, true_ident) {
         quote::quote! {
             impl From<bool> for #name_ident {
                 #[inline(always)]
                 fn from(val: bool) -> Self {
-                    if val { Self(#true_lit) } else { Self(#false_lit) }
+                    if val { Self::#tv } else { Self::#fv }
                 }
             }
 
             impl From<#name_ident> for bool {
                 #[inline(always)]
                 fn from(val: #name_ident) -> bool {
-                    val.raw() != 0
+                    val as #r_type_ty != 0
                 }
             }
         }
@@ -1163,58 +1143,37 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
     };
 
     let tokens = quote::quote! {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        #[repr(transparent)]
-        pub struct #name_ident(pub #r_type_ty);
-
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         #[repr(#r_type_ty)]
-        pub enum #kind_ident {
-            #(#variant_names = #variant_discs),*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub enum #name_ident {
+            #(#variant_names = #variant_discs,)*
+            NullVal,
         }
 
         impl #name_ident {
-            #(
-                pub const #const_names: Self = Self(#variant_discs);
-            )*
+            pub fn raw(self) -> #r_type_ty {
+                self as #r_type_ty
+            }
 
-            #boolean_consts
-
-            pub const fn kind(self) -> Option<#kind_ident> {
-                match self.0 {
-                    #(#kind_arms,)*
-                    _ => None,
+            pub const fn from_raw(val: #r_type_ty) -> Self {
+                match val {
+                    #(#from_raw_arms,)*
+                    _ => Self::NullVal,
                 }
-            }
-
-            pub const fn into_kind(self) -> Option<#kind_ident> {
-                self.kind()
-            }
-
-            pub const fn raw(self) -> #r_type_ty {
-                self.0
-            }
-        }
-
-        impl From<#r_type_ty> for #name_ident {
-            #[inline(always)]
-            fn from(val: #r_type_ty) -> Self {
-                Self(val)
             }
         }
 
         impl From<#name_ident> for #r_type_ty {
             #[inline(always)]
             fn from(val: #name_ident) -> Self {
-                val.0
+                val as #r_type_ty
             }
         }
 
-        impl TryFrom<#name_ident> for #kind_ident {
-            type Error = ();
-            #[inline]
-            fn try_from(val: #name_ident) -> Result<Self, Self::Error> {
-                val.kind().ok_or(())
+        impl From<#r_type_ty> for #name_ident {
+            #[inline(always)]
+            fn from(val: #r_type_ty) -> Self {
+                Self::from_raw(val)
             }
         }
 
@@ -1434,7 +1393,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                                  bytes[j] = self.0[{} + j];\n\
                                  j += 1;\n\
                              }}\n\
-                             {}({}::from_{}_bytes(bytes))\n\
+                             {}::from_raw({}::from_{}_bytes(bytes))\n\
                          }}\n\n",
                     field_name,
                     target_name,
@@ -1570,15 +1529,17 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 ));
             }
             MemberType::Enum { encoding_type, .. } => {
+                let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
-                    "        let val_bytes = {}.0.to_{}_bytes();\n\
+                    "        let val_bytes = ({field_name} as {r_type}).to_{order_suffix}_bytes();\n\
                              let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[{} + j] = val_bytes[j];\n\
+                             while j < {prim_size} {{\n\
+                                 bytes[{offset} + j] = val_bytes[j];\n\
                                  j += 1;\n\
                              }}\n",
-                    field_name, order_suffix, prim_size, m.offset
+                    r_type = r_type, order_suffix = order_suffix,
+                    field_name = field_name, prim_size = prim_size, offset = m.offset
                 ));
             }
             MemberType::Set { encoding_type, .. } => {
@@ -2127,7 +2088,7 @@ fn generate_message_decoder(
                     src.push_str(&format!(
                         "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                  if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                     return Ok({}(0 as {}));\n\
+                                     return Ok({}::NullVal);\n\
                                  }}\n\
                                  let offset = self.pos + {};\n\
                                  if offset + {} > self.buf.len() {{\n\
@@ -2139,9 +2100,9 @@ fn generate_message_decoder(
                                      bytes[j] = self.buf[offset + j];\n\
                                      j += 1;\n\
                                  }}\n\
-                                 Ok({}({}::from_{}_bytes(bytes)))\n\
+                                 Ok({}::from_raw({}::from_{}_bytes(bytes)))\n\
                              }}\n\n",
-                        f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
+                        f_name, target_name, since, offset + prim_size, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
                         field_name = f.name
                     ));
 
@@ -2151,7 +2112,7 @@ fn generate_message_decoder(
                                  let mut bytes = [0u8; {}];
 
                                  bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                 {}({}::from_{}_bytes(bytes))\n\
+                                 {}::from_raw({}::from_{}_bytes(bytes))\n\
                              }}\n\n",
                         f_name,
                         target_name,
@@ -2548,14 +2509,8 @@ fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
                     continue;
                 }
                 src.push_str(&format!(
-                    "        match self.{}() {{\n\
-                         Ok(e) => match e.kind() {{\n\
-                             Some(k) => write!(f, \"{}{}: {}::{{k:?}}\")?,\n\
-                             None => write!(f, \"{}{}: {{}}\", e.raw())?,\n\
-                         }},\n\
-                         _ => {{}}\n\
-                     }}\n",
-                    snake, sep, snake, enum_name, sep, snake,
+                    "        if let Ok(e) = self.{}() {{ write!(f, \"{}{}: {}::{{e:?}}\")?; }}\n",
+                    snake, sep, snake, enum_name,
                 ));
                 out_idx += 1;
             }
@@ -3041,7 +2996,7 @@ fn generate_group_decoder(
                                  bytes[j] = self.buf[offset + j];\n\
                                  j += 1;\n\
                              }}\n\
-                             Ok({}({}::from_{}_bytes(bytes)))\n\
+                             Ok({}::from_raw({}::from_{}_bytes(bytes)))\n\
                          }}\n\n",
                     f_name, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
                     field_name = f.name
@@ -3053,7 +3008,7 @@ fn generate_group_decoder(
                              let mut bytes = [0u8; {}];
 
                              bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                             {}({}::from_{}_bytes(bytes))\n\
+                             {}::from_raw({}::from_{}_bytes(bytes))\n\
                          }}\n\n",
                     f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
                 ));
@@ -3061,16 +3016,15 @@ fn generate_group_decoder(
                 // raw_ for enum returns the raw discriminant value
                 src.push_str(&format!(
                     "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
-                             #[allow(unused_unsafe)]\n\
-                             unsafe {{ self.{}_unchecked().0 }}\n\
+                             unsafe {{ self.{}_unchecked() as {} }}\n\
                          }}\n\n",
-                    f_name, r_type, f_name
+                    f_name, r_type, f_name, r_type
                 ));
                 // Boolean fields get an additional getter that returns bool directly
                 if enum_name == "BooleanType" {
                     src.push_str(&format!(
-                        "#[inline]\n    pub const fn {f}_bool(&self) -> Result<bool, sbe_rt::DecodeError> {{\n                         match self.{f}() {{\n                             Ok(v) => Ok(v.raw() != 0),\n                             Err(e) => Err(e),\n                         }}\n                     }}\n\n",
-                        f = f_name,
+                        "#[inline]\n    pub const fn {f}_bool(&self) -> Result<bool, sbe_rt::DecodeError> {{\n                         match self.{f}() {{\n                             Ok(v) => Ok((v as {r_type}) != 0),\n                             Err(e) => Err(e),\n                         }}\n                     }}\n\n",
+                        f = f_name, r_type = r_type,
                     ));
                 }
             }
@@ -3570,22 +3524,23 @@ fn generate_message_encoder(
                     // Constant enum fields have no setter
                 } else {
                     let target_name = to_pascal_case(enum_name);
+                    let r_type = rust_type(*encoding_type);
                     let prim_size = encoding_type.size();
                     src.push_str(&format!(
-                        "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
-                             let offset = self.message_start + {} + {};\n\
-                             let val_bytes = val.0.to_{}_bytes();\n\
-                             self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
+                        "#[must_use]\n    pub fn {f_name}(&mut self, val: {target_name}) -> &mut Self {{\n\
+                             let offset = self.message_start + {header_size} + {offset};\n\
+                             let val_bytes = (val as {r_type}).to_{order_suffix}_bytes();\n\
+                             self.buf[offset..offset + {prim_size}].copy_from_slice(&val_bytes);\n\
                              self\n\
                          }}\n\n",
-                        f_name, target_name, header_size, offset, order_suffix, prim_size
+                        order_suffix = order_suffix, r_type = r_type,
                     ));
                     // Boolean fields get an additional setter that accepts bool directly
                     if enum_name == "BooleanType" {
                         src.push_str(&format!(
-                            "#[must_use]\n    pub fn {f_name}_bool(&mut self, val: bool) -> &mut Self {{\n    let offset = self.message_start + {header_size} + {offset};\n    let enum_val: {target_name} = val.into();\n    let val_bytes = enum_val.0.to_{order_suffix}_bytes();\n    self.buf[offset..offset + {prim_size}].copy_from_slice(&val_bytes);\n    self\n                         }}\n\n",
+                            "#[must_use]\n    pub fn {f_name}_bool(&mut self, val: bool) -> &mut Self {{\n    let offset = self.message_start + {header_size} + {offset};\n    let enum_val: {target_name} = val.into();\n    let val_bytes = (enum_val as {r_type}).to_{order_suffix}_bytes();\n    self.buf[offset..offset + {prim_size}].copy_from_slice(&val_bytes);\n    self\n                         }}\n\n",
                             f_name=f_name, header_size=header_size, offset=offset,
-                            target_name=target_name, order_suffix=order_suffix, prim_size=prim_size,
+                            target_name=target_name, order_suffix=order_suffix, prim_size=prim_size, r_type=r_type,
                         ));
                     }
                 }
@@ -3965,15 +3920,16 @@ fn generate_group_encoder(
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(enum_name);
+                let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
-                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
-                             let offset = self.entry_start + {};\n\
-                             let val_bytes = val.0.to_{}_bytes();\n\
-                             self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
+                    "#[must_use]\n    pub fn {f_name}(&mut self, val: {target_name}) -> &mut Self {{\n\
+                             let offset = self.entry_start + {offset};\n\
+                             let val_bytes = (val as {r_type}).to_{order_suffix}_bytes();\n\
+                             self.buf[offset..offset + {prim_size}].copy_from_slice(&val_bytes);\n\
                              self\n\
                          }}\n\n",
-                    f_name, target_name, offset, order_suffix, prim_size
+                    order_suffix = order_suffix, r_type = r_type,
                 ));
             }
             FieldType::Set {

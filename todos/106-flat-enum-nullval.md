@@ -39,14 +39,14 @@ impl Model {
 
 ## Acceptance criteria
 
-- [ ] Replace `generate_enum` codegen to emit flat enum with NullVal variant
-- [ ] Remove newtype `Struct` + `Kind` split — single enum per SBE enum
-- [ ] `pub const fn raw(self) -> T` returns `self as T` (repr discriminant)
-- [ ] `From<T>` impls for conversion
-- [ ] `From<&str>` or `FromStr` for parsing (optional, like upstream)
-- [ ] All existing tests pass with updated API
-- [ ] Golden file regenerated
-- [ ] Update design record in `design/DECISIONS.md`
+- [x] Replace `generate_enum` codegen to emit flat enum with NullVal variant
+- [x] Remove newtype `Struct` + `Kind` split — single enum per SBE enum
+- [x] `pub const fn raw(self) -> T` returns `self as T` (repr discriminant)
+- [x] `From<T>` impls for conversion
+- [ ] `From<&str>` or `FromStr` for parsing (optional, not implemented — YAGNI for now)
+- [x] All existing tests pass with updated API
+- [x] Golden file regenerated
+- [x] Update design record in `design/DECISIONS.md`
 
 ## Trade-off
 
