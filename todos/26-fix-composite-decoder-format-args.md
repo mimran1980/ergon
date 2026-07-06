@@ -18,11 +18,11 @@ The unchecked variant is NOT affected — it correctly uses `offset` and
 
 ## Acceptance criteria
 
-- [ ] Fix format args at codegen.rs:1531: positions 4 and 6 swapped
-- [ ] Audit ALL composite field templates (8 locations: 485, 1207, 1505,
+- [x] Fix format args at codegen.rs:1531: positions 4 and 6 swapped (fixed in 35b100a)
+- [x] Audit ALL composite field templates (8 locations: 485, 1207, 1505,
       2042, 2248, 2286, 2454, 2781) for similar argument-ordering bugs
-- [ ] Generated `car.engine()` compiles and returns `Engine([u8; 7])` not `36([u8; 0])`
-- [ ] Generated offset is `self.pos + 36` not `self.pos + 43`
-- [ ] Add a regression test that compiles generated code with composite fields
+- [x] Generated `car.engine()` compiles and returns `Engine([u8; 7])` not `36([u8; 0])`
+- [x] Generated offset is `self.pos + 36` not `self.pos + 43`
+- [x] Add a regression test that compiles generated code with composite fields
 
 Discovered by: generated code review agent (todos/11-generated-code-review).
