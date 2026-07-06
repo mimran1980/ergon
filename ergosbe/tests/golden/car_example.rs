@@ -637,6 +637,7 @@ impl<'a> CarDecoder<'a> {
     pub const BLOCK_LENGTH: usize = 45;
     /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
+    const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     #[inline]
     pub const fn wrap(
         buf: &'a [u8],
@@ -1788,7 +1789,9 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const BLOCK_LENGTH: usize = 45;
     /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
+    const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
+    const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
@@ -2148,6 +2151,7 @@ pub struct FuelFiguresEncoder<'a> {
 impl<'a> FuelFiguresEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
+    const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
@@ -2242,6 +2246,7 @@ pub struct PerformanceFiguresEncoder<'a> {
 impl<'a> PerformanceFiguresEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [1, 0, 0, 0];
+    const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
@@ -2333,6 +2338,7 @@ pub struct AccelerationEncoder<'a> {
 impl<'a> AccelerationEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
+    const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {

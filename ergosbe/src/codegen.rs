@@ -1597,7 +1597,7 @@ fn generate_message_decoder(
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
                  /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
-                 pub const ENCODED_LENGTH: usize = {};\n\n",
+                 pub const ENCODED_LENGTH: usize = {};\n                 const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
             name, schema_id, schema_version, msg.id, block_length, encoded_length,
         ));
     } else {
@@ -1616,7 +1616,7 @@ fn generate_message_decoder(
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
                  {}\
-                 pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
+                 pub const MAX_ENCODED_LENGTH: usize = {};\n                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
             name, schema_id, schema_version, msg.id, block_length, max_doc, max_encoded_capped
         ));
     }
@@ -2921,7 +2921,7 @@ fn generate_message_encoder(
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
                  /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
-                 pub const ENCODED_LENGTH: usize = {};\n\n",
+                 pub const ENCODED_LENGTH: usize = {};\n                 const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
             schema_id, schema_version, msg.id, block_length, encoded_length
         ));
     } else {
@@ -2939,7 +2939,7 @@ fn generate_message_encoder(
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
                  {}\
-                 pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
+                 pub const MAX_ENCODED_LENGTH: usize = {};\n                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
             schema_id, schema_version, msg.id, block_length, max_doc, max_encoded_capped
         ));
     }
@@ -2966,8 +2966,8 @@ fn generate_message_encoder(
         .collect::<Vec<_>>()
         .join(", ");
     src.push_str(&format!(
-        "    pub const HEADER_TEMPLATE: [u8; {}] = [{}];\n\n",
-        header_size, hdr_repr
+        "    pub const HEADER_TEMPLATE: [u8; {}] = [{}];\n             const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == {});\n\n",
+        header_size, hdr_repr, header_size
     ));
 
     if total_tail > 0 {
@@ -3377,7 +3377,7 @@ fn generate_group_encoder(
          }}\n\n\
          impl<'a> {}Encoder<'a> {{\n\
              pub const ENTRY_BLOCK_LENGTH: usize = {};\n\
-             pub const GROUP_DIM_TEMPLATE: [u8; {}] = [{}];\n\n\
+             pub const GROUP_DIM_TEMPLATE: [u8; {}] = [{}];\n             const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == {});\n\n\
              #[inline]\n             pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {{\n\
                  Self {{ buf, pos, count, written: 0 }}\n\
              }}\n\n\
@@ -3393,7 +3393,7 @@ fn generate_group_encoder(
                      return Err(sbe_rt::EncodeError::BufferTooShort {{ needed: block_len, available: self.buf.len() - self.pos }});\n\
                  }}\n\
                  let mut entry = {}EntryEncoder::wrap(self.buf, self.pos);\n",
-        name, name, g.block_length, dim_size, dim_repr, name, name
+        name, name, g.block_length, dim_size, dim_repr, dim_size, name, name
     ));
 
     generate_nullification(src, &g.fields, "self.pos", byte_order);
