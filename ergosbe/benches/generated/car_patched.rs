@@ -1,7 +1,18 @@
+//! Generated from SBE schema package `baseline` id 1 version 0.
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::eq_op)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::manual_range_contains)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(dead_code)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
-        BufferTooShort { field: &'static str, offset: usize, needed: usize, available: usize },
+        BufferTooShort { field: &'static str, needed: usize, available: usize },
         WrongSchema { expected: u16, actual: u16 },
         UnknownTemplateLength { template_id: u16 },
         InvalidVarDataLength { field: &'static str, length: u32 },
@@ -11,9 +22,9 @@ pub mod sbe_rt {
         #[cold]
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
-                Self::BufferTooShort { field, offset, needed, available } => {
+                Self::BufferTooShort { field, needed, available } => {
                     write!(
-                        f, "field '{}' at offset {}: needed {} bytes, {} available", field, offset, needed,
+                        f, "field '{}': needed {} bytes, {} available", field, needed,
                         available
                     )
                 }
@@ -229,6 +240,7 @@ impl From<OptionalExtras> for u8 {
 #[repr(transparent)]
 pub struct MessageHeader(pub [u8; 8]);
 impl MessageHeader {
+    #[inline]
     pub const fn block_length(&self) -> u16 {
         let mut bytes = [0u8; 2];
         let mut j = 0;
@@ -238,6 +250,7 @@ impl MessageHeader {
         }
         u16::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn template_id(&self) -> u16 {
         let mut bytes = [0u8; 2];
         let mut j = 0;
@@ -247,6 +260,7 @@ impl MessageHeader {
         }
         u16::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn schema_id(&self) -> u16 {
         let mut bytes = [0u8; 2];
         let mut j = 0;
@@ -256,6 +270,7 @@ impl MessageHeader {
         }
         u16::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn version(&self) -> u16 {
         let mut bytes = [0u8; 2];
         let mut j = 0;
@@ -303,6 +318,7 @@ impl MessageHeader {
 #[repr(transparent)]
 pub struct GroupSizeEncoding(pub [u8; 4]);
 impl GroupSizeEncoding {
+    #[inline]
     pub const fn block_length(&self) -> u16 {
         let mut bytes = [0u8; 2];
         let mut j = 0;
@@ -312,6 +328,7 @@ impl GroupSizeEncoding {
         }
         u16::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn num_in_group(&self) -> u16 {
         let mut bytes = [0u8; 2];
         let mut j = 0;
@@ -342,6 +359,7 @@ impl GroupSizeEncoding {
 #[repr(transparent)]
 pub struct VarStringEncoding(pub [u8; 4]);
 impl VarStringEncoding {
+    #[inline]
     pub const fn length(&self) -> u32 {
         let mut bytes = [0u8; 4];
         let mut j = 0;
@@ -351,6 +369,7 @@ impl VarStringEncoding {
         }
         u32::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn var_data(&self) -> [u8; 0] {
         let mut res = [0 as u8; 0];
         let mut idx = 0;
@@ -392,6 +411,7 @@ impl VarStringEncoding {
 #[repr(transparent)]
 pub struct VarAsciiEncoding(pub [u8; 4]);
 impl VarAsciiEncoding {
+    #[inline]
     pub const fn length(&self) -> u32 {
         let mut bytes = [0u8; 4];
         let mut j = 0;
@@ -401,6 +421,7 @@ impl VarAsciiEncoding {
         }
         u32::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn var_data(&self) -> [u8; 0] {
         let mut res = [0 as u8; 0];
         let mut idx = 0;
@@ -442,6 +463,7 @@ impl VarAsciiEncoding {
 #[repr(transparent)]
 pub struct VarDataEncoding(pub [u8; 4]);
 impl VarDataEncoding {
+    #[inline]
     pub const fn length(&self) -> u32 {
         let mut bytes = [0u8; 4];
         let mut j = 0;
@@ -451,6 +473,7 @@ impl VarDataEncoding {
         }
         u32::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn var_data(&self) -> [u8; 0] {
         let mut res = [0 as u8; 0];
         let mut idx = 0;
@@ -492,6 +515,7 @@ impl VarDataEncoding {
 #[repr(transparent)]
 pub struct Booster(pub [u8; 1]);
 impl Booster {
+    #[inline]
     pub const fn horse_power(&self) -> u8 {
         let mut bytes = [0u8; 1];
         let mut j = 0;
@@ -516,6 +540,7 @@ impl Booster {
 #[repr(transparent)]
 pub struct Engine(pub [u8; 9]);
 impl Engine {
+    #[inline]
     pub const fn capacity(&self) -> u16 {
         let mut bytes = [0u8; 2];
         let mut j = 0;
@@ -525,6 +550,7 @@ impl Engine {
         }
         u16::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn num_cylinders(&self) -> u8 {
         let mut bytes = [0u8; 1];
         let mut j = 0;
@@ -534,9 +560,11 @@ impl Engine {
         }
         u8::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn max_rpm(&self) -> u16 {
         9000
     }
+    #[inline]
     pub const fn manufacturer_code(&self) -> [u8; 3] {
         let mut res = [0 as u8; 3];
         let mut idx = 0;
@@ -553,6 +581,7 @@ impl Engine {
         }
         res
     }
+    #[inline]
     pub const fn fuel(&self) -> &'static str {
         "Petrol"
     }
@@ -601,6 +630,7 @@ impl<'a> CarDecoder<'a> {
     pub const BLOCK_LENGTH: usize = 45;
     /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`
     pub const MAX_ENCODED_LENGTH: usize = 3221225552;
+    #[inline]
     pub const fn wrap(
         buf: &'a [u8],
         pos: usize,
@@ -614,24 +644,22 @@ impl<'a> CarDecoder<'a> {
             acting_version,
         }
     }
+    #[inline]
     pub fn wrap_and_apply_header(
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 8 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "message header",
-                needed: pos + 8,
-                available: buf.len(),
-            });
-        }
-        let mut header_bytes = [0u8; 8];
-        let mut j = 0;
-        while j < 8 {
-            header_bytes[j] = buf[pos + j];
-            j += 1;
-        }
+        let header_bytes: [u8; 8] = buf
+            .get(pos..pos + 8)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "message header",
+                    needed: 8,
+                    available: buf.len() - pos,
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = MessageHeader(header_bytes);
         if header.schema_id() != Self::SCHEMA_ID {
             return Err(sbe_rt::DecodeError::WrongSchema {
@@ -641,20 +669,21 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(Self::wrap(buf, pos + 8, header.block_length() as usize, header.version()))
     }
+    #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
     }
+    #[inline]
     pub const fn serial_number(&self) -> Result<u64, sbe_rt::DecodeError> {
         let offset = self.pos + 0;
         if offset + 8 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "serialNumber",
-                needed: offset + 8,
-                available: self.buf.len(),
+                field: "serialNumber",
+                needed: 8,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 8];
@@ -665,6 +694,7 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(u64::from_le_bytes(bytes))
     }
+    #[inline]
     pub const unsafe fn serial_number_unchecked(&self) -> u64 {
         let offset = self.pos + 0;
         let mut bytes = [0u8; 8];
@@ -674,17 +704,18 @@ impl<'a> CarDecoder<'a> {
             });
         u64::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn raw_serial_number(&self) -> u64 {
         #[allow(unused_unsafe)] unsafe { self.serial_number_unchecked() }
     }
+    #[inline]
     pub const fn model_year(&self) -> Result<u16, sbe_rt::DecodeError> {
         let offset = self.pos + 8;
         if offset + 2 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "modelYear",
-                needed: offset + 2,
-                available: self.buf.len(),
+                field: "modelYear",
+                needed: 2,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 2];
@@ -695,6 +726,7 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(u16::from_le_bytes(bytes))
     }
+    #[inline]
     pub const unsafe fn model_year_unchecked(&self) -> u16 {
         let offset = self.pos + 8;
         let mut bytes = [0u8; 2];
@@ -704,9 +736,11 @@ impl<'a> CarDecoder<'a> {
             });
         u16::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn raw_model_year(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.model_year_unchecked() }
     }
+    #[inline]
     pub const fn available(&self) -> Result<BooleanType, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 11 > self.acting_block_length {
             return Ok(BooleanType(0 as u8));
@@ -714,10 +748,9 @@ impl<'a> CarDecoder<'a> {
         let offset = self.pos + 10;
         if offset + 1 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "available",
-                needed: offset + 1,
-                available: self.buf.len(),
+                field: "available",
+                needed: 1,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 1];
@@ -728,6 +761,7 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(BooleanType(u8::from_le_bytes(bytes)))
     }
+    #[inline]
     pub const unsafe fn available_unchecked(&self) -> BooleanType {
         let offset = self.pos + 10;
         let mut bytes = [0u8; 1];
@@ -737,6 +771,7 @@ impl<'a> CarDecoder<'a> {
             });
         BooleanType(u8::from_le_bytes(bytes))
     }
+    #[inline]
     pub const fn code(&self) -> Result<Model, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 12 > self.acting_block_length {
             return Ok(Model(0 as u8));
@@ -744,10 +779,9 @@ impl<'a> CarDecoder<'a> {
         let offset = self.pos + 11;
         if offset + 1 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "code",
-                needed: offset + 1,
-                available: self.buf.len(),
+                field: "code",
+                needed: 1,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 1];
@@ -758,6 +792,7 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(Model(u8::from_le_bytes(bytes)))
     }
+    #[inline]
     pub const unsafe fn code_unchecked(&self) -> Model {
         let offset = self.pos + 11;
         let mut bytes = [0u8; 1];
@@ -767,6 +802,7 @@ impl<'a> CarDecoder<'a> {
             });
         Model(u8::from_le_bytes(bytes))
     }
+    #[inline]
     pub const fn some_numbers(&self) -> Result<[u32; 4], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 28 > self.acting_block_length {
             return Ok([0 as u32; 4]);
@@ -775,10 +811,9 @@ impl<'a> CarDecoder<'a> {
         let size = 16;
         if offset + size > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "someNumbers",
-                needed: offset + size,
-                available: self.buf.len(),
+                field: "someNumbers",
+                needed: size,
+                available: self.buf.len() - offset,
             });
         }
         let mut res = [0 as u32; 4];
@@ -796,6 +831,7 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(res)
     }
+    #[inline]
     pub const unsafe fn some_numbers_unchecked(&self) -> [u32; 4] {
         let offset = self.pos + 12;
         let mut res = [0 as u32; 4];
@@ -812,9 +848,11 @@ impl<'a> CarDecoder<'a> {
         }
         res
     }
+    #[inline]
     pub const fn raw_some_numbers(&self) -> [u32; 4] {
         #[allow(unused_unsafe)] unsafe { self.some_numbers_unchecked() }
     }
+    #[inline]
     pub const fn vehicle_code(&self) -> Result<[u8; 6], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 34 > self.acting_block_length {
             return Ok([0 as u8; 6]);
@@ -823,10 +861,9 @@ impl<'a> CarDecoder<'a> {
         let size = 6;
         if offset + size > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "vehicleCode",
-                needed: offset + size,
-                available: self.buf.len(),
+                field: "vehicleCode",
+                needed: size,
+                available: self.buf.len() - offset,
             });
         }
         let mut res = [0 as u8; 6];
@@ -844,6 +881,7 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(res)
     }
+    #[inline]
     pub const unsafe fn vehicle_code_unchecked(&self) -> [u8; 6] {
         let offset = self.pos + 28;
         let mut res = [0 as u8; 6];
@@ -860,9 +898,11 @@ impl<'a> CarDecoder<'a> {
         }
         res
     }
+    #[inline]
     pub const fn raw_vehicle_code(&self) -> [u8; 6] {
         #[allow(unused_unsafe)] unsafe { self.vehicle_code_unchecked() }
     }
+    #[inline]
     pub const fn extras(&self) -> Result<OptionalExtras, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 35 > self.acting_block_length {
             return Ok(OptionalExtras(0 as u8));
@@ -870,10 +910,9 @@ impl<'a> CarDecoder<'a> {
         let offset = self.pos + 34;
         if offset + 1 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "extras",
-                needed: offset + 1,
-                available: self.buf.len(),
+                field: "extras",
+                needed: 1,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 1];
@@ -884,6 +923,7 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(OptionalExtras(u8::from_le_bytes(bytes)))
     }
+    #[inline]
     pub const unsafe fn extras_unchecked(&self) -> OptionalExtras {
         let offset = self.pos + 34;
         let mut bytes = [0u8; 1];
@@ -893,9 +933,11 @@ impl<'a> CarDecoder<'a> {
             });
         OptionalExtras(u8::from_le_bytes(bytes))
     }
+    #[inline]
     pub const fn discounted_model(&self) -> Model {
         Model::C
     }
+    #[inline]
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 44 > self.acting_block_length {
             return Ok(Engine([0u8; 9]));
@@ -903,10 +945,9 @@ impl<'a> CarDecoder<'a> {
         let offset = self.pos + 35;
         if offset + 9 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "engine",
-                needed: offset + 9,
-                available: self.buf.len(),
+                field: "engine",
+                needed: 9,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 9];
@@ -917,6 +958,7 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(Engine(bytes))
     }
+    #[inline]
     pub const unsafe fn engine_unchecked(&self) -> Engine {
         let offset = self.pos + 35;
         let mut bytes = [0u8; 9];
@@ -935,10 +977,9 @@ impl<'a> CarDecoder<'a> {
         let start = self.tail_offset_0()?;
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "fuelFigures",
-                needed: start + 4,
-                available: self.buf.len(),
+                field: "fuelFigures",
+                needed: 4,
+                available: self.buf.len() - start,
             });
         }
         let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
@@ -963,10 +1004,9 @@ impl<'a> CarDecoder<'a> {
         let start = self.tail_offset_1()?;
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "performanceFigures",
-                needed: start + 4,
-                available: self.buf.len(),
+                field: "performanceFigures",
+                needed: 4,
+                available: self.buf.len() - start,
             });
         }
         let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
@@ -991,10 +1031,9 @@ impl<'a> CarDecoder<'a> {
         let start = self.tail_offset_2()?;
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "manufacturer",
-                needed: start + 4,
-                available: self.buf.len(),
+                field: "manufacturer",
+                needed: 4,
+                available: self.buf.len() - start,
             });
         }
         let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
@@ -1002,10 +1041,9 @@ impl<'a> CarDecoder<'a> {
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "manufacturer",
-                needed: start + 4 + len,
-                available: self.buf.len(),
+                field: "manufacturer",
+                needed: 4 + len,
+                available: self.buf.len() - start,
             });
         }
         Ok(start + 4 + len)
@@ -1015,10 +1053,9 @@ impl<'a> CarDecoder<'a> {
         let start = self.tail_offset_3()?;
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "model",
-                needed: start + 4,
-                available: self.buf.len(),
+                field: "model",
+                needed: 4,
+                available: self.buf.len() - start,
             });
         }
         let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
@@ -1026,10 +1063,9 @@ impl<'a> CarDecoder<'a> {
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "model",
-                needed: start + 4 + len,
-                available: self.buf.len(),
+                field: "model",
+                needed: 4 + len,
+                available: self.buf.len() - start,
             });
         }
         Ok(start + 4 + len)
@@ -1039,10 +1075,9 @@ impl<'a> CarDecoder<'a> {
         let start = self.tail_offset_4()?;
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "activationCode",
-                needed: start + 4,
-                available: self.buf.len(),
+                field: "activationCode",
+                needed: 4,
+                available: self.buf.len() - start,
             });
         }
         let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
@@ -1050,24 +1085,26 @@ impl<'a> CarDecoder<'a> {
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "activationCode",
-                needed: start + 4 + len,
-                available: self.buf.len(),
+                field: "activationCode",
+                needed: 4 + len,
+                available: self.buf.len() - start,
             });
         }
         Ok(start + 4 + len)
     }
+    #[inline]
     pub fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
         FuelFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
+    #[inline]
     pub fn performance_figures(
         &self,
     ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_1()?;
         PerformanceFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
+    #[inline]
     pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2()?;
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
@@ -1076,10 +1113,12 @@ impl<'a> CarDecoder<'a> {
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
+    #[inline]
     pub fn manufacturer_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.manufacturer()?;
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
+    #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
@@ -1088,10 +1127,12 @@ impl<'a> CarDecoder<'a> {
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
+    #[inline]
     pub fn model_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.model()?;
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
+    #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
@@ -1100,18 +1141,22 @@ impl<'a> CarDecoder<'a> {
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
+    #[inline]
     pub fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
+    #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
         Ok(end - self.pos)
     }
+    #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
         let len = self.encoded_length()?;
         Ok(len + 8)
     }
+    #[inline]
     pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let len = self.encoded_length_with_header()?;
         let start = self.pos - 8;
@@ -1190,20 +1235,23 @@ pub struct FuelFiguresDecoder<'a> {
 }
 impl<'a> FuelFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    #[inline]
     pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 4 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "fuelFigures",
-                needed: pos + 4,
-                available: buf.len(),
-            });
-        }
-        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
+        let bytes: [u8; 4] = buf
+            .get(pos..pos + 4)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "fuelFigures",
+                    needed: 4,
+                    available: buf.len() - pos,
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -1213,6 +1261,7 @@ impl<'a> FuelFiguresDecoder<'a> {
             acting_version,
         })
     }
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
@@ -1246,17 +1295,18 @@ pub struct FuelFiguresEntryDecoder<'a> {
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    #[inline]
     pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
+    #[inline]
     pub const fn speed(&self) -> Result<u16, sbe_rt::DecodeError> {
         let offset = self.pos + 0;
         if offset + 2 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "speed",
-                needed: offset + 2,
-                available: self.buf.len(),
+                field: "speed",
+                needed: 2,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 2];
@@ -1267,6 +1317,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         }
         Ok(u16::from_le_bytes(bytes))
     }
+    #[inline]
     pub const unsafe fn speed_unchecked(&self) -> u16 {
         let offset = self.pos + 0;
         let mut bytes = [0u8; 2];
@@ -1276,17 +1327,18 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             });
         u16::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn raw_speed(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.speed_unchecked() }
     }
+    #[inline]
     pub const fn mpg(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
         if offset + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "mpg",
-                needed: offset + 4,
-                available: self.buf.len(),
+                field: "mpg",
+                needed: 4,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 4];
@@ -1297,6 +1349,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         }
         Ok(f32::from_le_bytes(bytes))
     }
+    #[inline]
     pub const unsafe fn mpg_unchecked(&self) -> f32 {
         let offset = self.pos + 2;
         let mut bytes = [0u8; 4];
@@ -1306,6 +1359,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             });
         f32::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn raw_mpg(&self) -> f32 {
         #[allow(unused_unsafe)] unsafe { self.mpg_unchecked() }
     }
@@ -1318,10 +1372,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let start = self.tail_offset_0()?;
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "usageDescription",
-                needed: start + 4,
-                available: self.buf.len(),
+                field: "usageDescription",
+                needed: 4,
+                available: self.buf.len() - start,
             });
         }
         let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
@@ -1329,14 +1382,14 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "usageDescription",
-                needed: start + 4 + len,
-                available: self.buf.len(),
+                field: "usageDescription",
+                needed: 4 + len,
+                available: self.buf.len() - start,
             });
         }
         Ok(start + 4 + len)
     }
+    #[inline]
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
@@ -1345,9 +1398,11 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
+    #[inline]
     pub fn encoded_length(&self) -> usize {
         self.tail_offset_1().unwrap_or(self.pos + Self::ENTRY_BLOCK_LENGTH) - self.pos
     }
+    #[inline]
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
@@ -1366,20 +1421,23 @@ pub struct PerformanceFiguresDecoder<'a> {
 }
 impl<'a> PerformanceFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
+    #[inline]
     pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 4 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "performanceFigures",
-                needed: pos + 4,
-                available: buf.len(),
-            });
-        }
-        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
+        let bytes: [u8; 4] = buf
+            .get(pos..pos + 4)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "performanceFigures",
+                    needed: 4,
+                    available: buf.len() - pos,
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -1389,6 +1447,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
             acting_version,
         })
     }
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
@@ -1422,17 +1481,18 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
+    #[inline]
     pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
+    #[inline]
     pub const fn octane_rating(&self) -> Result<u8, sbe_rt::DecodeError> {
         let offset = self.pos + 0;
         if offset + 1 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "octaneRating",
-                needed: offset + 1,
-                available: self.buf.len(),
+                field: "octaneRating",
+                needed: 1,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 1];
@@ -1443,6 +1503,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         }
         Ok(u8::from_le_bytes(bytes))
     }
+    #[inline]
     pub const unsafe fn octane_rating_unchecked(&self) -> u8 {
         let offset = self.pos + 0;
         let mut bytes = [0u8; 1];
@@ -1452,6 +1513,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             });
         u8::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn raw_octane_rating(&self) -> u8 {
         #[allow(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
     }
@@ -1464,10 +1526,9 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         let start = self.tail_offset_0()?;
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "acceleration",
-                needed: start + 4,
-                available: self.buf.len(),
+                field: "acceleration",
+                needed: 4,
+                available: self.buf.len() - start,
             });
         }
         let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
@@ -1487,13 +1548,16 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         }
         Ok(pos)
     }
+    #[inline]
     pub fn acceleration(&self) -> Result<AccelerationDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
         AccelerationDecoder::wrap(self.buf, offset, self.acting_version)
     }
+    #[inline]
     pub fn encoded_length(&self) -> usize {
         self.tail_offset_1().unwrap_or(self.pos + Self::ENTRY_BLOCK_LENGTH) - self.pos
     }
+    #[inline]
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
@@ -1512,20 +1576,23 @@ pub struct AccelerationDecoder<'a> {
 }
 impl<'a> AccelerationDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    #[inline]
     pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 4 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "acceleration",
-                needed: pos + 4,
-                available: buf.len(),
-            });
-        }
-        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
+        let bytes: [u8; 4] = buf
+            .get(pos..pos + 4)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "acceleration",
+                    needed: 4,
+                    available: buf.len() - pos,
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -1535,17 +1602,18 @@ impl<'a> AccelerationDecoder<'a> {
             acting_version,
         })
     }
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+    #[inline]
     pub fn as_chunks(&self) -> Result<&'a [[u8; 6]], sbe_rt::DecodeError> {
         let len = self.count * 6;
         if self.pos + len > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "acceleration",
-                needed: self.pos + len,
-                available: self.buf.len(),
+                field: "acceleration",
+                needed: len,
+                available: self.buf.len() - self.pos,
             });
         }
         let bytes = &self.buf[self.pos..self.pos + len];
@@ -1582,17 +1650,18 @@ pub struct AccelerationEntryDecoder<'a> {
 }
 impl<'a> AccelerationEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    #[inline]
     pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
+    #[inline]
     pub const fn mph(&self) -> Result<u16, sbe_rt::DecodeError> {
         let offset = self.pos + 0;
         if offset + 2 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "mph",
-                needed: offset + 2,
-                available: self.buf.len(),
+                field: "mph",
+                needed: 2,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 2];
@@ -1603,6 +1672,7 @@ impl<'a> AccelerationEntryDecoder<'a> {
         }
         Ok(u16::from_le_bytes(bytes))
     }
+    #[inline]
     pub const unsafe fn mph_unchecked(&self) -> u16 {
         let offset = self.pos + 0;
         let mut bytes = [0u8; 2];
@@ -1612,17 +1682,18 @@ impl<'a> AccelerationEntryDecoder<'a> {
             });
         u16::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn raw_mph(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.mph_unchecked() }
     }
+    #[inline]
     pub const fn seconds(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
         if offset + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "seconds",
-                needed: offset + 4,
-                available: self.buf.len(),
+                field: "seconds",
+                needed: 4,
+                available: self.buf.len() - offset,
             });
         }
         let mut bytes = [0u8; 4];
@@ -1633,6 +1704,7 @@ impl<'a> AccelerationEntryDecoder<'a> {
         }
         Ok(f32::from_le_bytes(bytes))
     }
+    #[inline]
     pub const unsafe fn seconds_unchecked(&self) -> f32 {
         let offset = self.pos + 2;
         let mut bytes = [0u8; 4];
@@ -1642,6 +1714,7 @@ impl<'a> AccelerationEntryDecoder<'a> {
             });
         f32::from_le_bytes(bytes)
     }
+    #[inline]
     pub const fn raw_seconds(&self) -> f32 {
         #[allow(unused_unsafe)] unsafe { self.seconds_unchecked() }
     }
@@ -1649,9 +1722,11 @@ impl<'a> AccelerationEntryDecoder<'a> {
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
     }
+    #[inline]
     pub fn encoded_length(&self) -> usize {
         self.tail_offset_0().unwrap_or(self.pos + Self::ENTRY_BLOCK_LENGTH) - self.pos
     }
+    #[inline]
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
@@ -1685,6 +1760,7 @@ impl<'a, State> CarEncoder<'a, State> {
     /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`
     pub const MAX_ENCODED_LENGTH: usize = 3221225552;
     pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
+    #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
@@ -1693,44 +1769,50 @@ impl<'a, State> CarEncoder<'a, State> {
             _phantom: core::marker::PhantomData,
         }
     }
+    #[inline]
     pub fn wrap_and_apply_header(
         buf: &'a mut [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::EncodeError> {
-        let needed = pos + 8 + 45;
-        if needed > buf.len() {
+        let needed = 8 + 45;
+        if pos + needed > buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available: buf.len(),
+                available: buf.len() - pos,
             });
         }
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
         Ok(Self::wrap(buf, pos))
     }
+    #[must_use]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = self.message_start + 8 + 0;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 8].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = self.message_start + 8 + 8;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.message_start + 8 + 10;
         let val_bytes = val.0.to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.message_start + 8 + 11;
         let val_bytes = val.0.to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
         let offset = self.message_start + 8 + 12;
         let mut idx = 0;
@@ -1741,6 +1823,7 @@ impl<'a, State> CarEncoder<'a, State> {
         }
         self
     }
+    #[must_use]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
         let offset = self.message_start + 8 + 28;
         let mut idx = 0;
@@ -1751,25 +1834,30 @@ impl<'a, State> CarEncoder<'a, State> {
         }
         self
     }
+    #[must_use]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.message_start + 8 + 34;
         let val_bytes = val.0.to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.message_start + 8 + 35;
         self.buf[offset..offset + 9].copy_from_slice(&val.0);
         self
     }
+    #[inline]
     pub fn encoded_length(&self) -> usize {
         self.pos - (self.message_start + 8)
     }
+    #[inline]
     pub fn encoded_length_with_header(&self) -> usize {
         self.pos - self.message_start
     }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
+    #[must_use]
     pub fn fuel_figures<F>(
         mut self,
         count: u16,
@@ -1783,29 +1871,25 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
     {
         if self.pos + 4 > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: self.pos + 4,
-                available: self.buf.len(),
+                needed: 4,
+                available: self.buf.len() - self.pos,
             });
         }
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let __pos;
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = FuelFiguresEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            __pos = group.pos;
-        }
+        let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: __pos,
+            pos: group.pos,
             _phantom: core::marker::PhantomData,
         })
     }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
+    #[must_use]
     pub fn performance_figures<F>(
         mut self,
         count: u16,
@@ -1819,29 +1903,25 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
     {
         if self.pos + 4 > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: self.pos + 4,
-                available: self.buf.len(),
+                needed: 4,
+                available: self.buf.len() - self.pos,
             });
         }
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let __pos;
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = PerformanceFiguresEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            __pos = group.pos;
-        }
+        let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: __pos,
+            pos: group.pos,
             _phantom: core::marker::PhantomData,
         })
     }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
+    #[must_use]
     pub fn manufacturer(
         mut self,
         data: &[u8],
@@ -1853,11 +1933,11 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
                 actual: data.len(),
             });
         }
-        let needed = self.pos + 4 + data.len();
-        if needed > self.buf.len() {
+        let needed = 4 + data.len();
+        if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available: self.buf.len(),
+                available: self.buf.len() - self.pos,
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
@@ -1871,15 +1951,16 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
             _phantom: core::marker::PhantomData,
         })
     }
+    #[must_use]
     pub fn manufacturer_unchecked(
         mut self,
         data: &[u8],
     ) -> Result<CarEncoder<'a, car_encoder_state::NeedsModel>, sbe_rt::EncodeError> {
-        let needed = self.pos + 4 + data.len();
-        if needed > self.buf.len() {
+        let needed = 4 + data.len();
+        if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available: self.buf.len(),
+                available: self.buf.len() - self.pos,
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
@@ -1895,6 +1976,7 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
     }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
+    #[must_use]
     pub fn model(
         mut self,
         data: &[u8],
@@ -1909,11 +1991,11 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
                 actual: data.len(),
             });
         }
-        let needed = self.pos + 4 + data.len();
-        if needed > self.buf.len() {
+        let needed = 4 + data.len();
+        if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available: self.buf.len(),
+                available: self.buf.len() - self.pos,
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
@@ -1927,6 +2009,7 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
             _phantom: core::marker::PhantomData,
         })
     }
+    #[must_use]
     pub fn model_unchecked(
         mut self,
         data: &[u8],
@@ -1934,11 +2017,11 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
         CarEncoder<'a, car_encoder_state::NeedsActivationCode>,
         sbe_rt::EncodeError,
     > {
-        let needed = self.pos + 4 + data.len();
-        if needed > self.buf.len() {
+        let needed = 4 + data.len();
+        if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available: self.buf.len(),
+                available: self.buf.len() - self.pos,
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
@@ -1954,6 +2037,7 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
     }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
+    #[must_use]
     pub fn activation_code(
         mut self,
         data: &[u8],
@@ -1965,11 +2049,11 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
                 actual: data.len(),
             });
         }
-        let needed = self.pos + 4 + data.len();
-        if needed > self.buf.len() {
+        let needed = 4 + data.len();
+        if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available: self.buf.len(),
+                available: self.buf.len() - self.pos,
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
@@ -1983,15 +2067,16 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
             _phantom: core::marker::PhantomData,
         })
     }
+    #[must_use]
     pub fn activation_code_unchecked(
         mut self,
         data: &[u8],
     ) -> Result<CarEncoder<'a, car_encoder_state::Complete>, sbe_rt::EncodeError> {
-        let needed = self.pos + 4 + data.len();
-        if needed > self.buf.len() {
+        let needed = 4 + data.len();
+        if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available: self.buf.len(),
+                available: self.buf.len() - self.pos,
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
@@ -2007,6 +2092,7 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
     }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::Complete> {
+    #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf[self.message_start..self.pos]
     }
@@ -2033,6 +2119,7 @@ pub struct FuelFiguresEncoder<'a> {
 impl<'a> FuelFiguresEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
+    #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
@@ -2041,6 +2128,7 @@ impl<'a> FuelFiguresEncoder<'a> {
             written: 0,
         }
     }
+    #[must_use]
     pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
         F: FnOnce(&mut FuelFiguresEntryEncoder<'a>),
@@ -2051,17 +2139,14 @@ impl<'a> FuelFiguresEncoder<'a> {
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: self.pos + block_len,
-                available: self.buf.len(),
+                needed: block_len,
+                available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = FuelFiguresEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2073,6 +2158,7 @@ pub struct FuelFiguresEntryEncoder<'a> {
 }
 impl<'a> FuelFiguresEntryEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
@@ -2080,27 +2166,30 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
+    #[must_use]
     pub fn speed(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn mpg(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 4].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn usage_description(
         &mut self,
         data: &[u8],
     ) -> Result<&mut Self, sbe_rt::EncodeError> {
-        let needed = self.pos + 4 + data.len();
-        if needed > self.buf.len() {
+        let needed = 4 + data.len();
+        if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available: self.buf.len(),
+                available: self.buf.len() - self.pos,
             });
         }
         let len_bytes = (data.len() as u32).to_le_bytes();
@@ -2121,6 +2210,7 @@ pub struct PerformanceFiguresEncoder<'a> {
 impl<'a> PerformanceFiguresEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [1, 0, 0, 0];
+    #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
@@ -2129,6 +2219,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             written: 0,
         }
     }
+    #[must_use]
     pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
         F: FnOnce(&mut PerformanceFiguresEntryEncoder<'a>),
@@ -2139,17 +2230,14 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: self.pos + block_len,
-                available: self.buf.len(),
+                needed: block_len,
+                available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = PerformanceFiguresEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2161,6 +2249,7 @@ pub struct PerformanceFiguresEntryEncoder<'a> {
 }
 impl<'a> PerformanceFiguresEntryEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
+    #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
@@ -2168,12 +2257,14 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
+    #[must_use]
     pub fn octane_rating(&mut self, val: u8) -> &mut Self {
         let offset = self.entry_start + 0;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn acceleration<F>(
         &mut self,
         count: u16,
@@ -2184,19 +2275,16 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     {
         if self.pos + 4 > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: self.pos + 4,
-                available: self.buf.len(),
+                needed: 4,
+                available: self.buf.len() - self.pos,
             });
         }
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&AccelerationEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = AccelerationEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            self.pos = group.pos;
-        }
+        let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
+        self.pos = group.pos;
         Ok(self)
     }
 }
@@ -2210,6 +2298,7 @@ pub struct AccelerationEncoder<'a> {
 impl<'a> AccelerationEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
+    #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
@@ -2218,6 +2307,7 @@ impl<'a> AccelerationEncoder<'a> {
             written: 0,
         }
     }
+    #[must_use]
     pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
         F: FnOnce(&mut AccelerationEntryEncoder<'a>),
@@ -2228,17 +2318,14 @@ impl<'a> AccelerationEncoder<'a> {
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: self.pos + block_len,
-                available: self.buf.len(),
+                needed: block_len,
+                available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = AccelerationEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = AccelerationEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2250,6 +2337,7 @@ pub struct AccelerationEntryEncoder<'a> {
 }
 impl<'a> AccelerationEntryEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
@@ -2257,12 +2345,14 @@ impl<'a> AccelerationEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
+    #[must_use]
     pub fn mph(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
         self
     }
+    #[must_use]
     pub fn seconds(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         let val_bytes = val.to_le_bytes();
@@ -2270,6 +2360,83 @@ impl<'a> AccelerationEntryEncoder<'a> {
         self
     }
 }
+pub mod car_field_meta {
+    pub struct FieldInfo {
+        pub name: &'static str,
+        pub id: u16,
+        pub offset: usize,
+        pub since_version: u16,
+        pub field_type: &'static str,
+    }
+    pub const FIELDS: &[FieldInfo] = &[
+        FieldInfo {
+            name: "serialNumber",
+            id: 1,
+            offset: 0,
+            since_version: 0,
+            field_type: "u64",
+        },
+        FieldInfo {
+            name: "modelYear",
+            id: 2,
+            offset: 8,
+            since_version: 0,
+            field_type: "u16",
+        },
+        FieldInfo {
+            name: "available",
+            id: 3,
+            offset: 10,
+            since_version: 0,
+            field_type: "BooleanType",
+        },
+        FieldInfo {
+            name: "code",
+            id: 4,
+            offset: 11,
+            since_version: 0,
+            field_type: "Model",
+        },
+        FieldInfo {
+            name: "someNumbers",
+            id: 5,
+            offset: 12,
+            since_version: 0,
+            field_type: "u32",
+        },
+        FieldInfo {
+            name: "vehicleCode",
+            id: 6,
+            offset: 28,
+            since_version: 0,
+            field_type: "u8",
+        },
+        FieldInfo {
+            name: "extras",
+            id: 7,
+            offset: 34,
+            since_version: 0,
+            field_type: "OptionalExtras",
+        },
+        FieldInfo {
+            name: "discountedModel",
+            id: 8,
+            offset: 35,
+            since_version: 0,
+            field_type: "Model",
+        },
+        FieldInfo {
+            name: "engine",
+            id: 9,
+            offset: 35,
+            since_version: 0,
+            field_type: "Engine",
+        },
+    ];
+}
+pub const SEMANTIC_VERSION: &str = "5.2";
+pub const SCHEMA_HASH: u64 = 11133254787130522899;
+#[inline]
 pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     if buf.len() < 4 + 2 {
         return None;
@@ -2306,6 +2473,7 @@ pub struct FrameCursor<'a> {
     framing: FramingPolicy,
 }
 impl<'a> FrameCursor<'a> {
+    #[inline]
     pub const fn new(buf: &'a [u8], framing: FramingPolicy) -> Self {
         Self { buf, pos: 0, framing }
     }
@@ -2321,10 +2489,9 @@ impl<'a> Iterator for FrameCursor<'a> {
                 if self.pos + 4 > self.buf.len() {
                     return Some(
                         Err(sbe_rt::DecodeError::BufferTooShort {
-                            offset: pos,
-    field: "length prefix",
-                            needed: self.pos + 4,
-                            available: self.buf.len(),
+                            field: "length prefix",
+                            needed: 4,
+                            available: self.buf.len() - self.pos,
                         }),
                     );
                 }
@@ -2339,10 +2506,9 @@ impl<'a> Iterator for FrameCursor<'a> {
                 if self.pos + 2 > self.buf.len() {
                     return Some(
                         Err(sbe_rt::DecodeError::BufferTooShort {
-                            offset: pos,
-    field: "length prefix",
-                            needed: self.pos + 2,
-                            available: self.buf.len(),
+                            field: "length prefix",
+                            needed: 2,
+                            available: self.buf.len() - self.pos,
                         }),
                     );
                 }
@@ -2358,11 +2524,9 @@ impl<'a> Iterator for FrameCursor<'a> {
         if self.pos + header_len + frame_len > self.buf.len() {
             return Some(
                 Err(sbe_rt::DecodeError::BufferTooShort {
-                    offset: pos,
-                    offset: pos,
-    field: "frame bounds",
-                    needed: self.pos + header_len + frame_len,
-                    available: self.buf.len(),
+                    field: "frame bounds",
+                    needed: header_len + frame_len,
+                    available: self.buf.len() - self.pos,
                 }),
             );
         }
@@ -2378,13 +2542,13 @@ impl<'a> Iterator for FrameCursor<'a> {
     }
 }
 impl<'a> AnyMessage<'a> {
+    #[inline]
     pub const fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         if pos + 8 > buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "message header",
-                needed: pos + 8,
-                available: buf.len(),
+                field: "message header",
+                needed: 8,
+                available: buf.len() - pos,
             });
         }
         let mut header_bytes = [0u8; 8];
@@ -2414,25 +2578,23 @@ impl<'a> AnyMessage<'a> {
             }
         }
     }
+    #[inline]
     pub fn decode_frame(
         buf: &'a [u8],
         pos: usize,
         frame_len: usize,
     ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-        if pos + 8 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                offset: pos,
-    field: "decoded frame",
-                needed: pos + 8,
-                available: buf.len(),
-            });
-        }
-        let mut header_bytes = [0u8; 8];
-        let mut j = 0;
-        while j < 8 {
-            header_bytes[j] = buf[pos + j];
-            j += 1;
-        }
+        let header_bytes: [u8; 8] = buf
+            .get(pos..pos + 8)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "decoded frame",
+                    needed: 8,
+                    available: buf.len() - pos,
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = MessageHeader(header_bytes);
         let template_id = header.template_id();
         let schema_id = header.schema_id();
@@ -2454,8 +2616,7 @@ impl<'a> AnyMessage<'a> {
                 };
                 if total_len > frame_len {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
-                        offset: pos,
-    field: "Car",
+                        field: "Car",
                         needed: total_len,
                         available: frame_len,
                     });
@@ -2469,10 +2630,9 @@ impl<'a> AnyMessage<'a> {
             _ => {
                 if pos + frame_len > buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
-                        offset: pos,
-    field: "template body",
-                        needed: pos + frame_len,
-                        available: buf.len(),
+                        field: "template body",
+                        needed: frame_len,
+                        available: buf.len() - pos,
                     });
                 }
                 let payload = &buf[body_pos..pos + frame_len];
