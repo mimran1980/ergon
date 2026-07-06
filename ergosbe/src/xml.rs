@@ -628,7 +628,33 @@ fn parse_composite(
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
 
             if let Some(t_name) = type_name {
-                if let Some(resolved) =
+                // When a <type> directly specifies primitiveType="uint32" (or any
+                // primitive), parse_type_element retains per-use XML attributes (maxValue,
+                // minValue, nullValue, length, characterEncoding).  Going through
+                // resolve_type_to_tokens would look up the encoding from
+                // registry.encodings, which only holds a bare encoding with no per-use
+                // attributes — losing maxValue (e.g. maxValue="1073741824" on a
+                // varDataEncoding.length field) and producing wrong MAX_ENCODED_LENGTH.
+                //
+                // Only use resolve_type_to_tokens for true indirect references:
+                // <type name="..." type="CustomType"/>.
+                let is_indirect_ref = child.attribute("type").is_some()
+                    && !registry.encodings.contains_key(t_name);
+                if !is_indirect_ref {
+                    let encoding = parse_type_element(child, registry)?;
+                    composite_tokens.push(Token {
+                        id: None,
+                        name: member_name.clone(),
+                        signal: Signal::BeginField,
+                        encoding: encoding.clone(),
+                    });
+                    composite_tokens.push(Token {
+                        id: None,
+                        name: member_name.clone(),
+                        signal: Signal::EndField,
+                        encoding: Encoding::default(),
+                    });
+                } else if let Some(resolved) =
                     resolve_type_to_tokens(&member_name, t_name, None, registry, since_val)
                 {
                     composite_tokens.extend(resolved);

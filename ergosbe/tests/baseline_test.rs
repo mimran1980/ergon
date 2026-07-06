@@ -172,7 +172,7 @@ fn encode_baseline_roundtrip() {
         extras.set_sports_pack(true);
         car.extras(extras);
 
-        car.engine(Engine::new(2000, 4, 9000, 49, 80));
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
 
         let car = car.fuel_figures(3, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();
@@ -223,8 +223,8 @@ fn encode_baseline_roundtrip() {
         assert_eq!(2000, e2.capacity(), "rt.engine.capacity");
         assert_eq!(4, e2.num_cylinders(), "rt.engine.numCylinders");
         assert_eq!(9000, e2.max_rpm(), "rt.engine.maxRpm");
-        assert_eq!(49, e2.manufacturer_code(), "rt.engine.manufacturerCode");
-        assert_eq!(80, e2.fuel(), "rt.engine.fuel");
+        assert_eq!([49, 0, 0], e2.manufacturer_code(), "rt.engine.manufacturerCode");
+        assert_eq!("Petrol", e2.fuel(), "rt.engine.fuel");
 
         let ff2: Vec<_> = car2.fuel_figures().unwrap().collect::<Vec<_>>();
         assert_eq!(3, ff2.len());
@@ -258,5 +258,5 @@ fn constants_match_upstream() {
     assert!(src.contains("pub const SCHEMA_ID: u16 = 1;"));
     assert!(src.contains("pub const SCHEMA_VERSION: u16 = 0;"));
     assert!(src.contains("pub const TEMPLATE_ID: u16 = 1;"));
-    assert!(src.contains("pub const BLOCK_LENGTH: usize = 43;"));
+    assert!(src.contains("pub const BLOCK_LENGTH: usize = 45;"));
 }

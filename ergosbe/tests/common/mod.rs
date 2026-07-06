@@ -156,32 +156,6 @@ pub fn patch_source(src: &str) -> String {
     // Bug 3: Engine type used as array length
     s = s.replace("[0u8; Engine]", "[0u8; 7]");
 
-    // Bug 4: Var-encoding constructed from [u8; 4] instead of [u8; 5].
-    // The wire format for var-data is 4-byte length + payload (one byte of
-    // which is `var_data` in the struct definition).  The safe fix reads 4
-    // bytes into a 5-byte array (byte 5 stays 0).
-    //
-    // tail_offset_X / entry tail_offset uses `start` as the variable.
-    s = s.replace(
-        "let mut bytes = [0u8; 4];\n        let mut j = 0;\n        while j < 4 {\n            bytes[j] = self.buf[start + j];\n            j += 1;\n        }\n        let header = VarStringEncoding(bytes);",
-        "let mut bytes = [0u8; 5];\n        bytes[..4].copy_from_slice(&self.buf[start..start + 4]);\n        let header = VarStringEncoding(bytes);",
-    );
-    s = s.replace(
-        "let mut bytes = [0u8; 4];\n        let mut j = 0;\n        while j < 4 {\n            bytes[j] = self.buf[start + j];\n            j += 1;\n        }\n        let header = VarAsciiEncoding(bytes);",
-        "let mut bytes = [0u8; 5];\n        bytes[..4].copy_from_slice(&self.buf[start..start + 4]);\n        let header = VarAsciiEncoding(bytes);",
-    );
-
-    // manufacturer() / model() / activation_code() / usage_description()
-    // use `offset` as the variable.
-    s = s.replace(
-        "let mut bytes = [0u8; 4];\n        let mut j = 0;\n        while j < 4 {\n            bytes[j] = self.buf[offset + j];\n            j += 1;\n        }\n        let header = VarStringEncoding(bytes);",
-        "let mut bytes = [0u8; 5];\n        bytes[..4].copy_from_slice(&self.buf[offset..offset + 4]);\n        let header = VarStringEncoding(bytes);",
-    );
-    s = s.replace(
-        "let mut bytes = [0u8; 4];\n        let mut j = 0;\n        while j < 4 {\n            bytes[j] = self.buf[offset + j];\n            j += 1;\n        }\n        let header = VarAsciiEncoding(bytes);",
-        "let mut bytes = [0u8; 5];\n        bytes[..4].copy_from_slice(&self.buf[offset..offset + 4]);\n        let header = VarAsciiEncoding(bytes);",
-    );
-
     // Bug 5 (const fn): decode_frame and wrap_and_apply_header are `const fn`
     // but call non-const operations (encoded_length_with_header, indexing).
     s = s.replace(
@@ -195,14 +169,7 @@ pub fn patch_source(src: &str) -> String {
     // constant fields are omitted, so engine is at offset 35.  The fixture and
     // the round-trip test both need offset 35.
     s = s.replace("self.message_start + 8 + 36", "self.message_start + 8 + 35");
-    s = s.replace(
-        "        let offset = self.pos + 36;\n        let mut bytes = [0u8; 7];",
-        "        let offset = self.pos + 35;\n        let mut bytes = [0u8; 7];",
-    );
-    s = s.replace(
-        "        let offset = self.pos + 36;\n        if offset + 7 > self.buf.len()",
-        "        let offset = self.pos + 35;\n        if offset + 7 > self.buf.len()",
-    );
+    s = s.replace("self.pos + 36", "self.pos + 35");
 
     // Bug 6 (E0499): use unsafe pointer cast to decouple the encoder's buffer
     // lifetime from self.buf, so self.buf is available after the closure.

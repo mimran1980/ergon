@@ -349,7 +349,7 @@ impl GroupSizeEncoding {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct VarStringEncoding(pub [u8; 5]);
+pub struct VarStringEncoding(pub [u8; 4]);
 impl VarStringEncoding {
     pub const fn length(&self) -> u32 {
         let mut bytes = [0u8; 4];
@@ -360,35 +360,46 @@ impl VarStringEncoding {
         }
         u32::from_le_bytes(bytes)
     }
-    pub const fn var_data(&self) -> u8 {
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.0[4 + j];
-            j += 1;
+    pub const fn var_data(&self) -> [u8; 0] {
+        let mut res = [0 as u8; 0];
+        let mut idx = 0;
+        while idx < 0 {
+            let offset = 4 + idx * 1;
+            let mut bytes = [0u8; 1];
+            let mut j = 0;
+            while j < 1 {
+                bytes[j] = self.0[offset + j];
+                j += 1;
+            }
+            res[idx] = u8::from_le_bytes(bytes);
+            idx += 1;
         }
-        u8::from_le_bytes(bytes)
+        res
     }
-    pub const fn new(length: u32, var_data: u8) -> Self {
-        let mut bytes = [0u8; 5];
+    pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
+        let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         let mut j = 0;
         while j < 4 {
             bytes[0 + j] = val_bytes[j];
             j += 1;
         }
-        let val_bytes = var_data.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            bytes[4 + j] = val_bytes[j];
-            j += 1;
+        let mut idx = 0;
+        while idx < 0 {
+            let val_bytes = var_data[idx].to_le_bytes();
+            let mut j = 0;
+            while j < 1 {
+                bytes[4 + idx * 1 + j] = val_bytes[j];
+                j += 1;
+            }
+            idx += 1;
         }
         Self(bytes)
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct VarAsciiEncoding(pub [u8; 5]);
+pub struct VarAsciiEncoding(pub [u8; 4]);
 impl VarAsciiEncoding {
     pub const fn length(&self) -> u32 {
         let mut bytes = [0u8; 4];
@@ -399,35 +410,46 @@ impl VarAsciiEncoding {
         }
         u32::from_le_bytes(bytes)
     }
-    pub const fn var_data(&self) -> u8 {
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.0[4 + j];
-            j += 1;
+    pub const fn var_data(&self) -> [u8; 0] {
+        let mut res = [0 as u8; 0];
+        let mut idx = 0;
+        while idx < 0 {
+            let offset = 4 + idx * 1;
+            let mut bytes = [0u8; 1];
+            let mut j = 0;
+            while j < 1 {
+                bytes[j] = self.0[offset + j];
+                j += 1;
+            }
+            res[idx] = u8::from_le_bytes(bytes);
+            idx += 1;
         }
-        u8::from_le_bytes(bytes)
+        res
     }
-    pub const fn new(length: u32, var_data: u8) -> Self {
-        let mut bytes = [0u8; 5];
+    pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
+        let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         let mut j = 0;
         while j < 4 {
             bytes[0 + j] = val_bytes[j];
             j += 1;
         }
-        let val_bytes = var_data.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            bytes[4 + j] = val_bytes[j];
-            j += 1;
+        let mut idx = 0;
+        while idx < 0 {
+            let val_bytes = var_data[idx].to_le_bytes();
+            let mut j = 0;
+            while j < 1 {
+                bytes[4 + idx * 1 + j] = val_bytes[j];
+                j += 1;
+            }
+            idx += 1;
         }
         Self(bytes)
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct VarDataEncoding(pub [u8; 5]);
+pub struct VarDataEncoding(pub [u8; 4]);
 impl VarDataEncoding {
     pub const fn length(&self) -> u32 {
         let mut bytes = [0u8; 4];
@@ -438,28 +460,39 @@ impl VarDataEncoding {
         }
         u32::from_le_bytes(bytes)
     }
-    pub const fn var_data(&self) -> u8 {
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.0[4 + j];
-            j += 1;
+    pub const fn var_data(&self) -> [u8; 0] {
+        let mut res = [0 as u8; 0];
+        let mut idx = 0;
+        while idx < 0 {
+            let offset = 4 + idx * 1;
+            let mut bytes = [0u8; 1];
+            let mut j = 0;
+            while j < 1 {
+                bytes[j] = self.0[offset + j];
+                j += 1;
+            }
+            res[idx] = u8::from_le_bytes(bytes);
+            idx += 1;
         }
-        u8::from_le_bytes(bytes)
+        res
     }
-    pub const fn new(length: u32, var_data: u8) -> Self {
-        let mut bytes = [0u8; 5];
+    pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
+        let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         let mut j = 0;
         while j < 4 {
             bytes[0 + j] = val_bytes[j];
             j += 1;
         }
-        let val_bytes = var_data.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            bytes[4 + j] = val_bytes[j];
-            j += 1;
+        let mut idx = 0;
+        while idx < 0 {
+            let val_bytes = var_data[idx].to_le_bytes();
+            let mut j = 0;
+            while j < 1 {
+                bytes[4 + idx * 1 + j] = val_bytes[j];
+                j += 1;
+            }
+            idx += 1;
         }
         Self(bytes)
     }
@@ -490,7 +523,7 @@ impl Booster {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct Engine(pub [u8; 7]);
+pub struct Engine(pub [u8; 9]);
 impl Engine {
     pub const fn capacity(&self) -> u16 {
         let mut bytes = [0u8; 2];
@@ -511,40 +544,33 @@ impl Engine {
         u8::from_le_bytes(bytes)
     }
     pub const fn max_rpm(&self) -> u16 {
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.0[3 + j];
-            j += 1;
-        }
-        u16::from_le_bytes(bytes)
+        9000
     }
-    pub const fn manufacturer_code(&self) -> u8 {
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.0[5 + j];
-            j += 1;
+    pub const fn manufacturer_code(&self) -> [u8; 3] {
+        let mut res = [0 as u8; 3];
+        let mut idx = 0;
+        while idx < 3 {
+            let offset = 5 + idx * 1;
+            let mut bytes = [0u8; 1];
+            let mut j = 0;
+            while j < 1 {
+                bytes[j] = self.0[offset + j];
+                j += 1;
+            }
+            res[idx] = u8::from_le_bytes(bytes);
+            idx += 1;
         }
-        u8::from_le_bytes(bytes)
+        res
     }
-    pub const fn fuel(&self) -> u8 {
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.0[6 + j];
-            j += 1;
-        }
-        u8::from_le_bytes(bytes)
+    pub const fn fuel(&self) -> &'static str {
+        "Petrol"
     }
     pub const fn new(
         capacity: u16,
         num_cylinders: u8,
-        max_rpm: u16,
-        manufacturer_code: u8,
-        fuel: u8,
+        manufacturer_code: [u8; 3],
     ) -> Self {
-        let mut bytes = [0u8; 7];
+        let mut bytes = [0u8; 9];
         let val_bytes = capacity.to_le_bytes();
         let mut j = 0;
         while j < 2 {
@@ -557,23 +583,15 @@ impl Engine {
             bytes[2 + j] = val_bytes[j];
             j += 1;
         }
-        let val_bytes = max_rpm.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            bytes[3 + j] = val_bytes[j];
-            j += 1;
-        }
-        let val_bytes = manufacturer_code.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            bytes[5 + j] = val_bytes[j];
-            j += 1;
-        }
-        let val_bytes = fuel.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            bytes[6 + j] = val_bytes[j];
-            j += 1;
+        let mut idx = 0;
+        while idx < 3 {
+            let val_bytes = manufacturer_code[idx].to_le_bytes();
+            let mut j = 0;
+            while j < 1 {
+                bytes[5 + idx * 1 + j] = val_bytes[j];
+                j += 1;
+            }
+            idx += 1;
         }
         Self(bytes)
     }
@@ -589,7 +607,8 @@ impl<'a> CarDecoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
-    pub const BLOCK_LENGTH: usize = 43;
+    pub const BLOCK_LENGTH: usize = 45;
+    pub const MAX_ENCODED_LENGTH: usize = 3221225552;
     pub const fn wrap(
         buf: &'a [u8],
         pos: usize,
@@ -912,20 +931,20 @@ impl<'a> CarDecoder<'a> {
         Model(u8::from_le_bytes(bytes))
     }
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 43 > self.acting_block_length {
-            return Ok(Engine([0u8; 7]));
+        if self.acting_version < 0 || 45 > self.acting_block_length {
+            return Ok(Engine([0u8; 9]));
         }
         let offset = self.pos + 36;
-        if offset + 7 > self.buf.len() {
+        if offset + 9 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "engine",
-                needed: offset + 7,
+                needed: offset + 9,
                 available: self.buf.len(),
             });
         }
-        let mut bytes = [0u8; 7];
+        let mut bytes = [0u8; 9];
         let mut j = 0;
-        while j < 7 {
+        while j < 9 {
             bytes[j] = self.buf[offset + j];
             j += 1;
         }
@@ -933,9 +952,9 @@ impl<'a> CarDecoder<'a> {
     }
     pub const unsafe fn engine_unchecked(&self) -> Engine {
         let offset = self.pos + 36;
-        let mut bytes = [0u8; 7];
+        let mut bytes = [0u8; 9];
         let mut j = 0;
-        while j < 7 {
+        while j < 9 {
             bytes[j] = *self.buf.as_ptr().add(offset + j);
             j += 1;
         }
@@ -1168,7 +1187,7 @@ impl<'a> CarDecoder<'a> {
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}
 impl<'a> sbe_rt::SbeMessage for CarDecoder<'a> {
     const TEMPLATE_ID: u16 = 1;
-    const BLOCK_LENGTH: usize = 43;
+    const BLOCK_LENGTH: usize = 45;
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
@@ -1703,12 +1722,13 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
-    pub const BLOCK_LENGTH: usize = 43;
+    pub const BLOCK_LENGTH: usize = 45;
+    pub const MAX_ENCODED_LENGTH: usize = 3221225552;
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
             message_start: pos,
-            pos: pos + 8 + 43,
+            pos: pos + 8 + 45,
             _phantom: core::marker::PhantomData,
         }
     }
@@ -1716,7 +1736,7 @@ impl<'a, State> CarEncoder<'a, State> {
         buf: &'a mut [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::EncodeError> {
-        let needed = pos + 8 + 43;
+        let needed = pos + 8 + 45;
         if needed > buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
@@ -1828,7 +1848,7 @@ impl<'a, State> CarEncoder<'a, State> {
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.message_start + 8 + 36;
         let mut j = 0;
-        while j < 7 {
+        while j < 9 {
             self.buf[offset + j] = val.0[j];
             j += 1;
         }
@@ -1922,10 +1942,10 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
         mut self,
         data: &[u8],
     ) -> Result<CarEncoder<'a, car_encoder_state::NeedsModel>, sbe_rt::EncodeError> {
-        if data.len() > 4294967294 {
+        if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "manufacturer",
-                max_length: 4294967294,
+                max_length: 1073741824,
                 actual: data.len(),
             });
         }
@@ -1964,10 +1984,10 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
         CarEncoder<'a, car_encoder_state::NeedsActivationCode>,
         sbe_rt::EncodeError,
     > {
-        if data.len() > 4294967294 {
+        if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "model",
-                max_length: 4294967294,
+                max_length: 1073741824,
                 actual: data.len(),
             });
         }
@@ -2003,10 +2023,10 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
         mut self,
         data: &[u8],
     ) -> Result<CarEncoder<'a, car_encoder_state::Complete>, sbe_rt::EncodeError> {
-        if data.len() > 4294967294 {
+        if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "activationCode",
-                max_length: 4294967294,
+                max_length: 1073741824,
                 actual: data.len(),
             });
         }
@@ -2050,7 +2070,7 @@ impl<'a> AsRef<[u8]> for CarEncoder<'a, car_encoder_state::Complete> {
 impl<'a, State> sbe_rt::private::Sealed for CarEncoder<'a, State> {}
 impl<'a, State> sbe_rt::SbeMessage for CarEncoder<'a, State> {
     const TEMPLATE_ID: u16 = 1;
-    const BLOCK_LENGTH: usize = 43;
+    const BLOCK_LENGTH: usize = 45;
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }

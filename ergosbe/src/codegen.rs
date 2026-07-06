@@ -1189,36 +1189,15 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 prim,
                 length,
                 presence,
-                constant_value,
+                constant_value: _,
             } => {
-                let prim_size = prim.size();
+                // Constants don't occupy wire space; their accessors return
+                // hardcoded values, so skip writing them into the buffer.
                 if *presence == Presence::Constant {
-                    if let Some(val) = constant_value {
-                        if *prim == PrimitiveType::Char && val.len() > 1 {
-                            src.push_str(&format!(
-                                "        let const_bytes = b\"{}\";\n\
-                                 let mut j = 0;\n\
-                                 while j < const_bytes.len() {{\n\
-                                     bytes[{} + j] = const_bytes[j];\n\
-                                     j += 1;\n\
-                                 }}\n",
-                                val, m.offset
-                            ));
-                        } else {
-                            let expr = constant_value_expr(*prim, val);
-                            src.push_str(&format!(
-                                "        let const_val = {};\n\
-                                 let const_bytes = const_val.to_{}_bytes();\n\
-                                 let mut j = 0;\n\
-                                 while j < {} {{\n\
-                                     bytes[{} + j] = const_bytes[j];\n\
-                                     j += 1;\n\
-                                 }}\n",
-                                expr, order_suffix, prim_size, m.offset
-                            ));
-                        }
-                    }
-                } else if let Some(len) = length {
+                    continue;
+                }
+                let prim_size = prim.size();
+                if let Some(len) = length {
                     src.push_str(&format!(
                         "        let mut idx = 0;\n\
                                  while idx < {} {{\n\
@@ -1419,6 +1398,20 @@ fn generate_message_decoder(
         .and_then(|c| c[0].encoding.offset)
         .unwrap_or(8);
 
+    // Compile-time buffer sizing constants
+    let is_fixed = msg.groups.is_empty() && msg.var_data.is_empty();
+    let encoded_length = header_size + block_length;
+    let mut max_tail = 0usize;
+    for g in &msg.groups {
+        let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+        max_tail += dim_size + g.block_length;
+    }
+    for vd in &msg.var_data {
+        let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
+        max_tail += prefix_size + vd.max_length.unwrap_or(0);
+    }
+    let max_encoded_length = header_size + block_length + max_tail;
+
     // 1. Decoder Struct
     src.push_str(&format!(
         "#[derive(Clone, Copy)]\n\
@@ -1431,14 +1424,28 @@ fn generate_message_decoder(
         name
     ));
 
-    src.push_str(&format!(
-        "impl<'a> {}Decoder<'a> {{\n\
-             pub const SCHEMA_ID: u16 = {};\n\
-             pub const SCHEMA_VERSION: u16 = {};\n\
-             pub const TEMPLATE_ID: u16 = {};\n\
-             pub const BLOCK_LENGTH: usize = {};\n\n",
-        name, schema_id, schema_version, msg.id, block_length
-    ));
+    if is_fixed {
+        src.push_str(&format!(
+            "impl<'a> {}Decoder<'a> {{\n\
+                 pub const SCHEMA_ID: u16 = {};\n\
+                 pub const SCHEMA_VERSION: u16 = {};\n\
+                 pub const TEMPLATE_ID: u16 = {};\n\
+                 pub const BLOCK_LENGTH: usize = {};\n\
+                 pub const ENCODED_LENGTH: usize = {};\n\
+                 pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
+            name, schema_id, schema_version, msg.id, block_length, encoded_length, max_encoded_length
+        ));
+    } else {
+        src.push_str(&format!(
+            "impl<'a> {}Decoder<'a> {{\n\
+                 pub const SCHEMA_ID: u16 = {};\n\
+                 pub const SCHEMA_VERSION: u16 = {};\n\
+                 pub const TEMPLATE_ID: u16 = {};\n\
+                 pub const BLOCK_LENGTH: usize = {};\n\
+                 pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
+            name, schema_id, schema_version, msg.id, block_length, max_encoded_length
+        ));
+    }
 
     src.push_str(&format!(
         "    pub const fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {{\n\
@@ -2594,6 +2601,18 @@ fn generate_message_encoder(
 
     // Generate Encoder phantom states if we have variable length tail elements
     let total_tail = msg.groups.len() + msg.var_data.len();
+    let is_fixed = total_tail == 0;
+    let encoded_length = header_size + block_length;
+    let mut max_tail = 0usize;
+    for g in &msg.groups {
+        let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+        max_tail += dim_size + g.block_length;
+    }
+    for vd in &msg.var_data {
+        let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
+        max_tail += prefix_size + vd.max_length.unwrap_or(0);
+    }
+    let max_encoded_length = header_size + block_length + max_tail;
     if total_tail > 0 {
         src.push_str(&format!(
             "pub mod {}_encoder_state {{\n",
@@ -2652,13 +2671,26 @@ fn generate_message_encoder(
         src.push_str(&format!("impl<'a> {}Encoder<'a> {{\n", name));
     }
 
-    src.push_str(&format!(
-        "    pub const SCHEMA_ID: u16 = {};\n\
-             pub const SCHEMA_VERSION: u16 = {};\n\
-             pub const TEMPLATE_ID: u16 = {};\n\
-             pub const BLOCK_LENGTH: usize = {};\n\n",
-        schema_id, schema_version, msg.id, block_length
-    ));
+    if is_fixed {
+        src.push_str(&format!(
+            "    pub const SCHEMA_ID: u16 = {};\n\
+                 pub const SCHEMA_VERSION: u16 = {};\n\
+                 pub const TEMPLATE_ID: u16 = {};\n\
+                 pub const BLOCK_LENGTH: usize = {};\n\
+                 pub const ENCODED_LENGTH: usize = {};\n\
+                 pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
+            schema_id, schema_version, msg.id, block_length, encoded_length, max_encoded_length
+        ));
+    } else {
+        src.push_str(&format!(
+            "    pub const SCHEMA_ID: u16 = {};\n\
+                 pub const SCHEMA_VERSION: u16 = {};\n\
+                 pub const TEMPLATE_ID: u16 = {};\n\
+                 pub const BLOCK_LENGTH: usize = {};\n\
+                 pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
+            schema_id, schema_version, msg.id, block_length, max_encoded_length
+        ));
+    }
 
     if total_tail > 0 {
         let first_state = &msg
