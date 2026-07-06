@@ -14,22 +14,30 @@ Masked for the first field (offset=0), wrong for every subsequent field. This
 doesn't affect wire output — errors are `#[cold]` paths — but it misleads
 debugging and recovery logic.
 
-## Affected template positions
+## Affected template positions (all fixed)
 
-- [ ] Primitive required (since==0): codegen.rs ~1472, position 4
-- [ ] Primitive optional: codegen.rs ~1435, position 6
-- [ ] Primitive since>0: codegen.rs ~1455, position 6
-- [ ] Enum: codegen.rs ~1570, position 8
-- [ ] Set: codegen.rs ~1609, position 8
-- [ ] Composite: codegen.rs ~1531, position 8 (may overlap with bug #26)
+- [x] Message decoder field getters (primitive required/optional/since>0, enum, set, composite)
+- [x] Message decoder fixed-length arrays
+- [x] Message decoder tail offsets (groups, var_data prefix + data)
+- [x] Group decoder entry fields (all types)
+- [x] Group decoder entry tail offsets
+- [x] Group decoder `wrap` and `as_chunks`
+- [x] Message encoder `wrap_and_apply_header`
+- [x] Message encoder group/var_data methods
+- [x] Group entry encoder `add` and nested group/var_data setters
+- [x] FrameCursor (length prefix, frame bounds)
+- [x] AnyMessage::decode and decode_frame (header, template body)
 
 ## Acceptance criteria
 
-- [ ] `needed` in every BufferTooShort variant = `self.pos + field_offset + field_size`
-      (not `self.pos + 2*field_offset + field_size`)
-- [ ] `available` correctly computed as `self.buf.len() - (self.pos + field_offset)`
-- [ ] Test: decode a message with short buffer, assert `needed` value is correct
-- [ ] Test: verify for field at offset 0, offset 8, and offset 32+
-- [ ] Array template NOT affected — already computes `size` locally (verify)
+- [x] `needed` in every BufferTooShort variant = the size of THIS operation
+      (field size `prim_size`, array size `size`, header size `header_size`, etc.)
+      — NOT an absolute buffer position
+- [x] `available` correctly computed as remaining bytes from the current position:
+      `buf.len() - pos` for pos-based reads, `self.buf.len() - offset` for field reads,
+      `self.buf.len() - start` for tail reads, `self.buf.len() - self.pos` for encoder writes
+- [ ] DecodeError `needed: total_len, available: frame_len` left as-is for the
+      decode_frame total_len check (it compares absolute sizes, not positions)
+- [x] Array template already correctly uses `size` local variable — verified fixed
 
 Discovered by: generated code review agent (todos/11-generated-code-review).
