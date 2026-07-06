@@ -1,23 +1,70 @@
 //! Local orderbook built from exchange SBE messages.
 //!
-//! Maintains separate bid/ask books as BTreeMaps with `rust_decimal::Decimal`
-//! prices and sizes. Exponents from the SBE message are applied on ingest.
+//! Uses newtype wrappers with custom `Ord` so the ordering is encoded in the
+//! type, not the container. `BidLevel` sorts highest price first; `AskLevel`
+//! sorts lowest price first. Prices are transparent `Decimal` values.
 
 use rust_decimal::Decimal;
-use std::collections::BTreeMap;
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+
+/// A bid level — highest price first.
+#[derive(Debug, Clone, Copy)]
+pub struct BidLevel {
+    pub price: Decimal,
+    pub size: Decimal,
+}
+
+impl PartialEq for BidLevel {
+    fn eq(&self, other: &Self) -> bool {
+        self.price == other.price
+    }
+}
+impl Eq for BidLevel {}
+impl PartialOrd for BidLevel {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for BidLevel {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Highest price = best bid = smallest in BTreeSet ordering
+        other.price.cmp(&self.price)
+    }
+}
+
+/// An ask level — lowest price first.
+#[derive(Debug, Clone, Copy)]
+pub struct AskLevel {
+    pub price: Decimal,
+    pub size: Decimal,
+}
+
+impl PartialEq for AskLevel {
+    fn eq(&self, other: &Self) -> bool {
+        self.price == other.price
+    }
+}
+impl Eq for AskLevel {}
+impl PartialOrd for AskLevel {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for AskLevel {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Lowest price = best ask = smallest in BTreeSet ordering
+        self.price.cmp(&other.price)
+    }
+}
 
 /// A single exchange's orderbook.
 #[derive(Debug, Clone)]
 pub struct LocalBook {
-    /// Instrument symbol, e.g. "BTCUSDT".
     pub symbol: String,
-    /// Bids: price → size, descending (best bid first via `rev()`).
-    pub bids: BTreeMap<Decimal, Decimal>,
-    /// Asks: price → size, ascending (best ask first).
-    pub asks: BTreeMap<Decimal, Decimal>,
-    /// Price mantissa exponent: actual_price = mantissa × 10^exponent.
+    pub bids: BTreeSet<BidLevel>,
+    pub asks: BTreeSet<AskLevel>,
     price_exponent: i8,
-    /// Size mantissa exponent.
     size_exponent: i8,
 }
 
@@ -25,24 +72,21 @@ impl LocalBook {
     pub fn new(symbol: impl Into<String>, price_exponent: i8, size_exponent: i8) -> Self {
         Self {
             symbol: symbol.into(),
-            bids: BTreeMap::new(),
-            asks: BTreeMap::new(),
+            bids: BTreeSet::new(),
+            asks: BTreeSet::new(),
             price_exponent,
             size_exponent,
         }
     }
 
-    /// Convert a mantissa to a Decimal using the stored price exponent.
     pub fn price_dec(&self, mantissa: i64) -> Decimal {
         Decimal::from_i128_with_scale(mantissa as i128, (-self.price_exponent) as u32)
     }
 
-    /// Convert a mantissa to a Decimal using the stored size exponent.
     pub fn size_dec(&self, mantissa: i64) -> Decimal {
         Decimal::from_i128_with_scale(mantissa as i128, (-self.size_exponent) as u32)
     }
 
-    /// Apply a full depth snapshot, replacing the current book.
     pub fn apply_snapshot(
         &mut self,
         bids: impl IntoIterator<Item = (i64, i64)>,
@@ -53,7 +97,7 @@ impl LocalBook {
             let p = self.price_dec(price);
             let s = self.size_dec(size);
             if s > Decimal::ZERO {
-                self.bids.insert(p, s);
+                self.bids.insert(BidLevel { price: p, size: s });
             }
         }
         self.asks.clear();
@@ -61,33 +105,25 @@ impl LocalBook {
             let p = self.price_dec(price);
             let s = self.size_dec(size);
             if s > Decimal::ZERO {
-                self.asks.insert(p, s);
+                self.asks.insert(AskLevel { price: p, size: s });
             }
         }
     }
 
-    /// Top N bid levels, best first.
-    pub fn top_bids(&self, n: usize) -> Vec<(Decimal, Decimal)> {
-        self.bids
-            .iter()
-            .rev()
-            .take(n)
-            .map(|(p, s)| (*p, *s))
-            .collect()
+    pub fn top_bids(&self, n: usize) -> Vec<BidLevel> {
+        self.bids.iter().take(n).copied().collect()
     }
 
-    /// Top N ask levels, best first.
-    pub fn top_asks(&self, n: usize) -> Vec<(Decimal, Decimal)> {
-        self.asks.iter().take(n).map(|(p, s)| (*p, *s)).collect()
+    pub fn top_asks(&self, n: usize) -> Vec<AskLevel> {
+        self.asks.iter().take(n).copied().collect()
     }
 
-    /// Best bid price, if any.
     pub fn best_bid(&self) -> Option<Decimal> {
-        self.bids.keys().last().copied()
+        // BTreeSet is sorted lowest-first per our Ord; first is best bid
+        self.bids.first().map(|l| l.price)
     }
 
-    /// Best ask price, if any.
     pub fn best_ask(&self) -> Option<Decimal> {
-        self.asks.keys().next().copied()
+        self.asks.first().map(|l| l.price)
     }
 }

@@ -3336,9 +3336,9 @@ fn generate_message_encoder(
                                  while idx < {} {{\n\
                                      let val_bytes = val[idx].to_{}_bytes();\n\
                                      #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                                     {{ self.buf[offset + idx * {6}..offset + idx * {7} + {8}].copy_from_slice(&val_bytes); }}\n\
+                                     {{ self.buf[offset + idx * {7}..offset + idx * {8} + {9}].copy_from_slice(&val_bytes); }}\n\
                                      #[cfg(feature = \"disable-bounds-checks\")]\n\
-                                     {{ unsafe {{ core::ptr::copy_nonoverlapping(val_bytes.as_ptr(), self.buf.as_mut_ptr().add(offset).add(idx * {6}), {8}); }} }}\n\
+                                     {{ unsafe {{ core::ptr::copy_nonoverlapping(val_bytes.as_ptr(), self.buf.as_mut_ptr().add(offset).add(idx * {7}), {9}); }} }}\n\
                                      idx += 1;\n\
                                  }}\n\
                                  self\n\
@@ -3375,9 +3375,9 @@ fn generate_message_encoder(
                     "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.message_start + {} + {};\n\
                              #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                             {{ self.buf[offset..offset + {3}].copy_from_slice(&val.0); }}\n\
+                             {{ self.buf[offset..offset + {4}].copy_from_slice(&val.0); }}\n\
                              #[cfg(feature = \"disable-bounds-checks\")]\n\
-                             {{ unsafe {{ core::ptr::copy_nonoverlapping(val.0.as_ptr(), self.buf.as_mut_ptr().add(offset), {3}); }} }}\n\
+                             {{ unsafe {{ core::ptr::copy_nonoverlapping(val.0.as_ptr(), self.buf.as_mut_ptr().add(offset), {4}); }} }}\n\
                              self\n\
                          }}\n\n",
                     f_name, target_name, header_size, offset, comp_size
@@ -3535,7 +3535,7 @@ fn generate_message_encoder(
                  {{ self.buf[start..start + data.len()].copy_from_slice(data); }}\n\
                  #[cfg(feature = \"disable-bounds-checks\")]\n\
                  {{ unsafe {{ core::ptr::copy_nonoverlapping(data.as_ptr(), self.buf.as_mut_ptr().add(start), data.len()); }} }}\n\
-                 Ok({5}Encoder {{\n\
+                 Ok({}Encoder {{\n\
                      buf: self.buf,\n\
                      message_start: self.message_start,\n\
                      pos: start + data.len(),\n\
@@ -3560,7 +3560,7 @@ fn generate_message_encoder(
                  {{ self.buf[start..start + data.len()].copy_from_slice(data); }}\n\
                  #[cfg(feature = \"disable-bounds-checks\")]\n\
                  {{ unsafe {{ core::ptr::copy_nonoverlapping(data.as_ptr(), self.buf.as_mut_ptr().add(start), data.len()); }} }}\n\
-                 Ok({5}Encoder {{\n\
+                 Ok({}Encoder {{\n\
                      buf: self.buf,\n\
                      message_start: self.message_start,\n\
                      pos: start + data.len(),\n\
@@ -3759,9 +3759,9 @@ fn generate_group_encoder(
                                  while idx < {} {{\n\
                                      let val_bytes = val[idx].to_{}_bytes();\n\
                                      #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                                     {{ self.buf[offset + idx * {6}..offset + idx * {7} + {8}].copy_from_slice(&val_bytes); }}\n\
+                                     {{ self.buf[offset + idx * {7}..offset + idx * {8} + {9}].copy_from_slice(&val_bytes); }}\n\
                                      #[cfg(feature = \"disable-bounds-checks\")]\n\
-                                     {{ unsafe {{ core::ptr::copy_nonoverlapping(val_bytes.as_ptr(), self.buf.as_mut_ptr().add(offset).add(idx * {6}), {8}); }} }}\n\
+                                     {{ unsafe {{ core::ptr::copy_nonoverlapping(val_bytes.as_ptr(), self.buf.as_mut_ptr().add(offset).add(idx * {7}), {9}); }} }}\n\
                                      idx += 1;\n\
                                  }}\n\
                                  self\n\
@@ -3789,9 +3789,9 @@ fn generate_group_encoder(
                     "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.entry_start + {};\n\
                              #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                             {{ self.buf[offset..offset + {3}].copy_from_slice(&val.0); }}\n\
+                             {{ self.buf[offset..offset + {4}].copy_from_slice(&val.0); }}\n\
                              #[cfg(feature = \"disable-bounds-checks\")]\n\
-                             {{ unsafe {{ core::ptr::copy_nonoverlapping(val.0.as_ptr(), self.buf.as_mut_ptr().add(offset), {3}); }} }}\n\
+                             {{ unsafe {{ core::ptr::copy_nonoverlapping(val.0.as_ptr(), self.buf.as_mut_ptr().add(offset), {4}); }} }}\n\
                              self\n\
                          }}\n\n",
                     f_name, target_name, offset, comp_size
