@@ -237,7 +237,7 @@ impl Generator {
         // Format through syn/prettyplease
         syn::parse_str::<syn::File>(&src)
             .map(|file| prettyplease::unparse(&file))
-            .unwrap_or(src)
+            .expect("generated code must be valid Rust syntax")
     }
 }
 
@@ -317,7 +317,7 @@ fn generate_sbe_rt_src() -> String {
     // Format the generated module through prettyplease for canonical output
     syn::parse_str::<syn::File>(&module.to_string())
         .map(|file| prettyplease::unparse(&file))
-        .unwrap_or_else(|_| module.to_string())
+        .expect("generated SBE runtime must be valid Rust syntax")
 }
 
 fn to_pascal_case(s: &str) -> String {
