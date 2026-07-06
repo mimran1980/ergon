@@ -3,13 +3,26 @@
 **Blocked by:** none (codegen only)
 
 Per-field bounds checks and byte-copy loops are redundant when message-level
-validation has already proven the buffer is large enough. The upstream Aeron
-Rust SBE returns `T` directly from field accessors, not `Result<T, Error>`.
+validation has already proven the buffer is large enough. The `wrap` method
+is sufficient — per-field `Result` is hypothetical error handling that wastes
+cycles. The upstream Aeron Rust SBE returns `T` directly from field accessors,
+not `Result<T, Error>`.
+
+## Code comparison with Aeron Rust SBE
+
+A detailed line-by-line comparison is required. For EVERY generated method,
+ErgoSBE must produce code at least as compact and fast as the Aeron equivalent.
+Specific areas to audit:
+
+- Field accessors: no bounds checks, no byte-copy loops
+- Group iterators: no per-entry size validation on fixed-size entries  
+- Composite decoders: no per-member bounds checks
+- Encoder setters: minimal writes, no redundant validation
 
 ## What to change
 
-1. **Remove per-field bounds checks from `pub fn foo()`** — return `T` directly.
-   The message-level `wrap_and_apply_header` already validates the buffer.
+1. **Remove per-field bounds checks** — return `T` directly. The `wrap`
+   / `wrap_and_apply_header` already validates the buffer.
 
 2. **Replace byte-copy loops with direct reads**:
    ```rust
@@ -20,23 +33,28 @@ Rust SBE returns `T` directly from field accessors, not `Result<T, Error>`.
    Ok(i8::from_le_bytes(bytes))
    
    // After:
-   i8::from_le_bytes(self.buf[offset..offset + 1].try_into().unwrap())
+   i8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap())
    ```
 
-3. **Keep `try_foo() -> Result<T, DecodeError>` variants** for callers who want
-   per-field validation on untrusted buffers
+3. **No `try_foo()` variants** — wrap validation is sufficient. Per-field
+   errors on a validated buffer are hypothetical.
 
-4. **Rename `raw_foo()` → `foo()`** (the infallible variant becomes the default)
+4. **Rename `raw_foo()` → `foo()`** — the infallible variant becomes the
+   default (and only) accessor.
+
+5. **Compare every generated method** against Aeron Rust SBE output.
+   Any ErgoSBE method doing more work than Aeron must be fixed.
 
 ## Acceptance criteria
 
 - [ ] Every field accessor returns `T`, not `Result<T, DecodeError>`
-- [ ] No byte-copy loops for fixed-size fields (use `from_le_bytes` directly)
-- [ ] `try_foo()` checked variants exist for untrusted buffers
+- [ ] No byte-copy loops for fixed-size fields
+- [ ] No per-field bounds checks (wrap validates once)
 - [ ] All existing tests pass with updated API
 - [ ] Golden file regenerated
-- [ ] Compare generated output against upstream Aeron Rust SBE
+- [ ] Line-by-line comparison against Aeron Rust SBE — ErgoSBE ≤ Aeron in code
+  complexity for every method
+- [ ] ErgoSBE at least as fast as Aeron in every benchmark scenario (todo 105)
 
 Ref: user observation that upstream returns `u64` not `Result<u64, Error>`.
-Our `while j < 1` byte-copy loop is embarrassing compared to upstream's
-clean `from_le_bytes` pattern.
+Wrap validation is sufficient — per-field errors are hypothetical overhead.
