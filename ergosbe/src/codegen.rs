@@ -2657,12 +2657,32 @@ fn generate_nullification(
                     FieldType::Enum { encoding_type, .. } => encoding_type.size(),
                     FieldType::Set { encoding_type, .. } => encoding_type.size(),
                 };
-                src.push_str(&format!(
-                    "        let null_bytes = ({}_u64).to_{}_bytes();\n\
-                             let offset = {} + {};\n\
-                             buf[offset..offset + {}].copy_from_slice(&null_bytes);\n",
-                    null_val, order_suffix, offset_base, f.offset, size
-                ));
+
+                let null_val_expr: syn::Expr = syn::parse_str(
+                    &format!("{null_val}_u64"),
+                )
+                .unwrap();
+                let to_method = syn::Ident::new(
+                    &format!("to_{order_suffix}_bytes"),
+                    proc_macro2::Span::call_site(),
+                );
+                let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
+                let f_offset = syn::Index::from(f.offset);
+                let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
+
+                let stmts = quote::quote! {
+                    let null_bytes = #null_val_expr.#to_method();
+                    let offset = #offset_base_expr + #f_offset;
+                    buf[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+                };
+                src.push_str("        ");
+                src.push_str(
+                    &stmts
+                        .to_string()
+                        .replace('\n', "\n        ")
+                        .trim_end_matches("        "),
+                );
+                src.push('\n');
             }
         }
     }
