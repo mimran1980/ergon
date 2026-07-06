@@ -2347,7 +2347,14 @@ fn generate_message_decoder(
                  }}\n\
                  offset = data_end;\n\
              }}\n",
-            prefix_size, vd_snake, prefix_size, prefix_size, type_pascal, len_field, prefix_size, vd_snake
+            prefix_size,
+            vd_snake,
+            prefix_size,
+            prefix_size,
+            type_pascal,
+            len_field,
+            prefix_size,
+            vd_snake
         ));
     }
 
@@ -2584,7 +2591,11 @@ fn generate_group_decoder(
         // A group with exactly one non-constant field has that field occupying
         // the entire entry block, so the field data is contiguous in memory
         // and we can return a zero-copy &[T] via from_raw_parts.
-        let non_const_count = g.fields.iter().filter(|f| f.presence != Presence::Constant).count();
+        let non_const_count = g
+            .fields
+            .iter()
+            .filter(|f| f.presence != Presence::Constant)
+            .count();
         if non_const_count == 1 {
             for f in &g.fields {
                 if f.presence == Presence::Constant {
