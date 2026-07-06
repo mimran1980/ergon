@@ -38,81 +38,46 @@ impl Paths {
     }
 
     fn sbe_dir() -> PathBuf {
-        let root = Self::workspace_root();
-        if root.join("sbe").exists() {
-            root.join("sbe")
-        } else {
-            root.join("sbe")
-        }
+        Self::workspace_root().join("sbe")
     }
 
-    fn sample_resources(sub: &str) -> PathBuf {
-        Self::workspace_root()
-            .join("simple-binary-encoding")
-            .join(sub)
-            .join("src")
-            .join("main")
-            .join("resources")
-    }
-
-    fn sbe_samples() -> PathBuf {
-        Self::sample_resources("sbe-samples")
+    fn fixtures_dir() -> PathBuf {
+        Self::sbe_dir()
+            .join("tests")
+            .join("fixtures")
+            .join("schemas")
     }
 
     fn sbe_tool_test() -> PathBuf {
-        Self::workspace_root()
-            .join("simple-binary-encoding")
-            .join("sbe-tool")
-            .join("src")
-            .join("test")
-            .join("resources")
+        Self::fixtures_dir()
     }
 
     pub fn example_schema() -> PathBuf {
-        // Try the submodule path first; fall back to local fixture copy
-        let submodule = Self::sbe_samples().join("example-schema.xml");
-        if submodule.exists() {
-            submodule
-        } else {
-            Self::sbe_dir()
-                .join("tests")
-                .join("fixtures")
-                .join("schemas")
-                .join("example-schema.xml")
-        }
+        Self::fixtures_dir().join("example-schema.xml")
     }
 
     pub fn extension_schema() -> PathBuf {
-        let submodule = Self::sbe_samples().join("example-extension-schema.xml");
-        if submodule.exists() {
-            submodule
-        } else {
-            Self::sbe_dir()
-                .join("tests")
-                .join("fixtures")
-                .join("schemas")
-                .join("example-extension-schema.xml")
-        }
+        Self::fixtures_dir().join("extension-schema.xml")
     }
 
     pub fn bigendian_schema() -> PathBuf {
-        Self::sbe_tool_test().join("example-bigendian-test-schema.xml")
+        Self::fixtures_dir().join("example-bigendian-test-schema.xml")
     }
 
     pub fn basic_variable_length_schema() -> PathBuf {
-        Self::sbe_tool_test().join("basic-variable-length-schema.xml")
+        Self::fixtures_dir().join("basic-variable-length-schema.xml")
     }
 
     pub fn fixed_array_schema() -> PathBuf {
-        Self::sbe_tool_test().join("fixed-sized-primitive-array-types.xml")
+        Self::fixtures_dir().join("fixed-sized-primitive-array-types.xml")
     }
 
     pub fn optional_enum_nullify_schema() -> PathBuf {
-        Self::sbe_tool_test().join("optional_enum_nullify.xml")
+        Self::fixtures_dir().join("optional_enum_nullify.xml")
     }
 
     pub fn issue_schema(num: &str) -> PathBuf {
-        Self::sbe_tool_test().join(format!("issue{num}.xml"))
+        Self::fixtures_dir().join(format!("issue{num}.xml"))
     }
 
     pub fn baseline_binary() -> PathBuf {
