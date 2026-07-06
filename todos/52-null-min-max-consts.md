@@ -7,10 +7,10 @@ consts alongside the accessor. These are compile-time values from the schema.
 
 ## Acceptance criteria
 
-- [ ] `*_NULL` const for every field with a nullValue in schema
-- [ ] `*_MIN` const for every field with a minValue in schema
-- [ ] `*_MAX` const for every field with a maxValue in schema
-- [ ] `const fn` for all consts (allow inline in const contexts)
+- [x] `*_NULL` const for every field with a nullValue in schema
+- [x] `*_MIN` const for every field with a minValue in schema
+- [x] `*_MAX` const for every field with a maxValue in schema
+- [x] `const fn` for all consts (allow inline in const contexts)
 - [ ] Tests: verify consts match schema values
 
 Ref: gap analysis (todo 51), DECISIONS.md §2.

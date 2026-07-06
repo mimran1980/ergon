@@ -14,9 +14,9 @@ Catches codegen bugs at compile time rather than at runtime.
 
 ## Acceptance criteria
 
-- [ ] `const _: () = assert!(HEADER_TEMPLATE.len() == N);` in generated output
-- [ ] `const _: () = assert!(GROUP_DIM_TEMPLATE.len() == N);`
-- [ ] `const _: () = assert!(ENCODED_LENGTH == sum_of_field_sizes);`
+- [x] `const.*HEADER_TEMPLATE.len() == N);` in generated output
+- [x] `const.*GROUP_DIM_TEMPLATE.len() == N);`
+- [x] `const.*ENCODED_LENGTH == sum_of_field_sizes);`
 - [ ] `const _: () = assert!(BLOCK_LENGTH == N);` for each message
 - [ ] All existing tests pass
 
