@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Semantic type system is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Semantic type system — from annotations to type safety
 
 **Blocked by:** `02-composite-enum-set-wire-parity`

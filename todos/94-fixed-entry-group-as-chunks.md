@@ -10,16 +10,16 @@ This is the common order-book shape. DECISIONS.md §9.
 
 ## Acceptance criteria
 
-- [ ] Detect groups where entry has no nested groups and no var-data ("fixed-entry")
-- [ ] Generate `fn as_chunks(&self) -> Result<&[[u8; BLOCK_LENGTH]], DecodeError>` on fixed-entry group decoders
-- [ ] Generate `fn entry_at(&self, index: usize) -> Result<EntryDecoder<'a>, DecodeError>` for random access
-- [ ] Chunk-backed iteration removes repeated stride/bounds arithmetic
-- [ ] The typed entry decoder still reads field-by-field (chunk is just a fixed-size backing window)
-- [ ] Test: decode order-book-shaped group via `as_chunks()`
-- [ ] Test: `entry_at(0)` and `entry_at(len-1)` return correct entries
-- [ ] Test: `entry_at(len)` returns error (out of bounds)
-- [ ] Benchmark: `as_chunks()` vs standard iterator for fixed-entry groups
-- [ ] Golden file updated
+- [x] Detect groups where entry has no nested groups and no var-data ("fixed-entry")
+- [x] Generate `fn as_chunks(&self) -> Result<&[[u8; BLOCK_LENGTH]], DecodeError>` on fixed-entry group decoders
+- [x] Generate `fn entry_at(&self, index: usize) -> Result<EntryDecoder<'a>, DecodeError>` for random access
+- [x] Chunk-backed iteration removes repeated stride/bounds arithmetic
+- [x] The typed entry decoder still reads field-by-field (chunk is just a fixed-size backing window)
+- [x] Test: decode order-book-shaped group via `as_chunks()`
+- [x] Test: `entry_at(0)` and `entry_at(len-1)` return correct entries
+- [x] Test: `entry_at(len)` returns error (out of bounds)
+- [x] Benchmark: `as_chunks()` vs standard iterator for fixed-entry groups
+- [x] Golden file updated
 
 ## Dependencies
 

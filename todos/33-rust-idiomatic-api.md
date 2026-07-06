@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Rust-idiomatic API polish is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Rust-idiomatic API polish
 
 **Blocked by:** `01-scalar-wire-parity` (need working decoders/encoders)

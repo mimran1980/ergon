@@ -8,15 +8,15 @@ switches ergonomic paths to use `_unchecked` primitives internally.
 
 ## Acceptance criteria
 
-- [ ] `#[cfg(feature = "bound-check-disabled")]` directives in generated code
-- [ ] When feature enabled: `Iterator::next` calls `_unchecked` internally
-- [ ] When feature enabled: default decode paths call `_unchecked` internally
-- [ ] API shape is IDENTICAL regardless of feature state
-- [ ] When feature disabled: all checked paths active (current behavior)
-- [ ] Test: compile and run tests with feature enabled
-- [ ] Test: compile and run tests with feature disabled
-- [ ] Benchmark: measure speedup with feature enabled vs disabled
-- [ ] Golden file shows the cfg-gated code paths
+- [x] `#[cfg(feature = "bound-check-disabled")]` directives in generated code
+- [x] When feature enabled: `Iterator::next` calls `_unchecked` internally
+- [x] When feature enabled: default decode paths call `_unchecked` internally
+- [x] API shape is IDENTICAL regardless of feature state
+- [x] When feature disabled: all checked paths active (current behavior)
+- [x] Test: compile and run tests with feature enabled
+- [x] Test: compile and run tests with feature disabled
+- [x] Benchmark: measure speedup with feature enabled vs disabled
+- [x] Golden file shows the cfg-gated code paths
 
 ## Dependencies
 

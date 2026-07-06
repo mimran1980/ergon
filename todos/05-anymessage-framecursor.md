@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** AnyMessage + FrameCursor is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # AnyMessage + FrameCursor + SbeMessage trait
 
 **Blocked by:** `03-group-vardata-wire-parity` (can overlap with `04-versioning-matrix`)

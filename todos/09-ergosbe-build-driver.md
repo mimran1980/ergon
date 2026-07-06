@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** ergosbe-build driver is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # build.rs driver (ergosbe-build)
 
 **Blocked by:** `01-scalar-wire-parity` (can start early, progressively integrate)

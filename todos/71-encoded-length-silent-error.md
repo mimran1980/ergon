@@ -36,4 +36,4 @@ read from the wrong position.
 
 ## Verification
 
-- [ ] Write a test `test_encoded_length_error_propagation` in `sbe/tests/integration_tests.rs` that passes an incomplete/truncated buffer to `encoded_length()` and asserts it returns `Err(DecodeError::BufferTooShort)` instead of returning a garbage size.
+- [x] Write a test `test_encoded_length_error_propagation` in `sbe/tests/integration_tests.rs` that passes an incomplete/truncated buffer to `encoded_length()` and asserts it returns `Err(DecodeError::BufferTooShort)` instead of returning a garbage size.

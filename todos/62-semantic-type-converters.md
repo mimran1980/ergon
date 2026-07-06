@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** WireCompatibleExtensions converters is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # WireCompatibleExtensions: semanticType-driven converters
 
 **Blocked by:** none (codegen feature)

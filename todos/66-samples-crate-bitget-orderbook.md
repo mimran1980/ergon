@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Samples crate is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Samples crate: multi-exchange SBE orderbook demo
 
 **Blocked by:** wire parity (01, 02, 03), multi-schema codegen (32)

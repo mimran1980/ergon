@@ -44,4 +44,4 @@ entries were being dropped.
 
 ## Verification
 
-- [ ] Write a test `test_group_encoder_overflow` in `sbe/tests/integration_tests.rs` that wraps an encoder, adds a repeating group, attempts to call `.add()` more times than the declared group count, and asserts that the additional `.add()` calls return `Err(EncodeError::GroupFull { declared, attempted })`.
+- [x] Write a test `test_group_encoder_overflow` in `sbe/tests/integration_tests.rs` that wraps an encoder, adds a repeating group, attempts to call `.add()` more times than the declared group count, and asserts that the additional `.add()` calls return `Err(EncodeError::GroupFull { declared, attempted })`.

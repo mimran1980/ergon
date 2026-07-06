@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Wire up CompatibilityMode is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # WireCompatibleExtensions: wire up CompatibilityMode to codegen
 
 **Blocked by:** 62, 63, 64

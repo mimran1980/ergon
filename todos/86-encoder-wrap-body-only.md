@@ -9,14 +9,14 @@ DECISIONS.md §6 specifies both entrypoints.
 
 ## Acceptance Criteria
 
-- [ ] `fn wrap(buf: &'a mut [u8], offset: usize) -> Result<Self, EncodeError>` generated on every message encoder
-- [ ] Does NOT write the SBE header — caller manages header separately
-- [ ] Does NOT nullify optional fields (that's `wrap_and_apply_header`'s job)
-- [ ] Returns error if buffer too short for block_length
-- [ ] Coexists with `wrap_and_apply_header()` — both available
-- [ ] Test: encode body only → prepend header manually → decode succeeds
-- [ ] Test: buffer too short → EncodeError::BufferTooShort
-- [ ] Golden file updated
+- [x] `fn wrap(buf: &'a mut [u8], offset: usize) -> Result<Self, EncodeError>` generated on every message encoder
+- [x] Does NOT write the SBE header — caller manages header separately
+- [x] Does NOT nullify optional fields (that's `wrap_and_apply_header`'s job)
+- [x] Returns error if buffer too short for block_length
+- [x] Coexists with `wrap_and_apply_header()` — both available
+- [x] Test: encode body only → prepend header manually → decode succeeds
+- [x] Test: buffer too short → EncodeError::BufferTooShort
+- [x] Golden file updated
 
 ## Dependencies
 

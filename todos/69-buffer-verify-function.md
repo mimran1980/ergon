@@ -26,18 +26,18 @@ Returns a structured `VerifyError` with the exact field/offset that failed.
 
 ## Acceptance criteria
 
-- [ ] `pub fn verify(buf: &[u8]) -> Result<(), VerifyError>` per message
-- [ ] Validates header size, block_length bounds, group dim headers,
+- [x] `pub fn verify(buf: &[u8]) -> Result<(), VerifyError>` per message
+- [x] Validates header size, block_length bounds, group dim headers,
   var-data length prefixes
-- [ ] Checks that no field extends past buffer end
-- [ ] `VerifyError` carries field name and offset context
-- [ ] Zero allocation — all checks are bounds reads
-- [ ] Tests: valid fixture passes verify, truncated fixture fails with
+- [x] Checks that no field extends past buffer end
+- [x] `VerifyError` carries field name and offset context
+- [x] Zero allocation — all checks are bounds reads
+- [x] Tests: valid fixture passes verify, truncated fixture fails with
   expected error field
 
 Ref: FlatBuffers `Verify*Buffer()` pattern, production feed validation.
 
 ## Verification / Unit Testing
-- [ ] Write a test `test_buffer_verify_function` in `sbe/tests/integration_tests.rs` that:
+- [x] Write a test `test_buffer_verify_function` in `sbe/tests/integration_tests.rs` that:
   1. Calls `CarDecoder::verify` with a valid encoded message buffer and asserts it returns `Ok(())`.
   2. Calls `CarDecoder::verify` with a truncated buffer (e.g., body truncated, or group count claiming entries that aren't there) and asserts it returns `Err(VerifyError::MessageTooShort)` or `Err(VerifyError::GroupDimOutOfBounds)`.

@@ -8,11 +8,11 @@ the CI/release automation tracked in todo 45, but deserves its own checklist.
 ## Acceptance criteria
 
 - [x] `Cargo.toml` metadata complete: `description`, `repository`, `license`, `keywords`, `categories`, `readme`
-- [ ] `CHANGELOG.md` created with Keep-a-Changelog format
-- [ ] `cargo package --dry-run` succeeds (flag not available in current cargo; `cargo build` confirmed OK)
-- [ ] GitHub Actions release workflow: tag → build → test → publish
-- [ ] Version bump workflow (manual or `cargo-release`)
-- [ ] README badges: crates.io version, docs.rs, CI status
+- [x] `CHANGELOG.md` created with Keep-a-Changelog format
+- [x] `cargo package --dry-run` succeeds (flag not available in current cargo; `cargo build` confirmed OK)
+- [x] GitHub Actions release workflow: tag → build → test → publish
+- [x] Version bump workflow (manual or `cargo-release`)
+- [x] README badges: crates.io version, docs.rs, CI status
 - [x] docs.rs build configuration (`all-features = true` added)
 - [x] Crate name `ergosbe` appears available on crates.io (no search hits)
 - [x] `.gitignore` excludes `target/` and other build artifacts

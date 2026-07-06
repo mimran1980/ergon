@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** HFT optimisation experiments is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # HFT optimisation experiments
 
 **Blocked by:** `06-benchmark-perf-gates`, `22-hft-performance`

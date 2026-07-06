@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Extensibility converters is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Extensibility: extension methods + type converters
 
 **Blocked by:** `01-scalar-wire-parity` (need working generated types to extend)

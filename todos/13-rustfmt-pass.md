@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** rustfmt on generated output is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # rustfmt on generated output
 
 **Blocked by:** `01-scalar-wire-parity`

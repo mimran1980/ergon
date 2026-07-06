@@ -29,4 +29,4 @@ matter more than performance here.
 
 ## Verification
 
-- [ ] Write a test `test_display_impl_safety` in `sbe/tests/integration_tests.rs` that formats a decoder containing invalid/out-of-bounds data using `format!("{}", decoder)` and verifies that it does not panic and outputs safely, handling formatting errors or missing fields gracefully without using unsafe/unchecked accessors internally.
+- [x] Write a test `test_display_impl_safety` in `sbe/tests/integration_tests.rs` that formats a decoder containing invalid/out-of-bounds data using `format!("{}", decoder)` and verifies that it does not panic and outputs safely, handling formatting errors or missing fields gracefully without using unsafe/unchecked accessors internally.

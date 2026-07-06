@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Rust type system leverage is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Leverage Rust type system for safety, ergonomics, and performance
 
 **Blocked by:** `01-scalar-wire-parity` (need working baseline)

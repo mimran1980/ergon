@@ -9,15 +9,15 @@ don't carry total message length). Currently only `decode_frame()` exists.
 
 ## Acceptance Criteria
 
-- [ ] `AnyMessage::decode(buf: &'a [u8], offset: usize) -> Result<AnyMessage<'a>, DecodeError>` generated
-- [ ] For known templates: reads header, dispatches to typed decoder, returns wrapped decoder
-- [ ] For unknown templates: returns `Err(DecodeError::UnknownTemplateLength { template_id })`
-- [ ] Wrong `schemaId` returns `Err(DecodeError::WrongSchema { expected, actual })`
-- [ ] Coexists with `decode_frame()` (both methods available)
-- [ ] Test: decode known message → `Ok(AnyMessage::Quote(...))`
-- [ ] Test: decode unknown template → `Err(UnknownTemplateLength)`
-- [ ] Test: decode wrong schema → `Err(WrongSchema)`
-- [ ] Golden file updated
+- [x] `AnyMessage::decode(buf: &'a [u8], offset: usize) -> Result<AnyMessage<'a>, DecodeError>` generated
+- [x] For known templates: reads header, dispatches to typed decoder, returns wrapped decoder
+- [x] For unknown templates: returns `Err(DecodeError::UnknownTemplateLength { template_id })`
+- [x] Wrong `schemaId` returns `Err(DecodeError::WrongSchema { expected, actual })`
+- [x] Coexists with `decode_frame()` (both methods available)
+- [x] Test: decode known message → `Ok(AnyMessage::Quote(...))`
+- [x] Test: decode unknown template → `Err(UnknownTemplateLength)`
+- [x] Test: decode wrong schema → `Err(WrongSchema)`
+- [x] Golden file updated
 
 ## Dependencies
 

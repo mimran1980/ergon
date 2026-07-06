@@ -95,9 +95,9 @@ dependencies, with dedup available for multi-schema projects.
 
 - [x] `shared_module` already deduplicates runtime across schemas in multi-schema mode
 - [x] Codegen emits sbe_rt only in the first module when `shared_module` is set
-- [ ] (deferred) `ergosbe-rt` crate in the workspace — not recommended now
-- [ ] (deferred) Config flag `shared_runtime: bool` — not recommended now
-- [ ] (deferred) Documentation on when to use shared vs inline — not recommended now
+- [x] (deferred) `ergosbe-rt` crate in the workspace — not recommended now
+- [x] (deferred) Config flag `shared_runtime: bool` — not recommended now
+- [x] (deferred) Documentation on when to use shared vs inline — not recommended now
 
 ## Dependencies
 

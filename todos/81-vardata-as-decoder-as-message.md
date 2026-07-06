@@ -10,13 +10,13 @@ specific decoder.
 ## Acceptance criteria
 
 - [x] `_as_slice()` method generated on var-data decoder fields (delegates to existing accessor)
-- [ ] `as_decoder::<D: SbeMessage>()` method generated on var-data fields (wraps bytes in the specified decoder)
-- [ ] `as_message()` method generated on var-data fields (calls `AnyMessage::decode_frame`)
-- [ ] The var-data field's length acts as the external frame length for unknown templates
-- [ ] Type safety: `as_decoder` requires the type to implement `SbeMessage`
-- [ ] Test: nested SBE message in var-data field → decode via `as_message()`
-- [ ] Test: known message type in var-data → decode via `as_decoder::<SpecificDecoder>()`
-- [ ] Error handling: returns `Result<_, DecodeError>` for buffer/schema issues
+- [x] `as_decoder::<D: SbeMessage>()` method generated on var-data fields (wraps bytes in the specified decoder)
+- [x] `as_message()` method generated on var-data fields (calls `AnyMessage::decode_frame`)
+- [x] The var-data field's length acts as the external frame length for unknown templates
+- [x] Type safety: `as_decoder` requires the type to implement `SbeMessage`
+- [x] Test: nested SBE message in var-data field → decode via `as_message()`
+- [x] Test: known message type in var-data → decode via `as_decoder::<SpecificDecoder>()`
+- [x] Error handling: returns `Result<_, DecodeError>` for buffer/schema issues
 - [x] Golden file updated
 
 ## Dependencies

@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Domain objects is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Domain objects — owned structs with serde support
 
 **Blocked by:** `01-scalar-wire-parity` (need working encode/decode to build on)

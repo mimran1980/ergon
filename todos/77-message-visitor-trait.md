@@ -17,13 +17,13 @@ This is the foundation for the per-field visitor (todo 77b).
 
 ## Remaining (todo 77b — field-level visitor)
 
-- [ ] `MessageVisitor` trait with field-level methods (`field()`, `begin_group()`, etc.)
-- [ ] `FieldValue<'_>` enum
-- [ ] `accept_visitor` on every message and group decoder
-- [ ] Display/Debug refactor to use visitor internally
-- [ ] JSON export visitor example
-- [ ] Metrics extraction visitor example
-- [ ] Version-absent field skipping
+- [x] `MessageVisitor` trait with field-level methods (`field()`, `begin_group()`, etc.)
+- [x] `FieldValue<'_>` enum
+- [x] `accept_visitor` on every message and group decoder
+- [x] Display/Debug refactor to use visitor internally
+- [x] JSON export visitor example
+- [x] Metrics extraction visitor example
+- [x] Version-absent field skipping
 
 ## Dependencies
 

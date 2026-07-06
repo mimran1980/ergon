@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Regen-stability test is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Regen-stability test (golden file)
 
 **Blocked by:** `01-scalar-wire-parity`

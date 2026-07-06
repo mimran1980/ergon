@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Niche optimisation for Option<Enum> is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Niche optimisation for `Option<Enum>`
 
 **Blocked by:** `02-composite-enum-set-wire-parity`

@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Lifetime and type-state patterns is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Lifetime and type-state patterns for safety and ergonomics
 
 **Blocked by:** `01-scalar-wire-parity`

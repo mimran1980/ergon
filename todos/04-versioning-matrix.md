@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Versioning matrix is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Versioning matrix
 
 **Blocked by:** `03-group-vardata-wire-parity`

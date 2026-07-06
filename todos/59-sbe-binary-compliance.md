@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** SBE binary compliance is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # SBE binary compliance verification
 
 **Blocked by:** all wire-parity todos (01, 02, 03)

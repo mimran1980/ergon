@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Metaprogramming helpers is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Metaprogramming + helpers
 
 **Blocked by:** `05-anymessage-framecursor`, `06-benchmark-perf-gates`

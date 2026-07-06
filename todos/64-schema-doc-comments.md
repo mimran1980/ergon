@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Schema doc comments is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # WireCompatibleExtensions: schema doc comments on generated types
 
 **Blocked by:** none (codegen-only)

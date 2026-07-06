@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Type-safe encoded length builder is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # Type-safe encoded length builder
 
 **Blocked by:** `03-group-vardata-wire-parity`

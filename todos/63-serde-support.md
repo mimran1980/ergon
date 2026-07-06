@@ -1,3 +1,7 @@
+⚠️ **DEFERRED — post-v1.** Serde support is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+
+---
+
 # WireCompatibleExtensions: serde Serialize/Deserialize on domain types
 
 **Blocked by:** `46-domain-objects`
