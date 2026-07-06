@@ -41,7 +41,7 @@ fn main() {
     let schema = Schema::from_ir(ir);
 
     // Configure the generator
-    let config = GenerationConfig::low_latency("market_data");
+    let config = GenerationConfig::new("market_data");
     let generator = Generator::new(config);
 
     // Generate Rust source
@@ -74,7 +74,7 @@ fn main() {
     let ir_b = parse_file("schemas/market_data.xml").unwrap();
     let schema_b = Schema::from_ir(ir_b);
 
-    let mut config = GenerationConfig::low_latency("common_types");
+    let mut config = GenerationConfig::new("common_types");
     config.shared_module = Some("common_types".into());
 
     let generator = Generator::new(config);

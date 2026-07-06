@@ -16,7 +16,7 @@ fn test_generate_car_example() {
     let ir = parse(&xml_content).expect("Failed to parse SBE schema");
     let schema = Schema::from_ir(ir);
 
-    let generator = Generator::new(GenerationConfig::low_latency("car_example"));
+    let generator = Generator::new(GenerationConfig::new("car_example"));
     let module_set = generator.generate(&schema);
 
     let module = module_set.modules().next().unwrap();

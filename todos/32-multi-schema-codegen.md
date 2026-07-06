@@ -15,7 +15,7 @@ once and re-used via `use`.
 ```rust
 let config = GenerationConfig {
     shared_module: Some("common_types".into()),
-    ..GenerationConfig::low_latency("messages")
+    ..GenerationConfig::new("messages")
 };
 let generator = Generator::new(config);
 let modules = generator.generate_multi(&[

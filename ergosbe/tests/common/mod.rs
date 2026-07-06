@@ -123,7 +123,7 @@ pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let xml = fs::read_to_string(xml_path).unwrap_or_else(|e| panic!("read {xml_path:?}: {e}"));
     let ir = parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
-    let g = Generator::new(GenerationConfig::low_latency(module_name));
+    let g = Generator::new(GenerationConfig::new(module_name));
     let ms = g.generate(&schema);
     let module = ms.modules().next().unwrap();
     (schema, module.source.clone())

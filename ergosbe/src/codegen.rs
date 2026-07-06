@@ -3675,7 +3675,7 @@ mod tests {
 
     #[test]
     fn generator_emits_deterministic_module_name() {
-        let generator = Generator::new(GenerationConfig::low_latency("market_data"));
+        let generator = Generator::new(GenerationConfig::new("market_data"));
         let schema = Schema::new("fix.sbe", 1, 0);
 
         let modules = generator.generate(&schema);
@@ -3688,7 +3688,7 @@ mod tests {
 
     #[test]
     fn generate_multi_creates_separate_modules() {
-        let mut config = GenerationConfig::low_latency("common");
+        let mut config = GenerationConfig::new("common");
         config.shared_module = Some("common_types".to_string());
 
         let generator = Generator::new(config);
@@ -3724,7 +3724,7 @@ mod tests {
 
     #[test]
     fn generate_multi_without_shared_module_emits_sbe_rt_everywhere() {
-        let config = GenerationConfig::low_latency("common");
+        let config = GenerationConfig::new("common");
         let generator = Generator::new(config);
 
         let schema_a = Schema::new("common.sbe", 1, 0);

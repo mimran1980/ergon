@@ -4,14 +4,14 @@
 //! wire-compatibility policy, bounds-check behaviour, and multi-schema
 //! shared-type deduplication.
 //!
-//! The primary entry-point is [`GenerationConfig::low_latency`] which
-//! creates a latency-optimised configuration. Use direct field assignment
+//! The primary entry-point is [`GenerationConfig::new`] which
+//! creates the standard configuration. Use direct field assignment
 //! to customise:
 //!
 //! ```rust
 //! use ergosbe::GenerationConfig;
 //!
-//! let mut config = GenerationConfig::low_latency("market_data");
+//! let mut config = GenerationConfig::new("market_data");
 //! config.checked_accessors = false;
 //! config.shared_module = Some("common_types".into());
 //! ```
@@ -34,14 +34,14 @@ pub enum CompatibilityMode {
 ///
 /// ```rust
 /// use ergosbe::GenerationConfig;
-/// let config = GenerationConfig::low_latency("messages");
+/// let config = GenerationConfig::new("messages");
 /// ```
 ///
 /// Multi-schema setup with shared types:
 ///
 /// ```rust
 /// use ergosbe::GenerationConfig;
-/// let mut config = GenerationConfig::low_latency("common_types");
+/// let mut config = GenerationConfig::new("common_types");
 /// config.shared_module = Some("common_types".into());
 /// assert!(config.shared_module.is_some());
 /// ```
@@ -81,12 +81,11 @@ pub struct GenerationConfig {
 }
 
 impl GenerationConfig {
-    /// Create a configuration for latency-sensitive wire-compatible code.
+    /// Create a configuration with strict wire compatibility and checked accessors.
     ///
-    /// This is the recommended starting point. It enables strict wire
-    /// compatibility and checked accessors.
+    /// This is the recommended starting point.
     #[must_use]
-    pub fn low_latency(module_name: impl Into<String>) -> Self {
+    pub fn new(module_name: impl Into<String>) -> Self {
         Self {
             module_name: module_name.into(),
             compatibility: CompatibilityMode::Strict,
@@ -100,7 +99,7 @@ impl Default for GenerationConfig {
     /// Returns the default configuration: strict wire compat, checked
     /// accessors, single-schema mode with module name `"messages"`.
     fn default() -> Self {
-        Self::low_latency("messages")
+        Self::new("messages")
     }
 }
 

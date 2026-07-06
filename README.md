@@ -40,7 +40,7 @@ fn main() {
     let schema = Schema::from_ir(ir);
 
     // Configure the generator
-    let config = GenerationConfig::low_latency("my_messages");
+    let config = GenerationConfig::new("my_messages");
     let generator = Generator::new(config);
 
     // Generate Rust source

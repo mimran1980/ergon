@@ -10,7 +10,7 @@ sets, composites), ErgoSBE can deduplicate them.
 Configure a `shared_module` in `GenerationConfig`:
 
 ```rust
-let mut config = GenerationConfig::low_latency("common_types");
+let mut config = GenerationConfig::new("common_types");
 config.shared_module = Some("common_types".into());
 
 let generator = Generator::new(config);

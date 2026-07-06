@@ -45,7 +45,7 @@
 //! let ir = parse(schema_xml).unwrap();
 //! let schema = Schema::from_ir(ir);
 //!
-//! let config = GenerationConfig::low_latency("my_messages");
+//! let config = GenerationConfig::new("my_messages");
 //! let generator = Generator::new(config);
 //!
 //! let output = generator.generate(&schema);
