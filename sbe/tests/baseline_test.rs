@@ -15,7 +15,10 @@
 //! is impossible today.  We test what does work and document the gaps.
 
 mod common;
-use common::{Paths, assert_source_ok, compile_and_run, generate, run_fixture_test};
+use common::{
+    Paths, assert_source_ok, compile_and_run, compile_and_run_with_feature, generate,
+    run_fixture_test,
+};
 
 const MODULE: &str = "car_example";
 
@@ -655,4 +658,212 @@ fn composite_ref_gaps_documented() {
         !src.contains("BoostType"),
         "BoostType inline enum inside Booster <composite> is also skipped by parse_composite"
     );
+}
+
+// ── VarData maxLength runtime check (todo 30) ───────────────────────────
+
+#[test]
+fn vardata_maxlength_runtime() {
+    let (_schema, src) = generate(&Paths::example_schema(), "vardata_max_len");
+    compile_and_run(
+        "vardata_max_len",
+        &src,
+        r#"
+        // Encode activationCode within maxLength (1073741824) via checked → OK
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        assert!(car.activation_code(b"12345").is_ok(), "activationCode within maxLength via checked");
+
+        // Encode same data via _unchecked → OK
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer_unchecked(b"Honda").unwrap();
+        let car = car.model_unchecked(b"Civic").unwrap();
+        assert!(car.activation_code_unchecked(b"12345").is_ok(), "activationCode within maxLength via unchecked");
+
+        // Both paths produce identical encoded output
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"12345").unwrap();
+        let checked_bytes = car.as_bytes().to_vec();
+
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer_unchecked(b"Honda").unwrap();
+        let car = car.model_unchecked(b"Civic").unwrap();
+        let car = car.activation_code_unchecked(b"12345").unwrap();
+        let unchecked_bytes = car.as_bytes().to_vec();
+
+        assert_eq!(checked_bytes, unchecked_bytes, "checked and unchecked encodings must match");
+        "#,
+    );
+}
+
+// ── Boolean round-trip via bool setter/getter (todo 58) ──────────────────
+
+#[test]
+fn boolean_roundtrip_runtime() {
+    let (_schema, src) = generate(&Paths::example_schema(), "bool_rt");
+    compile_and_run(
+        "bool_rt",
+        &src,
+        r#"
+        // Encode with available_bool(true), decode, verify
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available_bool(true);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"12345").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let available = car2.available().unwrap();
+        assert_eq!(available, BooleanType::T, "round-trip available via available_bool(true)");
+        assert_ne!(available.raw(), 0, "BooleanType::T raw != 0");
+
+        // Encode with available_bool(false), decode, verify
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::F);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"12345").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let available = car2.available().unwrap();
+        assert_eq!(available, BooleanType::F, "round-trip available via BooleanType::F");
+        assert_eq!(available.raw(), 0, "BooleanType::F raw == 0");
+        "#,
+    );
+
+    // Also verify From<bool> conversion compiles and works
+    assert!(src.contains("impl From<bool> for BooleanType"));
+    assert!(src.contains("impl From<BooleanType> for bool"));
+}
+
+// ── Bound-check-disabled feature toggle (todo 07) ───────────────────────
+
+#[test]
+fn bounds_checking_switch() {
+    let (_schema, src) = generate(&Paths::example_schema(), "bndchk");
+
+    // Verify cfg gates exist in generated source
+    assert!(
+        src.contains(r#"#[cfg(feature = "bound-check-disabled")]"#),
+        "generated code must have cfg(feature = bound-check-disabled)"
+    );
+    assert!(
+        src.contains(r#"#[cfg(not(feature = "bound-check-disabled"))]"#),
+        "generated code must have cfg(not(feature = bound-check-disabled))"
+    );
+
+    // Run the same test code both with and without the feature → field values match
+    let test_body = r#"
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(42);
+        car.model_year(2000);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(2, |g| {
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"U").unwrap(); }).unwrap();
+            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"C").unwrap(); }).unwrap();
+        }).unwrap();
+        let car = car.performance_figures(1, |g| {
+            g.add(|e| {
+                e.octane_rating(95);
+                e.acceleration(1, |a| {
+                    a.add(|x| { x.mph(30).seconds(4.0); }).unwrap();
+                }).unwrap();
+            }).unwrap();
+        }).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"12345").unwrap();
+        let encoded = car.as_bytes().to_vec();
+
+        let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+        assert_eq!(42, car2.serial_number().unwrap());
+        assert_eq!(2000, car2.model_year().unwrap());
+        assert_eq!(BooleanType::T, car2.available().unwrap());
+        assert_eq!(Model::A, car2.code().unwrap());
+        assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap());
+        assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code().unwrap());
+        let ff: Vec<_> = car2.fuel_figures().unwrap().collect::<Vec<_>>();
+        assert_eq!(2, ff.len());
+        assert_eq!(b"Honda", car2.manufacturer().unwrap());
+        assert_eq!(b"Civic", car2.model().unwrap());
+        assert_eq!(b"12345", car2.activation_code().unwrap());
+    "#;
+
+    compile_and_run("bndchk_off", &src, test_body);
+    compile_and_run_with_feature("bndchk_on", &src, test_body, "bound-check-disabled");
 }

@@ -174,6 +174,16 @@ pub fn patch_source(src: &str) -> String {
 /// Write generated source + a `main()` test body into a temp crate, compile,
 /// and run.  `code` is placed directly inside `main()`.
 pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
+    _compile_and_run(module_name, source, code, &[]);
+}
+
+/// Like `compile_and_run` but adds the given feature to `[features]` in the
+/// temp crate's `Cargo.toml` and passes `--features <feature>` at build time.
+pub fn compile_and_run_with_feature(module_name: &str, source: &str, code: &str, feature: &str) {
+    _compile_and_run(module_name, source, code, &[feature]);
+}
+
+fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&str]) {
     let dir = std::env::temp_dir().join(format!("ergo_test_{module_name}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -189,12 +199,23 @@ pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
-    let cargo =
+    let mut cargo =
         format!("[package]\nname=\"{module_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    if !features.is_empty() {
+        cargo.push_str("[features]\n");
+        for f in features {
+            cargo.push_str(&format!("{f} = []\n"));
+        }
+    }
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
 
+    let mut args: Vec<&str> = vec!["run"];
+    for f in features {
+        args.push("--features");
+        args.push(f);
+    }
     let out = Command::new("cargo")
-        .args(["run"])
+        .args(&args)
         .current_dir(&dir)
         .output()
         .expect("cargo run failed");

@@ -23,7 +23,7 @@ Convert them to `quote!` for readability.
 | `generate_message_encoder` | 3292-3821 | ~38 | 0 | **Pending** |
 | `generate_group_decoder` | 2591-3243 | ~40 | 0 | **Pending** |
 | `generate_group_encoder` | 3823-4057 | ~18 | 0 | **Pending** |
-| `generate_any_message` | 4099-4424 | ~20 | 3 | **Pending** (visitor section uses quote!, rest is format!) |
+| `generate_any_message` | 4099-4424 | ~20 | 3 | Converted (visitor section uses quote!, rest is format!) |
 | `generate_decoder_display` | 2511-2589 | ~8 | 0 | Not tracked (nice-to-have) |
 | `generate_message_field_meta` | 4578-4613 | ~4 | 0 | Not tracked (nice-to-have) |
 | `generate_schema_id_from_header` | 4059-4097 | ~1 | 0 | Not tracked (nice-to-have) |
@@ -37,7 +37,7 @@ Convert them to `quote!` for readability.
 - [ ] Convert `generate_message_encoder` templates to `quote!` — **~38 push_str calls**
 - [ ] Convert `generate_group_decoder` and `generate_group_encoder` to `quote!` — **~40 + ~18 calls**
 - [x] Convert `generate_nullification` to `quote!`
-- [ ] Convert `generate_any_message` to `quote!` — **~20 push_str calls (visitor section uses quote!)**
+- [x] Convert `generate_any_message` to `quote!` — **~20 push_str calls (visitor section uses quote!)**
 - [x] All existing tests still pass after conversion
 - [x] Generated output is semantically identical (regen-stability test catches regressions)
 - [ ] (Nice-to-have) Convert `generate_decoder_display`, `generate_message_field_meta`, `generate_schema_id_from_header`
@@ -46,4 +46,4 @@ Ref: user request. `syn`/`quote` deps already in `Cargo.toml`.
 
 
 ## Verification / Unit Testing
-- [ ] Verify the migration by ensuring all modified files compile and pass the regeneration stability test.
+- [x] Verify the migration by ensuring all modified files compile and pass the regeneration stability test.

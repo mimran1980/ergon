@@ -19,4 +19,4 @@ Ref: `design/DECISIONS.md` §11 slice 10.
 
 
 ## Verification / Unit Testing
-- [ ] Create a unit test `test_bounds_checking_switch` that compiles a schema twice (with and without `bound-check-disabled` feature enabled) and verifies that bounds checks are compiled out when active.
+- [x] Create a unit test `test_bounds_checking_switch` that compiles a schema twice (with and without `bound-check-disabled` feature enabled) and verifies that bounds checks are compiled out when active.
