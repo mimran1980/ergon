@@ -1161,6 +1161,56 @@ impl<'a> CarDecoder<'a> {
         self.as_bytes().ok()
     }
 }
+impl<'a> core::fmt::Display for CarDecoder<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Car {{ ")?;
+        write!(f, "serial_number: {}", self.raw_serial_number())?;
+        write!(f, ", model_year: {}", self.raw_model_year())?;
+        match self.available() {
+            Ok(e) => {
+                match e.kind() {
+                    Some(k) => write!(f, ", available: BooleanType::{k:?}")?,
+                    None => write!(f, ", available: {}", e.raw())?,
+                }
+            }
+            _ => {}
+        }
+        match self.code() {
+            Ok(e) => {
+                match e.kind() {
+                    Some(k) => write!(f, ", code: Model::{k:?}")?,
+                    None => write!(f, ", code: {}", e.raw())?,
+                }
+            }
+            _ => {}
+        }
+        match self.discounted_model() {
+            Ok(e) => {
+                match e.kind() {
+                    Some(k) => write!(f, ", discounted_model: Model::{k:?}")?,
+                    None => write!(f, ", discounted_model: {}", e.raw())?,
+                }
+            }
+            _ => {}
+        }
+        if let Ok(g) = self.fuel_figures() {
+            write!(f, ", fuel_figures: {} entries", g.len())?;
+        }
+        if let Ok(g) = self.performance_figures() {
+            write!(f, ", performance_figures: {} entries", g.len())?;
+        }
+        if let Ok(d) = self.manufacturer() {
+            write!(f, ", manufacturer: {} bytes", d.len())?;
+        }
+        if let Ok(d) = self.model() {
+            write!(f, ", model: {} bytes", d.len())?;
+        }
+        if let Ok(d) = self.activation_code() {
+            write!(f, ", activation_code: {} bytes", d.len())?;
+        }
+        write!(f, " }}")
+    }
+}
 pub struct FuelFiguresDecoder<'a> {
     buf: &'a [u8],
     pos: usize,

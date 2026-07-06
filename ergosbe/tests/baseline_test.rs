@@ -147,6 +147,32 @@ fn decode_baseline_fixture() {
     );
 }
 
+// ── Display output verification ───────────────────────────────────────
+
+#[test]
+fn decoder_display() {
+    run_fixture_test(
+        "display_test",
+        &Paths::example_schema(),
+        &Paths::baseline_binary(),
+        r##"
+        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0).unwrap();
+        let s = format!("{}", car);
+        assert!(s.contains("serial_number: 1234"), "display serial_number");
+        assert!(s.contains("model_year: 2013"), "display model_year");
+        assert!(s.contains("available: BooleanType::T"), "display available");
+        assert!(s.contains("code: Model::A"), "display code");
+        assert!(s.contains("fuel_figures: 3 entries"), "display fuel_figures count");
+        assert!(s.contains("performance_figures: 2 entries"), "display performance_figures count");
+        assert!(s.contains("manufacturer: 5 bytes"), "display manufacturer bytes");
+        assert!(s.contains("model: 9 bytes"), "display model bytes");
+        assert!(s.contains("activation_code: 6 bytes"), "display activation_code bytes");
+        assert!(s.starts_with("Car {"), "display starts with Car {{");
+        assert!(s.ends_with(" }"), "display ends with }}");
+        "##,
+    );
+}
+
 // ── Encode from scratch and verify round-trip decode ─────────────────
 
 #[test]

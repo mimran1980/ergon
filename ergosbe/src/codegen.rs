@@ -1632,9 +1632,21 @@ fn generate_message_decoder(
     src.push_str("    pub const fn acting_block_length(&self) -> usize {\n        self.acting_block_length\n    }\n\n");
 
     // Fields Getters
+    let mut constant_adjustment = 0;
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
-        let offset = f.offset;
+        let offset = if f.presence == Presence::Constant {
+            let size = match f.field_type {
+                FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
+                FieldType::Composite { size, .. } => size,
+                FieldType::Enum { encoding_type, .. } => encoding_type.size(),
+                FieldType::Set { encoding_type, .. } => encoding_type.size(),
+            };
+            constant_adjustment += size;
+            f.offset
+        } else {
+            f.offset - constant_adjustment
+        };
         let since = f.since_version;
 
         match &f.field_type {
@@ -2161,10 +2173,92 @@ fn generate_message_decoder(
         name, name, name, msg.id, block_length, schema_id, schema_version, name, name
     ));
 
+    // Generate Display impl for this decoder
+    generate_decoder_display(src, msg);
+
     // Recursively generate Repeating Groups decoders for this message
     for g in &msg.groups {
         generate_group_decoder(src, g, elements, byte_order);
     }
+}
+
+
+fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
+    let name = to_pascal_case(&msg.name);
+    src.push_str(&format!(
+        "impl<'a> core::fmt::Display for {}Decoder<'a> {{\n\
+             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{\n",
+        name
+    ));
+    src.push_str(&format!("        write!(f, \"{} {{{{ \")?;\n", name));
+    let mut out_idx = 0usize;
+    for f in &msg.fields {
+        let snake = to_snake_case(&f.name);
+        let sep = if out_idx == 0 { "" } else { ", " };
+        match &f.field_type {
+            FieldType::Primitive(_prim, length) => {
+                if f.presence == Presence::Constant || length.is_some() {
+                    continue;
+                }
+                if f.presence == Presence::Optional || f.since_version > 0 {
+                    src.push_str(&format!(
+                        "        match self.{}() {{\n\
+                             Ok(Some(v)) => write!(f, \"{}{}: {{}}\", v)?,\n\
+                             _ => {{}}\n\
+                         }}\n",
+                        snake, sep, snake,
+                    ));
+                } else {
+                    src.push_str(&format!(
+                        "        write!(f, \"{}{}: {{}}\", self.raw_{}())?;\n",
+                        sep, snake, snake,
+                    ));
+                }
+                out_idx += 1;
+            }
+            FieldType::Enum { name: enum_name, .. } => {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                src.push_str(&format!(
+                    "        match self.{}() {{\n\
+                         Ok(e) => match e.kind() {{\n\
+                             Some(k) => write!(f, \"{}{}: {}::{{k:?}}\")?,\n\
+                             None => write!(f, \"{}{}: {{}}\", e.raw())?,\n\
+                         }},\n\
+                         _ => {{}}\n\
+                     }}\n",
+                    snake, sep, snake, enum_name, sep, snake,
+                ));
+                out_idx += 1;
+            }
+            FieldType::Set { .. } => {}
+            FieldType::Composite { .. } => {}
+        }
+    }
+    for g in &msg.groups {
+        let g_snake = to_snake_case(&g.name);
+        let sep = if out_idx == 0 { "" } else { ", " };
+        src.push_str(&format!(
+            "        if let Ok(g) = self.{}() {{\n\
+                 write!(f, \"{}{}: {{}} entries\", g.len())?;\n\
+             }}\n",
+            g_snake, sep, g_snake,
+        ));
+        out_idx += 1;
+    }
+    for vd in &msg.var_data {
+        let vd_snake = to_snake_case(&vd.name);
+        let sep = if out_idx == 0 { "" } else { ", " };
+        src.push_str(&format!(
+            "        if let Ok(d) = self.{}() {{\n\
+                 write!(f, \"{}{}: {{}} bytes\", d.len())?;\n\
+             }}\n",
+            vd_snake, sep, vd_snake,
+        ));
+        out_idx += 1;
+    }
+    src.push_str("        write!(f, \" }}\")\n    }\n}\n\n");
 }
 
 fn generate_group_decoder(
@@ -2641,6 +2735,7 @@ fn generate_nullification(
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
     };
+    let mut constant_adjustment = 0;
     for f in fields {
         if f.presence == Presence::Optional {
             if let Some(null_val) = f.null_value {
@@ -2657,7 +2752,7 @@ fn generate_nullification(
                     proc_macro2::Span::call_site(),
                 );
                 let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
-                let f_offset = syn::Index::from(f.offset);
+                let f_offset = syn::Index::from(f.offset - constant_adjustment);
                 let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
 
                 let stmts = quote::quote! {
@@ -2674,6 +2769,14 @@ fn generate_nullification(
                 );
                 src.push('\n');
             }
+        } else if f.presence == Presence::Constant {
+            let size = match f.field_type {
+                FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
+                FieldType::Composite { size, .. } => size,
+                FieldType::Enum { encoding_type, .. } => encoding_type.size(),
+                FieldType::Set { encoding_type, .. } => encoding_type.size(),
+            };
+            constant_adjustment += size;
         }
     }
 }
@@ -2883,9 +2986,21 @@ fn generate_message_encoder(
     }
 
     // Setters for fixed fields
+    let mut constant_adjustment = 0;
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
-        let offset = f.offset;
+        let offset = if f.presence == Presence::Constant {
+            let size = match f.field_type {
+                FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
+                FieldType::Composite { size, .. } => size,
+                FieldType::Enum { encoding_type, .. } => encoding_type.size(),
+                FieldType::Set { encoding_type, .. } => encoding_type.size(),
+            };
+            constant_adjustment += size;
+            f.offset
+        } else {
+            f.offset - constant_adjustment
+        };
         let since = f.since_version;
 
         match &f.field_type {
@@ -2947,9 +3062,12 @@ fn generate_message_encoder(
                 name: enum_name,
                 encoding_type,
             } => {
-                let target_name = to_pascal_case(enum_name);
-                let prim_size = encoding_type.size();
-                src.push_str(&format!(
+                if f.presence == Presence::Constant {
+                    // Constant enum fields have no setter
+                } else {
+                    let target_name = to_pascal_case(enum_name);
+                    let prim_size = encoding_type.size();
+                    src.push_str(&format!(
                     "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.message_start + {} + {};\n\
                              let val_bytes = val.0.to_{}_bytes();\n\
@@ -2958,6 +3076,7 @@ fn generate_message_encoder(
                          }}\n\n",
                     f_name, target_name, header_size, offset, order_suffix, prim_size
                 ));
+                }
             }
             FieldType::Set {
                 name: set_name,

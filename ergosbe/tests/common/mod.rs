@@ -158,11 +158,6 @@ pub fn patch_source(src: &str) -> String {
     // Bug 3: Engine type used as array length
     s = s.replace("[0u8; Engine]", "[0u8; 7]");
 
-    // Bug 7 (constant field offset): constant fields are not on the wire,
-    // so engine is at offset 35, not 36 (discountedModel is 1-byte constant).
-    s = s.replace("self.message_start + 8 + 36", "self.message_start + 8 + 35");
-    s = s.replace("self.pos + 36", "self.pos + 35");
-
     // Bug 6 (E0499): use unsafe pointer cast to decouple the encoder's buffer
     // lifetime from self.buf, so self.buf is available after the closure.
     // The safety-critical `'a` lifetime parameter makes a normal reborrow
@@ -235,7 +230,7 @@ pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
         .output()
         .expect("cargo run failed");
 
-    let _ = fs::remove_dir_all(&dir);
+    // let _ = fs::remove_dir_all(&dir);
 
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr);
