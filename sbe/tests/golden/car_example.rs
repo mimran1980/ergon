@@ -588,7 +588,7 @@ impl Booster {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct Engine(pub [u8; 9]);
+pub struct Engine(pub [u8; 6]);
 impl Engine {
     #[inline]
     pub const fn capacity(&self) -> u16 {
@@ -619,7 +619,7 @@ impl Engine {
         let mut res = [0 as u8; 3];
         let mut idx = 0;
         while idx < 3 {
-            let offset = 5 + idx * 1;
+            let offset = 3 + idx * 1;
             let mut bytes = [0u8; 1];
             let mut j = 0;
             while j < 1 {
@@ -640,7 +640,7 @@ impl Engine {
         num_cylinders: u8,
         manufacturer_code: [u8; 3],
     ) -> Self {
-        let mut bytes = [0u8; 9];
+        let mut bytes = [0u8; 6];
         let val_bytes = capacity.to_le_bytes();
         let mut j = 0;
         while j < 2 {
@@ -658,7 +658,7 @@ impl Engine {
             let val_bytes = manufacturer_code[idx].to_le_bytes();
             let mut j = 0;
             while j < 1 {
-                bytes[5 + idx * 1 + j] = val_bytes[j];
+                bytes[3 + idx * 1 + j] = val_bytes[j];
                 j += 1;
             }
             idx += 1;
@@ -677,7 +677,7 @@ impl<'a> CarDecoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
-    pub const BLOCK_LENGTH: usize = 45;
+    pub const BLOCK_LENGTH: usize = 41;
     /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
@@ -990,20 +990,20 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 44 > self.acting_block_length {
-            return Ok(Engine([0u8; 9]));
+        if self.acting_version < 0 || 41 > self.acting_block_length {
+            return Ok(Engine([0u8; 6]));
         }
         let offset = self.pos + 35;
-        if offset + 9 > self.buf.len() {
+        if offset + 6 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "engine",
-                needed: 9,
+                needed: 6,
                 available: self.buf.len() - offset,
             });
         }
-        let mut bytes = [0u8; 9];
+        let mut bytes = [0u8; 6];
         let mut j = 0;
-        while j < 9 {
+        while j < 6 {
             bytes[j] = self.buf[offset + j];
             j += 1;
         }
@@ -1012,10 +1012,10 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub const unsafe fn engine_unchecked(&self) -> Engine {
         let offset = self.pos + 35;
-        let mut bytes = [0u8; 9];
+        let mut bytes = [0u8; 6];
         bytes
             .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 9)
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 6)
             });
         Engine(bytes)
     }
@@ -1348,7 +1348,7 @@ impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}
 impl<'a> sbe_rt::SbeMessage for CarDecoder<'a> {
     const TEMPLATE_ID: u16 = 1;
-    const BLOCK_LENGTH: usize = 45;
+    const BLOCK_LENGTH: usize = 41;
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
@@ -2122,18 +2122,18 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
-    pub const BLOCK_LENGTH: usize = 45;
+    pub const BLOCK_LENGTH: usize = 41;
     /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
-    pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
+    pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
             message_start: pos,
-            pos: pos + 8 + 45,
+            pos: pos + 8 + 41,
             _phantom: core::marker::PhantomData,
         }
     }
@@ -2142,7 +2142,7 @@ impl<'a, State> CarEncoder<'a, State> {
         buf: &'a mut [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::EncodeError> {
-        let needed = 8 + 45;
+        let needed = 8 + 41;
         if pos + needed > buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
@@ -2212,7 +2212,7 @@ impl<'a, State> CarEncoder<'a, State> {
     #[must_use]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.message_start + 8 + 35;
-        self.buf[offset..offset + 9].copy_from_slice(&val.0);
+        self.buf[offset..offset + 6].copy_from_slice(&val.0);
         self
     }
     #[inline]
@@ -2473,7 +2473,7 @@ impl<'a> AsRef<[u8]> for CarEncoder<'a, car_encoder_state::Complete> {
 impl<'a, State> sbe_rt::private::Sealed for CarEncoder<'a, State> {}
 impl<'a, State> sbe_rt::SbeMessage for CarEncoder<'a, State> {
     const TEMPLATE_ID: u16 = 1;
-    const BLOCK_LENGTH: usize = 45;
+    const BLOCK_LENGTH: usize = 41;
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }

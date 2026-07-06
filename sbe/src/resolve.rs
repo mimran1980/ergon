@@ -237,6 +237,10 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
         Signal::BeginField => {
             let end_idx = find_matching_end(tokens, start, Signal::BeginField, Signal::EndField);
             // Size is the size of the contents
+            // ponytail: constant fields don't occupy wire space, always return 0
+            if tokens[start].encoding.presence == crate::ir::Presence::Constant {
+                return (0, end_idx + 1);
+            }
             if end_idx > start + 1 {
                 // Nested composite, enum, set etc.
                 let mut size = 0;

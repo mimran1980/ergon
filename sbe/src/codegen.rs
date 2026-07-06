@@ -1754,21 +1754,9 @@ fn generate_message_decoder(
     src.push_str("    pub const fn acting_block_length(&self) -> usize {\n        self.acting_block_length\n    }\n\n");
 
     // Fields Getters
-    let mut constant_adjustment = 0;
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
-        let offset = if f.presence == Presence::Constant {
-            let size = match f.field_type {
-                FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
-                FieldType::Composite { size, .. } => size,
-                FieldType::Enum { encoding_type, .. } => encoding_type.size(),
-                FieldType::Set { encoding_type, .. } => encoding_type.size(),
-            };
-            constant_adjustment += size;
-            f.offset
-        } else {
-            f.offset - constant_adjustment
-        };
+        let offset = f.offset;
         let since = f.since_version;
 
         match &f.field_type {
@@ -3051,7 +3039,6 @@ fn generate_nullification(
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
     };
-    let mut constant_adjustment = 0;
     for f in fields {
         if f.presence == Presence::Optional {
             if let Some(null_val) = f.null_value {
@@ -3068,7 +3055,7 @@ fn generate_nullification(
                     proc_macro2::Span::call_site(),
                 );
                 let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
-                let f_offset = syn::Index::from(f.offset - constant_adjustment);
+                let f_offset = syn::Index::from(f.offset);
                 let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
 
                 let stmts = quote::quote! {
@@ -3085,14 +3072,6 @@ fn generate_nullification(
                 );
                 src.push('\n');
             }
-        } else if f.presence == Presence::Constant {
-            let size = match f.field_type {
-                FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
-                FieldType::Composite { size, .. } => size,
-                FieldType::Enum { encoding_type, .. } => encoding_type.size(),
-                FieldType::Set { encoding_type, .. } => encoding_type.size(),
-            };
-            constant_adjustment += size;
         }
     }
 }
@@ -3310,21 +3289,9 @@ fn generate_message_encoder(
     }
 
     // Setters for fixed fields
-    let mut constant_adjustment = 0;
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
-        let offset = if f.presence == Presence::Constant {
-            let size = match f.field_type {
-                FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
-                FieldType::Composite { size, .. } => size,
-                FieldType::Enum { encoding_type, .. } => encoding_type.size(),
-                FieldType::Set { encoding_type, .. } => encoding_type.size(),
-            };
-            constant_adjustment += size;
-            f.offset
-        } else {
-            f.offset - constant_adjustment
-        };
+        let offset = f.offset;
         let since = f.since_version;
 
         match &f.field_type {
@@ -4206,9 +4173,6 @@ fn generate_message_field_meta(src: &mut String, msg: &MessageStructure) {
         msg_snake
     ));
 
-    // Track constant field bytes so non-constant fields report their
-    // actual wire offset (constant fields occupy no wire space).
-    let mut constant_adjustment = 0;
     for f in &msg.fields {
         let field_type_str = match &f.field_type {
             FieldType::Primitive(prim, _) => rust_type(*prim).to_string(),
@@ -4217,18 +4181,7 @@ fn generate_message_field_meta(src: &mut String, msg: &MessageStructure) {
             FieldType::Set { name, .. } => to_pascal_case(name),
         };
         let id = f.id.unwrap_or(0);
-        let wire_offset = if f.presence == Presence::Constant {
-            let size = match f.field_type {
-                FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
-                FieldType::Composite { size, .. } => size,
-                FieldType::Enum { encoding_type, .. } => encoding_type.size(),
-                FieldType::Set { encoding_type, .. } => encoding_type.size(),
-            };
-            constant_adjustment += size;
-            f.offset
-        } else {
-            f.offset - constant_adjustment
-        };
+        let wire_offset = f.offset;
         src.push_str(&format!(
             "    FieldInfo {{ name: \"{}\", id: {}, offset: {}, since_version: {}, field_type: \"{}\" }},\n",
             f.name, id, wire_offset, f.since_version, field_type_str
