@@ -1825,6 +1825,28 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
             _phantom: core::marker::PhantomData,
         })
     }
+    pub fn manufacturer_unchecked(
+        mut self,
+        data: &[u8],
+    ) -> Result<CarEncoder<'a, car_encoder_state::NeedsModel>, sbe_rt::EncodeError> {
+        let needed = self.pos + 4 + data.len();
+        if needed > self.buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available: self.buf.len(),
+            });
+        }
+        let len_bytes = (data.len() as u32).to_le_bytes();
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
+        let start = self.pos + 4;
+        self.buf[start..start + data.len()].copy_from_slice(data);
+        Ok(CarEncoder {
+            buf: self.buf,
+            message_start: self.message_start,
+            pos: start + data.len(),
+            _phantom: core::marker::PhantomData,
+        })
+    }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
     pub fn model(
@@ -1859,6 +1881,31 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
             _phantom: core::marker::PhantomData,
         })
     }
+    pub fn model_unchecked(
+        mut self,
+        data: &[u8],
+    ) -> Result<
+        CarEncoder<'a, car_encoder_state::NeedsActivationCode>,
+        sbe_rt::EncodeError,
+    > {
+        let needed = self.pos + 4 + data.len();
+        if needed > self.buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available: self.buf.len(),
+            });
+        }
+        let len_bytes = (data.len() as u32).to_le_bytes();
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
+        let start = self.pos + 4;
+        self.buf[start..start + data.len()].copy_from_slice(data);
+        Ok(CarEncoder {
+            buf: self.buf,
+            message_start: self.message_start,
+            pos: start + data.len(),
+            _phantom: core::marker::PhantomData,
+        })
+    }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
     pub fn activation_code(
@@ -1872,6 +1919,28 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
                 actual: data.len(),
             });
         }
+        let needed = self.pos + 4 + data.len();
+        if needed > self.buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available: self.buf.len(),
+            });
+        }
+        let len_bytes = (data.len() as u32).to_le_bytes();
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
+        let start = self.pos + 4;
+        self.buf[start..start + data.len()].copy_from_slice(data);
+        Ok(CarEncoder {
+            buf: self.buf,
+            message_start: self.message_start,
+            pos: start + data.len(),
+            _phantom: core::marker::PhantomData,
+        })
+    }
+    pub fn activation_code_unchecked(
+        mut self,
+        data: &[u8],
+    ) -> Result<CarEncoder<'a, car_encoder_state::Complete>, sbe_rt::EncodeError> {
         let needed = self.pos + 4 + data.len();
         if needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {

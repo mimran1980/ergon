@@ -3025,9 +3025,31 @@ fn generate_message_encoder(
                 prefix_size, len_rust_type, order_suffix, prefix_size, prefix_size, name
             ));
 
+            // Unchecked variant: same as above but skips the max_length check
+            let unchecked_body = format!(
+                "let needed = self.pos + {} + data.len();\n\
+                 if needed > self.buf.len() {{\n\
+                     return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() }});\n\
+                 }}\n\
+                 let len_bytes = (data.len() as {}).to_{}_bytes();\n\
+                 self.buf[self.pos..self.pos + {}].copy_from_slice(&len_bytes);\n\
+                 let start = self.pos + {};\n\
+                 self.buf[start..start + data.len()].copy_from_slice(data);\n\
+                 Ok({}Encoder {{\n\
+                     buf: self.buf,\n\
+                     message_start: self.message_start,\n\
+                     pos: start + data.len(),\n\
+                     _phantom: core::marker::PhantomData,\n\
+                 }})",
+                prefix_size, len_rust_type, order_suffix, prefix_size, prefix_size, name
+            );
+
             src.push_str(&format!(
                 "impl<'a> {}Encoder<'a, {}_encoder_state::Needs{}> {{\n\
                      pub fn {}(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
+                         {}\
+                     }}\n\
+                     pub fn {}_unchecked(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
                          {}\
                      }}\n\
                  }}\n\n",
@@ -3037,7 +3059,11 @@ fn generate_message_encoder(
                 vd_snake,
                 name,
                 next_state,
-                method_body
+                method_body,
+                vd_snake,
+                name,
+                next_state,
+                unchecked_body
             ));
             tail_idx += 1;
         }
