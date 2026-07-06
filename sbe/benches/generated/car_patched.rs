@@ -156,6 +156,8 @@ pub enum BooleanTypeKind {
 impl BooleanType {
     pub const F: Self = Self(0);
     pub const T: Self = Self(1);
+    pub const FALSE: Self = Self(0);
+    pub const TRUE: Self = Self(1);
     pub const fn kind(self) -> Option<BooleanTypeKind> {
         match self.0 {
             0 => Some(BooleanTypeKind::F),
@@ -187,6 +189,18 @@ impl TryFrom<BooleanType> for BooleanTypeKind {
     #[inline]
     fn try_from(val: BooleanType) -> Result<Self, Self::Error> {
         val.kind().ok_or(())
+    }
+}
+impl From<bool> for BooleanType {
+    #[inline(always)]
+    fn from(val: bool) -> Self {
+        if val { Self(1) } else { Self(0) }
+    }
+}
+impl From<BooleanType> for bool {
+    #[inline(always)]
+    fn from(val: BooleanType) -> bool {
+        val.raw() != 0
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -770,6 +784,9 @@ impl<'a> CarDecoder<'a> {
     pub const fn raw_serial_number(&self) -> u64 {
         #[allow(unused_unsafe)] unsafe { self.serial_number_unchecked() }
     }
+    pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
+    pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
+    pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
     #[inline]
     pub const fn model_year(&self) -> Result<u16, sbe_rt::DecodeError> {
         let offset = self.pos + 8;
@@ -802,6 +819,9 @@ impl<'a> CarDecoder<'a> {
     pub const fn raw_model_year(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.model_year_unchecked() }
     }
+    pub const MODEL_YEAR_NULL: u16 = 65535_u16;
+    pub const MODEL_YEAR_MIN: u16 = 0_u16;
+    pub const MODEL_YEAR_MAX: u16 = 65534_u16;
     #[inline]
     pub const fn available(&self) -> Result<BooleanType, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 11 > self.acting_block_length {
@@ -833,6 +853,7 @@ impl<'a> CarDecoder<'a> {
             });
         BooleanType(u8::from_le_bytes(bytes))
     }
+    pub const AVAILABLE_NULL: BooleanType = BooleanType(255_u8);
     #[inline]
     pub const fn code(&self) -> Result<Model, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 12 > self.acting_block_length {
@@ -864,6 +885,7 @@ impl<'a> CarDecoder<'a> {
             });
         Model(u8::from_le_bytes(bytes))
     }
+    pub const CODE_NULL: Model = Model(255_u8);
     #[inline]
     pub const fn some_numbers(&self) -> Result<[u32; 4], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 28 > self.acting_block_length {
@@ -914,6 +936,9 @@ impl<'a> CarDecoder<'a> {
     pub const fn raw_some_numbers(&self) -> [u32; 4] {
         #[allow(unused_unsafe)] unsafe { self.some_numbers_unchecked() }
     }
+    pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
+    pub const SOME_NUMBERS_MIN: u32 = 0_u32;
+    pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
     #[inline]
     pub const fn vehicle_code(&self) -> Result<[u8; 6], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 34 > self.acting_block_length {
@@ -964,6 +989,9 @@ impl<'a> CarDecoder<'a> {
     pub const fn raw_vehicle_code(&self) -> [u8; 6] {
         #[allow(unused_unsafe)] unsafe { self.vehicle_code_unchecked() }
     }
+    pub const VEHICLE_CODE_NULL: u8 = 0_u8;
+    pub const VEHICLE_CODE_MIN: u8 = 32_u8;
+    pub const VEHICLE_CODE_MAX: u8 = 126_u8;
     #[inline]
     pub const fn extras(&self) -> Result<OptionalExtras, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 35 > self.acting_block_length {
@@ -999,6 +1027,7 @@ impl<'a> CarDecoder<'a> {
     pub const fn discounted_model(&self) -> Model {
         Model::C
     }
+    pub const DISCOUNTED_MODEL_NULL: Model = Model(255_u8);
     #[inline]
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 41 > self.acting_block_length {
@@ -1629,6 +1658,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const fn raw_speed(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.speed_unchecked() }
     }
+    pub const SPEED_NULL: u16 = 65535_u16;
+    pub const SPEED_MIN: u16 = 0_u16;
+    pub const SPEED_MAX: u16 = 65534_u16;
     #[inline]
     pub const fn mpg(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
@@ -1661,6 +1693,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const fn raw_mpg(&self) -> f32 {
         #[allow(unused_unsafe)] unsafe { self.mpg_unchecked() }
     }
+    pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
+    pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
+    pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
@@ -1877,6 +1912,9 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const fn raw_octane_rating(&self) -> u8 {
         #[allow(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
     }
+    pub const OCTANE_RATING_NULL: u8 = 255_u8;
+    pub const OCTANE_RATING_MIN: u8 = 90_u8;
+    pub const OCTANE_RATING_MAX: u8 = 110_u8;
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
@@ -2108,6 +2146,9 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const fn raw_mph(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.mph_unchecked() }
     }
+    pub const MPH_NULL: u16 = 65535_u16;
+    pub const MPH_MIN: u16 = 0_u16;
+    pub const MPH_MAX: u16 = 65534_u16;
     #[inline]
     pub const fn seconds(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
@@ -2140,6 +2181,9 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const fn raw_seconds(&self) -> f32 {
         #[allow(unused_unsafe)] unsafe { self.seconds_unchecked() }
     }
+    pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
+    pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
+    pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
@@ -2230,6 +2274,14 @@ impl<'a, State> CarEncoder<'a, State> {
         self
     }
     #[must_use]
+    pub fn available_bool(&mut self, val: bool) -> &mut Self {
+        let offset = self.message_start + 8 + 10;
+        let enum_val: BooleanType = val.into();
+        let val_bytes = enum_val.0.to_le_bytes();
+        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
+        self
+    }
+    #[must_use]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.message_start + 8 + 11;
         let val_bytes = val.0.to_le_bytes();
@@ -2302,17 +2354,12 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let __pos;
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = FuelFiguresEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            __pos = group.pos;
-        }
+        let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: __pos,
+            pos: group.pos,
             _phantom: core::marker::PhantomData,
         })
     }
@@ -2339,17 +2386,12 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let __pos;
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = PerformanceFiguresEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            __pos = group.pos;
-        }
+        let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: __pos,
+            pos: group.pos,
             _phantom: core::marker::PhantomData,
         })
     }
@@ -2581,13 +2623,10 @@ impl<'a> FuelFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = FuelFiguresEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2679,13 +2718,10 @@ impl<'a> PerformanceFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = PerformanceFiguresEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2730,12 +2766,9 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&AccelerationEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = AccelerationEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            self.pos = group.pos;
-        }
+        let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
+        self.pos = group.pos;
         Ok(self)
     }
 }
@@ -2777,13 +2810,10 @@ impl<'a> AccelerationEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = AccelerationEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = AccelerationEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2895,11 +2925,11 @@ pub mod car_field_meta {
 pub const SEMANTIC_VERSION: &str = "5.2";
 pub const SCHEMA_HASH: u64 = 11133254787130522899;
 pub const SCHEMA_SHA256: [u8; 32] = [
-    0x87, 0x00, 0x80, 0x7e, 0x31, 0xaa, 0x76, 0x0a, 0xda, 0xcc, 0xdf, 0x31, 0xb4, 0xb9,
-    0xda, 0xae, 0xc3, 0x7c, 0xec, 0x2c, 0x94, 0xb5, 0x7c, 0x76, 0xc8, 0xa6, 0x32, 0x74,
-    0xab, 0x9f, 0x0a, 0x21,
+    0xad, 0xf6, 0x38, 0xad, 0x84, 0x97, 0xf8, 0x3b, 0x2b, 0x0b, 0x28, 0x50, 0x2e, 0xb2,
+    0xd2, 0x4f, 0xea, 0x41, 0xd7, 0xfa, 0x6d, 0x21, 0x55, 0x2e, 0xcd, 0xba, 0xc2, 0x4b,
+    0x35, 0x70, 0x74, 0x80,
 ];
-pub const SCHEMA_SHA256_HEX: &str = "8700807e31aa760adaccdf31b4b9daaec37cec2c94b57c76c8a63274ab9f0a21";
+pub const SCHEMA_SHA256_HEX: &str = "adf638ad8497f83b2b0b28502eb2d24fea41d7fa6d21552ecdbac24b35707480";
 #[inline]
 pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     if buf.len() < 4 + 2 {

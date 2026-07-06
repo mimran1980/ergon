@@ -24,6 +24,14 @@ const INCLUDE_FRAGMENTS: &[&str] = &[
     "fix_messages_include.xml",
 ];
 
+/// Error-handler schemas that are intentionally invalid.
+const ERROR_SCHEMAS: &[&str] = &[
+    "error-handler-dup-message-schema.xml",
+    "error-handler-group-dimensions-schema.xml",
+    "error-handler-message-schema.xml",
+    "error-handler-since-version.xml",
+];
+
 fn schema_dir() -> &'static Path {
     Path::new("tests/fixtures/schemas")
 }
@@ -103,6 +111,9 @@ fn all_schemas_parse() {
             Err(e) => {
                 if INCLUDE_FRAGMENTS.contains(&name.as_str()) {
                     println!("  SKIP  {name:<40}  (include fragment — needs parent schema)");
+                    skipped += 1;
+                } else if ERROR_SCHEMAS.contains(&name.as_str()) {
+                    println!("  SKIP  {name:<40}  (intentionally invalid error schema)");
                     skipped += 1;
                 } else {
                     let err_str = format!("{e}");
