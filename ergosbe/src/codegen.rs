@@ -388,25 +388,6 @@ fn to_upper_snake_case(s: &str) -> String {
     to_snake_case(s).to_uppercase()
 }
 
-fn format_discriminant(val: &str, is_char: bool) -> String {
-    if is_char {
-        if val.len() == 1 {
-            format!("b'{}'", val)
-        } else if let Ok(n) = val.parse::<u8>() {
-            format!("{}", n)
-        } else {
-            format!("{}", val.as_bytes().first().copied().unwrap_or(0))
-        }
-    } else {
-        if let Ok(n) = val.parse::<i128>() {
-            format!("{}", n)
-        } else if val.len() == 1 {
-            format!("b'{}'", val)
-        } else {
-            val.to_string()
-        }
-    }
-}
 
 fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
     match prim {
