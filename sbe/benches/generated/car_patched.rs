@@ -1,3 +1,4 @@
+pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
         BufferTooShort { field: &'static str, needed: usize, available: usize },
@@ -2301,17 +2302,12 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let __pos;
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = FuelFiguresEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            __pos = group.pos;
-        }
+        let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: __pos,
+            pos: group.pos,
             _phantom: core::marker::PhantomData,
         })
     }
@@ -2338,17 +2334,12 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let __pos;
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = PerformanceFiguresEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            __pos = group.pos;
-        }
+        let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: __pos,
+            pos: group.pos,
             _phantom: core::marker::PhantomData,
         })
     }
@@ -2580,13 +2571,10 @@ impl<'a> FuelFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = FuelFiguresEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2678,13 +2666,10 @@ impl<'a> PerformanceFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = PerformanceFiguresEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2729,12 +2714,9 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&AccelerationEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = AccelerationEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            self.pos = group.pos;
-        }
+        let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
+        self.pos = group.pos;
         Ok(self)
     }
 }
@@ -2776,13 +2758,10 @@ impl<'a> AccelerationEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = AccelerationEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = AccelerationEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
