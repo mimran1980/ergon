@@ -12,7 +12,7 @@ a message that violates the SBE spec.
 - [x] Encoder `set_foo(data: &[u8])` validates `data.len() <= max_length`
 - [x] Returns `Err(EncodeError::VarDataTooLong { field, max_length, actual })` on violation
 - [x] Add `VarDataTooLong` variant to `EncodeError`
-- [ ] `_unchecked` variant skips validation (HFT opt-out)
+- [x] `_unchecked` variant skips validation (HFT opt-out)
 - [ ] Test: encode with over-long data → error; encode with exact max → OK
 - [ ] Test: encode with over-long data via unchecked → no error (caller's responsibility)
 

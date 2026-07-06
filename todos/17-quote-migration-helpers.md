@@ -11,15 +11,15 @@ Convert them to `quote!` for readability.
 
 ## Acceptance criteria
 
-- [ ] Convert `generate_enum` templates to `quote!` (7 template blocks)
-- [ ] Convert `generate_set` templates to `quote!` (4 blocks)
+- [x] Convert `generate_enum` templates to `quote!` (7 template blocks)
+- [x] Convert `generate_set` templates to `quote!` (4 blocks)
 - [ ] Convert `generate_composite` templates to `quote!` (field accessors, encoder)
 - [ ] Convert `generate_message_decoder` templates to `quote!`
 - [ ] Convert `generate_message_encoder` templates to `quote!`
 - [ ] Convert `generate_group_decoder` and `generate_group_encoder` to `quote!`
-- [ ] Convert `generate_nullification` to `quote!`
+- [x] Convert `generate_nullification` to `quote!`
 - [ ] Convert `generate_any_message` to `quote!`
-- [ ] All existing tests still pass after conversion
-- [ ] Generated output is semantically identical (regen-stability test catches regressions)
+- [x] All existing tests still pass after conversion
+- [x] Generated output is semantically identical (regen-stability test catches regressions)
 
 Ref: user request. `syn`/`quote` deps already in `Cargo.toml`.
