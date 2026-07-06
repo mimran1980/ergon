@@ -18,10 +18,10 @@ Generate a `schema_id_from_header(buf: &[u8]) -> Option<u16>` free function that
 
 ## Acceptance criteria
 
-- [ ] `pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16>` generated per schema
-- [ ] Works for any headerType composite layout (not just the 8-byte default)
-- [ ] Zero allocation, no panics, inline-friendly
-- [ ] Tests: known header bytes → correct schemaId extracted
+- [x] `pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16>` generated per schema
+- [x] Works for any headerType composite layout (not just the 8-byte default)
+- [x] Zero allocation, no panics, inline-friendly
+- [x] Tests: known header bytes → correct schemaId extracted
 - [ ] Used in `AnyMessage::decode_frame` to avoid redundant header parse
 
 Ref: common SBE complaint #8 — "can't parse only schemaId without full header."

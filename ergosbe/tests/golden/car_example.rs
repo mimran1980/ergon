@@ -2221,6 +2221,18 @@ impl<'a> AccelerationEntryEncoder<'a> {
         self
     }
 }
+pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
+    if buf.len() < 4 + 2 {
+        return None;
+    }
+    let mut bytes = [0u8; 2];
+    let mut j = 0;
+    while j < 2 {
+        bytes[j] = buf[4 + j];
+        j += 1;
+    }
+    Some(u16::from_le_bytes(bytes))
+}
 #[non_exhaustive]
 #[derive(Clone, Copy)]
 pub enum AnyMessage<'a> {

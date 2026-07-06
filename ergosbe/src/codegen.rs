@@ -231,7 +231,10 @@ impl Generator {
             );
         }
 
-        // 7. Generate AnyMessage enum (per-schema: only this schema's messages)
+        // 7. Generate zero-parse schemaId extraction from raw header bytes
+        generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
+
+        // 8. Generate AnyMessage enum (per-schema: only this schema's messages)
         generate_any_message(&mut src, &messages, &elements, ir.id, &ir.header_type);
 
         // Format through syn/prettyplease
@@ -3420,6 +3423,47 @@ fn generate_group_encoder(
     for ng in &g.groups {
         generate_group_encoder(src, ng, elements, byte_order);
     }
+}
+
+
+fn generate_schema_id_from_header(
+    src: &mut String,
+    elements: &SchemaElements,
+    header_type: &str,
+    byte_order: ByteOrder,
+) {
+    let order_suffix = match byte_order {
+        ByteOrder::LittleEndian => "le",
+        ByteOrder::BigEndian => "be",
+    };
+
+    let schema_id_offset = elements
+        .composites
+        .iter()
+        .find(|c| c[0].name == header_type)
+        .and_then(|comp| {
+            parse_composite_members(comp)
+                .iter()
+                .find(|m| m.name.to_lowercase().contains("schemaid"))
+                .map(|m| m.offset)
+        })
+        .unwrap_or(4);
+
+    src.push_str(&format!(
+        "pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {{
+             if buf.len() < {} + 2 {{
+                 return None;
+             }}
+             let mut bytes = [0u8; 2];
+             let mut j = 0;
+             while j < 2 {{
+                 bytes[j] = buf[{} + j];
+                 j += 1;
+             }}
+             Some(u16::from_{}_bytes(bytes))
+         }}\n\n",
+        schema_id_offset, schema_id_offset, order_suffix
+    ));
 }
 
 fn generate_any_message(

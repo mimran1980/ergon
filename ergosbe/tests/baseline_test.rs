@@ -292,6 +292,24 @@ fn encode_byte_exact_scalar() {
     );
 }
 
+// ── Zero-parse schemaId extraction ───────────────────────────────────
+
+#[test]
+fn schema_id_from_header_car_example() {
+    run_fixture_test(
+        "schema_id_from_header",
+        &Paths::example_schema(),
+        &Paths::baseline_binary(),
+        r##"
+        let schema_id = schema_id_from_header(FIXTE);
+        assert_eq!(Some(1), schema_id, "schema_id from header");
+
+        assert_eq!(None, schema_id_from_header(&[]), "empty buffer");
+        assert_eq!(None, schema_id_from_header(&[0u8; 1]), "too short buffer");
+        "##,
+    );
+}
+
 // ── Constants verification ───────────────────────────────────────────
 
 #[test]
