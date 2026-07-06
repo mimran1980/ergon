@@ -13,11 +13,11 @@ schema validation at startup.
 
 ## Acceptance criteria
 
-- [ ] Per-message `field_meta` module with struct-per-field (name, type, offset, sinceVersion, presence)
-- [ ] `pub const FIELD_META: &[FieldInfo]` array for each message
-- [ ] `pub const SEMANTIC_VERSION: &str` from schema attribute
-- [ ] `pub const SCHEMA_HASH: u64` computed from canonical schema representation
-- [ ] Compile-time values only (no runtime overhead)
-- [ ] Tests verify metadata matches schema
+- [x] Per-message `field_meta` module with struct-per-field (name, type, offset, sinceVersion, presence)
+- [x] `pub const FIELDS: &[FieldInfo]` array for each message
+- [x] `pub const SEMANTIC_VERSION: &str` from schema attribute
+- [x] `pub const SCHEMA_HASH: u64` computed from canonical schema representation
+- [x] Compile-time values only (no runtime overhead)
+- [x] Tests verify metadata matches schema
 
 Ref: gap analysis (todo 51), DECISIONS.md §5 field-level metadata.

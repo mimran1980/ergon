@@ -264,7 +264,7 @@ fn generate_sbe_rt_src() -> String {
         pub mod sbe_rt {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum DecodeError {
-                BufferTooShort { field: &'static str, offset: usize, needed: usize, available: usize },
+                BufferTooShort { field: &'static str, needed: usize, available: usize },
                 WrongSchema { expected: u16, actual: u16 },
                 UnknownTemplateLength { template_id: u16 },
                 InvalidVarDataLength { field: &'static str, length: u32 },
@@ -275,7 +275,7 @@ fn generate_sbe_rt_src() -> String {
                 #[cold]
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
-                        Self::BufferTooShort { field, offset, needed, available } => write!(f, "field '{}' at offset {}: needed {} bytes, {} available", field, offset, needed, available),
+                        Self::BufferTooShort { field, needed, available } => write!(f, "field '{}': needed {} bytes, {} available", field, needed, available),
                         Self::WrongSchema { expected, actual } => write!(f, "wrong schema id: expected {}, actual {}", expected, actual),
                         Self::UnknownTemplateLength { template_id } => write!(f, "unknown template length for template id {}", template_id),
                         Self::InvalidVarDataLength { field, length } => write!(f, "invalid var data length for field {}: {}", field, length),
@@ -1622,7 +1622,7 @@ fn generate_message_decoder(
              }}\n\n\
              #[inline]\n             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
                  let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
-                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: pos, needed: {}, available: buf.len() - pos }}\n\
+                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
                  }})?.try_into().unwrap();\n\
                  let header = {}(header_bytes);\n\
                  if header.{}() != Self::SCHEMA_ID {{\n\
@@ -1690,7 +1690,7 @@ fn generate_message_decoder(
                                  let offset = self.pos + {};\n\
                                  let size = {};\n\
                                  if offset + size > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: size, available: self.buf.len() - offset }});\n\
+                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: size, available: self.buf.len() - offset }});\n\
                                  }}\n\
                                  let mut res = [0 as {}; {}];\n\
                                  let mut idx = 0;\n\
@@ -1779,7 +1779,7 @@ fn generate_message_decoder(
                                      }}\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -1805,7 +1805,7 @@ fn generate_message_decoder(
                                      }}\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -1823,7 +1823,7 @@ fn generate_message_decoder(
                             "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -1883,7 +1883,7 @@ fn generate_message_decoder(
                              }}\n\
                              let offset = self.pos + {};\n\
                              if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                              }}\n\
                              let mut bytes = [0u8; {}];\n\
                              let mut j = 0;\n\
@@ -1934,7 +1934,7 @@ fn generate_message_decoder(
                                  }}\n\
                                  let offset = self.pos + {};\n\
                                  if offset + {} > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                                  }}\n\
                                  let mut bytes = [0u8; {}];\n\
                                  let mut j = 0;\n\
@@ -1993,7 +1993,7 @@ fn generate_message_decoder(
                                  }}\n\
                                  let offset = self.pos + {};\n\
                                  if offset + {} > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                                  }}\n\
                                  let mut bytes = [0u8; {}];\n\
                                  let mut j = 0;\n\
@@ -2048,7 +2048,7 @@ fn generate_message_decoder(
                  fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
                      let start = self.tail_offset_{}()?;\n\
                      if start + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: start, needed: {}, available: self.buf.len() - start }});\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
                      }}\n\
                      let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
                      let header = {}(bytes);\n\
@@ -2075,13 +2075,13 @@ fn generate_message_decoder(
                  fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
                      let start = self.tail_offset_{}()?;\n\
                      if start + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: start, needed: {}, available: self.buf.len() - start }});\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
                      }}\n\
                      let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
                      let header = {}(bytes);\n\
                      let len = header.{}() as usize;\n\
                      if start + {} + len > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: start, needed: {} + len, available: self.buf.len() - start }});\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {} + len, available: self.buf.len() - start }});\n\
                      }}\n\
                      Ok(start + {} + len)\n\
                  }}\n\n",
@@ -2295,7 +2295,7 @@ fn generate_group_decoder(
              pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
              #[inline]\n             pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {{\n\
                  let bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
-                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: pos, needed: {}, available: buf.len() - pos }}\n\
+                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
                  }})?.try_into().unwrap();\n\
                  let header = {}(bytes);\n\
                  let count = header.{}() as usize;\n\
@@ -2320,7 +2320,7 @@ fn generate_group_decoder(
             "#[inline]\n    pub fn as_chunks(&self) -> Result<&'a [[u8; {}]], sbe_rt::DecodeError> {{\n\
                      let len = self.count * {};\n\
                      if self.pos + len > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: self.pos, needed: len, available: self.buf.len() - self.pos }});\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: len, available: self.buf.len() - self.pos }});\n\
                      }}\n\
                      let bytes = &self.buf[self.pos .. self.pos + len];\n\
                      let (chunks, _) = bytes.as_chunks::<{}>();\n\
@@ -2406,7 +2406,7 @@ fn generate_group_decoder(
                                  let offset = self.pos + {};\n\
                                  let size = {};\n\
                                  if offset + size > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: size, available: self.buf.len() - offset }});\n\
+                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: size, available: self.buf.len() - offset }});\n\
                                  }}\n\
                                  let mut res = [0 as {}; {}];\n\
                                  let mut idx = 0;\n\
@@ -2479,7 +2479,7 @@ fn generate_group_decoder(
                             "#[inline]\n    pub const fn {}(&self) -> Result<Option<{}>, sbe_rt::DecodeError> {{\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -2502,7 +2502,7 @@ fn generate_group_decoder(
                             "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                                      }}\n\
                                      let mut bytes = [0u8; {}];\n\
                                      let mut j = 0;\n\
@@ -2546,7 +2546,7 @@ fn generate_group_decoder(
                     "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                              let offset = self.pos + {};\n\
                              if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                              }}\n\
                              let mut bytes = [0u8; {}];\n\
                              let mut j = 0;\n\
@@ -2572,7 +2572,7 @@ fn generate_group_decoder(
                     "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                              let offset = self.pos + {};\n\
                              if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                              }}\n\
                              let mut bytes = [0u8; {}];\n\
                              let mut j = 0;\n\
@@ -2598,7 +2598,7 @@ fn generate_group_decoder(
                     "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                              let offset = self.pos + {};\n\
                              if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset, needed: {}, available: self.buf.len() - offset }});\n\
+                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
                              }}\n\
                              let mut bytes = [0u8; {}];\n\
                              let mut j = 0;\n\
@@ -2633,7 +2633,7 @@ fn generate_group_decoder(
                  fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
                      let start = self.tail_offset_{}()?;\n\
                      if start + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: start, needed: {}, available: self.buf.len() - start }});\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
                      }}\n\
                      let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
                      let header = {}(bytes);\n\
@@ -2660,13 +2660,13 @@ fn generate_group_decoder(
                  fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
                      let start = self.tail_offset_{}()?;\n\
                      if start + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: start, needed: {}, available: self.buf.len() - start }});\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
                      }}\n\
                      let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
                      let header = {}(bytes);\n\
                      let len = header.{}() as usize;\n\
                      if start + {} + len > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: start, needed: {} + len, available: self.buf.len() - start }});\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {} + len, available: self.buf.len() - start }});\n\
                      }}\n\
                      Ok(start + {} + len)\n\
                  }}\n\n",
@@ -3695,7 +3695,7 @@ fn generate_any_message(
                  let (header_len, frame_len) = match self.framing {\n\
                      FramingPolicy::LengthPrefixU32 => {\n\
                          if self.pos + 4 > self.buf.len() {\n\
-                             return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"length prefix\", offset: self.pos, needed: 4, available: self.buf.len() - self.pos }));\n\
+                             return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"length prefix\", needed: 4, available: self.buf.len() - self.pos }));\n\
                          }\n\
                          let bytes: [u8; 4] = self.buf[self.pos..self.pos + 4].try_into().unwrap();\n\
                          let len = u32::from_le_bytes(bytes) as usize;\n\
@@ -3703,7 +3703,7 @@ fn generate_any_message(
                      }\n\
                      FramingPolicy::LengthPrefixU16 => {\n\
                          if self.pos + 2 > self.buf.len() {\n\
-                             return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"length prefix\", offset: self.pos, needed: 2, available: self.buf.len() - self.pos }));\n\
+                             return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"length prefix\", needed: 2, available: self.buf.len() - self.pos }));\n\
                          }\n\
                          let bytes: [u8; 2] = self.buf[self.pos..self.pos + 2].try_into().unwrap();\n\
                          let len = u16::from_le_bytes(bytes) as usize;\n\
@@ -3712,7 +3712,7 @@ fn generate_any_message(
                      FramingPolicy::Fixed(len) => (0, len),\n\
                  };\n\n\
                  if self.pos + header_len + frame_len > self.buf.len() {\n\
-                     return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"frame bounds\", offset: self.pos, needed: header_len + frame_len, available: self.buf.len() - self.pos }));\n\
+                     return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"frame bounds\", needed: header_len + frame_len, available: self.buf.len() - self.pos }));\n\
                  }\n\
                  let off = self.pos + header_len;\n\
                  let res = AnyMessage::decode_frame(self.buf, off, frame_len);\n\
@@ -3731,7 +3731,7 @@ fn generate_any_message(
         "impl<'a> AnyMessage<'a> {{\n\
              #[inline]\n             pub const fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
                  if pos + {} > buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: pos, needed: {}, available: buf.len() - pos }});\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }});\n\
                  }}\n\
                  let mut header_bytes = [0u8; {}];\n\
                  let mut j = 0;\n\
@@ -3770,7 +3770,7 @@ fn generate_any_message(
     src.push_str(&format!(
         "#[inline]\n    pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {{\n\
                  let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
-                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: pos, needed: {}, available: buf.len() - pos }}\n\
+                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
                  }})?.try_into().unwrap();\n\
                  let header = {}(header_bytes);\n\
                  let template_id = header.{}();\n\
@@ -3796,7 +3796,7 @@ fn generate_any_message(
                                  Err(e) => return Err(e),\n\
                              }};\n\
                              if total_len > frame_len {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", offset: body_pos, needed: total_len, available: frame_len }});\n\
+                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: total_len, available: frame_len }});\n\
                              }}\n\
                              Ok(DecodedFrame {{\n\
                                  message: Self::{}(decoder),\n\
@@ -3812,7 +3812,7 @@ fn generate_any_message(
     src.push_str(
         "            _ => {\n\
                              if pos + frame_len > buf.len() {\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort { field: \"template body\", offset: pos, needed: frame_len, available: buf.len() - pos });\n\
+                                 return Err(sbe_rt::DecodeError::BufferTooShort { field: \"template body\", needed: frame_len, available: buf.len() - pos });\n\
                              }\n\
                              let payload = &buf[body_pos .. pos + frame_len];\n\
                              Ok(DecodedFrame {\n\
@@ -3890,6 +3890,9 @@ fn generate_message_field_meta(src: &mut String, msg: &MessageStructure) {
         msg_snake
     ));
 
+    // Track constant field bytes so non-constant fields report their
+    // actual wire offset (constant fields occupy no wire space).
+    let mut constant_adjustment = 0;
     for f in &msg.fields {
         let field_type_str = match &f.field_type {
             FieldType::Primitive(prim, _) => rust_type(*prim).to_string(),
@@ -3898,9 +3901,21 @@ fn generate_message_field_meta(src: &mut String, msg: &MessageStructure) {
             FieldType::Set { name, .. } => to_pascal_case(name),
         };
         let id = f.id.unwrap_or(0);
+        let wire_offset = if f.presence == Presence::Constant {
+            let size = match f.field_type {
+                FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
+                FieldType::Composite { size, .. } => size,
+                FieldType::Enum { encoding_type, .. } => encoding_type.size(),
+                FieldType::Set { encoding_type, .. } => encoding_type.size(),
+            };
+            constant_adjustment += size;
+            f.offset
+        } else {
+            f.offset - constant_adjustment
+        };
         src.push_str(&format!(
             "    FieldInfo {{ name: \"{}\", id: {}, offset: {}, since_version: {}, field_type: \"{}\" }},\n",
-            f.name, id, f.offset, f.since_version, field_type_str
+            f.name, id, wire_offset, f.since_version, field_type_str
         ));
     }
 
