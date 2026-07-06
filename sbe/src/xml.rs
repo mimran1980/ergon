@@ -344,7 +344,13 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
         ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
     })?;
     let base_dir = path.parent();
-    parse_with_context(&xml, base_dir, &mut HashSet::new())
+    let mut seen = HashSet::new();
+    // Seed `seen` with the main file so that any include targeting it is
+    // detected as a cycle (self-include or mutual A→B→A).
+    if let Ok(canon) = path.canonicalize() {
+        seen.insert(canon);
+    }
+    parse_with_context(&xml, base_dir, &mut seen)
 }
 
 /// Internal: parse with optional base directory for include resolution.
@@ -1277,10 +1283,13 @@ mod tests {
 
     #[test]
     fn xinclude_detects_cycle() {
-        // parse_file seeds `seen` with the main file, so any include inside
-        // that tries to re-include the same file is caught as a cycle.
-        let path = sbe_sample_resource("example-schema.xml");
-        let _ir = parse_file(&path).unwrap();
-        // The test passes if no panic — the existing includes are non-cyclic.
+        // Self-include: the schema includes itself.
+        let path = sbe_test_resource("cyclic-self-include.xml");
+        let err = parse_file(&path).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("cyclic include"),
+            "expected cyclic include error, got: {msg}"
+        );
     }
 }

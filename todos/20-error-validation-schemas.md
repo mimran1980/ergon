@@ -36,4 +36,4 @@ Ref: `simple-binary-encoding/sbe-tool/src/test/resources/error-handler-*.xml`,
 
 
 ## Verification / Unit Testing
-- [ ] Create tests verifying that malformed XML schemas return ParseError with the correct spans using miette.
+- [x] Create tests verifying that malformed XML schemas return ParseError with the correct spans using miette.

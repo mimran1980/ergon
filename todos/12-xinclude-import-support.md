@@ -21,4 +21,4 @@ Ref: upstream schemas at `simple-binary-encoding/sbe-tool/src/test/resources/sub
 
 
 ## Verification / Unit Testing
-- [ ] Create a unit test `test_xinclude_resolution` that parses a schema including other files, verifies that cyclic includes return an Error, and that all fields are merged correctly.
+- [x] Create a unit test `test_xinclude_detects_cycle` that verifies cyclic includes return an Error (self-include). Existing tests (`parses_schema_with_xinclude_relative_path`, `parses_example_schema_with_xinclude`) already verify fields are merged correctly.

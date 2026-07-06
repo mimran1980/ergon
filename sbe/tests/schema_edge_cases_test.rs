@@ -367,3 +367,20 @@ fn group_extension_types_exist() {
         ],
     );
 }
+
+/// Constant enum valueRef fields: top-level and group entry constants.
+#[test]
+fn constant_enum_fields_types_exist() {
+    assert_tool_schema(
+        "const_enum",
+        "constant-enum-fields.xml",
+        &[
+            "ConstantEnumsDecoder",
+            "ConstantEnumsEncoder",
+            "Model",
+            "ModelKind",
+            "GroupSizeEncoding",
+        ],
+    );
+}
+

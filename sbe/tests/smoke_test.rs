@@ -10,6 +10,7 @@ use ergosbe::parse_file;
 
 /// Schemas that are intentionally invalid — tested separately.
 const EXPECTED_PARSE_ERRORS: &[&str] = &[
+    "cyclic-self-include.xml",
     "duplicate-message-id.xml",
     "invalid-enum-value.xml",
     "invalid-type-ref.xml",

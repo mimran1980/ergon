@@ -56,4 +56,4 @@ Ref: `design/DECISIONS.md` SS11 test 11. `simple-binary-encoding/sbe-tool/src/pr
 
 
 ## Verification / Unit Testing
-- [ ] Add a property test suite `fuzz_roundtrip` using proptest to verify that random valid inputs always round-trip to the exact same bytes.
+- [x] Add a property test suite `fuzz_roundtrip` using proptest to verify that random valid inputs always round-trip to the exact same bytes.
