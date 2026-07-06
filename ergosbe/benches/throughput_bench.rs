@@ -51,8 +51,8 @@ fn bench_throughput_checked(c: &mut Criterion) {
                 let mut total_capacity: u64 = 0;
                 let mut off = 0usize;
                 for _ in 0..n {
-                    let car = CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()]))
-                        .unwrap();
+                    let car =
+                        CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()])).unwrap();
                     total_serial += car.serial_number().unwrap();
                     total_year += car.model_year().unwrap() as u64;
                     let engine = car.engine().unwrap();
@@ -84,8 +84,8 @@ fn bench_throughput_unchecked(c: &mut Criterion) {
                 let mut total_capacity: u64 = 0;
                 let mut off = 0usize;
                 for _ in 0..n {
-                    let car = CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()]))
-                        .unwrap();
+                    let car =
+                        CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()])).unwrap();
                     total_serial += car.raw_serial_number();
                     total_year += car.raw_model_year() as u64;
                     let engine = unsafe { car.engine_unchecked() };
@@ -191,8 +191,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             let mut total_capacity: u64 = 0;
             let mut off = 0usize;
             for _ in 0..COMP_N {
-                let car = CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()]))
-                    .unwrap();
+                let car = CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()])).unwrap();
                 total_serial += car.serial_number().unwrap();
                 total_year += car.model_year().unwrap() as u64;
                 let engine = car.engine().unwrap();
@@ -210,8 +209,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             let mut total_capacity: u64 = 0;
             let mut off = 0usize;
             for _ in 0..COMP_N {
-                let car = CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()]))
-                    .unwrap();
+                let car = CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()])).unwrap();
                 total_serial += car.raw_serial_number();
                 total_year += car.raw_model_year() as u64;
                 let engine = unsafe { car.engine_unchecked() };
