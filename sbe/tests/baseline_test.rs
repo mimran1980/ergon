@@ -15,7 +15,7 @@
 //! is impossible today.  We test what does work and document the gaps.
 
 mod common;
-use common::{Paths, assert_source_ok, generate, run_fixture_test};
+use common::{Paths, assert_source_ok, compile_and_run, generate, run_fixture_test};
 
 const MODULE: &str = "car_example";
 
@@ -376,4 +376,56 @@ fn constants_match_upstream() {
     assert!(src.contains("pub const SCHEMA_VERSION: u16 = 0;"));
     assert!(src.contains("pub const TEMPLATE_ID: u16 = 1;"));
     assert!(src.contains("pub const BLOCK_LENGTH: usize = 41;"));
+}
+
+// ── Group decoder is_empty() inherent method ──────────────────────
+
+#[test]
+fn group_decoder_is_empty() {
+    let (_schema, src) = generate(&Paths::example_schema(), "is_empty_group");
+    compile_and_run("is_empty_group", &src, r#"
+        // ── 0 fuel figures → is_empty() == true ──
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic VTi").unwrap();
+        let car = car.activation_code(b"abcdef").unwrap();
+        let encoded = car.as_bytes();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        assert!(car2.fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
+
+        // ── 3 fuel figures → is_empty() == false ──
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(3, |g| {
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();
+            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Combined Cycle").unwrap(); }).unwrap();
+            g.add(|e| { e.speed(75).mpg(40.0); e.usage_description(b"Highway Cycle").unwrap(); }).unwrap();
+        }).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic VTi").unwrap();
+        let car = car.activation_code(b"abcdef").unwrap();
+        let encoded = car.as_bytes();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        assert!(!car2.fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
+    "#);
 }

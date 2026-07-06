@@ -6,17 +6,18 @@ because `ExactSizeIterator::is_empty` is still unstable on stable Rust.
 
 ## Status
 
-🔲 Not started
+✅ Done — already implemented with `#[inline]` in `generate_group_decoder()` at line 2523.
+Added test `group_decoder_is_empty()` in `baseline_test.rs`.
 
 ## Acceptance criteria
 
-- [ ] `pub fn is_empty(&self) -> bool` generated on every group decoder
-- [ ] Returns `self.count == 0` (or equivalent)
-- [ ] Inherent method — does NOT rely on `ExactSizeIterator::is_empty()`
-- [ ] Consistent with `len()` from `ExactSizeIterator`
-- [ ] Test: empty group → `is_empty() == true`
-- [ ] Test: non-empty group → `is_empty() == false`
-- [ ] Golden file updated
+- [x] `pub fn is_empty(&self) -> bool` generated on every group decoder
+- [x] Returns `self.count == 0` (or equivalent)
+- [x] Inherent method — does NOT rely on `ExactSizeIterator::is_empty()`
+- [x] Consistent with `len()` from `ExactSizeIterator`
+- [x] Test: empty group → `is_empty() == true`
+- [x] Test: non-empty group → `is_empty() == false`
+- [x] Golden file updated
 
 ## Dependencies
 
