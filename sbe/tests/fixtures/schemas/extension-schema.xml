@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" xmlns:xi="http://www.w3.org/2001/XInclude" package="extension" id="1" version="1" byteOrder="littleEndian">
+    <xi:include href="common-types.xml"/>
+    <types/>
+    <sbe:message name="Car" id="1">
+        <field name="serialNumber" id="1" type="uint64"/>
+    </sbe:message>
+</sbe:messageSchema>

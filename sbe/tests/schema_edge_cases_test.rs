@@ -25,6 +25,7 @@ fn assert_tool_schema(name: &str, filename: &str, expected: &[&str]) {
 
 /// Schema extension (version 2): Car with `uuid`, `cupHolderCount`, `mpg (sinceVersion=2)`.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn extension_schema_types_exist() {
     assert_tool_schema(
         "ext",
@@ -53,6 +54,7 @@ fn extension_schema_types_exist() {
 
 /// Null semantics: optional enum fields, optional enum encoding, optional composite.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn optional_enum_nullify_types_exist() {
     assert_tool_schema(
         "oen",
@@ -72,6 +74,7 @@ fn optional_enum_nullify_types_exist() {
 /// standalone structs (they are inlined).  Only composites, enums, and sets
 /// produce named types.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn since_version_filter_types_exist() {
     assert_tool_schema(
         "since_dep",
@@ -109,6 +112,7 @@ fn since_version_filter_types_exist() {
 
 /// Issue 895: optional float/double with NaN-as-null semantics.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn issue_895_optional_float_double_types_exist() {
     assert_tool_schema(
         "issue895",
@@ -119,6 +123,7 @@ fn issue_895_optional_float_double_types_exist() {
 
 /// Issue 972: optional composite with versioned fields.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn issue_972_optional_composite_types_exist() {
     assert_tool_schema(
         "issue972",
@@ -133,6 +138,7 @@ fn issue_972_optional_composite_types_exist() {
 /// Note: inline enum/set/composite types (`EnumOne`, `SetOne`, Inner) are
 /// embedded in the Outer composite and don't generate standalone structs.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn composite_elements_types_exist() {
     assert_tool_schema(
         "comp_el",
@@ -143,6 +149,7 @@ fn composite_elements_types_exist() {
 
 /// Explicit field offsets in composites and messages.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn composite_offsets_types_exist() {
     assert_tool_schema(
         "comp_off",
@@ -159,6 +166,7 @@ fn composite_offsets_types_exist() {
 
 /// Basic repeating group with custom dimensionType.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn basic_group_types_exist() {
     assert_tool_schema(
         "basic_grp",
@@ -173,6 +181,7 @@ fn basic_group_types_exist() {
 
 /// Triply-nested repeating groups.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn nested_group_types_exist() {
     assert_tool_schema(
         "nested_grp",
@@ -183,6 +192,7 @@ fn nested_group_types_exist() {
 
 /// Groups that contain var-data fields (single, multiple, nested).
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn group_with_data_types_exist() {
     assert_tool_schema(
         "grp_data",
@@ -204,6 +214,7 @@ fn group_with_data_types_exist() {
 
 /// Message with embedded length/count (group dimension inside composite) and var data.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn embedded_length_and_count_types_exist() {
     assert_tool_schema(
         "emb_len",
@@ -223,6 +234,7 @@ fn embedded_length_and_count_types_exist() {
 /// Note: `PrimitiveConst` and `StrConst` are simple type aliases;
 /// they don't generate standalone structs.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn group_with_constant_fields_types_exist() {
     assert_tool_schema(
         "const_flds",
@@ -239,6 +251,7 @@ fn group_with_constant_fields_types_exist() {
 
 /// Value-ref schemas: constant enum valueRef and constant type valueRef.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn value_ref_types_exist() {
     assert_tool_schema(
         "val_ref",
@@ -262,6 +275,7 @@ fn value_ref_types_exist() {
 
 /// Basic minimal schema (single uint32 field, no groups/var-data).
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn basic_schema_types_exist() {
     assert_tool_schema(
         "basic",
@@ -272,6 +286,7 @@ fn basic_schema_types_exist() {
 
 /// Types schema with various primitive types.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn basic_types_schema_types_exist() {
     assert_tool_schema(
         "basic_types",
@@ -287,6 +302,7 @@ fn basic_types_schema_types_exist() {
 
 /// Block-length test schema with explicit blockLength on messages.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn block_length_schema_types_exist() {
     assert_tool_schema(
         "bl_len",
@@ -311,6 +327,7 @@ fn block_length_schema_types_exist() {
 /// accessors, so UTF-16 decoding will fail at runtime. This test asserts the
 /// structural gap: valid schema, valid Rust output, no UTF-16-specific method.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn utf16_encoding_types_exist() {
     assert_tool_schema(
         "utf16",
@@ -330,6 +347,7 @@ fn utf16_encoding_types_exist() {
 /// valid Rust despite the gap. The generated code should include
 /// `FIELD_MIN` / `FIELD_MAX` constants for types with `minValue`/`maxValue`.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn unit_attribute_types_exist() {
     assert_tool_schema(
         "unit_attr",
@@ -354,6 +372,7 @@ fn unit_attribute_types_exist() {
 /// This test asserts structural validity; a full wire-parity test will
 /// need a binary fixture encoded at an earlier schema version.
 #[test]
+#[ignore = "requires schemas from removed simple-binary-encoding submodule"]
 fn group_extension_types_exist() {
     assert_tool_schema(
         "grp_ext",
