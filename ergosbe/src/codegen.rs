@@ -1607,22 +1607,16 @@ fn generate_message_decoder(
                  }}\n\
              }}\n\n\
              pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
-                 if pos + {} > buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: pos + {}, available: buf.len() }});\n\
-                 }}\n\
-                 let mut header_bytes = [0u8; {}];\n\
-                 let mut j = 0;\n\
-                 while j < {} {{\n\
-                     header_bytes[j] = buf[pos + j];\n\
-                     j += 1;\n\
-                 }}\n\
+                 let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
+                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: pos + {}, available: buf.len() }}\n\
+                 }})?.try_into().unwrap();\n\
                  let header = {}(header_bytes);\n\
                  if header.{}() != Self::SCHEMA_ID {{\n\
                      return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{}() }});\n\
                  }}\n\
                  Ok(Self::wrap(buf, pos + {}, header.{}() as usize, header.{}()))\n\
              }}\n\n",
-        header_size, header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr,
+        header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr,
         field_name = "message header"
     ));
 
@@ -2286,10 +2280,9 @@ fn generate_group_decoder(
          impl<'a> {}Decoder<'a> {{\n\
              pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
              pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {{\n\
-                 if pos + {} > buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: pos + {}, available: buf.len() }});\n\
-                 }}\n\
-                 let bytes: [u8; {}] = buf[pos..pos + {}].try_into().unwrap();\n\
+                 let bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
+                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: pos + {}, available: buf.len() }}\n\
+                 }})?.try_into().unwrap();\n\
                  let header = {}(bytes);\n\
                  let count = header.{}() as usize;\n\
                  Ok(Self {{\n\
@@ -2302,7 +2295,7 @@ fn generate_group_decoder(
              pub fn is_empty(&self) -> bool {{\n\
                  self.count == 0\n\
              }}\n\n",
-        name, name, g.block_length, dim_size, dim_size, dim_size, dim_size, dim_name, count_field, dim_size,
+        name, name, g.block_length, dim_size, dim_size, dim_size, dim_name, count_field, dim_size,
         field_name = g.name
     ));
 
@@ -3762,15 +3755,9 @@ fn generate_any_message(
 
     src.push_str(&format!(
         "    pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {{\n\
-                 if pos + {} > buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: pos + {}, available: buf.len() }});\n\
-                 }}\n\
-                 let mut header_bytes = [0u8; {}];\n\
-                 let mut j = 0;\n\
-                 while j < {} {{\n\
-                     header_bytes[j] = buf[pos + j];\n\
-                     j += 1;\n\
-                 }}\n\
+                 let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
+                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: pos + {}, available: buf.len() }}\n\
+                 }})?.try_into().unwrap();\n\
                  let header = {}(header_bytes);\n\
                  let template_id = header.{}();\n\
                  let schema_id = header.{}();\n\
@@ -3781,7 +3768,7 @@ fn generate_any_message(
                      return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id }});\n\
                  }}\n\n\
                  match template_id {{\n",
-        header_size, header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id,
+        header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id,
         field_name = "decoded frame"
     ));
 

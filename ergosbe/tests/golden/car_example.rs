@@ -629,19 +629,17 @@ impl<'a> CarDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 8 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "message header",
-                needed: pos + 8,
-                available: buf.len(),
-            });
-        }
-        let mut header_bytes = [0u8; 8];
-        let mut j = 0;
-        while j < 8 {
-            header_bytes[j] = buf[pos + j];
-            j += 1;
-        }
+        let header_bytes: [u8; 8] = buf
+            .get(pos..pos + 8)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "message header",
+                    needed: pos + 8,
+                    available: buf.len(),
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = MessageHeader(header_bytes);
         if header.schema_id() != Self::SCHEMA_ID {
             return Err(sbe_rt::DecodeError::WrongSchema {
@@ -1189,14 +1187,17 @@ impl<'a> FuelFiguresDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 4 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "fuelFigures",
-                needed: pos + 4,
-                available: buf.len(),
-            });
-        }
-        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
+        let bytes: [u8; 4] = buf
+            .get(pos..pos + 4)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "fuelFigures",
+                    needed: pos + 4,
+                    available: buf.len(),
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -1360,14 +1361,17 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 4 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "performanceFigures",
-                needed: pos + 4,
-                available: buf.len(),
-            });
-        }
-        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
+        let bytes: [u8; 4] = buf
+            .get(pos..pos + 4)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "performanceFigures",
+                    needed: pos + 4,
+                    available: buf.len(),
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -1503,14 +1507,17 @@ impl<'a> AccelerationDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 4 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: pos + 4,
-                available: buf.len(),
-            });
-        }
-        let bytes: [u8; 4] = buf[pos..pos + 4].try_into().unwrap();
+        let bytes: [u8; 4] = buf
+            .get(pos..pos + 4)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "acceleration",
+                    needed: pos + 4,
+                    available: buf.len(),
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         Ok(Self {
@@ -2374,19 +2381,17 @@ impl<'a> AnyMessage<'a> {
         pos: usize,
         frame_len: usize,
     ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-        if pos + 8 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "decoded frame",
-                needed: pos + 8,
-                available: buf.len(),
-            });
-        }
-        let mut header_bytes = [0u8; 8];
-        let mut j = 0;
-        while j < 8 {
-            header_bytes[j] = buf[pos + j];
-            j += 1;
-        }
+        let header_bytes: [u8; 8] = buf
+            .get(pos..pos + 8)
+            .ok_or_else(|| {
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: "decoded frame",
+                    needed: pos + 8,
+                    available: buf.len(),
+                }
+            })?
+            .try_into()
+            .unwrap();
         let header = MessageHeader(header_bytes);
         let template_id = header.template_id();
         let schema_id = header.schema_id();

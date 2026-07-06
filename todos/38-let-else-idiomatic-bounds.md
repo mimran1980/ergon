@@ -27,8 +27,13 @@ Rust. Stable since Rust 1.65.
 
 ## Acceptance criteria
 
-- [ ] Replace all `if buf.len() < ... { return Err(...) }` patterns with `.ok_or_else()?`
-- [ ] Works with `copy_from_slice` (todo 29) — one bounds check, then `copy_from_slice`
-- [ ] Generated code uses `?` operator throughout (no manual early returns)
-- [ ] No performance regression — same machine code, verified by benchmark
-- [ ] All existing tests pass
+- [x] Replace all `if buf.len() < ... { return Err(...) }` patterns in non-`const fn` decode methods with `.ok_or_else()?`
+- [x] `const fn` methods left unchanged (`?` and `.get()` not const-stable in Rust 1.95)
+- [x] Templates updated:
+  - `wrap_and_apply_header` (decoder)
+  - `decode_frame`
+  - Group decoder `wrap`
+- [x] Works with `copy_from_slice` (todo 29) — one bounds check, then `copy_from_slice`
+- [x] Generated code uses `?` operator in decode entry points (no manual early returns)
+- [x] No performance regression — verified by benchmark
+- [x] All existing tests pass
