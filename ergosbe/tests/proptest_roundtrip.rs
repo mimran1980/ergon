@@ -38,9 +38,7 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
         .unwrap_or_else(|e| panic!("write {module_path}: {e}"));
 
     // lib.rs — re-export everything
-    let lib = format!(
-        "mod {module_name};\npub use {module_name}::*;\n"
-    );
+    let lib = format!("mod {module_name};\npub use {module_name}::*;\n");
     fs::write(src_dir.join("lib.rs"), &lib).unwrap();
 
     // Test file (integration test, compiled with proptest dev-dep)

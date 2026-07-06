@@ -43,7 +43,10 @@ fn missing_required_attr_returns_missing_error() {
     );
     // The error message should mention "field @name"
     let msg = format!("{err}");
-    assert!(msg.contains("field @name"), "error message should mention the missing attribute: {msg}");
+    assert!(
+        msg.contains("field @name"),
+        "error message should mention the missing attribute: {msg}"
+    );
 }
 
 // ── invalid-type-ref.xml ───────────────────────────────────────────────────
@@ -61,7 +64,10 @@ fn invalid_type_ref_returns_invalid_error() {
         "expected Invalid(primitive type, NonExistentType), got {err:?}"
     );
     let msg = format!("{err}");
-    assert!(msg.contains("NonExistentType"), "error message should name the bad type: {msg}");
+    assert!(
+        msg.contains("NonExistentType"),
+        "error message should name the bad type: {msg}"
+    );
 }
 
 // ── duplicate-message-id.xml ───────────────────────────────────────────────
@@ -79,8 +85,14 @@ fn duplicate_message_id_returns_duplicate_template_id() {
         "expected Resolve(DuplicateTemplateId), got {err:?}"
     );
     let msg = format!("{err}");
-    assert!(msg.contains("duplicate template id"), "error message should mention duplicate template id: {msg}");
-    assert!(msg.contains("AnotherMessageWithId1"), "error message should name the duplicate message: {msg}");
+    assert!(
+        msg.contains("duplicate template id"),
+        "error message should mention duplicate template id: {msg}"
+    );
+    assert!(
+        msg.contains("AnotherMessageWithId1"),
+        "error message should name the duplicate message: {msg}"
+    );
 }
 
 // ── version-gap.xml ────────────────────────────────────────────────────────
@@ -98,8 +110,14 @@ fn version_gap_returns_since_version_beyond_schema() {
         "expected Resolve(SinceVersionBeyondSchema), got {err:?}"
     );
     let msg = format!("{err}");
-    assert!(msg.contains("sinceVersion 5"), "error message should mention sinceVersion 5: {msg}");
-    assert!(msg.contains("schema version 1"), "error message should mention schema version 1: {msg}");
+    assert!(
+        msg.contains("sinceVersion 5"),
+        "error message should mention sinceVersion 5: {msg}"
+    );
+    assert!(
+        msg.contains("schema version 1"),
+        "error message should mention schema version 1: {msg}"
+    );
 }
 
 // ── invalid-enum-value.xml ─────────────────────────────────────────────────
@@ -117,6 +135,12 @@ fn invalid_enum_encoding_type_returns_invalid_error() {
         "expected Invalid(enum encodingType, NonExistentEncodingType), got {err:?}"
     );
     let msg = format!("{err}");
-    assert!(msg.contains("enum encodingType"), "error message should mention enum encodingType: {msg}");
-    assert!(msg.contains("NonExistentEncodingType"), "error message should name the bad type: {msg}");
+    assert!(
+        msg.contains("enum encodingType"),
+        "error message should mention enum encodingType: {msg}"
+    );
+    assert!(
+        msg.contains("NonExistentEncodingType"),
+        "error message should name the bad type: {msg}"
+    );
 }

@@ -10,8 +10,8 @@
 
 include!("generated/car_patched.rs");
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use car_encoder_state::Complete;
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[path = "_common.rs"]
 mod common;
@@ -87,7 +87,8 @@ fn encode_checked(buf: &mut [u8]) -> usize {
 /// `_unchecked` var-data setters, no max-length validation).
 fn encode_unchecked(buf: &mut [u8]) -> usize {
     // Write header manually (wrap does not write it)
-    buf[0..8].copy_from_slice(&CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::HEADER_TEMPLATE);
+    buf[0..8]
+        .copy_from_slice(&CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::HEADER_TEMPLATE);
 
     let mut car = CarEncoder::wrap(buf, 0);
     car.serial_number(1234);
