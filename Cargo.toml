@@ -1,5 +1,5 @@
 [workspace]
-members = ["ergosbe"]
+members = ["sbe"]
 exclude = ["samples"]
 resolver = "3"
 

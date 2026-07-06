@@ -11,7 +11,7 @@ fn workspace_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap();
     loop {
         if dir.join("Cargo.toml").exists() {
-            // Check both layouts: flat (ergosbe/) and crates/ (crates/ergosbe/)
+            // Check both layouts: flat (sbe/) and crates/ (crates/sbe/)
             if dir.join("ergosbe").exists() || dir.join("crates/ergosbe").exists() {
                 return dir;
             }
