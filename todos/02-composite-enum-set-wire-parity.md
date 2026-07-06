@@ -8,7 +8,7 @@ and `raw_` accessor tests.
 
 ## Acceptance criteria
 
-- [x] Composite field encode/decode matches upstream bytes
+- [ ] Composite field encode/decode matches upstream bytes (blocked by nested composite references, arrays, and inline types; see `100-nested-composites-and-refs.md`)
 - [ ] Closure sub-encoders for composites (`encode_foo(|e| { e.set_bar(...) })`)
 - [x] Enum (E3) encode/decode round-trips all discriminants including unknown
 - [x] Set (bitset) encode/decode with per-flag accessors + `raw()`

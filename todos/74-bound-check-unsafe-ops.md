@@ -52,5 +52,6 @@ Use a helper macro or function to keep the templates DRY.
 - [ ] Safe defaults unchanged when feature off
 - [ ] Benchmarks: measure speed difference for both paths
 - [ ] Tests pass with and without feature
+- [ ] Undefined Behavior & Memory Safety Audit: Run the test suite under Miri (`cargo miri test`) with the `bound-check-disabled` feature enabled to verify that no pointer arithmetic, slicing, or raw pointer casts violate Rust's memory alignment, dereferenceability, or aliasing rules.
 
 Ref: user request — bound-check-disabled should go all-in on unsafe for HFT.

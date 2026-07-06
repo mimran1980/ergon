@@ -21,6 +21,7 @@ asserting zero heap allocation per operation.
   - [ ] encode into caller buffer
 - [ ] CI gates: benchmarks run, allocation tests fail on regression
 - [ ] Upstream benchmarks ported: `car_benchmark.rs`, `md_benchmark.rs`
+- [ ] Heap Allocation Guard: Add a custom test global allocator (e.g. using a wrapper around `System` that counts allocations) to dynamically assert that `decode`, `raw_` getters, group navigation, and `encode` perform exactly zero heap allocations in any test run.
 
 Ref: `design/DECISIONS.md` §11 slice 2b.
 

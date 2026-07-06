@@ -56,6 +56,7 @@ flyweight decoders. These are the next-level optimisations for the hot path.
 - [ ] Criterion benchmarks for each P0 item: before vs after, same market-data shape
 - [ ] Allocation-count unchanged (zero alloc on hot path)
 - [ ] Generated API surface unchanged (no breaking changes to accessor names/signatures)
+- [ ] Assembly Codegen & Inlining Audit: Implement an automated verification script or integration test that inspects the generated assembly (using a tool or parsing compiler flags) to verify that primitive field accessors compile down to a single memory instruction (with any necessary endianness byte swap) and that all wrapper/gating layers are fully inlined without function call overhead.
 
 Ref: `design/DECISIONS.md` §2–4, §8, §9. `simple-binary-encoding/rust/benches/`
 for upstream benchmark shapes.

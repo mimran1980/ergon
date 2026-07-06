@@ -5,10 +5,11 @@ DECISIONS.md §3. `as_message()` calls `AnyMessage::decode_frame(field_bytes, 0,
 enabling nested SBE messages inside var-data payloads. `as_decoder()` wraps the raw bytes in a
 specific decoder.
 
-**Status:** not started
+**Status:** `as_slice()` done; `as_decoder()` / `as_message()` deferred
 
 ## Acceptance criteria
 
+- [x] `_as_slice()` method generated on var-data decoder fields (delegates to existing accessor)
 - [ ] `as_decoder::<D: SbeMessage>()` method generated on var-data fields (wraps bytes in the specified decoder)
 - [ ] `as_message()` method generated on var-data fields (calls `AnyMessage::decode_frame`)
 - [ ] The var-data field's length acts as the external frame length for unknown templates
@@ -16,7 +17,7 @@ specific decoder.
 - [ ] Test: nested SBE message in var-data field → decode via `as_message()`
 - [ ] Test: known message type in var-data → decode via `as_decoder::<SpecificDecoder>()`
 - [ ] Error handling: returns `Result<_, DecodeError>` for buffer/schema issues
-- [ ] Golden file updated
+- [x] Golden file updated
 
 ## Dependencies
 

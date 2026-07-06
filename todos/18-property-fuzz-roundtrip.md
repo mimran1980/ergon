@@ -13,6 +13,7 @@ buffer regions, integer overflow, string encoding, enum discriminants.
 - [x] Coverage includes: composites, enums (known + unknown discriminants), sets, groups, var-data
 - [x] Use `proptest` or `arbitrary` crate (not `quickcheck` -- unmaintained)
 - [ ] CI runs property tests, fuzz corpus checked in
+- [ ] Coverage-Guided Fuzzing: Set up a dedicated fuzzing target using `cargo-fuzz` (libFuzzer) that inputs completely arbitrary bytes to `AnyMessage::decode_frame` and all generated decoders, verifying that the decoders never panic, allocate, or enter infinite loops under any malformed, truncated, or cyclic input stream.
 
 ## What was implemented
 

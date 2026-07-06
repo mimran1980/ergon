@@ -96,3 +96,4 @@ A `just` command runner with common tasks (like rusteron's but Rust-only):
 
 ## Verification / Unit Testing
 - [ ] Verify that the build pipeline triggers and completes successfully on pull requests and branch merges.
+- [ ] MSRV CI Gate: Add a job in the CI workflow that installs the minimum supported Rust version (e.g. 1.81.0) and validates that the library, generated tests, and baseline modules compile without errors.
