@@ -80,10 +80,8 @@ fn decode_baseline_fixture() {
         assert!(extras.sports_pack(), "sportsPack");
         assert!(!extras.sun_roof(), "sunRoof");
 
-        // codegen gap: discountedModel is presence="constant" valueRef="Model.C"
-        // but the codegen reads from the wire buffer instead of returning the
-        // constant value.  The fixture byte at the read position is 208 (0xD0).
-        assert_eq!(Model(208), car.discounted_model().unwrap(), "discountedModel");
+        // discountedModel is presence="constant" valueRef="Model.C"
+        assert_eq!(Model::C, car.discounted_model(), "discountedModel");
 
         // Engine: capacity and numCylinders are at the correct wire offsets
         // (35 and 37 in the Car message).  The remaining engine fields differ

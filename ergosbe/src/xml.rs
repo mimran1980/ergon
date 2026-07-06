@@ -855,16 +855,32 @@ fn parse_message_child(
             let type_name = string_attr(node, "type", "field @type")?;
             let id = u16_attr(node, "id", "field @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+            let presence = node
+                .attribute("presence")
+                .map(|s| parse_presence(node, s))
+                .transpose()?
+                .unwrap_or(Presence::Required);
+            let constant_value = if presence == Presence::Constant {
+                node.attribute("valueRef").map(|s| {
+                    // valueRef format: "TypeName.VariantName" — keep only the variant
+                    s.rsplit('.').next().unwrap_or(s).to_string()
+                })
+            } else {
+                None
+            };
 
             if let Some(resolved) =
                 resolve_type_to_tokens(&field_name, &type_name, Some(id), registry, since_version)
             {
                 let mut inlined = resolved;
-                if let Some(offset_str) = node.attribute("offset")
-                    && let Ok(offset) = offset_str.parse::<usize>()
-                    && let Some(first) = inlined.first_mut()
-                {
-                    first.encoding.offset = Some(offset);
+                if let Some(first) = inlined.first_mut() {
+                    if let Some(offset_str) = node.attribute("offset")
+                        && let Ok(offset) = offset_str.parse::<usize>()
+                    {
+                        first.encoding.offset = Some(offset);
+                    }
+                    first.encoding.presence = presence;
+                    first.encoding.constant_value = constant_value;
                 }
                 tokens.extend(inlined);
             } else {

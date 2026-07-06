@@ -896,40 +896,14 @@ impl<'a> CarDecoder<'a> {
             });
         OptionalExtras(u8::from_le_bytes(bytes))
     }
-    pub const fn discounted_model(&self) -> Result<Model, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 36 > self.acting_block_length {
-            return Ok(Model(0 as u8));
-        }
-        let offset = self.pos + 35;
-        if offset + 1 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "discountedModel",
-                needed: offset + 1,
-                available: self.buf.len(),
-            });
-        }
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(Model(u8::from_le_bytes(bytes)))
-    }
-    pub const unsafe fn discounted_model_unchecked(&self) -> Model {
-        let offset = self.pos + 35;
-        let mut bytes = [0u8; 1];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
-            });
-        Model(u8::from_le_bytes(bytes))
+    pub const fn discounted_model(&self) -> Model {
+        Model::C
     }
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 45 > self.acting_block_length {
+        if self.acting_version < 0 || 44 > self.acting_block_length {
             return Ok(Engine([0u8; 9]));
         }
-        let offset = self.pos + 36;
+        let offset = self.pos + 35;
         if offset + 9 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "engine",
@@ -946,7 +920,7 @@ impl<'a> CarDecoder<'a> {
         Ok(Engine(bytes))
     }
     pub const unsafe fn engine_unchecked(&self) -> Engine {
-        let offset = self.pos + 36;
+        let offset = self.pos + 35;
         let mut bytes = [0u8; 9];
         bytes
             .copy_from_slice(unsafe {
@@ -1180,15 +1154,6 @@ impl<'a> core::fmt::Display for CarDecoder<'a> {
                 match e.kind() {
                     Some(k) => write!(f, ", code: Model::{k:?}")?,
                     None => write!(f, ", code: {}", e.raw())?,
-                }
-            }
-            _ => {}
-        }
-        match self.discounted_model() {
-            Ok(e) => {
-                match e.kind() {
-                    Some(k) => write!(f, ", discounted_model: Model::{k:?}")?,
-                    None => write!(f, ", discounted_model: {}", e.raw())?,
                 }
             }
             _ => {}
@@ -1774,14 +1739,8 @@ impl<'a, State> CarEncoder<'a, State> {
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
-    pub fn discounted_model(&mut self, val: Model) -> &mut Self {
-        let offset = self.message_start + 8 + 35;
-        let val_bytes = val.0.to_le_bytes();
-        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
-        self
-    }
     pub fn engine(&mut self, val: Engine) -> &mut Self {
-        let offset = self.message_start + 8 + 36;
+        let offset = self.message_start + 8 + 35;
         self.buf[offset..offset + 9].copy_from_slice(&val.0);
         self
     }

@@ -2182,7 +2182,6 @@ fn generate_message_decoder(
     }
 }
 
-
 fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
     let name = to_pascal_case(&msg.name);
     src.push_str(&format!(
@@ -2216,7 +2215,9 @@ fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
                 }
                 out_idx += 1;
             }
-            FieldType::Enum { name: enum_name, .. } => {
+            FieldType::Enum {
+                name: enum_name, ..
+            } => {
                 if f.presence == Presence::Constant {
                     continue;
                 }
@@ -3068,14 +3069,14 @@ fn generate_message_encoder(
                     let target_name = to_pascal_case(enum_name);
                     let prim_size = encoding_type.size();
                     src.push_str(&format!(
-                    "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                        "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.message_start + {} + {};\n\
                              let val_bytes = val.0.to_{}_bytes();\n\
                              self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
                              self\n\
                          }}\n\n",
-                    f_name, target_name, header_size, offset, order_suffix, prim_size
-                ));
+                        f_name, target_name, header_size, offset, order_suffix, prim_size
+                    ));
                 }
             }
             FieldType::Set {
@@ -3543,7 +3544,6 @@ fn generate_group_encoder(
         generate_group_encoder(src, ng, elements, byte_order);
     }
 }
-
 
 fn generate_schema_id_from_header(
     src: &mut String,

@@ -9,14 +9,14 @@ length handling.
 
 ## Acceptance criteria
 
-- [ ] Group decode: correct count, correct entry fields, correct tail offset from **wire** `blockLength`
-- [ ] Group encode: type-state tail ordering, correct on-wire bytes
-- [ ] Group accessor returns `Result` (validates extent); iteration is infallible within
+- [x] Group decode: correct count, correct entry fields, correct tail offset from **wire** `blockLength`
+- [x] Group encode: type-state tail ordering, correct on-wire bytes
+- [x] Group accessor returns `Result` (validates extent); iteration is infallible within
 - [ ] `ExactSizeIterator` + `len()` on group decoders
 - [ ] Var-data: `as_slice()`, `as_str()` → `Result<&str, Utf8Error>`, `as_decoder()`, `as_message()`
 - [ ] `unsafe fn as_str_unchecked()` for zero-cost UTF-8 skip
 - [ ] `AsRef<[u8]>` on decoders exposes `as_bytes()`
-- [ ] Full Car example: byte-exact round-trip against upstream `.sbe` fixture
+- [x] Full Car example: byte-exact round-trip against upstream `.sbe` fixture
 - [ ] Fixed-entry group fast path: `slice::as_chunks` for tail-free fixed-entry groups
 
 Ref: `design/DECISIONS.md` §3, §6, §11 slices 6–7, test 1–2.
