@@ -1277,7 +1277,13 @@ impl<'a> Iterator for FuelFiguresDecoder<'a> {
             self.pos,
             self.acting_version,
         );
-        let size = entry.encoded_length();
+        let size = match entry.encoded_length() {
+            Ok(s) => s,
+            Err(_) => {
+                self.count = 0;
+                return Some(entry);
+            }
+        };
         self.pos += size;
         self.count -= 1;
         Some(entry)
@@ -1399,8 +1405,8 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         Ok(&self.buf[data_offset..data_offset + len])
     }
     #[inline]
-    pub fn encoded_length(&self) -> usize {
-        self.tail_offset_1().unwrap_or(self.pos + Self::ENTRY_BLOCK_LENGTH) - self.pos
+    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.tail_offset_1()? - self.pos)
     }
     #[inline]
     pub fn skip(
@@ -1463,7 +1469,13 @@ impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
             self.pos,
             self.acting_version,
         );
-        let size = entry.encoded_length();
+        let size = match entry.encoded_length() {
+            Ok(s) => s,
+            Err(_) => {
+                self.count = 0;
+                return Some(entry);
+            }
+        };
         self.pos += size;
         self.count -= 1;
         Some(entry)
@@ -1554,8 +1566,8 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         AccelerationDecoder::wrap(self.buf, offset, self.acting_version)
     }
     #[inline]
-    pub fn encoded_length(&self) -> usize {
-        self.tail_offset_1().unwrap_or(self.pos + Self::ENTRY_BLOCK_LENGTH) - self.pos
+    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.tail_offset_1()? - self.pos)
     }
     #[inline]
     pub fn skip(
@@ -1632,7 +1644,13 @@ impl<'a> Iterator for AccelerationDecoder<'a> {
             self.pos,
             self.acting_version,
         );
-        let size = entry.encoded_length();
+        let size = match entry.encoded_length() {
+            Ok(s) => s,
+            Err(_) => {
+                self.count = 0;
+                return Some(entry);
+            }
+        };
         self.pos += size;
         self.count -= 1;
         Some(entry)
@@ -1723,8 +1741,8 @@ impl<'a> AccelerationEntryDecoder<'a> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
     }
     #[inline]
-    pub fn encoded_length(&self) -> usize {
-        self.tail_offset_0().unwrap_or(self.pos + Self::ENTRY_BLOCK_LENGTH) - self.pos
+    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.tail_offset_0()? - self.pos)
     }
     #[inline]
     pub fn skip(
