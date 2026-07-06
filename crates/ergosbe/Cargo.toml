@@ -15,5 +15,8 @@ authors.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[dev-dependencies]
+roxmltree = "0.20"
+
 [lints]
 workspace = true
