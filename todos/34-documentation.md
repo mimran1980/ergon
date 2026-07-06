@@ -7,6 +7,10 @@ hover, rustdoc, and `cargo doc` should answer every question.
 
 ## Generated code docs (user-facing)
 
+*The items below require changes to the code generator itself (emitting rustdoc
+from schema annotations). They are documented at the API level in
+`docs/guide/generated-api.md` but not yet wired into the codegen pass.*
+
 ### From schema annotations
 
 - [ ] XML `description` attributes → `///` rustdoc on: composite types, enum
@@ -49,26 +53,37 @@ hover, rustdoc, and `cargo doc` should answer every question.
 
 ## Generator library docs (developer-facing)
 
-- [ ] `Generator` struct: doc with usage example
-- [ ] `GenerationConfig`: every field documented
-- [ ] `Schema`: doc with parse-and-generate example
-- [ ] `lib.rs`: module-level doc with quick-start
-- [ ] `codegen.rs`: module-level doc explaining the codegen pipeline
-- [ ] `xml.rs`: module-level doc explaining the parsing strategy (DOM, why roxmltree)
-- [ ] `resolve.rs`: module-level doc explaining the resolution passes
-- [ ] `ir.rs`: doc on every Token variant and Encoding field
-- [ ] All `pub` items have `#![warn(missing_docs)]` in the generator crate
+- [x] `Generator` struct: doc with usage example
+- [x] `GenerationConfig`: every field documented
+- [x] `Schema`: doc with parse-and-generate example
+- [x] `lib.rs`: module-level doc with quick-start
+- [x] `codegen.rs`: module-level doc explaining the codegen pipeline
+- [x] `xml.rs`: module-level doc explaining the parsing strategy (DOM, why roxmltree)
+- [x] `resolve.rs`: module-level doc explaining the resolution passes
+- [x] `ir.rs`: doc on every Token variant and Encoding field
+- [x] All `pub` items have `#![warn(missing_docs)]` in the generator crate — **zero warnings**
 - [ ] `#[doc(hidden)]` on internal-but-pub items
+
+## Guide docs (docs/guide/)
+
+- [x] `docs/guide/getting-started.md` — build.rs, encoding, decoding, pipeline overview
+- [x] `docs/guide/schema-authoring.md` — SBE XML structure, types, messages, best practices
+- [x] `docs/guide/generated-api.md` — reference for every generated type and trait
+- [x] `docs/guide/advanced.md` — multi-schema, XInclude, unsafe, HFT patterns
+
+## README
+
+- [x] Expanded with quick start, feature flags, architecture table, philosophy
 
 ## Acceptance criteria
 
-- [ ] `#![warn(missing_docs)]` on ergosbe crate — zero warnings
-- [ ] Every generated type has a `///` doc from its schema description
-- [ ] Every generated field accessor has `///` doc with semantic type
-- [ ] Every message decoder has a runnable `/// # Example`
-- [ ] Every `unsafe fn` has a `# Safety` section
-- [ ] `cargo doc --no-deps` produces a useful, navigable documentation site
-- [ ] Doc tests pass: `cargo test --doc`
-- [ ] IDE hover on `car.model_year()` shows "Model year of the car (semantic type: Year)"
+- [x] `#![warn(missing_docs)]` on ergosbe crate — zero warnings
+- [ ] Every generated type has a `///` doc from its schema description *(codegen work)*
+- [ ] Every generated field accessor has `///` doc with semantic type *(codegen work)*
+- [ ] Every message decoder has a runnable `/// # Example` *(codegen work)*
+- [ ] Every `unsafe fn` has a `# Safety` section *(codegen work)*
+- [x] `cargo doc --no-deps` produces a useful, navigable documentation site
+- [x] Doc tests pass: `cargo test --doc`
+- [ ] IDE hover on `car.model_year()` shows "Model year of the car (semantic type: Year)" *(codegen work)*
 
 Ref: `design/DECISIONS.md` §9 "Schema docs → rustdoc." Rust RFC 1574 (doc comment conventions).

@@ -1,4 +1,24 @@
-//! Rust code generation boundary.
+//! Rust code generation from the resolved SBE IR.
+//!
+//! This module contains the [`Generator`] struct — the primary API for
+//! producing Rust source modules from a parsed [`Schema`].
+//!
+//! # Pipeline
+//!
+//! 1. Partition the flat token IR into logical groups (enums, sets,
+//!    composites, messages).
+//! 2. Generate type definitions for each group.
+//! 3. For each message, generate:
+//!    - A decoder struct (`CarDecoder`) with field accessors, group
+//!      iterators, and var-data readers.
+//!    - An encoder struct (`CarEncoder`) with field setters and type-state
+//!      tail management.
+//! 4. Generate an `AnyMessage` dispatch enum and `FrameCursor`.
+//! 5. Run the output through [`prettyplease`] for formatting.
+//!
+//! The generated code includes an inline `sbe_rt` runtime module with
+//! error types, the `SbeMessage` trait, and helper traits for group
+//! encoding.
 
 use std::collections::HashSet;
 
