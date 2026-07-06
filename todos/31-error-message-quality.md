@@ -58,7 +58,7 @@ answer: what failed, where in the buffer, and what to do about it.
 - [ ] Field names use schema-level names (`modelYear`) not Rust-level names
   (`model_year`) — ops teams read the schema, not the generated code
 - [ ] Composite field paths use dot notation: `engine.capacity`, `fuelFigures[2].speed`
-- [ ] Error types implement `core::error::Error` (already done — verify)
+- [x] Error types implement `core::error::Error` (already done — verified)
 - [ ] `#[cold]` on all error constructors (verify, tracked in 08)
 - [ ] `#[track_caller]` on error constructors so panic-location points to caller
 - [ ] Snapshot tests for every error variant's Display output

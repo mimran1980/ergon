@@ -20,7 +20,7 @@ profile = "minimal"
 
 - [x] `rust-toolchain.toml` at workspace root
 - [ ] Channel = current stable (1.88 at time of writing)
-- [ ] `rustfmt` + `clippy` + `rust-analyzer` components
+- [x] `rustfmt` + `clippy` + `rust-analyzer` components
 
 ## CI workflow (`.github/workflows/ci.yml`)
 
