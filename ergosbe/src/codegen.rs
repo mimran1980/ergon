@@ -913,106 +913,125 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
     let r_type = rust_type(encoding_type);
     let is_char = encoding_type == PrimitiveType::Char;
 
-    src.push_str(&format!(
-        "#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]\n\
-         #[repr(transparent)]\n\
-         pub struct {}(pub {});\n\n",
-        name, r_type
-    ));
+    let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+    let kind_ident = syn::Ident::new(&format!("{name}Kind"), proc_macro2::Span::call_site());
+    let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
 
-    src.push_str(&format!(
-        "#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]\n\
-         #[repr({})]\n\
-         pub enum {}Kind {{\n",
-        r_type, name
-    ));
-
-    for t in tokens {
-        if t.signal == Signal::Encoding {
-            if let Some(ref val) = t.encoding.constant_value {
-                let variant_name = to_pascal_case(&t.name);
-                let disc = format_discriminant(val, is_char);
-                src.push_str(&format!("    {} = {},\n", variant_name, disc));
-            }
-        }
-    }
-    src.push_str("}\n\n");
-
-    src.push_str(&format!("impl {} {{\n", name));
-
-    for t in tokens {
-        if t.signal == Signal::Encoding {
-            if let Some(ref val) = t.encoding.constant_value {
-                let const_name = to_upper_snake_case(&t.name);
-                let disc = format_discriminant(val, is_char);
-                src.push_str(&format!(
-                    "    pub const {}: Self = Self({});\n",
-                    const_name, disc
-                ));
-            }
-        }
+    // Collect encoding variants
+    struct Variant {
+        variant_ident: syn::Ident,
+        const_ident: syn::Ident,
+        disc: proc_macro2::TokenStream,
     }
 
-    src.push_str(&format!(
-        "\n    pub const fn kind(self) -> Option<{}Kind> {{\n\
-                  match self.0 {{\n",
-        name
-    ));
-    for t in tokens {
-        if t.signal == Signal::Encoding {
-            if let Some(ref val) = t.encoding.constant_value {
-                let variant_name = to_pascal_case(&t.name);
-                let disc = format_discriminant(val, is_char);
-                src.push_str(&format!(
-                    "            {} => Some({}Kind::{}),\n",
-                    disc, name, variant_name
-                ));
+    let variants: Vec<Variant> = tokens
+        .iter()
+        .filter(|t| t.signal == Signal::Encoding)
+        .filter_map(|t| {
+            let val = t.encoding.constant_value.as_ref()?;
+            let variant_ident =
+                syn::Ident::new(&to_pascal_case(&t.name), proc_macro2::Span::call_site());
+            let const_ident = syn::Ident::new(
+                &to_upper_snake_case(&t.name),
+                proc_macro2::Span::call_site(),
+            );
+            let disc: proc_macro2::TokenStream = if is_char {
+                let byte = val.as_bytes().first().copied().unwrap_or(0);
+                let lit = syn::LitByte::new(byte, proc_macro2::Span::call_site());
+                quote::quote! { #lit }
+            } else {
+                let lit = val.parse::<u64>().map_or_else(
+                    |_| val.parse::<i64>().map(|v| {
+                        syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site())
+                    }).unwrap_or_else(|_| {
+                        syn::LitInt::new(val, proc_macro2::Span::call_site())
+                    }),
+                    |v| syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site()),
+                );
+                quote::quote! { #lit }
+            };
+            Some(Variant {
+                variant_ident,
+                const_ident,
+                disc,
+            })
+        })
+        .collect();
+
+    let variant_names: Vec<_> = variants.iter().map(|v| &v.variant_ident).collect();
+    let variant_discs: Vec<_> = variants.iter().map(|v| &v.disc).collect();
+    let const_names: Vec<_> = variants.iter().map(|v| &v.const_ident).collect();
+
+    // Build kind match arms: disc => Some(Kind::Variant)
+    let kind_arms: Vec<_> = variants
+        .iter()
+        .map(|v| {
+            let disc = &v.disc;
+            let vname = &v.variant_ident;
+            quote::quote! { #disc => Some(#kind_ident::#vname) }
+        })
+        .collect();
+
+    let tokens = quote::quote! {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[repr(transparent)]
+        pub struct #name_ident(pub #r_type_ty);
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[repr(#r_type_ty)]
+        pub enum #kind_ident {
+            #(#variant_names = #variant_discs),*
+        }
+
+        impl #name_ident {
+            #(
+                pub const #const_names: Self = Self(#variant_discs);
+            )*
+
+            pub const fn kind(self) -> Option<#kind_ident> {
+                match self.0 {
+                    #(#kind_arms,)*
+                    _ => None,
+                }
+            }
+
+            pub const fn into_kind(self) -> Option<#kind_ident> {
+                self.kind()
+            }
+
+            pub const fn raw(self) -> #r_type_ty {
+                self.0
             }
         }
-    }
-    src.push_str("            _ => None,\n        }\n    }\n\n");
 
-    src.push_str(&format!(
-        "    pub const fn into_kind(self) -> Option<{}Kind> {{\n\
-                  self.kind()\n\
-              }}\n\n",
-        name
-    ));
+        impl From<#r_type_ty> for #name_ident {
+            #[inline(always)]
+            fn from(val: #r_type_ty) -> Self {
+                Self(val)
+            }
+        }
 
-    src.push_str(&format!(
-        "    pub const fn raw(self) -> {} {{\n\
-                  self.0\n\
-              }}\n",
-        r_type
-    ));
-    src.push_str("}\n\n");
+        impl From<#name_ident> for #r_type_ty {
+            #[inline(always)]
+            fn from(val: #name_ident) -> Self {
+                val.0
+            }
+        }
 
-    src.push_str(&format!(
-        "impl From<{}> for {} {{\n\
-              #[inline(always)]\n\
-              fn from(val: {}) -> Self {{\n\
-                  Self(val)\n\
-              }}\n\
-          }}\n\n\
-          impl From<{}> for {} {{\n\
-              #[inline(always)]\n\
-              fn from(val: {}) -> Self {{\n\
-                  val.0\n\
-              }}\n\
-          }}\n\n",
-        r_type, name, r_type, name, r_type, name
-    ));
+        impl TryFrom<#name_ident> for #kind_ident {
+            type Error = ();
+            #[inline]
+            fn try_from(val: #name_ident) -> Result<Self, Self::Error> {
+                val.kind().ok_or(())
+            }
+        }
+    };
 
-    src.push_str(&format!(
-        "impl TryFrom<{}> for {}Kind {{\n\
-             type Error = ();\n\
-             #[inline]\n\
-             fn try_from(val: {}) -> Result<Self, Self::Error> {{\n\
-                 val.kind().ok_or(())\n\
-             }}\n\
-         }}\n\n",
-        name, name, name
-    ));
+    let formatted = syn::parse_str::<syn::File>(&tokens.to_string())
+        .map(|file| prettyplease::unparse(&file))
+        .unwrap_or_else(|_| tokens.to_string());
+    src.push_str(&formatted);
+    src.push('\n');
 }
 
 fn generate_set(src: &mut String, tokens: &[Token]) {
