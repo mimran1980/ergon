@@ -24,5 +24,16 @@ quote = "1"
 proc-macro2 = "1"
 prettyplease = "0.2"
 
+[[bench]]
+name = "decode_bench"
+harness = false
+
+[[bench]]
+name = "encode_bench"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [lints]
 workspace = true

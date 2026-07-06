@@ -13,7 +13,7 @@ homepage = "https://github.com/mimran1980/ErgoSBE"
 authors = ["Mohammed Imran"]
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 missing_docs = "warn"
 
 [workspace.lints.clippy]

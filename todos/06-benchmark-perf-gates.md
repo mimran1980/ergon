@@ -8,9 +8,9 @@ asserting zero heap allocation per operation.
 
 ## Acceptance criteria
 
-- [ ] Criterion benchmark crate in workspace (`benches/`)
-- [ ] Encode benchmark (scalar + composite + group + var-data shapes)
-- [ ] Decode benchmark
+- [x] Criterion benchmark crate in workspace (`benches/`)
+- [x] Encode benchmark (scalar + composite + group + var-data shapes)
+- [x] Decode benchmark
 - [ ] Round-trip benchmark
 - [ ] `Display` / `debug_wire` / `skip` benchmarks
 - [ ] Allocation-count tests: zero alloc for:
