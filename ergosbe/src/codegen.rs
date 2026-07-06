@@ -2688,7 +2688,8 @@ fn generate_message_encoder(
             .map(|g| to_pascal_case(&g.name))
             .unwrap_or_else(|| to_pascal_case(&msg.var_data.first().unwrap().name));
         src.push_str(&format!(
-            "pub struct {}Encoder<'a, State = {}_encoder_state::Needs{}> {{\n\
+            "#[must_use]\n\
+             pub struct {}Encoder<'a, State = {}_encoder_state::Needs{}> {{\n\
                  buf: &'a mut [u8],\n\
                  message_start: usize,\n\
                  pos: usize,\n\
@@ -2700,7 +2701,8 @@ fn generate_message_encoder(
         ));
     } else {
         src.push_str(&format!(
-            "pub struct {}Encoder<'a> {{\n\
+            "#[must_use]\n\
+             pub struct {}Encoder<'a> {{\n\
                  buf: &'a mut [u8],\n\
                  message_start: usize,\n\
                  pos: usize,\n\
@@ -3146,7 +3148,8 @@ fn generate_group_encoder(
         .join(", ");
 
     src.push_str(&format!(
-        "pub struct {}Encoder<'a> {{\n\
+        "#[must_use]\n\
+         pub struct {}Encoder<'a> {{\n\
              buf: &'a mut [u8],\n\
              pos: usize,\n\
              count: u16,\n\
@@ -3186,7 +3189,8 @@ fn generate_group_encoder(
 
     // Entry Encoder Struct
     src.push_str(&format!(
-        "pub struct {}EntryEncoder<'a> {{\n\
+        "#[must_use]\n\
+         pub struct {}EntryEncoder<'a> {{\n\
              buf: &'a mut [u8],\n\
              entry_start: usize,\n\
              pos: usize,\n\

@@ -1629,6 +1629,7 @@ pub mod car_encoder_state {
     pub struct NeedsActivationCode;
     pub struct Complete;
 }
+#[must_use]
 pub struct CarEncoder<'a, State = car_encoder_state::NeedsFuelFigures> {
     buf: &'a mut [u8],
     message_start: usize,
@@ -1977,6 +1978,7 @@ impl<'a, State> sbe_rt::SbeMessage for CarEncoder<'a, State> {
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
+#[must_use]
 pub struct FuelFiguresEncoder<'a> {
     buf: &'a mut [u8],
     pos: usize,
@@ -2015,6 +2017,7 @@ impl<'a> FuelFiguresEncoder<'a> {
         Ok(())
     }
 }
+#[must_use]
 pub struct FuelFiguresEntryEncoder<'a> {
     buf: &'a mut [u8],
     entry_start: usize,
@@ -2060,6 +2063,7 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
         Ok(self)
     }
 }
+#[must_use]
 pub struct PerformanceFiguresEncoder<'a> {
     buf: &'a mut [u8],
     pos: usize,
@@ -2098,6 +2102,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         Ok(())
     }
 }
+#[must_use]
 pub struct PerformanceFiguresEntryEncoder<'a> {
     buf: &'a mut [u8],
     entry_start: usize,
@@ -2141,6 +2146,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         Ok(self)
     }
 }
+#[must_use]
 pub struct AccelerationEncoder<'a> {
     buf: &'a mut [u8],
     pos: usize,
@@ -2179,6 +2185,7 @@ impl<'a> AccelerationEncoder<'a> {
         Ok(())
     }
 }
+#[must_use]
 pub struct AccelerationEntryEncoder<'a> {
     buf: &'a mut [u8],
     entry_start: usize,
