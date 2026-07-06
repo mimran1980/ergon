@@ -1138,6 +1138,12 @@ impl<'a> CarDecoder<'a> {
         Ok(&self.buf[start..start + len])
     }
 }
+impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
+    type Error = sbe_rt::DecodeError;
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        Self::wrap_and_apply_header(buf, 0)
+    }
+}
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}
 impl<'a> sbe_rt::SbeMessage for CarDecoder<'a> {
     const TEMPLATE_ID: u16 = 1;

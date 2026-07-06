@@ -249,6 +249,49 @@ fn encode_baseline_roundtrip() {
     );
 }
 
+// ── Byte-exact encode (scalar header fields, full message) ───────────
+
+#[test]
+fn encode_byte_exact_scalar() {
+    run_fixture_test(
+        "scalar_byte_exact",
+        &Paths::example_schema(),
+        &Paths::baseline_binary(),
+        r##"
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+
+        // Set same scalar values as the fixture
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        let mut extras = OptionalExtras::default();
+        extras.set_cruise_control(true);
+        extras.set_sports_pack(true);
+        car.extras(extras);
+
+        // Engine (composite) — same values as fixture
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+
+        let encoded = car.as_bytes();
+
+        // Compare header bytes (8 bytes) with fixture
+        assert_eq!(&FIXTE[0..8], &encoded[0..8], "header mismatch");
+
+        // Compare scalar body: serialNumber through extras (body offsets 0..35)
+        let header_size = 8usize;
+        assert_eq!(
+            &FIXTE[header_size .. header_size + 35],
+            &encoded[header_size .. header_size + 35],
+            "scalar body mismatch"
+        );
+        "##,
+    );
+}
+
 // ── Constants verification ───────────────────────────────────────────
 
 #[test]

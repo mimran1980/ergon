@@ -2152,6 +2152,12 @@ fn generate_message_decoder(
 
     src.push_str(&format!(
         "}}\n\n\
+         impl<'a> TryFrom<&'a [u8]> for {}Decoder<'a> {{\n\
+             type Error = sbe_rt::DecodeError;\n\n\
+             fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {{\n\
+                 Self::wrap_and_apply_header(buf, 0)\n\
+             }}\n\
+         }}\n\n\
          impl<'a> sbe_rt::private::Sealed for {}Decoder<'a> {{}}\n\n\
          impl<'a> sbe_rt::SbeMessage for {}Decoder<'a> {{\n\
              const TEMPLATE_ID: u16 = {};\n\
@@ -2169,7 +2175,7 @@ fn generate_message_decoder(
                  self.as_bytes().ok()\n\
              }}\n\
          }}\n\n",
-        name, name, msg.id, block_length, schema_id, schema_version, name, name
+        name, name, name, msg.id, block_length, schema_id, schema_version, name, name
     ));
 
     // Recursively generate Repeating Groups decoders for this message
