@@ -141,18 +141,6 @@ pub fn assert_source_ok(src: &str, expected: &[&str]) {
 //
 // Each patch corresponds to a codegen bug that will be fixed in a
 // separate PR.  Remove patches as their upstream fixes land.
-//
-// Known bugs (all in `CarDecoder::engine()` and var-data readers):
-//
-// 1. default value: `Ok(36([0u8; 7]))` — the offset `36` leaks into
-//    the Ok expression instead of the composite type name.
-// 2. body offset: `self.pos + 43` — reads 7 bytes past the engine
-//    field into the tail area (the unchecked variant correctly uses 36).
-// 3. array length: `[0u8; Engine]` — `Engine` type used as literal
-//    array length.
-// 4. VarStringEncoding / VarAsciiEncoding declared as `[u8; 5]` but
-//    the codegen reads only 4 bytes and passes `[u8; 4]` to the
-//    constructor (6 occurrences).
 
 /// Apply surgical patches for known codegen bugs.
 pub fn patch_source(src: &str) -> String {
@@ -170,18 +158,8 @@ pub fn patch_source(src: &str) -> String {
     // Bug 3: Engine type used as array length
     s = s.replace("[0u8; Engine]", "[0u8; 7]");
 
-    // Bug 5 (const fn): decode_frame and wrap_and_apply_header are `const fn`
-    // but call non-const operations (encoded_length_with_header, indexing).
-    s = s.replace(
-        "pub const fn wrap_and_apply_header(",
-        "pub fn wrap_and_apply_header(",
-    );
-    s = s.replace("pub const fn decode_frame(", "pub fn decode_frame(");
-
-    // Bug 7 (constant field offset): the codegen places engine at message-body
-    // offset 36 (including discountedModel's 1-byte constant).  On the wire,
-    // constant fields are omitted, so engine is at offset 35.  The fixture and
-    // the round-trip test both need offset 35.
+    // Bug 7 (constant field offset): constant fields are not on the wire,
+    // so engine is at offset 35, not 36 (discountedModel is 1-byte constant).
     s = s.replace("self.message_start + 8 + 36", "self.message_start + 8 + 35");
     s = s.replace("self.pos + 36", "self.pos + 35");
 

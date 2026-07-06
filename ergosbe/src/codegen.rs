@@ -1604,7 +1604,7 @@ fn generate_message_decoder(
                      acting_version,\n\
                  }}\n\
              }}\n\n\
-             pub const fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
+             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
                  if pos + {} > buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: pos + {}, available: buf.len() }});\n\
                  }}\n\
@@ -1722,7 +1722,7 @@ fn generate_message_decoder(
                     if since == 0 {
                         src.push_str(&format!(
                             "    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
-                                     #[expect(unused_unsafe)]\n\
+                                     #[allow(unused_unsafe)]\n\
                                      unsafe {{ self.{}_unchecked() }}\n\
                                  }}\n\n",
                             f_name, r_type, len, f_name
@@ -1733,7 +1733,7 @@ fn generate_message_decoder(
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                          return None;\n\
                                      }}\n\
-                                     #[expect(unused_unsafe)]\n\
+                                     #[allow(unused_unsafe)]\n\
                                      Some(unsafe {{ self.{}_unchecked() }})\n\
                                  }}\n\n",
                             f_name, r_type, len, since, offset + prim_size * len, f_name
@@ -1830,7 +1830,7 @@ fn generate_message_decoder(
                     if since == 0 {
                         src.push_str(&format!(
                             "    pub const fn raw_{}(&self) -> {} {{\n\
-                                     #[expect(unused_unsafe)]\n\
+                                     #[allow(unused_unsafe)]\n\
                                      unsafe {{ self.{}_unchecked() }}\n\
                                  }}\n\n",
                             f_name, r_type, f_name
@@ -1841,7 +1841,7 @@ fn generate_message_decoder(
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                          return None;\n\
                                      }}\n\
-                                     #[expect(unused_unsafe)]\n\
+                                     #[allow(unused_unsafe)]\n\
                                      Some(unsafe {{ self.{}_unchecked() }})\n\
                                  }}\n\n",
                             f_name, r_type, since, offset + prim_size, f_name
@@ -2355,7 +2355,7 @@ fn generate_group_decoder(
 
                     src.push_str(&format!(
                         "    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
-                                 #[expect(unused_unsafe)]\n\
+                                 #[allow(unused_unsafe)]\n\
                                  unsafe {{ self.{}_unchecked() }}\n\
                              }}\n\n",
                         f_name, r_type, len, f_name
@@ -2426,7 +2426,7 @@ fn generate_group_decoder(
 
                     src.push_str(&format!(
                         "    pub const fn raw_{}(&self) -> {} {{\n\
-                                 #[expect(unused_unsafe)]\n\
+                                 #[allow(unused_unsafe)]\n\
                                  unsafe {{ self.{}_unchecked() }}\n\
                              }}\n\n",
                         f_name, r_type, f_name
@@ -3599,7 +3599,7 @@ fn generate_any_message(
     );
 
     src.push_str(&format!(
-        "    pub const fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {{\n\
+        "    pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {{\n\
                  if pos + {} > buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: pos + {}, available: buf.len() }});\n\
                  }}\n\

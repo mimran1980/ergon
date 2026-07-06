@@ -625,7 +625,7 @@ impl<'a> CarDecoder<'a> {
             acting_version,
         }
     }
-    pub const fn wrap_and_apply_header(
+    pub fn wrap_and_apply_header(
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -684,7 +684,7 @@ impl<'a> CarDecoder<'a> {
         u64::from_le_bytes(bytes)
     }
     pub const fn raw_serial_number(&self) -> u64 {
-        #[expect(unused_unsafe)] unsafe { self.serial_number_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.serial_number_unchecked() }
     }
     pub const fn model_year(&self) -> Result<u16, sbe_rt::DecodeError> {
         let offset = self.pos + 8;
@@ -713,7 +713,7 @@ impl<'a> CarDecoder<'a> {
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_model_year(&self) -> u16 {
-        #[expect(unused_unsafe)] unsafe { self.model_year_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.model_year_unchecked() }
     }
     pub const fn available(&self) -> Result<BooleanType, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 11 > self.acting_block_length {
@@ -818,7 +818,7 @@ impl<'a> CarDecoder<'a> {
         res
     }
     pub const fn raw_some_numbers(&self) -> [u32; 4] {
-        #[expect(unused_unsafe)] unsafe { self.some_numbers_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.some_numbers_unchecked() }
     }
     pub const fn vehicle_code(&self) -> Result<[u8; 6], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 34 > self.acting_block_length {
@@ -865,7 +865,7 @@ impl<'a> CarDecoder<'a> {
         res
     }
     pub const fn raw_vehicle_code(&self) -> [u8; 6] {
-        #[expect(unused_unsafe)] unsafe { self.vehicle_code_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.vehicle_code_unchecked() }
     }
     pub const fn extras(&self) -> Result<OptionalExtras, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 35 > self.acting_block_length {
@@ -1254,7 +1254,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_speed(&self) -> u16 {
-        #[expect(unused_unsafe)] unsafe { self.speed_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.speed_unchecked() }
     }
     pub const fn mpg(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
@@ -1283,7 +1283,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         f32::from_le_bytes(bytes)
     }
     pub const fn raw_mpg(&self) -> f32 {
-        #[expect(unused_unsafe)] unsafe { self.mpg_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.mpg_unchecked() }
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1425,7 +1425,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         u8::from_le_bytes(bytes)
     }
     pub const fn raw_octane_rating(&self) -> u8 {
-        #[expect(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1581,7 +1581,7 @@ impl<'a> AccelerationEntryDecoder<'a> {
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_mph(&self) -> u16 {
-        #[expect(unused_unsafe)] unsafe { self.mph_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.mph_unchecked() }
     }
     pub const fn seconds(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
@@ -1610,7 +1610,7 @@ impl<'a> AccelerationEntryDecoder<'a> {
         f32::from_le_bytes(bytes)
     }
     pub const fn raw_seconds(&self) -> f32 {
-        #[expect(unused_unsafe)] unsafe { self.seconds_unchecked() }
+        #[allow(unused_unsafe)] unsafe { self.seconds_unchecked() }
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -2348,7 +2348,7 @@ impl<'a> AnyMessage<'a> {
             }
         }
     }
-    pub const fn decode_frame(
+    pub fn decode_frame(
         buf: &'a [u8],
         pos: usize,
         frame_len: usize,
