@@ -2380,6 +2380,8 @@ fn generate_group_decoder(
              buf: &'a [u8],\n\
              pos: usize,\n\
              count: usize,\n\
+             start: usize,\n\
+             total: usize,\n\
              acting_version: u16,\n\
          }}\n\n\
          impl<'a> {}Decoder<'a> {{\n\
@@ -2394,13 +2396,62 @@ fn generate_group_decoder(
                      buf,\n\
                      pos: pos + {},\n\
                      count,\n\
+                     start: pos + {},\n\
+                     total: count,\n\
                      acting_version,\n\
                  }})\n\
              }}\n\n\
              #[inline]\n             pub fn is_empty(&self) -> bool {{\n\
                  self.count == 0\n\
              }}\n\n",
-        name, name, g.block_length, dim_size, dim_size, dim_size, dim_name, count_field, dim_size,
+        name, name, g.block_length, dim_size, dim_size, dim_size, dim_name, count_field, dim_size, dim_size,
+        field_name = g.name
+    ));
+
+    // Group navigation methods: skip_n, nth, rewind, remaining
+    src.push_str(&format!(
+        "    #[inline]\n    pub const fn remaining(&self) -> usize {{\n\
+                 self.count\n\
+             }}\n\n\
+             #[inline]\n    pub fn rewind(&mut self) -> &mut Self {{\n\
+                 self.pos = self.start;\n\
+                 self.count = self.total;\n\
+                 self\n\
+             }}\n\n\
+             #[inline]\n    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {{\n\
+                 if n > self.count {{\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{\n\
+                         field: \"{field_name}\",\n\
+                         needed: n * Self::ENTRY_BLOCK_LENGTH,\n\
+                         available: self.count * Self::ENTRY_BLOCK_LENGTH,\n\
+                     }});\n\
+                 }}\n\
+                 for _ in 0..n {{\n\
+                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
+                     self.pos += entry.encoded_length()?;\n\
+                     self.count -= 1;\n\
+                 }}\n\
+                 Ok(())\n\
+             }}\n\n\
+             #[inline]\n    pub fn nth(&self, idx: usize) -> Result<{}EntryDecoder<'a>, sbe_rt::DecodeError> {{\n\
+                 if idx >= self.total {{\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{\n\
+                         field: \"{field_name}\",\n\
+                         needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,\n\
+                         available: self.total * Self::ENTRY_BLOCK_LENGTH,\n\
+                     }});\n\
+                 }}\n\
+                 let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;\n\
+                 if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {{\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{\n\
+                         field: \"{field_name}\",\n\
+                         needed: Self::ENTRY_BLOCK_LENGTH,\n\
+                         available: self.buf.len() - offset,\n\
+                     }});\n\
+                 }}\n\
+                 Ok({}EntryDecoder::wrap(self.buf, offset, self.acting_version))\n\
+             }}\n\n",
+        name, name, name,
         field_name = g.name
     ));
 

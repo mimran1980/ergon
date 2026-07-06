@@ -1243,6 +1243,8 @@ pub struct FuelFiguresDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
     count: usize,
+    start: usize,
+    total: usize,
     acting_version: u16,
 }
 impl<'a> FuelFiguresDecoder<'a> {
@@ -1270,12 +1272,66 @@ impl<'a> FuelFiguresDecoder<'a> {
             buf,
             pos: pos + 4,
             count,
+            start: pos + 4,
+            total: count,
             acting_version,
         })
     }
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+    #[inline]
+    pub const fn remaining(&self) -> usize {
+        self.count
+    }
+    #[inline]
+    pub fn rewind(&mut self) -> &mut Self {
+        self.pos = self.start;
+        self.count = self.total;
+        self
+    }
+    #[inline]
+    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+        if n > self.count {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "fuelFigures",
+                needed: n * Self::ENTRY_BLOCK_LENGTH,
+                available: self.count * Self::ENTRY_BLOCK_LENGTH,
+            });
+        }
+        for _ in 0..n {
+            let entry = FuelFiguresEntryDecoder::wrap(
+                self.buf,
+                self.pos,
+                self.acting_version,
+            );
+            self.pos += entry.encoded_length()?;
+            self.count -= 1;
+        }
+        Ok(())
+    }
+    #[inline]
+    pub fn nth(
+        &self,
+        idx: usize,
+    ) -> Result<FuelFiguresEntryDecoder<'a>, sbe_rt::DecodeError> {
+        if idx >= self.total {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "fuelFigures",
+                needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
+                available: self.total * Self::ENTRY_BLOCK_LENGTH,
+            });
+        }
+        let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
+        if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "fuelFigures",
+                needed: Self::ENTRY_BLOCK_LENGTH,
+                available: self.buf.len() - offset,
+            });
+        }
+        Ok(FuelFiguresEntryDecoder::wrap(self.buf, offset, self.acting_version))
     }
 }
 impl<'a> Iterator for FuelFiguresDecoder<'a> {
@@ -1435,6 +1491,8 @@ pub struct PerformanceFiguresDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
     count: usize,
+    start: usize,
+    total: usize,
     acting_version: u16,
 }
 impl<'a> PerformanceFiguresDecoder<'a> {
@@ -1462,12 +1520,66 @@ impl<'a> PerformanceFiguresDecoder<'a> {
             buf,
             pos: pos + 4,
             count,
+            start: pos + 4,
+            total: count,
             acting_version,
         })
     }
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+    #[inline]
+    pub const fn remaining(&self) -> usize {
+        self.count
+    }
+    #[inline]
+    pub fn rewind(&mut self) -> &mut Self {
+        self.pos = self.start;
+        self.count = self.total;
+        self
+    }
+    #[inline]
+    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+        if n > self.count {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "performanceFigures",
+                needed: n * Self::ENTRY_BLOCK_LENGTH,
+                available: self.count * Self::ENTRY_BLOCK_LENGTH,
+            });
+        }
+        for _ in 0..n {
+            let entry = PerformanceFiguresEntryDecoder::wrap(
+                self.buf,
+                self.pos,
+                self.acting_version,
+            );
+            self.pos += entry.encoded_length()?;
+            self.count -= 1;
+        }
+        Ok(())
+    }
+    #[inline]
+    pub fn nth(
+        &self,
+        idx: usize,
+    ) -> Result<PerformanceFiguresEntryDecoder<'a>, sbe_rt::DecodeError> {
+        if idx >= self.total {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "performanceFigures",
+                needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
+                available: self.total * Self::ENTRY_BLOCK_LENGTH,
+            });
+        }
+        let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
+        if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "performanceFigures",
+                needed: Self::ENTRY_BLOCK_LENGTH,
+                available: self.buf.len() - offset,
+            });
+        }
+        Ok(PerformanceFiguresEntryDecoder::wrap(self.buf, offset, self.acting_version))
     }
 }
 impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
@@ -1596,6 +1708,8 @@ pub struct AccelerationDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
     count: usize,
+    start: usize,
+    total: usize,
     acting_version: u16,
 }
 impl<'a> AccelerationDecoder<'a> {
@@ -1623,12 +1737,66 @@ impl<'a> AccelerationDecoder<'a> {
             buf,
             pos: pos + 4,
             count,
+            start: pos + 4,
+            total: count,
             acting_version,
         })
     }
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+    #[inline]
+    pub const fn remaining(&self) -> usize {
+        self.count
+    }
+    #[inline]
+    pub fn rewind(&mut self) -> &mut Self {
+        self.pos = self.start;
+        self.count = self.total;
+        self
+    }
+    #[inline]
+    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+        if n > self.count {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: n * Self::ENTRY_BLOCK_LENGTH,
+                available: self.count * Self::ENTRY_BLOCK_LENGTH,
+            });
+        }
+        for _ in 0..n {
+            let entry = AccelerationEntryDecoder::wrap(
+                self.buf,
+                self.pos,
+                self.acting_version,
+            );
+            self.pos += entry.encoded_length()?;
+            self.count -= 1;
+        }
+        Ok(())
+    }
+    #[inline]
+    pub fn nth(
+        &self,
+        idx: usize,
+    ) -> Result<AccelerationEntryDecoder<'a>, sbe_rt::DecodeError> {
+        if idx >= self.total {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
+                available: self.total * Self::ENTRY_BLOCK_LENGTH,
+            });
+        }
+        let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
+        if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: Self::ENTRY_BLOCK_LENGTH,
+                available: self.buf.len() - offset,
+            });
+        }
+        Ok(AccelerationEntryDecoder::wrap(self.buf, offset, self.acting_version))
     }
     #[inline]
     pub fn as_chunks(&self) -> Result<&'a [[u8; 6]], sbe_rt::DecodeError> {
