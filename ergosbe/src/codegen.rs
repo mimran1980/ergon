@@ -143,16 +143,16 @@ impl Generator {
             schema.package, schema.id, schema.version
         ));
 
-        src.push_str("#![allow(non_camel_case_types)]\n");
-        src.push_str("#![allow(non_snake_case)]\n");
-        src.push_str("#![allow(clippy::identity_op)]\n");
-        src.push_str("#![allow(clippy::eq_op)]\n");
-        src.push_str("#![allow(clippy::needless_borrow)]\n");
-        src.push_str("#![allow(clippy::manual_range_contains)]\n");
-        src.push_str("#![allow(unused_imports)]\n");
-        src.push_str("#![allow(unused_variables)]\n");
-        src.push_str("#![allow(unused_mut)]\n");
-        src.push_str("#![allow(dead_code)]\n\n");
+        src.push_str("#![expect(non_camel_case_types)]\n");
+        src.push_str("#![expect(non_snake_case)]\n");
+        src.push_str("#![expect(clippy::identity_op)]\n");
+        src.push_str("#![expect(clippy::eq_op)]\n");
+        src.push_str("#![expect(clippy::needless_borrow)]\n");
+        src.push_str("#![expect(clippy::manual_range_contains)]\n");
+        src.push_str("#![expect(unused_imports)]\n");
+        src.push_str("#![expect(unused_variables)]\n");
+        src.push_str("#![expect(unused_mut)]\n");
+        src.push_str("#![expect(dead_code)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.
         // This covers shared types + the sbe_rt runtime module.
@@ -1707,7 +1707,7 @@ fn generate_message_decoder(
                     if since == 0 {
                         src.push_str(&format!(
                             "    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
-                                     #[allow(unused_unsafe)]\n\
+                                     #[expect(unused_unsafe)]\n\
                                      unsafe {{ self.{}_unchecked() }}\n\
                                  }}\n\n",
                             f_name, r_type, len, f_name
@@ -1718,7 +1718,7 @@ fn generate_message_decoder(
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                          return None;\n\
                                      }}\n\
-                                     #[allow(unused_unsafe)]\n\
+                                     #[expect(unused_unsafe)]\n\
                                      Some(unsafe {{ self.{}_unchecked() }})\n\
                                  }}\n\n",
                             f_name, r_type, len, since, offset + prim_size * len, f_name
@@ -1815,7 +1815,7 @@ fn generate_message_decoder(
                     if since == 0 {
                         src.push_str(&format!(
                             "    pub const fn raw_{}(&self) -> {} {{\n\
-                                     #[allow(unused_unsafe)]\n\
+                                     #[expect(unused_unsafe)]\n\
                                      unsafe {{ self.{}_unchecked() }}\n\
                                  }}\n\n",
                             f_name, r_type, f_name
@@ -1826,7 +1826,7 @@ fn generate_message_decoder(
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                          return None;\n\
                                      }}\n\
-                                     #[allow(unused_unsafe)]\n\
+                                     #[expect(unused_unsafe)]\n\
                                      Some(unsafe {{ self.{}_unchecked() }})\n\
                                  }}\n\n",
                             f_name, r_type, since, offset + prim_size, f_name
@@ -2334,7 +2334,7 @@ fn generate_group_decoder(
 
                     src.push_str(&format!(
                         "    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
-                                 #[allow(unused_unsafe)]\n\
+                                 #[expect(unused_unsafe)]\n\
                                  unsafe {{ self.{}_unchecked() }}\n\
                              }}\n\n",
                         f_name, r_type, len, f_name
@@ -2405,7 +2405,7 @@ fn generate_group_decoder(
 
                     src.push_str(&format!(
                         "    pub const fn raw_{}(&self) -> {} {{\n\
-                                 #[allow(unused_unsafe)]\n\
+                                 #[expect(unused_unsafe)]\n\
                                  unsafe {{ self.{}_unchecked() }}\n\
                              }}\n\n",
                         f_name, r_type, f_name
@@ -2664,7 +2664,7 @@ fn generate_message_encoder(
         acc.max(f.offset + size)
     });
 
-    #[allow(unused_variables)]
+    #[expect(unused_variables)]
     let header_pascal = to_pascal_case(header_type);
     let header_size = elements
         .composites

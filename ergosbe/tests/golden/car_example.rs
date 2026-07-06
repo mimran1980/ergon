@@ -1,14 +1,14 @@
 //! Generated from SBE schema package `baseline` id 1 version 0.
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(clippy::identity_op)]
-#![allow(clippy::eq_op)]
-#![allow(clippy::needless_borrow)]
-#![allow(clippy::manual_range_contains)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-#![allow(dead_code)]
+#![expect(non_camel_case_types)]
+#![expect(non_snake_case)]
+#![expect(clippy::identity_op)]
+#![expect(clippy::eq_op)]
+#![expect(clippy::needless_borrow)]
+#![expect(clippy::manual_range_contains)]
+#![expect(unused_imports)]
+#![expect(unused_variables)]
+#![expect(unused_mut)]
+#![expect(dead_code)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
@@ -682,7 +682,7 @@ impl<'a> CarDecoder<'a> {
         u64::from_le_bytes(bytes)
     }
     pub const fn raw_serial_number(&self) -> u64 {
-        #[allow(unused_unsafe)] unsafe { self.serial_number_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.serial_number_unchecked() }
     }
     pub const fn model_year(&self) -> Result<u16, sbe_rt::DecodeError> {
         let offset = self.pos + 8;
@@ -711,7 +711,7 @@ impl<'a> CarDecoder<'a> {
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_model_year(&self) -> u16 {
-        #[allow(unused_unsafe)] unsafe { self.model_year_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.model_year_unchecked() }
     }
     pub const fn available(&self) -> Result<BooleanType, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 11 > self.acting_block_length {
@@ -816,7 +816,7 @@ impl<'a> CarDecoder<'a> {
         res
     }
     pub const fn raw_some_numbers(&self) -> [u32; 4] {
-        #[allow(unused_unsafe)] unsafe { self.some_numbers_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.some_numbers_unchecked() }
     }
     pub const fn vehicle_code(&self) -> Result<[u8; 6], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 34 > self.acting_block_length {
@@ -863,7 +863,7 @@ impl<'a> CarDecoder<'a> {
         res
     }
     pub const fn raw_vehicle_code(&self) -> [u8; 6] {
-        #[allow(unused_unsafe)] unsafe { self.vehicle_code_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.vehicle_code_unchecked() }
     }
     pub const fn extras(&self) -> Result<OptionalExtras, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 35 > self.acting_block_length {
@@ -1246,7 +1246,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_speed(&self) -> u16 {
-        #[allow(unused_unsafe)] unsafe { self.speed_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.speed_unchecked() }
     }
     pub const fn mpg(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
@@ -1275,7 +1275,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         f32::from_le_bytes(bytes)
     }
     pub const fn raw_mpg(&self) -> f32 {
-        #[allow(unused_unsafe)] unsafe { self.mpg_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.mpg_unchecked() }
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1417,7 +1417,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         u8::from_le_bytes(bytes)
     }
     pub const fn raw_octane_rating(&self) -> u8 {
-        #[allow(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1573,7 +1573,7 @@ impl<'a> AccelerationEntryDecoder<'a> {
         u16::from_le_bytes(bytes)
     }
     pub const fn raw_mph(&self) -> u16 {
-        #[allow(unused_unsafe)] unsafe { self.mph_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.mph_unchecked() }
     }
     pub const fn seconds(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
@@ -1602,7 +1602,7 @@ impl<'a> AccelerationEntryDecoder<'a> {
         f32::from_le_bytes(bytes)
     }
     pub const fn raw_seconds(&self) -> f32 {
-        #[allow(unused_unsafe)] unsafe { self.seconds_unchecked() }
+        #[expect(unused_unsafe)] unsafe { self.seconds_unchecked() }
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
