@@ -143,16 +143,16 @@ impl Generator {
             schema.package, schema.id, schema.version
         ));
 
-        src.push_str("#![expect(non_camel_case_types)]\n");
-        src.push_str("#![expect(non_snake_case)]\n");
-        src.push_str("#![expect(clippy::identity_op)]\n");
-        src.push_str("#![expect(clippy::eq_op)]\n");
-        src.push_str("#![expect(clippy::needless_borrow)]\n");
-        src.push_str("#![expect(clippy::manual_range_contains)]\n");
-        src.push_str("#![expect(unused_imports)]\n");
-        src.push_str("#![expect(unused_variables)]\n");
-        src.push_str("#![expect(unused_mut)]\n");
-        src.push_str("#![expect(dead_code)]\n\n");
+        src.push_str("#![allow(non_camel_case_types)]\n");
+        src.push_str("#![allow(non_snake_case)]\n");
+        src.push_str("#![allow(clippy::identity_op)]\n");
+        src.push_str("#![allow(clippy::eq_op)]\n");
+        src.push_str("#![allow(clippy::needless_borrow)]\n");
+        src.push_str("#![allow(clippy::manual_range_contains)]\n");
+        src.push_str("#![allow(unused_imports)]\n");
+        src.push_str("#![allow(unused_variables)]\n");
+        src.push_str("#![allow(unused_mut)]\n");
+        src.push_str("#![allow(dead_code)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.
         // This covers shared types + the sbe_rt runtime module.
