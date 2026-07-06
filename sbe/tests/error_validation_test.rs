@@ -12,7 +12,10 @@ fn workspace_root() -> PathBuf {
     loop {
         if dir.join("Cargo.toml").exists() {
             // Check known layouts: sbe/, ergosbe/, crates/ergosbe/
-            if dir.join("sbe").exists() || dir.join("ergosbe").exists() || dir.join("crates/ergosbe").exists() {
+            if dir.join("sbe").exists()
+                || dir.join("ergosbe").exists()
+                || dir.join("crates/ergosbe").exists()
+            {
                 return dir;
             }
         }

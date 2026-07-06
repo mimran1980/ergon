@@ -249,7 +249,9 @@ impl Generator {
         let sha256_hash = compute_schema_sha256(&schema.ir);
         src.push_str("pub const SCHEMA_SHA256: [u8; 32] = [");
         for (i, &b) in sha256_hash.iter().enumerate() {
-            if i > 0 { src.push_str(", "); }
+            if i > 0 {
+                src.push_str(", ");
+            }
             src.push_str(&format!("0x{:02x}", b));
         }
         src.push_str("];\n\n");
@@ -1766,17 +1768,22 @@ fn generate_message_decoder(
                      acting_version,\n\
                  }}\n\
              }}\n\n\
-             #[inline]\n             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
+             #[inline]\n             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\n\
+                 #[cfg(not(feature = \"bound-check-disabled\"))]\n\
                  let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
                      sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
                  }})?.try_into().unwrap();\n\
+                 #[cfg(feature = \"bound-check-disabled\")]\n\
+                 let header_bytes: [u8; {}] = unsafe {{\n\
+                     core::ptr::read_unaligned(buf.as_ptr().add(pos) as *const [u8; {}])\n\
+                 }};\n\
                  let header = {}(header_bytes);\n\
                  if header.{}() != Self::SCHEMA_ID {{\n\
                      return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{}() , expected_name: \"{expected_name}\" }});\n\
                  }}\n\
                  Ok(Self::wrap(buf, pos + {}, header.{}() as usize, header.{}()))\n\
-             }}\n\n",
-        header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr,
+             }}\n\n\n\n",
+        header_size, header_size, header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr,
         field_name = "message header", expected_name = schema_name
     ));
 
@@ -4368,7 +4375,6 @@ fn compute_schema_hash(package: &str, id: u16, version: u16) -> u64 {
     }
     hash
 }
-
 
 /// Compute SHA-256 hash of the canonical schema IR.
 fn compute_schema_sha256(ir: &Ir) -> [u8; 32] {
