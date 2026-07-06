@@ -428,6 +428,87 @@ fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
     }
 }
 
+/// Format a `u64` stored value as a valid Rust literal expression for the given type.
+fn field_const_value_expr(val: u64, prim: PrimitiveType) -> String {
+    match prim {
+        PrimitiveType::Char | PrimitiveType::UInt8 => format!("{val}_u8"),
+        PrimitiveType::UInt16 => format!("{val}_u16"),
+        PrimitiveType::UInt32 => format!("{val}_u32"),
+        PrimitiveType::UInt64 => format!("{val}_u64"),
+        PrimitiveType::Int8 => format!("{}_i8", val as i8),
+        PrimitiveType::Int16 => format!("{}_i16", val as i16),
+        PrimitiveType::Int32 => format!("{}_i32", val as i32),
+        PrimitiveType::Int64 => format!("{}_i64", val as i64),
+        PrimitiveType::Float => format!("f32::from_bits({}u32)", val as u32),
+        PrimitiveType::Double => format!("f64::from_bits({val})"),
+    }
+}
+
+/// Return the maximum value the encoding type can represent.
+/// Used for enum NULL consts (SBE convention: null = encodingType.maxValue()).
+fn max_encoding_value(prim: PrimitiveType) -> u64 {
+    match prim {
+        PrimitiveType::Char | PrimitiveType::UInt8 => 255,
+        PrimitiveType::UInt16 => 65535,
+        PrimitiveType::UInt32 => 4_294_967_295,
+        PrimitiveType::UInt64 => 18_446_744_073_709_551_615,
+        PrimitiveType::Int8 => 127,
+        PrimitiveType::Int16 => 32767,
+        PrimitiveType::Int32 => 2_147_483_647,
+        PrimitiveType::Int64 => 9_223_372_036_854_775_807,
+        PrimitiveType::Float => 0x7F80_0001,
+        PrimitiveType::Double => 0x7FF8_0000_0000_0001,
+    }
+}
+
+/// Emit `*_NULL`, `*_MIN`, `*_MAX` compile-time constants for a message field.
+fn emit_field_consts(src: &mut String, f: &MessageField) {
+    let upper_name = to_upper_snake_case(&f.name);
+    let mut any = false;
+    match &f.field_type {
+        FieldType::Primitive(prim, _) => {
+            let r_type = rust_type(*prim);
+            if let Some(val) = f.null_value {
+                let expr = field_const_value_expr(val, *prim);
+                src.push_str(&format!(
+                    "    pub const {upper_name}_NULL: {r_type} = {expr};\n"
+                ));
+                any = true;
+            }
+            if let Some(val) = f.min_value {
+                let expr = field_const_value_expr(val, *prim);
+                src.push_str(&format!(
+                    "    pub const {upper_name}_MIN: {r_type} = {expr};\n"
+                ));
+                any = true;
+            }
+            if let Some(val) = f.max_value {
+                let expr = field_const_value_expr(val, *prim);
+                src.push_str(&format!(
+                    "    pub const {upper_name}_MAX: {r_type} = {expr};\n"
+                ));
+                any = true;
+            }
+        }
+        FieldType::Enum {
+            name,
+            encoding_type,
+        } => {
+            let target_name = to_pascal_case(name);
+            let max_val = max_encoding_value(*encoding_type);
+            let max_expr = field_const_value_expr(max_val, *encoding_type);
+            src.push_str(&format!(
+                "    pub const {upper_name}_NULL: {target_name} = {target_name}({max_expr});\n"
+            ));
+            any = true;
+        }
+        FieldType::Composite { .. } | FieldType::Set { .. } => {}
+    }
+    if any {
+        src.push('\n');
+    }
+}
+
 fn find_matching_end(tokens: &[Token], start: usize, begin: Signal, end: Signal) -> usize {
     let mut depth = 1;
     for j in (start + 1)..tokens.len() {
@@ -2034,6 +2115,7 @@ fn generate_message_decoder(
                         order_suffix
                     ));
                 }
+                emit_field_consts(src, f);
             }
         }
     }
@@ -2626,6 +2708,7 @@ fn generate_group_decoder(
                     f_name, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
                     field_name = f.name
                 ));
+                emit_field_consts(src, f);
             }
         }
     }
