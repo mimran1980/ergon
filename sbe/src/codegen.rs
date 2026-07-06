@@ -3272,10 +3272,7 @@ fn generate_message_encoder(
                      if pos + needed > buf.len() {{\n\
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: buf.len() - pos }});\n\
                      }}\n\
-                     #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                     {{ buf[pos..pos + {4}].copy_from_slice(&Self::HEADER_TEMPLATE); }}\n\
-                     #[cfg(feature = \"disable-bounds-checks\")]\n\
-                     {{ unsafe {{ core::ptr::copy_nonoverlapping(Self::HEADER_TEMPLATE.as_ptr(), buf.as_mut_ptr().add(pos), {4}); }} }}\n",
+                     buf[pos..pos + {}].copy_from_slice(&Self::HEADER_TEMPLATE);\n",
             header_size, block_length, header_size, block_length, header_size
         ));
         generate_nullification(src, &msg.fields, "pos + 8", byte_order);
@@ -3294,10 +3291,7 @@ fn generate_message_encoder(
                      if pos + needed > buf.len() {{\n\
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: buf.len() - pos }});\n\
                      }}\n\
-                     #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                     {{ buf[pos..pos + {4}].copy_from_slice(&Self::HEADER_TEMPLATE); }}\n\
-                     #[cfg(feature = \"disable-bounds-checks\")]\n\
-                     {{ unsafe {{ core::ptr::copy_nonoverlapping(Self::HEADER_TEMPLATE.as_ptr(), buf.as_mut_ptr().add(pos), {4}); }} }}\n",
+                     buf[pos..pos + {}].copy_from_slice(&Self::HEADER_TEMPLATE);\n",
             header_size, block_length, header_size, block_length, header_size
         ));
         generate_nullification(src, &msg.fields, "pos + 8", byte_order);
@@ -3335,10 +3329,7 @@ fn generate_message_encoder(
                                  let mut idx = 0;\n\
                                  while idx < {} {{\n\
                                      let val_bytes = val[idx].to_{}_bytes();\n\
-                                     #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                                     {{ self.buf[offset + idx * {6}..offset + idx * {7} + {8}].copy_from_slice(&val_bytes); }}\n\
-                                     #[cfg(feature = \"disable-bounds-checks\")]\n\
-                                     {{ unsafe {{ core::ptr::copy_nonoverlapping(val_bytes.as_ptr(), self.buf.as_mut_ptr().add(offset).add(idx * {6}), {8}); }} }}\n\
+                                     self.buf[offset + idx * {}..offset + idx * {} + {}].copy_from_slice(&val_bytes);\n\
                                      idx += 1;\n\
                                  }}\n\
                                  self\n\
@@ -3374,10 +3365,7 @@ fn generate_message_encoder(
                 src.push_str(&format!(
                     "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.message_start + {} + {};\n\
-                             #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                             {{ self.buf[offset..offset + {3}].copy_from_slice(&val.0); }}\n\
-                             #[cfg(feature = \"disable-bounds-checks\")]\n\
-                             {{ unsafe {{ core::ptr::copy_nonoverlapping(val.0.as_ptr(), self.buf.as_mut_ptr().add(offset), {3}); }} }}\n\
+                             self.buf[offset..offset + {}].copy_from_slice(&val.0);\n\
                              self\n\
                          }}\n\n",
                     f_name, target_name, header_size, offset, comp_size
@@ -3467,17 +3455,11 @@ fn generate_message_encoder(
                          if self.pos + {} > self.buf.len() {{\n\
                              return Err(sbe_rt::EncodeError::BufferTooShort {{ needed: {}, available: self.buf.len() - self.pos }});\n\
                          }}\n\
-                         #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                         {{ self.buf[self.pos..self.pos + {9}].copy_from_slice(&{10}Encoder::GROUP_DIM_TEMPLATE); }}\n\
-                         #[cfg(feature = \"disable-bounds-checks\")]\n\
-                         {{ unsafe {{ core::ptr::copy_nonoverlapping({10}Encoder::GROUP_DIM_TEMPLATE.as_ptr(), self.buf.as_mut_ptr().add(self.pos), {9}); }} }}\n\
-                         #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                         {{ self.buf[self.pos + {11}..self.pos + {12} + {13}].copy_from_slice(&count.to_{14}_bytes()); }}\n\
-                         #[cfg(feature = \"disable-bounds-checks\")]\n\
-                         {{ unsafe {{ core::ptr::copy_nonoverlapping(count.to_{14}_bytes().as_ptr(), self.buf.as_mut_ptr().add(self.pos).add({11}), {13}); }} }}\n\
-                         let mut group = {15}Encoder::wrap(self.buf, self.pos + {16}, count);\n\
+                         self.buf[self.pos..self.pos + {}].copy_from_slice(&{}Encoder::GROUP_DIM_TEMPLATE);\n\
+                         self.buf[self.pos + {}..self.pos + {} + {}].copy_from_slice(&count.to_{}_bytes());\n\
+                         let mut group = {}Encoder::wrap(self.buf, self.pos + {}, count);\n\
                          f(&mut group);\n\
-                         Ok({17}Encoder {{\n\
+                         Ok({}Encoder {{\n\
                              buf: self.buf,\n\
                              message_start: self.message_start,\n\
                              pos: group.pos,\n\
@@ -3526,16 +3508,10 @@ fn generate_message_encoder(
                      return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() - self.pos }});\n\
                  }}\n\
                  let len_bytes = (data.len() as {}).to_{}_bytes();\n\
-                 #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                 {{ self.buf[self.pos..self.pos + {3}].copy_from_slice(&len_bytes); }}\n\
-                 #[cfg(feature = \"disable-bounds-checks\")]\n\
-                 {{ unsafe {{ core::ptr::copy_nonoverlapping(len_bytes.as_ptr(), self.buf.as_mut_ptr().add(self.pos), {3}); }} }}\n\
-                 let start = self.pos + {4};\n\
-                 #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                 {{ self.buf[start..start + data.len()].copy_from_slice(data); }}\n\
-                 #[cfg(feature = \"disable-bounds-checks\")]\n\
-                 {{ unsafe {{ core::ptr::copy_nonoverlapping(data.as_ptr(), self.buf.as_mut_ptr().add(start), data.len()); }} }}\n\
-                 Ok({5}Encoder {{\n\
+                 self.buf[self.pos..self.pos + {}].copy_from_slice(&len_bytes);\n\
+                 let start = self.pos + {};\n\
+                 self.buf[start..start + data.len()].copy_from_slice(data);\n\
+                 Ok({}Encoder {{\n\
                      buf: self.buf,\n\
                      message_start: self.message_start,\n\
                      pos: start + data.len(),\n\
@@ -3551,16 +3527,10 @@ fn generate_message_encoder(
                      return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() - self.pos }});\n\
                  }}\n\
                  let len_bytes = (data.len() as {}).to_{}_bytes();\n\
-                 #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                 {{ self.buf[self.pos..self.pos + {3}].copy_from_slice(&len_bytes); }}\n\
-                 #[cfg(feature = \"disable-bounds-checks\")]\n\
-                 {{ unsafe {{ core::ptr::copy_nonoverlapping(len_bytes.as_ptr(), self.buf.as_mut_ptr().add(self.pos), {3}); }} }}\n\
-                 let start = self.pos + {4};\n\
-                 #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                 {{ self.buf[start..start + data.len()].copy_from_slice(data); }}\n\
-                 #[cfg(feature = \"disable-bounds-checks\")]\n\
-                 {{ unsafe {{ core::ptr::copy_nonoverlapping(data.as_ptr(), self.buf.as_mut_ptr().add(start), data.len()); }} }}\n\
-                 Ok({5}Encoder {{\n\
+                 self.buf[self.pos..self.pos + {}].copy_from_slice(&len_bytes);\n\
+                 let start = self.pos + {};\n\
+                 self.buf[start..start + data.len()].copy_from_slice(data);\n\
+                 Ok({}Encoder {{\n\
                      buf: self.buf,\n\
                      message_start: self.message_start,\n\
                      pos: start + data.len(),\n\
@@ -3758,10 +3728,7 @@ fn generate_group_encoder(
                                  let mut idx = 0;\n\
                                  while idx < {} {{\n\
                                      let val_bytes = val[idx].to_{}_bytes();\n\
-                                     #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                                     {{ self.buf[offset + idx * {6}..offset + idx * {7} + {8}].copy_from_slice(&val_bytes); }}\n\
-                                     #[cfg(feature = \"disable-bounds-checks\")]\n\
-                                     {{ unsafe {{ core::ptr::copy_nonoverlapping(val_bytes.as_ptr(), self.buf.as_mut_ptr().add(offset).add(idx * {6}), {8}); }} }}\n\
+                                     self.buf[offset + idx * {}..offset + idx * {} + {}].copy_from_slice(&val_bytes);\n\
                                      idx += 1;\n\
                                  }}\n\
                                  self\n\
@@ -3788,10 +3755,7 @@ fn generate_group_encoder(
                 src.push_str(&format!(
                     "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.entry_start + {};\n\
-                             #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                             {{ self.buf[offset..offset + {3}].copy_from_slice(&val.0); }}\n\
-                             #[cfg(feature = \"disable-bounds-checks\")]\n\
-                             {{ unsafe {{ core::ptr::copy_nonoverlapping(val.0.as_ptr(), self.buf.as_mut_ptr().add(offset), {3}); }} }}\n\
+                             self.buf[offset..offset + {}].copy_from_slice(&val.0);\n\
                              self\n\
                          }}\n\n",
                     f_name, target_name, offset, comp_size
@@ -3874,15 +3838,9 @@ fn generate_group_encoder(
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() - self.pos }});\n\
                      }}\n\
                      let len_bytes = (data.len() as {}).to_{}_bytes();\n\
-                     #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                     {{ self.buf[self.pos..self.pos + {4}].copy_from_slice(&len_bytes); }}\n\
-                     #[cfg(feature = \"disable-bounds-checks\")]\n\
-                     {{ unsafe {{ core::ptr::copy_nonoverlapping(len_bytes.as_ptr(), self.buf.as_mut_ptr().add(self.pos), {4}); }} }}\n\
-                     let start = self.pos + {5};\n\
-                     #[cfg(not(feature = \"disable-bounds-checks\"))]\n\
-                     {{ self.buf[start..start + data.len()].copy_from_slice(data); }}\n\
-                     #[cfg(feature = \"disable-bounds-checks\")]\n\
-                     {{ unsafe {{ core::ptr::copy_nonoverlapping(data.as_ptr(), self.buf.as_mut_ptr().add(start), data.len()); }} }}\n\
+                     self.buf[self.pos..self.pos + {}].copy_from_slice(&len_bytes);\n\
+                     let start = self.pos + {};\n\
+                     self.buf[start..start + data.len()].copy_from_slice(data);\n\
                      self.pos = start + data.len();\n\
                      Ok(self)\n\
                  }}\n\n",
