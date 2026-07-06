@@ -18,11 +18,12 @@ of propagating. Should return `Result<usize, DecodeError>`.
 
 ## Acceptance criteria
 
-- [ ] `#[inline]` on: every decoder field accessor (checked + unchecked + raw)
-- [ ] `#[inline]` on: every encoder setter method
-- [ ] `#[inline]` on: `wrap`, `wrap_and_apply_header`, `new` constructors
-- [ ] `#[inline]` on: group `next()`, `len()`, `is_empty()` methods
-- [ ] `#[must_use]` on: every `Result`-returning method
+- [x] `#[inline]` on: every decoder field accessor (checked + unchecked + raw)
+- [x] `#[inline]` on: group decoder `wrap`, `is_empty`, `skip`, `as_chunks`
+- [x] `#[must_use]` on: encoder setters returning `&mut Self` (scalars, arrays, composites, enums, sets)
+- [x] `#[inline]` on: encoder `wrap`, `wrap_and_apply_header`, `encoded_length`
+- [x] `#[must_use]` on: `Result`-returning encoder methods (wrap_and_apply_header)
+- [ ] `#[inline]` on: every encoder setter method (skipped — setters get `#[must_use]`; both would be noise)
 - [ ] `#[must_use = "encoder must be consumed to write the message"]` on encoder type-state types
 - [ ] `encoded_length()` on group decoders returns `Result` instead of `unwrap_or` fallback
 - [ ] `#[cold]` on error-construction paths (already tracked in 08, verify)

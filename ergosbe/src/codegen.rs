@@ -1133,7 +1133,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     if let Some(val) = constant_value {
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             src.push_str(&format!(
-                                "    pub const fn {}(&self) -> &'static str {{\n\
+                                "#[inline]\n    pub const fn {}(&self) -> &'static str {{\n\
                                          \"{}\"\n\
                                      }}\n\n",
                                 field_name, val
@@ -1141,7 +1141,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                         } else {
                             let expr = constant_value_expr(*prim, val);
                             src.push_str(&format!(
-                                "    pub const fn {}(&self) -> {} {{\n\
+                                "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                                          {}\n\
                                      }}\n\n",
                                 field_name, r_type, expr
@@ -1150,7 +1150,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     }
                 } else if let Some(len) = length {
                     src.push_str(&format!(
-                        "    pub const fn {}(&self) -> [{}; {}] {{\n\
+                        "#[inline]\n    pub const fn {}(&self) -> [{}; {}] {{\n\
                                  let mut res = [0 as {}; {}];\n\
                                  let mut idx = 0;\n\
                                  while idx < {} {{\n\
@@ -1181,7 +1181,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     ));
                 } else {
                     src.push_str(&format!(
-                        "    pub const fn {}(&self) -> {} {{\n\
+                        "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                                  let mut bytes = [0u8; {}];\n\
                                  let mut j = 0;\n\
                                  while j < {} {{\n\
@@ -1200,7 +1200,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
             } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
-                    "    pub const fn {}(&self) -> {} {{\n\
+                    "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                              let mut bytes = [0u8; {}];\n\
                              let mut j = 0;\n\
                              while j < {} {{\n\
@@ -1220,7 +1220,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
-                    "    pub const fn {}(&self) -> {} {{\n\
+                    "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                              let mut bytes = [0u8; {}];\n\
                              let mut j = 0;\n\
                              while j < {} {{\n\
@@ -1247,7 +1247,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 let r_type = rust_type(*encoding_type);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
-                    "    pub const fn {}(&self) -> {} {{\n\
+                    "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                              let mut bytes = [0u8; {}];\n\
                              let mut j = 0;\n\
                              while j < {} {{\n\
@@ -1598,7 +1598,7 @@ fn generate_message_decoder(
     }
 
     src.push_str(&format!(
-        "    pub const fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {{\n\
+        "#[inline]\n    pub const fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {{\n\
                  Self {{\n\
                      buf,\n\
                      pos,\n\
@@ -1606,7 +1606,7 @@ fn generate_message_decoder(
                      acting_version,\n\
                  }}\n\
              }}\n\n\
-             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
+             #[inline]\n             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
                  let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
                      sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
                  }})?.try_into().unwrap();\n\
@@ -1621,7 +1621,7 @@ fn generate_message_decoder(
     ));
 
     src.push_str(
-        "    pub const fn acting_version(&self) -> u16 {\n        self.acting_version\n    }\n\n",
+        "#[inline]\n    pub const fn acting_version(&self) -> u16 {\n        self.acting_version\n    }\n\n",
     );
     src.push_str("    pub const fn acting_block_length(&self) -> usize {\n        self.acting_block_length\n    }\n\n");
 
@@ -1652,7 +1652,7 @@ fn generate_message_decoder(
                     if let Some(ref val) = f.constant_value {
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             src.push_str(&format!(
-                                "    pub const fn {}(&self) -> &'static str {{\n\
+                                "#[inline]\n    pub const fn {}(&self) -> &'static str {{\n\
                                          \"{}\"\n\
                                      }}\n\n",
                                 f_name, val
@@ -1660,7 +1660,7 @@ fn generate_message_decoder(
                         } else {
                             let expr = constant_value_expr(*prim, val);
                             src.push_str(&format!(
-                                "    pub const fn {}(&self) -> {} {{\n\
+                                "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                                          {}\n\
                                      }}\n\n",
                                 f_name, r_type, expr
@@ -1669,7 +1669,7 @@ fn generate_message_decoder(
                     }
                 } else if let Some(len) = length {
                     src.push_str(&format!(
-                        "    pub const fn {}(&self) -> Result<[{}; {}], sbe_rt::DecodeError> {{\n\
+                        "#[inline]\n    pub const fn {}(&self) -> Result<[{}; {}], sbe_rt::DecodeError> {{\n\
                                  if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                      return Ok([0 as {}; {}]);\n\
                                  }}\n\
@@ -1698,7 +1698,7 @@ fn generate_message_decoder(
                     ));
 
                     src.push_str(&format!(
-                        "    pub const unsafe fn {}_unchecked(&self) -> [{}; {}] {{\n\
+                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> [{}; {}] {{\n\
                                  let offset = self.pos + {};\n\
                                  let mut res = [0 as {}; {}];\n\
                                  let mut idx = 0;\n\
@@ -1729,7 +1729,7 @@ fn generate_message_decoder(
 
                     if since == 0 {
                         src.push_str(&format!(
-                            "    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
+                            "#[inline]\n    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
                                      #[allow(unused_unsafe)]\n\
                                      unsafe {{ self.{}_unchecked() }}\n\
                                  }}\n\n",
@@ -1737,7 +1737,7 @@ fn generate_message_decoder(
                         ));
                     } else {
                         src.push_str(&format!(
-                            "    pub const fn raw_{}(&self) -> Option<[{}; {}]> {{\n\
+                            "#[inline]\n    pub const fn raw_{}(&self) -> Option<[{}; {}]> {{\n\
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                          return None;\n\
                                      }}\n\
@@ -1759,7 +1759,7 @@ fn generate_message_decoder(
                         };
 
                         src.push_str(&format!(
-                            "    pub const fn {}(&self) -> Result<Option<{}>, sbe_rt::DecodeError> {{\n\
+                            "#[inline]\n    pub const fn {}(&self) -> Result<Option<{}>, sbe_rt::DecodeError> {{\n\
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                          return Ok(None);\n\
                                      }}\n\
@@ -1785,7 +1785,7 @@ fn generate_message_decoder(
                         ));
                     } else if since > 0 {
                         src.push_str(&format!(
-                            "    pub const fn {}(&self) -> Result<Option<{}>, sbe_rt::DecodeError> {{\n\
+                            "#[inline]\n    pub const fn {}(&self) -> Result<Option<{}>, sbe_rt::DecodeError> {{\n\
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                          return Ok(None);\n\
                                      }}\n\
@@ -1806,7 +1806,7 @@ fn generate_message_decoder(
                         ));
                     } else {
                         src.push_str(&format!(
-                            "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                            "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
                                          return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
@@ -1825,7 +1825,7 @@ fn generate_message_decoder(
                     }
 
                     src.push_str(&format!(
-                        "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
                                  let offset = self.pos + {};\n\
                                  let mut bytes = [0u8; {}];
 
@@ -1837,7 +1837,7 @@ fn generate_message_decoder(
 
                     if since == 0 {
                         src.push_str(&format!(
-                            "    pub const fn raw_{}(&self) -> {} {{\n\
+                            "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
                                      #[allow(unused_unsafe)]\n\
                                      unsafe {{ self.{}_unchecked() }}\n\
                                  }}\n\n",
@@ -1845,7 +1845,7 @@ fn generate_message_decoder(
                         ));
                     } else {
                         src.push_str(&format!(
-                            "    pub const fn raw_{}(&self) -> Option<{}> {{\n\
+                            "#[inline]\n    pub const fn raw_{}(&self) -> Option<{}> {{\n\
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                          return None;\n\
                                      }}\n\
@@ -1863,7 +1863,7 @@ fn generate_message_decoder(
             } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
-                    "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                    "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                              if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                  return Ok({}([0u8; {}]));\n\
                              }}\n\
@@ -1884,7 +1884,7 @@ fn generate_message_decoder(
                 ));
 
                 src.push_str(&format!(
-                    "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
                              let offset = self.pos + {};\n\
                              let mut bytes = [0u8; {}];
 
@@ -1906,7 +1906,7 @@ fn generate_message_decoder(
                     if let Some(ref val) = f.constant_value {
                         let variant = val.rsplit('.').next().unwrap_or(val);
                         src.push_str(&format!(
-                            "    pub const fn {}(&self) -> {} {{\n\
+                            "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                                      {}::{}\n\
                                  }}\n\n",
                             f_name, target_name, target_name, variant
@@ -1914,7 +1914,7 @@ fn generate_message_decoder(
                     }
                 } else {
                     src.push_str(&format!(
-                        "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                        "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                  if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                      return Ok({}(0 as {}));\n\
                                  }}\n\
@@ -1935,7 +1935,7 @@ fn generate_message_decoder(
                     ));
 
                     src.push_str(&format!(
-                        "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
                                  let offset = self.pos + {};\n\
                                  let mut bytes = [0u8; {}];
 
@@ -1965,7 +1965,7 @@ fn generate_message_decoder(
                     if let Some(ref val) = f.constant_value {
                         let bits: u8 = val.parse().unwrap_or(0);
                         src.push_str(&format!(
-                            "    pub const fn {}(&self) -> {} {{\n\
+                            "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                                      {}({})\n\
                                  }}\n\n",
                             f_name, target_name, target_name, bits
@@ -1973,7 +1973,7 @@ fn generate_message_decoder(
                     }
                 } else {
                     src.push_str(&format!(
-                        "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                        "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                  if self.acting_version < {} || {} > self.acting_block_length {{\n\
                                      return Ok({}(0 as {}));\n\
                                  }}\n\
@@ -1994,7 +1994,7 @@ fn generate_message_decoder(
                     ));
 
                     src.push_str(&format!(
-                        "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
                                  let offset = self.pos + {};\n\
                                  let mut bytes = [0u8; {}];
 
@@ -2083,7 +2083,7 @@ fn generate_message_decoder(
         let g_pascal = to_pascal_case(&g.name);
         let g_snake = to_snake_case(&g.name);
         src.push_str(&format!(
-            "    pub fn {}(&self) -> Result<{}Decoder<'a>, sbe_rt::DecodeError> {{\n\
+            "#[inline]\n    pub fn {}(&self) -> Result<{}Decoder<'a>, sbe_rt::DecodeError> {{\n\
                      let offset = self.tail_offset_{}()?;\n\
                      {}Decoder::wrap(self.buf, offset, self.acting_version)\n\
                  }}\n\n",
@@ -2098,7 +2098,7 @@ fn generate_message_decoder(
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let vd_snake = to_snake_case(&vd.name);
         src.push_str(&format!(
-            "    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
+            "#[inline]\n    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
                      let offset = self.tail_offset_{}()?;\n\
                      let bytes: [u8; {}] = self.buf[offset..offset + {}].try_into().unwrap();\n\
                      let header = {}(bytes);\n\
@@ -2111,7 +2111,7 @@ fn generate_message_decoder(
 
         // UTF-8 str accessor
         src.push_str(&format!(
-            "    pub fn {}_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {{\n\
+            "#[inline]\n    pub fn {}_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {{\n\
                      let bytes = self.{}()?;\n\
                      core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))\n\
                  }}\n\n",
@@ -2123,15 +2123,15 @@ fn generate_message_decoder(
 
     // Message size/as_bytes
     src.push_str(&format!(
-        "    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+        "#[inline]\n    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
                  let end = self.tail_offset_{}()?;\n\
                  Ok(end - self.pos)\n\
              }}\n\n\
-             pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+             #[inline]\n             pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
                  let len = self.encoded_length()?;\n\
                  Ok(len + {})\n\
              }}\n\n\
-             pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
+             #[inline]\n             pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
                  let len = self.encoded_length_with_header()?;\n\
                  let start = self.pos - {};\n\
                  Ok(&self.buf[start .. start + len])\n\
@@ -2279,7 +2279,7 @@ fn generate_group_decoder(
          }}\n\n\
          impl<'a> {}Decoder<'a> {{\n\
              pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
-             pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {{\n\
+             #[inline]\n             pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {{\n\
                  let bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
                      sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
                  }})?.try_into().unwrap();\n\
@@ -2292,7 +2292,7 @@ fn generate_group_decoder(
                      acting_version,\n\
                  }})\n\
              }}\n\n\
-             pub fn is_empty(&self) -> bool {{\n\
+             #[inline]\n             pub fn is_empty(&self) -> bool {{\n\
                  self.count == 0\n\
              }}\n\n",
         name, name, g.block_length, dim_size, dim_size, dim_size, dim_name, count_field, dim_size,
@@ -2303,7 +2303,7 @@ fn generate_group_decoder(
     let total_tail = g.groups.len() + g.var_data.len();
     if total_tail == 0 {
         src.push_str(&format!(
-            "    pub fn as_chunks(&self) -> Result<&'a [[u8; {}]], sbe_rt::DecodeError> {{\n\
+            "#[inline]\n    pub fn as_chunks(&self) -> Result<&'a [[u8; {}]], sbe_rt::DecodeError> {{\n\
                      let len = self.count * {};\n\
                      if self.pos + len > self.buf.len() {{\n\
                          return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: len, available: self.buf.len() - self.pos }});\n\
@@ -2350,7 +2350,7 @@ fn generate_group_decoder(
          }}\n\n\
          impl<'a> {}EntryDecoder<'a> {{\n\
              pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
-             pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {{\n\
+             #[inline]\n             pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {{\n\
                  Self {{ buf, pos, acting_version }}\n\
              }}\n\n",
         name, name, g.block_length
@@ -2371,7 +2371,7 @@ fn generate_group_decoder(
                     if let Some(ref val) = f.constant_value {
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             src.push_str(&format!(
-                                "    pub const fn {}(&self) -> &'static str {{\n\
+                                "#[inline]\n    pub const fn {}(&self) -> &'static str {{\n\
                                          \"{}\"\n\
                                      }}\n\n",
                                 f_name, val
@@ -2379,7 +2379,7 @@ fn generate_group_decoder(
                         } else {
                             let expr = constant_value_expr(*prim, val);
                             src.push_str(&format!(
-                                "    pub const fn {}(&self) -> {} {{\n\
+                                "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                                          {}\n\
                                      }}\n\n",
                                 f_name, r_type, expr
@@ -2388,7 +2388,7 @@ fn generate_group_decoder(
                     }
                 } else if let Some(len) = length {
                     src.push_str(&format!(
-                        "    pub const fn {}(&self) -> Result<[{}; {}], sbe_rt::DecodeError> {{\n\
+                        "#[inline]\n    pub const fn {}(&self) -> Result<[{}; {}], sbe_rt::DecodeError> {{\n\
                                  let offset = self.pos + {};\n\
                                  let size = {};\n\
                                  if offset + size > self.buf.len() {{\n\
@@ -2414,7 +2414,7 @@ fn generate_group_decoder(
                     ));
 
                     src.push_str(&format!(
-                        "    pub const unsafe fn {}_unchecked(&self) -> [{}; {}] {{\n\
+                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> [{}; {}] {{\n\
                                  let offset = self.pos + {};\n\
                                  let mut res = [0 as {}; {}];\n\
                                  let mut idx = 0;\n\
@@ -2444,7 +2444,7 @@ fn generate_group_decoder(
                     ));
 
                     src.push_str(&format!(
-                        "    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
+                        "#[inline]\n    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
                                  #[allow(unused_unsafe)]\n\
                                  unsafe {{ self.{}_unchecked() }}\n\
                              }}\n\n",
@@ -2462,7 +2462,7 @@ fn generate_group_decoder(
                         };
 
                         src.push_str(&format!(
-                            "    pub const fn {}(&self) -> Result<Option<{}>, sbe_rt::DecodeError> {{\n\
+                            "#[inline]\n    pub const fn {}(&self) -> Result<Option<{}>, sbe_rt::DecodeError> {{\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
                                          return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
@@ -2485,7 +2485,7 @@ fn generate_group_decoder(
                         ));
                     } else {
                         src.push_str(&format!(
-                            "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                            "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                                      let offset = self.pos + {};\n\
                                      if offset + {} > self.buf.len() {{\n\
                                          return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
@@ -2504,7 +2504,7 @@ fn generate_group_decoder(
                     }
 
                     src.push_str(&format!(
-                        "    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
                                  let offset = self.pos + {};\n\
                                  let mut bytes = [0u8; {}];
 
@@ -2515,7 +2515,7 @@ fn generate_group_decoder(
                     ));
 
                     src.push_str(&format!(
-                        "    pub const fn raw_{}(&self) -> {} {{\n\
+                        "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
                                  #[allow(unused_unsafe)]\n\
                                  unsafe {{ self.{}_unchecked() }}\n\
                              }}\n\n",
@@ -2529,7 +2529,7 @@ fn generate_group_decoder(
             } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
-                    "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                    "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                              let offset = self.pos + {};\n\
                              if offset + {} > self.buf.len() {{\n\
                                  return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
@@ -2555,7 +2555,7 @@ fn generate_group_decoder(
                 let prim_size = encoding_type.size();
 
                 src.push_str(&format!(
-                    "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                    "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                              let offset = self.pos + {};\n\
                              if offset + {} > self.buf.len() {{\n\
                                  return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
@@ -2581,7 +2581,7 @@ fn generate_group_decoder(
                 let prim_size = encoding_type.size();
 
                 src.push_str(&format!(
-                    "    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                    "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
                              let offset = self.pos + {};\n\
                              if offset + {} > self.buf.len() {{\n\
                                  return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
@@ -2668,7 +2668,7 @@ fn generate_group_decoder(
         let ng_pascal = to_pascal_case(&ng.name);
         let ng_snake = to_snake_case(&ng.name);
         src.push_str(&format!(
-            "    pub fn {}(&self) -> Result<{}Decoder<'a>, sbe_rt::DecodeError> {{\n\
+            "#[inline]\n    pub fn {}(&self) -> Result<{}Decoder<'a>, sbe_rt::DecodeError> {{\n\
                      let offset = self.tail_offset_{}()?;\n\
                      {}Decoder::wrap(self.buf, offset, self.acting_version)\n\
                  }}\n\n",
@@ -2683,7 +2683,7 @@ fn generate_group_decoder(
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let vd_snake = to_snake_case(&vd.name);
         src.push_str(&format!(
-            "    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
+            "#[inline]\n    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
                      let offset = self.tail_offset_{}()?;\n\
                      let bytes: [u8; {}] = self.buf[offset..offset + {}].try_into().unwrap();\n\
                      let header = {}(bytes);\n\
@@ -2697,14 +2697,14 @@ fn generate_group_decoder(
     }
 
     src.push_str(&format!(
-        "    pub fn encoded_length(&self) -> usize {{\n\
+        "#[inline]\n    pub fn encoded_length(&self) -> usize {{\n\
                  self.tail_offset_{}().unwrap_or(self.pos + Self::ENTRY_BLOCK_LENGTH) - self.pos\n\
              }}\n\n",
         total_tail
     ));
 
     src.push_str(&format!(
-        "    pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {{\n\
+        "#[inline]\n    pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {{\n\
                  let entry = Self::wrap(buf, pos, acting_version);\n\
                  entry.tail_offset_{}()\n\
              }}\n",
@@ -2940,7 +2940,7 @@ fn generate_message_encoder(
             .map(|g| to_pascal_case(&g.name))
             .unwrap_or_else(|| to_pascal_case(&msg.var_data.first().unwrap().name));
         src.push_str(&format!(
-            "    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
+            "#[inline]\n    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
                      Self {{\n\
                          buf,\n\
                          message_start: pos,\n\
@@ -2948,7 +2948,7 @@ fn generate_message_encoder(
                          _phantom: core::marker::PhantomData,\n\
                      }}\n\
                  }}\n\n\
-                 pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {{\n\
+                 #[inline]\n                 pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {{\n\
                      let needed = {} + {};\n\
                      if pos + needed > buf.len() {{\n\
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: buf.len() - pos }});\n\
@@ -2960,14 +2960,14 @@ fn generate_message_encoder(
         src.push_str("        Ok(Self::wrap(buf, pos))\n    }\n\n");
     } else {
         src.push_str(&format!(
-            "    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
+            "#[inline]\n    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
                      Self {{\n\
                          buf,\n\
                          message_start: pos,\n\
                          pos: pos + {} + {},\n\
                      }}\n\
                  }}\n\n\
-                 pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {{\n\
+                 #[inline]\n                 pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {{\n\
                      let needed = {} + {};\n\
                      if pos + needed > buf.len() {{\n\
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: buf.len() - pos }});\n\
@@ -3005,7 +3005,7 @@ fn generate_message_encoder(
                     // Constant fields have no setter
                 } else if let Some(len) = length {
                     src.push_str(&format!(
-                        "    pub fn {}(&mut self, val: [{}; {}]) -> &mut Self {{\n\
+                        "#[must_use]\n    pub fn {}(&mut self, val: [{}; {}]) -> &mut Self {{\n\
                                  let offset = self.message_start + {} + {};\n\
                                  let mut idx = 0;\n\
                                  while idx < {} {{\n\
@@ -3028,7 +3028,7 @@ fn generate_message_encoder(
                     ));
                 } else {
                     src.push_str(&format!(
-                        "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                        "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                                  let offset = self.message_start + {} + {};\n\
                                  let val_bytes = val.to_{}_bytes();\n\
                                  self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
@@ -3044,7 +3044,7 @@ fn generate_message_encoder(
             } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
-                    "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.message_start + {} + {};\n\
                              self.buf[offset..offset + {}].copy_from_slice(&val.0);\n\
                              self\n\
@@ -3062,7 +3062,7 @@ fn generate_message_encoder(
                     let target_name = to_pascal_case(enum_name);
                     let prim_size = encoding_type.size();
                     src.push_str(&format!(
-                        "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                        "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.message_start + {} + {};\n\
                              let val_bytes = val.0.to_{}_bytes();\n\
                              self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
@@ -3079,7 +3079,7 @@ fn generate_message_encoder(
                 let target_name = to_pascal_case(set_name);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
-                    "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.message_start + {} + {};\n\
                              let val_bytes = val.0.to_{}_bytes();\n\
                              self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
@@ -3092,10 +3092,10 @@ fn generate_message_encoder(
     }
 
     src.push_str(&format!(
-        "    pub fn encoded_length(&self) -> usize {{\n\
+        "#[inline]\n    pub fn encoded_length(&self) -> usize {{\n\
                  self.pos - (self.message_start + {})\n\
              }}\n\n\
-             pub fn encoded_length_with_header(&self) -> usize {{\n\
+             #[inline]\n             pub fn encoded_length_with_header(&self) -> usize {{\n\
                  self.pos - self.message_start\n\
              }}\n",
         header_size
@@ -3129,7 +3129,7 @@ fn generate_message_encoder(
 
             src.push_str(&format!(
                 "impl<'a> {}Encoder<'a, {}_encoder_state::Needs{}> {{\n\
-                     pub fn {}<F>(mut self, count: u16, f: F) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError>\n\
+                     #[must_use]\n                     pub fn {}<F>(mut self, count: u16, f: F) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError>\n\
                      where\n\
                          F: FnOnce(&mut {}Encoder<'a>),\n\
                      {{\n\
@@ -3222,10 +3222,10 @@ fn generate_message_encoder(
 
             src.push_str(&format!(
                 "impl<'a> {}Encoder<'a, {}_encoder_state::Needs{}> {{\n\
-                     pub fn {}(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
+                     #[must_use]\n                     pub fn {}(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
                          {}\
                      }}\n\
-                     pub fn {}_unchecked(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
+                     #[must_use]\n                     pub fn {}_unchecked(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
                          {}\
                      }}\n\
                  }}\n\n",
@@ -3247,7 +3247,7 @@ fn generate_message_encoder(
         // Complete state impl
         src.push_str(&format!(
             "impl<'a> {}Encoder<'a, {}_encoder_state::Complete> {{\n\
-                 pub fn as_bytes(&self) -> &[u8] {{\n\
+                 #[inline]\n                 pub fn as_bytes(&self) -> &[u8] {{\n\
                      &self.buf[self.message_start .. self.pos]\n\
                  }}\n\
              }}\n\n\
@@ -3341,10 +3341,10 @@ fn generate_group_encoder(
          impl<'a> {}Encoder<'a> {{\n\
              pub const ENTRY_BLOCK_LENGTH: usize = {};\n\
              pub const GROUP_DIM_TEMPLATE: [u8; {}] = [{}];\n\n\
-             pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {{\n\
+             #[inline]\n             pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {{\n\
                  Self {{ buf, pos, count, written: 0 }}\n\
              }}\n\n\
-             pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>\n\
+             #[must_use]\n             pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>\n\
              where\n\
                  F: FnOnce(&mut {}EntryEncoder<'a>),\n\
              {{\n\
@@ -3380,7 +3380,7 @@ fn generate_group_encoder(
          }}\n\n\
          impl<'a> {}EntryEncoder<'a> {{\n\
              pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
-             pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
+             #[inline]\n             pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
                  Self {{\n\
                      buf,\n\
                      entry_start: pos,\n\
@@ -3404,7 +3404,7 @@ fn generate_group_encoder(
                     // Constant fields have no setter
                 } else if let Some(len) = length {
                     src.push_str(&format!(
-                        "    pub fn {}(&mut self, val: [{}; {}]) -> &mut Self {{\n\
+                        "#[must_use]\n    pub fn {}(&mut self, val: [{}; {}]) -> &mut Self {{\n\
                                  let offset = self.entry_start + {};\n\
                                  let mut idx = 0;\n\
                                  while idx < {} {{\n\
@@ -3418,7 +3418,7 @@ fn generate_group_encoder(
                     ));
                 } else {
                     src.push_str(&format!(
-                        "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                        "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                                  let offset = self.entry_start + {};\n\
                                  let val_bytes = val.to_{}_bytes();\n\
                                  self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
@@ -3434,7 +3434,7 @@ fn generate_group_encoder(
             } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
-                    "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.entry_start + {};\n\
                              self.buf[offset..offset + {}].copy_from_slice(&val.0);\n\
                              self\n\
@@ -3449,7 +3449,7 @@ fn generate_group_encoder(
                 let target_name = to_pascal_case(enum_name);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
-                    "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.entry_start + {};\n\
                              let val_bytes = val.0.to_{}_bytes();\n\
                              self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
@@ -3465,7 +3465,7 @@ fn generate_group_encoder(
                 let target_name = to_pascal_case(set_name);
                 let prim_size = encoding_type.size();
                 src.push_str(&format!(
-                    "    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
+                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
                              let offset = self.entry_start + {};\n\
                              let val_bytes = val.0.to_{}_bytes();\n\
                              self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
@@ -3486,7 +3486,7 @@ fn generate_group_encoder(
         let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
         let (num_offset, num_size) = get_dim_num_layout(elements, &ng.dimension_type);
         src.push_str(&format!(
-            "    pub fn {}<F>(&mut self, count: u16, f: F) -> Result<&mut Self, sbe_rt::EncodeError>\n\
+            "#[must_use]\n    pub fn {}<F>(&mut self, count: u16, f: F) -> Result<&mut Self, sbe_rt::EncodeError>\n\
                  where\n\
                      F: FnOnce(&mut {}Encoder<'a>),\n\
                  {{\n\
@@ -3513,7 +3513,7 @@ fn generate_group_encoder(
         let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
         let len_rust_type = rust_type(len_type);
         src.push_str(&format!(
-            "    pub fn {}(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {{\n\
+            "#[must_use]\n    pub fn {}(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {{\n\
                      let needed = {} + data.len();\n\
                      if self.pos + needed > self.buf.len() {{\n\
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() - self.pos }});\n\
@@ -3562,7 +3562,7 @@ fn generate_schema_id_from_header(
         .unwrap_or(4);
 
     src.push_str(&format!(
-        "pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {{
+        "#[inline]\npub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {{
              if buf.len() < {} + 2 {{
                  return None;
              }}
@@ -3668,7 +3668,7 @@ fn generate_any_message(
              framing: FramingPolicy,\n\
          }\n\n\
          impl<'a> FrameCursor<'a> {\n\
-             pub const fn new(buf: &'a [u8], framing: FramingPolicy) -> Self {\n\
+             #[inline]\n             pub const fn new(buf: &'a [u8], framing: FramingPolicy) -> Self {\n\
                  Self { buf, pos: 0, framing }\n\
              }\n\
          }\n\n\
@@ -3715,7 +3715,7 @@ fn generate_any_message(
 
     src.push_str(&format!(
         "impl<'a> AnyMessage<'a> {{\n\
-             pub const fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
+             #[inline]\n             pub const fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
                  if pos + {} > buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }});\n\
                  }}\n\
@@ -3754,7 +3754,7 @@ fn generate_any_message(
     );
 
     src.push_str(&format!(
-        "    pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {{\n\
+        "#[inline]\n    pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {{\n\
                  let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
                      sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
                  }})?.try_into().unwrap();\n\
