@@ -487,3 +487,63 @@ fn group_decoder_is_empty() {
     "#,
     );
 }
+
+// ── Codegen gap documentation: `<ref>` inside composites ───────────────
+
+#[test]
+fn composite_ref_gaps_documented() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+
+    // Engine struct is currently [u8; 6] (capacity + numCylinders +
+    // manufacturerCode).  The schema also defines three <ref> members
+    // (efficiency, boosterEnabled, booster) that would add 4 more bytes
+    // for a correct total of 10 bytes, but the XML parser's parse_composite
+    // only handles <type> children — <ref> elements are silently skipped.
+    assert!(
+        src.contains("pub struct Engine(pub [u8; 6]);"),
+        "Engine should be [u8; 6] (3 <type> children, 3 <ref> children \
+         skipped — fix parse_composite to handle <ref> for a correct 10-byte struct)"
+    );
+    assert!(
+        !src.contains("pub fn efficiency("),
+        "Engine::efficiency() should be generated from <ref name=\"efficiency\" type=\"Percentage\"/>, \
+         but <ref> is not yet handled inside composites"
+    );
+    assert!(
+        !src.contains("pub fn booster_enabled("),
+        "Engine::booster_enabled() should be generated from <ref name=\"boosterEnabled\" type=\"BooleanType\"/>, \
+         but <ref> is not yet handled inside composites"
+    );
+    assert!(
+        !src.contains("pub fn booster("),
+        "Engine::booster() should be generated from <ref name=\"booster\" type=\"Booster\"/>, \
+         but <ref> is not yet handled inside composites"
+    );
+
+    // Booster struct is [u8; 1] (just horsePower).  Schema also has an
+    // inline <enum name="BoostType"> that is skipped by parse_composite.
+    assert!(
+        src.contains("pub struct Booster(pub [u8; 1]);"),
+        "Booster should be [u8; 1] (inline BoostType enum skipped)"
+    );
+
+    // Verify the referenced types do exist in the generated output
+    // (they are top-level types, just not inlined into Engine/Booster).
+    // Percentage is a <type primitiveType="int8"/> that gets inlined
+    // as i8 at the use site -- no standalone type is generated for it.
+    assert!(
+        src.contains("pub struct BooleanType"),
+        "BooleanType should exist as a top-level struct"
+    );
+    assert!(
+        src.contains("pub struct Booster"),
+        "Booster composite should exist as a top-level type"
+    );
+
+    // BoostType inline enum is defined inside the Booster <composite>
+    // but parse_composite only handles <type> children, so it is also skipped.
+    assert!(
+        !src.contains("BoostType"),
+        "BoostType inline enum inside Booster <composite> is also skipped by parse_composite"
+    );
+}
