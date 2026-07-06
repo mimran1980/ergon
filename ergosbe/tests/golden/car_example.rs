@@ -19,6 +19,7 @@ pub mod sbe_rt {
         Utf8(core::str::Utf8Error),
     }
     impl core::fmt::Display for DecodeError {
+        #[cold]
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
                 Self::BufferTooShort { field, needed, available } => {
@@ -49,6 +50,7 @@ pub mod sbe_rt {
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
     }
     impl core::fmt::Display for EncodeError {
+        #[cold]
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
                 Self::BufferTooShort { needed, available } => {

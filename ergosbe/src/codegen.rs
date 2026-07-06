@@ -255,6 +255,7 @@ fn generate_sbe_rt_src() -> String {
             }
 
             impl core::fmt::Display for DecodeError {
+                #[cold]
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
                         Self::BufferTooShort { field, needed, available } => write!(f, "field '{}': needed {} bytes, {} available", field, needed, available),
@@ -275,6 +276,7 @@ fn generate_sbe_rt_src() -> String {
             }
 
             impl core::fmt::Display for EncodeError {
+                #[cold]
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
                         Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
