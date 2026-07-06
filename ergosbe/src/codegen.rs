@@ -1599,18 +1599,25 @@ fn generate_message_decoder(
             name, schema_id, schema_version, msg.id, block_length, encoded_length,
         ));
     } else {
+        const STACK_LIMIT: usize = 65536;
+        let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
+        let is_capped = max_encoded_length > STACK_LIMIT;
+        let max_doc = if is_capped {
+            "/// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation\n"
+        } else {
+            "/// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`\n"
+        };
         src.push_str(&format!(
             "impl<'a> {}Decoder<'a> {{\n\
                  pub const SCHEMA_ID: u16 = {};\n\
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
-                 /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`\n\
+                 {}\
                  pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
-            name, schema_id, schema_version, msg.id, block_length, max_encoded_length
+            name, schema_id, schema_version, msg.id, block_length, max_doc, max_encoded_capped
         ));
     }
-
     src.push_str(&format!(
         "#[inline]\n    pub const fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {{\n\
                  Self {{\n\
@@ -2838,6 +2845,7 @@ fn generate_message_encoder(
         max_tail += prefix_size + vd.max_length.unwrap_or(0);
     }
     let max_encoded_length = header_size + block_length + max_tail;
+
     if total_tail > 0 {
         src.push_str(&format!(
             "pub mod {}_encoder_state {{\n",
@@ -2909,17 +2917,24 @@ fn generate_message_encoder(
             schema_id, schema_version, msg.id, block_length, encoded_length
         ));
     } else {
+        const STACK_LIMIT: usize = 65536;
+        let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
+        let is_capped = max_encoded_length > STACK_LIMIT;
+        let max_doc = if is_capped {
+            "    /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation\n"
+        } else {
+            "    /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`\n"
+        };
         src.push_str(&format!(
             "    pub const SCHEMA_ID: u16 = {};\n\
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
-                 /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`\n\
+                 {}\
                  pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
-            schema_id, schema_version, msg.id, block_length, max_encoded_length
+            schema_id, schema_version, msg.id, block_length, max_doc, max_encoded_capped
         ));
     }
-
     // Pre-compute HEADER_TEMPLATE bytes at codegen time.
     let mut header_tpl = vec![0u8; header_size];
     let hdr_bl = block_length as u16;
