@@ -1,76 +1,128 @@
-# Samples crate: Bitget SBE orderbook demo
+# Samples crate: multi-exchange SBE orderbook demo
 
 **Blocked by:** wire parity (01, 02, 03), multi-schema codegen (32)
 
-Create a `samples/` directory with a full working demo that connects to
-Bitget's public WebSocket, subscribes to BTC/USDT, receives SBE-encoded
-Depth50 orderbook snapshots, decodes them, builds a local orderbook, and
-re-encodes messages for round-trip verification.
+Create a `samples/exchange-orderbook/` crate connecting to TWO exchanges
+(Bitget + Binance), using multi-schema codegen with shared common types and
+`rust_decimal` for price/size conversion. Builds a consolidated orderbook
+that decodes and re-encodes SBE messages from both venues.
 
-## Why Bitget
+## Exchanges
 
-- **Free, no registration required** for public market data WebSocket
-- **SBE binary encoding** for Depth50, BestBidAsk, and Trade messages
-- **20ms orderbook snapshots** — 50 levels of bids + asks as repeating groups
-- **Decimal handling**: price/size are mantissa × 10^exponent → use
-  `rust_decimal` for conversion
-- **Schema XML** is fully documented at https://www.bitget.com/api-doc/uta/sbe/sbe-intro
-- Tests encoding (subscription messages) AND decoding (market data)
-- Repeating groups, var-strings, enums, nested composites — complex enough
-  to exercise every codegen feature
+### Bitget — free, no registration
+- Public WebSocket: `wss://ws.bitget.com/v2/ws/public`
+- SBE messages: Depth50 (orderbook), BestBidAsk, Trade
+- repeating groups (bids/asks 50 levels), decimal exponents, enums
+- Schema at https://www.bitget.com/api-doc/uta/sbe/sbe-intro
 
-## SBE schema
+### Binance Spot — free, no registration  
+- Public WebSocket: `wss://stream.binance.com:9443/ws`
+- SBE schema from https://github.com/binance/binance-spot-api-docs
+  (`sbe/schemas/spot_prod_latest.xml`)
+- **Unique varData instrument pattern**: messages carry the symbol/instrument
+  as a `varStringEncoding` data field at the **end** of each message. You
+  cannot determine which instrument a message belongs to without first
+  finding the tail, skipping to the end of the body, and reading the
+  varData length prefix. This is a real-world test of our varData tail-offset
+  handling and `FrameCursor` routing.
 
-Extract the XML schema from Bitget's docs and save to
-`samples/schemas/bitget-spot.xml`. Known message types:
+## Multi-schema design
 
-| templateId | Message | Description |
-|------------|---------|-------------|
-| 1001 | Depth50 | 50-level orderbook snapshot with bids/asks groups |
-| 1002 | BestBidAsk | Best bid/ask price and size |
-| 1003 | Trade | Public trade data |
-
-Depth50 fields: ts, seq, priceExponent, sizeExponent, category (enum),
-bids group (price, size), asks group (price, size).
-
-## Sample project structure
+Both schemas share common SBE types (groupSizeEncoding, varStringEncoding,
+varAsciiEncoding). Use `generate_multi()` with a shared `common_types` module:
 
 ```
-samples/bitget-orderbook/
+samples/exchange-orderbook/
   Cargo.toml
-  build.rs                  # Generate SBE code from bitget-spot.xml
+  build.rs                       # generate_multi() over all schemas
   schemas/
-    bitget-spot.xml          # Bitget SBE schema
+    common-types.xml              # Shared SBE types extracted from both
+    bitget-spot.xml               # Bitget schema
+    binance-spot.xml              # Binance Spot schema
   src/
-    main.rs                  # Connect, subscribe, decode, build orderbook
-    orderbook.rs             # LocalBook type with update/display logic
+    main.rs                      # Connect both exchanges, consolidate books
+    orderbook.rs                 # LocalBook with BTreeMap<Decimal, Decimal>
+    generated/
+      mod.rs                     # re-exports
+      common_types.rs            # Generated: shared types (once)
+      bitget_spot.rs             # Generated: Bitget types
+      binance_spot.rs            # Generated: Binance types
 ```
+
+## SBE schema extraction
+
+### Bitget
+Extract from docs (or reconstruct from the API reference). Key messages:
+- `Depth50` (id=1001): ts, seq, priceExponent, sizeExponent, category,
+  asks group(price int64, size int64), bids group(price int64, size int64)
+- `BestBidAsk` (id=1002): bestBidPrice, bestBidSize, bestAskPrice, bestAskSize
+- `Trade` (id=1003): price, size, side, timestamp
+
+### Binance Spot
+Download `spot_prod_latest.xml` from GitHub. 87 messages including:
+- `DepthBook` / `DiffDepth`: orderbook snapshots and updates
+- **varData instrument at end**: symbol is a `varStringEncoding` data field
+  placed AFTER groups and var-data tail. Decoding requires:
+  1. Read header → get templateId, blockLength
+  2. Parse fixed root block fields
+  3. Iterate repeating groups (count from group dimension)
+  4. Skip to tail at `body_offset + wire_block_length`
+  5. Read varData fields in order — last one is the symbol
+  This is the chicken-and-egg problem: you need the symbol to interpret
+  the message, but the symbol is at the end.
 
 ## Acceptance criteria
 
-- [ ] Extract Bitget SBE schema XML and commit to `samples/schemas/bitget-spot.xml`
-- [ ] Scaffold `samples/bitget-orderbook/` crate with `build.rs`
-- [ ] `build.rs` calls `ergosbe::Generator::generate()` to produce
-  `src/generated.rs` from the schema
-- [ ] `main.rs` connects to Bitget public WebSocket
-  (`wss://ws.bitget.com/v2/ws/public`)
-- [ ] Sends JSON subscription for `books.sbe` on `BTCUSDT`
-- [ ] Receives SBE binary frames and decodes `Depth50` messages
-- [ ] Builds `LocalBook` struct: BTreeMap of price → size for bids and asks
-- [ ] Handles decimal conversion: `price * 10^priceExponent`, `size * 10^sizeExponent`
-- [ ] Prints top 5 bid/ask levels on each update
-- [ ] Round-trip test: encode a Depth50 → decode → assert fields match
+- [ ] Extract Bitget SBE schema XML → `samples/schemas/bitget-spot.xml`
+- [ ] Download Binance `spot_prod_latest.xml` → `samples/schemas/binance-spot.xml`
+- [ ] Extract shared common types → `samples/schemas/common-types.xml`
+- [ ] Scaffold `samples/exchange-orderbook/` crate with multi-schema `build.rs`
+- [ ] `build.rs` calls `ergosbe::Generator::generate_multi()` with all 3 schemas
+- [ ] Shared types (groupSizeEncoding, varStringEncoding, varAsciiEncoding) emitted once
+- [ ] `common_types` module imported by both Bitget and Binance modules
+- [ ] `rust_decimal::Decimal` conversion layer: `Price::from(Decimal)` and
+  `From<Price> for Decimal` using `mantissa * 10^exponent`
+- [ ] `LocalBook` struct: BTreeMap<Decimal, Decimal> for bids and asks
+- [ ] Connect to Bitget WebSocket, subscribe to `books.sbe` on BTCUSDT
+- [ ] Connect to Binance WebSocket, subscribe to `btcusdt@depth`
+- [ ] Decode Depth50/DepthBook messages from both exchanges
+- [ ] Build consolidated orderbook from both feeds
+- [ ] Handle Binance varData symbol at end: decode whole message, then extract symbol
+- [ ] Print top 5 bid/ask levels with exchange source on each update
+- [ ] Round-trip test: encode → decode → assert fields match for both schemas
 - [ ] `cargo run --release` in samples dir runs end-to-end
 
 ## Transport
 
-Use `tokio-tungstenite` for WebSocket (any crate that works — the focus is
-SBE interaction, not transport). Use `rust_decimal` for decimal conversion.
+Use `tokio-tungstenite` for WebSocket. The transport is scaffolding — focus is
+on SBE decode/encode ergonomics and decimal handling.
+
+## rust_decimal integration
+
+Each `price`/`size` field has a sibling exponent field. Generate converter
+methods:
+
+```rust
+impl Depth50Decoder<'_> {
+    pub fn bid_price_decimal(&self, idx: usize) -> Option<Decimal> {
+        let mantissa = self.bids().ok()?.get(idx)?.price();
+        let exponent = self.price_exponent();
+        Some(Decimal::from_i128_with_scale(mantissa as i128, -exponent as u32))
+    }
+}
+```
+
+Eventually this should be driven by `semanticType="Price"` (todo 62), but
+for the sample crate, hand-write the converter trait.
 
 ## Why this matters
 
-This is the real-world litmus test. If ErgoSBE can handle a production
-crypto exchange SBE feed — decimals, repeating groups, var-strings, binary
-frames over WebSocket — with ergonomic Rust code, the design is validated.
+- Tests multi-schema codegen with shared type dedup (todo 32)
+- Tests decimal handling end-to-end (paves the way for todo 62)
+- Tests varData tail-offset decoding with Binance's instrument-at-end pattern
+- Tests repeating groups, nested groups, var-strings, enums
+- Real WebSocket binary frames — no mock data
+- Dual-exchange proves the API is composable
 
-Ref: user request for a demo project exercising real SBE complexity.
+Ref: user request for samples crate with multi-exchange, multi-schema, and
+rust_decimal integration.
