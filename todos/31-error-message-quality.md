@@ -21,14 +21,14 @@ answer: what failed, where in the buffer, and what to do about it.
 - [x] `BufferTooShort` message reads like: `"modelYear at offset 8: needed 2 bytes, 1 available"`.
   Current: `"field '<name>' at offset N: needed N bytes, M available"`.
 
-- [ ] `WrongSchema` includes both expected and actual schema IDs in Display:
+- [x] `WrongSchema` includes both expected and actual schema IDs in Display:
   `"wrong schema: expected id 1 (Car), got id 99"`. Include the human-readable
   schema name if available from the schema metadata.
 
-- [ ] `UnknownTemplateLength` suggests the fix:
+- [x] `UnknownTemplateLength` suggests the fix:
   `"unknown template id 42: SBE messages do not carry length. Use decode_frame() with an external frame length."`
 
-- [ ] `InvalidVarDataLength` includes max expected:
+- [x] `InvalidVarDataLength` includes max expected:
   `"var data field 'manufacturer': length 200 exceeds max 128"`
 
 ## EncodeError improvements
@@ -42,7 +42,7 @@ answer: what failed, where in the buffer, and what to do about it.
   }
   ```
 
-- [ ] `VarDataTooLong` (new variant from `30-vardata-max-length`):
+- [x] `VarDataTooLong` (new variant from `30-vardata-max-length`):
   ```rust
   EncodeError::VarDataTooLong {
       field: &'static str,

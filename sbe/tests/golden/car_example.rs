@@ -13,9 +13,9 @@ pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
         BufferTooShort { field: &'static str, needed: usize, available: usize },
-        WrongSchema { expected: u16, actual: u16 },
+        WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
         UnknownTemplateLength { template_id: u16 },
-        InvalidVarDataLength { field: &'static str, length: u32 },
+        InvalidVarDataLength { field: &'static str, length: u32, max_length: u32 },
         Utf8(core::str::Utf8Error),
     }
     impl core::fmt::Display for DecodeError {
@@ -28,16 +28,24 @@ pub mod sbe_rt {
                         available
                     )
                 }
-                Self::WrongSchema { expected, actual } => {
+                Self::WrongSchema { expected, actual, expected_name } => {
                     write!(
-                        f, "wrong schema id: expected {}, actual {}", expected, actual
+                        f, "wrong schema: expected id {} ({}), got id {}", expected,
+                        expected_name, actual
                     )
                 }
                 Self::UnknownTemplateLength { template_id } => {
-                    write!(f, "unknown template length for template id {}", template_id)
+                    write!(
+                        f,
+                        "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.",
+                        template_id
+                    )
                 }
-                Self::InvalidVarDataLength { field, length } => {
-                    write!(f, "invalid var data length for field {}: {}", field, length)
+                Self::InvalidVarDataLength { field, length, max_length } => {
+                    write!(
+                        f, "var data field '{}: length {} exceeds max {}", field, length,
+                        max_length
+                    )
                 }
                 Self::Utf8(err) => write!(f, "UTF-8 decode error: {}", err),
             }
@@ -716,6 +724,7 @@ impl<'a> CarDecoder<'a> {
             return Err(sbe_rt::DecodeError::WrongSchema {
                 expected: Self::SCHEMA_ID,
                 actual: header.schema_id(),
+                expected_name: "baseline",
             });
         }
         Ok(Self::wrap(buf, pos + 8, header.block_length() as usize, header.version()))
@@ -1161,6 +1170,13 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "manufacturer",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
@@ -1175,6 +1191,13 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "model",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
@@ -1189,6 +1212,13 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "activation_code",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
@@ -2947,6 +2977,7 @@ impl<'a> AnyMessage<'a> {
             return Err(sbe_rt::DecodeError::WrongSchema {
                 expected: 1,
                 actual: schema_id,
+                expected_name: "baseline",
             });
         }
         match template_id {
@@ -2985,6 +3016,7 @@ impl<'a> AnyMessage<'a> {
             return Err(sbe_rt::DecodeError::WrongSchema {
                 expected: 1,
                 actual: schema_id,
+                expected_name: "baseline",
             });
         }
         match template_id {

@@ -1742,12 +1742,12 @@ fn generate_message_decoder(
                  }})?.try_into().unwrap();\n\
                  let header = {}(header_bytes);\n\
                  if header.{}() != Self::SCHEMA_ID {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{}() , expected_name: "{}" }});\n\
+                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{}() , expected_name: \"{expected_name}\" }});\n\
                  }}\n\
                  Ok(Self::wrap(buf, pos + {}, header.{}() as usize, header.{}()))\n\
              }}\n\n",
-        header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr, schema_name,
-        field_name = "message header"
+        header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr,
+        field_name = "message header", expected_name = schema_name
     ));
 
     src.push_str(
@@ -2221,21 +2221,21 @@ fn generate_message_decoder(
                      let offset = self.tail_offset_{}()?;\n\
                      let bytes: [u8; {}] = self.buf[offset..offset + {}].try_into().unwrap();\n\
                      let header = {}(bytes);\n\
-                     let len = header.{}() as usize;\n"
+                     let len = header.{}() as usize;\n",
             vd_snake, vd_idx, prefix_size, prefix_size, type_pascal, len_field
         );
         if let Some(max) = vd.max_length {
             vd_body.push_str(&format!(
                 "                     if len > {} {{\n\
                                              return Err(sbe_rt::DecodeError::InvalidVarDataLength {{ field: \"{}\", length: len as u32, max_length: {} }});\n\
-                                         }}\n"
+                                         }}\n",
                 max, vd_snake, max
             ));
         }
         vd_body.push_str(&format!(
             "                     let data_offset = offset + {};\n\
                              Ok(&self.buf[data_offset .. data_offset + len])\n\
-                         }}\n\n"
+                         }}\n\n",
             prefix_size
         ));
         src.push_str(&vd_body);
@@ -4128,11 +4128,11 @@ fn generate_any_message(
                  let block_length = header.{}() as usize;\n\
                  let body_pos = pos + {};\n\n\
                  if schema_id != {} {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id, expected_name: "{}" }});\n\
+                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id, expected_name: \"{expected_name}\" }});\n\
                  }}\n\n\
                  match template_id {{\n",
-        header_size, header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id, schema_name,
-        field_name = "message header"
+        header_size, header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id,
+        field_name = "message header", expected_name = schema_name
     ));
 
     for m in messages {
@@ -4161,11 +4161,11 @@ fn generate_any_message(
                  let block_length = header.{}() as usize;\n\
                  let body_pos = pos + {};\n\n\
                  if schema_id != {} {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id, expected_name: "{}" }});\n\
+                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id, expected_name: \"{expected_name}\" }});\n\
                  }}\n\n\
                  match template_id {{\n",
-        header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id, schema_name,
-        field_name = "decoded frame"
+        header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id,
+        field_name = "decoded frame", expected_name = schema_name
     ));
 
     for m in messages {

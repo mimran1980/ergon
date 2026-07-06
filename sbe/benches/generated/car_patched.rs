@@ -1,10 +1,21 @@
+//! Generated from SBE schema package `baseline` id 1 version 0.
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::eq_op)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::manual_range_contains)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(dead_code)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
         BufferTooShort { field: &'static str, needed: usize, available: usize },
-        WrongSchema { expected: u16, actual: u16 },
+        WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
         UnknownTemplateLength { template_id: u16 },
-        InvalidVarDataLength { field: &'static str, length: u32 },
+        InvalidVarDataLength { field: &'static str, length: u32, max_length: u32 },
         Utf8(core::str::Utf8Error),
     }
     impl core::fmt::Display for DecodeError {
@@ -17,16 +28,24 @@ pub mod sbe_rt {
                         available
                     )
                 }
-                Self::WrongSchema { expected, actual } => {
+                Self::WrongSchema { expected, actual, expected_name } => {
                     write!(
-                        f, "wrong schema id: expected {}, actual {}", expected, actual
+                        f, "wrong schema: expected id {} ({}), got id {}", expected,
+                        expected_name, actual
                     )
                 }
                 Self::UnknownTemplateLength { template_id } => {
-                    write!(f, "unknown template length for template id {}", template_id)
+                    write!(
+                        f,
+                        "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.",
+                        template_id
+                    )
                 }
-                Self::InvalidVarDataLength { field, length } => {
-                    write!(f, "invalid var data length for field {}: {}", field, length)
+                Self::InvalidVarDataLength { field, length, max_length } => {
+                    write!(
+                        f, "var data field '{}: length {} exceeds max {}", field, length,
+                        max_length
+                    )
                 }
                 Self::Utf8(err) => write!(f, "UTF-8 decode error: {}", err),
             }
@@ -64,6 +83,49 @@ pub mod sbe_rt {
         }
     }
     impl core::error::Error for EncodeError {}
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum VerifyError {
+        HeaderTooShort,
+        InvalidBlockLength { expected_min: usize, actual: usize },
+        GroupDimOutOfBounds { field: &'static str, offset: usize },
+        VarDataOutOfBounds { field: &'static str, offset: usize, length: u32 },
+        MessageTooShort { needed: usize, available: usize },
+    }
+    impl core::fmt::Display for VerifyError {
+        #[cold]
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Self::HeaderTooShort => {
+                    write!(f, "buffer too short to contain message header")
+                }
+                Self::InvalidBlockLength { expected_min, actual } => {
+                    write!(
+                        f, "invalid block length: expected at least {}, actual {}",
+                        expected_min, actual
+                    )
+                }
+                Self::GroupDimOutOfBounds { field, offset } => {
+                    write!(
+                        f, "group dimension header for '{}' out of bounds at offset {}",
+                        field, offset
+                    )
+                }
+                Self::VarDataOutOfBounds { field, offset, length } => {
+                    write!(
+                        f, "var-data for '{}' out of bounds at offset {} with length {}",
+                        field, offset, length
+                    )
+                }
+                Self::MessageTooShort { needed, available } => {
+                    write!(
+                        f, "message too short: needed {} bytes, {} available", needed,
+                        available
+                    )
+                }
+            }
+        }
+    }
+    impl core::error::Error for VerifyError {}
     pub trait SbeMessage {
         const TEMPLATE_ID: u16;
         const BLOCK_LENGTH: usize;
@@ -534,7 +596,7 @@ impl Booster {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct Engine(pub [u8; 9]);
+pub struct Engine(pub [u8; 6]);
 impl Engine {
     #[inline]
     pub const fn capacity(&self) -> u16 {
@@ -565,7 +627,7 @@ impl Engine {
         let mut res = [0 as u8; 3];
         let mut idx = 0;
         while idx < 3 {
-            let offset = 5 + idx * 1;
+            let offset = 3 + idx * 1;
             let mut bytes = [0u8; 1];
             let mut j = 0;
             while j < 1 {
@@ -586,7 +648,7 @@ impl Engine {
         num_cylinders: u8,
         manufacturer_code: [u8; 3],
     ) -> Self {
-        let mut bytes = [0u8; 9];
+        let mut bytes = [0u8; 6];
         let val_bytes = capacity.to_le_bytes();
         let mut j = 0;
         while j < 2 {
@@ -604,7 +666,7 @@ impl Engine {
             let val_bytes = manufacturer_code[idx].to_le_bytes();
             let mut j = 0;
             while j < 1 {
-                bytes[5 + idx * 1 + j] = val_bytes[j];
+                bytes[3 + idx * 1 + j] = val_bytes[j];
                 j += 1;
             }
             idx += 1;
@@ -623,7 +685,7 @@ impl<'a> CarDecoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
-    pub const BLOCK_LENGTH: usize = 45;
+    pub const BLOCK_LENGTH: usize = 41;
     /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
@@ -662,6 +724,7 @@ impl<'a> CarDecoder<'a> {
             return Err(sbe_rt::DecodeError::WrongSchema {
                 expected: Self::SCHEMA_ID,
                 actual: header.schema_id(),
+                expected_name: "baseline",
             });
         }
         Ok(Self::wrap(buf, pos + 8, header.block_length() as usize, header.version()))
@@ -936,20 +999,20 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 44 > self.acting_block_length {
-            return Ok(Engine([0u8; 9]));
+        if self.acting_version < 0 || 41 > self.acting_block_length {
+            return Ok(Engine([0u8; 6]));
         }
         let offset = self.pos + 35;
-        if offset + 9 > self.buf.len() {
+        if offset + 6 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "engine",
-                needed: 9,
+                needed: 6,
                 available: self.buf.len() - offset,
             });
         }
-        let mut bytes = [0u8; 9];
+        let mut bytes = [0u8; 6];
         let mut j = 0;
-        while j < 9 {
+        while j < 6 {
             bytes[j] = self.buf[offset + j];
             j += 1;
         }
@@ -958,10 +1021,10 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub const unsafe fn engine_unchecked(&self) -> Engine {
         let offset = self.pos + 35;
-        let mut bytes = [0u8; 9];
+        let mut bytes = [0u8; 6];
         bytes
             .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 9)
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 6)
             });
         Engine(bytes)
     }
@@ -1107,6 +1170,13 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "manufacturer",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
@@ -1121,6 +1191,13 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "model",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
@@ -1135,6 +1212,13 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "activation_code",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
@@ -1159,6 +1243,131 @@ impl<'a> CarDecoder<'a> {
         let start = self.pos - 8;
         Ok(&self.buf[start..start + len])
     }
+    #[inline]
+    pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
+        if buf.len() < 8 {
+            return Err(sbe_rt::VerifyError::HeaderTooShort);
+        }
+        let header_bytes: [u8; 8] = buf[..8].try_into().unwrap();
+        let header = MessageHeader(header_bytes);
+        let block_length = header.block_length() as usize;
+        if block_length < Self::BLOCK_LENGTH {
+            return Err(sbe_rt::VerifyError::InvalidBlockLength {
+                expected_min: Self::BLOCK_LENGTH,
+                actual: block_length,
+            });
+        }
+        let body_end = 8 + block_length;
+        if body_end > buf.len() {
+            return Err(sbe_rt::VerifyError::MessageTooShort {
+                needed: body_end,
+                available: buf.len(),
+            });
+        }
+        let mut offset = body_end;
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                    field: "fuel_figures",
+                    offset,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let dim = GroupSizeEncoding(bytes);
+            let count = dim.num_in_group() as usize;
+            let entries_end = offset + 4 + count * 6;
+            if entries_end > buf.len() {
+                return Err(sbe_rt::VerifyError::MessageTooShort {
+                    needed: entries_end,
+                    available: buf.len(),
+                });
+            }
+            offset = entries_end;
+        }
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                    field: "performance_figures",
+                    offset,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let dim = GroupSizeEncoding(bytes);
+            let count = dim.num_in_group() as usize;
+            let entries_end = offset + 4 + count * 1;
+            if entries_end > buf.len() {
+                return Err(sbe_rt::VerifyError::MessageTooShort {
+                    needed: entries_end,
+                    available: buf.len(),
+                });
+            }
+            offset = entries_end;
+        }
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "manufacturer",
+                    offset,
+                    length: 0,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let var_header = VarStringEncoding(bytes);
+            let len = var_header.length();
+            let data_end = offset + 4 + len as usize;
+            if data_end > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "manufacturer",
+                    offset,
+                    length: len,
+                });
+            }
+            offset = data_end;
+        }
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "model",
+                    offset,
+                    length: 0,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let var_header = VarStringEncoding(bytes);
+            let len = var_header.length();
+            let data_end = offset + 4 + len as usize;
+            if data_end > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "model",
+                    offset,
+                    length: len,
+                });
+            }
+            offset = data_end;
+        }
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "activation_code",
+                    offset,
+                    length: 0,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let var_header = VarAsciiEncoding(bytes);
+            let len = var_header.length();
+            let data_end = offset + 4 + len as usize;
+            if data_end > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "activation_code",
+                    offset,
+                    length: len,
+                });
+            }
+            offset = data_end;
+        }
+        Ok(())
+    }
 }
 impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
     type Error = sbe_rt::DecodeError;
@@ -1169,7 +1378,7 @@ impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}
 impl<'a> sbe_rt::SbeMessage for CarDecoder<'a> {
     const TEMPLATE_ID: u16 = 1;
-    const BLOCK_LENGTH: usize = 45;
+    const BLOCK_LENGTH: usize = 41;
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
@@ -1943,18 +2152,18 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
-    pub const BLOCK_LENGTH: usize = 45;
+    pub const BLOCK_LENGTH: usize = 41;
     /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
-    pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
+    pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
             message_start: pos,
-            pos: pos + 8 + 45,
+            pos: pos + 8 + 41,
             _phantom: core::marker::PhantomData,
         }
     }
@@ -1963,7 +2172,7 @@ impl<'a, State> CarEncoder<'a, State> {
         buf: &'a mut [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::EncodeError> {
-        let needed = 8 + 45;
+        let needed = 8 + 41;
         if pos + needed > buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
@@ -2033,7 +2242,7 @@ impl<'a, State> CarEncoder<'a, State> {
     #[must_use]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.message_start + 8 + 35;
-        self.buf[offset..offset + 9].copy_from_slice(&val.0);
+        self.buf[offset..offset + 6].copy_from_slice(&val.0);
         self
     }
     #[inline]
@@ -2067,17 +2276,12 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let __pos;
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = FuelFiguresEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            __pos = group.pos;
-        }
+        let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: __pos,
+            pos: group.pos,
             _phantom: core::marker::PhantomData,
         })
     }
@@ -2104,17 +2308,12 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let __pos;
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = PerformanceFiguresEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            __pos = group.pos;
-        }
+        let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
         Ok(CarEncoder {
             buf: self.buf,
             message_start: self.message_start,
-            pos: __pos,
+            pos: group.pos,
             _phantom: core::marker::PhantomData,
         })
     }
@@ -2304,7 +2503,7 @@ impl<'a> AsRef<[u8]> for CarEncoder<'a, car_encoder_state::Complete> {
 impl<'a, State> sbe_rt::private::Sealed for CarEncoder<'a, State> {}
 impl<'a, State> sbe_rt::SbeMessage for CarEncoder<'a, State> {
     const TEMPLATE_ID: u16 = 1;
-    const BLOCK_LENGTH: usize = 45;
+    const BLOCK_LENGTH: usize = 41;
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
@@ -2346,13 +2545,10 @@ impl<'a> FuelFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = FuelFiguresEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2444,13 +2640,10 @@ impl<'a> PerformanceFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = PerformanceFiguresEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2495,12 +2688,9 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&AccelerationEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = AccelerationEncoder::wrap(__buf, self.pos + 4, count);
-            f(&mut group);
-            self.pos = group.pos;
-        }
+        let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group);
+        self.pos = group.pos;
         Ok(self)
     }
 }
@@ -2542,13 +2732,10 @@ impl<'a> AccelerationEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut entry = AccelerationEntryEncoder::wrap(__buf, self.pos);
-            f(&mut entry);
-            self.pos = entry.pos;
-            self.written += 1;
-        }
+        let mut entry = AccelerationEntryEncoder::wrap(self.buf, self.pos);
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
         Ok(())
     }
 }
@@ -2790,6 +2977,7 @@ impl<'a> AnyMessage<'a> {
             return Err(sbe_rt::DecodeError::WrongSchema {
                 expected: 1,
                 actual: schema_id,
+                expected_name: "baseline",
             });
         }
         match template_id {
@@ -2828,6 +3016,7 @@ impl<'a> AnyMessage<'a> {
             return Err(sbe_rt::DecodeError::WrongSchema {
                 expected: 1,
                 actual: schema_id,
+                expected_name: "baseline",
             });
         }
         match template_id {
