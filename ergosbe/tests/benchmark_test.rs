@@ -2,7 +2,7 @@
 //!
 //! Port of upstream `simple-binary-encoding/rust/benches/car_benchmark.rs`.
 //! The upstream benchmarks use `criterion` on the upstream Rust codegen's
-//! generated API (pre-compiled modules).  Since ErgoSBE generates code on
+//! generated API (pre-compiled modules).  Since `ErgoSBE` generates code on
 //! the fly with a fundamentally different API (closure-based group setters,
 //! `wrap_and_apply_header`), we:
 //!
@@ -25,7 +25,7 @@ fn car_encode_decode_perf_smoke() {
     compile_and_run(
         "perf_car",
         &src,
-        r##"
+        r#"
         // The CarEncoder type-state requires all tail fields (groups + var-data)
         // to reach the Complete state before as_bytes() is available.
         // We build one Car, then benchmark decode on it.
@@ -94,6 +94,6 @@ fn car_encode_decode_perf_smoke() {
         // Smoke check: even in debug mode, 50 iterations under 30 seconds.
         assert!(encode_dur.as_secs() < 30, "encode too slow: {:?}", encode_dur);
         assert!(decode_dur.as_secs() < 30, "decode too slow: {:?}", decode_dur);
-    "##,
+    "#,
     );
 }

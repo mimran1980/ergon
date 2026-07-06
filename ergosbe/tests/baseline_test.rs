@@ -62,7 +62,7 @@ fn decode_baseline_fixture() {
         "baseline_decode",
         &Paths::example_schema(),
         &Paths::baseline_binary(),
-        r##"
+        r#"
         let car = CarDecoder::wrap_and_apply_header(FIXTE, 0).unwrap();
 
         // Scalar fields
@@ -141,7 +141,7 @@ fn decode_baseline_fixture() {
         assert_eq!(b"Honda",     car.manufacturer().unwrap(), "manufacturer");
         assert_eq!(b"Civic VTi", car.model().unwrap(), "model");
         assert_eq!(b"abcdef",    car.activation_code().unwrap(), "activationCode");
-        "##,
+        "#,
     );
 }
 
@@ -153,7 +153,7 @@ fn decoder_display() {
         "display_test",
         &Paths::example_schema(),
         &Paths::baseline_binary(),
-        r##"
+        r#"
         let car = CarDecoder::wrap_and_apply_header(FIXTE, 0).unwrap();
         let s = format!("{}", car);
         assert!(s.contains("serial_number: 1234"), "display serial_number");
@@ -167,7 +167,7 @@ fn decoder_display() {
         assert!(s.contains("activation_code: 6 bytes"), "display activation_code bytes");
         assert!(s.starts_with("Car {"), "display starts with Car {{");
         assert!(s.ends_with(" }"), "display ends with }}");
-        "##,
+        "#,
     );
 }
 
@@ -179,7 +179,7 @@ fn encode_baseline_roundtrip() {
         "baseline_encode",
         &Paths::example_schema(),
         &Paths::baseline_binary(),
-        r##"
+        r#"
         // ── Encode from scratch ──
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
@@ -269,7 +269,7 @@ fn encode_baseline_roundtrip() {
         assert_eq!(b"Honda",     car2.manufacturer().unwrap(), "rt.manufacturer");
         assert_eq!(b"Civic VTi", car2.model().unwrap(), "rt.model");
         assert_eq!(b"abcdef",    car2.activation_code().unwrap(), "rt.activationCode");
-        "##,
+        "#,
     );
 }
 
@@ -281,7 +281,7 @@ fn encode_byte_exact_scalar() {
         "scalar_byte_exact",
         &Paths::example_schema(),
         &Paths::baseline_binary(),
-        r##"
+        r#"
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
 
@@ -312,7 +312,7 @@ fn encode_byte_exact_scalar() {
             &encoded[header_size .. header_size + 35],
             "scalar body mismatch"
         );
-        "##,
+        "#,
     );
 }
 
@@ -324,13 +324,13 @@ fn schema_id_from_header_car_example() {
         "schema_id_from_header",
         &Paths::example_schema(),
         &Paths::baseline_binary(),
-        r##"
+        r#"
         let schema_id = schema_id_from_header(FIXTE);
         assert_eq!(Some(1), schema_id, "schema_id from header");
 
         assert_eq!(None, schema_id_from_header(&[]), "empty buffer");
         assert_eq!(None, schema_id_from_header(&[0u8; 1]), "too short buffer");
-        "##,
+        "#,
     );
 }
 

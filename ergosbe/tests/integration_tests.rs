@@ -1,4 +1,4 @@
-//! Integration tests for ErgoSBE code generation.
+//! Integration tests for `ErgoSBE` code generation.
 
 #![allow(missing_docs)]
 

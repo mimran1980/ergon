@@ -130,7 +130,7 @@ fn issue_972_optional_composite_types_exist() {
 // ── Item 2: Extract XML schemas with edge cases ──────────────────────────
 
 /// Composite elements: enum, set, and nested composite inside a composite.
-/// Note: inline enum/set/composite types (EnumOne, SetOne, Inner) are
+/// Note: inline enum/set/composite types (`EnumOne`, `SetOne`, Inner) are
 /// embedded in the Outer composite and don't generate standalone structs.
 #[test]
 fn composite_elements_types_exist() {
@@ -220,7 +220,7 @@ fn embedded_length_and_count_types_exist() {
 }
 
 /// Group with constant fields inside and outside messages.
-/// Note: PrimitiveConst and StrConst are simple type aliases;
+/// Note: `PrimitiveConst` and `StrConst` are simple type aliases;
 /// they don't generate standalone structs.
 #[test]
 fn group_with_constant_fields_types_exist() {

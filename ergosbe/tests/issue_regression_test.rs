@@ -26,7 +26,7 @@ fn workspace_root() -> PathBuf {
     if fb.join("Cargo.toml").exists() && fb.join("simple-binary-encoding").exists() {
         return fb;
     }
-    panic!("Cannot find workspace root from {:?}", cwd);
+    panic!("Cannot find workspace root from {cwd:?}");
 }
 
 fn issue_schema(num: &str) -> PathBuf {
