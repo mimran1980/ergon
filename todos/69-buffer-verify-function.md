@@ -26,13 +26,13 @@ Returns a structured `VerifyError` with the exact field/offset that failed.
 
 ## Acceptance criteria
 
-- [ ] `pub fn verify(buf: &[u8]) -> Result<(), VerifyError>` per message
-- [ ] Validates header size, block_length bounds, group dim headers,
+- [x] `pub fn verify(buf: &[u8]) -> Result<(), VerifyError>` per message
+- [x] Validates header size, block_length bounds, group dim headers,
   var-data length prefixes
-- [ ] Checks that no field extends past buffer end
-- [ ] `VerifyError` carries field name and offset context
-- [ ] Zero allocation — all checks are bounds reads
-- [ ] Tests: valid fixture passes verify, truncated fixture fails with
+- [x] Checks that no field extends past buffer end
+- [x] `VerifyError` carries field name and offset context
+- [x] Zero allocation — all checks are bounds reads
+- [x] Tests: valid fixture passes verify, truncated fixture fails with
   expected error field
 
 Ref: FlatBuffers `Verify*Buffer()` pattern, production feed validation.

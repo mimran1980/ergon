@@ -306,6 +306,30 @@ fn generate_sbe_rt_src() -> String {
 
             impl core::error::Error for EncodeError {}
 
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum VerifyError {
+                HeaderTooShort,
+                InvalidBlockLength { expected_min: usize, actual: usize },
+                GroupDimOutOfBounds { field: &'static str, offset: usize },
+                VarDataOutOfBounds { field: &'static str, offset: usize, length: u32 },
+                MessageTooShort { needed: usize, available: usize },
+            }
+
+            impl core::fmt::Display for VerifyError {
+                #[cold]
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    match self {
+                        Self::HeaderTooShort => write!(f, "buffer too short to contain message header"),
+                        Self::InvalidBlockLength { expected_min, actual } => write!(f, "invalid block length: expected at least {}, actual {}", expected_min, actual),
+                        Self::GroupDimOutOfBounds { field, offset } => write!(f, "group dimension header for '{}' out of bounds at offset {}", field, offset),
+                        Self::VarDataOutOfBounds { field, offset, length } => write!(f, "var-data for '{}' out of bounds at offset {} with length {}", field, offset, length),
+                        Self::MessageTooShort { needed, available } => write!(f, "message too short: needed {} bytes, {} available", needed, available),
+                    }
+                }
+            }
+
+            impl core::error::Error for VerifyError {}
+
             pub trait SbeMessage {
                 const TEMPLATE_ID: u16;
                 const BLOCK_LENGTH: usize;
@@ -2243,6 +2267,91 @@ fn generate_message_decoder(
              }}\n",
         total_tail, header_size, header_size
     ));
+
+    // ponytail: linear buffer walk, no nested-entry tree recursion
+    src.push_str(&format!(
+        "    #[inline]\n    pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {{\n\
+             if buf.len() < {} {{\n\
+                 return Err(sbe_rt::VerifyError::HeaderTooShort);\n\
+             }}\n\
+             let header_bytes: [u8; {}] = buf[..{}].try_into().unwrap();\n\
+             let header = {}(header_bytes);\n\
+             let block_length = header.{}() as usize;\n\
+             if block_length < Self::BLOCK_LENGTH {{\n\
+                 return Err(sbe_rt::VerifyError::InvalidBlockLength {{\n\
+                     expected_min: Self::BLOCK_LENGTH,\n\
+                     actual: block_length,\n\
+                 }});\n\
+             }}\n\
+             let body_end = {} + block_length;\n\
+             if body_end > buf.len() {{\n\
+                 return Err(sbe_rt::VerifyError::MessageTooShort {{\n\
+                     needed: body_end,\n\
+                     available: buf.len(),\n\
+                 }});\n\
+             }}\n\
+             let mut offset = body_end;\n",
+        header_size, header_size, header_size, header_pascal, header_bl, header_size
+    ));
+
+    for g in &msg.groups {
+        let (dim_name, dim_size, _, count_field) = get_dimension_info(elements, &g.dimension_type);
+        let g_snake = to_snake_case(&g.name);
+        let entry_bl = g.block_length;
+        src.push_str(&format!(
+            "    {{\n\
+                 if offset + {} > buf.len() {{\n\
+                     return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {{\n\
+                         field: \"{}\",\n\
+                         offset,\n\
+                     }});\n\
+                 }}\n\
+                 let bytes: [u8; {}] = buf[offset..offset + {}].try_into().unwrap();\n\
+                 let dim = {}(bytes);\n\
+                 let count = dim.{}() as usize;\n\
+                 let entries_end = offset + {} + count * {};\n\
+                 if entries_end > buf.len() {{\n\
+                     return Err(sbe_rt::VerifyError::MessageTooShort {{\n\
+                         needed: entries_end,\n\
+                         available: buf.len(),\n\
+                     }});\n\
+                 }}\n\
+                 offset = entries_end;\n\
+             }}\n",
+            dim_size, g_snake, dim_size, dim_size, dim_name, count_field, dim_size, entry_bl
+        ));
+    }
+
+    for vd in &msg.var_data {
+        let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
+        let vd_snake = to_snake_case(&vd.name);
+        src.push_str(&format!(
+            "    {{\n\
+                 if offset + {} > buf.len() {{\n\
+                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n\
+                         field: \"{}\",\n\
+                         offset,\n\
+                         length: 0,\n\
+                     }});\n\
+                 }}\n\
+                 let bytes: [u8; {}] = buf[offset..offset + {}].try_into().unwrap();\n\
+                 let var_header = {}(bytes);\n\
+                 let len = var_header.{}();\n\
+                 let data_end = offset + {} + len as usize;\n\
+                 if data_end > buf.len() {{\n\
+                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n\
+                         field: \"{}\",\n\
+                         offset,\n\
+                         length: len,\n\
+                     }});\n\
+                 }}\n\
+                 offset = data_end;\n\
+             }}\n",
+            prefix_size, vd_snake, prefix_size, prefix_size, type_pascal, len_field, prefix_size, vd_snake
+        ));
+    }
+
+    src.push_str("    Ok(())\n    }\n\n");
 
     src.push_str(&format!(
         "}}\n\n\

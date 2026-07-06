@@ -75,6 +75,49 @@ pub mod sbe_rt {
         }
     }
     impl core::error::Error for EncodeError {}
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum VerifyError {
+        HeaderTooShort,
+        InvalidBlockLength { expected_min: usize, actual: usize },
+        GroupDimOutOfBounds { field: &'static str, offset: usize },
+        VarDataOutOfBounds { field: &'static str, offset: usize, length: u32 },
+        MessageTooShort { needed: usize, available: usize },
+    }
+    impl core::fmt::Display for VerifyError {
+        #[cold]
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Self::HeaderTooShort => {
+                    write!(f, "buffer too short to contain message header")
+                }
+                Self::InvalidBlockLength { expected_min, actual } => {
+                    write!(
+                        f, "invalid block length: expected at least {}, actual {}",
+                        expected_min, actual
+                    )
+                }
+                Self::GroupDimOutOfBounds { field, offset } => {
+                    write!(
+                        f, "group dimension header for '{}' out of bounds at offset {}",
+                        field, offset
+                    )
+                }
+                Self::VarDataOutOfBounds { field, offset, length } => {
+                    write!(
+                        f, "var-data for '{}' out of bounds at offset {} with length {}",
+                        field, offset, length
+                    )
+                }
+                Self::MessageTooShort { needed, available } => {
+                    write!(
+                        f, "message too short: needed {} bytes, {} available", needed,
+                        available
+                    )
+                }
+            }
+        }
+    }
+    impl core::error::Error for VerifyError {}
     pub trait SbeMessage {
         const TEMPLATE_ID: u16;
         const BLOCK_LENGTH: usize;
@@ -1169,6 +1212,131 @@ impl<'a> CarDecoder<'a> {
         let len = self.encoded_length_with_header()?;
         let start = self.pos - 8;
         Ok(&self.buf[start..start + len])
+    }
+    #[inline]
+    pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
+        if buf.len() < 8 {
+            return Err(sbe_rt::VerifyError::HeaderTooShort);
+        }
+        let header_bytes: [u8; 8] = buf[..8].try_into().unwrap();
+        let header = MessageHeader(header_bytes);
+        let block_length = header.block_length() as usize;
+        if block_length < Self::BLOCK_LENGTH {
+            return Err(sbe_rt::VerifyError::InvalidBlockLength {
+                expected_min: Self::BLOCK_LENGTH,
+                actual: block_length,
+            });
+        }
+        let body_end = 8 + block_length;
+        if body_end > buf.len() {
+            return Err(sbe_rt::VerifyError::MessageTooShort {
+                needed: body_end,
+                available: buf.len(),
+            });
+        }
+        let mut offset = body_end;
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                    field: "fuel_figures",
+                    offset,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let dim = GroupSizeEncoding(bytes);
+            let count = dim.num_in_group() as usize;
+            let entries_end = offset + 4 + count * 6;
+            if entries_end > buf.len() {
+                return Err(sbe_rt::VerifyError::MessageTooShort {
+                    needed: entries_end,
+                    available: buf.len(),
+                });
+            }
+            offset = entries_end;
+        }
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                    field: "performance_figures",
+                    offset,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let dim = GroupSizeEncoding(bytes);
+            let count = dim.num_in_group() as usize;
+            let entries_end = offset + 4 + count * 1;
+            if entries_end > buf.len() {
+                return Err(sbe_rt::VerifyError::MessageTooShort {
+                    needed: entries_end,
+                    available: buf.len(),
+                });
+            }
+            offset = entries_end;
+        }
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "manufacturer",
+                    offset,
+                    length: 0,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let var_header = VarStringEncoding(bytes);
+            let len = var_header.length();
+            let data_end = offset + 4 + len as usize;
+            if data_end > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "manufacturer",
+                    offset,
+                    length: len,
+                });
+            }
+            offset = data_end;
+        }
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "model",
+                    offset,
+                    length: 0,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let var_header = VarStringEncoding(bytes);
+            let len = var_header.length();
+            let data_end = offset + 4 + len as usize;
+            if data_end > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "model",
+                    offset,
+                    length: len,
+                });
+            }
+            offset = data_end;
+        }
+        {
+            if offset + 4 > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "activation_code",
+                    offset,
+                    length: 0,
+                });
+            }
+            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let var_header = VarAsciiEncoding(bytes);
+            let len = var_header.length();
+            let data_end = offset + 4 + len as usize;
+            if data_end > buf.len() {
+                return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                    field: "activation_code",
+                    offset,
+                    length: len,
+                });
+            }
+            offset = data_end;
+        }
+        Ok(())
     }
 }
 impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
