@@ -12,7 +12,6 @@
 mod common;
 use common::{Paths, generate, patch_source};
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 // ── Helper: compile generated code and run proptest in a temp crate ─────
