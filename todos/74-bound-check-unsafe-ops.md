@@ -49,9 +49,11 @@ Use a helper macro or function to keep the templates DRY.
 - [ ] `copy_from_slice` → `ptr::copy_nonoverlapping` when feature on
 - [ ] Array indexing → `get_unchecked` when feature on
 - [ ] All unsafe gated behind `#[cfg(feature = "bound-check-disabled")]`
-- [ ] Safe defaults unchanged when feature off
+- [x] Safe defaults unchanged when feature off
 - [ ] Benchmarks: measure speed difference for both paths
-- [ ] Tests pass with and without feature
+- [x] Tests pass with and without feature
 - [ ] Undefined Behavior & Memory Safety Audit: Run the test suite under Miri (`cargo miri test`) with the `bound-check-disabled` feature enabled to verify that no pointer arithmetic, slicing, or raw pointer casts violate Rust's memory alignment, dereferenceability, or aliasing rules.
 
 Ref: user request — bound-check-disabled should go all-in on unsafe for HFT.
+
+Audit note (2026-07-06): Items 4 and 6 corrected from [ ] to [x] — safe defaults confirmed unchanged (codegen.rs:1820-1844 for header decode), tests pass both with and without feature (baseline_test.rs:867-868). Items 1-2 (copy_nonoverlapping, get_unchecked) NOT implemented. Pre-existing header decode uses ptr::read_unaligned behind #[cfg(feature = "bound-check-disabled")] (codegen.rs:1828-1835, golden:733-748).

@@ -20,3 +20,5 @@ Ref: gap analysis (todo 51), DECISIONS.md §12.
 
 ## Verification / Unit Testing
 - [x] Create a test verifying that `#[cold]` functions are generated on the error paths in the output.
+
+Audit note (2026-07-06): Verified. #[cold] annotated on DecodeError, EncodeError, VerifyError Display impls in codegen.rs lines 297, 320, 349. Confirmed in golden car_example.rs lines 22, 63, 102. Baseline test (lines 494-503) confirms 3+ occurrences.

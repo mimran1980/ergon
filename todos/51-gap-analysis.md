@@ -312,3 +312,5 @@ Produced by: Claude Code audit of todos/ against design/DECISIONS.md.
 
 ## Verification / Unit Testing
 - [ ] Ensure all identified gaps have corresponding todo files with explicit tests.
+
+Audit note (2026-07-06): Analysis document verified. Gaps C1(cold)->54, C2(expect)->55, C3(const assertions)->56, A1(NULL/MIN/MAX)->52 all tracked. Unaddressed gaps from audit: A2 (raw_ accessors in groups), C4 (FieldMeta const module), C5 (SEMANTIC_TYPE), C6 (SCHEMA_HASH), G1 (prettyplease unwrap_or).

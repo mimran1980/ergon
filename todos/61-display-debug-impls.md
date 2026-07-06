@@ -31,3 +31,5 @@ Ref: common SBE complaint #10 — "no machine-parseable debug format."
 
 ## Verification / Unit Testing
 - [ ] Create a unit test `test_display_debug_output` verifying that the generated `Display` output matches the expected format, skips absent optionals, and does not allocate.
+
+Audit note (2026-07-06): Verified. Display impl on decoders (codegen.rs:2511, golden car_example.rs:1461). Enum variants shown by name. Absent optionals omitted. No allocation (write! directly to fmt::Formatter). Existing test at baseline_test.rs:205-228 (decoder_display function) verifies output with substring assertions. Composite/set Display deferred items correctly unchecked.

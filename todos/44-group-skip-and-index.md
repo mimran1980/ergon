@@ -96,3 +96,5 @@ asks.rewind();  // re-read if needed
 
 ## Verification / Unit Testing
 - [ ] Create unit tests `test_group_skip_and_index` verifying `skip_n()`, `nth()`, `rewind()`, and `as_chunks()` navigate groups correctly and return errors for out of bounds access.
+
+Audit note (2026-07-06): Verified. `skip_n()`, `nth()` (O(1) stride), and `rewind()` confirmed in codegen.rs lines 2638-2683 and golden car_example.rs lines 1553-1589. `skip_all()`, `_unchecked` variants, and dedicated unit tests remain unimplemented.

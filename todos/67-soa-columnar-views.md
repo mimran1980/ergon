@@ -56,3 +56,5 @@ Generated `_as_slice()` methods are:
 
 ## Verification / Unit Testing
 - [ ] Create a unit test `test_soa_columnar_views` verifying that calling `{field}_as_slice()` on repeating groups returns the correct zero-copy slice of fields.
+
+Audit note (2026-07-06): Verified. Group-level _as_slice() codegen at codegen.rs:2724-2741 uses from_raw_parts with bounds check. WARNING: codegen path is NEVER exercised by any test schema (no single-field fixed-size groups exist in test schemas). The only _as_slice in golden car_example.rs are var-data convenience aliases (manufacturer_as_slice, model_as_slice, activation_code_as_slice). Deferred items correctly unchecked.

@@ -24,4 +24,6 @@ Ref: gap analysis (todo 51), DECISIONS.md §12 "const assertions in generated co
 
 
 ## Verification / Unit Testing
-- [x] Create a compile-fail test verifying that changing the expected sizes or block lengths of composites in the schema causes a compile error via the generated const assertions.
+- [ ] Create a compile-fail test verifying that changing the expected sizes or block lengths of composites in the schema causes a compile error via the generated const assertions (baseline test at line 510 is a string-pattern check, not a true compile-fail test).
+
+Audit note (2026-07-06): Verified. HEADER_TEMPLATE.len() assertion in codegen.rs:3454 (golden:2241). GROUP_DIM_TEMPLATE.len() in codegen.rs:3861 (golden:2609/2704/2796). ENCODED_LENGTH assertion via const _ENCODED_LEN at codegen.rs:1795/3409. BLOCK_LENGTH == N assertion NOT done (uses named consts, not anonymous const _:). 'compile-fail test' checkbox demoted: only string-pattern check exists.

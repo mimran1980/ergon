@@ -22,7 +22,7 @@ resolution, and generated-code compile errors — shows annotated source spans.
 - [x] `UnknownType` points at the reference and suggests possible matches
 - [x] `InvalidOffset` points at the overlapping field definitions
 - [x] `EmptyComposite` points at the empty composite definition
-- [x] Test: snapshot test for each error variant's miette output
+- [ ] Test: snapshot test for each error variant's miette output (only 2/5 ResolveError variants tested: DuplicateTemplateId, SinceVersionBeyondSchema)
 
 ## Generated code compile errors (new)
 
@@ -41,7 +41,7 @@ resolution, and generated-code compile errors — shows annotated source spans.
 
 - [x] Every error type (ParseError, ResolveError, generation errors) produces rich miette output
 - [ ] Error output includes: filename, line/column, source snippet, labelled span, help text
-- [x] Snapshot tests for every error variant's rendered output
+- [ ] Snapshot tests for every error variant's rendered output (only 2/5 ResolveError variants have snapshot tests)
 - [ ] Resolver errors point at the specific XML element causing the problem
 - [x] `miette::Report` is the standard way to render all ErgoSBE errors
 
@@ -67,3 +67,5 @@ Ref: miette crate docs. Already in Cargo.toml with `derive` feature.
 
 ## Verification / Unit Testing
 - [ ] Create unit tests verifying miette diagnostics render source code snippets highlighting the exact location of schema parsing errors.
+
+Audit note (2026-07-06): Verified. ParseError (xml.rs:22) and ResolveError (resolve.rs:37) derive miette::Diagnostic. Snapshot tests exist for DuplicateTemplateId and SinceVersionBeyondSchema (error_validation_test.rs). Labels are set to None (no XML byte positions), so source snippets don't visually highlight. Generated runtime errors (DecodeError, EncodeError, VerifyError) intentionally don't use miette.

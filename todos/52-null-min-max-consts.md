@@ -18,3 +18,5 @@ Ref: gap analysis (todo 51), DECISIONS.md §2.
 
 ## Verification / Unit Testing
 - [ ] Create unit tests `test_null_min_max_constants` verifying that `*_NULL`, `*_MIN`, and `*_MAX` constants are generated for every scalar field and match the SBE defaults or XML overrides.
+
+Audit note (2026-07-06): Verified. *_NULL, *_MIN, *_MAX constants confirmed in codegen.rs lines 519-564 (emit_field_consts) and golden car_example.rs (SERIAL_NUMBER_NULL/MIN/MAX, MODEL_YEAR_NULL/MIN/MAX, SPEED_NULL/MIN/MAX, etc.). Enum fields get *_NULL only (using max_encoding_value). Composites and Sets get nothing. Baseline test unit_attribute_types_exist at schema_edge_cases_test.rs:327-348.

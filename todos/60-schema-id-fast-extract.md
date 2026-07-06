@@ -29,3 +29,5 @@ Ref: common SBE complaint #8 — "can't parse only schemaId without full header.
 
 ## Verification / Unit Testing
 - [x] Create a unit test `test_schema_id_fast_extract` verifying that `schema_id_from_header` correctly extracts the schema ID from header bytes for any header layout without allocating.
+
+Audit note (2026-07-06): Verified. schema_id_from_header generated in codegen.rs:4059 (generate_schema_id_from_header). Confirmed in golden car_example.rs:2945. Baseline test at lines 411-421 tests it. Not yet integrated into AnyMessage::decode_frame (correctly unchecked as deferred).
