@@ -608,6 +608,7 @@ impl<'a> CarDecoder<'a> {
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
+    /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`
     pub const MAX_ENCODED_LENGTH: usize = 3221225552;
     pub const fn wrap(
         buf: &'a [u8],
@@ -1639,6 +1640,7 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
+    /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`
     pub const MAX_ENCODED_LENGTH: usize = 3221225552;
     pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {

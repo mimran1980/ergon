@@ -1458,15 +1458,14 @@ fn generate_message_decoder(
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
-                 pub const ENCODED_LENGTH: usize = {};\n\
-                 pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
+                 /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
+                 pub const ENCODED_LENGTH: usize = {};\n\n",
             name,
             schema_id,
             schema_version,
             msg.id,
             block_length,
             encoded_length,
-            max_encoded_length
         ));
     } else {
         src.push_str(&format!(
@@ -1475,6 +1474,7 @@ fn generate_message_decoder(
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
+                 /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`\n\
                  pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
             name, schema_id, schema_version, msg.id, block_length, max_encoded_length
         ));
@@ -2651,9 +2651,9 @@ fn generate_message_encoder(
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
-                 pub const ENCODED_LENGTH: usize = {};\n\
-                 pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
-            schema_id, schema_version, msg.id, block_length, encoded_length, max_encoded_length
+                 /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
+                 pub const ENCODED_LENGTH: usize = {};\n\n",
+            schema_id, schema_version, msg.id, block_length, encoded_length
         ));
     } else {
         src.push_str(&format!(
@@ -2661,6 +2661,7 @@ fn generate_message_encoder(
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
                  pub const BLOCK_LENGTH: usize = {};\n\
+                 /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`\n\
                  pub const MAX_ENCODED_LENGTH: usize = {};\n\n",
             schema_id, schema_version, msg.id, block_length, max_encoded_length
         ));
