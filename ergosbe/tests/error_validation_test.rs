@@ -1,6 +1,8 @@
 //! Error validation tests: assert that invalid SBE schemas produce specific
 //! [`ParseError`] / [`ResolveError`] variants rather than panicking or
 //! silently succeeding.
+//!
+//! Also validates that errors render with miette source context.
 
 use std::path::PathBuf;
 
@@ -8,8 +10,11 @@ use std::path::PathBuf;
 fn workspace_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap();
     loop {
-        if dir.join("Cargo.toml").exists() && dir.join("ergosbe").exists() {
-            return dir;
+        if dir.join("Cargo.toml").exists() {
+            // Check both layouts: flat (ergosbe/) and crates/ (crates/ergosbe/)
+            if dir.join("ergosbe").exists() || dir.join("crates/ergosbe").exists() {
+                return dir;
+            }
         }
         assert!(
             dir.pop(),
@@ -19,9 +24,17 @@ fn workspace_root() -> PathBuf {
     }
 }
 
+fn crate_root() -> PathBuf {
+    let ws = workspace_root();
+    if ws.join("crates/ergosbe").exists() {
+        ws.join("crates/ergosbe")
+    } else {
+        ws.join("ergosbe")
+    }
+}
+
 fn fixture_path(name: &str) -> PathBuf {
-    workspace_root()
-        .join("ergosbe")
+    crate_root()
         .join("tests")
         .join("fixtures")
         .join("schemas")
@@ -80,8 +93,8 @@ fn duplicate_message_id_returns_duplicate_template_id() {
     let path = fixture_path("duplicate-message-id.xml");
     let err = ergosbe::parse_file(&path).unwrap_err();
     assert!(
-        matches!(&err, ergosbe::ParseError::Resolve(e)
-            if matches!(e, ergosbe::ResolveError::DuplicateTemplateId { id: 1, name } if name == "AnotherMessageWithId1")),
+        matches!(&err, ergosbe::ParseError::Resolve { error, .. }
+            if matches!(error.as_ref(), ergosbe::ResolveError::DuplicateTemplateId { id: 1, name, .. } if name == "AnotherMessageWithId1")),
         "expected Resolve(DuplicateTemplateId), got {err:?}"
     );
     let msg = format!("{err}");
@@ -95,6 +108,44 @@ fn duplicate_message_id_returns_duplicate_template_id() {
     );
 }
 
+// ── duplicate-message-id miette rendering ─────────────────────────────────────
+//
+// Verify that a ResolveError rendered through miette includes source context.
+
+#[test]
+fn duplicate_message_id_renders_miette_diagnostic() {
+    let path = fixture_path("duplicate-message-id.xml");
+    let err = ergosbe::parse_file(&path).unwrap_err();
+
+    // Verify the error carries source_code via the Diagnostic trait.
+    use miette::Diagnostic;
+    assert!(
+        err.source_code().is_some(),
+        "expected ParseError to carry source_code, got None"
+    );
+
+    let report = miette::Report::from(err);
+    let rendered = format!("{report:?}");
+
+    // The rendered output should contain the error message.
+    assert!(
+        rendered.contains("duplicate template id"),
+        "rendered output should contain the error message, got:\n{rendered}"
+    );
+
+    // It should name the duplicate message.
+    assert!(
+        rendered.contains("AnotherMessageWithId1"),
+        "rendered output should name the duplicate message, got:\n{rendered}"
+    );
+
+    // The error code should be present in the rendered output.
+    assert!(
+        rendered.contains("ergosbe::schema_parse::resolve"),
+        "rendered output should include error code, got:\n{rendered}"
+    );
+}
+
 // ── version-gap.xml ────────────────────────────────────────────────────────
 //
 // A <field> with sinceVersion=5 when the schema version is 1.
@@ -105,8 +156,8 @@ fn version_gap_returns_since_version_beyond_schema() {
     let path = fixture_path("version-gap.xml");
     let err = ergosbe::parse_file(&path).unwrap_err();
     assert!(
-        matches!(&err, ergosbe::ParseError::Resolve(e)
-            if matches!(e, ergosbe::ResolveError::SinceVersionBeyondSchema { version: 5, schema_version: 1, .. })),
+        matches!(&err, ergosbe::ParseError::Resolve { error, .. }
+            if matches!(error.as_ref(), ergosbe::ResolveError::SinceVersionBeyondSchema { version: 5, schema_version: 1, .. })),
         "expected Resolve(SinceVersionBeyondSchema), got {err:?}"
     );
     let msg = format!("{err}");
@@ -117,6 +168,37 @@ fn version_gap_returns_since_version_beyond_schema() {
     assert!(
         msg.contains("schema version 1"),
         "error message should mention schema version 1: {msg}"
+    );
+}
+
+// ── version-gap miette rendering ──────────────────────────────────────────────
+//
+// Verify that a SinceVersionBeyondSchema error rendered through miette includes
+// source context.
+
+#[test]
+fn version_gap_renders_miette_diagnostic() {
+    let path = fixture_path("version-gap.xml");
+    let err = ergosbe::parse_file(&path).unwrap_err();
+
+    use miette::Diagnostic;
+    assert!(
+        err.source_code().is_some(),
+        "expected ParseError to carry source_code, got None"
+    );
+
+    let report = miette::Report::from(err);
+    let rendered = format!("{report:?}");
+
+    assert!(
+        rendered.contains("schema version 1"),
+        "rendered output should mention schema version, got:\n{rendered}"
+    );
+
+    // The error code should be present in the rendered output.
+    assert!(
+        rendered.contains("ergosbe::schema_parse::resolve"),
+        "rendered output should include error code, got:\n{rendered}"
     );
 }
 

@@ -60,9 +60,19 @@ pub enum ParseError {
         span: Option<miette::SourceSpan>,
     },
     /// A schema resolution or validation error occurred.
-    #[error("resolution error: {0}")]
+    #[error("resolution error: {error}")]
     #[diagnostic(code(ergosbe::schema_parse::resolve))]
-    Resolve(#[from] crate::resolve::ResolveError),
+    Resolve {
+        /// The source document, for span rendering.
+        #[source_code]
+        source_code: miette::NamedSource<String>,
+        /// The offending location (for miette label).
+        #[label("resolution error")]
+        span: Option<miette::SourceSpan>,
+        /// The underlying resolution error.
+        #[source]
+        error: Box<crate::resolve::ResolveError>,
+    },
     /// An include (xi:include) resolution error occurred.
     #[error("include error: {message}")]
     #[diagnostic(code(ergosbe::schema_parse::include))]
@@ -109,6 +119,19 @@ impl ParseError {
                 source_code,
                 span,
             },
+        }
+    }
+}
+
+impl From<crate::resolve::ResolveError> for ParseError {
+    fn from(mut e: crate::resolve::ResolveError) -> Self {
+        let source_code = e
+            .take_source_code()
+            .unwrap_or_else(|| miette::NamedSource::new("schema.xml", String::new()));
+        Self::Resolve {
+            source_code,
+            span: None,
+            error: Box::new(e),
         }
     }
 }
@@ -352,7 +375,7 @@ fn parse_with_context(
     }
     let mut ir =
         parse_schema(root, base_dir, seen).map_err(|fault| ParseError::from_fault(fault, input))?;
-    crate::resolve::resolve_schema(&mut ir)?;
+    crate::resolve::resolve_schema(&mut ir, Some(input))?;
     Ok(ir)
 }
 
@@ -1149,7 +1172,7 @@ mod tests {
             header_type: "messageHeader".to_string(),
             tokens: expected,
         };
-        crate::resolve::resolve_schema(&mut expected_ir).unwrap();
+        crate::resolve::resolve_schema(&mut expected_ir, None).unwrap();
 
         assert_eq!(ir.tokens, expected_ir.tokens);
     }

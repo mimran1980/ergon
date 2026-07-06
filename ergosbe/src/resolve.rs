@@ -29,36 +29,78 @@
 use crate::ir::{Ir, PrimitiveType, Signal, Token};
 
 /// Errors raised during schema resolution/validation.
-#[derive(Debug, thiserror::Error)]
+///
+/// Each variant carries an optional [`miette::NamedSource`] for source-code
+/// rendering in diagnostics. When the resolver is invoked from the XML
+/// parser the source text is attached; direct callers may leave it as
+/// `None`.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum ResolveError {
     /// Two messages share the same template ID.
     #[error("duplicate template id {id} for message {name}")]
+    #[diagnostic(code(ergosbe::resolve::duplicate_template_id))]
+    #[diagnostic(help("each message must have a unique template id"))]
     DuplicateTemplateId {
         /// The duplicate ID.
         id: u16,
         /// Message name.
         name: String,
+        /// Source document for miette span rendering.
+        #[source_code]
+        source_code: Option<miette::NamedSource<String>>,
+        /// Span pointing at the first definition.
+        #[label("first defined here")]
+        first_label: Option<miette::SourceSpan>,
+        /// Span pointing at the duplicate definition.
+        #[label("duplicate definition")]
+        second_label: Option<miette::SourceSpan>,
     },
     /// A referenced type was not found in the registry.
     #[error("unknown type reference {name}")]
+    #[diagnostic(code(ergosbe::resolve::unknown_type))]
+    #[diagnostic(help("ensure the type is defined in the schema or an include"))]
     UnknownType {
         /// Type name.
         name: String,
+        /// Source document for miette span rendering.
+        #[source_code]
+        source_code: Option<miette::NamedSource<String>>,
+        /// Span pointing at the reference.
+        #[label("unknown type")]
+        span: Option<miette::SourceSpan>,
     },
     /// Field offsets are overlapping or unaligned.
     #[error("overlapping offsets or invalid alignment at offset {offset}")]
+    #[diagnostic(code(ergosbe::resolve::invalid_offset))]
+    #[diagnostic(help("check explicit offset attributes for clashes"))]
     InvalidOffset {
         /// The invalid offset.
         offset: usize,
+        /// Source document for miette span rendering.
+        #[source_code]
+        source_code: Option<miette::NamedSource<String>>,
+        /// Span pointing at the overlap.
+        #[label("overlap here")]
+        span: Option<miette::SourceSpan>,
     },
     /// A composite type definition is empty.
     #[error("composite {name} has no fields")]
+    #[diagnostic(code(ergosbe::resolve::empty_composite))]
+    #[diagnostic(help("add at least one <type> member to the composite"))]
     EmptyComposite {
         /// Composite name.
         name: String,
+        /// Source document for miette span rendering.
+        #[source_code]
+        source_code: Option<miette::NamedSource<String>>,
+        /// Span pointing at the empty composite.
+        #[label("empty composite")]
+        span: Option<miette::SourceSpan>,
     },
     /// A field or message has a sinceVersion greater than the schema version.
     #[error("sinceVersion {version} exceeds schema version {schema_version} for {name}")]
+    #[diagnostic(code(ergosbe::resolve::since_version_beyond))]
+    #[diagnostic(help("the sinceVersion must be <= the schema version"))]
     SinceVersionBeyondSchema {
         /// The sinceVersion value found.
         version: u16,
@@ -66,14 +108,40 @@ pub enum ResolveError {
         schema_version: u16,
         /// The token name.
         name: String,
+        /// Source document for miette span rendering.
+        #[source_code]
+        source_code: Option<miette::NamedSource<String>>,
+        /// Span pointing at the token.
+        #[label("sinceVersion too high")]
+        span: Option<miette::SourceSpan>,
     },
+}
+
+impl ResolveError {
+    /// Take the source code field, leaving `None` in its place.
+    /// Used when wrapping this error in [`ParseError::Resolve`] to
+    /// transfer the source code to the outer error's `#[source_code]`.
+    pub(crate) fn take_source_code(&mut self) -> Option<miette::NamedSource<String>> {
+        match self {
+            ResolveError::DuplicateTemplateId { source_code, .. } => source_code.take(),
+            ResolveError::UnknownType { source_code, .. } => source_code.take(),
+            ResolveError::InvalidOffset { source_code, .. } => source_code.take(),
+            ResolveError::EmptyComposite { source_code, .. } => source_code.take(),
+            ResolveError::SinceVersionBeyondSchema { source_code, .. } => source_code.take(),
+        }
+    }
 }
 
 /// Run the reference resolution pass on a schema IR.
 ///
+/// `source` is an optional reference to the raw XML text; when provided it
+/// is attached to any [`ResolveError`] for miette source-code rendering.
+///
 /// Modifies the IR in-place to fill resolved offsets, block lengths,
 /// and default null/min/max values.
-pub fn resolve_schema(ir: &mut Ir) -> Result<(), ResolveError> {
+pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveError> {
+    let src = source.map(|s| miette::NamedSource::new("schema.xml", s.to_owned()));
+
     // 1. Validate no duplicate template IDs.
     {
         let mut seen_ids: std::collections::HashMap<u16, &str> = std::collections::HashMap::new();
@@ -84,6 +152,9 @@ pub fn resolve_schema(ir: &mut Ir) -> Result<(), ResolveError> {
                         return Err(ResolveError::DuplicateTemplateId {
                             id,
                             name: token.name.clone(),
+                            source_code: src.clone(),
+                            first_label: None,
+                            second_label: None,
                         });
                     }
                 }
@@ -99,6 +170,8 @@ pub fn resolve_schema(ir: &mut Ir) -> Result<(), ResolveError> {
                 version: sv,
                 schema_version: ir.version,
                 name: token.name.clone(),
+                source_code: src.clone(),
+                span: None,
             });
         }
     }
@@ -125,13 +198,13 @@ pub fn resolve_schema(ir: &mut Ir) -> Result<(), ResolveError> {
             Signal::BeginComposite => {
                 let end_idx =
                     find_matching_end(&ir.tokens, i, Signal::BeginComposite, Signal::EndComposite);
-                resolve_composite_offsets(&mut ir.tokens[i..=end_idx])?;
+                resolve_composite_offsets(&mut ir.tokens[i..=end_idx], &src)?;
                 i = end_idx + 1;
             }
             Signal::BeginMessage => {
                 let end_idx =
                     find_matching_end(&ir.tokens, i, Signal::BeginMessage, Signal::EndMessage);
-                resolve_message_offsets(&mut ir.tokens[i..=end_idx])?;
+                resolve_message_offsets(&mut ir.tokens[i..=end_idx], &src)?;
                 i = end_idx + 1;
             }
             _ => {
@@ -224,7 +297,10 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
     }
 }
 
-fn resolve_composite_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
+fn resolve_composite_offsets(
+    tokens: &mut [Token],
+    _src: &Option<miette::NamedSource<String>>,
+) -> Result<(), ResolveError> {
     let mut current_offset = 0;
     let mut i = 1; // skip BeginComposite
     let end_limit = tokens.len() - 1; // skip EndComposite
@@ -253,7 +329,10 @@ fn resolve_composite_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
     Ok(())
 }
 
-fn resolve_message_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
+fn resolve_message_offsets(
+    tokens: &mut [Token],
+    src: &Option<miette::NamedSource<String>>,
+) -> Result<(), ResolveError> {
     let mut current_offset = 0;
     let mut i = 1; // skip BeginMessage
     let end_limit = tokens.len() - 1; // skip EndMessage
@@ -265,12 +344,12 @@ fn resolve_message_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
             // Resolve nested group/var-data offsets starting at 0
             if tokens[i].signal == Signal::BeginGroup {
                 let end_idx = find_matching_end(tokens, i, Signal::BeginGroup, Signal::EndGroup);
-                resolve_group_offsets(&mut tokens[i..=end_idx])?;
+                resolve_group_offsets(&mut tokens[i..=end_idx], src)?;
                 i = end_idx + 1;
             } else {
                 let end_idx =
                     find_matching_end(tokens, i, Signal::BeginVarData, Signal::EndVarData);
-                resolve_vardata_offsets(&mut tokens[i..=end_idx])?;
+                resolve_vardata_offsets(&mut tokens[i..=end_idx], src)?;
                 i = end_idx + 1;
             }
             continue;
@@ -296,14 +375,17 @@ fn resolve_message_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
     Ok(())
 }
 
-fn resolve_group_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
+fn resolve_group_offsets(
+    tokens: &mut [Token],
+    src: &Option<miette::NamedSource<String>>,
+) -> Result<(), ResolveError> {
     // A group has BeginGroup, followed by dimensionType composite tokens,
     // followed by group entry tokens, followed by EndGroup.
     // First, resolve the dimensionType composite offsets:
     let mut i = 1;
     if tokens[i].signal == Signal::BeginComposite {
         let dim_end = find_matching_end(tokens, i, Signal::BeginComposite, Signal::EndComposite);
-        resolve_composite_offsets(&mut tokens[i..=dim_end])?;
+        resolve_composite_offsets(&mut tokens[i..=dim_end], src)?;
         i = dim_end + 1;
     }
 
@@ -314,12 +396,12 @@ fn resolve_group_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
         if tokens[i].signal == Signal::BeginGroup || tokens[i].signal == Signal::BeginVarData {
             if tokens[i].signal == Signal::BeginGroup {
                 let end_idx = find_matching_end(tokens, i, Signal::BeginGroup, Signal::EndGroup);
-                resolve_group_offsets(&mut tokens[i..=end_idx])?;
+                resolve_group_offsets(&mut tokens[i..=end_idx], src)?;
                 i = end_idx + 1;
             } else {
                 let end_idx =
                     find_matching_end(tokens, i, Signal::BeginVarData, Signal::EndVarData);
-                resolve_vardata_offsets(&mut tokens[i..=end_idx])?;
+                resolve_vardata_offsets(&mut tokens[i..=end_idx], src)?;
                 i = end_idx + 1;
             }
             continue;
@@ -342,13 +424,16 @@ fn resolve_group_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
     Ok(())
 }
 
-fn resolve_vardata_offsets(tokens: &mut [Token]) -> Result<(), ResolveError> {
+fn resolve_vardata_offsets(
+    tokens: &mut [Token],
+    src: &Option<miette::NamedSource<String>>,
+) -> Result<(), ResolveError> {
     // A var-data field has BeginVarData, followed by type composite tokens,
     // followed by EndVarData.
     let i = 1;
     if tokens[i].signal == Signal::BeginComposite {
         let type_end = find_matching_end(tokens, i, Signal::BeginComposite, Signal::EndComposite);
-        resolve_composite_offsets(&mut tokens[i..=type_end])?;
+        resolve_composite_offsets(&mut tokens[i..=type_end], src)?;
     }
     Ok(())
 }
