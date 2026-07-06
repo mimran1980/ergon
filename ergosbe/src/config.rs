@@ -19,6 +19,11 @@ pub struct GenerationConfig {
     pub compatibility: CompatibilityMode,
     /// Whether generated code should include bounds checks in public accessors.
     pub checked_accessors: bool,
+    /// Name of a sibling module that provides shared types (enums, sets, composites).
+    /// When set, `generate_multi` treats the first schema as the shared source and
+    /// subsequent schemas emit `pub use super::<shared_module>::*;` instead of
+    /// regenerating those types.
+    pub shared_module: Option<String>,
 }
 
 impl GenerationConfig {
@@ -29,6 +34,7 @@ impl GenerationConfig {
             module_name: module_name.into(),
             compatibility: CompatibilityMode::Strict,
             checked_accessors: true,
+            shared_module: None,
         }
     }
 }
