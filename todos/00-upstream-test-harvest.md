@@ -36,11 +36,11 @@ against the same expectations.
   - [x] `car_example_extension_data.sbe` — extension variant for versioning tests
 - [x] Port Rust integration tests to use ErgoSBE-generated code instead of
       upstream sbe-tool Rust output, matching assertions field-for-field
-- [ ] Port key Java test cases (encode/decode round-trip, null semantics,
+- [x] Port key Java test cases (encode/decode round-trip, null semantics,
       version gating, schema extension) to Rust against ErgoSBE output
-- [ ] Extract XML schemas with edge cases (composite elements, group
+- [x] Extract XML schemas with edge cases (composite elements, group
       dimensions, since-version) and add parser/resolver tests for them
-- [ ] Add upstream Rust benchmarks as criterion benchmarks in ErgoSBE
+- [x] Add upstream Rust benchmarks as criterion benchmarks in ErgoSBE
 - [x] Review upstream Rust generator (`RustGenerator.java`, `RustUtil.java`)
       for design decisions, naming conventions, and known traps
 - [x] Review upstream IR design (`Ir.java`, `Token.java`, `Signal.java`) for

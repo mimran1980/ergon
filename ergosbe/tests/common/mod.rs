@@ -23,7 +23,9 @@ impl Paths {
     fn workspace_root() -> PathBuf {
         let cwd = std::env::current_dir().unwrap();
         for ancestor in cwd.ancestors() {
-            if ancestor.join("Cargo.toml").exists() && ancestor.join("ergosbe").exists() {
+            if ancestor.join("Cargo.toml").exists()
+                && (ancestor.join("ergosbe").exists() || ancestor.join("crates/ergosbe").exists())
+            {
                 return ancestor.to_path_buf();
             }
         }
@@ -33,6 +35,15 @@ impl Paths {
             return fallback;
         }
         panic!("Cannot find workspace root from {:?}", cwd);
+    }
+
+    fn ergosbe_dir() -> PathBuf {
+        let root = Self::workspace_root();
+        if root.join("ergosbe").exists() {
+            root.join("ergosbe")
+        } else {
+            root.join("crates/ergosbe")
+        }
     }
 
     fn sample_resources(sub: &str) -> PathBuf {
@@ -86,19 +97,22 @@ impl Paths {
     }
 
     pub fn baseline_binary() -> PathBuf {
-        Self::workspace_root()
-            .join("ergosbe")
+        Self::ergosbe_dir()
             .join("tests")
             .join("fixtures")
             .join("car_example_baseline_data.sbe")
     }
 
     pub fn extension_binary() -> PathBuf {
-        Self::workspace_root()
-            .join("ergosbe")
+        Self::ergosbe_dir()
             .join("tests")
             .join("fixtures")
             .join("car_example_extension_data.sbe")
+    }
+
+    /// Generic path to a resource in `sbe-tool/src/test/resources/`.
+    pub fn sbe_tool_test_resource(name: &str) -> PathBuf {
+        Self::sbe_tool_test().join(name)
     }
 }
 

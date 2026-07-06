@@ -2,21 +2,16 @@
 
 #![allow(missing_docs)]
 
+mod common;
+use common::Paths;
 use ergosbe::{GenerationConfig, Generator, Schema, parse};
 use std::fs;
 
 #[test]
 fn test_generate_car_example() {
-    let xml_path =
-        if fs::metadata("simple-binary-encoding/sbe-samples/src/main/resources/example-schema.xml")
-            .is_ok()
-        {
-            "simple-binary-encoding/sbe-samples/src/main/resources/example-schema.xml"
-        } else {
-            "../simple-binary-encoding/sbe-samples/src/main/resources/example-schema.xml"
-        };
+    let xml_path = Paths::example_schema();
 
-    let xml_content = fs::read_to_string(xml_path).expect("Failed to read example schema");
+    let xml_content = fs::read_to_string(&xml_path).expect("Failed to read example schema");
 
     let ir = parse(&xml_content).expect("Failed to parse SBE schema");
     let schema = Schema::from_ir(ir);
