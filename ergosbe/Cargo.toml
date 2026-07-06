@@ -15,6 +15,10 @@ authors.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+bound-check-disabled = []
+
 [dependencies]
 roxmltree = "0.20"
 thiserror = "2"
