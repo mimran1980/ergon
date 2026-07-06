@@ -781,6 +781,9 @@ impl<'a> CarDecoder<'a> {
     pub const fn raw_serial_number(&self) -> u64 {
         #[allow(unused_unsafe)] unsafe { self.serial_number_unchecked() }
     }
+    pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
+    pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
+    pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
     #[inline]
     pub const fn model_year(&self) -> Result<u16, sbe_rt::DecodeError> {
         let offset = self.pos + 8;
@@ -813,6 +816,9 @@ impl<'a> CarDecoder<'a> {
     pub const fn raw_model_year(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.model_year_unchecked() }
     }
+    pub const MODEL_YEAR_NULL: u16 = 65535_u16;
+    pub const MODEL_YEAR_MIN: u16 = 0_u16;
+    pub const MODEL_YEAR_MAX: u16 = 65534_u16;
     #[inline]
     pub const fn available(&self) -> Result<BooleanType, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 11 > self.acting_block_length {
@@ -844,6 +850,7 @@ impl<'a> CarDecoder<'a> {
             });
         BooleanType(u8::from_le_bytes(bytes))
     }
+    pub const AVAILABLE_NULL: BooleanType = BooleanType(255_u8);
     #[inline]
     pub const fn code(&self) -> Result<Model, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 12 > self.acting_block_length {
@@ -875,6 +882,7 @@ impl<'a> CarDecoder<'a> {
             });
         Model(u8::from_le_bytes(bytes))
     }
+    pub const CODE_NULL: Model = Model(255_u8);
     #[inline]
     pub const fn some_numbers(&self) -> Result<[u32; 4], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 28 > self.acting_block_length {
@@ -925,6 +933,9 @@ impl<'a> CarDecoder<'a> {
     pub const fn raw_some_numbers(&self) -> [u32; 4] {
         #[allow(unused_unsafe)] unsafe { self.some_numbers_unchecked() }
     }
+    pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
+    pub const SOME_NUMBERS_MIN: u32 = 0_u32;
+    pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
     #[inline]
     pub const fn vehicle_code(&self) -> Result<[u8; 6], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 34 > self.acting_block_length {
@@ -975,6 +986,9 @@ impl<'a> CarDecoder<'a> {
     pub const fn raw_vehicle_code(&self) -> [u8; 6] {
         #[allow(unused_unsafe)] unsafe { self.vehicle_code_unchecked() }
     }
+    pub const VEHICLE_CODE_NULL: u8 = 0_u8;
+    pub const VEHICLE_CODE_MIN: u8 = 32_u8;
+    pub const VEHICLE_CODE_MAX: u8 = 126_u8;
     #[inline]
     pub const fn extras(&self) -> Result<OptionalExtras, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 35 > self.acting_block_length {
@@ -1010,6 +1024,7 @@ impl<'a> CarDecoder<'a> {
     pub const fn discounted_model(&self) -> Model {
         Model::C
     }
+    pub const DISCOUNTED_MODEL_NULL: Model = Model(255_u8);
     #[inline]
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 41 > self.acting_block_length {
@@ -1640,6 +1655,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const fn raw_speed(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.speed_unchecked() }
     }
+    pub const SPEED_NULL: u16 = 65535_u16;
+    pub const SPEED_MIN: u16 = 0_u16;
+    pub const SPEED_MAX: u16 = 65534_u16;
     #[inline]
     pub const fn mpg(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
@@ -1672,6 +1690,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const fn raw_mpg(&self) -> f32 {
         #[allow(unused_unsafe)] unsafe { self.mpg_unchecked() }
     }
+    pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
+    pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
+    pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
@@ -1888,6 +1909,9 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const fn raw_octane_rating(&self) -> u8 {
         #[allow(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
     }
+    pub const OCTANE_RATING_NULL: u8 = 255_u8;
+    pub const OCTANE_RATING_MIN: u8 = 90_u8;
+    pub const OCTANE_RATING_MAX: u8 = 110_u8;
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
@@ -2119,6 +2143,9 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const fn raw_mph(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.mph_unchecked() }
     }
+    pub const MPH_NULL: u16 = 65535_u16;
+    pub const MPH_MIN: u16 = 0_u16;
+    pub const MPH_MAX: u16 = 65534_u16;
     #[inline]
     pub const fn seconds(&self) -> Result<f32, sbe_rt::DecodeError> {
         let offset = self.pos + 2;
@@ -2151,6 +2178,9 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const fn raw_seconds(&self) -> f32 {
         #[allow(unused_unsafe)] unsafe { self.seconds_unchecked() }
     }
+    pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
+    pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
+    pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
