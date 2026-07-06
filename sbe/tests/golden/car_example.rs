@@ -716,6 +716,7 @@ impl<'a> CarDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
+        #[cfg(not(feature = "bound-check-disabled"))]
         let header_bytes: [u8; 8] = buf
             .get(pos..pos + 8)
             .ok_or_else(|| {
@@ -727,6 +728,10 @@ impl<'a> CarDecoder<'a> {
             })?
             .try_into()
             .unwrap();
+        #[cfg(feature = "bound-check-disabled")]
+        let header_bytes: [u8; 8] = unsafe {
+            core::ptr::read_unaligned(buf.as_ptr().add(pos) as *const [u8; 8])
+        };
         let header = MessageHeader(header_bytes);
         if header.schema_id() != Self::SCHEMA_ID {
             return Err(sbe_rt::DecodeError::WrongSchema {
