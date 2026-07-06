@@ -19,10 +19,10 @@ the raw bitmask value, matching the enum's `.raw()` pattern.
 
 ## Acceptance criteria
 
-- [ ] `pub const fn raw(self) -> T` on all generated set types
-- [ ] Same signature as enum's `.raw()` — consumes self, returns encoding type
-- [ ] Tests: `OptionalExtras(0b101).raw() == 0b101`
-- [ ] Golden file regenerated
+- [x] `pub const fn raw(self) -> T` on all generated set types
+- [x] Same signature as enum's `.raw()` — consumes self, returns encoding type
+- [x] Tests: `OptionalExtras(0b101).raw() == 0b101`
+- [x] Golden file regenerated
 
 Ref: upstream SBE issue #1086 — "[Java] Add setRaw() method for Set type".
 Consistency with existing enum `.raw()` accessor.
