@@ -1024,62 +1024,71 @@ fn generate_set(src: &mut String, tokens: &[Token]) {
         .unwrap_or(PrimitiveType::UInt8);
     let r_type = rust_type(encoding_type);
 
-    src.push_str(&format!(
-        "#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]\n\
-         #[repr(transparent)]\n\
-         pub struct {}(pub {});\n\n",
-        name, r_type
-    ));
+    let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+    let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
 
-    src.push_str(&format!(
-        "impl {} {{\n\
-             pub const fn raw(self) -> {} {{\n\
-                 self.0\n\
-             }}\n\n\
-             pub const fn default() -> Self {{\n\
-                 Self(0)\n\
-             }}\n\n",
-        name, r_type
-    ));
+    let bits: Vec<proc_macro2::TokenStream> = tokens
+        .iter()
+        .filter(|t| t.signal == Signal::Encoding)
+        .filter_map(|t| {
+            let val = t.encoding.constant_value.as_ref()?;
+            let bit_index: u8 = val.parse().unwrap_or(0);
+            let bit_name = syn::Ident::new(&to_snake_case(&t.name), proc_macro2::Span::call_site());
+            let set_bit_name = quote::format_ident!("set_{}", to_snake_case(&t.name));
+            let bit_lit = syn::LitInt::new(&bit_index.to_string(), proc_macro2::Span::call_site());
+            Some(quote::quote! {
+                pub const fn #bit_name(self) -> bool {
+                    (self.0 & (1 << #bit_lit)) != 0
+                }
 
-    for t in tokens {
-        if t.signal == Signal::Encoding {
-            if let Some(ref val) = t.encoding.constant_value {
-                let bit_index: u8 = val.parse().unwrap_or(0);
-                let bit_name_lower = to_snake_case(&t.name);
-                src.push_str(&format!(
-                    "    pub const fn {}(self) -> bool {{\n\
-                              (self.0 & (1 << {})) != 0\n\
-                          }}\n\n\
-                          pub fn set_{}(&mut self, val: bool) {{\n\
-                              if val {{\n\
-                                  self.0 |= 1 << {};\n\
-                              }} else {{\n\
-                                  self.0 &= !(1 << {});\n\
-                              }}\n\
-                          }}\n\n",
-                    bit_name_lower, bit_index, bit_name_lower, bit_index, bit_index
-                ));
+                pub fn #set_bit_name(&mut self, val: bool) {
+                    if val {
+                        self.0 |= 1 << #bit_lit;
+                    } else {
+                        self.0 &= !(1 << #bit_lit);
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let tokens = quote::quote! {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+        #[repr(transparent)]
+        pub struct #name_ident(pub #r_type_ty);
+
+        impl #name_ident {
+            pub const fn raw(self) -> #r_type_ty {
+                self.0
+            }
+
+            pub const fn default() -> Self {
+                Self(0)
+            }
+
+            #(#bits)*
+        }
+
+        impl From<#r_type_ty> for #name_ident {
+            #[inline(always)]
+            fn from(val: #r_type_ty) -> Self {
+                Self(val)
             }
         }
-    }
-    src.push_str("}\n\n");
 
-    src.push_str(&format!(
-        "impl From<{}> for {} {{\n\
-              #[inline(always)]\n\
-              fn from(val: {}) -> Self {{\n\
-                  Self(val)\n\
-              }}\n\
-          }}\n\n\
-          impl From<{}> for {} {{\n\
-              #[inline(always)]\n\
-              fn from(val: {}) -> Self {{\n\
-                  val.0\n\
-              }}\n\
-          }}\n\n",
-        r_type, name, r_type, name, r_type, name
-    ));
+        impl From<#name_ident> for #r_type_ty {
+            #[inline(always)]
+            fn from(val: #name_ident) -> Self {
+                val.0
+            }
+        }
+    };
+
+    let formatted = syn::parse_str::<syn::File>(&tokens.to_string())
+        .map(|file| prettyplease::unparse(&file))
+        .unwrap_or_else(|_| tokens.to_string());
+    src.push_str(&formatted);
+    src.push('\n');
 }
 
 fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder) {
