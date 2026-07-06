@@ -28,4 +28,4 @@ Ref: common SBE complaint #8 — "can't parse only schemaId without full header.
 
 
 ## Verification / Unit Testing
-- [ ] Create a unit test `test_schema_id_fast_extract` verifying that `schema_id_from_header` correctly extracts the schema ID from header bytes for any header layout without allocating.
+- [x] Create a unit test `test_schema_id_fast_extract` verifying that `schema_id_from_header` correctly extracts the schema ID from header bytes for any header layout without allocating.

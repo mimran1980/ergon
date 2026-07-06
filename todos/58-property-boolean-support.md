@@ -28,7 +28,7 @@ Detect boolean enum types in codegen and generate:
 - [ ] Encoder setter: `pub fn set_foo(&mut self, val: bool)` calls `From<bool>`
 - [ ] Decoder getter: `pub const fn foo(&self) -> bool` returns `self.raw() != 0`
 - [ ] Existing `BooleanType`/`Model` enums still work unchanged (backward compat)
-- [ ] Tests: verify round-trip `true` → encode → decode → `true`
+- [x] Tests: verify round-trip `true` → encode → decode → `true`
 
 ## Design rationale
 

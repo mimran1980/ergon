@@ -21,4 +21,4 @@ Ref: gap analysis (todo 51), DECISIONS.md §12.
 
 
 ## Verification / Unit Testing
-- [ ] Create a test verifying that `#[expect(...)]` warnings are produced if any lint suppression becomes stale in the generated output.
+- [x] Create a test verifying that `#[expect(...)]` warnings are produced if any lint suppression becomes stale in the generated output.

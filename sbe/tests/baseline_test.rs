@@ -488,6 +488,87 @@ fn group_decoder_is_empty() {
     );
 }
 
+// ── #[cold] on error Display impls (todo 54) ──────────────────────────
+
+#[test]
+fn generated_code_has_cold_annotations() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    // sbe_rt emits #[cold] on all three error Display impls
+    let cold_count = src.matches("#[cold]").count();
+    assert!(
+        cold_count >= 3,
+        "expected >=3 #[cold] annotations (DecodeError, EncodeError, VerifyError Display impls), found {cold_count}"
+    );
+}
+
+// ── Const assertions in generated code (todo 56) ──────────────────────
+
+#[test]
+fn generated_code_has_const_assertions() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    assert!(
+        src.contains(
+            "const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);"
+        ) || src.contains(
+            "const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);"
+        ),
+        "generated code must have a compile-time assertion for ENCODED_LENGTH >= BLOCK_LENGTH"
+    );
+    assert!(
+        src.contains(
+            "const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == "
+        ),
+        "generated code must have a compile-time assertion for HEADER_TEMPLATE length"
+    );
+    assert!(
+        src.contains(
+            "const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == "
+        ),
+        "generated code must have a compile-time assertion for GROUP_DIM_TEMPLATE length"
+    );
+}
+
+// ── BooleanType from-primitive impls (todo 58) ─────────────────────────
+
+#[test]
+fn generated_code_has_boolean_from_impls() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    // BooleanType implements From<u8> (the underlying encoding type).
+    // Future enhancement: add From<bool> so users can pass true/false directly.
+    assert!(
+        src.contains("impl From<u8> for BooleanType"),
+        "BooleanType must implement From<u8>"
+    );
+    assert!(
+        src.contains("impl From<BooleanType> for u8"),
+        "BooleanType must implement From<BooleanType> for u8"
+    );
+}
+
+// ── VarData maxLength enforcement (todo 30) ───────────────────────────
+
+#[test]
+fn generated_code_has_vardata_maxlength() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    // EncodeError must have VarDataTooLong variant
+    assert!(
+        src.contains(
+            "VarDataTooLong { field: &'static str, max_length: usize, actual: usize }"
+        ),
+        "EncodeError must have VarDataTooLong variant"
+    );
+    // Encoder methods must emit a max_length check that returns VarDataTooLong
+    assert!(
+        src.contains("return Err(sbe_rt::EncodeError::VarDataTooLong {"),
+        "encoder var-data methods must return VarDataTooLong on overflow"
+    );
+    // Display impl must describe the VarDataTooLong error
+    assert!(
+        src.contains("var data too long for field"),
+        "EncodeError Display must describe VarDataTooLong"
+    );
+}
+
 // ── Codegen gap documentation: `<ref>` inside composites ───────────────
 
 #[test]

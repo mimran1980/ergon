@@ -24,4 +24,4 @@ Ref: gap analysis (todo 51), DECISIONS.md §12 "const assertions in generated co
 
 
 ## Verification / Unit Testing
-- [ ] Create a compile-fail test verifying that changing the expected sizes or block lengths of composites in the schema causes a compile error via the generated const assertions.
+- [x] Create a compile-fail test verifying that changing the expected sizes or block lengths of composites in the schema causes a compile error via the generated const assertions.

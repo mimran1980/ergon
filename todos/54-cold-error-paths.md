@@ -19,4 +19,4 @@ Ref: gap analysis (todo 51), DECISIONS.md §12.
 
 
 ## Verification / Unit Testing
-- [ ] Create a test verifying that `#[cold]` functions are generated on the error paths in the output.
+- [x] Create a test verifying that `#[cold]` functions are generated on the error paths in the output.
