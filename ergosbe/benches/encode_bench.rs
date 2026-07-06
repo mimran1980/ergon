@@ -206,10 +206,34 @@ fn bench_encode_scalar_only(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_encode_checked_vs_unchecked(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode/checked_vs_unchecked");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("checked_full", |b| {
+        let mut buf = vec![0u8; 1024];
+        b.iter(|| {
+            let n = encode_checked(black_box(&mut buf));
+            black_box(n);
+        });
+    });
+
+    group.bench_function("unchecked_full", |b| {
+        let mut buf = vec![0u8; 1024];
+        b.iter(|| {
+            let n = encode_unchecked(black_box(&mut buf));
+            black_box(n);
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_encode_checked,
     bench_encode_unchecked,
     bench_encode_scalar_only,
+    bench_encode_checked_vs_unchecked,
 );
 criterion_main!(benches);

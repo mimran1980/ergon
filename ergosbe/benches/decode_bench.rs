@@ -87,11 +87,74 @@ fn bench_group_iteration(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Full decode with unchecked scalar access ───────────────────────
+
+fn bench_full_decode_unchecked(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decode/unchecked");
+    group.throughput(Throughput::Bytes(BASELINE.len() as u64));
+    group.bench_function("car_full", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+            let _ = car.raw_serial_number();
+            let _ = car.raw_model_year();
+            let _ = unsafe { car.available_unchecked() };
+            let _ = unsafe { car.code_unchecked() };
+            let _ = car.raw_some_numbers();
+            let _ = car.raw_vehicle_code();
+            let _ = unsafe { car.extras_unchecked() };
+            let _ = unsafe { car.engine_unchecked() };
+            black_box(());
+        });
+    });
+    group.finish();
+}
+
+// ── Checked vs unchecked comparison ──────────────────────────────
+
+fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
+    let car = CarDecoder::try_from(BASELINE).unwrap();
+
+    let mut group = c.benchmark_group("decode/checked_vs_unchecked");
+    group.throughput(Throughput::Bytes(BASELINE.len() as u64));
+
+    group.bench_function("checked_all_fields", |b| {
+        b.iter(|| {
+            let _ = car.serial_number().unwrap();
+            let _ = car.model_year().unwrap();
+            let _ = car.available().unwrap();
+            let _ = car.code().unwrap();
+            let _ = car.some_numbers().unwrap();
+            let _ = car.vehicle_code().unwrap();
+            let _ = car.extras().unwrap();
+            let _ = car.engine().unwrap();
+            black_box(());
+        });
+    });
+
+    group.bench_function("unchecked_all_fields", |b| {
+        b.iter(|| {
+            let _ = car.raw_serial_number();
+            let _ = car.raw_model_year();
+            let _ = unsafe { car.available_unchecked() };
+            let _ = unsafe { car.code_unchecked() };
+            let _ = car.raw_some_numbers();
+            let _ = car.raw_vehicle_code();
+            let _ = unsafe { car.extras_unchecked() };
+            let _ = unsafe { car.engine_unchecked() };
+            black_box(());
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_try_from,
     bench_field_access_checked,
     bench_field_access_raw,
     bench_group_iteration,
+    bench_full_decode_unchecked,
+    bench_decode_checked_vs_unchecked,
 );
 criterion_main!(benches);
