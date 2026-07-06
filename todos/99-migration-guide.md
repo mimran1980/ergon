@@ -4,17 +4,17 @@ Write a migration guide for users coming from other SBE implementations (officia
 Java-generated Rust, sbe-tool, etc.). This was identified as missing in the
 documentation todo (34).
 
-**Status:** Not started
+**Status:** Done
 
 ## Acceptance criteria
 
-- [ ] `docs/guide/migration.md` created
-- [ ] Section: migrating from the official SBE Java-generated Rust code
-- [ ] Section: migrating from sbe-tool C++ codegen
-- [ ] Side-by-side API comparison table (official vs ErgoSBE)
-- [ ] Key differences highlighted: E3 enums, type-state encoding, version-aware decoding, raw accessors
-- [ ] Common gotchas and breaking changes documented
-- [ ] Links to relevant generated-api.md and advanced.md sections
+- [x] `docs/guide/migration.md` created
+- [x] Section: migrating from the official SBE Java-generated Rust code
+- [x] Section: migrating from sbe-tool C++ codegen (covered alongside Java-generated Rust)
+- [x] Side-by-side API comparison table (official vs ErgoSBE)
+- [x] Key differences highlighted: E3 enums, type-state encoding, version-aware decoding, raw accessors
+- [x] Common gotchas and breaking changes documented
+- [x] Links to relevant generated-api.md and advanced.md sections
 
 ## Dependencies
 
