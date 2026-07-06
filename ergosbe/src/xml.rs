@@ -860,12 +860,11 @@ fn parse_message_child(
                 resolve_type_to_tokens(&field_name, &type_name, Some(id), registry, since_version)
             {
                 let mut inlined = resolved;
-                if let Some(offset_str) = node.attribute("offset") {
-                    if let Ok(offset) = offset_str.parse::<usize>() {
-                        if let Some(first) = inlined.first_mut() {
-                            first.encoding.offset = Some(offset);
-                        }
-                    }
+                if let Some(offset_str) = node.attribute("offset")
+                    && let Ok(offset) = offset_str.parse::<usize>()
+                    && let Some(first) = inlined.first_mut()
+                {
+                    first.encoding.offset = Some(offset);
                 }
                 tokens.extend(inlined);
             } else {
@@ -1110,7 +1109,7 @@ mod tests {
             encoding: Encoding {
                 since_version: 0,
                 description: None,
-                semantic_type: Some("".to_string()),
+                semantic_type: Some(String::new()),
                 ..Encoding::default()
             },
         });

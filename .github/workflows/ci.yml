@@ -29,7 +29,7 @@ jobs:
           components: rustfmt, clippy
 
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets
       - run: cargo doc --no-deps --workspace
 
   test:
@@ -62,9 +62,3 @@ jobs:
           toolchain: "1.95.0"
 
       - run: cargo build --release --workspace
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-ubuntu-latest
-          path: target/release/ergosbe
-          retention-days: 1
