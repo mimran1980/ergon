@@ -16,13 +16,16 @@
 //! slow.
 
 mod common;
-use common::{Paths, generate, compile_and_run};
+use common::{Paths, compile_and_run, generate};
 
 #[test]
 fn car_encode_decode_perf_smoke() {
     let (_, src) = generate(&Paths::example_schema(), "perf_car");
 
-    compile_and_run("perf_car", &src, r##"
+    compile_and_run(
+        "perf_car",
+        &src,
+        r##"
         // The CarEncoder type-state requires all tail fields (groups + var-data)
         // to reach the Complete state before as_bytes() is available.
         // We build one Car, then benchmark decode on it.
@@ -91,5 +94,6 @@ fn car_encode_decode_perf_smoke() {
         // Smoke check: even in debug mode, 50 iterations under 30 seconds.
         assert!(encode_dur.as_secs() < 30, "encode too slow: {:?}", encode_dur);
         assert!(decode_dur.as_secs() < 30, "decode too slow: {:?}", decode_dur);
-    "##);
+    "##,
+    );
 }

@@ -113,10 +113,7 @@ fn issue_895_optional_float_double_types_exist() {
     assert_tool_schema(
         "issue895",
         "issue895.xml",
-        &[
-            "Issue895Decoder",
-            "Issue895Encoder",
-        ],
+        &["Issue895Decoder", "Issue895Encoder"],
     );
 }
 
@@ -126,11 +123,7 @@ fn issue_972_optional_composite_types_exist() {
     assert_tool_schema(
         "issue972",
         "issue972.xml",
-        &[
-            "Issue972Decoder",
-            "Issue972Encoder",
-            "NewComposite",
-        ],
+        &["Issue972Decoder", "Issue972Encoder", "NewComposite"],
     );
 }
 
@@ -144,11 +137,7 @@ fn composite_elements_types_exist() {
     assert_tool_schema(
         "comp_el",
         "composite-elements-schema.xml",
-        &[
-            "Outer(pub",
-            "MsgDecoder",
-            "MsgEncoder",
-        ],
+        &["Outer(pub", "MsgDecoder", "MsgEncoder"],
     );
 }
 
@@ -188,11 +177,7 @@ fn nested_group_types_exist() {
     assert_tool_schema(
         "nested_grp",
         "nested-group-schema.xml",
-        &[
-            "TopDecoder",
-            "TopEncoder",
-            "GroupSizeEncoding",
-        ],
+        &["TopDecoder", "TopEncoder", "GroupSizeEncoding"],
     );
 }
 
@@ -281,10 +266,7 @@ fn basic_schema_types_exist() {
     assert_tool_schema(
         "basic",
         "basic-schema.xml",
-        &[
-            "TestMessage50001Decoder",
-            "TestMessage50001Encoder",
-        ],
+        &["TestMessage50001Decoder", "TestMessage50001Encoder"],
     );
 }
 

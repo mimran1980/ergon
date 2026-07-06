@@ -18,9 +18,7 @@ use std::path::PathBuf;
 fn workspace_root() -> PathBuf {
     let cwd = std::env::current_dir().unwrap();
     for ancestor in cwd.ancestors() {
-        if ancestor.join("Cargo.toml").exists()
-            && ancestor.join("ergosbe").exists()
-        {
+        if ancestor.join("Cargo.toml").exists() && ancestor.join("ergosbe").exists() {
             return ancestor.to_path_buf();
         }
     }
@@ -51,8 +49,7 @@ struct SchemaMeta {
 
 /// Parse SBE XML using roxmltree and extract top-level metadata.
 fn parse_xml_meta(xml: &str) -> SchemaMeta {
-    let doc =
-        roxmltree::Document::parse(xml).expect("XML must be well-formed");
+    let doc = roxmltree::Document::parse(xml).expect("XML must be well-formed");
     let root = doc
         .root()
         .children()
@@ -67,10 +64,7 @@ fn parse_xml_meta(xml: &str) -> SchemaMeta {
         "root element must be <messageSchema>"
     );
 
-    let package = root
-        .attribute("package")
-        .unwrap_or("(missing)")
-        .to_string();
+    let package = root.attribute("package").unwrap_or("(missing)").to_string();
     let id = root
         .attribute("id")
         .and_then(|v| v.parse().ok())
@@ -115,8 +109,10 @@ fn issue472_optional_uint64() {
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue472");
     assert_eq!(meta.id, 472);
-    assert!(xml.contains("presence=\"optional\""),
-        "should have optional field");
+    assert!(
+        xml.contains("presence=\"optional\""),
+        "should have optional field"
+    );
 }
 
 #[test]
@@ -136,8 +132,10 @@ fn issue488_variable_length_data() {
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue488");
     assert_eq!(meta.id, 488);
-    assert!(xml.contains("varDataEncoding"),
-        "should contain varDataEncoding");
+    assert!(
+        xml.contains("varDataEncoding"),
+        "should contain varDataEncoding"
+    );
 }
 
 #[test]
@@ -159,10 +157,10 @@ fn issue505_constant_fields() {
     assert_eq!(meta.id, 505);
     assert!(xml.contains("presence=\"constant\""), "constant fields");
     // Multiple constant field patterns
-    assert!(xml.contains(">C<"), "char constant C");      // idSourceOne
-    assert!(xml.contains(">D<"), "char constant D");      // idSourceTwo
-    assert!(xml.contains(">EF<"), "char constant EF");    // idSourceThree
-    assert!(xml.contains(">GH<"), "char constant GH");    // idSourceFour
+    assert!(xml.contains(">C<"), "char constant C"); // idSourceOne
+    assert!(xml.contains(">D<"), "char constant D"); // idSourceTwo
+    assert!(xml.contains(">EF<"), "char constant EF"); // idSourceThree
+    assert!(xml.contains(">GH<"), "char constant GH"); // idSourceFour
 }
 
 #[test]
@@ -171,14 +169,19 @@ fn issue560_constant_enum_ref() {
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue560");
     assert_eq!(meta.id, 560);
-    assert!(xml.contains("valueRef=\"Model.C\""),
-        "constant enum valueRef");
-    assert!(xml.contains("groupSizeEncoding"),
-        "groupSizeEncoding composite");
-    assert!(xml.contains("varStringEncoding"),
-        "varStringEncoding composite");
-    assert!(xml.contains("varDataEncoding"),
-        "varDataEncoding composite");
+    assert!(
+        xml.contains("valueRef=\"Model.C\""),
+        "constant enum valueRef"
+    );
+    assert!(
+        xml.contains("groupSizeEncoding"),
+        "groupSizeEncoding composite"
+    );
+    assert!(
+        xml.contains("varStringEncoding"),
+        "varStringEncoding composite"
+    );
+    assert!(xml.contains("varDataEncoding"), "varDataEncoding composite");
 }
 
 #[test]
@@ -186,8 +189,10 @@ fn issue567_valid_group_uint32_dimension() {
     let xml = fs::read_to_string(issue_schema("567-valid")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.id, 1);
-    assert!(xml.contains("numInGroup") && xml.contains("maxValue"),
-        "valid group dimension has maxValue");
+    assert!(
+        xml.contains("numInGroup") && xml.contains("maxValue"),
+        "valid group dimension has maxValue"
+    );
 }
 
 #[test]
@@ -204,8 +209,10 @@ fn issue567_invalid_group_dimension() {
         let after = &xml[start..];
         let end = after.find("</composite>").unwrap_or(after.len());
         let gse = &after[..end];
-        assert!(!gse.contains("maxValue"),
-            "invalid schema's groupSizeEncoding lacks maxValue constraint");
+        assert!(
+            !gse.contains("maxValue"),
+            "invalid schema's groupSizeEncoding lacks maxValue constraint"
+        );
     } else {
         panic!("groupSizeEncoding not found");
     }
@@ -218,8 +225,10 @@ fn issue661_set_with_since_version() {
     assert_eq!(meta.package, "issue661");
     assert_eq!(meta.id, 661);
     assert_eq!(meta.version, 1);
-    assert!(xml.contains("sinceVersion=\"1\""),
-        "field with sinceVersion");
+    assert!(
+        xml.contains("sinceVersion=\"1\""),
+        "field with sinceVersion"
+    );
 }
 
 #[test]
@@ -240,12 +249,19 @@ fn issue835_large_fix_schema() {
     assert_eq!(meta.id, 1);
     assert_eq!(meta.version, 9);
     // ns2 namespace — parser must not reject this
-    assert!(xml.contains("ns2:messageSchema"),
-        "should use ns2 namespace");
-    assert!(xml.len() > 10_000,
-        "schema should be large (got {})", xml.len());
-    assert!(xml.contains("MDIncrementalRefreshOrderBook47"),
-        "should contain the group message");
+    assert!(
+        xml.contains("ns2:messageSchema"),
+        "should use ns2 namespace"
+    );
+    assert!(
+        xml.len() > 10_000,
+        "schema should be large (got {})",
+        xml.len()
+    );
+    assert!(
+        xml.contains("MDIncrementalRefreshOrderBook47"),
+        "should contain the group message"
+    );
 }
 
 #[test]
@@ -254,8 +270,7 @@ fn issue847_composite_ref_in_header() {
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue847");
     assert_eq!(meta.id, 1);
-    assert!(xml.contains("name=\"c1\""),
-        "ref inside messageHeader");
+    assert!(xml.contains("name=\"c1\""), "ref inside messageHeader");
 }
 
 #[test]
@@ -264,8 +279,7 @@ fn issue848_composite_ref_to_composite() {
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue848");
     assert_eq!(meta.id, 1);
-    assert!(xml.contains("name=\"c1\""),
-        "ref to Comp1 inside Comp2");
+    assert!(xml.contains("name=\"c1\""), "ref to Comp1 inside Comp2");
     assert!(xml.contains("Comp2"), "Comp2 composite");
 }
 
@@ -287,8 +301,10 @@ fn issue889_enum_optional_encoding() {
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue889");
     assert_eq!(meta.id, 1);
-    assert!(xml.contains("encodingType=\"uInt8NULL\""),
-        "enum with optional encoding type");
+    assert!(
+        xml.contains("encodingType=\"uInt8NULL\""),
+        "enum with optional encoding type"
+    );
     assert!(xml.contains("LotType"), "LotType enum");
 }
 
@@ -298,8 +314,7 @@ fn issue895_optional_float_double() {
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue895");
     assert_eq!(meta.id, 895);
-    assert!(xml.contains("presence=\"optional\""),
-        "optional fields");
+    assert!(xml.contains("presence=\"optional\""), "optional fields");
     assert!(
         xml.contains("type=\"float\"") && xml.contains("type=\"double\""),
         "float and double types"
@@ -318,8 +333,7 @@ fn issue910_keyword_field_names() {
     assert!(xml.contains("groupSizeEncoding"), "groupSizeEncoding");
     // 8 messages
     let msg_count = xml.matches("message name=").count();
-    assert_eq!(msg_count, 8,
-        "should have 8 messages, found {msg_count}");
+    assert_eq!(msg_count, 8, "should have 8 messages, found {msg_count}");
 }
 
 #[test]
@@ -330,11 +344,14 @@ fn issue967_composite_optional_constant() {
     assert_eq!(meta.id, 1);
     assert_eq!(meta.version, 13);
     // PRICENULL9 has optional mantissa + constant exponent
-    assert!(xml.contains("presence=\"optional\"") &&
-            xml.contains("presence=\"constant\""),
-        "both optional and constant presence in composite");
-    assert!(xml.contains("sinceVersion=\"12\""),
-        "field with sinceVersion");
+    assert!(
+        xml.contains("presence=\"optional\"") && xml.contains("presence=\"constant\""),
+        "both optional and constant presence in composite"
+    );
+    assert!(
+        xml.contains("sinceVersion=\"12\""),
+        "field with sinceVersion"
+    );
 }
 
 #[test]
@@ -344,10 +361,14 @@ fn issue972_composite_optional_fields() {
     assert_eq!(meta.package, "issue972");
     assert_eq!(meta.id, 972);
     assert_eq!(meta.version, 2);
-    assert!(xml.contains("presence=\"optional\""),
-        "optional fields in composite");
-    assert!(xml.contains("nullValue=\"0\""),
-        "null value on optional fields");
+    assert!(
+        xml.contains("presence=\"optional\""),
+        "optional fields in composite"
+    );
+    assert!(
+        xml.contains("nullValue=\"0\""),
+        "null value on optional fields"
+    );
 }
 
 #[test]
@@ -361,8 +382,10 @@ fn issue984_group_char_arrays() {
     assert!(xml.contains("String5"), "char[5] type");
     assert!(xml.contains("String6"), "char[6] type");
     assert!(xml.contains("sinceVersion=\"2\""), "sinceVersion on field");
-    assert!(xml.contains("dimensionType=\"groupSize\""),
-        "custom dimensionType");
+    assert!(
+        xml.contains("dimensionType=\"groupSize\""),
+        "custom dimensionType"
+    );
 }
 
 #[test]
@@ -372,8 +395,10 @@ fn issue987_composite_offset_attributes() {
     assert_eq!(meta.package, "issue987");
     assert_eq!(meta.id, 987);
     assert_eq!(meta.version, 1);
-    assert!(xml.contains("offset=\"4\""),
-        "composite with explicit offset");
+    assert!(
+        xml.contains("offset=\"4\""),
+        "composite with explicit offset"
+    );
 }
 
 #[test]
@@ -383,10 +408,8 @@ fn issue1007_enum_keyword_values() {
     assert_eq!(meta.package, "issue1007");
     assert_eq!(meta.id, 1007);
     // ValidValue names "false" and "true" are Rust keywords
-    assert!(xml.contains("name=\"false\""),
-        "validValue named 'false'");
-    assert!(xml.contains("name=\"true\""),
-        "validValue named 'true'");
+    assert!(xml.contains("name=\"false\""), "validValue named 'false'");
+    assert!(xml.contains("name=\"true\""), "validValue named 'true'");
 }
 
 #[test]
@@ -398,8 +421,10 @@ fn issue1028_set_since_version_in_composite() {
     assert_eq!(meta.version, 4);
     assert!(xml.contains("sinceVersion=\"4\""), "sinceVersion on set");
     assert!(xml.contains("EventIndicator"), "EventIndicator set");
-    assert!(xml.contains("OutboundBusinessHeader"),
-        "OutboundBusinessHeader composite");
+    assert!(
+        xml.contains("OutboundBusinessHeader"),
+        "OutboundBusinessHeader composite"
+    );
 }
 
 #[test]
@@ -411,8 +436,10 @@ fn issue1057_set_and_primitive_in_composite() {
     assert_eq!(meta.version, 4);
     assert!(xml.contains("SessionID"), "primitive type in composite");
     assert!(xml.contains("EventIndicator"), "set type in composite");
-    assert!(xml.contains("OutboundBusinessHeader"),
-        "OutboundBusinessHeader composite");
+    assert!(
+        xml.contains("OutboundBusinessHeader"),
+        "OutboundBusinessHeader composite"
+    );
 }
 
 #[test]
@@ -433,8 +460,7 @@ fn issue435_codegen_pipeline() {
     let xml = fs::read_to_string(issue_schema("435")).unwrap();
     let meta = parse_xml_meta(&xml);
     let schema = ergosbe::Schema::new(&meta.package, meta.id, meta.version);
-    let generator =
-        ergosbe::Generator::new(ergosbe::GenerationConfig::low_latency("issue435"));
+    let generator = ergosbe::Generator::new(ergosbe::GenerationConfig::low_latency("issue435"));
     let modules = generator.generate(&schema);
     let module = modules.modules().next().unwrap();
     assert_eq!(module.path, "issue435.rs");
@@ -448,18 +474,41 @@ fn issue435_codegen_pipeline() {
 #[test]
 fn all_issue_schemas_valid_xml() {
     for num in &[
-        "435", "472", "483", "488", "496", "505", "560", "567-valid", "567-invalid",
-        "661", "827", "835", "847", "848", "849", "889", "895",
-        "910", "967", "972", "984", "987", "1007", "1028", "1057", "1066",
+        "435",
+        "472",
+        "483",
+        "488",
+        "496",
+        "505",
+        "560",
+        "567-valid",
+        "567-invalid",
+        "661",
+        "827",
+        "835",
+        "847",
+        "848",
+        "849",
+        "889",
+        "895",
+        "910",
+        "967",
+        "972",
+        "984",
+        "987",
+        "1007",
+        "1028",
+        "1057",
+        "1066",
     ] {
         let path = issue_schema(num);
-        let xml = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read issue{num}.xml: {e}"));
+        let xml = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read issue{num}.xml: {e}"));
         let meta = parse_xml_meta(&xml);
-        assert!(!meta.package.is_empty(),
-            "issue{num}: package should exist");
-        assert!(!meta.byte_order.is_empty(),
-            "issue{num}: byteOrder should exist");
+        assert!(!meta.package.is_empty(), "issue{num}: package should exist");
+        assert!(
+            !meta.byte_order.is_empty(),
+            "issue{num}: byteOrder should exist"
+        );
     }
 }
 
@@ -467,23 +516,49 @@ fn all_issue_schemas_valid_xml() {
 #[test]
 fn all_issue_schemas_codegen() {
     for num in &[
-        "435", "472", "483", "488", "496", "505", "560", "567-valid",
-        "661", "827", "835", "847", "848", "849", "889", "895",
-        "910", "967", "972", "984", "987", "1007", "1028", "1057", "1066",
+        "435",
+        "472",
+        "483",
+        "488",
+        "496",
+        "505",
+        "560",
+        "567-valid",
+        "661",
+        "827",
+        "835",
+        "847",
+        "848",
+        "849",
+        "889",
+        "895",
+        "910",
+        "967",
+        "972",
+        "984",
+        "987",
+        "1007",
+        "1028",
+        "1057",
+        "1066",
     ] {
         let path = issue_schema(num);
-        let xml = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read issue{num}.xml: {e}"));
+        let xml = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read issue{num}.xml: {e}"));
         let meta = parse_xml_meta(&xml);
         let schema = ergosbe::Schema::new(&meta.package, meta.id, meta.version);
-        let generator = ergosbe::Generator::new(
-            ergosbe::GenerationConfig::low_latency(format!("issue{num}")),
-        );
+        let generator = ergosbe::Generator::new(ergosbe::GenerationConfig::low_latency(format!(
+            "issue{num}"
+        )));
         let modules = generator.generate(&schema);
-        let module = modules.modules().next()
+        let module = modules
+            .modules()
+            .next()
             .unwrap_or_else(|| panic!("issue{num}: expected at least one module"));
         assert_eq!(module.path, format!("issue{num}.rs"));
-        assert!(module.source.contains(&meta.id.to_string()),
-            "issue{num}: source should contain schema id {}", meta.id);
+        assert!(
+            module.source.contains(&meta.id.to_string()),
+            "issue{num}: source should contain schema id {}",
+            meta.id
+        );
     }
 }
