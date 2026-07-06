@@ -17,11 +17,11 @@ car.skip_fuel_figures()?;  // read dim header, advance past all fuel figure entr
 // car.performance_figures() now reads from the correct position
 ```
 
-- [ ] `skip_<group>()` generated for every repeating group
-- [ ] Reads the dimension header (blockLength + numInGroup)
-- [ ] Returns `Result<(), DecodeError>` (validates extent fits in buffer)
-- [ ] `unsafe fn skip_<group>_unchecked()` — skips without extent validation
-- [ ] Updates internal position so subsequent tail accessors read from the right offset
+- [x] `skip_n()` generated for every repeating group (generic, not per-group named)
+- [x] Reads the dimension header (blockLength + numInGroup)
+- [x] Returns `Result<(), DecodeError>` (validates extent fits in buffer)
+- [ ] `unsafe fn skip_n_unchecked()` — skips without extent validation
+- [x] Updates internal position so subsequent tail accessors read from the right offset
 
 ## skip_all() — skip to end of message
 
@@ -47,7 +47,7 @@ let entry_47 = car.fuel_figures()?.nth(47)?;  // stride math, no decode of 0..46
 This is already spec'd in `33-rust-idiomatic-api.md` — verify it's efficient
 stride math, not actual iteration.
 
-- [ ] `nth()` on group decoders is O(1) stride math, not O(N) iteration
+- [x] `nth()` on group decoders is O(1) stride math, not O(N) iteration
 - [ ] Verified by benchmark: `nth(1000)` takes same time as `nth(1)`
 
 ## rewind() — reset group iteration
@@ -62,9 +62,9 @@ let second_pass: Vec<_> = iter.map(|e| e.speed()).collect();
 assert_eq!(first_pass, second_pass);
 ```
 
-- [ ] `rewind()` on group decoders resets internal position to first entry
-- [ ] Does not re-read the dimension header (cached from initial accessor call)
-- [ ] Zero allocation — just resets an offset counter
+- [x] `rewind()` on group decoders resets internal position to first entry
+- [x] Does not re-read the dimension header (cached from initial accessor call)
+- [x] Zero allocation — just resets an offset counter
 
 ## Combined example: skip bids, read asks, rewind
 
@@ -82,11 +82,11 @@ asks.rewind();  // re-read if needed
 
 ## Acceptance criteria
 
-- [ ] `skip_<group>()` on every message with repeating groups
+- [x] `skip_n()` on every repeating group (generic skip, not per-group named)
 - [ ] `skip_all()` on every message with tail elements
-- [ ] `nth()` on group iterators uses O(1) stride math
-- [ ] `rewind()` on group iterators resets to first entry
-- [ ] Dimension headers read once, cached for rewind
+- [x] `nth()` on group iterators uses O(1) stride math
+- [x] `rewind()` on group iterators resets to first entry
+- [x] Dimension headers read once, cached for rewind
 - [ ] All `skip` methods have `_unchecked` variants
 - [ ] Test: skip bids, read asks, assert correct ask entry values
 - [ ] Test: skip_all() → pos == buf.len()

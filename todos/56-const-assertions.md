@@ -17,7 +17,7 @@ Catches codegen bugs at compile time rather than at runtime.
 - [x] `const.*HEADER_TEMPLATE.len() == N);` in generated output
 - [x] `const.*GROUP_DIM_TEMPLATE.len() == N);`
 - [x] `const.*ENCODED_LENGTH == sum_of_field_sizes);`
-- [ ] `const _: () = assert!(BLOCK_LENGTH == N);` for each message
-- [ ] All existing tests pass
+- [ ] `const _: () = assert!(BLOCK_LENGTH == N);` for each message (only `pub const BLOCK_LENGTH` exists, no `const assert!`)
+- [x] All existing tests pass
 
 Ref: gap analysis (todo 51), DECISIONS.md §12 "const assertions in generated code".
