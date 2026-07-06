@@ -1640,6 +1640,7 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
     pub const MAX_ENCODED_LENGTH: usize = 3221225552;
+    pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
@@ -1659,14 +1660,7 @@ impl<'a, State> CarEncoder<'a, State> {
                 available: buf.len(),
             });
         }
-        let header = MessageHeader::new(
-            Self::BLOCK_LENGTH as u16,
-            Self::TEMPLATE_ID,
-            Self::SCHEMA_ID,
-            Self::SCHEMA_VERSION,
-        );
-        let header_bytes = header.0;
-        buf[pos..pos + 8].copy_from_slice(&header_bytes);
+        buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
         Ok(Self::wrap(buf, pos))
     }
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
@@ -1755,12 +1749,9 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
                 available: self.buf.len(),
             });
         }
-        let header = GroupSizeEncoding::new(
-            FuelFiguresEncoder::ENTRY_BLOCK_LENGTH as u16,
-            count,
-        );
-        let header_bytes = header.0;
-        self.buf[self.pos..self.pos + 4].copy_from_slice(&header_bytes);
+        self.buf[self.pos..self.pos + 4]
+            .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
+        self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
         Ok(CarEncoder {
@@ -1789,12 +1780,9 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
                 available: self.buf.len(),
             });
         }
-        let header = GroupSizeEncoding::new(
-            PerformanceFiguresEncoder::ENTRY_BLOCK_LENGTH as u16,
-            count,
-        );
-        let header_bytes = header.0;
-        self.buf[self.pos..self.pos + 4].copy_from_slice(&header_bytes);
+        self.buf[self.pos..self.pos + 4]
+            .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
+        self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
         Ok(CarEncoder {
@@ -1926,6 +1914,7 @@ pub struct FuelFiguresEncoder<'a> {
 }
 impl<'a> FuelFiguresEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
@@ -2008,6 +1997,7 @@ pub struct PerformanceFiguresEncoder<'a> {
 }
 impl<'a> PerformanceFiguresEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
+    pub const GROUP_DIM_TEMPLATE: [u8; 4] = [1, 0, 0, 0];
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
@@ -2071,12 +2061,9 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
                 available: self.buf.len(),
             });
         }
-        let header = GroupSizeEncoding::new(
-            AccelerationEncoder::ENTRY_BLOCK_LENGTH as u16,
-            count,
-        );
-        let header_bytes = header.0;
-        self.buf[self.pos..self.pos + 4].copy_from_slice(&header_bytes);
+        self.buf[self.pos..self.pos + 4]
+            .copy_from_slice(&AccelerationEncoder::GROUP_DIM_TEMPLATE);
+        self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
         self.pos = group.pos;
@@ -2091,6 +2078,7 @@ pub struct AccelerationEncoder<'a> {
 }
 impl<'a> AccelerationEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,

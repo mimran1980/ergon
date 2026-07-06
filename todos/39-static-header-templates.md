@@ -24,9 +24,9 @@ byte region.
 
 ## Acceptance criteria
 
-- [ ] Generate `const HEADER_TEMPLATE: [u8; 8]` for each message
-- [ ] Generate `const GROUP_DIM_TEMPLATE: [u8; 4]` for each group
-- [ ] `wrap_and_apply_header` uses `copy_from_slice` from template
+- [x] Generate `const HEADER_TEMPLATE: [u8; 8]` for each message
+- [x] Generate `const GROUP_DIM_TEMPLATE: [u8; 4]` for each group
+- [x] `wrap_and_apply_header` uses `copy_from_slice` from template
 - [ ] Constant-value fields get `const FIELD_TEMPLATE: [u8; N]`
 - [ ] Benchmark: encode throughput improvement from skipping per-field header writes
-- [ ] Verify: generated template bytes match upstream fixture bytes
+- [x] Verify: generated template bytes match upstream fixture bytes

@@ -1293,6 +1293,29 @@ fn get_dimension_info(
     (name, size, bl, num)
 }
 
+/// Returns (offset, size) of the numInGroup field within a dimension composite.
+fn get_dim_num_layout(elements: &SchemaElements, dim_type: &str) -> (usize, usize) {
+    let raw_name = dim_type;
+    let mut offset = 2;
+    let mut size = 2;
+    if let Some(comp) = elements.composites.iter().find(|c| c[0].name == raw_name) {
+        let members = parse_composite_members(comp);
+        for m in members {
+            let lower = m.name.to_lowercase();
+            if lower.contains("numingroup") || lower.contains("count") {
+                offset = m.offset;
+                size = match &m.member_type {
+                    MemberType::Primitive {
+                        prim, length, ..
+                    } => prim.size() * length.unwrap_or(1),
+                    _ => 2,
+                };
+            }
+        }
+    }
+    (offset, size)
+}
+
 fn get_vardata_info(
     elements: &SchemaElements,
     type_name: &str,
@@ -1319,6 +1342,7 @@ fn get_vardata_info(
     (name, size, len_field, prim)
 }
 
+#[allow(dead_code)]
 fn generate_dim_new_call(
     elements: &SchemaElements,
     dim_type: &str,
@@ -2540,6 +2564,7 @@ fn generate_message_encoder(
         acc.max(f.offset + size)
     });
 
+    #[allow(unused_variables)]
     let header_pascal = to_pascal_case(header_type);
     let header_size = elements
         .composites
@@ -2641,6 +2666,29 @@ fn generate_message_encoder(
         ));
     }
 
+    // Pre-compute HEADER_TEMPLATE bytes at codegen time.
+    let mut header_tpl = vec![0u8; header_size];
+    let hdr_bl = block_length as u16;
+    match byte_order {
+        ByteOrder::LittleEndian => {
+            header_tpl[0..2].copy_from_slice(&hdr_bl.to_le_bytes());
+            header_tpl[2..4].copy_from_slice(&msg.id.to_le_bytes());
+            header_tpl[4..6].copy_from_slice(&schema_id.to_le_bytes());
+            header_tpl[6..8].copy_from_slice(&schema_version.to_le_bytes());
+        }
+        ByteOrder::BigEndian => {
+            header_tpl[0..2].copy_from_slice(&hdr_bl.to_be_bytes());
+            header_tpl[2..4].copy_from_slice(&msg.id.to_be_bytes());
+            header_tpl[4..6].copy_from_slice(&schema_id.to_be_bytes());
+            header_tpl[6..8].copy_from_slice(&schema_version.to_be_bytes());
+        }
+    }
+    let hdr_repr: String = header_tpl.iter().map(|b| format!("{}", b)).collect::<Vec<_>>().join(", ");
+    src.push_str(&format!(
+        "    pub const HEADER_TEMPLATE: [u8; {}] = [{}];\n\n",
+        header_size, hdr_repr
+    ));
+
     if total_tail > 0 {
         let first_state = &msg
             .groups
@@ -2661,10 +2709,8 @@ fn generate_message_encoder(
                      if needed > buf.len() {{\n\
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: buf.len() }});\n\
                      }}\n\
-                     let header = {}::new(Self::BLOCK_LENGTH as u16, Self::TEMPLATE_ID, Self::SCHEMA_ID, Self::SCHEMA_VERSION);\n\
-                     let header_bytes = header.0;\n\
-                     buf[pos..pos + {}].copy_from_slice(&header_bytes);\n",
-            header_size, block_length, header_size, block_length, header_pascal, header_size
+                     buf[pos..pos + {}].copy_from_slice(&Self::HEADER_TEMPLATE);\n",
+            header_size, block_length, header_size, block_length, header_size
         ));
         generate_nullification(src, &msg.fields, "pos + 8", byte_order);
         src.push_str("        Ok(Self::wrap(buf, pos))\n    }\n\n");
@@ -2682,10 +2728,8 @@ fn generate_message_encoder(
                      if needed > buf.len() {{\n\
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: buf.len() }});\n\
                      }}\n\
-                     let header = {}::new(Self::BLOCK_LENGTH as u16, Self::TEMPLATE_ID, Self::SCHEMA_ID, Self::SCHEMA_VERSION);\n\
-                     let header_bytes = header.0;\n\
-                     buf[pos..pos + {}].copy_from_slice(&header_bytes);\n",
-            header_size, block_length, header_size, block_length, header_pascal, header_size
+                     buf[pos..pos + {}].copy_from_slice(&Self::HEADER_TEMPLATE);\n",
+            header_size, block_length, header_size, block_length, header_size
         ));
         generate_nullification(src, &msg.fields, "pos + 8", byte_order);
         src.push_str("        Ok(Self::wrap(buf, pos))\n    }\n\n");
@@ -2820,7 +2864,8 @@ fn generate_message_encoder(
 
             let g_pascal = to_pascal_case(&g.name);
             let g_snake = to_snake_case(&g.name);
-            let (dim_name, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+            let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+            let (num_offset, num_size) = get_dim_num_layout(elements, &g.dimension_type);
 
             src.push_str(&format!(
                 "impl<'a> {}Encoder<'a, {}_encoder_state::Needs{}> {{\n\
@@ -2831,9 +2876,8 @@ fn generate_message_encoder(
                          if self.pos + {} > self.buf.len() {{\n\
                              return Err(sbe_rt::EncodeError::BufferTooShort {{ needed: self.pos + {}, available: self.buf.len() }});\n\
                          }}\n\
-                         let header = {};\n\
-                         let header_bytes = header.0;\n\
-                         self.buf[self.pos..self.pos + {}].copy_from_slice(&header_bytes);\n\
+                         self.buf[self.pos..self.pos + {}].copy_from_slice(&{}Encoder::GROUP_DIM_TEMPLATE);\n\
+                         self.buf[self.pos + {}..self.pos + {} + {}].copy_from_slice(&count.to_{}_bytes());\n\
                          let mut group = {}Encoder::wrap(self.buf, self.pos + {}, count);\n\
                          f(&mut group);\n\
                          Ok({}Encoder {{\n\
@@ -2845,8 +2889,8 @@ fn generate_message_encoder(
                      }}\n\n\
                  }}\n\n",
                 name, to_snake_case(&msg.name), g_pascal, g_snake, name, next_state, g_pascal, dim_size, dim_size,
-                generate_dim_new_call(elements, &g.dimension_type, &format!("{}Encoder::ENTRY_BLOCK_LENGTH as u16", g_pascal), "count"),
-                dim_size, g_pascal, dim_size, name
+                dim_size, g_pascal, num_offset, num_offset, num_size, order_suffix,
+                g_pascal, dim_size, name
             ));
             tail_idx += 1;
         }
@@ -2983,6 +3027,18 @@ fn generate_group_encoder(
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
     };
+    let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+
+    let mut dim_tpl = vec![0u8; dim_size];
+    match byte_order {
+        ByteOrder::LittleEndian => {
+            dim_tpl[0..2].copy_from_slice(&(g.block_length as u16).to_le_bytes());
+        }
+        ByteOrder::BigEndian => {
+            dim_tpl[0..2].copy_from_slice(&(g.block_length as u16).to_be_bytes());
+        }
+    }
+    let dim_repr: String = dim_tpl.iter().map(|b| format!("{}", b)).collect::<Vec<_>>().join(", ");
 
     src.push_str(&format!(
         "pub struct {}Encoder<'a> {{\n\
@@ -2992,7 +3048,8 @@ fn generate_group_encoder(
              written: u16,\n\
          }}\n\n\
          impl<'a> {}Encoder<'a> {{\n\
-             pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
+             pub const ENTRY_BLOCK_LENGTH: usize = {};\n\
+             pub const GROUP_DIM_TEMPLATE: [u8; {}] = [{}];\n\n\
              pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {{\n\
                  Self {{ buf, pos, count, written: 0 }}\n\
              }}\n\n\
@@ -3008,7 +3065,7 @@ fn generate_group_encoder(
                      return Err(sbe_rt::EncodeError::BufferTooShort {{ needed: self.pos + block_len, available: self.buf.len() }});\n\
                  }}\n\
                  let mut entry = {}EntryEncoder::wrap(self.buf, self.pos);\n",
-        name, name, g.block_length, name, name
+        name, name, g.block_length, dim_size, dim_repr, name, name
     ));
 
     generate_nullification(src, &g.fields, "self.pos", byte_order);
@@ -3134,7 +3191,8 @@ fn generate_group_encoder(
     for ng in &g.groups {
         let ng_pascal = to_pascal_case(&ng.name);
         let ng_snake = to_snake_case(&ng.name);
-        let (dim_name, dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
+        let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
+        let (num_offset, num_size) = get_dim_num_layout(elements, &ng.dimension_type);
         src.push_str(&format!(
             "    pub fn {}<F>(&mut self, count: u16, f: F) -> Result<&mut Self, sbe_rt::EncodeError>\n\
                  where\n\
@@ -3143,17 +3201,16 @@ fn generate_group_encoder(
                      if self.pos + {} > self.buf.len() {{\n\
                          return Err(sbe_rt::EncodeError::BufferTooShort {{ needed: self.pos + {}, available: self.buf.len() }});\n\
                      }}\n\
-                     let header = {};\n\
-                     let header_bytes = header.0;\n\
-                     self.buf[self.pos..self.pos + {}].copy_from_slice(&header_bytes);\n\
+                     self.buf[self.pos..self.pos + {}].copy_from_slice(&{}Encoder::GROUP_DIM_TEMPLATE);\n\
+                     self.buf[self.pos + {}..self.pos + {} + {}].copy_from_slice(&count.to_{}_bytes());\n\
                      let mut group = {}Encoder::wrap(self.buf, self.pos + {}, count);\n\
                      f(&mut group);\n\
                      self.pos = group.pos;\n\
                      Ok(self)\n\
                  }}\n\n",
             ng_snake, ng_pascal, dim_size, dim_size,
-            generate_dim_new_call(elements, &ng.dimension_type, &format!("{}Encoder::ENTRY_BLOCK_LENGTH as u16", ng_pascal), "count"),
-            dim_size, ng_pascal, dim_size
+            dim_size, ng_pascal, num_offset, num_offset, num_size, order_suffix,
+            ng_pascal, dim_size
         ));
         tail_idx += 1;
     }
