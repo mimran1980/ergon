@@ -92,6 +92,29 @@ Download `spot_prod_latest.xml` from GitHub. 87 messages including:
 - [ ] Round-trip test: encode → decode → assert fields match for both schemas
 - [ ] `cargo run --release` in samples dir runs end-to-end
 
+## Benchmark comparison with upstream sbe-tools
+
+- [ ] Generate SBE code using upstream `sbe-tools` (Rust): run
+  `simple-binary-encoding/sbe-rust/sbe-encode` against both Bitget and
+  Binance schemas to produce reference Rust decoders
+- [ ] Generate SBE code using upstream `sbe-tools` (Java): run the Java
+  `SbeTool` against both schemas for reference `.sbe` binary fixtures
+- [ ] Commit the upstream-generated Rust code into
+  `samples/exchange-orderbook/src/sbe_tools_gen/` (separate module)
+- [ ] Commit Java-generated binary fixtures into
+  `samples/exchange-orderbook/fixtures/`
+- [ ] Write benchmark: `cargo bench` comparing ErgoSBE vs upstream Rust
+  decode of the same SBE binary fixtures:
+  - Decode latency (ns per message)
+  - Encode latency
+  - Throughput (msgs/sec) for batches of 10k messages
+- [ ] Assert wire-identical output: ErgoSBE-encoded bytes == upstream
+  Rust-encoded bytes == Java-generated fixture bytes
+- [ ] Benchmark script produces a markdown table of results
+
+This turns the sample crate into a competitive analysis tool — proves
+ErgoSBE is both wire-compatible AND competitive on performance.
+
 ## Transport
 
 Use `tokio-tungstenite` for WebSocket. The transport is scaffolding — focus is
