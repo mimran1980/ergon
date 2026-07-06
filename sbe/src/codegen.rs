@@ -4210,7 +4210,7 @@ fn generate_any_message(
                              if pos + frame_len > buf.len() {\n\
                                  return Err(sbe_rt::DecodeError::BufferTooShort { field: \"template body\", needed: frame_len, available: buf.len() - pos });\n\
                              }\n\
-                             let payload = &buf[body_pos .. pos + frame_len];\n\
+                             let payload = &buf[pos .. pos + frame_len];\n\
                              Ok(DecodedFrame {\n\
                                  message: Self::Unknown {\n\
                                      header,\n\
@@ -4223,6 +4223,30 @@ fn generate_any_message(
                  }\n\
              }\n"
     );
+
+    // ── encoded_length_with_header + as_bytes ────────────────────────
+    src.push_str(
+        "    #[inline]\n    pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {\n        match self {\n"
+    );
+    for m in messages {
+        let name_pascal = to_pascal_case(&m.name);
+        src.push_str(&format!(
+            "            Self::{name_pascal}(d) => d.encoded_length_with_header(),\n"
+        ));
+    }
+    src.push_str(
+        "            Self::Unknown { payload, .. } => Ok(payload.len()),\n        }\n    }\n\n",
+    );
+    src.push_str(
+        "    #[inline]\n    pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {\n        match self {\n"
+    );
+    for m in messages {
+        let name_pascal = to_pascal_case(&m.name);
+        src.push_str(&format!(
+            "            Self::{name_pascal}(d) => d.as_bytes(),\n"
+        ));
+    }
+    src.push_str("            Self::Unknown { payload, .. } => Ok(payload),\n        }\n    }\n");
 
     src.push_str("}\n\n");
 

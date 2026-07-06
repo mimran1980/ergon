@@ -3059,13 +3059,27 @@ impl<'a> AnyMessage<'a> {
                         available: buf.len() - pos,
                     });
                 }
-                let payload = &buf[body_pos..pos + frame_len];
+                let payload = &buf[pos..pos + frame_len];
                 Ok(DecodedFrame {
                     message: Self::Unknown { header, payload },
                     range: pos..pos + frame_len,
                     len: frame_len,
                 })
             }
+        }
+    }
+    #[inline]
+    pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
+        match self {
+            Self::Car(d) => d.encoded_length_with_header(),
+            Self::Unknown { payload, .. } => Ok(payload.len()),
+        }
+    }
+    #[inline]
+    pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        match self {
+            Self::Car(d) => d.as_bytes(),
+            Self::Unknown { payload, .. } => Ok(payload),
         }
     }
 }
