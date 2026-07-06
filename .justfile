@@ -31,6 +31,10 @@ bench:
 docs:
     cargo doc --no-deps --workspace --open
 
+# CI monitoring — check latest CI run status
+ci-status limit='3':
+    ./ci-monitor.sh {{limit}}
+
 # check for unused deps
 deps:
     cargo +nightly udeps --workspace 2>/dev/null || echo "install nightly and cargo-udeps"
