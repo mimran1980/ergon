@@ -524,28 +524,45 @@ fn max_encoding_value(prim: PrimitiveType) -> u64 {
 fn emit_field_consts(src: &mut String, f: &MessageField) {
     let upper_name = to_upper_snake_case(&f.name);
     let mut any = false;
+    let mut tokens = proc_macro2::TokenStream::new();
     match &f.field_type {
         FieldType::Primitive(prim, _) => {
             let r_type = rust_type(*prim);
+            let r_type_ty: syn::Type = syn::parse_str(r_type).unwrap();
             if let Some(val) = f.null_value {
+                let name_ident = syn::Ident::new(
+                    &format!("{upper_name}_NULL"),
+                    proc_macro2::Span::call_site(),
+                );
                 let expr = field_const_value_expr(val, *prim);
-                src.push_str(&format!(
-                    "    pub const {upper_name}_NULL: {r_type} = {expr};\n"
-                ));
+                let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
+                tokens.extend(quote::quote! {
+                    pub const #name_ident: #r_type_ty = #expr_parsed;
+                });
                 any = true;
             }
             if let Some(val) = f.min_value {
+                let name_ident = syn::Ident::new(
+                    &format!("{upper_name}_MIN"),
+                    proc_macro2::Span::call_site(),
+                );
                 let expr = field_const_value_expr(val, *prim);
-                src.push_str(&format!(
-                    "    pub const {upper_name}_MIN: {r_type} = {expr};\n"
-                ));
+                let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
+                tokens.extend(quote::quote! {
+                    pub const #name_ident: #r_type_ty = #expr_parsed;
+                });
                 any = true;
             }
             if let Some(val) = f.max_value {
+                let name_ident = syn::Ident::new(
+                    &format!("{upper_name}_MAX"),
+                    proc_macro2::Span::call_site(),
+                );
                 let expr = field_const_value_expr(val, *prim);
-                src.push_str(&format!(
-                    "    pub const {upper_name}_MAX: {r_type} = {expr};\n"
-                ));
+                let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
+                tokens.extend(quote::quote! {
+                    pub const #name_ident: #r_type_ty = #expr_parsed;
+                });
                 any = true;
             }
         }
@@ -554,17 +571,31 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
             encoding_type,
         } => {
             let target_name = to_pascal_case(name);
-            let max_val = max_encoding_value(*encoding_type);
-            let max_expr = field_const_value_expr(max_val, *encoding_type);
-            src.push_str(&format!(
-                "    pub const {upper_name}_NULL: {target_name} = {target_name}::NullVal;\n"
-            ));
+            let name_ident = syn::Ident::new(
+                &format!("{upper_name}_NULL"),
+                proc_macro2::Span::call_site(),
+            );
+            let target_ident =
+                syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+            tokens.extend(quote::quote! {
+                pub const #name_ident: #target_ident = #target_ident::NullVal;
+            });
             any = true;
         }
         FieldType::Composite { .. } | FieldType::Set { .. } => {}
     }
     if any {
-        src.push('\n');
+        let block = tokens.to_string();
+        // Indent each line to 4 spaces (inside impl block)
+        if !block.is_empty() {
+            for line in block.lines() {
+                if !line.is_empty() {
+                    src.push_str("    ");
+                    src.push_str(line);
+                    src.push('\n');
+                }
+            }
+        }
     }
 }
 
@@ -4566,63 +4597,91 @@ fn extend_opt_str(buf: &mut Vec<u8>, s: Option<&str>) {
 /// }
 /// ```
 fn generate_message_field_meta(src: &mut String, msg: &MessageStructure) {
-    let msg_snake = to_snake_case(&msg.name);
-
-    src.push_str(&format!(
-        "pub mod {}_field_meta {{\n\
-         pub struct FieldInfo {{\n\
-             pub name: &'static str,\n\
-             pub id: u16,\n\
-             pub offset: usize,\n\
-             pub since_version: u16,\n\
-             pub field_type: &'static str,\n\
-             pub presence: &'static str,\n\
-             pub null_value: Option<&'static str>,\n\
-             pub semantic_type: Option<&'static str>,\n\
-             pub description: Option<&'static str>,\n\
-         }}\n\
-         pub const FIELDS: &[FieldInfo] = &[\n",
-        msg_snake
-    ));
-
-    for f in &msg.fields {
-        let field_type_str = match &f.field_type {
-            FieldType::Primitive(prim, _) => rust_type(*prim).to_string(),
-            FieldType::Composite { name, .. } => to_pascal_case(name),
-            FieldType::Enum { name, .. } => to_pascal_case(name),
-            FieldType::Set { name, .. } => to_pascal_case(name),
-        };
-        let id = f.id.unwrap_or(0);
-        let presence_str = match f.presence {
-            Presence::Required => "required",
-            Presence::Optional => "optional",
-            Presence::Constant => "constant",
-        };
-        let null_val = f
-            .null_value
-            .as_ref()
-            .map(|v| format!("Some(\"{v}\")"))
-            .unwrap_or_else(|| "None".to_string());
-        let sem_type = f
-            .semantic_type
-            .as_deref()
-            .map(|v| format!("Some(\"{v}\")"))
-            .unwrap_or_else(|| "None".to_string());
-        let desc = f
-            .description
-            .as_deref()
-            .map(|v| format!("Some(\"{v}\")"))
-            .unwrap_or_else(|| "None".to_string());
-        src.push_str(&format!(
-            "    FieldInfo {{ name: \"{}\", id: {}, offset: {}, since_version: {}, field_type: \"{}\", presence: \"{}\", null_value: {}, semantic_type: {}, description: {} }},\n",
-            f.name, id, f.offset, f.since_version, field_type_str, presence_str, null_val, sem_type, desc
-        ));
-    }
-
-    src.push_str(
-        "];\n\
-         }\n\n",
+    let mod_name = syn::Ident::new(
+        &format!("{}_field_meta", to_snake_case(&msg.name)),
+        proc_macro2::Span::call_site(),
     );
+
+    let fields: Vec<proc_macro2::TokenStream> = msg
+        .fields
+        .iter()
+        .map(|f| {
+            let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+            let id = f.id.unwrap_or(0);
+            let id_lit = syn::LitInt::new(&id.to_string(), proc_macro2::Span::call_site());
+            let offset_lit =
+                syn::LitInt::new(&f.offset.to_string(), proc_macro2::Span::call_site());
+            let sv_lit = syn::LitInt::new(
+                &f.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            let field_type_str = match &f.field_type {
+                FieldType::Primitive(prim, _) => rust_type(*prim).to_string(),
+                FieldType::Composite { name, .. } => to_pascal_case(name),
+                FieldType::Enum { name, .. } => to_pascal_case(name),
+                FieldType::Set { name, .. } => to_pascal_case(name),
+            };
+            let field_type_lit =
+                syn::LitStr::new(&field_type_str, proc_macro2::Span::call_site());
+            let presence_str = match f.presence {
+                Presence::Required => "required",
+                Presence::Optional => "optional",
+                Presence::Constant => "constant",
+            };
+            let presence_lit =
+                syn::LitStr::new(presence_str, proc_macro2::Span::call_site());
+            let null_val = f.null_value.map(|v| {
+                let s = v.to_string();
+                let lit = syn::LitStr::new(&s, proc_macro2::Span::call_site());
+                quote::quote! { Some(#lit) }
+            }).unwrap_or(quote::quote! { None });
+            let sem_type = f
+                .semantic_type
+                .as_deref()
+                .map(|v| {
+                    let lit = syn::LitStr::new(v, proc_macro2::Span::call_site());
+                    quote::quote! { Some(#lit) }
+                })
+                .unwrap_or(quote::quote! { None });
+            let desc = f
+                .description
+                .as_deref()
+                .map(|v| {
+                    let lit = syn::LitStr::new(v, proc_macro2::Span::call_site());
+                    quote::quote! { Some(#lit) }
+                })
+                .unwrap_or(quote::quote! { None });
+
+            quote::quote! {
+                FieldInfo { name: #name_lit, id: #id_lit, offset: #offset_lit, since_version: #sv_lit, field_type: #field_type_lit, presence: #presence_lit, null_value: #null_val, semantic_type: #sem_type, description: #desc },
+            }
+        })
+        .collect();
+
+    let tokens = quote::quote! {
+        pub mod #mod_name {
+            pub struct FieldInfo {
+                pub name: &'static str,
+                pub id: u16,
+                pub offset: usize,
+                pub since_version: u16,
+                pub field_type: &'static str,
+                pub presence: &'static str,
+                pub null_value: Option<&'static str>,
+                pub semantic_type: Option<&'static str>,
+                pub description: Option<&'static str>,
+            }
+            pub const FIELDS: &[FieldInfo] = &[
+                #(#fields)*
+            ];
+        }
+    };
+
+    let formatted = syn::parse_str::<syn::File>(&tokens.to_string())
+        .map(|file| prettyplease::unparse(&file))
+        .unwrap_or_else(|_| tokens.to_string());
+    src.push_str(&formatted);
+    src.push('\n');
 }
 
 #[cfg(test)]
