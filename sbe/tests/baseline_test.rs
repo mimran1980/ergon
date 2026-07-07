@@ -552,6 +552,66 @@ fn compute_encoded_length_matches_actual() {
     );
 }
 
+// ── entries() iterator for fixed-entry groups (todo 114) ─────────────
+
+#[test]
+fn fixed_entry_group_entries_iterator() {
+    let (_schema, src) = generate(&Paths::example_schema(), "entries_iter");
+    compile_and_run(
+        "entries_iter",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(1, |g| {
+            g.add(|e| {
+                e.octane_rating(95);
+                e.acceleration(3, |ag| {
+                    ag.add(|ae| { ae.mph(30).seconds(4.0); }).unwrap();
+                    ag.add(|ae| { ae.mph(60).seconds(7.5); }).unwrap();
+                    ag.add(|ae| { ae.mph(100).seconds(12.2); }).unwrap();
+                }).unwrap();
+            }).unwrap();
+        }).unwrap();
+        let car = car.manufacturer(b"Hon").unwrap();
+        let car = car.model(b"Civ").unwrap();
+        let car = car.activation_code(b"abc").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let perf: Vec<_> = car2.performance_figures().unwrap()
+            .collect::<Result<Vec<_>, _>>().unwrap();
+        let mut accel = perf[0].acceleration().unwrap();
+        let mut entries = accel.entries();
+        assert_eq!(entries.len(), 3);
+        let a0 = entries.next().unwrap();
+        assert_eq!(a0.mph(), 30);
+        assert!((a0.seconds() - 4.0).abs() < 0.01);
+        let a1 = entries.next().unwrap();
+        assert_eq!(a1.mph(), 60);
+        let a2 = entries.next().unwrap();
+        assert_eq!(a2.mph(), 100);
+        assert!(entries.next().is_none());
+
+        // ponytail: entries() takes &mut self (same as Iterator impl).
+        // To call multiple times, get fresh decoder each time.
+        let len1 = perf[0].acceleration().unwrap().entries().len();
+        let len2 = perf[0].acceleration().unwrap().entries().len();
+        assert_eq!(len1, 3);
+        assert_eq!(len2, 3);
+    "#,
+    );
+}
+
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────
 
 #[test]

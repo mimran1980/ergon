@@ -73,9 +73,9 @@ because it returns an iterator, not a slice.
 
 ## Acceptance criteria
 
-- [ ] `entries()` method on group decoders with `total_tail == 0`
-- [ ] `EntriesIter` borrows `&self`, returns `EntryDecoder<'a>` items
-- [ ] `ExactSizeIterator` impl with correct `len()`
+- [x] `entries()` method on group decoders with `total_tail == 0`
+- [x] `EntriesIter` borrows `&self`, returns `EntryDecoder<'a>` items
+- [x] `ExactSizeIterator` impl with correct `len()`
 - [x] `as_chunks()` preserved as the raw-bytes escape hatch
 - [x] Golden file regenerated and stability test passes
 - [x] Baseline tests pass
