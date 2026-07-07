@@ -1,7 +1,14 @@
-# Dual composite access: eager copy + lazy flyweight
+# Dual composite access: eager copy + lazy flyweight — WON'T DO
 
-**Blocked by:** none (codegen only)
+**Status:** REJECTED — unnecessary
+**Blocked by:** none (codegen only) — but design doesn't justify implementation
 **Ref:** Aeron perf audit (todo 105, gap #7)
+
+**Why rejected:** ErgoSBE composites are value types (typically 6-10 bytes). The eager
+copy is already a single `try_into().unwrap()` — zero-cost on the stack. Aeron's
+flyweight decoder pattern exists because Aeron uses parent-reference chains, which
+ErgoSBE doesn't. ErgoSBE's value-type approach is already optimal for both single and
+multi-field access. A lazy variant would add API surface with no measurable perf gain.
 
 ## Problem
 

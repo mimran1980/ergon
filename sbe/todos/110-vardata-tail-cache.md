@@ -1,7 +1,14 @@
-# Var-data tail offset caching (avoid re-walking)
+# Var-data tail offset caching (avoid re-walking) — WON'T DO
 
-**Blocked by:** none (codegen only)
+**Status:** REJECTED — infeasible on Rust ≥1.95
+**Blocked by:** Rust language limitation
 **Ref:** Aeron perf audit (todo 105, gap #3)
+
+**Why rejected:** Cell<Option<usize>> is `!Copy` on Rust 1.95+. Adding it to decoder
+structs breaks `Copy`, which is a critical property for zero-cost decoder passing in
+hot loops. Losing `Copy` is worse than the O(N²) tail walking it would fix. Tail
+offsets are typically N ≤ 5 sections, and sequential access means each is computed
+once anyway.
 
 ## Problem
 
