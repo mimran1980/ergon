@@ -2,6 +2,7 @@
 
 **Blocked by:** 03
 **Blocks:** 10, 11
+**Status: DONE**
 
 The main entry point for the consumer. Manages the ClickHouse connection, caches
 table schemas, auto-batches rows, handles schema migration on first-seen table
@@ -72,27 +73,27 @@ impl PersistSender {
 
 ## Acceptance criteria
 
-- [ ] Builder pattern with all options, sensible defaults
-- [ ] `sender("table").build()` succeeds
-- [ ] `sender.persist(&dto)` → schema created on first call (struct columns + metadata columns), rows inserted
-- [ ] Metadata columns appear in table: `app`, `host`, `pid`, etc.
-- [ ] Metadata values are consistent across rows from the same sender
-- [ ] Schema cached: second call with same table name skips DDL
-- [ ] Schema migration: adding a data field triggers ALTER TABLE ADD COLUMN
-- [ ] Schema migration: new metadata key on sender rebuild triggers ALTER TABLE ADD COLUMN
-- [ ] Type conflict: incompatible change is logged and skipped
-- [ ] Auto-batch: rows don't appear until flush interval or batch size hit
-- [ ] Manual `flush()` sends pending rows immediately
-- [ ] `cleanup()` drops empty tables, leaves non-empty tables alone
-- [ ] `Drop` on sink flushes remaining rows
-- [ ] ClickHouse unreachable → drop data, log warning, don't panic
-- [ ] Default URL from `CLICKHOUSE_URL` env var
-- [ ] Multiple senders on one sink (same table, different metadata) produce correct rows
-- [ ] Multiple senders on one sink (different tables) produce isolated tables
-- [ ] Unit test: schema caching logic with metadata columns (no ClickHouse needed)
-- [ ] Unit test: batch accumulation + flush trigger
-- [ ] Unit test: diff logic triggers correct DDL
-- [ ] Integration test: docker ClickHouse, create table + insert + query back + verify metadata
-- [ ] Integration test: schema migration (add column, type change, conflict)
-- [ ] Integration test: cleanup drops empty table
-- [ ] Integration test: multiple tables from same struct via different names
+- [x] Builder pattern with all options, sensible defaults
+- [x] `sender("table").build()` succeeds
+- [x] `sender.persist(&dto)` → schema created on first call (struct columns + metadata columns), rows inserted
+- [x] Metadata columns appear in table: `app`, `host`, `pid`, etc.
+- [x] Metadata values are consistent across rows from the same sender
+- [x] Schema cached: second call with same table name skips DDL
+- [x] Schema migration: adding a data field triggers ALTER TABLE ADD COLUMN
+- [x] Schema migration: new metadata key on sender rebuild triggers ALTER TABLE ADD COLUMN
+- [x] Type conflict: incompatible change is logged and skipped
+- [x] Auto-batch: rows don't appear until flush interval or batch size hit
+- [x] Manual `flush()` sends pending rows immediately
+- [x] `cleanup()` drops empty tables, leaves non-empty tables alone
+- [x] `Drop` on sink flushes remaining rows
+- [x] ClickHouse unreachable → drop data, log warning, don't panic
+- [x] Default URL from `CLICKHOUSE_URL` env var
+- [x] Multiple senders on one sink (same table, different metadata) produce correct rows
+- [x] Multiple senders on one sink (different tables) produce isolated tables
+- [x] Unit test: schema caching logic with metadata columns (no ClickHouse needed)
+- [x] Unit test: batch accumulation + flush trigger
+- [x] Unit test: diff logic triggers correct DDL
+- [x] Integration test: docker ClickHouse, create table + insert + query back + verify metadata
+- [x] Integration test: schema migration (add column, type change, conflict)
+- [x] Integration test: cleanup drops empty table
+- [x] Integration test: multiple tables from same struct via different names

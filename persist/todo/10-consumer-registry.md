@@ -2,6 +2,7 @@
 
 **Blocked by:** 05, 09
 **Blocks:** 11
+**Status: DONE**
 
 The consumer-side counterpart to `DynamicRecorder`. Receives `DynamicSchema` and
 `DynamicRow` messages (as decoded SBE types from todo 09), manages table schemas,
@@ -61,17 +62,17 @@ impl RowDecoder {
 
 ## Acceptance criteria
 
-- [ ] `SchemaRegistry::register()` parses DynamicSchema → populates internal map with columns + metadata_keys
-- [ ] `SchemaRegistry::register()` is idempotent (same schema_id twice → no-op)
-- [ ] `SchemaRegistry::table_name()` returns correct name for known schema_id
-- [ ] `RowDecoder::decode()` produces correct `clickhouse::Row` with data + metadata columns
-- [ ] Metadata values from row decoded into correct `clickhouse::Row` columns
-- [ ] New metadata key in row (not in schema) → ADD COLUMN + added to cache
-- [ ] Row with string fields → correct string values via symbol table
-- [ ] Row with null fields → null values in output
-- [ ] Extra data fields in row not in schema → ignored
-- [ ] Missing data fields in row (present in schema, absent in row) → null
-- [ ] Unit test: register schema with metadata → decode row → verify Row contents including metadata
-- [ ] Unit test: roundtrip: DynamicRecorder.record() bytes → DynamicRow decode → RowDecoder.decode() — metadata intact
-- [ ] Unit test: multiple rows decoded in sequence (no state leak between decodes)
-- [ ] Unit test: dynamic metadata discovery (new metadata key appears mid-stream)
+- [x] `SchemaRegistry::register()` parses DynamicSchema → populates internal map with columns + metadata_keys
+- [x] `SchemaRegistry::register()` is idempotent (same schema_id twice → no-op)
+- [x] `SchemaRegistry::table_name()` returns correct name for known schema_id
+- [x] `RowDecoder::decode()` produces correct `clickhouse::Row` with data + metadata columns
+- [x] Metadata values from row decoded into correct `clickhouse::Row` columns
+- [x] New metadata key in row (not in schema) → ADD COLUMN + added to cache
+- [x] Row with string fields → correct string values via symbol table
+- [x] Row with null fields → null values in output
+- [x] Extra data fields in row not in schema → ignored
+- [x] Missing data fields in row (present in schema, absent in row) → null
+- [x] Unit test: register schema with metadata → decode row → verify Row contents including metadata
+- [x] Unit test: roundtrip: DynamicRecorder.record() bytes → DynamicRow decode → RowDecoder.decode() — metadata intact
+- [x] Unit test: multiple rows decoded in sequence (no state leak between decodes)
+- [x] Unit test: dynamic metadata discovery (new metadata key appears mid-stream)

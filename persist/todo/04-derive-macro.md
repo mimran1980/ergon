@@ -2,6 +2,7 @@
 
 **Blocked by:** 03
 **Blocks:** 11
+**Status: DONE**
 
 The standalone proc-macro crate `ergo-clickhouse-persist-derive`. Generates
 `Persist` impls from annotated struct definitions.
@@ -65,18 +66,18 @@ Type resolution: `#[persist(type = "...")]` → `PersistAs` impl on the field's 
 
 ## Acceptance criteria
 
-- [ ] Standalone proc-macro crate `ergo-clickhouse-persist-derive` compiles
-- [ ] `#[derive(Persist)]` on a flat struct with primitives → correct impl
-- [ ] `#[persist(name = "custom")]` renames a column
-- [ ] `#[persist(flatten)]` on a nested struct → parent_child column names
-- [ ] `#[persist(json)]` on a field → Json column type
-- [ ] `#[persist(array)]` on `Vec<T>` → one Array column per scalar field of T
-- [ ] `#[persist(type = "Decimal(18,2)")]` overrides column type
-- [ ] `#[persist(order_by = "price, ts")]` overrides ORDER BY
-- [ ] `#[persist(skip)]` excludes a field
-- [ ] `Option<T>` fields → Nullable columns
-- [ ] `Vec<u8>` field → String column
-- [ ] Nested struct with no annotation → Json column (fallback)
-- [ ] Compile-pass test: derive on a realistic struct with all annotations
-- [ ] Compile-pass test: struct with generics (must produce useful error, not UB)
-- [ ] Generated code passes `cargo fmt --check`
+- [x] Standalone proc-macro crate `ergo-clickhouse-persist-derive` compiles
+- [x] `#[derive(Persist)]` on a flat struct with primitives → correct impl
+- [x] `#[persist(name = "custom")]` renames a column
+- [x] `#[persist(flatten)]` on a nested struct → parent_child column names
+- [x] `#[persist(json)]` on a field → Json column type
+- [x] `#[persist(array)]` on `Vec<T>` → one Array column per scalar field of T
+- [x] `#[persist(type = "Decimal(18,2)")]` overrides column type
+- [x] `#[persist(order_by = "price, ts")]` overrides ORDER BY
+- [x] `#[persist(skip)]` excludes a field
+- [x] `Option<T>` fields → Nullable columns
+- [x] `Vec<u8>` field → String column
+- [x] Nested struct with no annotation → Json column (fallback)
+- [x] Compile-pass test: derive on a realistic struct with all annotations
+- [x] Compile-pass test: struct with generics (must produce useful error, not UB)
+- [x] Generated code passes `cargo fmt --check`

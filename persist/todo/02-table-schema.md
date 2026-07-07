@@ -2,6 +2,7 @@
 
 **Blocked by:** 00
 **Blocks:** 03
+**Status: DONE**
 
 The table schema type: holds column definitions, ORDER BY clause, and can diff
 against a previous schema version for migration DDL generation.
@@ -35,14 +36,14 @@ pub struct SchemaDiff {
 
 ## Acceptance criteria
 
-- [ ] `TableSchema` struct with columns, order_by, engine
-- [ ] `TableSchema::diff(&self, previous: &TableSchema) -> SchemaDiff`
-- [ ] `SchemaDiff` → DDL: `ALTER TABLE` statements for new columns and compatible widens
-- [ ] Unit test: identical schemas → empty diff
-- [ ] Unit test: new column added → one ADD COLUMN
-- [ ] Unit test: u32→u64 → compatible widen (ALTER COLUMN MODIFY TYPE)
-- [ ] Unit test: u64→u32 → type conflict (skipped)
-- [ ] Unit test: i32→String → type conflict (skipped)
-- [ ] Unit test: column removed → ignored (no DROP COLUMN)
-- [ ] Unit test: full migration sequence — create, add 3 columns, 1 conflict, 2 compatible
-- [ ] `_persist_time DateTime64(9)` auto-added if not explicitly declared
+- [x] `TableSchema` struct with columns, order_by, engine
+- [x] `TableSchema::diff(&self, previous: &TableSchema) -> SchemaDiff`
+- [x] `SchemaDiff` → DDL: `ALTER TABLE` statements for new columns and compatible widens
+- [x] Unit test: identical schemas → empty diff
+- [x] Unit test: new column added → one ADD COLUMN
+- [x] Unit test: u32→u64 → compatible widen (ALTER COLUMN MODIFY TYPE)
+- [x] Unit test: u64→u32 → type conflict (skipped)
+- [x] Unit test: i32→String → type conflict (skipped)
+- [x] Unit test: column removed → ignored (no DROP COLUMN)
+- [x] Unit test: full migration sequence — create, add 3 columns, 1 conflict, 2 compatible
+- [x] `_persist_time DateTime64(9)` auto-added if not explicitly declared

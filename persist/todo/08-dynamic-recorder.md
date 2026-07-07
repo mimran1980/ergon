@@ -2,6 +2,7 @@
 
 **Blocked by:** none (standalone, but integrates with 05 + 09)
 **Blocks:** 11
+**Status: DONE**
 
 The "no struct needed" path. Register fields at runtime, pre-compute the wire
 layout, then call `.record()` on the hot path with positional values.
@@ -70,17 +71,17 @@ that's too fragile. The user must declare types.
 
 ## Acceptance criteria
 
-- [ ] `DynamicRecorderBuilder::new()` + `.field()` + `.metadata()` + `.build()` compiles
-- [ ] `record()` with correct value types produces buffer bytes
-- [ ] `record()` with wrong number of values → error (panic or Result, up to implementor)
-- [ ] `record()` 100k times in a loop with no allocation (verify with a simple allocation counter or benchmark)
-- [ ] Metadata values are consistent across all `record()` calls from the same recorder
-- [ ] Change metadata → different `schema_id` (new schema registered on the consumer)
-- [ ] Change data fields → different `schema_id`
-- [ ] Same fields + same metadata → same `schema_id`
-- [ ] Unit test: build + record + inspect buffer (verify it's valid SBE with metadata group)
-- [ ] Unit test: schema_id determinism with metadata
-- [ ] Unit test: String values work (symbol table interning)
-- [ ] Unit test: Null values work
-- [ ] Unit test: empty metadata (no metadata keys set) → still produces valid SBE
-- [ ] Unit test: multiple metadata keys → all present in buffer
+- [x] `DynamicRecorderBuilder::new()` + `.field()` + `.metadata()` + `.build()` compiles
+- [x] `record()` with correct value types produces buffer bytes
+- [x] `record()` with wrong number of values → error (panic or Result, up to implementor)
+- [x] `record()` 100k times in a loop with no allocation (verify with a simple allocation counter or benchmark)
+- [x] Metadata values are consistent across all `record()` calls from the same recorder
+- [x] Change metadata → different `schema_id` (new schema registered on the consumer)
+- [x] Change data fields → different `schema_id`
+- [x] Same fields + same metadata → same `schema_id`
+- [x] Unit test: build + record + inspect buffer (verify it's valid SBE with metadata group)
+- [x] Unit test: schema_id determinism with metadata
+- [x] Unit test: String values work (symbol table interning)
+- [x] Unit test: Null values work
+- [x] Unit test: empty metadata (no metadata keys set) → still produces valid SBE
+- [x] Unit test: multiple metadata keys → all present in buffer

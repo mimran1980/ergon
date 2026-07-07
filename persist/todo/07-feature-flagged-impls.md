@@ -1,6 +1,7 @@
 # Feature-gated PersistAs impls for external crate types
 
 **Blocked by:** 01
+**Status: DONE**
 
 One `PersistAs` impl per external crate, each behind its own feature flag.
 Each feature is independently testable.
@@ -41,12 +42,12 @@ serde = ["dep:serde", "dep:serde_json"]
 
 ## Acceptance criteria
 
-- [ ] Feature `rust_decimal`: `Decimal` roundtrips through `PersistAs` → correct ColumnType + encoding
-- [ ] Feature `chrono`: `NaiveDateTime` → `DateTime64(9)`, `NaiveDate` → `Date`
-- [ ] Feature `chrono`: `DateTime<Utc>` → `DateTime64(9)`
-- [ ] Feature `duration`: `Duration` → `Interval`
-- [ ] Feature `serde`: custom type with `#[derive(Serialize)]` → `String`(Json) column
-- [ ] Each feature compiles and tests pass independently (`cargo test --features rust_decimal`, etc.)
-- [ ] No feature: none of these deps are compiled
-- [ ] `cargo test --all-features` passes
-- [ ] Doc example for each feature
+- [x] Feature `rust_decimal`: `Decimal` roundtrips through `PersistAs` → correct ColumnType + encoding
+- [x] Feature `chrono`: `NaiveDateTime` → `DateTime64(9)`, `NaiveDate` → `Date`
+- [x] Feature `chrono`: `DateTime<Utc>` → `DateTime64(9)`
+- [x] Feature `duration`: `Duration` → `Interval`
+- [x] Feature `serde`: custom type with `#[derive(Serialize)]` → `String`(Json) column
+- [x] Each feature compiles and tests pass independently (`cargo test --features rust_decimal`, etc.)
+- [x] No feature: none of these deps are compiled
+- [x] `cargo test --all-features` passes
+- [x] Doc example for each feature
