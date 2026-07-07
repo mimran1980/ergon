@@ -64,17 +64,17 @@ the user's crate — these are internal infrastructure types).
 
 ## Acceptance criteria
 
-- [ ] SBE XML schema for `DynamicSchema`, `DynamicRow` written
-- [ ] Schema compiles through ErgoSBE's generator
-- [ ] Generated Rust types compile with no warnings
-- [ ] `DynamicRow` can encode + decode roundtrip with known values
-- [ ] `DynamicSchema` encodes table_name, metadata, and column list correctly
-- [ ] Metadata group in `DynamicSchema` → consumer can read metadata keys
-- [ ] Metadata group in `DynamicRow` → consumer can read metadata values
-- [ ] Metadata roundtrip: encode with metadata → decode → metadata values match
-- [ ] All six field groups (int64, uint64, float64, bool, string, null) encode + decode correctly
-- [ ] Symbol table works: string values roundtrip through varData
-- [ ] Empty row (all groups including metadata have numInGroup=0) decodes correctly
-- [ ] Row with metadata + one field of each type decodes correctly
-- [ ] Schema + row roundtrip: encode DynamicSchema, encode DynamicRow with that schema_id, decode both
-- [ ] Empty metadata (no metadata keys) → still produces valid roundtrip
+- [x] SBE XML schema for `DynamicSchema`, `DynamicRow` written
+- [x] Schema compiles through ErgoSBE's generator
+- [x] Generated Rust types compile with no warnings
+- [x] `DynamicRow` can encode + decode roundtrip with known values
+- [x] `DynamicSchema` encodes table_name, metadata, and column list correctly
+- [x] Metadata group in `DynamicSchema` → consumer can read metadata keys
+- [x] Metadata group in `DynamicRow` → consumer can read metadata values
+- [x] Metadata roundtrip: encode with metadata → decode → metadata values match
+- [x] All six field groups (int64, uint64, float64, bool, string, null) encode + decode correctly
+- [x] Symbol table works: string values roundtrip through varData
+- [x] Empty row (all groups including metadata have numInGroup=0) decodes correctly
+- [x] Row with metadata + one field of each type decodes correctly
+- [x] Schema + row roundtrip: encode DynamicSchema, encode DynamicRow with that schema_id, decode both
+- [x] Empty metadata (no metadata keys) → still produces valid roundtrip

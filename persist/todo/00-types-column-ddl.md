@@ -45,13 +45,13 @@ DDL generation functions:
 
 ## Acceptance criteria
 
-- [ ] `ColumnType` enum with all variants listed above
-- [ ] `Display` impl: every variant produces valid ClickHouse DDL
-- [ ] `create_table_ddl()` generates correct `CREATE TABLE IF NOT EXISTS ... ENGINE = MergeTree() ORDER BY (...)`
-- [ ] `alter_table_add_column_ddl()` generates correct `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...`
-- [ ] Unit test for every variant's DDL string output
-- [ ] Unit test for Nullable nesting: `Nullable(Nullable(Int32))` produces `Nullable(Int32)` (no double-wrapping)
-- [ ] Unit test for Array + Nullable interaction
-- [ ] Unit test for Decimal bounds (precision 1-76, scale 0-precision)
-- [ ] Unit test for full CREATE TABLE with multiple columns + ORDER BY clause
-- [ ] No `unwrap()` in DDL generation — use `expect` with a message or `Result`
+- [x] `ColumnType` enum with all variants listed above
+- [x] `Display` impl: every variant produces valid ClickHouse DDL
+- [x] `create_table_ddl()` generates correct `CREATE TABLE IF NOT EXISTS ... ENGINE = MergeTree() ORDER BY (...)`
+- [x] `alter_table_add_column_ddl()` generates correct `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...`
+- [x] Unit test for every variant's DDL string output
+- [x] Unit test for Nullable nesting: `Nullable(Nullable(Int32))` produces `Nullable(Int32)` (no double-wrapping)
+- [x] Unit test for Array + Nullable interaction
+- [x] Unit test for Decimal bounds (precision 1-76, scale 0-precision)
+- [x] Unit test for full CREATE TABLE with multiple columns + ORDER BY clause
+- [x] No `unwrap()` in DDL generation — use `expect` with a message or `Result`

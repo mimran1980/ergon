@@ -1,11 +1,13 @@
 //! `ColumnType` enum and default type mappings — todo 00, 06.
 
+use std::any::TypeId;
 use std::fmt;
 
 /// A `ClickHouse` column type.
 ///
 /// Every variant maps 1:1 to a `ClickHouse` DDL type string.
 /// The [`Display`] impl produces the canonical DDL representation.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ColumnType {
     /// `Int8`
     Int8,
@@ -148,6 +150,58 @@ pub fn create_table_ddl(
          ENGINE = MergeTree() ORDER BY ({order_by_clause})",
         columns.join(",\n    ")
     )
+}
+
+/// Map a Rust type to its default [`ColumnType`] at compile time.
+///
+/// Every primitive type has a canonical ClickHouse column type:
+///
+/// | Rust type | ClickHouse type |
+/// |-----------|----------------|
+/// | `i8` | `Int8` |
+/// | `i16` | `Int16` |
+/// | `i32` | `Int32` |
+/// | `i64` | `Int64` |
+/// | `u8` | `UInt8` |
+/// | `u16` | `UInt16` |
+/// | `u32` | `UInt32` |
+/// | `u64` | `UInt64` |
+/// | `f32` | `Float32` |
+/// | `f64` | `Float64` |
+/// | `bool` | `Bool` |
+/// | `String` | `String` |
+/// | `&str` | `String` |
+/// | `Vec<u8>` | `String` |
+///
+/// Types without an explicit mapping receive [`ColumnType::Json`] (the
+/// catch-all for `impl Serialize` values).
+///
+/// `Option<T>`, `Vec<T>` (other than `Vec<u8>`), and user-defined structs
+/// are not handled here — they receive the `Json` fallback or require a
+/// custom `PersistAs` implementation.
+#[must_use]
+pub fn default_column_type<T: 'static>() -> ColumnType {
+    let tid = TypeId::of::<T>();
+    match () {
+        _ if tid == TypeId::of::<i8>() => ColumnType::Int8,
+        _ if tid == TypeId::of::<i16>() => ColumnType::Int16,
+        _ if tid == TypeId::of::<i32>() => ColumnType::Int32,
+        _ if tid == TypeId::of::<i64>() => ColumnType::Int64,
+        _ if tid == TypeId::of::<u8>() => ColumnType::UInt8,
+        _ if tid == TypeId::of::<u16>() => ColumnType::UInt16,
+        _ if tid == TypeId::of::<u32>() => ColumnType::UInt32,
+        _ if tid == TypeId::of::<u64>() => ColumnType::UInt64,
+        _ if tid == TypeId::of::<f32>() => ColumnType::Float32,
+        _ if tid == TypeId::of::<f64>() => ColumnType::Float64,
+        _ if tid == TypeId::of::<bool>() => ColumnType::Bool,
+        _ if tid == TypeId::of::<String>()
+            || tid == TypeId::of::<&'static str>()
+            || tid == TypeId::of::<Vec<u8>>() =>
+        {
+            ColumnType::String
+        }
+        _ => ColumnType::Json,
+    }
 }
 
 #[cfg(test)]
@@ -410,5 +464,86 @@ CREATE TABLE IF NOT EXISTS trades (
         assert!(!ColumnType::decimal_bounds(0, 0));
         assert!(!ColumnType::decimal_bounds(77, 0));
         assert!(!ColumnType::decimal_bounds(5, 6));
+    }
+
+    // -- default type mappings — todo 06 ---------------------------------
+
+    fn assert_maps_to<T: 'static>(expected: ColumnType) {
+        assert_eq!(default_column_type::<T>(), expected);
+    }
+
+    #[test]
+    fn test_default_i8() {
+        assert_maps_to::<i8>(ColumnType::Int8);
+    }
+
+    #[test]
+    fn test_default_i16() {
+        assert_maps_to::<i16>(ColumnType::Int16);
+    }
+
+    #[test]
+    fn test_default_i32() {
+        assert_maps_to::<i32>(ColumnType::Int32);
+    }
+
+    #[test]
+    fn test_default_i64() {
+        assert_maps_to::<i64>(ColumnType::Int64);
+    }
+
+    #[test]
+    fn test_default_u8() {
+        assert_maps_to::<u8>(ColumnType::UInt8);
+    }
+
+    #[test]
+    fn test_default_u16() {
+        assert_maps_to::<u16>(ColumnType::UInt16);
+    }
+
+    #[test]
+    fn test_default_u32() {
+        assert_maps_to::<u32>(ColumnType::UInt32);
+    }
+
+    #[test]
+    fn test_default_u64() {
+        assert_maps_to::<u64>(ColumnType::UInt64);
+    }
+
+    #[test]
+    fn test_default_f32() {
+        assert_maps_to::<f32>(ColumnType::Float32);
+    }
+
+    #[test]
+    fn test_default_f64() {
+        assert_maps_to::<f64>(ColumnType::Float64);
+    }
+
+    #[test]
+    fn test_default_bool() {
+        assert_maps_to::<bool>(ColumnType::Bool);
+    }
+
+    #[test]
+    fn test_default_string() {
+        assert_maps_to::<String>(ColumnType::String);
+    }
+
+    #[test]
+    fn test_default_str() {
+        assert_maps_to::<&str>(ColumnType::String);
+    }
+
+    #[test]
+    fn test_default_vec_u8() {
+        assert_maps_to::<Vec<u8>>(ColumnType::String);
+    }
+
+    #[test]
+    fn test_default_unknown_type_falls_back_to_json() {
+        assert_maps_to::<Vec<i32>>(ColumnType::Json);
     }
 }
