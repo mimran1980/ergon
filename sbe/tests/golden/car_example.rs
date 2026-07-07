@@ -2943,6 +2943,8 @@ impl<'a> AnyMessage<'a> {
             }
         }
     }
+}
+impl<'a> AnyMessage<'a> {
     #[inline]
     pub fn decode_frame(
         buf: &'a [u8],
@@ -3010,6 +3012,8 @@ impl<'a> AnyMessage<'a> {
             }
         }
     }
+}
+impl<'a> AnyMessage<'a> {
     #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
         match self {
@@ -3017,6 +3021,8 @@ impl<'a> AnyMessage<'a> {
             Self::Unknown { payload, .. } => Ok(payload.len()),
         }
     }
+}
+impl<'a> AnyMessage<'a> {
     #[inline]
     pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         match self {
@@ -3024,6 +3030,8 @@ impl<'a> AnyMessage<'a> {
             Self::Unknown { payload, .. } => Ok(payload),
         }
     }
+}
+impl<'a> AnyMessage<'a> {
     #[inline]
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         match self {

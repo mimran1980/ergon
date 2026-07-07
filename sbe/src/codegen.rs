@@ -269,14 +269,10 @@ impl Generator {
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
         // 8. Generate AnyMessage enum (per-schema: only this schema's messages)
-        generate_any_message(
-            &mut src,
-            &messages,
-            &elements,
-            ir.id,
-            &ir.header_type,
-            &ir.package,
-        );
+        let any_msg_ts =
+            generate_any_message(&messages, &elements, ir.id, &ir.header_type, &ir.package);
+        src.push_str(&any_msg_ts.to_string());
+        src.push('\n');
 
         // Format through syn/prettyplease
         syn::parse_str::<syn::File>(&src)
@@ -4147,13 +4143,12 @@ fn generate_schema_id_from_header(
 }
 
 fn generate_any_message(
-    src: &mut String,
     messages: &[MessageStructure],
     elements: &SchemaElements,
     schema_id: u16,
     header_type: &str,
     schema_name: &str,
-) {
+) -> proc_macro2::TokenStream {
     let header_size = elements
         .composites
         .iter()
@@ -4188,289 +4183,383 @@ fn generate_any_message(
         (bl, ti, si, vr)
     };
 
-    src.push_str(
-        "#[non_exhaustive]\n\
-         #[derive(Clone, Copy)]\n\
-         pub enum AnyMessage<'a> {\n",
-    );
-    for m in messages {
-        let name_pascal = to_pascal_case(&m.name);
-        src.push_str(&format!(
-            "    {}({}Decoder<'a>),\n",
-            name_pascal, name_pascal
-        ));
-    }
-    src.push_str(&format!(
-        "    Unknown {{\n\
-                 header: {},\n\
-                 payload: &'a [u8],\n\
-             }},\n\
-         }}\n\n",
-        to_pascal_case(header_type)
-    ));
+    let span = proc_macro2::Span::call_site();
+    let header_type_ident = syn::Ident::new(&to_pascal_case(header_type), span);
+    let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
+    let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), span);
+    let bl_ident = syn::Ident::new(&header_bl, span);
+    let ti_ident = syn::Ident::new(&header_ti, span);
+    let si_ident = syn::Ident::new(&header_si, span);
+    let vr_ident = syn::Ident::new(&header_vr, span);
 
-    // DecodedFrame Struct
-    src.push_str(
-        "#[derive(Clone)]\n\
-         pub struct DecodedFrame<'a> {\n\
-             pub message: AnyMessage<'a>,\n\
-             pub range: core::ops::Range<usize>,\n\
-             pub len: usize,\n\
-         }\n\n",
-    );
+    let mut out = proc_macro2::TokenStream::new();
 
-    // FramingPolicy Enum
-    src.push_str(
-        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
-         pub enum FramingPolicy {\n\
-             LengthPrefixU32,\n\
-             LengthPrefixU16,\n\
-             Fixed(usize),\n\
-         }\n\n",
-    );
-
-    // FrameCursor Struct
-    src.push_str(
-        "pub struct FrameCursor<'a> {\n\
-             buf: &'a [u8],\n\
-             pos: usize,\n\
-             framing: FramingPolicy,\n\
-         }\n\n\
-         impl<'a> FrameCursor<'a> {\n\
-             #[inline]\n             pub const fn new(buf: &'a [u8], framing: FramingPolicy) -> Self {\n\
-                 Self { buf, pos: 0, framing }\n\
-             }\n\
-         }\n\n\
-         impl<'a> Iterator for FrameCursor<'a> {\n\
-             type Item = Result<DecodedFrame<'a>, sbe_rt::DecodeError>;\n\
-             fn next(&mut self) -> Option<Self::Item> {\n\
-                 if self.pos >= self.buf.len() {\n\
-                     return None;\n\
-                 }\n\
-                 let (header_len, frame_len) = match self.framing {\n\
-                     FramingPolicy::LengthPrefixU32 => {\n\
-                         if self.pos + 4 > self.buf.len() {\n\
-                             return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"length prefix\", needed: 4, available: self.buf.len() - self.pos }));\n\
-                         }\n\
-                         let bytes: [u8; 4] = self.buf[self.pos..self.pos + 4].try_into().unwrap();\n\
-                         let len = u32::from_le_bytes(bytes) as usize;\n\
-                         (4, len)\n\
-                     }\n\
-                     FramingPolicy::LengthPrefixU16 => {\n\
-                         if self.pos + 2 > self.buf.len() {\n\
-                             return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"length prefix\", needed: 2, available: self.buf.len() - self.pos }));\n\
-                         }\n\
-                         let bytes: [u8; 2] = self.buf[self.pos..self.pos + 2].try_into().unwrap();\n\
-                         let len = u16::from_le_bytes(bytes) as usize;\n\
-                         (2, len)\n\
-                     }\n\
-                     FramingPolicy::Fixed(len) => (0, len),\n\
-                 };\n\n\
-                 if self.pos + header_len + frame_len > self.buf.len() {\n\
-                     return Some(Err(sbe_rt::DecodeError::BufferTooShort { field: \"frame bounds\", needed: header_len + frame_len, available: self.buf.len() - self.pos }));\n\
-                 }\n\
-                 let off = self.pos + header_len;\n\
-                 let res = AnyMessage::decode_frame(self.buf, off, frame_len);\n\
-                 match res {\n\
-                     Ok(frame) => {\n\
-                         self.pos += header_len + frame_len;\n\
-                         Some(Ok(frame))\n\
-                     }\n\
-                     Err(e) => Some(Err(e)),\n\
-                 }\n\
-             }\n\
-         }\n\n"
-    );
-
-    src.push_str(&format!(
-        "impl<'a> AnyMessage<'a> {{\n\
-             #[inline]\n             pub const fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
-                 if pos + {} > buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }});\n\
-                 }}\n\
-                 let mut header_bytes = [0u8; {}];\n\
-                 let mut j = 0;\n\
-                 while j < {} {{\n\
-                     header_bytes[j] = buf[pos + j];\n\
-                     j += 1;\n\
-                 }}\n\
-                 let header = {}(header_bytes);\n\
-                 let template_id = header.{}();\n\
-                 let schema_id = header.{}();\n\
-                 let version = header.{}();\n\
-                 let block_length = header.{}() as usize;\n\
-                 let body_pos = pos + {};\n\n\
-                 if schema_id != {} {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id, expected_name: \"{expected_name}\" }});\n\
-                 }}\n\n\
-                 match template_id {{\n",
-        header_size, header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id,
-        field_name = "message header", expected_name = schema_name
-    ));
-
-    for m in messages {
-        let name_pascal = to_pascal_case(&m.name);
-        src.push_str(&format!(
-            "            {} => Ok(Self::{}({}Decoder::wrap(buf, body_pos, block_length, version))),\n",
-            m.id, name_pascal, name_pascal
-        ));
-    }
-
-    src.push_str(
-        "            _ => Err(sbe_rt::DecodeError::UnknownTemplateLength { template_id }),\n\
-                 }\n\
-             }\n\n",
-    );
-
-    src.push_str(&format!(
-        "#[inline]\n    pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {{\n\
-                 let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
-                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
-                 }})?.try_into().unwrap();\n\
-                 let header = {}(header_bytes);\n\
-                 let template_id = header.{}();\n\
-                 let schema_id = header.{}();\n\
-                 let version = header.{}();\n\
-                 let block_length = header.{}() as usize;\n\
-                 let body_pos = pos + {};\n\n\
-                 if schema_id != {} {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: {}, actual: schema_id, expected_name: \"{expected_name}\" }});\n\
-                 }}\n\n\
-                 match template_id {{\n",
-        header_size, header_size, header_size, to_pascal_case(header_type), header_ti, header_si, header_vr, header_bl, header_size, schema_id, schema_id,
-        field_name = "decoded frame", expected_name = schema_name
-    ));
-
-    for m in messages {
-        let name_pascal = to_pascal_case(&m.name);
-        src.push_str(&format!(
-            "            {} => {{\n\
-                             let decoder = {}Decoder::wrap(buf, body_pos, block_length, version);\n\
-                             let total_len = match decoder.encoded_length_with_header() {{\n\
-                                 Ok(len) => len,\n\
-                                 Err(e) => return Err(e),\n\
-                             }};\n\
-                             if total_len > frame_len {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: total_len, available: frame_len }});\n\
-                             }}\n\
-                             Ok(DecodedFrame {{\n\
-                                 message: Self::{}(decoder),\n\
-                                 range: pos .. pos + total_len,\n\
-                                 len: total_len,\n\
-                             }})\n\
-                         }}\n",
-            m.id, name_pascal, name_pascal,
-            field_name = m.name
-        ));
-    }
-
-    src.push_str(
-        "            _ => {\n\
-                             if pos + frame_len > buf.len() {\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort { field: \"template body\", needed: frame_len, available: buf.len() - pos });\n\
-                             }\n\
-                             let payload = &buf[pos .. pos + frame_len];\n\
-                             Ok(DecodedFrame {\n\
-                                 message: Self::Unknown {\n\
-                                     header,\n\
-                                     payload,\n\
-                                 },\n\
-                                 range: pos .. pos + frame_len,\n\
-                                 len: frame_len,\n\
-                             })\n\
-                         }\n\
-                 }\n\
-             }\n"
-    );
-
-    // ── encoded_length_with_header + as_bytes ────────────────────────
-    src.push_str(
-        "    #[inline]\n    pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {\n        match self {\n"
-    );
-    for m in messages {
-        let name_pascal = to_pascal_case(&m.name);
-        src.push_str(&format!(
-            "            Self::{name_pascal}(d) => d.encoded_length_with_header(),\n"
-        ));
-    }
-    src.push_str(
-        "            Self::Unknown { payload, .. } => Ok(payload.len()),\n        }\n    }\n\n",
-    );
-    src.push_str(
-        "    #[inline]\n    pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {\n        match self {\n"
-    );
-    for m in messages {
-        let name_pascal = to_pascal_case(&m.name);
-        src.push_str(&format!(
-            "            Self::{name_pascal}(d) => d.as_bytes(),\n"
-        ));
-    }
-    src.push_str("            Self::Unknown { payload, .. } => Ok(payload),\n        }\n    }\n\n");
-
-    // ── encode ──────────────────────────────────────────────────────────────
-    src.push_str(
-        "    #[inline]\n    pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {\n        match self {\n"
-    );
-    for m in messages {
-        let name_pascal = to_pascal_case(&m.name);
-        src.push_str(&format!(
-            "            Self::{name_pascal}(d) => {{\n\
-                         let len = d.encoded_length_with_header()?;\n\
-                         buf[..len].copy_from_slice(d.as_bytes()?);\n\
-                         Ok(len)\n\
-                     }}\n",
-        ));
-    }
-    src.push_str(
-        "            Self::Unknown { payload, .. } => {\n\
-             buf[..payload.len()].copy_from_slice(payload);\n\
-             Ok(payload.len())\n\
-         }\n\
-         }\n\
-     }\n",
-    );
-
-    src.push_str("}\n\n");
-
-    // ── MessageVisitor trait ──────────────────────────────────────────────
-    let mut visitor_methods = Vec::new();
-    let mut visit_arms = Vec::new();
-
-    for m in messages {
-        let name_pascal = to_pascal_case(&m.name);
-        let name_snake = to_snake_case(&m.name);
-        let method_name = syn::Ident::new(
-            &format!("visit_{name_snake}"),
-            proc_macro2::Span::call_site(),
-        );
-        let decoder_ty: syn::Type = syn::parse_str(&format!("{name_pascal}Decoder<'_>")).unwrap();
-        let variant = syn::Ident::new(&name_pascal, proc_macro2::Span::call_site());
-        visitor_methods.push(quote::quote! {
-            fn #method_name(&mut self, decoder: &#decoder_ty) -> Self::Output;
-        });
-        visit_arms.push(quote::quote! {
-            Self::#variant(d) => visitor.#method_name(d),
+    // ── AnyMessage enum ─────────────────────────────────────────────────
+    {
+        let mut enum_variants = proc_macro2::TokenStream::new();
+        for m in messages {
+            let name = quote::format_ident!("{}", to_pascal_case(&m.name));
+            let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
+            enum_variants.extend(quote::quote! {
+                #name(#decoder<'a>),
+            });
+        }
+        out.extend(quote::quote! {
+            #[non_exhaustive]
+            #[derive(Clone, Copy)]
+            pub enum AnyMessage<'a> {
+                #enum_variants
+                Unknown {
+                    header: #header_type_ident,
+                    payload: &'a [u8],
+                },
+            }
         });
     }
 
-    let visitor_items = quote::quote! {
-        pub trait MessageVisitor {
-            type Output;
+    // ── DecodedFrame struct ──────────────────────────────────────────────
+    out.extend(quote::quote! {
+        #[derive(Clone)]
+        pub struct DecodedFrame<'a> {
+            pub message: AnyMessage<'a>,
+            pub range: core::ops::Range<usize>,
+            pub len: usize,
+        }
+    });
 
-            #(#visitor_methods)*
+    // ── FramingPolicy enum ──────────────────────────────────────────────
+    out.extend(quote::quote! {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum FramingPolicy {
+            LengthPrefixU32,
+            LengthPrefixU16,
+            Fixed(usize),
+        }
+    });
+
+    // ── FrameCursor struct + Iterator impl ──────────────────────────────
+    out.extend(quote::quote! {
+        pub struct FrameCursor<'a> {
+            buf: &'a [u8],
+            pos: usize,
+            framing: FramingPolicy,
         }
 
-        impl<'a> AnyMessage<'a> {
-            pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
-                match self {
-                    #(#visit_arms)*
-                    Self::Unknown { .. } => unimplemented!(),
+        impl<'a> FrameCursor<'a> {
+            #[inline]
+            pub const fn new(buf: &'a [u8], framing: FramingPolicy) -> Self {
+                Self { buf, pos: 0, framing }
+            }
+        }
+
+        impl<'a> Iterator for FrameCursor<'a> {
+            type Item = Result<DecodedFrame<'a>, sbe_rt::DecodeError>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.pos >= self.buf.len() {
+                    return None;
+                }
+                let (header_len, frame_len) = match self.framing {
+                    FramingPolicy::LengthPrefixU32 => {
+                        if self.pos + 4 > self.buf.len() {
+                            return Some(Err(sbe_rt::DecodeError::BufferTooShort {
+                                field: "length prefix",
+                                needed: 4,
+                                available: self.buf.len() - self.pos,
+                            }));
+                        }
+                        let bytes: [u8; 4] = self.buf[self.pos..self.pos + 4].try_into().unwrap();
+                        let len = u32::from_le_bytes(bytes) as usize;
+                        (4, len)
+                    }
+                    FramingPolicy::LengthPrefixU16 => {
+                        if self.pos + 2 > self.buf.len() {
+                            return Some(Err(sbe_rt::DecodeError::BufferTooShort {
+                                field: "length prefix",
+                                needed: 2,
+                                available: self.buf.len() - self.pos,
+                            }));
+                        }
+                        let bytes: [u8; 2] = self.buf[self.pos..self.pos + 2].try_into().unwrap();
+                        let len = u16::from_le_bytes(bytes) as usize;
+                        (2, len)
+                    }
+                    FramingPolicy::Fixed(len) => (0, len),
+                };
+
+                if self.pos + header_len + frame_len > self.buf.len() {
+                    return Some(Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "frame bounds",
+                        needed: header_len + frame_len,
+                        available: self.buf.len() - self.pos,
+                    }));
+                }
+                let off = self.pos + header_len;
+                let res = AnyMessage::decode_frame(self.buf, off, frame_len);
+                match res {
+                    Ok(frame) => {
+                        self.pos += header_len + frame_len;
+                        Some(Ok(frame))
+                    }
+                    Err(e) => Some(Err(e)),
                 }
             }
         }
-    };
-    src.push_str(&visitor_items.to_string());
-    src.push('\n');
+    });
+
+    // ── decode() ────────────────────────────────────────────────────────
+    {
+        let mut decode_arms = proc_macro2::TokenStream::new();
+        for m in messages {
+            let name = quote::format_ident!("{}", to_pascal_case(&m.name));
+            let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
+            let id = syn::LitInt::new(&m.id.to_string(), span);
+            decode_arms.extend(quote::quote! {
+                #id => Ok(Self::#name(#decoder::wrap(buf, body_pos, block_length, version))),
+            });
+        }
+
+        out.extend(quote::quote! {
+            impl<'a> AnyMessage<'a> {
+                #[inline]
+                pub const fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                    if pos + #header_size_lit > buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "message header",
+                            needed: #header_size_lit,
+                            available: buf.len() - pos,
+                        });
+                    }
+                    let mut header_bytes = [0u8; #header_size_lit];
+                    let mut j = 0;
+                    while j < #header_size_lit {
+                        header_bytes[j] = buf[pos + j];
+                        j += 1;
+                    }
+                    let header = #header_type_ident(header_bytes);
+                    let template_id = header.#ti_ident();
+                    let schema_id = header.#si_ident();
+                    let version = header.#vr_ident();
+                    let block_length = header.#bl_ident() as usize;
+                    let body_pos = pos + #header_size_lit;
+
+                    if schema_id != #schema_id_lit {
+                        return Err(sbe_rt::DecodeError::WrongSchema {
+                            expected: #schema_id_lit,
+                            actual: schema_id,
+                            expected_name: #schema_name,
+                        });
+                    }
+
+                    match template_id {
+                        #decode_arms
+                        _ => Err(sbe_rt::DecodeError::UnknownTemplateLength { template_id }),
+                    }
+                }
+            }
+        });
+    }
+
+    // ── decode_frame() ──────────────────────────────────────────────────
+    {
+        let mut decode_frame_arms = proc_macro2::TokenStream::new();
+        for m in messages {
+            let name = quote::format_ident!("{}", to_pascal_case(&m.name));
+            let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
+            let id = syn::LitInt::new(&m.id.to_string(), span);
+            let field_name = &m.name;
+            decode_frame_arms.extend(quote::quote! {
+                #id => {
+                    let decoder = #decoder::wrap(buf, body_pos, block_length, version);
+                    let total_len = match decoder.encoded_length_with_header() {
+                        Ok(len) => len,
+                        Err(e) => return Err(e),
+                    };
+                    if total_len > frame_len {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #field_name,
+                            needed: total_len,
+                            available: frame_len,
+                        });
+                    }
+                    Ok(DecodedFrame {
+                        message: Self::#name(decoder),
+                        range: pos .. pos + total_len,
+                        len: total_len,
+                    })
+                }
+            });
+        }
+
+        out.extend(quote::quote! {
+            impl<'a> AnyMessage<'a> {
+                #[inline]
+                pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+                    let header_bytes: [u8; #header_size_lit] = buf.get(pos..pos + #header_size_lit).ok_or_else(|| {
+                        sbe_rt::DecodeError::BufferTooShort {
+                            field: "decoded frame",
+                            needed: #header_size_lit,
+                            available: buf.len() - pos,
+                        }
+                    })?.try_into().unwrap();
+                    let header = #header_type_ident(header_bytes);
+                    let template_id = header.#ti_ident();
+                    let schema_id = header.#si_ident();
+                    let version = header.#vr_ident();
+                    let block_length = header.#bl_ident() as usize;
+                    let body_pos = pos + #header_size_lit;
+
+                    if schema_id != #schema_id_lit {
+                        return Err(sbe_rt::DecodeError::WrongSchema {
+                            expected: #schema_id_lit,
+                            actual: schema_id,
+                            expected_name: #schema_name,
+                        });
+                    }
+
+                    match template_id {
+                        #decode_frame_arms
+                        _ => {
+                            if pos + frame_len > buf.len() {
+                                return Err(sbe_rt::DecodeError::BufferTooShort {
+                                    field: "template body",
+                                    needed: frame_len,
+                                    available: buf.len() - pos,
+                                });
+                            }
+                            let payload = &buf[pos .. pos + frame_len];
+                            Ok(DecodedFrame {
+                                message: Self::Unknown {
+                                    header,
+                                    payload,
+                                },
+                                range: pos .. pos + frame_len,
+                                len: frame_len,
+                            })
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ── encoded_length_with_header() ────────────────────────────────────
+    {
+        let mut encoded_arms = proc_macro2::TokenStream::new();
+        for m in messages {
+            let name = quote::format_ident!("{}", to_pascal_case(&m.name));
+            encoded_arms.extend(quote::quote! {
+                Self::#name(d) => d.encoded_length_with_header(),
+            });
+        }
+
+        out.extend(quote::quote! {
+            impl<'a> AnyMessage<'a> {
+                #[inline]
+                pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    match self {
+                        #encoded_arms
+                        Self::Unknown { payload, .. } => Ok(payload.len()),
+                    }
+                }
+            }
+        });
+    }
+
+    // ── as_bytes() ──────────────────────────────────────────────────────
+    {
+        let mut as_bytes_arms = proc_macro2::TokenStream::new();
+        for m in messages {
+            let name = quote::format_ident!("{}", to_pascal_case(&m.name));
+            as_bytes_arms.extend(quote::quote! {
+                Self::#name(d) => d.as_bytes(),
+            });
+        }
+
+        out.extend(quote::quote! {
+            impl<'a> AnyMessage<'a> {
+                #[inline]
+                pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    match self {
+                        #as_bytes_arms
+                        Self::Unknown { payload, .. } => Ok(payload),
+                    }
+                }
+            }
+        });
+    }
+
+    // ── encode() ────────────────────────────────────────────────────────
+    {
+        let mut encode_arms = proc_macro2::TokenStream::new();
+        for m in messages {
+            let name = quote::format_ident!("{}", to_pascal_case(&m.name));
+            encode_arms.extend(quote::quote! {
+                Self::#name(d) => {
+                    let len = d.encoded_length_with_header()?;
+                    buf[..len].copy_from_slice(d.as_bytes()?);
+                    Ok(len)
+                }
+            });
+        }
+
+        out.extend(quote::quote! {
+            impl<'a> AnyMessage<'a> {
+                #[inline]
+                pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
+                    match self {
+                        #encode_arms
+                        Self::Unknown { payload, .. } => {
+                            buf[..payload.len()].copy_from_slice(payload);
+                            Ok(payload.len())
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ── MessageVisitor trait + visit() ──────────────────────────────────
+    {
+        let mut visitor_methods = Vec::new();
+        let mut visit_arms = Vec::new();
+        for m in messages {
+            let name_pascal = to_pascal_case(&m.name);
+            let name_snake = to_snake_case(&m.name);
+            let method_name = syn::Ident::new(
+                &format!("visit_{name_snake}"),
+                proc_macro2::Span::call_site(),
+            );
+            let decoder_ty: syn::Type =
+                syn::parse_str(&format!("{name_pascal}Decoder<'_>")).unwrap();
+            let variant = syn::Ident::new(&name_pascal, proc_macro2::Span::call_site());
+            visitor_methods.push(quote::quote! {
+                fn #method_name(&mut self, decoder: &#decoder_ty) -> Self::Output;
+            });
+            visit_arms.push(quote::quote! {
+                Self::#variant(d) => visitor.#method_name(d),
+            });
+        }
+
+        out.extend(quote::quote! {
+            pub trait MessageVisitor {
+                type Output;
+
+                #(#visitor_methods)*
+            }
+
+            impl<'a> AnyMessage<'a> {
+                pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
+                    match self {
+                        #(#visit_arms)*
+                        Self::Unknown { .. } => unimplemented!(),
+                    }
+                }
+            }
+        });
+    }
+
+    out
 }
 
 /// Compute a deterministic 64-bit hash of the schema identity.
