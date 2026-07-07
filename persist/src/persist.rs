@@ -118,6 +118,13 @@ pub struct TtlConfig {
     pub interval: String, // e.g. "24 HOURS"
 }
 
+impl TtlConfig {
+    #[must_use]
+    pub fn new(column: impl Into<String>, interval: impl Into<String>) -> Self {
+        Self { column: column.into(), interval: interval.into() }
+    }
+}
+
 impl TableSchema {
     /// Create a new `TableSchema` with `MergeTree` engine.
     #[must_use]

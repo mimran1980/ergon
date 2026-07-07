@@ -30,6 +30,7 @@
 
 use crate::sbe::DynamicRowEncoder;
 use crate::sbe::dynamic_row_encoder_state;
+use crate::persist::TtlConfig;
 use crate::types::ColumnType;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
@@ -192,6 +193,7 @@ pub struct DynamicRecorderBuilder {
     table_name: String,
     fields: Vec<(String, ColumnType)>,
     metadata: Vec<(String, String)>,
+    ttl: Option<TtlConfig>,
 }
 
 impl DynamicRecorderBuilder {
@@ -201,6 +203,7 @@ impl DynamicRecorderBuilder {
             table_name: table_name.into(),
             fields: Vec::new(),
             metadata: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -222,6 +225,15 @@ impl DynamicRecorderBuilder {
     /// consumer side).
     pub fn metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.push((key.into(), value.into()));
+        self
+    }
+
+    /// Set a TTL policy for the table.
+    ///
+    /// The TTL is used when generating the table's DDL — it is not part
+    /// of the SBE wire format or the schema_id.  See [`TtlConfig`].
+    pub fn ttl(mut self, column: impl Into<String>, interval: impl Into<String>) -> Self {
+        self.ttl = Some(TtlConfig::new(column, interval));
         self
     }
 
@@ -330,6 +342,7 @@ impl DynamicRecorderBuilder {
             bool_count,
             string_count,
             nullable_count,
+            ttl: self.ttl,
             buffer,
         })
     }
@@ -378,6 +391,10 @@ pub struct DynamicRecorder {
     string_count: u16,
     #[expect(dead_code)]
     nullable_count: u16,
+
+    /// Table-level TTL policy, if any.  Used when generating DDL for the
+    /// corresponding ClickHouse table.
+    pub ttl: Option<TtlConfig>,
 
     /// Pre-allocated buffer reused on every [`record()`] call.
     buffer: Vec<u8>,

@@ -53,6 +53,6 @@ TTL timestamp + INTERVAL 24 HOURS
 - [x] `TableSchema::ttl: Option<TtlConfig>`
 - [x] `create_table_ddl()` emits `TTL` clause when configured
 - [x] `SchemaDiff` ignores TTL (no migration needed)
-- [ ] `DynamicRecorderBuilder` gains `ttl()` method
-- [ ] `#[derive(Persist)]` gets `#[persist(ttl = "...")]` container attribute
-- [ ] Integration test: table created with TTL, verify via `SHOW CREATE TABLE`
+- [x] `DynamicRecorderBuilder` gains `ttl()` method
+- [x] `#[derive(Persist)]` gets `#[persist(ttl = "...")]` container attribute
+- [ ] Integration test: table created with TTL, verify via `SHOW CREATE TABLE` (needs Docker)

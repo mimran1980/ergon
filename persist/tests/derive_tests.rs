@@ -145,6 +145,23 @@ fn test_custom_order_by() {
     );
 }
 
+// ── TTL ──────────────────────────────────────────────────────────────────────
+
+#[derive(Persist, Clone)]
+#[persist(ttl = "ts, 24 HOURS")]
+struct WithTtl {
+    ts: u64,
+    value: u64,
+}
+
+#[test]
+fn test_ttl_attribute() {
+    let schema = <WithTtl as Persist>::table_schema();
+    let ttl = schema.ttl.expect("ttl should be Some");
+    assert_eq!(ttl.column, "ts");
+    assert_eq!(ttl.interval, "24 HOURS");
+}
+
 // ── Option<T> → Nullable ─────────────────────────────────────────────────────
 
 #[derive(Persist, Clone)]

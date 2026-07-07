@@ -16,6 +16,7 @@ use syn::{
 #[derive(Default)]
 struct StructAttrs {
     order_by: Option<String>,
+    ttl: Option<String>,
 }
 
 #[derive(Default)]
@@ -41,8 +42,11 @@ fn parse_struct_attrs(attrs: &[syn::Attribute]) -> syn::Result<StructAttrs> {
             if meta.path.is_ident("order_by") {
                 let value: LitStr = meta.value()?.parse()?;
                 result.order_by = Some(value.value());
+            } else if meta.path.is_ident("ttl") {
+                let value: LitStr = meta.value()?.parse()?;
+                result.ttl = Some(value.value());
             } else {
-                return Err(meta.error("unknown persist struct attribute; expected `order_by`"));
+                return Err(meta.error("unknown persist struct attribute; expected `order_by` or `ttl`"));
             }
             Ok(())
         })?;
@@ -422,10 +426,29 @@ fn generate_schema_body(
         },
     );
 
+    let ttl_assignment = struct_attrs.ttl.as_ref().map(|ttl_str| {
+        let parts: Vec<&str> = ttl_str.splitn(2, ',').collect();
+        if parts.len() == 2 {
+            let col = parts[0].trim();
+            let interval = parts[1].trim();
+            let col_lit = LitStr::new(col, proc_macro2::Span::call_site());
+            let interval_lit = LitStr::new(interval, proc_macro2::Span::call_site());
+            quote! {
+                __schema.ttl = Some(ergo_clickhouse_persist::TtlConfig::new(#col_lit, #interval_lit));
+            }
+        } else {
+            quote! {
+                compile_error!("#[persist(ttl = \"...\")] requires format \"column, interval\"");
+            }
+        }
+    }).unwrap_or(TokenStream2::new());
+
     quote! {{
         let mut columns: Vec<ergo_clickhouse_persist::ColumnDef> = Vec::new();
         #(#col_stmts)*
-        ergo_clickhouse_persist::TableSchema::new(columns, #order_by)
+        let mut __schema = ergo_clickhouse_persist::TableSchema::new(columns, #order_by);
+        #ttl_assignment
+        __schema
     }}
 }
 
@@ -555,6 +578,7 @@ fn generate_encode_body(fields: &[FieldInfo]) -> TokenStream2 {
 /// # Attributes
 ///
 /// - `#[persist(order_by = "col1, col2")]` — struct-level ORDER BY
+/// - `#[persist(ttl = "col, INTERVAL expr")]` — table TTL (e.g. `"_persist_time, 24 HOURS"`)
 /// - `#[persist(name = "custom")]` — override column name
 /// - `#[persist(skip)]` — exclude field
 /// - `#[persist(json)]` — JSON column type
