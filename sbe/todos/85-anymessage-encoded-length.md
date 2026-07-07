@@ -3,6 +3,8 @@
 Add `encoded_length_with_header()` and `as_bytes()` to `AnyMessage` enum.
 
 **Status:** done
+**Status: DONE**
+
 
 ## Acceptance criteria
 

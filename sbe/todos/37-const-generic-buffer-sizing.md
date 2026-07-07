@@ -17,6 +17,8 @@ let mut buf = [0u8; Order::MAX_ENCODED_LENGTH];
 For fixed messages (no groups, no var-data), `ENCODED_LENGTH` is exact. For
 variable messages, it's a compile error to use `ENCODED_LENGTH` — you must use
 `MAX_ENCODED_LENGTH` with worst-case sizing or `encoded_length()` at runtime.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

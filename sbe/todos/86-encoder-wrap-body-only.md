@@ -4,6 +4,8 @@ Generate `wrap(buf, offset)` on encoders that positions the encoder at the body 
 WITHOUT writing the header. The header is managed externally (e.g., by a transport layer
 or `AnyMessage::encode`). Currently only `wrap_and_apply_header()` exists.
 DECISIONS.md §6 specifies both entrypoints.
+**Status: DONE**
+
 
 ## Status: Not Started
 

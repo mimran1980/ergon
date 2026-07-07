@@ -4,6 +4,8 @@ Generate `AnyMessage::encode()` for encoding messages through the dispatch enum.
 the encode-side of the AnyMessage API specified in DECISIONS.md §6.
 
 **Status:** done
+**Status: DONE**
+
 
 ## Acceptance criteria
 

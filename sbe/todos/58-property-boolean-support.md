@@ -5,6 +5,8 @@
 SBE represents booleans as an enum type (typically `BooleanType` with `F=0, T=1`
 or similar). This is correct per the SBE spec, but Rust code should deal with
 `true`/`false` directly — not `BooleanType(BooleanTypeKind::T)`.
+**Status: DONE**
+
 
 ## What to do
 

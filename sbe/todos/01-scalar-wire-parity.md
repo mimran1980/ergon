@@ -7,6 +7,8 @@ Generate a scalar-only test message; assert byte-exact encode output against the
 upstream `.sbe` fixture; decode the fixture and assert every field. Fix the
 VarStringEncoding size mismatch bug as a prerequisite. Finalise the
 `DecodeError`/`EncodeError` taxonomy here.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

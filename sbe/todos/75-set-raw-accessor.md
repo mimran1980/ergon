@@ -3,6 +3,8 @@
 **Blocked by:** none
 
 Enums already have `.raw()` returning the underlying integer. Sets should too.
+**Status: DONE**
+
 
 ## What to add
 

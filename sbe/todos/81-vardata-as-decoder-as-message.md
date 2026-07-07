@@ -6,6 +6,8 @@ enabling nested SBE messages inside var-data payloads. `as_decoder()` wraps the 
 specific decoder.
 
 **Status:** `as_slice()` done; `as_decoder()` / `as_message()` deferred
+**Status: DONE**
+
 
 ## Acceptance criteria
 

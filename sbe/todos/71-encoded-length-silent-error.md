@@ -1,4 +1,6 @@
 # todo 71: encoded_length() silently swallowing errors
+**Status: DONE**
+
 
 ## Status: IN PROGRESS
 

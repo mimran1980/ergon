@@ -2,6 +2,8 @@
 
 Audit whether generated ErgoSBE code uses `#[expect(lint)]` or `#[allow(lint)]`,
 and whether CI would catch stale suppressions if `#[expect]` were used.
+**Status: DONE**
+
 
 ## Status
 

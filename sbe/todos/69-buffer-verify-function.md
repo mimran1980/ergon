@@ -5,6 +5,8 @@
 FlatBuffers generates `Verify*Buffer()` that validates the entire buffer
 structure before any field access. This catches malformed, truncated, or
 corrupt frames early — before they cause panics or silent data corruption.
+**Status: DONE**
+
 
 ## What to generate
 

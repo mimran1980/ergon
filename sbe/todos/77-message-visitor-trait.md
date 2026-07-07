@@ -5,6 +5,8 @@ Add a `MessageVisitor` trait with one visitor method per message type and a
 This is the foundation for the per-field visitor (todo 77b).
 
 **Status:** Done
+**Status: DONE**
+
 
 ## What was implemented
 

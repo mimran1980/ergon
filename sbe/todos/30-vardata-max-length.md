@@ -6,6 +6,8 @@ SBE var-data fields declare `maxLength` in the XML schema. The schema IR already
 has this data (it's parsed from the XML), but encoder templates don't emit the
 check. A user can write 100 bytes to a `maxLength=64` var-data field, producing
 a message that violates the SBE spec.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

@@ -6,6 +6,8 @@ dispatches on `templateId` without requiring an external frame length. Returns
 don't carry total message length). Currently only `decode_frame()` exists.
 
 **Status:** Not started
+**Status: DONE**
+
 
 ## Acceptance Criteria
 

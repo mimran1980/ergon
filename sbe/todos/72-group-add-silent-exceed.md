@@ -1,4 +1,6 @@
 # todo 72: group encoder add() silently exceeding count
+**Status: DONE**
+
 
 ## Status: IN PROGRESS
 

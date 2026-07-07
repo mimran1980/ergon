@@ -1,4 +1,6 @@
 # todo 73: Display impl uses unchecked raw_ accessors inconsistently
+**Status: DONE**
+
 
 ## Status: IN PROGRESS
 

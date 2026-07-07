@@ -4,6 +4,8 @@ The generated `MAX_ENCODED_LENGTH` for the Car message is ~3GB because three
 var-data fields each have `max_length=2^30`. The doc comment says
 "stack-allocate with `[0u8; MAX_ENCODED_LENGTH]`" but 3GB won't fit on the
 stack.
+**Status: DONE**
+
 
 ## Changes
 

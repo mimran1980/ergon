@@ -24,6 +24,8 @@ let bytes: [u8; 2] = rest[..2].try_into().unwrap();
 Benefits: `?` propagates errors naturally, `unwrap()` here is safe (we just
 proved the slice is big enough), and the generated code reads like hand-written
 Rust. Stable since Rust 1.65.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

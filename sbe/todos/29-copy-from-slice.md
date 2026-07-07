@@ -9,6 +9,8 @@ non-const fn code paths, and while loops for `pub const fn` paths (where
 Changes applied to `ergosbe/src/codegen.rs`:
 - All `while j < N` loops in non-const fn templates replaced with `try_into()`
 - `try_into()` in const fn templates reverted to while loops (Rust const fn limitation)
+**Status: DONE**
+
 
 ## Acceptance criteria
 

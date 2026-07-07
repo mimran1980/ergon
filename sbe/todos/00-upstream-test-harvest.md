@@ -6,6 +6,8 @@ The `simple-binary-encoding` submodule contains the official Java reference
 implementation, the existing Rust generator, binary `.sbe` fixtures, and a
 comprehensive test suite. Pull their tests into ErgoSBE's suite so we validate
 against the same expectations.
+**Status: DONE**
+
 
 ## Source inventory
 

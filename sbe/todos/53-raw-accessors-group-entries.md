@@ -5,6 +5,8 @@
 Group entry decoders only offer high-level `foo()` accessors that collapse
 optional null and version absence into `Option<T>`. HFT hot loops inside
 groups need `raw_foo()` accessors that return the raw wire value.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

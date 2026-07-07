@@ -5,6 +5,8 @@
 The codegen already uses `prettyplease::unparse` for formatting generated code
 (line 219 of `codegen.rs`). No external `rustfmt` process is spawned. But there
 are gaps that need verification.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

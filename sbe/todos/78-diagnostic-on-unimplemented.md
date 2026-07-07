@@ -5,6 +5,8 @@ trait for clear compiler errors when non-SBE types are used in generic contexts.
 Specified in DECISIONS.md §5.
 
 **Status:** Not started
+**Status: DONE**
+
 
 ## Acceptance Criteria
 

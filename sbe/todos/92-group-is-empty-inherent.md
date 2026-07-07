@@ -3,6 +3,8 @@
 Add `pub fn is_empty(&self) -> bool` as an inherent method on group decoders.
 DECISIONS.md §3 specifies this should be inherent (not from `ExactSizeIterator`)
 because `ExactSizeIterator::is_empty` is still unstable on stable Rust.
+**Status: DONE**
+
 
 ## Status
 

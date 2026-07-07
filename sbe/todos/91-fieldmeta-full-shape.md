@@ -3,6 +3,8 @@
 The generated `FieldMeta`/`FieldInfo` struct is missing fields specified in
 DECISIONS.md §5. Add `presence: Presence`, `null_value: Option<u64>`, and
 `semantic_type: Option<&'static str>` to match the designed shape.
+**Status: DONE**
+
 
 ## Status
 

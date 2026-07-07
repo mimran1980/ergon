@@ -4,6 +4,8 @@ Create an opt-in `ergosbe-rt` crate that deduplicates `MessageHeader`, `DecodeEr
 `EncodeError`, `SbeMessage` trait, and read/write primitives when multiple schemas are
 generated into one workspace. Currently the runtime is always inlined into each
 generated module.
+**Status: DONE**
+
 
 ## Status: Audited — Not Recommended (Yet)
 

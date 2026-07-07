@@ -3,6 +3,8 @@
 **Status:** Verified correct — `varData` has `length="0"` (variable-length),
 so the fixed prefix is just the uint32 `length` field (4 bytes). The codegen
 generates `VarStringEncoding(pub [u8; 4])` which matches. No fix needed.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

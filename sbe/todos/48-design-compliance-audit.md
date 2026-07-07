@@ -12,6 +12,8 @@ Status legend:
 - 📝 NOT APPLICABLE — design is about future work or unrelated subsystem
 
 ---
+**Status: DONE**
+
 
 ## §1 Type model
 

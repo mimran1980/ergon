@@ -5,6 +5,8 @@ Generate `fn debug_wire(&self) -> WireDebug<'_>` on decoders that implements
 DECISIONS.md §9 but completely missing from the implementation.
 
 **Status:** Not started
+**Status: DONE**
+
 
 ## Acceptance Criteria
 

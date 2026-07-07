@@ -15,6 +15,8 @@ arguments, producing broken generated code:
 
 The unchecked variant is NOT affected — it correctly uses `offset` and
 `target_name` in the right positions.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

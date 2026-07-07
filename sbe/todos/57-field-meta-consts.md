@@ -10,6 +10,8 @@ Generated code should expose schema metadata for reflection/introspection:
 
 These are zero-cost compile-time values useful for tooling, logging, and
 schema validation at startup.
+**Status: DONE**
+
 
 ## Acceptance criteria
 

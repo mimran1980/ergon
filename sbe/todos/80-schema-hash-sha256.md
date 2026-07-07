@@ -6,6 +6,8 @@ specified in DECISIONS.md §5. The design requires `SCHEMA_HASH: [u8; 32]` and
 safety.
 
 **Status:** Done
+**Status: DONE**
+
 
 ## Acceptance Criteria
 

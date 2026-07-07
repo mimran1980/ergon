@@ -3,6 +3,8 @@
 Emit `const _: () = assert!(...)` assertions for structural invariants in generated
 code. These catch generator bugs at compile time, not runtime. Specified in
 DECISIONS.md §10.
+**Status: DONE**
+
 
 ## Status: Not Started
 

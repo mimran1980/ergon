@@ -4,6 +4,8 @@ Generate `fn {field}_as_string() -> Result<String, DecodeError>` on var-data fie
 the existing `as_str()` accessor. Convenience for owned String conversion.
 
 **Status:** done
+**Status: DONE**
+
 
 ## Acceptance criteria
 
