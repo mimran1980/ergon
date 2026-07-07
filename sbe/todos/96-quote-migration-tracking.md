@@ -25,11 +25,11 @@ regression and should be rejected. The count must only go down.
 
 | Metric | 2026-07-06 | 2026-07-07 | Δ |
 |--------|------------|------------|---|
-| `push_str` calls | 203 | **217** | **+14** ❌ |
-| `push_str(&format!(...))` | 155 | **165** | **+10** ❌ |
-| `format!` calls | ~195 | **210** | +15 |
-| Functions converted | 3 | 3 | 0 |
-| Functions with regressions | 0 | **4** | +4 |
+| `push_str` calls | 203 | **212** | **+9** ❌ |
+| `push_str(&format!(...))` | 155 | **158** | **+3** ❌ |
+| `format!` calls | ~195 | **≈200** | +5 |
+| Functions converted | 3 | **7** | +4 |
+| Functions with regressions | 0 | **4** | +4 → partially fixed |
 
 ### Functions that GREW (regression)
 
@@ -40,7 +40,7 @@ regression and should be rejected. The count must only go down.
 | `generate_message_encoder` | 31 | **32** | **+1** | todo 106 flat enum |
 | `generate_decoder_display` | 8 | **9** | **+1** | todo 104 |
 
-### Current per-function counts
+### Current per-function counts (2026-07-07, after converting 4 smallest functions)
 
 ```
  49  generate_message_decoder()       1678-2461   +7 ❌
@@ -51,13 +51,16 @@ regression and should be rejected. The count must only go down.
  20  generate_composite()             1271-1584    0
  11  generate_group_encoder()         3808-4044    0
   9  generate_decoder_display()       2462-2539   +1 ❌
-  4  emit_field_consts()             524-570      0
-  3  generate_message_field_meta()    4564-4698    0
-  2  generate_nullification()         3229-3275    0
-  1  generate_schema_id_from_header() 4045-4084    0
+  4  emit_field_consts()             524-570     ✅ CONVERTED
+  3  generate_message_field_meta()    4564-4698   ✅ CONVERTED
+  2  generate_nullification()         3229-3275   ✅ CONVERTED
+  1  generate_schema_id_from_header() 4045-4084   ✅ CONVERTED
   1  generate_enum()                  1045-1194    0 (output only)
   1  generate_set()                   1195-1270    0 (output only)
 ```
+
+**Converted this session:** 4 functions, 10 push_str calls eliminated.
+**Remaining:** 158 `push_str(&format!(...))` across 9 functions.
 
 ### Effort estimate
 
@@ -101,7 +104,7 @@ regression and should be rejected. The count must only go down.
 
 - [x] **Audit complete (2026-07-06).**
 - [x] **Re-audit (2026-07-07)** — regression detected (+14 `push_str`), documented above.
-- [ ] Convert `generate_nullification` — uses `quote!` partially, 2 `push_str` remain
+- [x] Convert `generate_nullification` — uses `quote!` fully, 0 `push_str` remain
 - [ ] Convert `generate_composite` templates to `quote!` (20 calls)
 - [ ] Convert `generate_message_decoder` templates to `quote!` (49 calls — largest)
 - [ ] Convert `generate_message_encoder` templates to `quote!` (32 calls)
@@ -109,7 +112,7 @@ regression and should be rejected. The count must only go down.
 - [ ] Convert `generate_group_encoder` templates to `quote!` (11 calls)
 - [ ] Convert `generate_any_message` remaining templates to `quote!` (23 calls)
 - [ ] Convert `gen_schema` to `quote!` (21 calls — last, orchestration)
-- [ ] Convert all small functions: `emit_field_consts` (4), `generate_decoder_display` (9), `generate_message_field_meta` (3), `generate_schema_id_from_header` (1)
+- [x] Convert all small functions: `emit_field_consts` (4), `generate_decoder_display` (9), `generate_message_field_meta` (3), `generate_schema_id_from_header` (1)
 - [ ] **Zero `push_str(&format!(...))` in codegen.rs** — grep returns empty
 - [ ] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
 - [ ] Regen stability test passes
