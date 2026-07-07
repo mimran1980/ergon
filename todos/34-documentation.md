@@ -91,3 +91,15 @@ Ref: `design/DECISIONS.md` §9 "Schema docs → rustdoc." Rust RFC 1574 (doc com
 
 ## Verification / Unit Testing
 - [ ] Verify that documentation tests (`cargo test --doc`) compile and run successfully for all generated code modules.
+
+
+## Audit round (todo 34 — July 2026)
+
+### Verified
+- [x] `docs/guide/` has all 4 files: getting-started.md, schema-authoring.md, generated-api.md, advanced.md
+- [x] Guide docs use up-to-date code examples (flat enum with NullVal, infallible accessors)
+- [x] README.md features list is complete and accurate
+- [x] `design/DECISIONS.md` updated for flat enum (§4 "Enums: Aeron-style flat enum with NullVal catch-all")
+
+### Fixed during audit
+- [x] `docs/guide/migration.md` was outdated: references to E3 pattern, `Result`-wrapped accessors, and `ModelKind` removed; updated to flat enum and infallible accessor descriptions

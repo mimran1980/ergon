@@ -20,10 +20,10 @@ and `<data>` type system.
 | Concern | Upstream SBE Rust | ErgoSBE |
 |---------|-------------------|---------|
 | Decoder construction | `decoder.wrap(buffer, offset, blockLength, version)` | `CarDecoder::wrap_and_apply_header(buf, pos)?` or `CarDecoder::try_from(buf)?` |
-| Field access | `decoder.foo()` returns raw type | `decoder.foo()` returns `Result<T, DecodeError>` |
-| Enum access | `decoder.side()` returns `u8` | `decoder.code()` returns `Result<Model, DecodeError>`; `model.kind()` returns `Option<ModelKind>` |
-| Set (bitset) access | `decoder.flags()` returns raw int | `decoder.extras()` returns `Result<OptionalExtras, DecodeError>`; `extras.sun_roof()` returns `bool` |
-| Optional/version-gated | Manual version check + null sentinel check | `decoder.optional_field()` returns `Result<Option<T>, DecodeError>` |
+| Field access | `decoder.foo()` returns raw type | `decoder.foo()` returns `T` (infallible for scalars, enums, sets, composites) |
+| Enum access | `decoder.side()` returns `u8` | `decoder.code()` returns flat `Model` enum (infallible); `NullVal` catches unknown wire values |
+| Set (bitset) access | `decoder.flags()` returns raw int | `decoder.extras()` returns `OptionalExtras` (infallible); `extras.sun_roof()` returns `bool` |
+| Optional/version-gated | Manual version check + null sentinel check | `decoder.optional_field()` returns `Option<T>` (infallible) |
 | Group iteration | Manual loop over count | `ExactSizeIterator` via `decoder.group()?` |
 | Var-data | `decoder.get_foo(bytes, dst)` writes to buffer | `decoder.foo()?` returns `&'a [u8]`; `decoder.foo_as_str()?` returns `&'a str` |
 | Encoder construction | `encoder.wrap(buffer, offset, blockLength, version)` | `CarEncoder::wrap_and_apply_header(&mut buf, pos)?` |
@@ -59,44 +59,44 @@ car.some_numbers();    // returns &[u32]
 
 ```rust
 // ErgoSBE
-let car = CarDecoder::try_from(buf)?;
-//         ^^^^^^^^^^^^^^^^^^^^^^^^^^^  or wrap_and_apply_header(buf, 0)?
+let car = CarDecoder::wrap_and_apply_header(buf, 0)?;
+//         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  or try_from(buf)?
 
-let serial = car.serial_number()?;          // Result<u64>
-let year = car.model_year()?;                // Result<u16>
+// Scalar/enum/set/composite accessors are INFALLIBLE -- no ?, no unwrap
+let serial = car.serial_number();          // u64 -- infallible
+let year = car.model_year();               // u16 -- infallible
 
-// Enum: returns typed newtype, not raw integer
-let code = car.code()?;                      // Result<Model>
-if let Some(kind) = code.kind() {
-    // kind: ModelKind (A, B, or C)
+// Enum: flat Rust enum with NullVal catch-all
+let code = car.code();                     // Model -- infallible
+match code {
+    Model::A => println!("Type A"),
+    Model::B => println!("Type B"),
+    Model::C => println!("Type C"),
+    Model::NullVal => println!("Unknown: {}", code.raw()),
 }
-let raw: u8 = code.raw();                    // raw wire value
+let raw: u8 = code.raw();                  // raw wire value
 
-// Optional/version-gated fields return Option<T>
-let available = car.available()?;            // Result<BooleanType>
-                                              // returns default if before sinceVersion
-
-// Fixed-size arrays
-let nums = car.some_numbers()?;              // Result<[u32; 4]>
-
-// Groups are ExactSizeIterator
-let figures = car.fuel_figures()?;
-for entry in figures {
-    println!("speed: {}", entry.speed()?);
+// Optional/version-gated fields return Option<T> (infallible)
+let available = car.available();           // Option<BooleanType>
+if let Some(val) = available {
+    println!("Available: {}", val);
 }
 
-// Var-data returns &'a [u8] or &'a str
+// Groups still return Result (header bounds check)
+let figures = car.fuel_figures()?;          // Result<FuelFiguresDecoder>
+for entry in figures {                      // iteration is infallible
+    println!("speed: {}", entry.speed());   // u16 -- infallible
+}
+
+// Var-data returns Result<&'a [u8]> or Result<&'a str>
 let manufacturer = car.manufacturer_as_str()?;  // Result<&str>
 ```
 
 Key differences:
-- Every accessor returns `Result` -- no panics.
-- Enums are newtype wrappers (`Model`) with a `.kind()` accessor for
-  matching known variants and `.raw()` for the wire value.
-- Optional and version-gated fields collapse both null-sentinels and
-  version absence into `Option<T>`.
-- Groups implement `Iterator` and `ExactSizeIterator` -- no manual count
-  management.
+- Scalar, enum, set, and composite field accessors are **infallible** -- no `?`, no `unwrap`.
+- Enums are flat Rust `enum`s with a `NullVal` variant for unknown wire values (no separate `Kind` type).
+- Optional and version-gated fields return `Option<T>` directly (infallible).
+- Groups implement `Iterator` and `ExactSizeIterator` -- no manual count management.
 - Var-data accessors return borrowed slices (`&'a [u8]` / `&'a str`)
   instead of writing into a caller-provided buffer.
 
@@ -205,8 +205,9 @@ allocation on the error path.
 **What to check for during migration:**
 - Replace unwrap expectations with `?` propagation.
 - Decide where to handle `BufferTooShort` vs let it propagate.
-- Group iteration is infallible (returns `Option<Entry>`) but entry
-  accessors are `Result`.
+- Group iteration is infallible (returns `Option<Entry>`). Within
+  entries, scalar/enum/set/composite field accessors are also
+  infallible; only nested groups and var-data return `Result`.
 
 ## Type system
 
@@ -215,25 +216,26 @@ allocation on the error path.
 **Upstream** generates a raw integer constant or a Rust `repr(u8)` enum that
 cannot represent unknown wire values.
 
-**ErgoSBE** uses the E3 pattern: a `#[repr(transparent)]` newtype wrapping
-the raw integer, plus a separate Rust enum for known variants:
+**ErgoSBE** uses a flat Rust `enum` with a `NullVal` catch-all variant:
 
 ```rust
-// ErgoSBE enum
-#[repr(transparent)]
-pub struct Model(pub u8);
-
-pub enum ModelKind { A = b'A', B = b'B', C = b'C' }
+// ErgoSBE enum — flat, no separate Kind type
+#[repr(u8)]
+pub enum Model {
+    A = b'A',
+    B = b'B',
+    C = b'C',
+    NullVal,
+}
 
 impl Model {
-    pub const A: Self = Self(b'A');
-    pub const fn kind(self) -> Option<ModelKind> { /* ... */ }
-    pub const fn raw(self) -> u8 { self.0 }
+    pub const fn raw(self) -> u8 { self as u8 }
+    pub const fn from_raw(val: u8) -> Self { /* ... */ }
 }
 ```
 
-This allows unknown wire values (the Rust enum can't hold them) while
-still providing pattern matching on known variants.
+The `NullVal` variant safely holds any unknown wire discriminant without
+panicking. Accessors return `Model` directly (infallible).
 
 ### Composites
 
@@ -385,16 +387,18 @@ methods (unsafe).
    let encoder = encoder.fuel_figures(1, |g| { /* ... */ })?;  // note: let encoder =
    ```
 
-3. **Enum constants use associated constants, not variants.** `Model::A`,
-   not `ModelKind::A`. The newtype (`Model`) holds the wire value; the
-   `ModelKind` enum is only for pattern matching.
+3. **Enum is flat with `NullVal`.** Access `Model::A` directly.
+   No separate `Kind` type exists. Unknown wire values are caught by
+   the `NullVal` variant.
 
 4. **Var-data returns `&'a [u8]`, not a copy.** The decoder borrows the
    original buffer. Don't drop the buffer before processing var-data.
 
-5. **Group iteration is infallible but entry accessors are `Result`.**
-   `Iterator::next` returns `Option<Entry>`, but each entry field accessor
-   returns `Result<T, DecodeError>`.
+5. **Entry field accessors are infallible for scalars/enums/sets/composites.**
+   `Iterator::next` returns `Option<Entry>`, and within each entry,
+   scalar, enum, set, and composite field accessors return `T`
+   (no `?`, no `unwrap`). Groups and var-data within entries still
+   return `Result`.
 
 6. **`encoded_length()` propagates errors.** Unlike the upstream (which
    returns 0 on error), ErgoSBE returns `Result<usize, DecodeError>`.
