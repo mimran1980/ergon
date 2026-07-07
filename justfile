@@ -16,6 +16,11 @@ test:
 bench:
     cargo bench --workspace
 
+bench-hft:
+    cargo bench --workspace -- decode/hft/
+
+ci: check test docs bench
+
 docs:
     cargo doc --no-deps --workspace --open
 

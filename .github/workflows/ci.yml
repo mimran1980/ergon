@@ -62,3 +62,19 @@ jobs:
           toolchain: "1.95.0"
 
       - run: cargo build --release --workspace
+
+  bench:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - run: cargo bench --workspace
