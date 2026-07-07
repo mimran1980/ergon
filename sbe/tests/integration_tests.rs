@@ -3,7 +3,7 @@
 #![allow(missing_docs)]
 
 mod common;
-use common::Paths;
+use common::{Paths, compile_and_run, generate};
 use ergosbe::{GenerationConfig, Generator, Schema, parse};
 use std::fs;
 
@@ -31,4 +31,85 @@ fn test_generate_car_example() {
     assert!(module.source.contains("pub struct OptionalExtras"));
     assert!(module.source.contains("pub enum Model"));
     assert!(module.source.contains("pub enum BooleanType"));
+}
+
+
+#[test]
+fn test_fixed_entry_group_access() {
+    let (_schema, src) = generate(&Paths::example_schema(), "fixed_entry_group");
+
+    compile_and_run(
+        "fixed_entry_group",
+        &src,
+        r#"
+        fn encode_car() -> Vec<u8> {
+            let mut buf = vec![0u8; 512];
+            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+            car.serial_number(1234);
+            car.model_year(2013);
+            car.available(BooleanType::T);
+            car.code(Model::A);
+            car.some_numbers([1u32, 2, 3, 4]);
+            car.vehicle_code([97, 98, 99, 100, 101, 102]);
+            let mut extras = OptionalExtras::default();
+            extras.set_cruise_control(true);
+            car.extras(extras);
+            car.engine(Engine::new(2000, 4, [49, 0, 0]));
+
+            let car = car.fuel_figures(1, |g| {
+                g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();
+            }).unwrap();
+
+            let car = car.performance_figures(1, |g| {
+                g.add(|e| {
+                    e.octane_rating(95);
+                    e.acceleration(3, |a| {
+                        a.add(|x| { x.mph(30).seconds(4.0); }).unwrap();
+                        a.add(|x| { x.mph(60).seconds(7.5); }).unwrap();
+                        a.add(|x| { x.mph(100).seconds(12.2); }).unwrap();
+                    }).unwrap();
+                }).unwrap();
+            }).unwrap();
+
+            let car = car.manufacturer(b"Honda").unwrap();
+            let car = car.model(b"Civic VTi").unwrap();
+            let encoded = car.activation_code(b"abcdef").unwrap();
+            encoded.as_bytes().to_vec()
+        }
+
+        let encoded = encode_car();
+        let car = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+
+        // Navigate to acceleration group
+        let mut perf = car.performance_figures().unwrap();
+        let pf = perf.next().unwrap();
+        let mut accel = pf.acceleration().unwrap();
+
+        // Test as_chunks()
+        let chunks = accel.as_chunks().unwrap();
+        assert_eq!(chunks.len(), 3, "as_chunks should have 3 entries");
+        // Entry 0: mph=30 => 0x1e00 LE
+        assert_eq!(chunks[0][0..2], [0x1e, 0x00], "mph of entry 0");
+        // Entry 1: mph=60 => 0x3c00 LE
+        assert_eq!(chunks[1][0..2], [0x3c, 0x00], "mph of entry 1");
+        // Entry 2: mph=100 => 0x6400 LE
+        assert_eq!(chunks[2][0..2], [0x64, 0x00], "mph of entry 2");
+
+        // Test nth() random access (same as entry_at)
+        let entry0 = accel.nth(0).unwrap();
+        assert_eq!(entry0.mph(), 30, "nth(0) mph");
+        assert!((entry0.seconds() - 4.0).abs() < 0.001, "nth(0) seconds");
+
+        let entry_last = accel.nth(2).unwrap();
+        assert_eq!(entry_last.mph(), 100, "nth(2) mph");
+        assert!((entry_last.seconds() - 12.2).abs() < 0.001, "nth(2) seconds");
+
+        // nth() out of bounds returns error
+        assert!(accel.nth(3).is_err(), "nth(3) should be out of bounds");
+
+        // Test iterating yields same results
+        let mut accel2 = pf.acceleration().unwrap();
+        let count = accel2.count();
+        assert_eq!(count, 3, "iterator should yield 3 entries");
+    "#);
 }

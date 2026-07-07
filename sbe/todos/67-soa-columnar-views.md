@@ -48,13 +48,12 @@ Generated `_as_slice()` methods are:
       single-field entries
 - [x] Zero-copy -- `from_raw_parts` on the original buffer
 - [x] All existing tests pass
-- [ ] Generate `{field}_as_slice() -> &[[u8; N]]` for composite fields
-      (deferred -- `as_chunks()` covers this case)
+- [ ] Generate `{field}_as_slice() -> &[[u8; N]]` for composite fields (deferred -- as_chunks() covers this case)
 - [ ] Benchmark: SoA access vs AoS iteration (deferred)
 - [ ] Non-fixed-size groups: iterator fallback (deferred)
 
 
 ## Verification / Unit Testing
-- [ ] Create a unit test `test_soa_columnar_views` verifying that calling `{field}_as_slice()` on repeating groups returns the correct zero-copy slice of fields.
+- [ ] Create a unit test `test_soa_columnar_views` (deferred -- no single-field groups in test schemas) verifying that calling `{field}_as_slice()` on repeating groups returns the correct zero-copy slice of fields.
 
 Audit note (2026-07-06): Verified. Group-level _as_slice() codegen at codegen.rs:2724-2741 uses from_raw_parts with bounds check. WARNING: codegen path is NEVER exercised by any test schema (no single-field fixed-size groups exist in test schemas). The only _as_slice in golden car_example.rs are var-data convenience aliases (manufacturer_as_slice, model_as_slice, activation_code_as_slice). Deferred items correctly unchecked.

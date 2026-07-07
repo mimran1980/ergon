@@ -30,8 +30,8 @@ println!("cargo:rerun-if-changed=schemas/my-schema.xml");
 ## Acceptance criteria
 
 - [x] `GeneratedModule` fields (`path`, `source`) are documented (doc comments on codegen.rs:32-35)
-- [ ] Build script template in user guide
-- [ ] `cargo:rerun-if-changed` directives emitted automatically or documented
-- [ ] Directory creation handled (not left to caller)
+- [x] Build script template in user guide
+- [x] `cargo:rerun-if-changed` directives emitted automatically or documented
+- [x] Directory creation handled (not left to caller)
 
 Ref: user request — automate the println! + create_dir_all boilerplate.

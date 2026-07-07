@@ -33,10 +33,13 @@ code generation.
 ```rust
 // build.rs
 use ergosbe::{parse_file, Generator, GenerationConfig, Schema};
+use std::path::Path;
 
 fn main() {
+    let schema_path = "schemas/market_data.xml";
+
     // Parse the SBE XML schema
-    let ir = parse_file("schemas/market_data.xml")
+    let ir = parse_file(schema_path)
         .expect("failed to parse SBE schema");
     let schema = Schema::from_ir(ir);
 
@@ -47,15 +50,19 @@ fn main() {
     // Generate Rust source
     let output = generator.generate(&schema);
 
-    // Write to OUT_DIR
+    // Write to OUT_DIR, creating parent directories as needed
     let out_dir = std::env::var("OUT_DIR").unwrap();
     for module in output.modules() {
-        std::fs::write(
-            format!("{}/{}", out_dir, module.path),
-            &module.source,
-        )
-        .expect("failed to write generated module");
+        let dest = Path::new(&out_dir).join(&module.path);
+        std::fs::create_dir_all(dest.parent().unwrap())
+            .expect("failed to create output directory");
+        std::fs::write(&dest, &module.source)
+            .expect("failed to write generated module");
+        println!("cargo:rerun-if-changed={}", dest.display());
     }
+
+    // Re-run build.rs when the schema changes
+    println!("cargo:rerun-if-changed={}", schema_path);
 }
 ```
 
