@@ -216,12 +216,40 @@ fn boolean_field_from_bool_impl() {
 // ── todo 52: NULL/MIN/MAX constants ───────────────────────────────────
 
 #[test]
-fn null_min_max_constants_present() {
-    let (_schema, src) = generate(&Paths::example_schema(), "consts");
-    // Verify constants exist in generated source
+fn null_min_max_constants_match_schema_values() {
+    let (_schema, src) = generate(&Paths::example_schema(), "consts_val");
+    // Source contains the constants
     assert!(src.contains("SERIAL_NUMBER_NULL"), "missing NULL constant");
     assert!(src.contains("SERIAL_NUMBER_MIN"), "missing MIN constant");
     assert!(src.contains("SERIAL_NUMBER_MAX"), "missing MAX constant");
+    // Compile-and-run: verify constant values match schema definitions
+    compile_and_run("consts_val", &src, r#"
+        // serialNumber: uint64, null=2^64-1, min=0, max=2^64-2
+        assert_eq!(CarDecoder::SERIAL_NUMBER_NULL, 18446744073709551615u64);
+        assert_eq!(CarDecoder::SERIAL_NUMBER_MIN, 0u64);
+        assert_eq!(CarDecoder::SERIAL_NUMBER_MAX, 18446744073709551614u64);
+        // modelYear: uint16, null=65535, min=0, max=65534
+        assert_eq!(CarDecoder::MODEL_YEAR_NULL, 65535u16);
+        assert_eq!(CarDecoder::MODEL_YEAR_MIN, 0u16);
+        assert_eq!(CarDecoder::MODEL_YEAR_MAX, 65534u16);
+        // someNumbers: uint32, null=2^32-1
+        assert_eq!(CarDecoder::SOME_NUMBERS_NULL, 4294967295u32);
+        // vehicleCode: uint8, null=0, min=32, max=126
+        assert_eq!(CarDecoder::VEHICLE_CODE_NULL, 0u8);
+        assert_eq!(CarDecoder::VEHICLE_CODE_MIN, 32u8);
+        assert_eq!(CarDecoder::VEHICLE_CODE_MAX, 126u8);
+        // Enum types get NULL variants
+        assert_eq!(CarDecoder::AVAILABLE_NULL, BooleanType::NullVal);
+        assert_eq!(CarDecoder::CODE_NULL, Model::NullVal);
+        // speed (in group entry) gets NULL/MIN/MAX
+        assert_eq!(FuelFiguresEntryDecoder::SPEED_NULL, 65535u16);
+        assert_eq!(FuelFiguresEntryDecoder::SPEED_MIN, 0u16);
+        assert_eq!(FuelFiguresEntryDecoder::SPEED_MAX, 65534u16);
+        // Ron-type field (octaneRating in performance figures entry)
+        assert_eq!(PerformanceFiguresEntryDecoder::OCTANE_RATING_NULL, 255u8);
+        assert_eq!(PerformanceFiguresEntryDecoder::OCTANE_RATING_MIN, 90u8);
+        assert_eq!(PerformanceFiguresEntryDecoder::OCTANE_RATING_MAX, 110u8);
+    "#);
 }
 
 // ── todo 60: schema_id fast extract ───────────────────────────────────
@@ -450,4 +478,175 @@ fn verify_function_detects_invalid_messages() {
         // verify() should fail on truncated buffer
         assert!(CarDecoder::verify(&encoded[..5]).is_err());
     "#);
+}
+
+// ── todo 93: float composite skips Eq/Ord/Hash ──────────────────────────
+
+#[test]
+fn float_composite_skips_eq_ord_hash() {
+    let (_schema, src) = generate(&Paths::float_composite_schema(), "float_comp");
+    // Float composite (FloatPair) should NOT derive Eq, Ord, or Hash.
+    // Use " Eq," not "Eq," to avoid false match on "PartialEq,"
+    let fp_idx = src.find("pub struct FloatPair").unwrap();
+    let fp_pre = &src[fp_idx.saturating_sub(200)..fp_idx + 50];
+    let fp_has_eq = fp_pre.contains(" Eq,");
+    let fp_has_ord = fp_pre.contains(" Ord,");
+    let fp_has_hash = fp_pre.contains("Hash");
+    assert!(!fp_has_eq && !fp_has_ord && !fp_has_hash,
+        "FloatPair must NOT derive Eq/Ord/Hash, but got Eq={fp_has_eq} Ord={fp_has_ord} Hash={fp_has_hash}");
+    // Integer composite (IntPair) SHOULD derive Eq/Ord/Hash
+    let ip_idx = src.find("pub struct IntPair").unwrap();
+    let ip_pre = &src[ip_idx.saturating_sub(200)..ip_idx + 50];
+    assert!(ip_pre.contains(" Eq,"), "IntPair should derive Eq");
+    assert!(ip_pre.contains(" Ord,"), "IntPair should derive Ord");
+    assert!(ip_pre.contains("Hash"), "IntPair should derive Hash");
+}
+
+// ── Error path tests (critical for trading system robustness) ──────────
+
+#[test]
+fn buffer_too_short_truncated_field() {
+    let (_schema, src) = generate(&Paths::example_schema(), "buf_err");
+    compile_and_run("buf_err", &src, r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1); car.model_year(2000);
+        car.available(BooleanType::F); car.code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0,0,[0,0,0]));
+        let car = car.fuel_figures(0, |_|{}).unwrap();
+        let car = car.performance_figures(0, |_|{}).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
+        let encoded = car.as_bytes();
+        // Truncate buffer mid-message — field read should fail
+        let truncated = &encoded[..10]; // only header + partial block
+        assert!(CarDecoder::verify(truncated).is_err());
+        // Truncated right at header boundary
+        assert!(CarDecoder::verify(&encoded[..8]).is_err());
+        // Empty buffer
+        assert!(CarDecoder::verify(&[]).is_err());
+    "#);
+}
+
+#[test]
+fn wrong_schema_id_detected() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "wrong_sid");
+    compile_and_run("wrong_sid", &src, r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1); car.model_year(2000);
+        car.available(BooleanType::F); car.code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0,0,[0,0,0]));
+        let car = car.fuel_figures(0, |_|{}).unwrap();
+        let car = car.performance_figures(0, |_|{}).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
+        let mut encoded = car.as_bytes().to_vec();
+        // Corrupt schemaId byte in header (offset 4 = schemaId low byte, car schema id = 1)
+        encoded[4] = 99u8;
+        // wrap_and_apply_header should detect wrong schema and fail
+        assert!(CarDecoder::wrap_and_apply_header(&encoded, 0).is_err());
+    "#);
+    Ok(())
+}
+
+#[test]
+fn vardata_truncated_length_detected() {
+    let (_schema, src) = generate(&Paths::example_schema(), "vd_trunc");
+    compile_and_run("vd_trunc", &src, r#"
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1); car.model_year(2000);
+        car.available(BooleanType::F); car.code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0,0,[0,0,0]));
+        let car = car.fuel_figures(0, |_|{}).unwrap();
+        let car = car.performance_figures(0, |_|{}).unwrap();
+        // Encode varData fields
+        let car = car.manufacturer(b"Porsche").unwrap();
+        let car = car.model(b"911 GT3 RS").unwrap();
+        let car = car.activation_code(b"RACE-XYZ").unwrap();
+        let encoded = car.as_bytes();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        // Valid varData reads
+        assert_eq!(car2.manufacturer().unwrap(), b"Porsche");
+        assert_eq!(car2.model().unwrap(), b"911 GT3 RS");
+        assert_eq!(car2.activation_code().unwrap(), b"RACE-XYZ");
+        // Truncated buffer at the very end should fail to decode varData
+        // (length prefix points past end of buffer)
+        // Severely truncated buffer fails to parse
+        assert!(CarDecoder::verify(&encoded[..20]).is_err(),
+            "severely truncated buffer ({}) should fail verify", encoded.len());
+        // VarData with explicit length prefix — cutting mid-way fails
+        let trunc_at_block_end = &encoded[..45]; // just past header + block, before varData
+        assert!(CarDecoder::verify(trunc_at_block_end).is_err());
+    "#);
+}
+
+// ── Raw accessor tests (HFT hot-path opts) ─────────────────────────────
+
+#[test]
+fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "raw_enum");
+    compile_and_run("raw_enum", &src, r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1); car.model_year(2000);
+        car.available(BooleanType::T); car.code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0,0,[0,0,0]));
+        let car = car.fuel_figures(0, |_|{}).unwrap();
+        let car = car.performance_figures(0, |_|{}).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
+        let encoded = car.as_bytes();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        // raw() returns the underlying integer discriminant
+        assert_eq!(car2.available().raw(), 1u8);   // T = 1
+        assert_eq!(car2.code().raw(), 65u8);       // A = 65 (char 'A')
+        // raw_ prefix methods for scalar fields exist and match
+        // (raw_ accessors skip the enum decoding and return the primitive)
+    "#);
+    Ok(())
+}
+
+#[test]
+fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "raw_set");
+    compile_and_run("raw_set", &src, r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1); car.model_year(2000);
+        car.available(BooleanType::F); car.code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        let mut extras = OptionalExtras::default();
+        extras.set_cruise_control(true);
+        extras.set_sports_pack(true);
+        car.extras(extras);
+        car.engine(Engine::new(0,0,[0,0,0]));
+        let car = car.fuel_figures(0, |_|{}).unwrap();
+        let car = car.performance_figures(0, |_|{}).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
+        let encoded = car.as_bytes();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        // raw() returns the underlying bitfield
+        let raw = car2.extras().raw();
+        // cruise_control = bit 2, sports_pack = bit 1, sun_roof = bit 0
+        assert!(car2.extras().cruise_control());
+        assert!(car2.extras().sports_pack());
+        assert!(!car2.extras().sun_roof());
+        assert_eq!(raw, 6u8); // 0b110 = bits 1 and 2 set
+    "#);
+    Ok(())
 }

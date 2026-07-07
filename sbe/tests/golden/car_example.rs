@@ -292,43 +292,19 @@ pub struct MessageHeader(pub [u8; 8]);
 impl MessageHeader {
     #[inline]
     pub const fn block_length(&self) -> u16 {
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.0[0 + j];
-            j += 1;
-        }
-        u16::from_le_bytes(bytes)
+        u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
     #[inline]
     pub const fn template_id(&self) -> u16 {
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.0[2 + j];
-            j += 1;
-        }
-        u16::from_le_bytes(bytes)
+        u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
     #[inline]
     pub const fn schema_id(&self) -> u16 {
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.0[4 + j];
-            j += 1;
-        }
-        u16::from_le_bytes(bytes)
+        u16::from_le_bytes(read_bytes::<2>(&self.0, 4))
     }
     #[inline]
     pub const fn version(&self) -> u16 {
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.0[6 + j];
-            j += 1;
-        }
-        u16::from_le_bytes(bytes)
+        u16::from_le_bytes(read_bytes::<2>(&self.0, 6))
     }
     pub const fn new(
         block_length: u16,
@@ -338,29 +314,13 @@ impl MessageHeader {
     ) -> Self {
         let mut bytes = [0u8; 8];
         let val_bytes = block_length.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            bytes[0 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<2>(&mut bytes, 0, &val_bytes);
         let val_bytes = template_id.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            bytes[2 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<2>(&mut bytes, 2, &val_bytes);
         let val_bytes = schema_id.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            bytes[4 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<2>(&mut bytes, 4, &val_bytes);
         let val_bytes = version.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            bytes[6 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<2>(&mut bytes, 6, &val_bytes);
         Self(bytes)
     }
 }
@@ -397,38 +357,18 @@ pub struct GroupSizeEncoding(pub [u8; 4]);
 impl GroupSizeEncoding {
     #[inline]
     pub const fn block_length(&self) -> u16 {
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.0[0 + j];
-            j += 1;
-        }
-        u16::from_le_bytes(bytes)
+        u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
     #[inline]
     pub const fn num_in_group(&self) -> u16 {
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.0[2 + j];
-            j += 1;
-        }
-        u16::from_le_bytes(bytes)
+        u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
     pub const fn new(block_length: u16, num_in_group: u16) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = block_length.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            bytes[0 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<2>(&mut bytes, 0, &val_bytes);
         let val_bytes = num_in_group.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            bytes[2 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<2>(&mut bytes, 2, &val_bytes);
         Self(bytes)
     }
 }
@@ -455,13 +395,7 @@ pub struct VarStringEncoding(pub [u8; 4]);
 impl VarStringEncoding {
     #[inline]
     pub const fn length(&self) -> u32 {
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.0[0 + j];
-            j += 1;
-        }
-        u32::from_le_bytes(bytes)
+        u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
     #[inline]
     pub const fn var_data(&self) -> [u8; 0] {
@@ -469,13 +403,7 @@ impl VarStringEncoding {
         let mut idx = 0;
         while idx < 0 {
             let offset = 4 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.0[offset + j];
-                j += 1;
-            }
-            res[idx] = u8::from_le_bytes(bytes);
+            res[idx] = u8::from_le_bytes(read_bytes::<1>(&self.0, offset));
             idx += 1;
         }
         res
@@ -483,19 +411,11 @@ impl VarStringEncoding {
     pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            bytes[0 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<4>(&mut bytes, 0, &val_bytes);
         let mut idx = 0;
         while idx < 0 {
             let val_bytes = var_data[idx].to_le_bytes();
-            let mut j = 0;
-            while j < 1 {
-                bytes[4 + idx * 1 + j] = val_bytes[j];
-                j += 1;
-            }
+            write_bytes::<1>(&mut bytes, 4 + idx * 1, &val_bytes);
             idx += 1;
         }
         Self(bytes)
@@ -518,13 +438,7 @@ impl<'a> VarStringEncodingDecoder<'a> {
         let mut idx = 0;
         while idx < 0 {
             let offset = self.pos + 4 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.buf[offset + j];
-                j += 1;
-            }
-            res[idx] = u8::from_le_bytes(bytes);
+            res[idx] = u8::from_le_bytes(read_bytes::<1>(self.buf, offset));
             idx += 1;
         }
         res
@@ -536,13 +450,7 @@ pub struct VarAsciiEncoding(pub [u8; 4]);
 impl VarAsciiEncoding {
     #[inline]
     pub const fn length(&self) -> u32 {
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.0[0 + j];
-            j += 1;
-        }
-        u32::from_le_bytes(bytes)
+        u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
     #[inline]
     pub const fn var_data(&self) -> [u8; 0] {
@@ -550,13 +458,7 @@ impl VarAsciiEncoding {
         let mut idx = 0;
         while idx < 0 {
             let offset = 4 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.0[offset + j];
-                j += 1;
-            }
-            res[idx] = u8::from_le_bytes(bytes);
+            res[idx] = u8::from_le_bytes(read_bytes::<1>(&self.0, offset));
             idx += 1;
         }
         res
@@ -564,19 +466,11 @@ impl VarAsciiEncoding {
     pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            bytes[0 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<4>(&mut bytes, 0, &val_bytes);
         let mut idx = 0;
         while idx < 0 {
             let val_bytes = var_data[idx].to_le_bytes();
-            let mut j = 0;
-            while j < 1 {
-                bytes[4 + idx * 1 + j] = val_bytes[j];
-                j += 1;
-            }
+            write_bytes::<1>(&mut bytes, 4 + idx * 1, &val_bytes);
             idx += 1;
         }
         Self(bytes)
@@ -599,13 +493,7 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
         let mut idx = 0;
         while idx < 0 {
             let offset = self.pos + 4 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.buf[offset + j];
-                j += 1;
-            }
-            res[idx] = u8::from_le_bytes(bytes);
+            res[idx] = u8::from_le_bytes(read_bytes::<1>(self.buf, offset));
             idx += 1;
         }
         res
@@ -617,13 +505,7 @@ pub struct VarDataEncoding(pub [u8; 4]);
 impl VarDataEncoding {
     #[inline]
     pub const fn length(&self) -> u32 {
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.0[0 + j];
-            j += 1;
-        }
-        u32::from_le_bytes(bytes)
+        u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
     #[inline]
     pub const fn var_data(&self) -> [u8; 0] {
@@ -631,13 +513,7 @@ impl VarDataEncoding {
         let mut idx = 0;
         while idx < 0 {
             let offset = 4 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.0[offset + j];
-                j += 1;
-            }
-            res[idx] = u8::from_le_bytes(bytes);
+            res[idx] = u8::from_le_bytes(read_bytes::<1>(&self.0, offset));
             idx += 1;
         }
         res
@@ -645,19 +521,11 @@ impl VarDataEncoding {
     pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
-        let mut j = 0;
-        while j < 4 {
-            bytes[0 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<4>(&mut bytes, 0, &val_bytes);
         let mut idx = 0;
         while idx < 0 {
             let val_bytes = var_data[idx].to_le_bytes();
-            let mut j = 0;
-            while j < 1 {
-                bytes[4 + idx * 1 + j] = val_bytes[j];
-                j += 1;
-            }
+            write_bytes::<1>(&mut bytes, 4 + idx * 1, &val_bytes);
             idx += 1;
         }
         Self(bytes)
@@ -680,13 +548,7 @@ impl<'a> VarDataEncodingDecoder<'a> {
         let mut idx = 0;
         while idx < 0 {
             let offset = self.pos + 4 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.buf[offset + j];
-                j += 1;
-            }
-            res[idx] = u8::from_le_bytes(bytes);
+            res[idx] = u8::from_le_bytes(read_bytes::<1>(self.buf, offset));
             idx += 1;
         }
         res
@@ -698,22 +560,12 @@ pub struct Booster(pub [u8; 1]);
 impl Booster {
     #[inline]
     pub const fn horse_power(&self) -> u8 {
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.0[0 + j];
-            j += 1;
-        }
-        u8::from_le_bytes(bytes)
+        u8::from_le_bytes(read_bytes::<1>(&self.0, 0))
     }
     pub const fn new(horse_power: u8) -> Self {
         let mut bytes = [0u8; 1];
         let val_bytes = horse_power.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            bytes[0 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<1>(&mut bytes, 0, &val_bytes);
         Self(bytes)
     }
 }
@@ -735,23 +587,11 @@ pub struct Engine(pub [u8; 6]);
 impl Engine {
     #[inline]
     pub const fn capacity(&self) -> u16 {
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.0[0 + j];
-            j += 1;
-        }
-        u16::from_le_bytes(bytes)
+        u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
     #[inline]
     pub const fn num_cylinders(&self) -> u8 {
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.0[2 + j];
-            j += 1;
-        }
-        u8::from_le_bytes(bytes)
+        u8::from_le_bytes(read_bytes::<1>(&self.0, 2))
     }
     #[inline]
     pub const fn max_rpm(&self) -> u16 {
@@ -763,13 +603,7 @@ impl Engine {
         let mut idx = 0;
         while idx < 3 {
             let offset = 3 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.0[offset + j];
-                j += 1;
-            }
-            res[idx] = u8::from_le_bytes(bytes);
+            res[idx] = u8::from_le_bytes(read_bytes::<1>(&self.0, offset));
             idx += 1;
         }
         res
@@ -785,25 +619,13 @@ impl Engine {
     ) -> Self {
         let mut bytes = [0u8; 6];
         let val_bytes = capacity.to_le_bytes();
-        let mut j = 0;
-        while j < 2 {
-            bytes[0 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<2>(&mut bytes, 0, &val_bytes);
         let val_bytes = num_cylinders.to_le_bytes();
-        let mut j = 0;
-        while j < 1 {
-            bytes[2 + j] = val_bytes[j];
-            j += 1;
-        }
+        write_bytes::<1>(&mut bytes, 2, &val_bytes);
         let mut idx = 0;
         while idx < 3 {
             let val_bytes = manufacturer_code[idx].to_le_bytes();
-            let mut j = 0;
-            while j < 1 {
-                bytes[3 + idx * 1 + j] = val_bytes[j];
-                j += 1;
-            }
+            write_bytes::<1>(&mut bytes, 3 + idx * 1, &val_bytes);
             idx += 1;
         }
         Self(bytes)
@@ -835,13 +657,7 @@ impl<'a> EngineDecoder<'a> {
         let mut idx = 0;
         while idx < 3 {
             let offset = self.pos + 3 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.buf[offset + j];
-                j += 1;
-            }
-            res[idx] = u8::from_le_bytes(bytes);
+            res[idx] = u8::from_le_bytes(read_bytes::<1>(self.buf, offset));
             idx += 1;
         }
         res
@@ -1865,6 +1681,9 @@ impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
             let v = self.mpg();
             write!(f, ", mpg: {}", v)?;
         }
+        if let Ok(d) = self.usage_description() {
+            write!(f, ", usageDescription: {} bytes", d.len())?;
+        }
         write!(f, " }}")
     }
 }
@@ -2095,6 +1914,16 @@ impl<'a> core::fmt::Display for PerformanceFiguresEntryDecoder<'a> {
             let v = self.octane_rating();
             write!(f, "octaneRating: {}", v)?;
         }
+        write!(f, ", acceleration: [")?;
+        if let Ok(ng_decoder) = self.acceleration() {
+            for (i, entry) in ng_decoder.enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", entry)?;
+            }
+        }
+        write!(f, "]")?;
         write!(f, " }}")
     }
 }
@@ -2812,8 +2641,12 @@ impl<'a> FuelFiguresEncoder<'a> {
             });
         }
         let mut entry = FuelFiguresEntryEncoder::wrap(self.buf, self.pos);
-        f(&mut entry);
-        self.pos = entry.pos;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut __entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
+            f(&mut __entry);
+            self.pos = __entry.pos;
+        }
         self.written += 1;
         Ok(())
     }
@@ -2907,8 +2740,12 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             });
         }
         let mut entry = PerformanceFiguresEntryEncoder::wrap(self.buf, self.pos);
-        f(&mut entry);
-        self.pos = entry.pos;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut __entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
+            f(&mut __entry);
+            self.pos = __entry.pos;
+        }
         self.written += 1;
         Ok(())
     }
@@ -2954,9 +2791,14 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&AccelerationEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group);
-        self.pos = group.pos;
+        let __pos;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut group = AccelerationEncoder::wrap(__buf, self.pos + 4, count);
+            f(&mut group);
+            __pos = group.pos;
+        }
+        self.pos = __pos;
         Ok(self)
     }
 }
@@ -2999,8 +2841,12 @@ impl<'a> AccelerationEncoder<'a> {
             });
         }
         let mut entry = AccelerationEntryEncoder::wrap(self.buf, self.pos);
-        f(&mut entry);
-        self.pos = entry.pos;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut __entry = AccelerationEntryEncoder::wrap(__buf, self.pos);
+            f(&mut __entry);
+            self.pos = __entry.pos;
+        }
         self.written += 1;
         Ok(())
     }
@@ -3158,6 +3004,32 @@ pub const SCHEMA_SHA256: [u8; 32] = [
     0x35, 0x70, 0x74, 0x80,
 ];
 pub const SCHEMA_SHA256_HEX: &str = "adf638ad8497f83b2b0b28502eb2d24fea41d7fa6d21552ecdbac24b35707480";
+/// Read `N` bytes from `buf` at `offset` into a fixed-size array.
+/// Const-compatible — the compiler unrolls the loop for small N.
+#[inline]
+pub const fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
+    let mut bytes = [0u8; N];
+    let mut i = 0;
+    while i < N {
+        bytes[i] = buf[offset + i];
+        i += 1;
+    }
+    bytes
+}
+/// Write `N` bytes from `bytes` into `buf` at `offset`.
+/// Const-compatible — the compiler unrolls the loop for small N.
+#[inline]
+pub const fn write_bytes<const N: usize>(
+    buf: &mut [u8],
+    offset: usize,
+    bytes: &[u8; N],
+) {
+    let mut i = 0;
+    while i < N {
+        buf[offset + i] = bytes[i];
+        i += 1;
+    }
+}
 #[inline]
 pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     if buf.len() < 4 + 2 {

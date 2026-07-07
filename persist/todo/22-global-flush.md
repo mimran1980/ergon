@@ -51,10 +51,10 @@ on drop via Weak reference.
 ## Acceptance criteria
 
 - [x] `ClickhouseSink::flush()` flushes all active senders
-- [ ] Senders auto-register on `build()`, auto-deregister on `Drop`
-- [ ] Calling `flush()` on a sink with no senders is a no-op (not an error)
-- [ ] Thread-safe: multiple senders can be built concurrently from the same sink
-- [ ] Integration test: two senders, both with buffered rows, global flush clears both
+- [x] Senders auto-register on `build()` (`register_sender` at sink.rs:483, Weak refs)
+- [x] Calling `flush()` on a sink with no senders is a no-op (test at sink.rs:1539)
+- [x] Thread-safe: multiple senders built concurrently via `Mutex<Vec<Weak<...>>>` pattern
+- [ ] Integration test: two senders, both with buffered rows, global flush clears both (needs Docker)
 
 ## Implementation notes
 

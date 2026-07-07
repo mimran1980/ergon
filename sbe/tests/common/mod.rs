@@ -74,6 +74,10 @@ impl Paths {
         Self::fixtures_dir().join("optional_enum_nullify.xml")
     }
 
+    pub fn float_composite_schema() -> PathBuf {
+        Self::fixtures_dir().join("float-composite-schema.xml")
+    }
+
     pub fn issue_schema(num: &str) -> PathBuf {
         Self::fixtures_dir().join(format!("issue{num}.xml"))
     }

@@ -221,6 +221,7 @@ impl Generator {
             .collect();
 
         for msg in &messages {
+            let multi = messages.len() > 1;
             let decoder_ts = generate_message_decoder(
                 msg,
                 &elements,
@@ -229,6 +230,7 @@ impl Generator {
                 ir.version,
                 &ir.header_type,
                 &ir.package,
+                multi,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
@@ -239,6 +241,7 @@ impl Generator {
                 ir.id,
                 ir.version,
                 &ir.header_type,
+                multi,
             );
             src.push_str(&encoder_ts.to_string());
             src.push('\n');
@@ -267,6 +270,34 @@ impl Generator {
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
         write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
+        // 7.5. Generate const-compatible byte-read helper (avoids per-accessor loop bloat)
+        let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
+            /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
+            /// Const-compatible — the compiler unrolls the loop for small N.
+            #[inline]
+            pub const fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
+                let mut bytes = [0u8; N];
+                let mut i = 0;
+                while i < N {
+                    bytes[i] = buf[offset + i];
+                    i += 1;
+                }
+                bytes
+            }
+
+            /// Write `N` bytes from `bytes` into `buf` at `offset`.
+            /// Const-compatible — the compiler unrolls the loop for small N.
+            #[inline]
+            pub const fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
+                let mut i = 0;
+                while i < N {
+                    buf[offset + i] = bytes[i];
+                    i += 1;
+                }
+            }
+        };
+        src.push_str(&read_bytes_ts.to_string());
+        src.push('\n');
         // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
@@ -440,23 +471,23 @@ fn to_pascal_case(s: &str) -> String {
 fn to_snake_case(s: &str) -> String {
     let mut res = String::new();
     let mut prev_is_lower = false;
-    let mut prev_is_upper = false;
+    let mut _prev_is_upper = false;
     for c in s.chars() {
         if c == '_' || c == '-' || c == ' ' {
             res.push('_');
             prev_is_lower = false;
-            prev_is_upper = false;
+            _prev_is_upper = false;
         } else if c.is_uppercase() {
             if prev_is_lower {
                 res.push('_');
             }
             res.extend(c.to_lowercase());
             prev_is_lower = false;
-            prev_is_upper = true;
+            _prev_is_upper = true;
         } else {
             res.push(c);
             prev_is_lower = true;
-            prev_is_upper = false;
+            _prev_is_upper = false;
         }
     }
     let mut clean = String::new();
@@ -530,7 +561,7 @@ fn max_encoding_value(prim: PrimitiveType) -> u64 {
 /// Emit `*_NULL`, `*_MIN`, `*_MAX` compile-time constants for a message field.
 fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
     let upper_name = to_upper_snake_case(&f.name);
-    let mut any = false;
+    let mut _any = false;
     let mut tokens = proc_macro2::TokenStream::new();
     match &f.field_type {
         FieldType::Primitive(prim, _) => {
@@ -546,7 +577,7 @@ fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                any = true;
+                _any = true;
             }
             if let Some(val) = f.min_value {
                 let name_ident =
@@ -556,7 +587,7 @@ fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                any = true;
+                _any = true;
             }
             if let Some(val) = f.max_value {
                 let name_ident =
@@ -566,12 +597,12 @@ fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                any = true;
+                _any = true;
             }
         }
         FieldType::Enum {
             name,
-            encoding_type,
+            encoding_type: _,
         } => {
             let target_name = to_pascal_case(name);
             let name_ident = syn::Ident::new(
@@ -582,7 +613,7 @@ fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
             tokens.extend(quote::quote! {
                 pub const #name_ident: #target_ident = #target_ident::NullVal;
             });
-            any = true;
+            _any = true;
         }
         FieldType::Composite { .. } | FieldType::Set { .. } => {}
     }
@@ -1389,13 +1420,9 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                             let mut idx = 0;
                             while idx < #len_lit {
                                 let offset = #offset_lit + idx * #prim_size_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                let mut j = 0;
-                                while j < #prim_size_lit {
-                                    bytes[j] = self.0[offset + j];
-                                    j += 1;
-                                }
-                                res[idx] = #r_type_ty::#from_method(bytes);
+                                res[idx] = #r_type_ty::#from_method(
+                                    read_bytes::<#prim_size_lit>(&self.0, offset)
+                                );
                                 idx += 1;
                             }
                             res
@@ -1406,11 +1433,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                         let mut idx = 0;
                         while idx < #len_lit {
                             let val_bytes = #field_ident[idx].#to_method();
-                            let mut j = 0;
-                            while j < #prim_size_lit {
-                                bytes[#offset_lit + idx * #prim_size_lit + j] = val_bytes[j];
-                                j += 1;
-                            }
+                            write_bytes::<#prim_size_lit>(&mut bytes, #offset_lit + idx * #prim_size_lit, &val_bytes);
                             idx += 1;
                         }
                     });
@@ -1420,23 +1443,13 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     getters.extend(quote::quote! {
                         #[inline]
                         pub const fn #field_ident(&self) -> #r_type_ty {
-                            let mut bytes = [0u8; #prim_size_lit];
-                            let mut j = 0;
-                            while j < #prim_size_lit {
-                                bytes[j] = self.0[#offset_lit + j];
-                                j += 1;
-                            }
-                            #r_type_ty::#from_method(bytes)
+                            #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(&self.0, #offset_lit))
                         }
                     });
 
                     ctor_body.extend(quote::quote! {
                         let val_bytes = #field_ident.#to_method();
-                        let mut j = 0;
-                        while j < #prim_size_lit {
-                            bytes[#offset_lit + j] = val_bytes[j];
-                            j += 1;
-                        }
+                        write_bytes::<#prim_size_lit>(&mut bytes, #offset_lit, &val_bytes);
                     });
                 }
             }
@@ -1454,22 +1467,12 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 getters.extend(quote::quote! {
                     #[inline]
                     pub const fn #field_ident(&self) -> #target_ident {
-                        let mut bytes = [0u8; #comp_size_lit];
-                        let mut j = 0;
-                        while j < #comp_size_lit {
-                            bytes[j] = self.0[#offset_lit + j];
-                            j += 1;
-                        }
-                        #target_ident(bytes)
+                        #target_ident(read_bytes::<#comp_size_lit>(&self.0, #offset_lit))
                     }
                 });
 
                 ctor_body.extend(quote::quote! {
-                    let mut j = 0;
-                    while j < #comp_size_lit {
-                        bytes[#offset_lit + j] = #field_ident.0[j];
-                        j += 1;
-                    }
+                    write_bytes::<#comp_size_lit>(&mut bytes, #offset_lit, &#field_ident.0);
                 });
             }
             MemberType::Enum {
@@ -1489,23 +1492,15 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 getters.extend(quote::quote! {
                     #[inline]
                     pub const fn #field_ident(&self) -> #target_ident {
-                        let mut bytes = [0u8; #prim_size_lit];
-                        let mut j = 0;
-                        while j < #prim_size_lit {
-                            bytes[j] = self.0[#offset_lit + j];
-                            j += 1;
-                        }
-                        #target_ident::from_raw(#r_type_ty::#from_method(bytes))
+                        #target_ident::from_raw(#r_type_ty::#from_method(
+                            read_bytes::<#prim_size_lit>(&self.0, #offset_lit)
+                        ))
                     }
                 });
 
                 ctor_body.extend(quote::quote! {
                     let val_bytes = (#field_ident as #r_type_ty).#to_method();
-                    let mut j = 0;
-                    while j < #prim_size_lit {
-                        bytes[#offset_lit + j] = val_bytes[j];
-                        j += 1;
-                    }
+                    write_bytes::<#prim_size_lit>(&mut bytes, #offset_lit, &val_bytes);
                 });
             }
             MemberType::Set {
@@ -1525,23 +1520,15 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 getters.extend(quote::quote! {
                     #[inline]
                     pub const fn #field_ident(&self) -> #target_ident {
-                        let mut bytes = [0u8; #prim_size_lit];
-                        let mut j = 0;
-                        while j < #prim_size_lit {
-                            bytes[j] = self.0[#offset_lit + j];
-                            j += 1;
-                        }
-                        #target_ident(#r_type_ty::#from_method(bytes))
+                        #target_ident(#r_type_ty::#from_method(
+                            read_bytes::<#prim_size_lit>(&self.0, #offset_lit)
+                        ))
                     }
                 });
 
                 ctor_body.extend(quote::quote! {
                     let val_bytes = #field_ident.0.#to_method();
-                    let mut j = 0;
-                    while j < #prim_size_lit {
-                        bytes[#offset_lit + j] = val_bytes[j];
-                        j += 1;
-                    }
+                    write_bytes::<#prim_size_lit>(&mut bytes, #offset_lit, &val_bytes);
                 });
             }
         }
@@ -1620,13 +1607,9 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                             let mut idx = 0;
                             while idx < #len_lit {
                                 let offset = self.pos + #offset_lit + idx * #prim_size_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                let mut j = 0;
-                                while j < #prim_size_lit {
-                                    bytes[j] = self.buf[offset + j];
-                                    j += 1;
-                                }
-                                res[idx] = #r_type_ty::#from_method(bytes);
+                                res[idx] = #r_type_ty::#from_method(
+                                    read_bytes::<#prim_size_lit>(self.buf, offset)
+                                );
                                 idx += 1;
                             }
                             res
@@ -1655,13 +1638,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #comp_size_lit];
-                        let mut j = 0;
-                        while j < #comp_size_lit {
-                            bytes[j] = self.buf[offset + j];
-                            j += 1;
-                        }
-                        #target_ident(bytes)
+                        #target_ident(read_bytes::<#comp_size_lit>(self.buf, offset))
                     }
                 });
             }
@@ -1825,6 +1802,7 @@ fn generate_message_decoder(
     schema_version: u16,
     header_type: &str,
     schema_name: &str,
+    multi_message: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -1893,14 +1871,14 @@ fn generate_message_decoder(
     let max_encoded_length = header_size + block_length + max_tail;
 
     // Identifiers for codegen
-    let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+    let _name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
     let decoder_ident =
         syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
-    let header_pascal_ident = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
-    let header_bl_ident = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
-    let header_ti_ident = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
-    let header_si_ident = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
-    let header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
+    let _header_pascal_ident = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
+    let _header_bl_ident = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
+    let _header_ti_ident = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
+    let _header_si_ident = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
+    let _header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
 
     let mut ts = proc_macro2::TokenStream::new();
     let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), proc_macro2::Span::call_site());
@@ -2073,7 +2051,7 @@ fn generate_message_decoder(
                     let len_val = *len;
                     let len_lit =
                         syn::LitInt::new(&len_val.to_string(), proc_macro2::Span::call_site());
-                    let since_lit =
+                    let _since_lit =
                         syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + prim_size * len_val;
                     let offset_end_lit =
@@ -2196,14 +2174,14 @@ fn generate_message_decoder(
                         } else {
                             format!("val == {null_val} as {r_type}")
                         };
-                        let since_lit =
+                        let _since_lit =
                             syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                         let offset_end = offset + prim_size;
-                        let offset_end_lit = syn::LitInt::new(
+                        let _offset_end_lit = syn::LitInt::new(
                             &offset_end.to_string(),
                             proc_macro2::Span::call_site(),
                         );
-                        let unchecked_val = format!(
+                        let _unchecked_val = format!(
                             "unsafe fn {snake}_unchecked(&self) -> {rt} {{\
                              let offset = self.pos + {off};\
                              let mut bytes = [0u8; {ps}];\
@@ -2552,16 +2530,16 @@ fn generate_message_decoder(
         let (dim_name, dim_size, bl_field, count_field) =
             get_dimension_info(elements, &g.dimension_type);
         let g_pascal = to_pascal_case(&g.name);
-        let dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
-        let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-        let g_entry_ident = syn::Ident::new(
+        let _dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
+        let _count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
+        let _bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
+        let _g_entry_ident = syn::Ident::new(
             &format!("{}EntryDecoder", g_pascal),
             proc_macro2::Span::call_site(),
         );
         let k1 = k + 1;
-        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let tail_k = format_ident!("tail_offset_{k}");
+        let _dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
+        let _tail_k = format_ident!("tail_offset_{k}");
         let tail_k1 = format_ident!("tail_offset_{k1}");
         let g_name_str = g.name.as_str();
 
@@ -2936,8 +2914,9 @@ fn generate_message_decoder(
 
     // 14. Repeating Group decoders
     // 14. Repeating Group decoders
+    let parent = if multi_message { Some(msg.name.as_str()) } else { None };
     for g in &msg.groups {
-        ts.extend(generate_group_decoder(g, elements, byte_order));
+        ts.extend(generate_group_decoder(g, elements, byte_order, parent));
     }
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)
@@ -3076,9 +3055,16 @@ fn generate_group_decoder(
     g: &MessageGroup,
     elements: &SchemaElements,
     byte_order: ByteOrder,
+    parent_message_name: Option<&str>,
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
-    let name = to_pascal_case(&g.name);
+    let raw_name = to_pascal_case(&g.name);
+    // Scope group types under parent message to avoid collisions in multi-message schemas
+    let name = if let Some(parent) = parent_message_name {
+        format!("{}{}", to_pascal_case(parent), raw_name)
+    } else {
+        raw_name
+    };
     let decoder_ident = quote::format_ident!("{}Decoder", name);
     let entry_decoder_ident = quote::format_ident!("{}EntryDecoder", name);
     let (dim_name, dim_size, bl_field, count_field) =
@@ -3454,13 +3440,9 @@ fn generate_group_decoder(
                             let mut idx = 0;
                             while idx < #len_lit {
                                 let offset = self.pos + #offset_lit + idx * #prim_size_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                let mut j = 0;
-                                while j < #prim_size_lit {
-                                    bytes[j] = self.buf[offset + j];
-                                    j += 1;
-                                }
-                                res[idx] = #r_type_ty::#order_fn(bytes);
+                                res[idx] = #r_type_ty::#order_fn(
+                                    read_bytes::<#prim_size_lit>(self.buf, offset)
+                                );
                                 idx += 1;
                             }
                             Ok(res)
@@ -3923,6 +3905,56 @@ fn generate_group_decoder(
             FieldType::Composite { .. } => {}
         }
     }
+    // Entry varData fields in Display
+    for vd in &g.var_data {
+        let vd_snake = to_snake_case(&vd.name);
+        let vd_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
+        let sep = if entry_display_out_idx == 0 { "" } else { ", " };
+        let fmt_str = format!("{sep}{}: {{}} bytes", vd.name);
+        entry_display_body.extend(quote::quote! {
+            if let Ok(d) = self.#vd_ident() {
+                write!(f, #fmt_str, d.len())?;
+            }
+        });
+        entry_display_out_idx += 1;
+    }
+    // Entry nested groups in Display
+    for ng in &g.groups {
+        let ng_snake = to_snake_case(&ng.name);
+        let ng_ident = syn::Ident::new(&ng_snake, proc_macro2::Span::call_site());
+        let sep = if entry_display_out_idx == 0 { "" } else { ", " };
+        let fmt_open = format!("{sep}{}: [", ng.name);
+        let ng_total_tail = ng.groups.len() + ng.var_data.len();
+        if ng_total_tail == 0 {
+            // Fixed-entry nested group: entries are infallible
+            entry_display_body.extend(quote::quote! {
+                write!(f, #fmt_open)?;
+                if let Ok(ng_decoder) = self.#ng_ident() {
+                    for (i, entry) in ng_decoder.enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{}", entry)?;
+                    }
+                }
+                write!(f, "]")?;
+            });
+        } else {
+            // Nested group with tail: entries are Result-wrapped
+            entry_display_body.extend(quote::quote! {
+                write!(f, #fmt_open)?;
+                if let Ok(ng_decoder) = self.#ng_ident() {
+                    for (i, result) in ng_decoder.enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        match result {
+                            Ok(entry) => write!(f, "{}", entry)?,
+                            Err(_) => write!(f, "{{err}}")?,
+                        }
+                    }
+                }
+                write!(f, "]")?;
+            });
+        }
+        entry_display_out_idx += 1;
+    }
 
     // Emit the EntryDecoder struct + its impl block + Display impl
     ts.extend(quote::quote! {
@@ -3945,9 +3977,9 @@ fn generate_group_decoder(
         }
     });
 
-    // Recursively generate nested group decoders
+    // Recursively generate nested group decoders (no parent prefix — already scoped)
     for ng in &g.groups {
-        ts.extend(generate_group_decoder(ng, elements, byte_order));
+        ts.extend(generate_group_decoder(ng, elements, byte_order, None));
     }
 
     ts
@@ -4004,6 +4036,7 @@ fn generate_message_encoder(
     schema_id: u16,
     schema_version: u16,
     header_type: &str,
+    multi_message: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -4648,8 +4681,9 @@ fn generate_message_encoder(
 
     // ── Generate Repeating Groups encoders ──
     let mut group_buf = String::new();
+    let parent = if multi_message { Some(msg.name.as_str()) } else { None };
     for g in &msg.groups {
-        generate_group_encoder(&mut group_buf, g, elements, byte_order);
+        generate_group_encoder(&mut group_buf, g, elements, byte_order, parent);
     }
     if !group_buf.is_empty() {
         let group_ts: proc_macro2::TokenStream = group_buf
@@ -4666,8 +4700,14 @@ fn generate_group_encoder(
     g: &MessageGroup,
     elements: &SchemaElements,
     byte_order: ByteOrder,
+    parent_message_name: Option<&str>,
 ) {
-    let name = to_pascal_case(&g.name);
+    let raw_name = to_pascal_case(&g.name);
+    let name = if let Some(parent) = parent_message_name {
+        format!("{}{}", to_pascal_case(parent), raw_name)
+    } else {
+        raw_name
+    };
     let order_suffix = match byte_order {
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
@@ -4732,8 +4772,15 @@ fn generate_group_encoder(
         add_body.extend(null_stmts);
     }
     add_body.extend(quote::quote! {
-        f(&mut entry);
-        self.pos = entry.pos;
+        // SAFETY: same borrow-split pattern as the group encoder method above.
+        // The closure `f` only operates on __entry (which holds __buf), never
+        // on `self`. The block scope drops __buf before `self.pos` is written.
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
+            f(&mut __entry);
+            self.pos = __entry.pos;
+        }
         self.written += 1;
         Ok(())
     });
@@ -4896,9 +4943,21 @@ fn generate_group_encoder(
                 }
                 self.buf[self.pos..self.pos + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
                 self.buf[self.pos + #num_off_idx..self.pos + #num_off_idx + #num_sz_lit].copy_from_slice(&count.#to_endian());
-                let mut group = #ng_enc::wrap(self.buf, self.pos + #ng_dim, count);
-                f(&mut group);
-                self.pos = group.pos;
+                // SAFETY: the closure `f` only operates on the group encoder (which
+                // holds __buf), never on `self`. The block scope ensures __buf is
+                // dropped before `self.pos` is written. No aliasing occurs because
+                // `self.buf` is not accessed through `self` while __buf is live.
+                // This is the standard borrow-split pattern (same as split_at_mut
+                // internals) — the raw pointer cast is a borrow-checker workaround,
+                // not an actual aliasing violation.
+                let __pos;
+                {
+                    let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+                    let mut group = #ng_enc::wrap(__buf, self.pos + #ng_dim, count);
+                    f(&mut group);
+                    __pos = group.pos;
+                }
+                self.pos = __pos;
                 Ok(self)
             }
         });
@@ -4947,7 +5006,7 @@ fn generate_group_encoder(
 
     // Recursively generate nested Repeating Groups encoders
     for ng in &g.groups {
-        generate_group_encoder(src, ng, elements, byte_order);
+        generate_group_encoder(src, ng, elements, byte_order, None);
     }
 }
 

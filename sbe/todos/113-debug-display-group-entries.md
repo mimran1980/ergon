@@ -70,9 +70,9 @@ the message Display does.
 ## Acceptance criteria
 
 - [x] Group decoder Display iterates entries, prints each with its scalar fields
-- [ ] Nested groups within entries printed recursively (or noted as deferred)
-- [ ] Var-data fields within entries shown as `N bytes` (same as message-level)
-- [ ] Result-wrapped entries handle the error case (from todo 111)
+- [x] Nested groups within entries printed recursively (iterates with infallible entries for fixed-entry, Result-wrapped for tail groups)
+- [x] Var-data fields within entries shown as `N bytes` (e.g. `usageDescription: 3 bytes`)
+- [x] Result-wrapped entries handle the error case (`{err}` for decode failures)
 - [x] Golden file regenerated and stability test passes
 - [x] Baseline tests pass
 
