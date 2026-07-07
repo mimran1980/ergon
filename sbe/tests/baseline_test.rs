@@ -151,7 +151,7 @@ fn decode_baseline_fixture() {
         assert_eq!(4, engine.num_cylinders(), "engine.numCylinders");
 
         // Group: fuelFigures (3 entries)
-        let fuel_figures: Vec<_> = car.fuel_figures().unwrap().collect::<Vec<_>>();
+        let fuel_figures: Vec<_> = car.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(3, fuel_figures.len(), "fuelFigures count");
 
         assert_eq!(30, fuel_figures[0].speed(), "ff[0].speed");
@@ -167,7 +167,7 @@ fn decode_baseline_fixture() {
         assert_eq!(b"Highway Cycle",  fuel_figures[2].usage_description().unwrap(), "ff[2].usage");
 
         // Group: performanceFigures (2 entries), each with nested acceleration group
-        let perf: Vec<_> = car.performance_figures().unwrap().collect::<Vec<_>>();
+        let perf: Vec<_> = car.performance_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(2, perf.len(), "performanceFigures count");
 
         // --- 95 octane ---
@@ -305,7 +305,7 @@ fn encode_baseline_roundtrip() {
         assert_eq!([49, 0, 0], e2.manufacturer_code(), "rt.engine.manufacturerCode");
         assert_eq!("Petrol", e2.fuel(), "rt.engine.fuel");
 
-        let ff2: Vec<_> = car2.fuel_figures().unwrap().collect::<Vec<_>>();
+        let ff2: Vec<_> = car2.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(3, ff2.len());
         assert_eq!(30, ff2[0].speed());  assert!((ff2[0].mpg() - 35.9).abs() < 0.01);
         assert_eq!(b"Urban Cycle", ff2[0].usage_description().unwrap());
@@ -314,7 +314,7 @@ fn encode_baseline_roundtrip() {
         assert_eq!(75, ff2[2].speed());  assert!((ff2[2].mpg() - 40.0).abs() < 0.01);
         assert_eq!(b"Highway Cycle", ff2[2].usage_description().unwrap());
 
-        let pf2: Vec<_> = car2.performance_figures().unwrap().collect::<Vec<_>>();
+        let pf2: Vec<_> = car2.performance_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(2, pf2.len());
         assert_eq!(95, pf2[0].octane_rating());
         let a0: Vec<_> = pf2[0].acceleration().unwrap().collect::<Vec<_>>();
@@ -855,7 +855,7 @@ fn bounds_checking_switch() {
         assert_eq!(Model::A, car2.code());
         assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap());
         assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code().unwrap());
-        let ff: Vec<_> = car2.fuel_figures().unwrap().collect::<Vec<_>>();
+        let ff: Vec<_> = car2.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(2, ff.len());
         assert_eq!(b"Honda", car2.manufacturer().unwrap());
         assert_eq!(b"Civic", car2.model().unwrap());
