@@ -7,17 +7,26 @@ default:
 
 # ── Build ──────────────────────────────────────────────────────
 
+# Build all workspace crates (sbe, persist, persist/derive)
 build:
     RUSTC_WRAPPER="" cargo build --workspace
 
+# Build all crates including samples
 build-all: build
     RUSTC_WRAPPER="" cargo build --manifest-path samples/exchange-orderbook/Cargo.toml
 
+# Build all projects + run all unit and integration tests
+build-test: build-all
+    RUSTC_WRAPPER="" cargo test --workspace -- --test-threads=1
+    RUSTC_WRAPPER="" cargo test --manifest-path samples/exchange-orderbook/Cargo.toml
+
 # ── Test ───────────────────────────────────────────────────────
 
+# Run workspace unit tests
 test:
-    RUSTC_WRAPPER="" cargo test --workspace
+    RUSTC_WRAPPER="" cargo test --workspace -- --test-threads=1
 
+# Run all tests including samples
 test-all: test
     RUSTC_WRAPPER="" cargo test --manifest-path samples/exchange-orderbook/Cargo.toml
 
