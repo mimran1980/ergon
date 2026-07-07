@@ -115,7 +115,6 @@ impl PersistAs for std::time::Duration {
     }
 }
 
-
 // ── chrono::TimeDelta ─────────────────────────────────────────────
 
 /// `chrono::TimeDelta` maps to `Interval`.
@@ -128,7 +127,9 @@ impl PersistAs for chrono::TimeDelta {
     }
 
     fn encode_value(&self) -> Vec<u8> {
-        let nanos = self.num_nanoseconds().expect("TimeDelta out of range for i64 nanoseconds");
+        let nanos = self
+            .num_nanoseconds()
+            .expect("TimeDelta out of range for i64 nanoseconds");
         nanos.to_le_bytes().to_vec()
     }
 }
@@ -309,7 +310,6 @@ mod tests {
         assert_eq!(d.encode_value(), 1_000_000_000i64.to_le_bytes().to_vec());
     }
 
-
     // ── chrono::TimeDelta ────────────────────────────────────────────
 
     #[test]
@@ -334,7 +334,6 @@ mod tests {
         let d = chrono::TimeDelta::nanoseconds(1_000_000_000);
         assert_eq!(d.encode_value(), 1_000_000_000i64.to_le_bytes().to_vec());
     }
-
 
     // ── serde ───────────────────────────────────────────────────────────
 

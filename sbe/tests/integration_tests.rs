@@ -33,7 +33,6 @@ fn test_generate_car_example() {
     assert!(module.source.contains("pub enum BooleanType"));
 }
 
-
 #[test]
 fn test_fixed_entry_group_access() {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_entry_group");
@@ -111,5 +110,6 @@ fn test_fixed_entry_group_access() {
         let mut accel2 = pf.acceleration().unwrap();
         let count = accel2.count();
         assert_eq!(count, 3, "iterator should yield 3 entries");
-    "#);
+    "#,
+    );
 }

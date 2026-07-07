@@ -259,7 +259,12 @@ impl ClickhouseSinkBuilder {
             self.tls_ca_cert.as_deref(),
         )?;
 
-        let inner = SinkInner::spawn(client, database.clone(), Arc::new(NoopMetrics), self.retry_config);
+        let inner = SinkInner::spawn(
+            client,
+            database.clone(),
+            Arc::new(NoopMetrics),
+            self.retry_config,
+        );
 
         Ok(ClickhouseSink {
             inner: Arc::new(inner),
@@ -414,7 +419,12 @@ struct SinkInner {
 
 impl SinkInner {
     /// Spawn a background worker thread with its own tokio runtime.
-    fn spawn(client: clickhouse::Client, database: String, metrics: Arc<dyn PersistMetrics>, retry_config: RetryConfig) -> Self {
+    fn spawn(
+        client: clickhouse::Client,
+        database: String,
+        metrics: Arc<dyn PersistMetrics>,
+        retry_config: RetryConfig,
+    ) -> Self {
         let (cmd_tx, rx) = std::sync::mpsc::channel::<Cmd>();
 
         std::thread::Builder::new()
@@ -426,7 +436,8 @@ impl SinkInner {
                     .build()
                     .expect("clickhouse worker runtime");
                 for cmd in rx {
-                    let result = rt.block_on(client.query(&cmd.sql).execute())
+                    let result = rt
+                        .block_on(client.query(&cmd.sql).execute())
                         .map_err(|e| format!("{e}"));
                     let _ = cmd.response.send(result);
                 }
@@ -461,9 +472,9 @@ impl SinkInner {
 
     /// Execute a DDL statement (CREATE TABLE, ALTER TABLE, DROP TABLE).
     fn exec_ddl(&self, sql: &str) -> Result<(), SinkError> {
-        self.exec(sql).map_err(|e| SinkError::Ddl(format!("{sql}: {e}")))
+        self.exec(sql)
+            .map_err(|e| SinkError::Ddl(format!("{sql}: {e}")))
     }
-
 
     /// Register a sender's flush closure for global flush.
     ///
@@ -474,18 +485,29 @@ impl SinkInner {
     }
 
     /// Execute an INSERT with exponential-backoff retry.
-    fn exec_insert_with_retry(&self, sql: &str, table: &str, rows: &[String], on_drop: &Option<DeadLetterFn>) -> Result<(), SinkError> {
+    fn exec_insert_with_retry(
+        &self,
+        sql: &str,
+        table: &str,
+        rows: &[String],
+        on_drop: &Option<DeadLetterFn>,
+    ) -> Result<(), SinkError> {
         let mut backoff = self.retry_config.initial_backoff;
         let mut attempt: u32 = 0;
         loop {
-            match self.exec(sql).map_err(|e| SinkError::Insert(format!("{sql}: {e}"))) {
+            match self
+                .exec(sql)
+                .map_err(|e| SinkError::Insert(format!("{sql}: {e}")))
+            {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     self.retries_total.fetch_add(1, Ordering::Relaxed);
                     self.metrics.retry_attempted(table, attempt);
                     attempt += 1;
                     if attempt >= self.retry_config.max_retries as u32 {
-                        let _dropped = self.dropped_rows_total.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                        let _dropped = self
+                            .dropped_rows_total
+                            .fetch_add(rows.len() as u64, Ordering::Relaxed);
                         self.metrics.row_dropped(table, rows.len());
                         if let Some(cb) = on_drop {
                             cb(DroppedBatch {
@@ -560,7 +582,12 @@ impl ClickhouseSink {
     pub fn flush(&self) -> Result<(), SinkError> {
         let mut senders = self.inner.senders.lock().unwrap();
         senders.retain(|s| {
-            s.upgrade().map(|f| { f(); true }).unwrap_or(false)
+            s.upgrade()
+                .map(|f| {
+                    f();
+                    true
+                })
+                .unwrap_or(false)
         });
         Ok(())
     }
@@ -665,7 +692,9 @@ impl PersistSenderBuilder {
             batch,
             last_flush,
         };
-        sender.inner.register_sender(Arc::new(move || flush.flush()));
+        sender
+            .inner
+            .register_sender(Arc::new(move || flush.flush()));
         sender
     }
 }
@@ -711,10 +740,16 @@ impl SenderFlush {
         let values = rows.join(", ");
         let sql = format!("INSERT INTO {} VALUES {}", self.table_name, values);
         let sql_str: &str = &sql;
-        if let Err(e) = self.inner.exec_insert_with_retry(sql_str, &self.table_name, &rows, &None) {
+        if let Err(e) = self
+            .inner
+            .exec_insert_with_retry(sql_str, &self.table_name, &rows, &None)
+        {
             warn!(
                 "ClickhouseSink: global flush failed for {}.{} ({} rows): {}",
-                self.inner.database, self.table_name, rows.len(), e
+                self.inner.database,
+                self.table_name,
+                rows.len(),
+                e
             );
         }
         *self.last_flush.lock().unwrap() = Instant::now();
@@ -890,7 +925,9 @@ impl<T: Persist + Serialize> PersistSender<T> {
         let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
         let sql = build_insert_sql(&self.table_name, &columns, &rows);
 
-        let result = self.inner.exec_insert_with_retry(&sql, &self.table_name, &rows, &self.on_drop);
+        let result =
+            self.inner
+                .exec_insert_with_retry(&sql, &self.table_name, &rows, &self.on_drop);
         if let Err(e) = result {
             warn!(
                 "ClickhouseSink: failed to flush {}.{} ({} rows): {}",
@@ -932,7 +969,9 @@ impl<T> Drop for PersistSender<T> {
         let values = rows.join(", ");
         let sql = format!("INSERT INTO {} VALUES {}", self.table_name, values);
 
-        let result = self.inner.exec_insert_with_retry(&sql, &self.table_name, &rows, &self.on_drop);
+        let result =
+            self.inner
+                .exec_insert_with_retry(&sql, &self.table_name, &rows, &self.on_drop);
         if let Err(e) = result {
             warn!(
                 "ClickhouseSink: drop-flush failed for {}.{} ({} rows): {}",

@@ -3089,7 +3089,7 @@ pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes(bytes))
 }
 #[non_exhaustive]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum AnyMessage<'a> {
     Car(CarDecoder<'a>),
     Unknown { header: MessageHeader, payload: &'a [u8] },

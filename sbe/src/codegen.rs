@@ -266,12 +266,7 @@ impl Generator {
         }
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
-        write!(
-            src,
-            "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n",
-            hex
-        )
-        .unwrap();
+        write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
         // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
@@ -1897,23 +1892,6 @@ fn generate_message_decoder(
     let max_encoded_length = header_size + block_length + max_tail;
     let total_tail = msg.groups.len() + msg.var_data.len();
 
-    // Tail offset cache fields (Cell<Option<usize>> per section ≥1)
-    let mut tail_cache_fields = proc_macro2::TokenStream::new();
-    for ki in 1..=total_tail {
-        let field: proc_macro2::TokenStream = format!(
-            "tail_{ki}_cache: core::cell::Cell<Option<usize>>,"
-        ).parse().expect("valid token stream");
-        tail_cache_fields.extend(field);
-    }
-    // Wrap cache initializations (Cell::new(None) per section)
-    let mut wrap_cache_inits = proc_macro2::TokenStream::new();
-    for ki in 1..=total_tail {
-        let field: proc_macro2::TokenStream = format!(
-            "tail_{ki}_cache: core::cell::Cell::new(None),"
-        ).parse().expect("valid token stream");
-        wrap_cache_inits.extend(field);
-    }
-
     // Identifiers for codegen
     let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
     let decoder_ident =
@@ -1942,13 +1920,12 @@ fn generate_message_decoder(
         });
     }
     ts.extend(quote::quote! {
-        #[derive(Clone)]
+        #[derive(Clone, Copy)]
         pub struct #decoder_ident<'a> {
             buf: &'a [u8],
             pos: usize,
             acting_version: u16,
             acting_block_length: usize,
-            #tail_cache_fields
         }
     });
 
@@ -2000,7 +1977,6 @@ fn generate_message_decoder(
                 pos,
                 acting_block_length,
                 acting_version,
-                #wrap_cache_inits
             }
         }
     });
@@ -2160,7 +2136,10 @@ fn generate_message_decoder(
                         let byte_indices: Vec<syn::Expr> = (0..prim_size)
                             .map(|b| {
                                 let bi = i * prim_size + b;
-                                let bi_lit = syn::LitInt::new(&bi.to_string(), proc_macro2::Span::call_site());
+                                let bi_lit = syn::LitInt::new(
+                                    &bi.to_string(),
+                                    proc_macro2::Span::call_site(),
+                                );
                                 syn::parse_quote! { all[#bi_lit] }
                             })
                             .collect();
@@ -2372,8 +2351,10 @@ fn generate_message_decoder(
                     let offset_end = offset + comp_size;
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
-                    let target_decoder_name =
-                        syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
+                    let target_decoder_name = syn::Ident::new(
+                        &format!("{}Decoder", target_name),
+                        proc_macro2::Span::call_site(),
+                    );
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #lazy_ident(&self) -> Option<#target_decoder_name<'_>> {
@@ -2385,8 +2366,10 @@ fn generate_message_decoder(
                         }
                     });
                 } else {
-                    let target_decoder_name =
-                        syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
+                    let target_decoder_name = syn::Ident::new(
+                        &format!("{}Decoder", target_name),
+                        proc_macro2::Span::call_site(),
+                    );
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #lazy_ident(&self) -> #target_decoder_name<'_> {
@@ -2559,9 +2542,6 @@ fn generate_message_decoder(
         let tail = format!(
             "    #[inline]\n\
              fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 if let Some(cached) = self.tail_{k1}_cache.get() {{\n\
-                     return Ok(cached);\n\
-                 }}\n\
                  let start = self.tail_offset_{k}()?;\n\
                  if start + {ds} > self.buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{gn}\", needed: {ds}, available: self.buf.len() - start }});\n\
@@ -2576,7 +2556,6 @@ fn generate_message_decoder(
                      pos = {ge}::skip(self.buf, pos, block_len, self.acting_version)?;\n\
                      idx += 1;\n\
                  }}\n\
-                 self.tail_{k1}_cache.set(Some(pos));\n\
                  Ok(pos)\n\
              }}",
             k1 = k1,
@@ -2603,9 +2582,6 @@ fn generate_message_decoder(
         let vd_tail = format!(
             "    #[inline]\n\
              fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 if let Some(cached) = self.tail_{k1}_cache.get() {{\n\
-                     return Ok(cached);\n\
-                 }}\n\
                  let start = self.tail_offset_{k}()?;\n\
                  if start + {ps} > self.buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps}, available: self.buf.len() - start }});\n\
@@ -2616,7 +2592,6 @@ fn generate_message_decoder(
                  if start + {ps} + len > self.buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps} + len, available: self.buf.len() - start }});\n\
                  }}\n\
-                 self.tail_{k1}_cache.set(Some(start + {ps} + len));\n\
                  Ok(start + {ps} + len)\n\
              }}",
             k1 = k1,
@@ -3450,7 +3425,10 @@ fn generate_group_decoder(
                         let byte_indices: Vec<syn::Expr> = (0..prim_size)
                             .map(|b| {
                                 let bi = i * prim_size + b;
-                                let bi_lit = syn::LitInt::new(&bi.to_string(), proc_macro2::Span::call_site());
+                                let bi_lit = syn::LitInt::new(
+                                    &bi.to_string(),
+                                    proc_macro2::Span::call_site(),
+                                );
                                 syn::parse_quote! { all[#bi_lit] }
                             })
                             .collect();
@@ -3586,12 +3564,12 @@ fn generate_group_decoder(
                 });
 
                 // Lazy flyweight accessor (_lazy)
-                let entry_lazy_ident = syn::Ident::new(
-                    &format!("{}_lazy", f_name),
+                let entry_lazy_ident =
+                    syn::Ident::new(&format!("{}_lazy", f_name), proc_macro2::Span::call_site());
+                let target_decoder_name = syn::Ident::new(
+                    &format!("{}Decoder", target_name),
                     proc_macro2::Span::call_site(),
                 );
-                let target_decoder_name =
-                    syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
                 entry_body.extend(quote::quote! {
                     #[inline]
                     pub fn #entry_lazy_ident(&self) -> #target_decoder_name<'_> {

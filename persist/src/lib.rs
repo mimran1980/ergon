@@ -11,10 +11,10 @@
 pub mod consumer;
 pub mod dynamic;
 pub mod feature_impls;
+pub mod metrics;
 pub mod persist;
 pub mod sbe;
 pub mod sink;
-pub mod metrics;
 pub mod types;
 
 pub use persist::{
@@ -22,9 +22,8 @@ pub use persist::{
     is_compatible_widen,
 };
 pub use sink::{
-    ClickhouseSink, ClickhouseSinkBuilder, PersistCompression, PersistSender, PersistSenderBuilder,
-    SinkError,
-    RetryConfig, DroppedBatch, DeadLetterFn,
+    ClickhouseSink, ClickhouseSinkBuilder, DeadLetterFn, DroppedBatch, PersistCompression,
+    PersistSender, PersistSenderBuilder, RetryConfig, SinkError,
 };
 pub use types::ColumnType;
 pub use types::default_column_type;
