@@ -169,51 +169,84 @@ impl ClickhouseSinkBuilder {
         }
         client = client.with_database(&database);
 
-        // ponytail: single-threaded runtime.  Switch to multi-thread if CH
-        // throughput ever becomes the bottleneck.
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| SinkError::Runtime(e.to_string()))?;
+        let inner = SinkInner::spawn(client, database.clone());
 
         Ok(ClickhouseSink {
-            inner: Arc::new(SinkInner {
-                client,
-                runtime: Mutex::new(runtime),
-                database,
-                schema_cache: Mutex::new(HashMap::new()),
-            }),
+            inner: Arc::new(inner),
         })
     }
+}
+
+// ── Background worker thread ──────────────────────────────────────────────
+
+/// A SQL command sent to the background worker thread.
+struct Cmd {
+    sql: String,
+    /// The worker sends its result here.  Using `std::sync::mpsc` which is
+    /// always available (no tokio dependency needed on the caller side).
+    response: std::sync::mpsc::Sender<Result<(), String>>,
 }
 
 // ── SinkInner ──────────────────────────────────────────────────────────────
 
 struct SinkInner {
-    client: clickhouse::Client,
-    runtime: Mutex<tokio::runtime::Runtime>,
+    /// Channel to the background worker thread.
+    cmd_tx: std::sync::mpsc::Sender<Cmd>,
     #[allow(dead_code)]
     database: String,
     schema_cache: Mutex<HashMap<String, TableSchema>>,
 }
 
 impl SinkInner {
+    /// Spawn a background worker thread with its own tokio runtime.
+    fn spawn(client: clickhouse::Client, database: String) -> Self {
+        let (cmd_tx, rx) = std::sync::mpsc::channel::<Cmd>();
+
+        std::thread::Builder::new()
+            .name("clickhouse-worker".into())
+            .spawn(move || {
+                // Worker thread: its own runtime, no nesting conflicts.
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("clickhouse worker runtime");
+                for cmd in rx {
+                    let result = rt.block_on(client.query(&cmd.sql).execute())
+                        .map_err(|e| format!("{e}"));
+                    let _ = cmd.response.send(result);
+                }
+            })
+            .expect("clickhouse worker thread");
+
+        Self {
+            cmd_tx,
+            database,
+            schema_cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Send a SQL command to the worker and block for the result.
+    fn exec(&self, sql: &str) -> Result<(), SinkError> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.cmd_tx
+            .send(Cmd {
+                sql: sql.to_string(),
+                response: tx,
+            })
+            .map_err(|_| SinkError::Runtime("worker channel closed".into()))?;
+        rx.recv()
+            .map_err(|_| SinkError::Runtime("worker thread died".into()))?
+            .map_err(|e| SinkError::Connection(e))
+    }
+
     /// Execute a DDL statement (CREATE TABLE, ALTER TABLE, DROP TABLE).
     fn exec_ddl(&self, sql: &str) -> Result<(), SinkError> {
-        let sql = sql.to_string();
-        let guard = self.runtime.lock().unwrap();
-        guard
-            .block_on(self.client.query(&sql).execute())
-            .map_err(|e| SinkError::Ddl(format!("{sql}: {e}")))
+        self.exec(sql).map_err(|e| SinkError::Ddl(format!("{sql}: {e}")))
     }
 
     /// Execute an INSERT statement.
     fn exec_insert(&self, sql: &str) -> Result<(), SinkError> {
-        let sql = sql.to_string();
-        let guard = self.runtime.lock().unwrap();
-        guard
-            .block_on(self.client.query(&sql).execute())
-            .map_err(|e| SinkError::Insert(format!("{sql}: {e}")))
+        self.exec(sql).map_err(|e| SinkError::Insert(format!("{sql}: {e}")))
     }
 }
 

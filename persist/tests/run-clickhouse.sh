@@ -13,6 +13,8 @@ case "${1:-start}" in
     docker run -d \
       --name "$CONTAINER_NAME" \
       -p "$PORT":8123 \
+      -e CLICKHOUSE_USER=default \
+      -e CLICKHOUSE_PASSWORD=test123 \
       clickhouse/clickhouse-server
     echo "Waiting for ClickHouse to be ready..."
     for i in $(seq 1 30); do
