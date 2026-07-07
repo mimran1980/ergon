@@ -59,9 +59,11 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
     );
     fs::write(dir.join("Cargo.toml"), &cargo_toml).unwrap();
 
+    let target_dir = dir.join("target_ci");
     let out = Command::new("cargo")
         .args(["test"])
         .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
         .output()
         .unwrap_or_else(|e| panic!("cargo test on temp crate {module_name}: {e}"));
 
@@ -255,7 +257,7 @@ proptest! {
         let encoded = car.as_bytes();
         let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
-        let fuel: Vec<_> = decoded.fuel_figures().unwrap().collect::<Vec<_>>();
+        let fuel: Vec<_> = decoded.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         prop_assert_eq!(entries.len(), fuel.len(), "fuel figures count");
 
         for (i, (speed, mpg, usage)) in entries.iter().enumerate() {
@@ -363,7 +365,7 @@ fn boundary_values() {
     assert_eq!(u16::MAX, de.capacity());
     assert_eq!(u8::MAX, de.num_cylinders());
 
-    let ff: Vec<_> = decoded.fuel_figures().unwrap().collect::<Vec<_>>();
+    let ff: Vec<_> = decoded.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
     assert_eq!(1, ff.len());
     assert_eq!(u16::MAX, ff[0].speed());
     // f32::MAX is the largest finite f32; check round-trip within epsilon

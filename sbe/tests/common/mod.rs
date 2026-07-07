@@ -214,9 +214,11 @@ fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&st
         args.push("--features");
         args.push(f);
     }
+    let target_dir = dir.join("target_ci");
     let out = Command::new("cargo")
         .args(&args)
         .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
         .output()
         .expect("cargo run failed");
 
