@@ -517,9 +517,8 @@ fn max_encoding_value(prim: PrimitiveType) -> u64 {
 }
 
 /// Emit `*_NULL`, `*_MIN`, `*_MAX` compile-time constants for a message field.
-fn emit_field_consts(src: &mut String, f: &MessageField) {
+fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
     let upper_name = to_upper_snake_case(&f.name);
-    let mut any = false;
     let mut tokens = proc_macro2::TokenStream::new();
     match &f.field_type {
         FieldType::Primitive(prim, _) => {
@@ -535,7 +534,6 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                any = true;
             }
             if let Some(val) = f.min_value {
                 let name_ident =
@@ -545,7 +543,6 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                any = true;
             }
             if let Some(val) = f.max_value {
                 let name_ident =
@@ -555,12 +552,11 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                any = true;
             }
         }
         FieldType::Enum {
             name,
-            encoding_type,
+            ..
         } => {
             let target_name = to_pascal_case(name);
             let name_ident = syn::Ident::new(
@@ -571,23 +567,10 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
             tokens.extend(quote::quote! {
                 pub const #name_ident: #target_ident = #target_ident::NullVal;
             });
-            any = true;
         }
         FieldType::Composite { .. } | FieldType::Set { .. } => {}
     }
-    if any {
-        let block = tokens.to_string();
-        // Indent each line to 4 spaces (inside impl block)
-        if !block.is_empty() {
-            for line in block.lines() {
-                if !line.is_empty() {
-                    src.push_str("    ");
-                    src.push_str(line);
-                    src.push('\n');
-                }
-            }
-        }
-    }
+    tokens
 }
 
 fn find_matching_end(tokens: &[Token], start: usize, begin: Signal, end: Signal) -> usize {
@@ -2154,7 +2137,17 @@ fn generate_message_decoder(
                 ));
             }
         }
-        emit_field_consts(src, f);
+        {
+            let const_ts = emit_field_consts(f);
+            let const_str = const_ts.to_string();
+            for line in const_str.lines() {
+                if !line.is_empty() {
+                    src.push_str("    ");
+                    src.push_str(line);
+                    src.push('\n');
+                }
+            }
+        }
     }
 
     // Tail Offsets Helpers
@@ -2440,7 +2433,13 @@ fn generate_message_decoder(
 
     // Recursively generate Repeating Groups decoders for this message
     for g in &msg.groups {
-        generate_group_decoder(src, g, elements, byte_order);
+        let group_ts = generate_group_decoder(g, elements, byte_order);
+        let formatted = prettyplease::unparse(
+            &syn::parse2::<syn::File>(group_ts).unwrap_or_else(|_| syn::File { shebang: None, attrs: vec![], items: vec![] })
+        );
+        if !formatted.is_empty() {
+            src.push_str(&formatted);
+        }
     }
 }
 
@@ -2541,11 +2540,10 @@ fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
 }
 
 fn generate_group_decoder(
-    src: &mut String,
     g: &MessageGroup,
     elements: &SchemaElements,
     byte_order: ByteOrder,
-) {
+) -> proc_macro2::TokenStream {
     let name = to_pascal_case(&g.name);
     let (dim_name, dim_size, bl_field, count_field) =
         get_dimension_info(elements, &g.dimension_type);
@@ -2553,447 +2551,426 @@ fn generate_group_decoder(
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
     };
-
-    src.push_str(&format!(
-        "pub struct {}Decoder<'a> {{\n\
-             buf: &'a [u8],\n\
-             pos: usize,\n\
-             count: usize,\n\
-             start: usize,\n\
-             total: usize,\n\
-             acting_version: u16,\n\
-         }}\n\n\
-         impl<'a> {}Decoder<'a> {{\n\
-             pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
-             #[inline]\n             pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {{\n\
-                 let bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
-                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
-                 }})?.try_into().unwrap();\n\
-                 let header = {}(bytes);\n\
-                 let count = header.{}() as usize;\n\
-                 Ok(Self {{\n\
-                     buf,\n\
-                     pos: pos + {},\n\
-                     count,\n\
-                     start: pos + {},\n\
-                     total: count,\n\
-                     acting_version,\n\
-                 }})\n\
-             }}\n\n\
-             #[inline]\n             pub fn is_empty(&self) -> bool {{\n\
-                 self.count == 0\n\
-             }}\n\n",
-        name, name, g.block_length, dim_size, dim_size, dim_size, dim_name, count_field, dim_size, dim_size,
-        field_name = g.name
-    ));
-
-    // Expose fast-path as_chunks if entry has no tail
     let total_tail = g.groups.len() + g.var_data.len();
-    // Group navigation methods: skip_n, nth, rewind, remaining
-    src.push_str(
-        "    #[inline]\n    pub const fn remaining(&self) -> usize {{\n\
-                 self.count\n\
-             }}\n\n\
-             #[inline]\n    pub fn rewind(&mut self) -> &mut Self {{\n\
-                 self.pos = self.start;\n\
-                 self.count = self.total;\n\
-                 self\n\
-             }}\n\n",
-    );
 
+    let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+    let decoder_ident = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    let entry_dec_ident = syn::Ident::new(&format!("{}EntryDecoder", name), proc_macro2::Span::call_site());
+    let dim_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
+    let bl_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
+    let count_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
+    let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
+    let bl_lit = syn::LitInt::new(&g.block_length.to_string(), proc_macro2::Span::call_site());
+    let field_name_str = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
+    let from_method = syn::Ident::new(&format!("from_{order_suffix}_bytes"), proc_macro2::Span::call_site());
+
+    let mut tokens = proc_macro2::TokenStream::new();
+
+    // Group Decoder struct + impl with basic methods
+    tokens.extend(quote::quote! {
+        pub struct #decoder_ident<'a> {
+            buf: &'a [u8],
+            pos: usize,
+            count: usize,
+            start: usize,
+            total: usize,
+            acting_version: u16,
+        }
+
+        impl<'a> #decoder_ident<'a> {
+            pub const ENTRY_BLOCK_LENGTH: usize = #bl_lit;
+
+            #[inline]
+            pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {
+                let bytes: [u8; #dim_size_lit] = buf.get(pos..pos + #dim_size_lit).ok_or_else(|| {
+                    sbe_rt::DecodeError::BufferTooShort { field: #field_name_str, needed: #dim_size_lit, available: buf.len() - pos }
+                })?.try_into().unwrap();
+                let header = #dim_ident(bytes);
+                let count = header.#count_ident() as usize;
+                Ok(Self {
+                    buf,
+                    pos: pos + #dim_size_lit,
+                    count,
+                    start: pos + #dim_size_lit,
+                    total: count,
+                    acting_version,
+                })
+            }
+
+            #[inline]
+            pub fn is_empty(&self) -> bool {
+                self.count == 0
+            }
+
+            #[inline]
+            pub const fn remaining(&self) -> usize {
+                self.count
+            }
+
+            #[inline]
+            pub fn rewind(&mut self) -> &mut Self {
+                self.pos = self.start;
+                self.count = self.total;
+                self
+            }
+        }
+    });
+
+    // skip_n method - two variants based on total_tail
     if total_tail == 0 {
-        src.push_str(&format!(
-            "#[inline]\n    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {{\
-\
-                 if n > self.count {{\
-\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{\
-\
-                         field: \"{field_name}\",\n\
-                         needed: n * Self::ENTRY_BLOCK_LENGTH,\
-\
-                         available: self.count * Self::ENTRY_BLOCK_LENGTH,\
-\
-                     }});\n\
-                 }}\n\
-                 self.pos += n * Self::ENTRY_BLOCK_LENGTH;\n\
-                 self.count -= n;\n\
-                 Ok(())\
-\
-             }}\n\n",
-            field_name = g.name
-        ));
+        tokens.extend(quote::quote! {
+            impl<'a> #decoder_ident<'a> {
+                #[inline]
+                pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+                    if n > self.count {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #field_name_str,
+                            needed: n * Self::ENTRY_BLOCK_LENGTH,
+                            available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                        });
+                    }
+                    self.pos += n * Self::ENTRY_BLOCK_LENGTH;
+                    self.count -= n;
+                    Ok(())
+                }
+            }
+        });
     } else {
-        src.push_str(&format!(
-            "#[inline]\n    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {{\
-\
-                 if n > self.count {{\
-\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{\
-\
-                         field: \"{field_name}\",\n\
-                         needed: n * Self::ENTRY_BLOCK_LENGTH,\
-\
-                         available: self.count * Self::ENTRY_BLOCK_LENGTH,\
-\
-                     }});\n\
-                 }}\n\
-                 for _ in 0..n {{\
-\
-                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
-                     self.pos += entry.encoded_length()?;\n\
-                     self.count -= 1;\n\
-                 }}\n\
-                 Ok(())\
-\
-             }}\n\n",
-            name,
-            field_name = g.name
-        ));
+        tokens.extend(quote::quote! {
+            impl<'a> #decoder_ident<'a> {
+                #[inline]
+                pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+                    if n > self.count {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #field_name_str,
+                            needed: n * Self::ENTRY_BLOCK_LENGTH,
+                            available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                        });
+                    }
+                    for _ in 0..n {
+                        let entry = #entry_dec_ident::wrap(self.buf, self.pos, self.acting_version);
+                        self.pos += entry.encoded_length()?;
+                        self.count -= 1;
+                    }
+                    Ok(())
+                }
+            }
+        });
     }
 
-    src.push_str(&format!(
-        "#[inline]\n    pub fn nth(&self, idx: usize) -> Result<{}EntryDecoder<'a>, sbe_rt::DecodeError> {{\
-\
-             if idx >= self.total {{\
-\
-                 return Err(sbe_rt::DecodeError::BufferTooShort {{\
-\
-                     field: \"{field_name}\",\n\
-                     needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,\
-\
-                     available: self.total * Self::ENTRY_BLOCK_LENGTH,\
-\
-                 }});\n\
-             }}\n\
-             let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;\n\
-             if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {{\
-\
-                 return Err(sbe_rt::DecodeError::BufferTooShort {{\
-\
-                     field: \"{field_name}\",\n\
-                     needed: Self::ENTRY_BLOCK_LENGTH,\
-\
-                     available: self.buf.len() - offset,\
-\
-                 }});\n\
-             }}\n\
-             Ok({}EntryDecoder::wrap(self.buf, offset, self.acting_version))\n\
-         }}\n\n",
-        name, name,
-        field_name = g.name
-    ));
+    // nth method
+    tokens.extend(quote::quote! {
+        impl<'a> #decoder_ident<'a> {
+            #[inline]
+            pub fn nth(&self, idx: usize) -> Result<#entry_dec_ident<'a>, sbe_rt::DecodeError> {
+                if idx >= self.total {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: #field_name_str,
+                        needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
+                        available: self.total * Self::ENTRY_BLOCK_LENGTH,
+                    });
+                }
+                let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
+                if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: #field_name_str,
+                        needed: Self::ENTRY_BLOCK_LENGTH,
+                        available: self.buf.len() - offset,
+                    });
+                }
+                Ok(#entry_dec_ident::wrap(self.buf, offset, self.acting_version))
+            }
+        }
+    });
+
+    // as_chunks and columnar slice access for fixed-size groups (no tail)
     if total_tail == 0 {
-        src.push_str(&format!(
-            "#[inline]\n    pub fn as_chunks(&self) -> Result<&'a [[u8; {}]], sbe_rt::DecodeError> {{\n\
-                     let len = self.count * {};\n\
-                     if self.pos + len > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: len, available: self.buf.len() - self.pos }});\n\
-                     }}\n\
-                     let bytes = &self.buf[self.pos .. self.pos + len];\n\
-                     let (chunks, _) = bytes.as_chunks::<{}>();\n\
-                     Ok(chunks)\n\
-                 }}\n\n",
-            g.block_length, g.block_length, g.block_length,
-            field_name = g.name
-        ));
+        tokens.extend(quote::quote! {
+            impl<'a> #decoder_ident<'a> {
+                #[inline]
+                pub fn as_chunks(&self) -> Result<&'a [[u8; #bl_lit]], sbe_rt::DecodeError> {
+                    let len = self.count * #bl_lit;
+                    if self.pos + len > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort { field: #field_name_str, needed: len, available: self.buf.len() - self.pos });
+                    }
+                    let bytes = &self.buf[self.pos .. self.pos + len];
+                    let (chunks, _) = bytes.as_chunks::<#bl_lit>();
+                    Ok(chunks)
+                }
+            }
+        });
+
         // SoA columnar slice access for single-field fixed-size groups.
-        // A group with exactly one non-constant field has that field occupying
-        // the entire entry block, so the field data is contiguous in memory
-        // and we can return a zero-copy &[T] via from_raw_parts.
-        let non_const_count = g
-            .fields
-            .iter()
-            .filter(|f| f.presence != Presence::Constant)
-            .count();
+        let non_const_count = g.fields.iter().filter(|f| f.presence != Presence::Constant).count();
         if non_const_count == 1 {
             for f in &g.fields {
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                let f_name = to_snake_case(&f.name);
-                let (f_size, slice_type) = match &f.field_type {
+                let f_ident = syn::Ident::new(&to_snake_case(&f.name), proc_macro2::Span::call_site());
+                let (f_size, slice_type_str) = match &f.field_type {
                     FieldType::Primitive(prim, None) => (prim.size(), rust_type(*prim)),
-                    // Fixed arrays, composites, enums, and sets don't map to a single
-                    // primitive type. Use as_chunks() for bulk entry access instead.
                     _ => continue,
                 };
-                src.push_str(&format!(
-                    "#[inline]\n\
-                     pub fn {}_as_slice(&self) -> Result<&'a [{}], sbe_rt::DecodeError> {{\n\
-                         let len = self.count * {};\n\
-                         if self.pos + len > self.buf.len() {{\n\
-                             return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{g_name}\", needed: len, available: self.buf.len() - self.pos }});\n\
-                         }}\n\
-                         // SAFETY: SBE message buffers are allocated with sufficient\n\
-                         // alignment for all primitive types. The bounds check above\n\
-                         // guarantees at least count * sizeof(T) readable bytes.\n\
-                         Ok(unsafe {{\n\
-                             core::slice::from_raw_parts(\n\
-                                 self.buf.as_ptr().add(self.pos) as *const {},\n\
-                                 self.count,\n\
-                             )\n\
-                         }})\n\
-                     }}\n\n",
-                    f_name, slice_type, f_size, slice_type,
-                    g_name = g.name
-                ));
+                let slice_type: syn::Type = syn::parse_str(slice_type_str).unwrap();
+                let f_size_lit = syn::LitInt::new(&f_size.to_string(), proc_macro2::Span::call_site());
+                let slice_ident = syn::Ident::new(&format!("{}_as_slice", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                tokens.extend(quote::quote! {
+                    impl<'a> #decoder_ident<'a> {
+                        #[inline]
+                        pub fn #slice_ident(&self) -> Result<&'a [#slice_type], sbe_rt::DecodeError> {
+                            let len = self.count * #f_size_lit;
+                            if self.pos + len > self.buf.len() {
+                                return Err(sbe_rt::DecodeError::BufferTooShort { field: #field_name_str, needed: len, available: self.buf.len() - self.pos });
+                            }
+                            // SAFETY: SBE message buffers are allocated with sufficient
+                            // alignment for all primitive types. The bounds check above
+                            // guarantees at least count * sizeof(T) readable bytes.
+                            Ok(unsafe {
+                                core::slice::from_raw_parts(
+                                    self.buf.as_ptr().add(self.pos) as *const #slice_type,
+                                    self.count,
+                                )
+                            })
+                        }
+                    }
+                });
             }
         }
     }
-    src.push_str("}\n\n");
 
     // Iterator implementation
     if total_tail == 0 {
-        // Fast path: entries are fixed-size, advance by ENTRY_BLOCK_LENGTH
-        src.push_str(&format!(
-            "impl<'a> Iterator for {}Decoder<'a> {{\
-\
-                 type Item = {}EntryDecoder<'a>;\n\
-                 fn next(&mut self) -> Option<Self::Item> {{\
-\
-                     if self.count == 0 {{\
-\
-                         return None;\n\
-                     }}\n\
-                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
-                     self.pos += Self::ENTRY_BLOCK_LENGTH;\n\
-                     self.count -= 1;\n\
-                     Some(entry)\
-\
-                 }}\n\
-             }}\n\n\
-             impl<'a> ExactSizeIterator for {}Decoder<'a> {{\
-\
-                 fn len(&self) -> usize {{\
-\
-                     self.count\n\
-                 }}\n\
-             }}\n\n",
-            name, name, name, name
-        ));
+        tokens.extend(quote::quote! {
+            impl<'a> Iterator for #decoder_ident<'a> {
+                type Item = #entry_dec_ident<'a>;
+
+                fn next(&mut self) -> Option<Self::Item> {
+                    if self.count == 0 {
+                        return None;
+                    }
+                    let entry = #entry_dec_ident::wrap(self.buf, self.pos, self.acting_version);
+                    self.pos += Self::ENTRY_BLOCK_LENGTH;
+                    self.count -= 1;
+                    Some(entry)
+                }
+            }
+
+            impl<'a> ExactSizeIterator for #decoder_ident<'a> {
+                fn len(&self) -> usize {
+                    self.count
+                }
+            }
+        });
     } else {
-        // Safe path: entries have var-data tails, compute encoded length per entry
-        src.push_str(&format!(
-            "impl<'a> Iterator for {}Decoder<'a> {{\
-\
-                 type Item = {}EntryDecoder<'a>;\n\
-                 fn next(&mut self) -> Option<Self::Item> {{\
-\
-                     if self.count == 0 {{\
-\
-                         return None;\n\
-                     }}\n\
-                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
-                     let size = match entry.encoded_length() {{\
-\
-                         Ok(s) => s,\
-\
-                         Err(_) => {{\
-\
-                             self.count = 0;\n\
-                             return Some(entry);\n\
-                         }}\n\
-                     }};\n\
-                     self.pos += size;\n\
-                     self.count -= 1;\n\
-                     Some(entry)\
-\
-                 }}\n\
-             }}\n\n\
-             impl<'a> ExactSizeIterator for {}Decoder<'a> {{\
-\
-                 fn len(&self) -> usize {{\
-\
-                     self.count\n\
-                 }}\n\
-             }}\n\n",
-            name, name, name, name
-        ));
+        tokens.extend(quote::quote! {
+            impl<'a> Iterator for #decoder_ident<'a> {
+                type Item = #entry_dec_ident<'a>;
+
+                fn next(&mut self) -> Option<Self::Item> {
+                    if self.count == 0 {
+                        return None;
+                    }
+                    let entry = #entry_dec_ident::wrap(self.buf, self.pos, self.acting_version);
+                    let size = match entry.encoded_length() {
+                        Ok(s) => s,
+                        Err(_) => {
+                            self.count = 0;
+                            return Some(entry);
+                        }
+                    };
+                    self.pos += size;
+                    self.count -= 1;
+                    Some(entry)
+                }
+            }
+
+            impl<'a> ExactSizeIterator for #decoder_ident<'a> {
+                fn len(&self) -> usize {
+                    self.count
+                }
+            }
+        });
     }
+
     // Entry Decoder Struct
-    src.push_str(&format!(
-        "pub struct {}EntryDecoder<'a> {{\n\
-             buf: &'a [u8],\n\
-             pos: usize,\n\
-             acting_version: u16,\n\
-         }}\n\n\
-         impl<'a> {}EntryDecoder<'a> {{\n\
-             pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
-             #[inline]\n             pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {{\n\
-                 Self {{ buf, pos, acting_version }}\n\
-             }}\n\n",
-        name, name, g.block_length
-    ));
+    tokens.extend(quote::quote! {
+        pub struct #entry_dec_ident<'a> {
+            buf: &'a [u8],
+            pos: usize,
+            acting_version: u16,
+        }
+    });
+
+    // Entry Decoder impl with basic methods (separate quote::quote! block for brace clarity)
+    tokens.extend(quote::quote! {
+        impl<'a> #entry_dec_ident<'a> {
+            pub const ENTRY_BLOCK_LENGTH: usize = #bl_lit;
+
+            #[inline]
+            pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
+                Self { buf, pos, acting_version }
+            }
+        }
+    });
 
     // Fields of group entry
+    let mut field_methods = proc_macro2::TokenStream::new();
     for f in &g.fields {
-        let f_name = to_snake_case(&f.name);
-        let offset = f.offset;
-        let since = f.since_version;
+        let f_ident = syn::Ident::new(&to_snake_case(&f.name), proc_macro2::Span::call_site());
+        let offset_lit = syn::LitInt::new(&f.offset.to_string(), proc_macro2::Span::call_site());
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
-                let r_type = rust_type(*prim);
+                let r_type_str = rust_type(*prim);
+                let r_type_ty: syn::Type = syn::parse_str(r_type_str).unwrap();
                 let prim_size = prim.size();
+                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
                 if f.presence == Presence::Constant {
                     if let Some(ref val) = f.constant_value {
                         if *prim == PrimitiveType::Char && val.len() > 1 {
-                            src.push_str(&format!(
-                                "#[inline]\n    pub const fn {}(&self) -> &'static str {{\n\
-                                         \"{}\"\n\
-                                     }}\n\n",
-                                f_name, val
-                            ));
+                            let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
+                            field_methods.extend(quote::quote! {
+                                #[inline]
+                                pub const fn #f_ident(&self) -> &'static str {
+                                    #val_lit
+                                }
+                            });
                         } else {
-                            let expr = constant_value_expr(*prim, val);
-                            src.push_str(&format!(
-                                "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                                         {}\n\
-                                     }}\n\n",
-                                f_name, r_type, expr
-                            ));
+                            let expr_str = constant_value_expr(*prim, val);
+                            let expr: syn::Expr = syn::parse_str(&expr_str).unwrap();
+                            field_methods.extend(quote::quote! {
+                                #[inline]
+                                pub const fn #f_ident(&self) -> #r_type_ty {
+                                    #expr
+                                }
+                            });
                         }
                     }
                 } else if let Some(len) = length {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const fn {}(&self) -> Result<[{}; {}], sbe_rt::DecodeError> {{\n\
-                                 let offset = self.pos + {};\n\
-                                 let size = {};\n\
-                                 if offset + size > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: size, available: self.buf.len() - offset }});\n\
-                                 }}\n\
-                                 let mut res = [0 as {}; {}];\n\
-                                 let mut idx = 0;\n\
-                                 while idx < {} {{\n\
-                                     let offset = self.pos + {} + idx * {};\n\
-                                     let mut bytes = [0u8; {}];\n\
-                                     let mut j = 0;\n\
-                                     while j < {} {{\n\
-                                         bytes[j] = self.buf[offset + j];\n\
-                                         j += 1;\n\
-                                     }}\n\
-                                     res[idx] = {}::from_{}_bytes(bytes);\n\
-                                     idx += 1;\n\
-                                 }}\n\
-                                 Ok(res)\n\
-                             }}\n\n",
-                        f_name, r_type, len, offset, prim_size * len, r_type, len, len, offset, prim_size, prim_size, prim_size, r_type, order_suffix,
-                        field_name = f.name
-                    ));
+                    let len_lit = syn::LitInt::new(&len.to_string(), proc_macro2::Span::call_site());
+                    let f_name_str = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                    let total_size_lit = syn::LitInt::new(&(prim_size * len).to_string(), proc_macro2::Span::call_site());
+                    let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                    let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                    let array_ty: syn::Type = syn::parse_str(&format!("[{}; {}]", r_type_str, len)).unwrap();
 
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> [{}; {}] {{\n\
-                                 let offset = self.pos + {};\n\
-                                 let mut res = [0 as {}; {}];\n\
-                                 let mut idx = 0;\n\
-                                 while idx < {} {{\n\
-                                     let offset = self.pos + {} + idx * {};\n\
-                                     let mut bytes = [0u8; {}];
+                    field_methods.extend(quote::quote! {
+                        #[inline]
+                        pub const fn #f_ident(&self) -> Result<#array_ty, sbe_rt::DecodeError> {
+                            let offset = self.pos + #offset_lit;
+                            let size = #total_size_lit;
+                            if offset + size > self.buf.len() {
+                                return Err(sbe_rt::DecodeError::BufferTooShort { field: #f_name_str, needed: size, available: self.buf.len() - offset });
+                            }
+                            let mut res = [0 as #r_type_ty; #len_lit];
+                            let mut idx = 0;
+                            while idx < #len_lit {
+                                let offset = self.pos + #offset_lit + idx * #prim_size_lit;
+                                let mut bytes = [0u8; #prim_size_lit];
+                                let mut j = 0;
+                                while j < #prim_size_lit {
+                                    bytes[j] = self.buf[offset + j];
+                                    j += 1;
+                                }
+                                res[idx] = #r_type_ty::#from_method(bytes);
+                                idx += 1;
+                            }
+                            Ok(res)
+                        }
 
-                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                     res[idx] = {}::from_{}_bytes(bytes);\n\
-                                     idx += 1;\n\
-                                 }}\n\
-                                 res\n\
-                             }}\n\n",
-                        f_name,
-                        r_type,
-                        len,
-                        offset,
-                        r_type,
-                        len,
-                        len,
-                        offset,
-                        prim_size,
-                        prim_size,
-                        prim_size,
-                        r_type,
-                        order_suffix
-                    ));
+                        #[inline]
+                        pub const unsafe fn #unchecked_ident(&self) -> #array_ty {
+                            let offset = self.pos + #offset_lit;
+                            let mut res = [0 as #r_type_ty; #len_lit];
+                            let mut idx = 0;
+                            while idx < #len_lit {
+                                let offset = self.pos + #offset_lit + idx * #prim_size_lit;
+                                let mut bytes = [0u8; #prim_size_lit];
+                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                                res[idx] = #r_type_ty::#from_method(bytes);
+                                idx += 1;
+                            }
+                            res
+                        }
 
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
-                                 #[allow(unused_unsafe)]\n\
-                                 unsafe {{ self.{}_unchecked() }}\n\
-                             }}\n\n",
-                        f_name, r_type, len, f_name
-                    ));
+                        #[inline]
+                        pub const fn #raw_ident(&self) -> #array_ty {
+                            #[allow(unused_unsafe)]
+                            unsafe { self.#unchecked_ident() }
+                        }
+                    });
                 } else {
                     if f.presence == Presence::Optional {
                         let null_val = f.null_value.unwrap_or(0);
-                        let null_check = if *prim == PrimitiveType::Float {
+                        let null_check_str = if *prim == PrimitiveType::Float {
                             format!("val.to_bits() == {} as u32", null_val)
                         } else if *prim == PrimitiveType::Double {
                             format!("val.to_bits() == {}", null_val)
                         } else {
-                            format!("val == {} as {}", null_val, r_type)
+                            format!("val == {} as {}", null_val, r_type_str)
                         };
+                        let null_check: syn::Expr = syn::parse_str(&null_check_str).unwrap();
+                        let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                        let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
 
-                        src.push_str(&format!(
-                            "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
-                                     let offset = self.pos + {};\n\
-                                     let val = {}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap());\n\
-                                     if {} {{\n\
-                                         None\n\
-                                     }} else {{\n\
-                                         Some(val)\n\
-                                     }}\n\
-                                 }}\n\n",
-                            f_name, r_type, offset, r_type, order_suffix, prim_size, null_check,
-                        ));
+                        field_methods.extend(quote::quote! {
+                            #[inline]
+                            pub fn #f_ident(&self) -> Option<#r_type_ty> {
+                                let offset = self.pos + #offset_lit;
+                                let val = #r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap());
+                                if #null_check {
+                                    None
+                                } else {
+                                    Some(val)
+                                }
+                            }
 
-                        src.push_str(&format!(
-                            "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> Option<{}> {{\n\
-                                     let offset = self.pos + {};\n\
-                                     let mut bytes = [0u8; {}];
+                            #[inline]
+                            pub const unsafe fn #unchecked_ident(&self) -> Option<#r_type_ty> {
+                                let offset = self.pos + #offset_lit;
+                                let mut bytes = [0u8; #prim_size_lit];
+                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                                let val = #r_type_ty::#from_method(bytes);
+                                if #null_check {
+                                    None
+                                } else {
+                                    Some(val)
+                                }
+                            }
 
-                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                     let val = {}::from_{}_bytes(bytes);\n\
-                                     if {} {{\n\
-                                         None\n\
-                                     }} else {{\n\
-                                         Some(val)\n\
-                                     }}\n\
-                                 }}\n\n",
-                            f_name, r_type, offset, prim_size, prim_size, r_type, order_suffix, null_check,
-                        ));
-
-                        src.push_str(&format!(
-                            "#[inline]\n    pub const fn raw_{}(&self) -> Option<{}> {{\n\
-                                     #[allow(unused_unsafe)]\n\
-                                     unsafe {{ self.{}_unchecked() }}\n\
-                                 }}\n\n",
-                            f_name, r_type, f_name,
-                        ));
+                            #[inline]
+                            pub const fn #raw_ident(&self) -> Option<#r_type_ty> {
+                                #[allow(unused_unsafe)]
+                                unsafe { self.#unchecked_ident() }
+                            }
+                        });
                     } else {
-                        src.push_str(&format!(
-                            "#[inline]\n    pub fn {}(&self) -> {} {{\n\
-                                     let offset = self.pos + {};\n\
-                                     {}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap())\n\
-                                 }}\n\n",
-                            f_name, r_type, offset, r_type, order_suffix, prim_size,
-                        ));
+                        let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                        let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
 
-                        src.push_str(&format!(
-                            "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                                     let offset = self.pos + {};\n\
-                                     let mut bytes = [0u8; {}];
+                        field_methods.extend(quote::quote! {
+                            #[inline]
+                            pub fn #f_ident(&self) -> #r_type_ty {
+                                let offset = self.pos + #offset_lit;
+                                #r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap())
+                            }
 
-                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                     {}::from_{}_bytes(bytes)\n\
-                                 }}\n\n",
-                            f_name, r_type, offset, prim_size, prim_size, r_type, order_suffix
-                        ));
+                            #[inline]
+                            pub const unsafe fn #unchecked_ident(&self) -> #r_type_ty {
+                                let offset = self.pos + #offset_lit;
+                                let mut bytes = [0u8; #prim_size_lit];
+                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                                #r_type_ty::#from_method(bytes)
+                            }
 
-                        src.push_str(&format!(
-                            "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
-                                     #[allow(unused_unsafe)]\n\
-                                     unsafe {{ self.{}_unchecked() }}\n\
-                                 }}\n\n",
-                            f_name, r_type, f_name
-                        ));
+                            #[inline]
+                            pub const fn #raw_ident(&self) -> #r_type_ty {
+                                #[allow(unused_unsafe)]
+                                unsafe { self.#unchecked_ident() }
+                            }
+                        });
                     }
                 }
             }
@@ -3002,73 +2979,75 @@ fn generate_group_decoder(
                 size: comp_size,
             } => {
                 let target_name = to_pascal_case(comp_name);
-                src.push_str(&format!(
-                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             {}(self.buf[offset..][..{}].try_into().unwrap())\n\
-                         }}\n\n",
-                    f_name, target_name, offset, target_name, comp_size,
-                ));
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
+                let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             let mut bytes = [0u8; {}];
+                field_methods.extend(quote::quote! {
+                    #[inline]
+                    pub fn #f_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        #target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap())
+                    }
 
-                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                             {}(bytes)\n\
-                         }}\n\n",
-                    f_name, target_name, offset, comp_size, comp_size, target_name
-                ));
+                    #[inline]
+                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        let mut bytes = [0u8; #comp_size_lit];
+                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #comp_size_lit) });
+                        #target_ident(bytes)
+                    }
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
-                             #[allow(unused_unsafe)]\n\
-                             unsafe {{ self.{}_unchecked() }}\n\
-                         }}\n\n",
-                    f_name, target_name, f_name
-                ));
+                    #[inline]
+                    pub const fn #raw_ident(&self) -> #target_ident {
+                        #[allow(unused_unsafe)]
+                        unsafe { self.#unchecked_ident() }
+                    }
+                });
             }
             FieldType::Enum {
                 name: enum_name,
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(enum_name);
-                let r_type = rust_type(*encoding_type);
-                let prim_size = encoding_type.size();
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let enc_type_str = rust_type(*encoding_type);
+                let enc_type_ty: syn::Type = syn::parse_str(enc_type_str).unwrap();
+                let enc_size = encoding_type.size();
+                let enc_size_lit = syn::LitInt::new(&enc_size.to_string(), proc_macro2::Span::call_site());
+                let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             {}::from_raw({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
-                         }}\n\n",
-                    f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
-                ));
+                field_methods.extend(quote::quote! {
+                    #[inline]
+                    pub fn #f_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        #target_ident::from_raw(#enc_type_ty::#from_method(self.buf[offset..][..#enc_size_lit].try_into().unwrap()))
+                    }
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             let mut bytes = [0u8; {}];
+                    #[inline]
+                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        let mut bytes = [0u8; #enc_size_lit];
+                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #enc_size_lit) });
+                        #target_ident::from_raw(#enc_type_ty::#from_method(bytes))
+                    }
 
-                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                             {}::from_raw({}::from_{}_bytes(bytes))\n\
-                         }}\n\n",
-                    f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
-                ));
+                    #[inline]
+                    pub const fn #raw_ident(&self) -> #enc_type_ty {
+                        unsafe { self.#unchecked_ident() as #enc_type_ty }
+                    }
+                });
 
-                // raw_ for enum returns the raw discriminant value
-                src.push_str(&format!(
-                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
-                             unsafe {{ self.{}_unchecked() as {} }}\n\
-                         }}\n\n",
-                    f_name, r_type, f_name, r_type
-                ));
-                // Boolean fields get an additional getter that returns bool directly
                 if enum_name == "BooleanType" {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const fn {f}_bool(&self) -> bool {{\n                         (self.{f}() as {r_type}) != 0\n                     }}\n\n",
-                        f = f_name, r_type = r_type,
-                    ));
+                    let bool_ident = syn::Ident::new(&format!("{}_bool", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                    field_methods.extend(quote::quote! {
+                        #[inline]
+                        pub const fn #bool_ident(&self) -> bool {
+                            (self.#f_ident() as #enc_type_ty) != 0
+                        }
+                    });
                 }
             }
             FieldType::Set {
@@ -3076,114 +3055,147 @@ fn generate_group_decoder(
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(set_name);
-                let r_type = rust_type(*encoding_type);
-                let prim_size = encoding_type.size();
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let enc_type_str = rust_type(*encoding_type);
+                let enc_type_ty: syn::Type = syn::parse_str(enc_type_str).unwrap();
+                let enc_size = encoding_type.size();
+                let enc_size_lit = syn::LitInt::new(&enc_size.to_string(), proc_macro2::Span::call_site());
+                let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             {}({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
-                         }}\n\n",
-                    f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
-                ));
+                field_methods.extend(quote::quote! {
+                    #[inline]
+                    pub fn #f_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        #target_ident(#enc_type_ty::#from_method(self.buf[offset..][..#enc_size_lit].try_into().unwrap()))
+                    }
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             let mut bytes = [0u8; {}];
+                    #[inline]
+                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        let mut bytes = [0u8; #enc_size_lit];
+                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #enc_size_lit) });
+                        #target_ident(#enc_type_ty::#from_method(bytes))
+                    }
 
-                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                             {}({}::from_{}_bytes(bytes))\n\
-                         }}\n\n",
-                    f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
-                ));
-
-                // raw_ for set returns the raw bitmask value
-                src.push_str(&format!(
-                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
-                             #[allow(unused_unsafe)]\n\
-                             unsafe {{ self.{}_unchecked().0 }}\n\
-                         }}\n\n",
-                    f_name, r_type, f_name
-                ));
+                    #[inline]
+                    pub const fn #raw_ident(&self) -> #enc_type_ty {
+                        #[allow(unused_unsafe)]
+                        unsafe { self.#unchecked_ident().0 }
+                    }
+                });
             }
         }
-        emit_field_consts(src, f);
+        tokens.extend(emit_field_consts(f));
     }
 
-    // Group entry tail offsets
-    src.push_str(&format!(
-        "    #[inline]\n\
-             fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)\n\
-             }}\n\n"
-    ));
+    // Emit all field methods inside a single impl block
+    tokens.extend(quote::quote! {
+        impl<'a> #entry_dec_ident<'a> {
+            #field_methods
+        }
+    });
 
-    let mut k = 0;
+        // Open a new impl block for tail + other methods (previous impl was closed above)
+    tokens.extend(quote::quote! {
+        impl<'a> #entry_dec_ident<'a> {
+            #[inline]
+            fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+                Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
+            }
+        }
+    });
+
+    // tail_offset_N for nested groups
+    let mut k = 0usize;
     for ng in &g.groups {
         let (dim_name, dim_size, bl_field, count_field) =
             get_dimension_info(elements, &ng.dimension_type);
         let ng_pascal = to_pascal_case(&ng.name);
-        src.push_str(&format!(
-            "    #[inline]\n\
-                 fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                     let start = self.tail_offset_{}()?;\n\
-                     if start + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
-                     }}\n\
-                     let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
-                     let header = {}(bytes);\n\
-                     let count = header.{}() as usize;\n\
-                     let block_len = header.{}() as usize;\n\
-                     let mut pos = start + {};\n\
-                     let mut idx = 0;\n\
-                     while idx < count {{\n\
-                         pos = {}EntryDecoder::skip(self.buf, pos, block_len, self.acting_version)?;\n\
-                         idx += 1;\n\
-                     }}\n\
-                     Ok(pos)\n\
-                 }}\n\n",
-            k + 1, k, dim_size, dim_size, dim_size, dim_size, dim_name, count_field, bl_field, dim_size, ng_pascal,
-            field_name = ng.name
-        ));
+        let ng_pascal_dec = syn::Ident::new(&format!("{}EntryDecoder", ng_pascal), proc_macro2::Span::call_site());
+        let next_k = k + 1;
+        let dim_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
+        let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
+        let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
+        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
+        let ng_name_str = syn::LitStr::new(&ng.name, proc_macro2::Span::call_site());
+        let tail_k_ident = syn::Ident::new(&format!("tail_offset_{}", k), proc_macro2::Span::call_site());
+        let tail_k1_ident = syn::Ident::new(&format!("tail_offset_{}", next_k), proc_macro2::Span::call_site());
+
+        tokens.extend(quote::quote! {
+            impl<'a> #entry_dec_ident<'a> {
+                #[inline]
+                fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    let start = self.#tail_k_ident()?;
+                    if start + #dim_size_lit > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort { field: #ng_name_str, needed: #dim_size_lit, available: self.buf.len() - start });
+                    }
+                    let bytes: [u8; #dim_size_lit] = self.buf[start..start + #dim_size_lit].try_into().unwrap();
+                    let header = #dim_ident(bytes);
+                    let count = header.#count_field_ident() as usize;
+                    let block_len = header.#bl_field_ident() as usize;
+                    let mut pos = start + #dim_size_lit;
+                    let mut idx = 0;
+                    while idx < count {
+                        pos = #ng_pascal_dec::skip(self.buf, pos, block_len, self.acting_version)?;
+                        idx += 1;
+                    }
+                    Ok(pos)
+                }
+            }
+        });
         k += 1;
     }
 
+    // tail_offset_N for var_data
     for vd in &g.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        src.push_str(&format!(
-            "    #[inline]\n\
-                 fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                     let start = self.tail_offset_{}()?;\n\
-                     if start + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
-                     }}\n\
-                     let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
-                     let header = {}(bytes);\n\
-                     let len = header.{}() as usize;\n\
-                     if start + {} + len > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {} + len, available: self.buf.len() - start }});\n\
-                     }}\n\
-                     Ok(start + {} + len)\n\
-                 }}\n\n",
-            k + 1, k, prefix_size, prefix_size, prefix_size, prefix_size, type_pascal, len_field, prefix_size, prefix_size, prefix_size,
-            field_name = vd.name
-        ));
+        let next_k = k + 1;
+        let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
+        let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
+        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
+        let vd_name_str = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
+        let tail_k_ident = syn::Ident::new(&format!("tail_offset_{}", k), proc_macro2::Span::call_site());
+        let tail_k1_ident = syn::Ident::new(&format!("tail_offset_{}", next_k), proc_macro2::Span::call_site());
+
+        tokens.extend(quote::quote! {
+            impl<'a> #entry_dec_ident<'a> {
+                #[inline]
+                fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    let start = self.#tail_k_ident()?;
+                    if start + #prefix_size_lit > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_str, needed: #prefix_size_lit, available: self.buf.len() - start });
+                    }
+                    let bytes: [u8; #prefix_size_lit] = self.buf[start..start + #prefix_size_lit].try_into().unwrap();
+                    let header = #type_pascal_ident(bytes);
+                    let len = header.#len_field_ident() as usize;
+                    if start + #prefix_size_lit + len > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_str, needed: #prefix_size_lit + len, available: self.buf.len() - start });
+                    }
+                    Ok(start + #prefix_size_lit + len)
+                }
+            }
+        });
         k += 1;
     }
 
     // Accessors for nested groups
-    let mut ng_idx = 0;
+    let mut ng_idx = 0usize;
     for ng in &g.groups {
         let ng_pascal = to_pascal_case(&ng.name);
-        let ng_snake = to_snake_case(&ng.name);
-        src.push_str(&format!(
-            "#[inline]\n    pub fn {}(&self) -> Result<{}Decoder<'a>, sbe_rt::DecodeError> {{\n\
-                     let offset = self.tail_offset_{}()?;\n\
-                     {}Decoder::wrap(self.buf, offset, self.acting_version)\n\
-                 }}\n\n",
-            ng_snake, ng_pascal, ng_idx, ng_pascal
-        ));
+        let ng_dec_ident = syn::Ident::new(&format!("{}Decoder", ng_pascal), proc_macro2::Span::call_site());
+        let ng_snake_ident = syn::Ident::new(&to_snake_case(&ng.name), proc_macro2::Span::call_site());
+        let tail_ng_idx_ident = syn::Ident::new(&format!("tail_offset_{}", ng_idx), proc_macro2::Span::call_site());
+
+        tokens.extend(quote::quote! {
+            impl<'a> #entry_dec_ident<'a> {
+                #[inline]
+                pub fn #ng_snake_ident(&self) -> Result<#ng_dec_ident<'a>, sbe_rt::DecodeError> {
+                    let offset = self.#tail_ng_idx_ident()?;
+                    #ng_dec_ident::wrap(self.buf, offset, self.acting_version)
+                }
+            }
+        });
         ng_idx += 1;
     }
 
@@ -3191,42 +3203,53 @@ fn generate_group_decoder(
     let mut nvd_idx = g.groups.len();
     for vd in &g.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let vd_snake = to_snake_case(&vd.name);
-        src.push_str(&format!(
-            "#[inline]\n    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
-                     let offset = self.tail_offset_{}()?;\n\
-                     let bytes: [u8; {}] = self.buf[offset..offset + {}].try_into().unwrap();\n\
-                     let header = {}(bytes);\n\
-                     let len = header.{}() as usize;\n\
-                     let data_offset = offset + {};\n\
-                     Ok(&self.buf[data_offset .. data_offset + len])\n\
-                 }}\n\n",
-            vd_snake, nvd_idx, prefix_size, prefix_size, type_pascal, len_field, prefix_size
-        ));
+        let vd_snake_ident = syn::Ident::new(&to_snake_case(&vd.name), proc_macro2::Span::call_site());
+        let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
+        let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
+        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
+        let tail_nvd_idx_ident = syn::Ident::new(&format!("tail_offset_{}", nvd_idx), proc_macro2::Span::call_site());
+
+        tokens.extend(quote::quote! {
+            impl<'a> #entry_dec_ident<'a> {
+                #[inline]
+                pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let offset = self.#tail_nvd_idx_ident()?;
+                    let bytes: [u8; #prefix_size_lit] = self.buf[offset..offset + #prefix_size_lit].try_into().unwrap();
+                    let header = #type_pascal_ident(bytes);
+                    let len = header.#len_field_ident() as usize;
+                    let data_offset = offset + #prefix_size_lit;
+                    Ok(&self.buf[data_offset .. data_offset + len])
+                }
+            }
+        });
         nvd_idx += 1;
     }
 
-    src.push_str(&format!(
-        "#[inline]\n    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 Ok(self.tail_offset_{}()? - self.pos)\n\
-             }}\n\n",
-        total_tail
-    ));
+    // encoded_length and skip methods
+    let tail_total_ident = syn::Ident::new(&format!("tail_offset_{}", total_tail), proc_macro2::Span::call_site());
+    tokens.extend(quote::quote! {
+        impl<'a> #entry_dec_ident<'a> {
+            #[inline]
+            pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+                Ok(self.#tail_total_ident()? - self.pos)
+            }
 
-    src.push_str(&format!(
-        "#[inline]\n    pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 let entry = Self::wrap(buf, pos, acting_version);\n\
-                 entry.tail_offset_{}()\n\
-             }}\n",
-        total_tail
-    ));
+            #[inline]
+            pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+                let entry = Self::wrap(buf, pos, acting_version);
+                entry.#tail_total_ident()
+            }
+        }
+    });
 
-    src.push_str("}\n\n");
+
 
     // Recursively generate nested Repeating Groups decoders
     for ng in &g.groups {
-        generate_group_decoder(src, ng, elements, byte_order);
+        tokens.extend(generate_group_decoder(ng, elements, byte_order));
     }
+
+    tokens
 }
 
 fn generate_nullification(
