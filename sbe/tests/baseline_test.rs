@@ -710,6 +710,54 @@ fn display_shows_group_entry_fields_not_just_count() {
     "#);
 }
 
+// ── composite flyweight default (todo 112) ───────────────────────────
+
+#[test]
+fn composite_default_is_flyweight_as_struct_is_eager_copy() {
+    let (_schema, src) = generate(&Paths::example_schema(), "composite_api");
+    compile_and_run("composite_api", &src, r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"abcdef").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+
+        // Default: flyweight (zero-copy from buffer)
+        let fly: EngineDecoder = car2.engine();
+        assert_eq!(fly.capacity(), 2000);
+        assert_eq!(fly.num_cylinders(), 4);
+
+        // Eager copy: value struct
+        let eager: Engine = car2.engine_as_struct();
+        assert_eq!(eager.capacity(), 2000);
+        assert_eq!(eager.num_cylinders(), 4);
+
+        // Both paths produce identical values
+        assert_eq!(fly.capacity(), eager.capacity());
+        assert_eq!(fly.num_cylinders(), eager.num_cylinders());
+
+        // Deprecated alias still works
+        #[allow(deprecated)]
+        {
+            let old: EngineDecoder = car2.engine_lazy();
+            assert_eq!(old.capacity(), 2000);
+        }
+    "#);
+}
+
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────
 
 #[test]
