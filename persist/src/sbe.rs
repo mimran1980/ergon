@@ -28,5 +28,20 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 #![allow(unused_mut)]
+// ponytail: generated SBE code triggers many clippy lints; suppress them all here rather than fighting per-line
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::unnecessary_cast,
+    clippy::redundant_closure,
+    clippy::double_must_use,
+    clippy::items_after_statements,
+    clippy::struct_excessive_bools,
+    clippy::only_used_in_recursion,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::comparison_to_empty,
+    clippy::unnecessary_literal_unwrap,
+    unexpected_cfgs,
+)]
 
 include!("gen/persist_sbe.rs");

@@ -1,49 +1,57 @@
 # Convert remaining codegen helpers to syn/quote
 
-**Blocked by:** none (can run anytime, cosmetic improvement)
+**Blocked by:** none (can run anytime — mandatory code quality)
 
 `syn`/`quote`/`prettyplease` deps are already in `Cargo.toml`. `generate()` wraps
-output through `prettyplease::unparse`. As of 2026-07-06 audit, **155**
-`push_str`/`format!` calls remain across `generate_composite`,
-`generate_message_decoder`, `generate_message_encoder`, `generate_group_decoder`,
-`generate_group_encoder`, `generate_any_message`, `generate_decoder_display`,
-`generate_message_field_meta`, and `generate_schema_id_from_header`.
-Convert them to `quote!` for readability.
+output through `prettyplease::unparse`.
 
-## Audit status (2026-07-06)
+## REGRESSION WARNING (2026-07-07)
 
-| Function | Lines | push_str/format! | quote! | Status |
-|----------|-------|-----------------|--------|--------|
-| `generate_sbe_rt_src` | 284-394 | 0 | 1 | Converted (not in original scope) |
-| `generate_enum` | 1040-1229 | 0 | 7 | Converted |
-| `generate_set` | 1231-1305 | 0 | 2 | Converted |
-| `generate_nullification` | 3245-3290 | 0 | 1 | Converted (statement body uses quote!, wrapper uses push_str) |
-| `generate_composite` | 1307-1601 | ~28 | 0 | **Pending** |
-| `generate_message_decoder` | 1696-2509 | ~55 | 0 | **Pending** (largest remaining) |
-| `generate_message_encoder` | 3292-3821 | ~38 | 0 | **Pending** |
-| `generate_group_decoder` | 2591-3243 | ~40 | 0 | **Pending** |
-| `generate_group_encoder` | 3823-4057 | ~18 | 0 | **Pending** |
-| `generate_any_message` | 4099-4424 | ~20 | 3 | Converted (visitor section uses quote!, rest is format!) |
-| `generate_decoder_display` | 2511-2589 | ~8 | 0 | Not tracked (nice-to-have) |
-| `generate_message_field_meta` | 4578-4613 | ~4 | 0 | Not tracked (nice-to-have) |
-| `generate_schema_id_from_header` | 4059-4097 | ~1 | 0 | Not tracked (nice-to-have) |
+**The audit of 2026-07-06 counted 203 `push_str` calls. Today it's 217.**
+New `push_str(&format!(...))` has been added to `generate_message_decoder` (+7),
+`generate_group_decoder` (+5), `generate_message_encoder` (+1), and
+`generate_decoder_display` (+1). **This is a direct violation of CLAUDE.md.**
+
+```text
+CLAUDE.md: "No new push_str(&format!(...)) in codegen.rs. When modifying existing
+string-based templates, convert the affected section to quote! rather than adding
+more string pushers. This is non-negotiable."
+```
+
+**Every commit that touches codegen.rs MUST shrink the push_str count, never grow it.**
+
+## Current audit (2026-07-07)
+
+**217 `push_str` calls** across 13 functions (up from 203 on 2026-07-06).
+**165 `push_str(&format!(...))` patterns**.
+
+| Function | push_str | Δ since audit | Status |
+|----------|----------|---------------|--------|
+| `generate_sbe_rt_src` | 0 | 0 | ✅ Converted |
+| `generate_enum` | 1 | 0 | ✅ Converted (1 output push_str only) |
+| `generate_set` | 1 | 0 | ✅ Converted (1 output push_str only) |
+| `generate_nullification` | 2 | 0 | ⚠️ Nearly done (1 quote! block already) |
+| `generate_composite` | 20 | 0 | Pending |
+| `generate_message_decoder` | 49 | **+7** | Pending (largest, growing) |
+| `generate_message_encoder` | 32 | **+1** | Pending |
+| `generate_group_decoder` | 40 | **+5** | Pending |
+| `generate_group_encoder` | 11 | 0 | Pending |
+| `generate_any_message` | 23 | 0 | ⚠️ Partial (visitor uses quote!) |
+| `generate_decoder_display` | 9 | **+1** | Pending |
+| `generate_message_field_meta` | 3 | 0 | Pending |
+| `generate_schema_id_from_header` | 1 | 0 | Pending |
+| `emit_field_consts` | 4 | 0 | Pending |
+| `gen_schema` | 21 | 0 | Pending (orchestration, last to convert) |
 
 ## Acceptance criteria
 
-- [x] Convert `generate_enum` templates to `quote!` (7 template blocks)
-- [x] Convert `generate_set` templates to `quote!` (4 blocks)
-- [ ] Convert `generate_composite` templates to `quote!` — **~28 push_str calls**
-- [ ] Convert `generate_message_decoder` templates to `quote!` — **~55 push_str calls**
-- [ ] Convert `generate_message_encoder` templates to `quote!` — **~38 push_str calls**
-- [ ] Convert `generate_group_decoder` and `generate_group_encoder` to `quote!` — **~40 + ~18 calls**
-- [x] Convert `generate_nullification` to `quote!`
-- [x] Convert `generate_any_message` to `quote!` — **~20 push_str calls (visitor section uses quote!)**
-- [x] All existing tests still pass after conversion
-- [x] Generated output is semantically identical (regen-stability test catches regressions)
-- [ ] (Nice-to-have) Convert `generate_decoder_display`, `generate_message_field_meta`, `generate_schema_id_from_header`
+- [ ] **Zero `push_str(&format!(...))` in codegen.rs** — the count hits 0
+- [ ] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
+- [ ] Regen stability test passes
+- [x] No `rustfmt` subprocess — all formatting via `prettyplease`
+- [ ] CI hook: `grep -c 'push_str(&format!' sbe/src/codegen.rs` fails CI if > 0
 
 Ref: user request. `syn`/`quote` deps already in `Cargo.toml`.
-
 
 ## Verification / Unit Testing
 - [x] Verify the migration by ensuring all modified files compile and pass the regeneration stability test.

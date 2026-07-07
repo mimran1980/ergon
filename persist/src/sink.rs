@@ -192,7 +192,7 @@ impl ClickhouseSinkBuilder {
 struct SinkInner {
     client: clickhouse::Client,
     runtime: Mutex<tokio::runtime::Runtime>,
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     database: String,
     schema_cache: Mutex<HashMap<String, TableSchema>>,
 }
@@ -369,10 +369,7 @@ impl<T: Persist + Serialize> PersistSender<T> {
         }
 
         // 2. Serialize row to SQL value tuple.
-        let values = match self.row_to_values(dto, &full_schema) {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let values = self.row_to_values(dto, &full_schema)?;
 
         // 3. Accumulate in batch.
         let should_flush = {

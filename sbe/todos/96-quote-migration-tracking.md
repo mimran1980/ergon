@@ -5,73 +5,58 @@ codegen.rs to `quote!`. Todo 17 tracks this at a high level, but the remaining
 sections need an explicit checklist. CLAUDE.md says this is **non-negotiable** —
 no new `push_str` additions.
 
-**Status:** In progress — audit complete
+**Status:** ⚠️ REGRESSION — count grew from 203 → 217 since last audit
 
-## Audit findings (2026-07-06)
+## ⛔ ANTI-REGRESSION RULE
 
-`sbe/src/codegen.rs` — 4610 lines, 60 top-level functions
+```text
+CLAUDE.md: "No new push_str(&format!(...)) in codegen.rs. When modifying existing
+string-based templates, convert the affected section to quote! rather than adding
+more string pushers. This is non-negotiable."
+```
 
-### Raw counts
+**Every commit touching codegen.rs MUST shrink the `push_str` count.** A commit
+that adds new `push_str(&format!(...))` without removing at least as many is a
+regression and should be rejected. The count must only go down.
 
-| Metric | Count |
-|--------|-------|
-| `push_str` calls | **203** (across 19 functions) |
-| `quote!` invocations | **11** (across 6 functions) |
-| `format!` calls | **~195** (nearly all paired with `push_str`) |
-| Lines of string-based templates | **~3000** (as stated in CLAUDE.md, confirmed) |
-| Functions fully converted | **3** |
-| Functions partially converted | **5** |
-| Functions still 100% string-based | **11** |
+## Audit (2026-07-07)
 
-### Fully converted to `quote!`
+`sbe/src/codegen.rs` — `push_str` count: **217** (was 203 on 2026-07-06 — **+14 regression**)
 
-| Function | Lines | Notes |
-|----------|-------|-------|
-| `generate_sbe_rt_src` | 282–392 | Pure `quote!` throughout. No `push_str` at all. |
-| `generate_enum` | 1038–1171 | `quote!` for all generated tokens; `push_str` only for appending `prettyplease::unparse` output to `src`. |
-| `generate_set` | 1173–1247 | Same pattern as `generate_enum`. |
+| Metric | 2026-07-06 | 2026-07-07 | Δ |
+|--------|------------|------------|---|
+| `push_str` calls | 203 | **217** | **+14** ❌ |
+| `push_str(&format!(...))` | 155 | **165** | **+10** ❌ |
+| `format!` calls | ~195 | **210** | +15 |
+| Functions converted | 3 | 3 | 0 |
+| Functions with regressions | 0 | **4** | +4 |
 
-### Partially converted (mixed `quote!` and `push_str`)
+### Functions that GREW (regression)
 
-| Function | Lines | `quote!` blocks | `push_str` calls | Notes |
-|----------|-------|-----------------|------------------|-------|
-| `generate_nullification` | 3172–3217 | 1 | 2 | Uses `quote!` for byte-nullification statements, converts via `.to_string()`, then manually indents and appends via `push_str`. Close to done. |
-| `generate_any_message` | 4018–4343 | 3 | 23 | `quote!` for the `MessageVisitor` trait and its dispatch method; string-based for `FrameCursor`, `AnyMessage` enum, `DecodedFrame`, `FramingPolicy`, and all their impls. |
-| `generate_message_encoder` | 3219–3740 | 0 | 31 | Calls `generate_nullification` (which uses `quote!`); the encoder body itself is entirely string-based. |
+| Function | Before | After | Δ | Likely cause |
+|----------|--------|-------|---|--------------|
+| `generate_message_decoder` | 42 | **49** | **+7** | todo 104 infallible accessors, todo 106 flat enum |
+| `generate_group_decoder` | 35 | **40** | **+5** | todo 104 step 2, group iteration fix |
+| `generate_message_encoder` | 31 | **32** | **+1** | todo 106 flat enum |
+| `generate_decoder_display` | 8 | **9** | **+1** | todo 104 |
 
-### Not yet converted (100% `push_str` / `format!`)
-
-| Function | Lines | `push_str` calls | Complexity |
-|----------|-------|-----------------|------------|
-| `generate_message_decoder` | 1638–2443 | **42** | **HIGH** — decoder struct, field getters for all types, tail-offset helpers, group accessors, var-data accessors, `verify()`, `Display` impl, `TryFrom`, `SbeMessage` impl, `AsRef` impl. The largest single function. |
-| `generate_group_decoder` | 2525–3170 | **35** | **HIGH** — group decoder struct, entry decoder, `Iterator::next`, `ExactSizeIterator::len`, `tail_offset_0()`, tail-offset and var-data accessors for entry fields, nested-group support. |
-| `generate_message_encoder` (body) | 3219–3740 | 31 | **HIGH** — encoder struct, `wrap()`, field setters (all types), tail-state methods, var-data methods, `Complete` state, `Sealed` / `SbeMessage` impls, `AsRef` impl. Type-state phantom pattern. |
-| `gen_schema` | 132–279 | 21 | **MEDIUM** — top-level orchestration: creates `String` buffer, memoizes module paths, calls all sub-generators, writes `use` statements, applies `prettyplease::unparse`. |
-| `generate_composite` | 1249–1543 | 20 | **MEDIUM** — composite type struct, getters for all member types (Primitive, Enum, Set, Composite), constructor `new(...)`. |
-| `generate_any_message` (rest) | 4018–4343 | 20 | **MEDIUM** — `FrameCursor` impl (decode, decode_frame, encoded_length_with_header, as_bytes, encode), `AnyMessage` enum dispatch. |
-| `generate_group_encoder` | 3742–3976 | 11 | **MEDIUM** — entry encoder with setters, nested groups, var-data. |
-| `generate_decoder_display` | 2445–2523 | 8 | **LOW** — `Display` impl for message decoder. |
-| `emit_field_consts` | 517–562 | 4 | **LOW** — field constant emission. |
-| `generate_message_field_meta` | 4498–4533 | 3 | **LOW** — `MESSAGE_FIELD_META` constant emission. |
-| `generate_schema_id_from_header` | 3978–4016 | 1 | **LOW** — `schema_id()` / `schema_version()` methods. |
-
-### Function-to-`push_str` detailed mapping
+### Current per-function counts
 
 ```
- 42  generate_message_decoder()       1638-2443   HIGH
- 35  generate_group_decoder()          2525-3170   HIGH
- 31  generate_message_encoder()        3219-3740   HIGH
- 21  gen_schema()                      132-279     MEDIUM
- 23  generate_any_message()            4018-4343   MEDIUM
- 20  generate_composite()              1249-1543   MEDIUM
- 11  generate_group_encoder()          3742-3976   MEDIUM
-  8  generate_decoder_display()        2445-2523   LOW
-  4  emit_field_consts()              517-562     LOW
-  3  generate_message_field_meta()     4498-4533   LOW
-  2  generate_nullification()          3172-3217   LOW (uses quote!)
-  1  generate_schema_id_from_header()  3978-4016   LOW
-  2  generate_enum()                   1038-1171   DONE (output only)
-  2  generate_set()                    1173-1247   DONE (output only)
+ 49  generate_message_decoder()       1678-2461   +7 ❌
+ 40  generate_group_decoder()         2540-3228   +5 ❌
+ 32  generate_message_encoder()       3276-3807   +1 ❌
+ 23  generate_any_message()           4085-4416    0
+ 21  gen_schema()                     132-279      0
+ 20  generate_composite()             1271-1584    0
+ 11  generate_group_encoder()         3808-4044    0
+  9  generate_decoder_display()       2462-2539   +1 ❌
+  4  emit_field_consts()             524-570      0
+  3  generate_message_field_meta()    4564-4698    0
+  2  generate_nullification()         3229-3275    0
+  1  generate_schema_id_from_header() 4045-4084    0
+  1  generate_enum()                  1045-1194    0 (output only)
+  1  generate_set()                   1195-1270    0 (output only)
 ```
 
 ### Effort estimate
@@ -114,15 +99,18 @@ no new `push_str` additions.
 
 ## Acceptance criteria
 
-- [x] **Audit complete.**
+- [x] **Audit complete (2026-07-06).**
+- [x] **Re-audit (2026-07-07)** — regression detected (+14 `push_str`), documented above.
 - [ ] Convert `generate_nullification` — uses `quote!` partially, 2 `push_str` remain
-- [ ] Convert `generate_composite` templates to `quote!`
-- [ ] Convert `generate_message_decoder` templates to `quote!`
-- [ ] Convert `generate_message_encoder` templates to `quote!`
-- [ ] Convert `generate_group_decoder` templates to `quote!`
-- [ ] Convert `generate_group_encoder` templates to `quote!`
-- [ ] Convert `generate_any_message` remaining templates to `quote!`
-- [ ] Zero remaining `push_str(- [x] Zero remaining `push_str(&format!(` calls in codegen.rsformat!(` calls in codegen.rs
+- [ ] Convert `generate_composite` templates to `quote!` (20 calls)
+- [ ] Convert `generate_message_decoder` templates to `quote!` (49 calls — largest)
+- [ ] Convert `generate_message_encoder` templates to `quote!` (32 calls)
+- [ ] Convert `generate_group_decoder` templates to `quote!` (40 calls)
+- [ ] Convert `generate_group_encoder` templates to `quote!` (11 calls)
+- [ ] Convert `generate_any_message` remaining templates to `quote!` (23 calls)
+- [ ] Convert `gen_schema` to `quote!` (21 calls — last, orchestration)
+- [ ] Convert all small functions: `emit_field_consts` (4), `generate_decoder_display` (9), `generate_message_field_meta` (3), `generate_schema_id_from_header` (1)
+- [ ] **Zero `push_str(&format!(...))` in codegen.rs** — grep returns empty
 - [ ] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
 - [ ] Regen stability test passes
 - [x] No `rustfmt` subprocess — all formatting via `prettyplease`
@@ -139,5 +127,20 @@ CLAUDE.md states:
 > string-based templates, convert the affected section to quote! rather than
 > adding more string pushers. This is non-negotiable."
 
-The existing ~3000 lines of string-based templates are technical debt. Each
-change should shrink that debt.
+The existing `push_str` count (217) is technical debt. Each change to `codegen.rs`
+**must** shrink it. The 2026-07-06 → 2026-07-07 regression (+14) was caused by
+todos 104 (infallible accessors) and 106 (flat enum) adding new `push_str` without
+converting anything to `quote!`. Future feature work on these functions must convert
+the affected section to `quote!` rather than adding more string pushers.
+
+### Quick-start: smallest conversions first (~2hr total for first 4)
+
+| # | Function | push_str | Est. |
+|---|----------|----------|------|
+| 1 | `generate_schema_id_from_header` | 1 | 15min |
+| 2 | `generate_nullification` | 2 | 30min |
+| 3 | `generate_message_field_meta` | 3 | 30min |
+| 4 | `emit_field_consts` | 4 | 45min |
+
+These four are purely mechanical — no version-awareness, no type-state, no iterator
+logic. Good first PR to establish the pattern.

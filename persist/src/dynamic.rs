@@ -71,7 +71,6 @@ enum DynamicValueType {
     Float64,
     Bool,
     String,
-    Null,
 }
 
 impl DynamicValueType {
@@ -417,7 +416,7 @@ impl DynamicRecorder {
                         DynamicValueType::Float64 => "Float64",
                         DynamicValueType::Bool => "Bool",
                         DynamicValueType::String => "String",
-                        DynamicValueType::Null => "Null",
+
                     };
                     let actual_name = match v {
                         DynamicValue::Int64(_) => "Int64",
@@ -491,7 +490,7 @@ impl DynamicRecorder {
 
         let off_null_dim = off_string_entries + string_entries_size;
         let off_null_entries = off_null_dim + 4;
-        let null_entries_size = actual_null as usize * 1;
+        let null_entries_size = actual_null as usize;
 
         let off_symbol = off_null_entries + null_entries_size;
 
@@ -641,6 +640,7 @@ fn compute_schema_id(
 
 /// Compute the total encoded byte size of a DynamicRow message given the
 /// per-group entry counts and the symbol table byte length.
+#[expect(clippy::too_many_arguments)]
 const fn compute_encoded_size(
     meta_entries: usize,
     int64_cnt: usize,
@@ -659,7 +659,7 @@ const fn compute_encoded_size(
     let float64_size = 4 + float64_cnt * 9;
     let bool_size = 4 + bool_cnt * 2;
     let string_size = 4 + string_cnt * 3;
-    let null_size = 4 + null_cnt * 1;
+    let null_size = 4 + null_cnt;
     let var_data_size = 4 + symbol_data_len;
     hdr + meta_size
         + int64_size

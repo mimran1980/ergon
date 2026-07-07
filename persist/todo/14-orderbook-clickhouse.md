@@ -1,6 +1,6 @@
 # Orderbook ClickHouse persistence schema
 
-**Blocked by:** `sbe/todos/108-samples-e2e-orderbook-persist.md`, persist
+**Blocked by:** `samples/todo/00-e2e-orderbook-persist.md`, persist
 feature completeness (all outstanding persist todos)
 
 Provide the DTO and table schema for persisting exchange orderbook snapshots
