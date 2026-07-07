@@ -324,6 +324,68 @@ fn schema_constants_present_and_nonzero() {
     "#);
 }
 
+// ── todo 03 + 84: encoder roundtrip with groups ───────────────────────
+
+#[test]
+fn encoder_roundtrip_with_groups_and_vardata() {
+    let (_schema, src) = generate(&Paths::example_schema(), "enc_rt");
+    compile_and_run("enc_rt", &src, r#"
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(7777); car.model_year(2022);
+        car.available(BooleanType::T); car.code(Model::A);
+        car.some_numbers([10u32, 20, 30, 40]);
+        car.vehicle_code([65, 66, 67, 68, 69, 70]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2500, 6, [50, 0, 0]));
+        let car = car.fuel_figures(2, |g| {
+            g.add(|e| { e.speed(100).mpg(25.5); e.usage_description(b"City").unwrap(); }).unwrap();
+            g.add(|e| { e.speed(200).mpg(15.0); e.usage_description(b"Track").unwrap(); }).unwrap();
+        }).unwrap();
+        let car = car.performance_figures(1, |g| {
+            g.add(|e| {
+                e.octane_rating(98);
+                e.acceleration(2, |ag| {
+                    ag.add(|ae| { ae.mph(60).seconds(3.5); }).unwrap();
+                    ag.add(|ae| { ae.mph(120).seconds(8.0); }).unwrap();
+                }).unwrap();
+            }).unwrap();
+        }).unwrap();
+        let car = car.manufacturer(b"Porsche").unwrap();
+        let car = car.model(b"911 GT3").unwrap();
+        let car = car.activation_code(b"RACE").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        assert_eq!(car2.serial_number(), 7777u64);
+        assert_eq!(car2.model_year(), 2022u16);
+        assert_eq!(car2.some_numbers().unwrap(), [10u32, 20, 30, 40]);
+        let engine_fly = car2.engine();
+        assert_eq!(engine_fly.capacity(), 2500);
+        assert_eq!(engine_fly.num_cylinders(), 6);
+        // Groups
+        let ff: Vec<_> = car2.fuel_figures().unwrap()
+            .collect::<Result<Vec<_>,_>>().unwrap();
+        assert_eq!(ff.len(), 2);
+        assert_eq!(ff[0].speed(), 100);
+        assert_eq!(ff[0].usage_description().unwrap(), b"City");
+        assert_eq!(ff[1].speed(), 200);
+        // Nested group
+        let pf: Vec<_> = car2.performance_figures().unwrap()
+            .collect::<Result<Vec<_>,_>>().unwrap();
+        let acc: Vec<_> = pf[0].acceleration().unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(acc.len(), 2);
+        assert_eq!(acc[0].mph(), 60);
+        assert!((acc[0].seconds() - 3.5).abs() < 0.01);
+        assert_eq!(acc[1].mph(), 120);
+        // VarData
+        assert_eq!(car2.manufacturer().unwrap(), b"Porsche");
+        assert_eq!(car2.model().unwrap(), b"911 GT3");
+        assert_eq!(car2.activation_code().unwrap(), b"RACE");
+    "#);
+}
+
 // ── todo 69: buffer verify function ───────────────────────────────────
 
 #[test]
