@@ -4,13 +4,13 @@ Emit `///` rustdoc comments on generated types and accessors from XML `descripti
 attributes, `<!-- -->` comments, and `description` child elements. This is specified
 in DECISIONS.md §9 as a core helper.
 
-## Status: Message-level decoder struct only
+## Status: Message-level + field-level decoder scalar accessors
 
 ## Acceptance Criteria (SIMPLE cut — todo 87)
 
 - [x] XML `description` attribute on messages → `///` doc on decoder struct
 - [x] XML `description` on messages → `///` doc on encoder struct
-- [ ] XML `description` on fields → `///` doc on field accessor methods
+- [x] XML `description` on fields → `///` doc on field accessor methods
 - [ ] XML `description` on enum `<validValue>` → `///` doc on enum variant constants
 - [ ] XML `description` on set `<choice>` → `///` doc on set accessor methods
 - [ ] XML `description` on composites → `///` doc on composite struct
