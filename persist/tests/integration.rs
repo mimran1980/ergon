@@ -25,16 +25,46 @@ use serde::{Deserialize, Serialize};
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+/// Run an async block on a **dedicated OS thread** with its own tokio runtime.
+///
+/// This is the only safe way to mix `ClickhouseSink` (which owns its own
+/// tokio runtime and calls `Runtime::block_on`) with async ClickHouse queries
+/// in the same test — the two runtimes live on separate threads so neither
+/// observes the other at `block_on` time.
+fn run_async<F, T>(f: F) -> T
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(f)
+    })
+    .join()
+    .expect("async thread panicked")
+}
+
 /// A `clickhouse` client pointing at the Docker instance on port 8123.
 fn ch_client() -> clickhouse::Client {
     clickhouse::Client::default()
         .with_url("http://localhost:8123")
+        .with_user("default")
+        .with_password("test123")
         .with_database("default")
 }
 
 /// Build a sink that connects to the Docker instance.
+///
+/// The sink runs SQL queries on a dedicated background thread with its own
+/// tokio runtime, so this is safe to call from any context (including tokio
+/// test runtimes).
 fn test_sink() -> ClickhouseSink {
     ClickhouseSinkBuilder::new()
+        .user("default")
+        .password("test123")
         .build()
         .expect("failed to build ClickhouseSink")
 }
@@ -164,48 +194,50 @@ struct TradeV1 {
     qty: u32,
 }
 
-#[tokio::test]
+#[test]
 #[ignore]
-async fn test_derive_persist_roundtrip() {
-    if std::env::var("DOCKER_TEST").is_err() {
-        return;
-    }
-    let table = "int_test_derive_rnd";
-    drop_table(table).await;
+fn test_derive_persist_roundtrip() {
+    run_async(async {
+        if std::env::var("DOCKER_TEST").is_err() {
+            return;
+        }
+        let table = "int_test_derive_rnd";
+        drop_table(table).await;
 
-    let sink = test_sink();
-    let sender: PersistSender<TradeV1> = sink.sender(table).build();
+        let sink = test_sink();
+        let sender: PersistSender<TradeV1> = sink.sender(table).build();
 
-    // Row 1
-    let row1 = TradeV1 {
-        price: 100,
-        qty: 10,
-    };
-    sender.persist(&row1).unwrap();
+        // Row 1
+        let row1 = TradeV1 {
+            price: 100,
+            qty: 10,
+        };
+        sender.persist(&row1).unwrap();
 
-    // Row 2
-    let row2 = TradeV1 {
-        price: 200,
-        qty: 20,
-    };
-    sender.persist(&row2).unwrap();
-    sender.flush();
+        // Row 2
+        let row2 = TradeV1 {
+            price: 200,
+            qty: 20,
+        };
+        sender.persist(&row2).unwrap();
+        sender.flush();
 
-    // Query back
-    let client = ch_client();
-    let rows: Vec<TradeV1> = client
-        .query(&format!(
-            "SELECT price, qty FROM {table} ORDER BY _persist_time"
-        ))
-        .fetch_all()
-        .await
-        .expect("select failed");
+        // Query back
+        let client = ch_client();
+        let rows: Vec<TradeV1> = client
+            .query(&format!(
+                "SELECT price, qty FROM {table} ORDER BY _persist_time"
+            ))
+            .fetch_all()
+            .await
+            .expect("select failed");
 
-    assert_eq!(rows.len(), 2, "expected 2 rows");
-    assert_eq!(rows[0], row1, "first row mismatch");
-    assert_eq!(rows[1], row2, "second row mismatch");
+        assert_eq!(rows.len(), 2, "expected 2 rows");
+        assert_eq!(rows[0], row1, "first row mismatch");
+        assert_eq!(rows[1], row2, "second row mismatch");
 
-    drop_table(table).await;
+        drop_table(table).await;
+    })
 }
 
 // ── Test 2: Dynamic record + decode + persist roundtrip ────────────────────
@@ -301,67 +333,69 @@ struct MigrationV2 {
     side: Option<String>,
 }
 
-#[tokio::test]
+#[test]
 #[ignore]
-async fn test_schema_migration() {
-    if std::env::var("DOCKER_TEST").is_err() {
-        return;
-    }
-    let table = "int_test_migration";
-    drop_table(table).await;
+fn test_schema_migration() {
+    run_async(async {
+        if std::env::var("DOCKER_TEST").is_err() {
+            return;
+        }
+        let table = "int_test_migration";
+        drop_table(table).await;
 
-    let sink = test_sink();
+        let sink = test_sink();
 
-    // V1: create table + insert row.
-    let sender_v1: PersistSender<MigrationV1> = sink.sender(table).build();
-    let row_v1 = MigrationV1 {
-        price: 100,
-        qty: 10,
-    };
-    sender_v1.persist(&row_v1).unwrap();
-    sender_v1.flush();
+        // V1: create table + insert row.
+        let sender_v1: PersistSender<MigrationV1> = sink.sender(table).build();
+        let row_v1 = MigrationV1 {
+            price: 100,
+            qty: 10,
+        };
+        sender_v1.persist(&row_v1).unwrap();
+        sender_v1.flush();
 
-    // V2: ALTER TABLE ADD COLUMN side Nullable(String) + insert row.
-    let sender_v2: PersistSender<MigrationV2> = sink.sender(table).build();
-    let row_v2 = MigrationV2 {
-        price: 200,
-        qty: 20,
-        side: Some("BUY".into()),
-    };
-    sender_v2.persist(&row_v2).unwrap();
-    sender_v2.flush();
+        // V2: ALTER TABLE ADD COLUMN side Nullable(String) + insert row.
+        let sender_v2: PersistSender<MigrationV2> = sink.sender(table).build();
+        let row_v2 = MigrationV2 {
+            price: 200,
+            qty: 20,
+            side: Some("BUY".into()),
+        };
+        sender_v2.persist(&row_v2).unwrap();
+        sender_v2.flush();
 
-    // Query back: first row has NULL side, second row has 'BUY'.
-    let client = ch_client();
-    #[derive(Row, Deserialize, Debug, PartialEq)]
-    struct MigrationRow {
-        price: u64,
-        qty: u32,
-        side: Option<String>,
-    }
-    let rows: Vec<MigrationRow> = client
-        .query(&format!(
-            "SELECT price, qty, side FROM {table} ORDER BY _persist_time"
-        ))
-        .fetch_all()
-        .await
-        .expect("select failed");
+        // Query back: first row has NULL side, second row has 'BUY'.
+        let client = ch_client();
+        #[derive(Row, Deserialize, Debug, PartialEq)]
+        struct MigrationRow {
+            price: u64,
+            qty: u32,
+            side: Option<String>,
+        }
+        let rows: Vec<MigrationRow> = client
+            .query(&format!(
+                "SELECT price, qty, side FROM {table} ORDER BY _persist_time"
+            ))
+            .fetch_all()
+            .await
+            .expect("select failed");
 
-    assert_eq!(rows.len(), 2, "expected 2 rows");
-    // V1 row: side should be NULL.
-    assert_eq!(rows[0].price, 100);
-    assert_eq!(rows[0].qty, 10);
-    assert_eq!(rows[0].side, None, "V1 row should have NULL for new column");
-    // V2 row: side should be Some("BUY").
-    assert_eq!(rows[1].price, 200);
-    assert_eq!(rows[1].qty, 20);
-    assert_eq!(
-        rows[1].side,
-        Some("BUY".to_string()),
-        "V2 row should have side"
-    );
+        assert_eq!(rows.len(), 2, "expected 2 rows");
+        // V1 row: side should be NULL.
+        assert_eq!(rows[0].price, 100);
+        assert_eq!(rows[0].qty, 10);
+        assert_eq!(rows[0].side, None, "V1 row should have NULL for new column");
+        // V2 row: side should be Some("BUY").
+        assert_eq!(rows[1].price, 200);
+        assert_eq!(rows[1].qty, 20);
+        assert_eq!(
+            rows[1].side,
+            Some("BUY".to_string()),
+            "V2 row should have side"
+        );
 
-    drop_table(table).await;
+        drop_table(table).await;
+    })
 }
 
 // ── Test 4: Type conflict (incompatible change skipped) ────────────────────
@@ -378,81 +412,83 @@ struct ConflictTypeString {
     qty: String,
 }
 
-#[tokio::test]
+#[test]
 #[ignore]
-async fn test_type_conflict() {
-    if std::env::var("DOCKER_TEST").is_err() {
-        return;
-    }
-    let table = "int_test_type_conflict";
-    drop_table(table).await;
+fn test_type_conflict() {
+    run_async(async {
+        if std::env::var("DOCKER_TEST").is_err() {
+            return;
+        }
+        let table = "int_test_type_conflict";
+        drop_table(table).await;
 
-    let sink = test_sink();
+        let sink = test_sink();
 
-    // Insert row with qty as u32 — creates table and inserts.
-    let sender_u32: PersistSender<ConflictTypeU32> = sink.sender(table).build();
-    let row1 = ConflictTypeU32 {
-        price: 100,
-        qty: 42,
-    };
-    sender_u32.persist(&row1).unwrap();
-    sender_u32.flush();
+        // Insert row with qty as u32 — creates table and inserts.
+        let sender_u32: PersistSender<ConflictTypeU32> = sink.sender(table).build();
+        let row1 = ConflictTypeU32 {
+            price: 100,
+            qty: 42,
+        };
+        sender_u32.persist(&row1).unwrap();
+        sender_u32.flush();
 
-    // Now try to persist with qty as String → type conflict logged,
-    // row silently dropped by ClickHouse type mismatch.
-    let sender_str: PersistSender<ConflictTypeString> = sink.sender(table).build();
-    let row2 = ConflictTypeString {
-        price: 200,
-        qty: "bad".into(),
-    };
-    // Should not panic — errors are swallowed.
-    sender_str.persist(&row2).unwrap();
-    sender_str.flush();
+        // Now try to persist with qty as String → type conflict logged,
+        // row silently dropped by ClickHouse type mismatch.
+        let sender_str: PersistSender<ConflictTypeString> = sink.sender(table).build();
+        let row2 = ConflictTypeString {
+            price: 200,
+            qty: "bad".into(),
+        };
+        // Should not panic — errors are swallowed.
+        sender_str.persist(&row2).unwrap();
+        sender_str.flush();
 
-    // Query back: only the first row.
-    #[derive(Row, Deserialize, Debug, PartialEq)]
-    struct ConflictRow {
-        price: u64,
-        qty: u32,
-    }
-    let client = ch_client();
-    let rows: Vec<ConflictRow> = client
-        .query(&format!(
-            "SELECT price, qty FROM {table} ORDER BY _persist_time"
-        ))
-        .fetch_all()
-        .await
-        .expect("select failed");
+        // Query back: only the first row.
+        #[derive(Row, Deserialize, Debug, PartialEq)]
+        struct ConflictRow {
+            price: u64,
+            qty: u32,
+        }
+        let client = ch_client();
+        let rows: Vec<ConflictRow> = client
+            .query(&format!(
+                "SELECT price, qty FROM {table} ORDER BY _persist_time"
+            ))
+            .fetch_all()
+            .await
+            .expect("select failed");
 
-    assert_eq!(
-        rows.len(),
-        1,
-        "type conflict should silently drop incompatible rows"
-    );
-    assert_eq!(rows[0].price, 100);
-    assert_eq!(rows[0].qty, 42, "original data should be intact");
+        assert_eq!(
+            rows.len(),
+            1,
+            "type conflict should silently drop incompatible rows"
+        );
+        assert_eq!(rows[0].price, 100);
+        assert_eq!(rows[0].qty, 42, "original data should be intact");
 
-    // Verify column type is still UInt32 (not String).
-    #[derive(Row, Deserialize, Debug, PartialEq)]
-    struct ColTypeRow {
-        #[clickhouse(rename = "type")]
-        col_type: String,
-    }
-    let col_type: ColTypeRow = client
-        .query(&format!(
-            "SELECT type FROM system.columns \
-             WHERE database = 'default' AND table = '{table}' AND name = 'qty'"
-        ))
-        .fetch_one()
-        .await
-        .expect("column type query failed");
+        // Verify column type is still UInt32 (not String).
+        #[derive(Row, Deserialize, Debug, PartialEq)]
+        struct ColTypeRow {
+            // ponytail: alias to avoid the `type` keyword conflict
+            col_type: String,
+        }
+        let col_type: ColTypeRow = client
+            .query(&format!(
+                "SELECT type AS col_type FROM system.columns \
+                 WHERE database = 'default' AND table = '{table}' AND name = 'qty'"
+            ))
+            .fetch_one()
+            .await
+            .expect("column type query failed");
 
-    assert_eq!(
-        col_type.col_type, "UInt32",
-        "column type should not have changed"
-    );
+        assert_eq!(
+            col_type.col_type, "UInt32",
+            "column type should not have changed"
+        );
 
-    drop_table(table).await;
+        drop_table(table).await;
+    })
 }
 
 // ── Test 5: Multiple table names from same struct ──────────────────────────
@@ -462,80 +498,84 @@ struct SharedStruct {
     val: u64,
 }
 
-#[tokio::test]
+#[test]
 #[ignore]
-async fn test_multiple_tables() {
-    if std::env::var("DOCKER_TEST").is_err() {
-        return;
-    }
-    let table_a = "int_test_multi_a";
-    let table_b = "int_test_multi_b";
-    drop_table(table_a).await;
-    drop_table(table_b).await;
+fn test_multiple_tables() {
+    run_async(async {
+        if std::env::var("DOCKER_TEST").is_err() {
+            return;
+        }
+        let table_a = "int_test_multi_a";
+        let table_b = "int_test_multi_b";
+        drop_table(table_a).await;
+        drop_table(table_b).await;
 
-    let sink = test_sink();
+        let sink = test_sink();
 
-    let sender_a: PersistSender<SharedStruct> = sink.sender(table_a).build();
-    let sender_b: PersistSender<SharedStruct> = sink.sender(table_b).build();
+        let sender_a: PersistSender<SharedStruct> = sink.sender(table_a).build();
+        let sender_b: PersistSender<SharedStruct> = sink.sender(table_b).build();
 
-    sender_a.persist(&SharedStruct { val: 1 }).unwrap();
-    sender_b.persist(&SharedStruct { val: 2 }).unwrap();
-    sender_a.flush();
-    sender_b.flush();
+        sender_a.persist(&SharedStruct { val: 1 }).unwrap();
+        sender_b.persist(&SharedStruct { val: 2 }).unwrap();
+        sender_a.flush();
+        sender_b.flush();
 
-    // Verify both tables exist and have correct data.
-    let client = ch_client();
-    let rows_a: Vec<SharedStruct> = client
-        .query(&format!("SELECT val FROM {table_a}"))
-        .fetch_all()
-        .await
-        .expect("select table_a failed");
-    assert_eq!(rows_a.len(), 1);
-    assert_eq!(rows_a[0].val, 1);
+        // Verify both tables exist and have correct data.
+        let client = ch_client();
+        let rows_a: Vec<SharedStruct> = client
+            .query(&format!("SELECT val FROM {table_a}"))
+            .fetch_all()
+            .await
+            .expect("select table_a failed");
+        assert_eq!(rows_a.len(), 1);
+        assert_eq!(rows_a[0].val, 1);
 
-    let rows_b: Vec<SharedStruct> = client
-        .query(&format!("SELECT val FROM {table_b}"))
-        .fetch_all()
-        .await
-        .expect("select table_b failed");
-    assert_eq!(rows_b.len(), 1);
-    assert_eq!(rows_b[0].val, 2);
+        let rows_b: Vec<SharedStruct> = client
+            .query(&format!("SELECT val FROM {table_b}"))
+            .fetch_all()
+            .await
+            .expect("select table_b failed");
+        assert_eq!(rows_b.len(), 1);
+        assert_eq!(rows_b[0].val, 2);
 
-    drop_table(table_a).await;
-    drop_table(table_b).await;
+        drop_table(table_a).await;
+        drop_table(table_b).await;
+    })
 }
 
 // ── Test 6: Cleanup drops tables ───────────────────────────────────────────
 
-#[tokio::test]
+#[test]
 #[ignore]
-async fn test_cleanup_drops_tables() {
-    if std::env::var("DOCKER_TEST").is_err() {
-        return;
-    }
-    let table = "int_test_cleanup";
-    drop_table(table).await;
+fn test_cleanup_drops_tables() {
+    run_async(async {
+        if std::env::var("DOCKER_TEST").is_err() {
+            return;
+        }
+        let table = "int_test_cleanup";
+        drop_table(table).await;
 
-    let sink = test_sink();
-    let sender: PersistSender<SharedStruct> = sink.sender(table).build();
-    sender.persist(&SharedStruct { val: 1 }).unwrap();
-    sender.flush();
+        let sink = test_sink();
+        let sender: PersistSender<SharedStruct> = sink.sender(table).build();
+        sender.persist(&SharedStruct { val: 1 }).unwrap();
+        sender.flush();
 
-    // Verify table exists.
-    let client = ch_client();
-    assert!(
-        table_exists(&client, table).await,
-        "table should exist before cleanup"
-    );
+        // Verify table exists.
+        let client = ch_client();
+        assert!(
+            table_exists(&client, table).await,
+            "table should exist before cleanup"
+        );
 
-    // Cleanup drops all tables tracked by the schema cache.
-    sink.cleanup().expect("cleanup failed");
+        // Cleanup drops all tables tracked by the schema cache.
+        sink.cleanup().expect("cleanup failed");
 
-    // Verify table was dropped.
-    assert!(
-        !table_exists(&client, table).await,
-        "table should be dropped after cleanup"
-    );
+        // Verify table was dropped.
+        assert!(
+            !table_exists(&client, table).await,
+            "table should be dropped after cleanup"
+        );
+    })
 }
 
 // ── Test 7: Metadata injection ─────────────────────────────────────────────
@@ -545,45 +585,47 @@ struct MetaStruct {
     price: u64,
 }
 
-#[tokio::test]
+#[test]
 #[ignore]
-async fn test_metadata_injection() {
-    if std::env::var("DOCKER_TEST").is_err() {
-        return;
-    }
-    let table = "int_test_metadata";
-    drop_table(table).await;
+fn test_metadata_injection() {
+    run_async(async {
+        if std::env::var("DOCKER_TEST").is_err() {
+            return;
+        }
+        let table = "int_test_metadata";
+        drop_table(table).await;
 
-    let sink = test_sink();
-    let sender: PersistSender<MetaStruct> = sink
-        .sender(table)
-        .metadata("source", "exchange_a")
-        .metadata("env", "prod")
-        .build();
+        let sink = test_sink();
+        let sender: PersistSender<MetaStruct> = sink
+            .sender(table)
+            .metadata("source", "exchange_a")
+            .metadata("env", "prod")
+            .build();
 
-    sender.persist(&MetaStruct { price: 42 }).unwrap();
-    sender.flush();
+        sender.persist(&MetaStruct { price: 42 }).unwrap();
+        sender.flush();
 
-    // Query back and verify metadata columns.
-    let client = ch_client();
-    #[derive(Row, Deserialize, Debug, PartialEq)]
-    struct MetaRow {
-        price: u64,
-        source: String,
-        env: String,
-    }
-    let rows: Vec<MetaRow> = client
-        .query(&format!(
-            "SELECT price, source, env FROM {table} ORDER BY _persist_time"
-        ))
-        .fetch_all()
-        .await
-        .expect("select failed");
+        // Query back and verify metadata columns.
+        let client = ch_client();
+        #[derive(Row, Deserialize, Debug, PartialEq)]
+        struct MetaRow {
+            price: u64,
+            source: String,
+            env: String,
+        }
+        let rows: Vec<MetaRow> = client
+            .query(&format!(
+                "SELECT price, source, env FROM {table} ORDER BY _persist_time"
+            ))
+            .fetch_all()
+            .await
+            .expect("select failed");
 
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].price, 42);
-    assert_eq!(rows[0].source, "exchange_a");
-    assert_eq!(rows[0].env, "prod");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].price, 42);
+        assert_eq!(rows[0].source, "exchange_a");
+        assert_eq!(rows[0].env, "prod");
 
-    drop_table(table).await;
+        drop_table(table).await;
+    })
 }
