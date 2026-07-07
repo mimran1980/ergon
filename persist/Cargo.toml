@@ -15,7 +15,6 @@ authors.workspace = true
 default = []
 rust_decimal = ["dep:rust_decimal"]
 chrono = ["dep:chrono"]
-duration = []
 serde = []
 
 [dependencies]
