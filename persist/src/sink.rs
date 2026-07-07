@@ -13,6 +13,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,7 @@ use log::warn;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
+use crate::metrics::{NoopMetrics, PersistMetrics};
 use crate::persist::{ColumnDef, Persist, TableSchema};
 use crate::types::ColumnType;
 
@@ -77,6 +79,37 @@ impl Default for PersistCompression {
     }
 }
 
+// ── RetryConfig ────────────────────────────────────────────────────────────
+
+/// Exponential backoff configuration.
+pub struct RetryConfig {
+    pub initial_backoff: Duration,
+    pub max_backoff: Duration,
+    pub max_retries: usize,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_secs(10),
+            max_retries: 5,
+        }
+    }
+}
+
+// ── DroppedBatch ───────────────────────────────────────────────────────────
+
+/// Information about a batch that was dropped after exhausting retries.
+pub struct DroppedBatch {
+    pub table: String,
+    pub rows: Vec<String>,
+    pub error: String,
+}
+
+/// Callback invoked when a batch exhausts retries.
+pub type DeadLetterFn = Box<dyn Fn(DroppedBatch) + Send + Sync>;
+
 // ── ClickhouseSinkBuilder ──────────────────────────────────────────────────
 
 /// Builder for [`ClickhouseSink`].
@@ -102,6 +135,7 @@ pub struct ClickhouseSinkBuilder {
     compression: PersistCompression,
     tls_skip_verify: bool,
     tls_ca_cert: Option<String>,
+    retry_config: RetryConfig,
 }
 
 impl Default for ClickhouseSinkBuilder {
@@ -116,6 +150,7 @@ impl Default for ClickhouseSinkBuilder {
             compression: PersistCompression::default(),
             tls_skip_verify: false,
             tls_ca_cert: None,
+            retry_config: RetryConfig::default(),
         }
     }
 }
@@ -169,6 +204,13 @@ impl ClickhouseSinkBuilder {
         self
     }
 
+    /// Configure retry behaviour.
+    #[must_use]
+    pub fn retry_config(mut self, cfg: RetryConfig) -> Self {
+        self.retry_config = cfg;
+        self
+    }
+
     /// Wire compression mode. Default: `Lz4`.
     #[must_use]
     pub fn compression(mut self, c: PersistCompression) -> Self {
@@ -217,7 +259,7 @@ impl ClickhouseSinkBuilder {
             self.tls_ca_cert.as_deref(),
         )?;
 
-        let inner = SinkInner::spawn(client, database.clone());
+        let inner = SinkInner::spawn(client, database.clone(), Arc::new(NoopMetrics), self.retry_config);
 
         Ok(ClickhouseSink {
             inner: Arc::new(inner),
@@ -364,11 +406,15 @@ struct SinkInner {
     schema_cache: Mutex<HashMap<String, TableSchema>>,
     /// Registered senders for global flush.
     senders: Mutex<Vec<Weak<dyn Fn() + Send + Sync>>>,
+    metrics: Arc<dyn PersistMetrics>,
+    retry_config: RetryConfig,
+    retries_total: AtomicU64,
+    dropped_rows_total: AtomicU64,
 }
 
 impl SinkInner {
     /// Spawn a background worker thread with its own tokio runtime.
-    fn spawn(client: clickhouse::Client, database: String) -> Self {
+    fn spawn(client: clickhouse::Client, database: String, metrics: Arc<dyn PersistMetrics>, retry_config: RetryConfig) -> Self {
         let (cmd_tx, rx) = std::sync::mpsc::channel::<Cmd>();
 
         std::thread::Builder::new()
@@ -392,6 +438,10 @@ impl SinkInner {
             database,
             schema_cache: Mutex::new(HashMap::new()),
             senders: Mutex::new(Vec::new()),
+            metrics,
+            retry_config,
+            retries_total: AtomicU64::new(0),
+            dropped_rows_total: AtomicU64::new(0),
         }
     }
 
@@ -423,10 +473,54 @@ impl SinkInner {
         self.senders.lock().unwrap().push(Arc::downgrade(&flush));
     }
 
-    /// Execute an INSERT statement.
-    fn exec_insert(&self, sql: &str) -> Result<(), SinkError> {
-        self.exec(sql).map_err(|e| SinkError::Insert(format!("{sql}: {e}")))
+    /// Execute an INSERT with exponential-backoff retry.
+    fn exec_insert_with_retry(&self, sql: &str, table: &str, rows: &[String], on_drop: &Option<DeadLetterFn>) -> Result<(), SinkError> {
+        let mut backoff = self.retry_config.initial_backoff;
+        let mut attempt: u32 = 0;
+        loop {
+            match self.exec(sql).map_err(|e| SinkError::Insert(format!("{sql}: {e}"))) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    self.retries_total.fetch_add(1, Ordering::Relaxed);
+                    self.metrics.retry_attempted(table, attempt);
+                    attempt += 1;
+                    if attempt >= self.retry_config.max_retries as u32 {
+                        let _dropped = self.dropped_rows_total.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                        self.metrics.row_dropped(table, rows.len());
+                        if let Some(cb) = on_drop {
+                            cb(DroppedBatch {
+                                table: table.to_string(),
+                                rows: rows.to_vec(),
+                                error: e.to_string(),
+                            });
+                        }
+                        return Err(e);
+                    }
+                    let jitter_range = backoff / 2;
+                    let jitter = jitter(backoff, jitter_range);
+                    std::thread::sleep(backoff + jitter);
+                    backoff = std::cmp::min(backoff * 2, self.retry_config.max_backoff);
+                }
+            }
+        }
     }
+}
+
+/// Apply ±50% jitter to a base duration.
+fn jitter(base: Duration, range: Duration) -> Duration {
+    let _nanos = base.as_nanos() as i128;
+    let range_nanos = range.as_nanos() as i128;
+    if range_nanos == 0 {
+        return Duration::from_nanos(0);
+    }
+    // Use low bits of SystemTime for a simple pseudo-random offset.
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let offset = (seed % (range_nanos as u128)) as i128;
+    // Center around 0: offset - range/2
+    Duration::from_nanos((offset - range_nanos / 2).unsigned_abs() as u64)
 }
 
 // ── ClickhouseSink ─────────────────────────────────────────────────────────
@@ -457,6 +551,8 @@ impl ClickhouseSink {
             metadata: Vec::new(),
             batch_size: 1000,
             flush_interval: Duration::from_millis(100),
+            on_drop: None,
+            metrics: self.inner.metrics.clone(),
         }
     }
 
@@ -467,6 +563,18 @@ impl ClickhouseSink {
             s.upgrade().map(|f| { f(); true }).unwrap_or(false)
         });
         Ok(())
+    }
+
+    /// Total number of retry attempts across all senders.
+    #[must_use]
+    pub fn retries_total(&self) -> u64 {
+        self.inner.retries_total.load(Ordering::Relaxed)
+    }
+
+    /// Total number of dropped rows across all senders.
+    #[must_use]
+    pub fn dropped_rows_total(&self) -> u64 {
+        self.inner.dropped_rows_total.load(Ordering::Relaxed)
     }
 
     /// Drop tables that have zero rows.
@@ -508,9 +616,18 @@ pub struct PersistSenderBuilder {
     metadata: Vec<(String, String)>,
     batch_size: usize,
     flush_interval: Duration,
+    on_drop: Option<DeadLetterFn>,
+    metrics: Arc<dyn PersistMetrics>,
 }
 
 impl PersistSenderBuilder {
+    /// Register a dead-letter callback invoked when retries are exhausted.
+    #[must_use]
+    pub fn dead_letter(mut self, cb: DeadLetterFn) -> Self {
+        self.on_drop = Some(cb);
+        self
+    }
+
     /// Attach a static metadata key-value pair.
     ///
     /// Every row produced by the resulting sender will include this metadata
@@ -537,6 +654,8 @@ impl PersistSenderBuilder {
             flush_interval: self.flush_interval,
             batch: batch.clone(),
             last_flush: last_flush.clone(),
+            on_drop: self.on_drop,
+            metrics: self.metrics,
             _phantom: PhantomData,
         };
 
@@ -565,6 +684,9 @@ pub struct PersistSender<T> {
     flush_interval: Duration,
     batch: Arc<Mutex<Vec<String>>>, // accumulated SQL VALUE tuples
     last_flush: Arc<Mutex<Instant>>,
+    on_drop: Option<DeadLetterFn>,
+    #[allow(dead_code)]
+    metrics: Arc<dyn PersistMetrics>,
     _phantom: PhantomData<T>,
 }
 // ── SenderFlush ─────────────────────────────────────────────────────────────
@@ -588,7 +710,8 @@ impl SenderFlush {
         }
         let values = rows.join(", ");
         let sql = format!("INSERT INTO {} VALUES {}", self.table_name, values);
-        if let Err(e) = self.inner.exec_insert(&sql) {
+        let sql_str: &str = &sql;
+        if let Err(e) = self.inner.exec_insert_with_retry(sql_str, &self.table_name, &rows, &None) {
             warn!(
                 "ClickhouseSink: global flush failed for {}.{} ({} rows): {}",
                 self.inner.database, self.table_name, rows.len(), e
@@ -751,7 +874,8 @@ impl<T: Persist + Serialize> PersistSender<T> {
 
     /// Flush the current batch to ClickHouse.
     ///
-    /// Errors are logged as warnings; the batch is cleared regardless.
+    /// Retries on failure with exponential backoff.  If retries are
+    /// exhausted the dead-letter callback is invoked (if configured).
     fn flush_inner(&self) {
         let rows: Vec<String> = {
             let mut batch = self.batch.lock().unwrap();
@@ -766,7 +890,8 @@ impl<T: Persist + Serialize> PersistSender<T> {
         let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
         let sql = build_insert_sql(&self.table_name, &columns, &rows);
 
-        if let Err(e) = self.inner.exec_insert(&sql) {
+        let result = self.inner.exec_insert_with_retry(&sql, &self.table_name, &rows, &self.on_drop);
+        if let Err(e) = result {
             warn!(
                 "ClickhouseSink: failed to flush {}.{} ({} rows): {}",
                 self.inner.database,
@@ -774,9 +899,6 @@ impl<T: Persist + Serialize> PersistSender<T> {
                 rows.len(),
                 e
             );
-            // Data is dropped — see ponytail: comment below.
-            // ponytail: lost rows.  Add a dead-letter queue if data loss
-            // becomes a problem.
         }
 
         *self.last_flush.lock().unwrap() = Instant::now();
@@ -810,8 +932,8 @@ impl<T> Drop for PersistSender<T> {
         let values = rows.join(", ");
         let sql = format!("INSERT INTO {} VALUES {}", self.table_name, values);
 
-        // Silence errors — we're dropping.
-        if let Err(e) = self.inner.exec_insert(&sql) {
+        let result = self.inner.exec_insert_with_retry(&sql, &self.table_name, &rows, &self.on_drop);
+        if let Err(e) = result {
             warn!(
                 "ClickhouseSink: drop-flush failed for {}.{} ({} rows): {}",
                 self.inner.database,

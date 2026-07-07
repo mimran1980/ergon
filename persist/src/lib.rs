@@ -14,6 +14,7 @@ pub mod feature_impls;
 pub mod persist;
 pub mod sbe;
 pub mod sink;
+pub mod metrics;
 pub mod types;
 
 pub use persist::{
@@ -23,6 +24,7 @@ pub use persist::{
 pub use sink::{
     ClickhouseSink, ClickhouseSinkBuilder, PersistCompression, PersistSender, PersistSenderBuilder,
     SinkError,
+    RetryConfig, DroppedBatch, DeadLetterFn,
 };
 pub use types::ColumnType;
 pub use types::default_column_type;
