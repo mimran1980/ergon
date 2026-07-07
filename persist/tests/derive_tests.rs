@@ -4,7 +4,6 @@
 //! "Correct" means the schema and encode_row functions produce expected output
 //! for various combinations of field types and annotations.
 
-use chrono::{DateTime, Utc};
 use ergo_clickhouse_persist::{ColumnType, Persist};
 use ergo_clickhouse_persist_derive::Persist;
 
@@ -242,24 +241,29 @@ fn test_flatten_encode_row() {
     assert_eq!(dst.z, 3);
 }
 
-// ── All annotations combined ─────────────────────────────────────────────────
+// ── All annotations combined (chrono feature) ─────────────────────────────────
 
-#[derive(Persist, Clone)]
-#[persist(order_by = "event_time")]
-struct FullExample {
-    event_time: DateTime<Utc>,
-    #[persist(name = "sym")]
-    symbol: String,
-    #[persist(type = "Decimal(18, 8)")]
-    price: u64,
-    #[persist(json)]
-    extra: String,
-    #[persist(skip)]
-    internal: String,
-}
+#[cfg(feature = "chrono")]
+mod full_example_tests {
+    use super::*;
+    use chrono::{DateTime, Utc};
 
-#[test]
-fn test_full_example_schema() {
+    #[derive(Persist, Clone)]
+    #[persist(order_by = "event_time")]
+    struct FullExample {
+        event_time: DateTime<Utc>,
+        #[persist(name = "sym")]
+        symbol: String,
+        #[persist(type = "Decimal(18, 8)")]
+        price: u64,
+        #[persist(json)]
+        extra: String,
+        #[persist(skip)]
+        internal: String,
+    }
+
+    #[test]
+    fn test_full_example_schema() {
     let schema = <FullExample as Persist>::table_schema();
     // expected: event_time, sym (Decimal), extra (Json), _persist_time = 5
     assert_eq!(schema.columns.len(), 5);
@@ -306,32 +310,33 @@ fn test_full_example_schema() {
     assert!(!schema.columns.iter().any(|c| c.name == "internal"));
 
     assert_eq!(schema.order_by, vec!["event_time".to_string()]);
-}
+    }
 
-#[test]
-fn test_full_example_encode_row() {
-    let now = Utc::now();
-    let src = FullExample {
-        event_time: now,
-        symbol: "AAPL".into(),
-        price: 15000,
-        extra: "{\"note\":\"test\"}".into(),
-        internal: "should be skipped".into(),
-    };
-    let mut dst = FullExample {
-        event_time: DateTime::from_timestamp(0, 0).unwrap(),
-        symbol: String::new(),
-        price: 0,
-        extra: String::new(),
-        internal: "original".into(),
-    };
-    src.encode_row(&mut dst);
-    assert_eq!(dst.event_time, now);
-    assert_eq!(dst.symbol, "AAPL");
-    assert_eq!(dst.price, 15000);
-    assert_eq!(dst.extra, "{\"note\":\"test\"}");
-    // internal should NOT be overwritten because it has #[persist(skip)]
-    assert_eq!(dst.internal, "original");
+    #[test]
+    fn test_full_example_encode_row() {
+        let now = Utc::now();
+        let src = FullExample {
+            event_time: now,
+            symbol: "AAPL".into(),
+            price: 15000,
+            extra: "{\"note\":\"test\"}".into(),
+            internal: "should be skipped".into(),
+        };
+        let mut dst = FullExample {
+            event_time: DateTime::from_timestamp(0, 0).unwrap(),
+            symbol: String::new(),
+            price: 0,
+            extra: String::new(),
+            internal: "original".into(),
+        };
+        src.encode_row(&mut dst);
+        assert_eq!(dst.event_time, now);
+        assert_eq!(dst.symbol, "AAPL");
+        assert_eq!(dst.price, 15000);
+        assert_eq!(dst.extra, "{\"note\":\"test\"}");
+        // internal should NOT be overwritten because it has #[persist(skip)]
+        assert_eq!(dst.internal, "original");
+    }
 }
 
 // ── Generic struct (compile-pass test) ──────────────────────────────────────
