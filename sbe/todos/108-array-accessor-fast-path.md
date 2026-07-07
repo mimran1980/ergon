@@ -111,7 +111,7 @@ message body) get infallible array reads.
 
 - [x] `_unchecked` array accessors use bulk `copy_from_slice` + unrolled element
   parsing instead of per-element while-loop (both group entry and message decoder)
-- [ ] The existing `const fn raw_` accessors are preserved for const contexts
+- [x] The existing `const fn raw_` accessors are preserved for const contexts
 - [ ] Benchmarks show array accessor latency within 10% of Aeron's
   unrolled reads
 - [x] Golden file stability test passes

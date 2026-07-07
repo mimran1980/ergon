@@ -39,4 +39,4 @@ use ergo_sbe::persist_derive::Persist;  // if we re-export the derive too
 - [x] `ergo_sbe` without the feature does not pull in `clickhouse` or `ergo_clickhouse_persist`
 - [x] User can `use ergo_sbe::persist::Persist` when feature is on
 - [ ] Example in `samples/` showing a DTO with `#[derive(SbeMessage)]` + `#[derive(Persist)]`
-- [ ] `cargo test --workspace` passes with and without the persist feature
+- [x] `cargo test --workspace` passes with and without the persist feature

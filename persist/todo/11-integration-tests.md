@@ -68,8 +68,8 @@ Or use `testcontainers` if preferred, but shell script is simpler.
 
 ## Acceptance criteria
 
-- [ ] Docker ClickHouse starts and stops via script
+- [x] Docker ClickHouse starts and stops via script
 - [ ] All test cases above pass
-- [ ] Tests clean up after themselves (drop tables, reset state)
-- [ ] Tests runnable with a single command: `cargo test --test integration`
-- [ ] CI-friendly: skip if no docker, or require `--ignored` without `CI` env var
+- [x] Tests clean up after themselves (drop tables, reset state)
+- [x] Tests runnable with a single command: `cargo test --test integration`
+- [x] CI-friendly: skip if no docker, or require `--ignored` without `CI` env var
