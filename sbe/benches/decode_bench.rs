@@ -52,10 +52,10 @@ fn bench_field_access_checked(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("decode/field/checked");
     group.bench_function("serial_number", |b| {
-        b.iter(|| black_box(car.serial_number().unwrap()));
+        b.iter(|| black_box(car.serial_number()));
     });
     group.bench_function("model_year", |b| {
-        b.iter(|| black_box(car.model_year().unwrap()));
+        b.iter(|| black_box(car.model_year()));
     });
     group.bench_function("engine", |b| {
         b.iter(|| black_box(car.engine().unwrap()));
@@ -135,8 +135,8 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
 
     group.bench_function("checked_all_fields", |b| {
         b.iter(|| {
-            let _ = car.serial_number().unwrap();
-            let _ = car.model_year().unwrap();
+            let _ = car.serial_number();
+            let _ = car.model_year();
             let _ = car.available().unwrap();
             let _ = car.code().unwrap();
             let _ = car.some_numbers().unwrap();

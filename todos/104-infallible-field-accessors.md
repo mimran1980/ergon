@@ -45,13 +45,16 @@ Specific areas to audit:
 5. **Compare every generated method** against Aeron Rust SBE output.
    Any ErgoSBE method doing more work than Aeron must be fixed.
 
-## Acceptance criteria
+## Acceptance criteria — Step 1 (primitive scalar fields) COMPLETE
 
-- [ ] Every field accessor returns `T`, not `Result<T, DecodeError>`
-- [ ] No byte-copy loops for fixed-size fields
-- [ ] No per-field bounds checks (wrap validates once)
-- [ ] All existing tests pass with updated API
-- [ ] Golden file regenerated
+- [x] Every **primitive scalar** field accessor returns `T`, not `Result<T, DecodeError>`
+- [x] No byte-copy loops for fixed-size fields (primitive scalars)
+- [x] No per-field bounds checks (wrap validates once)
+- [x] All existing tests pass with updated API
+- [x] Golden file regenerated
+- [ ] Extend to composite decoders (no per-member bounds checks)
+- [ ] Extend to enum/set decoders
+- [ ] Extend to group decoders (no per-entry size validation on fixed-size entries)
 - [ ] Line-by-line comparison against Aeron Rust SBE — ErgoSBE ≤ Aeron in code
   complexity for every method
 - [ ] ErgoSBE at least as fast as Aeron in every benchmark scenario (todo 105)

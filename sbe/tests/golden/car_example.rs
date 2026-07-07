@@ -733,22 +733,9 @@ impl<'a> CarDecoder<'a> {
         self.acting_block_length
     }
     #[inline]
-    pub const fn serial_number(&self) -> Result<u64, sbe_rt::DecodeError> {
+    pub fn serial_number(&self) -> u64 {
         let offset = self.pos + 0;
-        if offset + 8 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "serialNumber",
-                needed: 8,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 8];
-        let mut j = 0;
-        while j < 8 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(u64::from_le_bytes(bytes))
+        u64::from_le_bytes(self.buf[offset..][..8].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn serial_number_unchecked(&self) -> u64 {
@@ -760,30 +747,13 @@ impl<'a> CarDecoder<'a> {
             });
         u64::from_le_bytes(bytes)
     }
-    #[inline]
-    pub const fn raw_serial_number(&self) -> u64 {
-        #[allow(unused_unsafe)] unsafe { self.serial_number_unchecked() }
-    }
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
     #[inline]
-    pub const fn model_year(&self) -> Result<u16, sbe_rt::DecodeError> {
+    pub fn model_year(&self) -> u16 {
         let offset = self.pos + 8;
-        if offset + 2 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "modelYear",
-                needed: 2,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(u16::from_le_bytes(bytes))
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn model_year_unchecked(&self) -> u16 {
@@ -794,10 +764,6 @@ impl<'a> CarDecoder<'a> {
                 core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 2)
             });
         u16::from_le_bytes(bytes)
-    }
-    #[inline]
-    pub const fn raw_model_year(&self) -> u16 {
-        #[allow(unused_unsafe)] unsafe { self.model_year_unchecked() }
     }
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
@@ -1430,10 +1396,12 @@ impl<'a> CarDecoder<'a> {
 impl<'a> core::fmt::Display for CarDecoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Car {{ ")?;
-        if let Ok(v) = self.serial_number() {
+        {
+            let v = self.serial_number();
             write!(f, "serial_number: {}", v)?;
         }
-        if let Ok(v) = self.model_year() {
+        {
+            let v = self.model_year();
             write!(f, ", model_year: {}", v)?;
         }
         if let Ok(e) = self.available() {

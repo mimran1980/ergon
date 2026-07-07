@@ -137,8 +137,8 @@ proptest! {
         let encoded = car.as_bytes();
         let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
-        prop_assert_eq!(serial_number, decoded.serial_number().unwrap());
-        prop_assert_eq!(model_year, decoded.model_year().unwrap());
+        prop_assert_eq!(serial_number, decoded.serial_number());
+        prop_assert_eq!(model_year, decoded.model_year());
         prop_assert_eq!(available, decoded.available().unwrap());
         prop_assert_eq!(code, decoded.code().unwrap());
         prop_assert_eq!(some_numbers, decoded.some_numbers().unwrap());
@@ -300,7 +300,7 @@ fn zero_length_roundtrip() {
     let encoded = car.as_bytes();
     let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
-    assert_eq!(0, decoded.serial_number().unwrap());
+    assert_eq!(0, decoded.serial_number());
     assert!(decoded.fuel_figures().unwrap().is_empty(), "fuel figures not empty");
     assert!(decoded.performance_figures().unwrap().is_empty(), "perf figures not empty");
     assert_eq!(b"", decoded.manufacturer().unwrap(), "manufacturer");
@@ -348,8 +348,8 @@ fn boundary_values() {
     let encoded = car.as_bytes();
     let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
-    assert_eq!(u64::MAX, decoded.serial_number().unwrap());
-    assert_eq!(u16::MAX, decoded.model_year().unwrap());
+    assert_eq!(u64::MAX, decoded.serial_number());
+    assert_eq!(u16::MAX, decoded.model_year());
     assert_eq!(BooleanType::T, decoded.available().unwrap());
     assert_eq!(Model::C, decoded.code().unwrap());
     assert_eq!([u32::MAX; 4], decoded.some_numbers().unwrap());

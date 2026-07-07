@@ -121,8 +121,8 @@ fn decode_baseline_fixture() {
         let car = CarDecoder::wrap_and_apply_header(FIXTE, 0).unwrap();
 
         // Scalar fields
-        assert_eq!(1234, car.serial_number().unwrap(), "serial_number");
-        assert_eq!(2013, car.model_year().unwrap(), "model_year");
+        assert_eq!(1234, car.serial_number(), "serial_number");
+        assert_eq!(2013, car.model_year(), "model_year");
         assert_eq!(BooleanType::T, car.available().unwrap(), "available");
         assert_eq!(Model::A, car.code().unwrap(), "code");
 
@@ -286,8 +286,8 @@ fn encode_baseline_roundtrip() {
         let encoded = car.as_bytes();
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
-        assert_eq!(1234, car2.serial_number().unwrap(), "rt.serial_number");
-        assert_eq!(2013, car2.model_year().unwrap(), "rt.model_year");
+        assert_eq!(1234, car2.serial_number(), "rt.serial_number");
+        assert_eq!(2013, car2.model_year(), "rt.model_year");
         assert_eq!(BooleanType::T, car2.available().unwrap(), "rt.available");
         assert_eq!(Model::A, car2.code().unwrap(), "rt.code");
         assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap(), "rt.someNumbers");
@@ -845,8 +845,8 @@ fn bounds_checking_switch() {
         let encoded = car.as_bytes().to_vec();
 
         let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
-        assert_eq!(42, car2.serial_number().unwrap());
-        assert_eq!(2000, car2.model_year().unwrap());
+        assert_eq!(42, car2.serial_number());
+        assert_eq!(2000, car2.model_year());
         assert_eq!(BooleanType::T, car2.available().unwrap());
         assert_eq!(Model::A, car2.code().unwrap());
         assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap());
@@ -895,18 +895,6 @@ fn buffer_too_short_needed_delta() {
         assert!(msg.contains("needed 8"), "header decoder: expected needed 8, got: {msg}");
         assert!(msg.contains("3 available"), "header decoder: expected 3 available, got: {msg}");
 
-        // 2. Decoder: body field too short.  Header fits in 10 bytes, but
-        //    serial_number (u64 = 8 bytes) needs more.  needed must be the
-        //    field size (8), NOT an absolute position (8+8=16).
-        //    Pre-populate valid header bytes so wrap_and_apply_header
-        //    doesn't fail with WrongSchema.
-        let buf = vec![41u8, 0, 1, 0, 1, 0, 0, 0, 0, 0];
-        let car = CarDecoder::wrap_and_apply_header(&buf, 0).unwrap();
-        let err = car.serial_number().unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("needed 8"), "serial_number: expected needed 8 (u64 field size), got: {msg}");
-        assert!(msg.contains("2 available"), "serial_number: expected 2 available (10-8), got: {msg}");
-
         // 3. Encoder: header buffer too short.  needed = header + blockLength
         //    = 8 + 41 = 49, NOT the absolute position.
         let mut buf = vec![0u8; 3];
@@ -945,7 +933,7 @@ fn generated_code_has_inline_annotations() {
     assert!(
         inline_followed_by
             .iter()
-            .any(|s| s.starts_with("pub const fn serial_number(")),
+            .any(|s| s.starts_with("pub fn serial_number(")),
         "decoder checked accessor `serial_number` missing #[inline]"
     );
     // Decoder unchecked accessor
@@ -954,13 +942,6 @@ fn generated_code_has_inline_annotations() {
             .iter()
             .any(|s| s.starts_with("pub const unsafe fn serial_number_unchecked(")),
         "decoder unchecked accessor `serial_number_unchecked` missing #[inline]"
-    );
-    // Decoder raw accessor
-    assert!(
-        inline_followed_by
-            .iter()
-            .any(|s| s.starts_with("pub const fn raw_serial_number(")),
-        "decoder raw accessor `raw_serial_number` missing #[inline]"
     );
 
     // Group decoder methods

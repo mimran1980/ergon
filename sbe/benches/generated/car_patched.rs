@@ -1,3 +1,14 @@
+//! Generated from SBE schema package `baseline` id 1 version 0.
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::eq_op)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::manual_range_contains)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(dead_code)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
@@ -144,111 +155,80 @@ pub mod sbe_rt {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct BooleanType(pub u8);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
-pub enum BooleanTypeKind {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BooleanType {
     F = 0,
     T = 1,
+    NullVal,
 }
 impl BooleanType {
-    pub const F: Self = Self(0);
-    pub const T: Self = Self(1);
-    pub const FALSE: Self = Self(0);
-    pub const TRUE: Self = Self(1);
-    pub const fn kind(self) -> Option<BooleanTypeKind> {
-        match self.0 {
-            0 => Some(BooleanTypeKind::F),
-            1 => Some(BooleanTypeKind::T),
-            _ => None,
+    pub fn raw(self) -> u8 {
+        self as u8
+    }
+    pub const fn from_raw(val: u8) -> Self {
+        match val {
+            0 => Self::F,
+            1 => Self::T,
+            _ => Self::NullVal,
         }
-    }
-    pub const fn into_kind(self) -> Option<BooleanTypeKind> {
-        self.kind()
-    }
-    pub const fn raw(self) -> u8 {
-        self.0
-    }
-}
-impl From<u8> for BooleanType {
-    #[inline(always)]
-    fn from(val: u8) -> Self {
-        Self(val)
     }
 }
 impl From<BooleanType> for u8 {
     #[inline(always)]
     fn from(val: BooleanType) -> Self {
-        val.0
+        val as u8
     }
 }
-impl TryFrom<BooleanType> for BooleanTypeKind {
-    type Error = ();
-    #[inline]
-    fn try_from(val: BooleanType) -> Result<Self, Self::Error> {
-        val.kind().ok_or(())
+impl From<u8> for BooleanType {
+    #[inline(always)]
+    fn from(val: u8) -> Self {
+        Self::from_raw(val)
     }
 }
 impl From<bool> for BooleanType {
     #[inline(always)]
     fn from(val: bool) -> Self {
-        if val { Self(1) } else { Self(0) }
+        if val { Self::T } else { Self::F }
     }
 }
 impl From<BooleanType> for bool {
     #[inline(always)]
     fn from(val: BooleanType) -> bool {
-        val.raw() != 0
+        val as u8 != 0
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct Model(pub u8);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
-pub enum ModelKind {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Model {
     A = b'A',
     B = b'B',
     C = b'C',
+    NullVal,
 }
 impl Model {
-    pub const A: Self = Self(b'A');
-    pub const B: Self = Self(b'B');
-    pub const C: Self = Self(b'C');
-    pub const fn kind(self) -> Option<ModelKind> {
-        match self.0 {
-            b'A' => Some(ModelKind::A),
-            b'B' => Some(ModelKind::B),
-            b'C' => Some(ModelKind::C),
-            _ => None,
+    pub fn raw(self) -> u8 {
+        self as u8
+    }
+    pub const fn from_raw(val: u8) -> Self {
+        match val {
+            b'A' => Self::A,
+            b'B' => Self::B,
+            b'C' => Self::C,
+            _ => Self::NullVal,
         }
-    }
-    pub const fn into_kind(self) -> Option<ModelKind> {
-        self.kind()
-    }
-    pub const fn raw(self) -> u8 {
-        self.0
-    }
-}
-impl From<u8> for Model {
-    #[inline(always)]
-    fn from(val: u8) -> Self {
-        Self(val)
     }
 }
 impl From<Model> for u8 {
     #[inline(always)]
     fn from(val: Model) -> Self {
-        val.0
+        val as u8
     }
 }
-impl TryFrom<Model> for ModelKind {
-    type Error = ();
-    #[inline]
-    fn try_from(val: Model) -> Result<Self, Self::Error> {
-        val.kind().ok_or(())
+impl From<u8> for Model {
+    #[inline(always)]
+    fn from(val: u8) -> Self {
+        Self::from_raw(val)
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
@@ -753,22 +733,9 @@ impl<'a> CarDecoder<'a> {
         self.acting_block_length
     }
     #[inline]
-    pub const fn serial_number(&self) -> Result<u64, sbe_rt::DecodeError> {
+    pub fn serial_number(&self) -> u64 {
         let offset = self.pos + 0;
-        if offset + 8 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "serialNumber",
-                needed: 8,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 8];
-        let mut j = 0;
-        while j < 8 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(u64::from_le_bytes(bytes))
+        u64::from_le_bytes(self.buf[offset..][..8].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn serial_number_unchecked(&self) -> u64 {
@@ -780,30 +747,13 @@ impl<'a> CarDecoder<'a> {
             });
         u64::from_le_bytes(bytes)
     }
-    #[inline]
-    pub const fn raw_serial_number(&self) -> u64 {
-        #[allow(unused_unsafe)] unsafe { self.serial_number_unchecked() }
-    }
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
     #[inline]
-    pub const fn model_year(&self) -> Result<u16, sbe_rt::DecodeError> {
+    pub fn model_year(&self) -> u16 {
         let offset = self.pos + 8;
-        if offset + 2 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "modelYear",
-                needed: 2,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(u16::from_le_bytes(bytes))
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn model_year_unchecked(&self) -> u16 {
@@ -815,17 +765,13 @@ impl<'a> CarDecoder<'a> {
             });
         u16::from_le_bytes(bytes)
     }
-    #[inline]
-    pub const fn raw_model_year(&self) -> u16 {
-        #[allow(unused_unsafe)] unsafe { self.model_year_unchecked() }
-    }
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
     #[inline]
     pub const fn available(&self) -> Result<BooleanType, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 11 > self.acting_block_length {
-            return Ok(BooleanType(0 as u8));
+            return Ok(BooleanType::NullVal);
         }
         let offset = self.pos + 10;
         if offset + 1 > self.buf.len() {
@@ -841,7 +787,7 @@ impl<'a> CarDecoder<'a> {
             bytes[j] = self.buf[offset + j];
             j += 1;
         }
-        Ok(BooleanType(u8::from_le_bytes(bytes)))
+        Ok(BooleanType::from_raw(u8::from_le_bytes(bytes)))
     }
     #[inline]
     pub const unsafe fn available_unchecked(&self) -> BooleanType {
@@ -851,13 +797,13 @@ impl<'a> CarDecoder<'a> {
             .copy_from_slice(unsafe {
                 core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
             });
-        BooleanType(u8::from_le_bytes(bytes))
+        BooleanType::from_raw(u8::from_le_bytes(bytes))
     }
-    pub const AVAILABLE_NULL: BooleanType = BooleanType(255_u8);
+    pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     #[inline]
     pub const fn code(&self) -> Result<Model, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 12 > self.acting_block_length {
-            return Ok(Model(0 as u8));
+            return Ok(Model::NullVal);
         }
         let offset = self.pos + 11;
         if offset + 1 > self.buf.len() {
@@ -873,7 +819,7 @@ impl<'a> CarDecoder<'a> {
             bytes[j] = self.buf[offset + j];
             j += 1;
         }
-        Ok(Model(u8::from_le_bytes(bytes)))
+        Ok(Model::from_raw(u8::from_le_bytes(bytes)))
     }
     #[inline]
     pub const unsafe fn code_unchecked(&self) -> Model {
@@ -883,9 +829,9 @@ impl<'a> CarDecoder<'a> {
             .copy_from_slice(unsafe {
                 core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
             });
-        Model(u8::from_le_bytes(bytes))
+        Model::from_raw(u8::from_le_bytes(bytes))
     }
-    pub const CODE_NULL: Model = Model(255_u8);
+    pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
     pub const fn some_numbers(&self) -> Result<[u32; 4], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 28 > self.acting_block_length {
@@ -1027,7 +973,7 @@ impl<'a> CarDecoder<'a> {
     pub const fn discounted_model(&self) -> Model {
         Model::C
     }
-    pub const DISCOUNTED_MODEL_NULL: Model = Model(255_u8);
+    pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
     #[inline]
     pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
         if self.acting_version < 0 || 41 > self.acting_block_length {
@@ -1450,29 +1396,19 @@ impl<'a> CarDecoder<'a> {
 impl<'a> core::fmt::Display for CarDecoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Car {{ ")?;
-        if let Ok(v) = self.serial_number() {
+        {
+            let v = self.serial_number();
             write!(f, "serial_number: {}", v)?;
         }
-        if let Ok(v) = self.model_year() {
+        {
+            let v = self.model_year();
             write!(f, ", model_year: {}", v)?;
         }
-        match self.available() {
-            Ok(e) => {
-                match e.kind() {
-                    Some(k) => write!(f, ", available: BooleanType::{k:?}")?,
-                    None => write!(f, ", available: {}", e.raw())?,
-                }
-            }
-            _ => {}
+        if let Ok(e) = self.available() {
+            write!(f, ", available: BooleanType::{e:?}")?;
         }
-        match self.code() {
-            Ok(e) => {
-                match e.kind() {
-                    Some(k) => write!(f, ", code: Model::{k:?}")?,
-                    None => write!(f, ", code: {}", e.raw())?,
-                }
-            }
-            _ => {}
+        if let Ok(e) = self.code() {
+            write!(f, ", code: Model::{e:?}")?;
         }
         if let Ok(g) = self.fuel_figures() {
             write!(f, ", fuel_figures: {} entries", g.len())?;
@@ -2269,7 +2205,7 @@ impl<'a, State> CarEncoder<'a, State> {
     #[must_use]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.message_start + 8 + 10;
-        let val_bytes = val.0.to_le_bytes();
+        let val_bytes = (val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
@@ -2277,14 +2213,14 @@ impl<'a, State> CarEncoder<'a, State> {
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
         let offset = self.message_start + 8 + 10;
         let enum_val: BooleanType = val.into();
-        let val_bytes = enum_val.0.to_le_bytes();
+        let val_bytes = (enum_val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.message_start + 8 + 11;
-        let val_bytes = val.0.to_le_bytes();
+        let val_bytes = (val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
