@@ -71,10 +71,10 @@ No change needed on the encoder side.
 
 ## Acceptance criteria
 
-- [ ] `{field}_lazy() -> {Type}Decoder` generated for composite fields
+- [x] `{field}_lazy() -> {Type}Decoder` generated for composite fields
   on message decoders and group entry decoders
-- [ ] `{field}() -> {Type}` preserved (eager copy, unchanged)
-- [ ] Lazy variant compiles to a single `get_u16_at` (or equivalent)
+- [x] `{field}() -> {Type}` preserved (eager copy, unchanged)
+- [x] Lazy variant compiles to a single `get_u16_at` (or equivalent)
   for single-field reads — zero copy from buffer
-- [ ] Golden file stability test passes
-- [ ] No regression in baseline test suite
+- [x] Golden file stability test passes
+- [x] No regression in baseline test suite
