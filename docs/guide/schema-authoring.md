@@ -158,7 +158,7 @@ and var-data:
 
 Generated access:
 ```rust
-for entry in quote.orders()?.iter() {
+for entry in quote.orders()? {
     let id = entry.order_id()?;
     let qty = entry.order_qty()?;
 }

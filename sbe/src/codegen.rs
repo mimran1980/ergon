@@ -139,11 +139,16 @@ impl Generator {
         let ir = &schema.ir;
 
         let mut src = String::new();
+        // NOTE: #![allow(...)] inner attributes are emitted inline so the
+        // generated code compiles in Rust editions < 2024.  In edition 2024
+        // inner attributes are NOT permitted after outer items (E0753).
+        // When including this code via include!() in edition 2024, the caller
+        // must suppress these lints at the module level themselves, OR the
+        // codegen must be updated to emit a separate module file (not include!).
         src.push_str(&format!(
             "//! Generated from SBE schema package `{}` id {} version {}.\n\n",
             schema.package, schema.id, schema.version
         ));
-
         src.push_str("#![allow(non_camel_case_types)]\n");
         src.push_str("#![allow(non_snake_case)]\n");
         src.push_str("#![allow(clippy::identity_op)]\n");

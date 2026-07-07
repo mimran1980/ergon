@@ -27,7 +27,7 @@ const MODULE: &str = "car_example";
 #[test]
 fn generated_code_has_lint_suppressions() {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
-    // Crate-level allow attributes — NOT expect, because the exact set of
+    // Item-level allow attributes — NOT expect, because the exact set of
     // lints that fire depends on the schema.  Using #[expect] would produce
     // false-positive stale-suppression warnings when a schema doesn'''t trigger
     // the suppressed lint, breaking CI for end users.

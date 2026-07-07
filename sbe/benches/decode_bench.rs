@@ -70,10 +70,10 @@ fn bench_field_access_raw(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("decode/field/raw");
     group.bench_function("raw_serial_number", |b| {
-        b.iter(|| black_box(car.raw_serial_number()));
+        b.iter(|| black_box(car.serial_number()));
     });
     group.bench_function("raw_model_year", |b| {
-        b.iter(|| black_box(car.raw_model_year()));
+        b.iter(|| black_box(car.model_year()));
     });
     group.bench_function("raw_engine", |b| {
         b.iter(|| black_box(unsafe { car.engine_unchecked() }));
@@ -111,8 +111,8 @@ fn bench_full_decode_unchecked(c: &mut Criterion) {
     group.bench_function("car_full", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
-            let _ = car.raw_serial_number();
-            let _ = car.raw_model_year();
+            let _ = car.serial_number();
+            let _ = car.model_year();
             let _ = unsafe { car.available_unchecked() };
             let _ = unsafe { car.code_unchecked() };
             let _ = car.raw_some_numbers();
@@ -149,8 +149,8 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
 
     group.bench_function("unchecked_all_fields", |b| {
         b.iter(|| {
-            let _ = car.raw_serial_number();
-            let _ = car.raw_model_year();
+            let _ = car.serial_number();
+            let _ = car.model_year();
             let _ = unsafe { car.available_unchecked() };
             let _ = unsafe { car.code_unchecked() };
             let _ = car.raw_some_numbers();
@@ -184,8 +184,8 @@ fn bench_hft_tight_loop(c: &mut Criterion) {
             let mut sum_year: u64 = 0;
             while pos + msg_len <= end {
                 let car = CarDecoder::try_from(black_box(&batch[pos..pos + msg_len])).unwrap();
-                sum_serial += car.raw_serial_number();
-                sum_year += car.raw_model_year() as u64;
+                sum_serial += car.serial_number();
+                sum_year += car.model_year() as u64;
                 pos += msg_len;
             }
             black_box((sum_serial, sum_year));
@@ -215,7 +215,7 @@ fn bench_hft_field_stride(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("model_year", |b| {
-        b.iter(|| black_box(car.raw_model_year()));
+        b.iter(|| black_box(car.model_year()));
     });
 
     group.bench_function("engine_capacity", |b| {
@@ -230,7 +230,7 @@ fn bench_hft_field_stride(c: &mut Criterion) {
 
         group.bench_function("all_three_strided", |b| {
             b.iter(|| {
-                let m = car.raw_model_year();
+                let m = car.model_year();
                 let e = engine.capacity();
                 let s = entry.raw_speed();
                 black_box((m, e, s));
@@ -261,8 +261,8 @@ fn bench_hft_alloc_free(c: &mut Criterion) {
     group.bench_function("decode_from_stack", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(&stack_buf[..msg_len])).unwrap();
-            let s = car.raw_serial_number();
-            let y = car.raw_model_year();
+            let s = car.serial_number();
+            let y = car.model_year();
             black_box((s, y));
         });
     });

@@ -5,7 +5,7 @@ SBE schema, generating code, and using the generated decoder and encoder.
 
 ## Prerequisites
 
-- Rust 1.85 or later (edition 2024)
+- Rust 1.88 or later (edition 2024)
 - An SBE XML schema (see [schema-authoring.md](schema-authoring.md) or use one
   from the [official SBE examples](../../simple-binary-encoding/sbe-samples/src/main/resources/))
 

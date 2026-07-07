@@ -65,8 +65,8 @@ include!(concat!(env!("OUT_DIR"), "/my_messages.rs"));
 
 fn decode_message(buf: &[u8]) -> Result<(), sbe_rt::DecodeError> {
     let car = CarDecoder::wrap_and_apply_header(buf, 0)?;
-    let serial = car.serial_number()?;          // Result<u64>
-    let year = car.model_year()?;               // Result<u16>
+    let serial = car.serial_number();           // u64 -- infallible
+    let year = car.model_year();                // u16 -- infallible
     println!("Car #{} ({})", serial, year);
     Ok(())
 }
