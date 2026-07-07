@@ -759,7 +759,7 @@ fn parse_enum(
 
     enum_tokens.push(structural(&name, Signal::EndEnum));
 
-    registry.registry.insert(name.clone(), enum_tokens.clone());
+    registry.registry.insert(name, enum_tokens.clone());
     tokens.extend(enum_tokens);
     Ok(())
 }
@@ -816,7 +816,7 @@ fn parse_set(
 
     set_tokens.push(structural(&name, Signal::EndSet));
 
-    registry.registry.insert(name.clone(), set_tokens.clone());
+    registry.registry.insert(name, set_tokens.clone());
     tokens.extend(set_tokens);
     Ok(())
 }
