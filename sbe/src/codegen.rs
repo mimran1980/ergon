@@ -1316,28 +1316,37 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
         )
     });
 
+    let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+    let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
+
     let derives = if has_float {
-        "Clone, Copy, Debug, PartialEq, PartialOrd"
+        quote::quote! { Clone, Copy, Debug, PartialEq, PartialOrd }
     } else {
-        "Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash"
+        quote::quote! { Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash }
     };
 
-    src.push_str(&format!(
-        "#[derive({})]\n\
-         #[repr(transparent)]\n\
-         pub struct {}(pub [u8; {}]);\n\n",
-        derives, name, size
-    ));
-
-    src.push_str(&format!("impl {} {{\n", name));
     let order_suffix = match byte_order {
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
     };
+    let from_method = syn::Ident::new(
+        &format!("from_{order_suffix}_bytes"),
+        proc_macro2::Span::call_site(),
+    );
+    let to_method = syn::Ident::new(
+        &format!("to_{order_suffix}_bytes"),
+        proc_macro2::Span::call_site(),
+    );
 
-    // Getters for members
+    let mut getters = proc_macro2::TokenStream::new();
+    let mut ctor_params = Vec::new();
+    let mut ctor_body = proc_macro2::TokenStream::new();
+
     for m in &members {
         let field_name = to_snake_case(&m.name);
+        let field_ident = syn::Ident::new(&field_name, proc_macro2::Span::call_site());
+        let offset_lit = syn::LitInt::new(&m.offset.to_string(), proc_macro2::Span::call_site());
+
         match &m.member_type {
             MemberType::Primitive {
                 prim,
@@ -1345,71 +1354,100 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 presence,
                 constant_value,
             } => {
-                let r_type = rust_type(*prim);
+                let r_type_str = rust_type(*prim);
+                let r_type_ty: syn::Type = syn::parse_str(r_type_str).unwrap();
                 let prim_size = prim.size();
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+
                 if *presence == Presence::Constant {
                     if let Some(val) = constant_value {
                         if *prim == PrimitiveType::Char && val.len() > 1 {
-                            src.push_str(&format!(
-                                "#[inline]\n    pub const fn {}(&self) -> &'static str {{\n\
-                                         \"{}\"\n\
-                                     }}\n\n",
-                                field_name, val
-                            ));
+                            let val_lit =
+                                syn::LitStr::new(val, proc_macro2::Span::call_site());
+                            getters.extend(quote::quote! {
+                                #[inline]
+                                pub const fn #field_ident(&self) -> &'static str {
+                                    #val_lit
+                                }
+                            });
                         } else {
-                            let expr = constant_value_expr(*prim, val);
-                            src.push_str(&format!(
-                                "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                                         {}\n\
-                                     }}\n\n",
-                                field_name, r_type, expr
-                            ));
+                            let expr_str = constant_value_expr(*prim, val);
+                            let expr: syn::Expr = syn::parse_str(&expr_str).unwrap();
+                            getters.extend(quote::quote! {
+                                #[inline]
+                                pub const fn #field_ident(&self) -> #r_type_ty {
+                                    #expr
+                                }
+                            });
                         }
                     }
-                } else if let Some(len) = length {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const fn {}(&self) -> [{}; {}] {{\n\
-                                 let mut res = [0 as {}; {}];\n\
-                                 let mut idx = 0;\n\
-                                 while idx < {} {{\n\
-                                     let offset = {} + idx * {};\n\
-                                     let mut bytes = [0u8; {}];\n\
-                                     let mut j = 0;\n\
-                                     while j < {} {{\n\
-                                         bytes[j] = self.0[offset + j];\n\
-                                         j += 1;\n\
-                                     }}\n\
-                                     res[idx] = {}::from_{}_bytes(bytes);\n\
-                                     idx += 1;\n\
-                                 }}\n\
-                                 res\n\
-                             }}\n\n",
-                        field_name,
-                        r_type,
-                        len,
-                        r_type,
-                        len,
-                        len,
-                        m.offset,
-                        prim_size,
-                        prim_size,
-                        prim_size,
-                        r_type,
-                        order_suffix
-                    ));
+                    continue; // no ctor param for constants
+                }
+
+                if let Some(len) = length {
+                    let len_lit =
+                        syn::LitInt::new(&len.to_string(), proc_macro2::Span::call_site());
+                    let array_ty: syn::Type =
+                        syn::parse_str(&format!("[{}; {}]", r_type_str, len)).unwrap();
+                    ctor_params.push(quote::quote! { #field_ident: #array_ty });
+
+                    getters.extend(quote::quote! {
+                        #[inline]
+                        pub const fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
+                            let mut res = [0 as #r_type_ty; #len_lit];
+                            let mut idx = 0;
+                            while idx < #len_lit {
+                                let offset = #offset_lit + idx * #prim_size_lit;
+                                let mut bytes = [0u8; #prim_size_lit];
+                                let mut j = 0;
+                                while j < #prim_size_lit {
+                                    bytes[j] = self.0[offset + j];
+                                    j += 1;
+                                }
+                                res[idx] = #r_type_ty::#from_method(bytes);
+                                idx += 1;
+                            }
+                            res
+                        }
+                    });
+
+                    ctor_body.extend(quote::quote! {
+                        let mut idx = 0;
+                        while idx < #len_lit {
+                            let val_bytes = #field_ident[idx].#to_method();
+                            let mut j = 0;
+                            while j < #prim_size_lit {
+                                bytes[#offset_lit + idx * #prim_size_lit + j] = val_bytes[j];
+                                j += 1;
+                            }
+                            idx += 1;
+                        }
+                    });
                 } else {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                                 let mut bytes = [0u8; {}];\n\
-                                 let mut j = 0;\n\
-                                 while j < {} {{\n\
-                                     bytes[j] = self.0[{} + j];\n\
-                                     j += 1;\n\
-                                 }}\n\
-                                 {}::from_{}_bytes(bytes)\n\
-                             }}\n\n",
-                        field_name, r_type, prim_size, prim_size, m.offset, r_type, order_suffix
-                    ));
+                    ctor_params.push(quote::quote! { #field_ident: #r_type_ty });
+
+                    getters.extend(quote::quote! {
+                        #[inline]
+                        pub const fn #field_ident(&self) -> #r_type_ty {
+                            let mut bytes = [0u8; #prim_size_lit];
+                            let mut j = 0;
+                            while j < #prim_size_lit {
+                                bytes[j] = self.0[#offset_lit + j];
+                                j += 1;
+                            }
+                            #r_type_ty::#from_method(bytes)
+                        }
+                    });
+
+                    ctor_body.extend(quote::quote! {
+                        let val_bytes = #field_ident.#to_method();
+                        let mut j = 0;
+                        while j < #prim_size_lit {
+                            bytes[#offset_lit + j] = val_bytes[j];
+                            j += 1;
+                        }
+                    });
                 }
             }
             MemberType::Composite {
@@ -1417,200 +1455,129 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 size: comp_size,
             } => {
                 let target_name = to_pascal_case(comp_name);
-                src.push_str(&format!(
-                    "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.0[{} + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             {}(bytes)\n\
-                         }}\n\n",
-                    field_name, target_name, comp_size, comp_size, m.offset, target_name
-                ));
+                let target_ident =
+                    syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let comp_size_lit =
+                    syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
+
+                ctor_params.push(quote::quote! { #field_ident: #target_ident });
+
+                getters.extend(quote::quote! {
+                    #[inline]
+                    pub const fn #field_ident(&self) -> #target_ident {
+                        let mut bytes = [0u8; #comp_size_lit];
+                        let mut j = 0;
+                        while j < #comp_size_lit {
+                            bytes[j] = self.0[#offset_lit + j];
+                            j += 1;
+                        }
+                        #target_ident(bytes)
+                    }
+                });
+
+                ctor_body.extend(quote::quote! {
+                    let mut j = 0;
+                    while j < #comp_size_lit {
+                        bytes[#offset_lit + j] = #field_ident.0[j];
+                        j += 1;
+                    }
+                });
             }
             MemberType::Enum {
                 name: enum_name,
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(enum_name);
+                let target_ident =
+                    syn::Ident::new(&target_name, proc_macro2::Span::call_site());
                 let r_type = rust_type(*encoding_type);
+                let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
                 let prim_size = encoding_type.size();
-                src.push_str(&format!(
-                    "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.0[{} + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             {}::from_raw({}::from_{}_bytes(bytes))\n\
-                         }}\n\n",
-                    field_name,
-                    target_name,
-                    prim_size,
-                    prim_size,
-                    m.offset,
-                    target_name,
-                    r_type,
-                    order_suffix
-                ));
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+
+                ctor_params.push(quote::quote! { #field_ident: #target_ident });
+
+                getters.extend(quote::quote! {
+                    #[inline]
+                    pub const fn #field_ident(&self) -> #target_ident {
+                        let mut bytes = [0u8; #prim_size_lit];
+                        let mut j = 0;
+                        while j < #prim_size_lit {
+                            bytes[j] = self.0[#offset_lit + j];
+                            j += 1;
+                        }
+                        #target_ident::from_raw(#r_type_ty::#from_method(bytes))
+                    }
+                });
+
+                ctor_body.extend(quote::quote! {
+                    let val_bytes = (#field_ident as #r_type_ty).#to_method();
+                    let mut j = 0;
+                    while j < #prim_size_lit {
+                        bytes[#offset_lit + j] = val_bytes[j];
+                        j += 1;
+                    }
+                });
             }
             MemberType::Set {
                 name: set_name,
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(set_name);
+                let target_ident =
+                    syn::Ident::new(&target_name, proc_macro2::Span::call_site());
                 let r_type = rust_type(*encoding_type);
+                let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
                 let prim_size = encoding_type.size();
-                src.push_str(&format!(
-                    "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.0[{} + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             {}({}::from_{}_bytes(bytes))\n\
-                         }}\n\n",
-                    field_name,
-                    target_name,
-                    prim_size,
-                    prim_size,
-                    m.offset,
-                    target_name,
-                    r_type,
-                    order_suffix
-                ));
-            }
-        }
-    }
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
-    // Constructor `new(...)`
-    src.push_str("    pub const fn new(");
-    let mut params = Vec::new();
-    for m in &members {
-        let field_name = to_snake_case(&m.name);
-        match &m.member_type {
-            MemberType::Primitive {
-                prim,
-                length,
-                presence,
-                ..
-            } => {
-                if *presence != Presence::Constant {
-                    let r_type = rust_type(*prim);
-                    if let Some(len) = length {
-                        params.push(format!("{}: [{}; {}]", field_name, r_type, len));
-                    } else {
-                        params.push(format!("{}: {}", field_name, r_type));
+                ctor_params.push(quote::quote! { #field_ident: #target_ident });
+
+                getters.extend(quote::quote! {
+                    #[inline]
+                    pub const fn #field_ident(&self) -> #target_ident {
+                        let mut bytes = [0u8; #prim_size_lit];
+                        let mut j = 0;
+                        while j < #prim_size_lit {
+                            bytes[j] = self.0[#offset_lit + j];
+                            j += 1;
+                        }
+                        #target_ident(#r_type_ty::#from_method(bytes))
                     }
-                }
-            }
-            MemberType::Composite {
-                name: comp_name, ..
-            } => {
-                params.push(format!("{}: {}", field_name, to_pascal_case(comp_name)));
-            }
-            MemberType::Enum {
-                name: enum_name, ..
-            } => {
-                params.push(format!("{}: {}", field_name, to_pascal_case(enum_name)));
-            }
-            MemberType::Set { name: set_name, .. } => {
-                params.push(format!("{}: {}", field_name, to_pascal_case(set_name)));
-            }
-        }
-    }
-    src.push_str(&params.join(", "));
-    src.push_str(") -> Self {\n");
-    src.push_str(&format!("        let mut bytes = [0u8; {}];\n", size));
+                });
 
-    for m in &members {
-        let field_name = to_snake_case(&m.name);
-        match &m.member_type {
-            MemberType::Primitive {
-                prim,
-                length,
-                presence,
-                constant_value: _,
-            } => {
-                // Constants don't occupy wire space; their accessors return
-                // hardcoded values, so skip writing them into the buffer.
-                if *presence == Presence::Constant {
-                    continue;
-                }
-                let prim_size = prim.size();
-                if let Some(len) = length {
-                    src.push_str(&format!(
-                        "        let mut idx = 0;\n\
-                                 while idx < {} {{\n\
-                                     let val_bytes = {}[idx].to_{}_bytes();\n\
-                                     let mut j = 0;\n\
-                                     while j < {} {{\n\
-                                         bytes[{} + idx * {} + j] = val_bytes[j];\n\
-                                         j += 1;\n\
-                                     }}\n\
-                                     idx += 1;\n\
-                                 }}\n",
-                        len, field_name, order_suffix, prim_size, m.offset, prim_size
-                    ));
-                } else {
-                    src.push_str(&format!(
-                        "        let val_bytes = {}.to_{}_bytes();\n\
-                                 let mut j = 0;\n\
-                                 while j < {} {{\n\
-                                     bytes[{} + j] = val_bytes[j];\n\
-                                     j += 1;\n\
-                                 }}\n",
-                        field_name, order_suffix, prim_size, m.offset
-                    ));
-                }
-            }
-            MemberType::Composite {
-                size: comp_size, ..
-            } => {
-                src.push_str(&format!(
-                    "        let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[{} + j] = {}.0[j];\n\
-                                 j += 1;\n\
-                             }}\n",
-                    comp_size, m.offset, field_name
-                ));
-            }
-            MemberType::Enum { encoding_type, .. } => {
-                let r_type = rust_type(*encoding_type);
-                let prim_size = encoding_type.size();
-                src.push_str(&format!(
-                    "        let val_bytes = ({field_name} as {r_type}).to_{order_suffix}_bytes();\n\
-                             let mut j = 0;\n\
-                             while j < {prim_size} {{\n\
-                                 bytes[{offset} + j] = val_bytes[j];\n\
-                                 j += 1;\n\
-                             }}\n",
-                    r_type = r_type, order_suffix = order_suffix,
-                    field_name = field_name, prim_size = prim_size, offset = m.offset
-                ));
-            }
-            MemberType::Set { encoding_type, .. } => {
-                let prim_size = encoding_type.size();
-                src.push_str(&format!(
-                    "        let val_bytes = {}.0.to_{}_bytes();\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[{} + j] = val_bytes[j];\n\
-                                 j += 1;\n\
-                             }}\n",
-                    field_name, order_suffix, prim_size, m.offset
-                ));
+                ctor_body.extend(quote::quote! {
+                    let val_bytes = #field_ident.0.#to_method();
+                    let mut j = 0;
+                    while j < #prim_size_lit {
+                        bytes[#offset_lit + j] = val_bytes[j];
+                        j += 1;
+                    }
+                });
             }
         }
     }
 
-    src.push_str("        Self(bytes)\n    }\n");
-    src.push_str("}\n\n");
+    // ponytail: refactor ctor_params into proper syn::FnArg when polishing
+    let ts = quote::quote! {
+        #[derive(#derives)]
+        #[repr(transparent)]
+        pub struct #name_ident(pub [u8; #size_lit]);
+
+        impl #name_ident {
+            #getters
+
+            pub const fn new(#(#ctor_params),*) -> Self {
+                let mut bytes = [0u8; #size_lit];
+                #ctor_body
+                Self(bytes)
+            }
+        }
+    };
+    src.push_str(&ts.to_string());
+    src.push('\n');
 }
 
 fn get_dimension_info(
