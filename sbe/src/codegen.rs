@@ -1772,10 +1772,10 @@ fn generate_message_decoder(
                  pub const SCHEMA_ID: u16 = {};\n\
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
-                 pub const BLOCK_LENGTH: usize = {};\n\
+                 pub const BLOCK_LENGTH: usize = {};\n                 const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == {});\n\
                  /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
                  pub const ENCODED_LENGTH: usize = {};\n                 const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
-            name, schema_id, schema_version, msg.id, block_length, encoded_length,
+            name, schema_id, schema_version, msg.id, block_length, block_length, encoded_length,
         ));
     } else {
         const STACK_LIMIT: usize = 65536;
@@ -1791,10 +1791,10 @@ fn generate_message_decoder(
                  pub const SCHEMA_ID: u16 = {};\n\
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
-                 pub const BLOCK_LENGTH: usize = {};\n\
+                 pub const BLOCK_LENGTH: usize = {};\n                 const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == {});\n\
                  {}\
                  pub const MAX_ENCODED_LENGTH: usize = {};\n                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
-            name, schema_id, schema_version, msg.id, block_length, max_doc, max_encoded_capped
+            name, schema_id, schema_version, msg.id, block_length, block_length, max_doc, max_encoded_capped
         ));
     }
     src.push_str(&format!(
@@ -3388,10 +3388,10 @@ fn generate_message_encoder(
             "    pub const SCHEMA_ID: u16 = {};\n\
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
-                 pub const BLOCK_LENGTH: usize = {};\n\
+                 pub const BLOCK_LENGTH: usize = {};\n                 const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == {});\n\
                  /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
                  pub const ENCODED_LENGTH: usize = {};\n                 const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
-            schema_id, schema_version, msg.id, block_length, encoded_length
+            schema_id, schema_version, msg.id, block_length, block_length, encoded_length
         ));
     } else {
         const STACK_LIMIT: usize = 65536;
@@ -3406,10 +3406,10 @@ fn generate_message_encoder(
             "    pub const SCHEMA_ID: u16 = {};\n\
                  pub const SCHEMA_VERSION: u16 = {};\n\
                  pub const TEMPLATE_ID: u16 = {};\n\
-                 pub const BLOCK_LENGTH: usize = {};\n\
+                 pub const BLOCK_LENGTH: usize = {};\n                 const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == {});\n\
                  {}\
                  pub const MAX_ENCODED_LENGTH: usize = {};\n                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
-            schema_id, schema_version, msg.id, block_length, max_doc, max_encoded_capped
+            schema_id, schema_version, msg.id, block_length, block_length, max_doc, max_encoded_capped
         ));
     }
     // Pre-compute HEADER_TEMPLATE bytes at codegen time.

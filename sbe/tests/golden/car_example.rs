@@ -677,6 +677,7 @@ impl<'a> CarDecoder<'a> {
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 41;
+    const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 41);
     /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
@@ -2051,6 +2052,7 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 41;
+    const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 41);
     /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);

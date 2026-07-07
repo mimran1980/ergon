@@ -525,6 +525,10 @@ fn generated_code_has_const_assertions() {
         ),
         "generated code must have a compile-time assertion for GROUP_DIM_TEMPLATE length"
     );
+    assert!(
+        src.contains("const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == "),
+        "generated code must have a compile-time assertion for BLOCK_LENGTH == N"
+    );
 }
 
 // ── BooleanType support (todo 58) ─────────────────────────────────────
