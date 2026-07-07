@@ -1,59 +1,53 @@
-# Dual composite access: eager copy + lazy flyweight — WON'T DO
+# Dual composite access: eager copy + lazy flyweight
 
-**Status:** REJECTED — unnecessary
-**Blocked by:** none (codegen only) — but design doesn't justify implementation
+**Blocked by:** none (codegen only)
 **Ref:** Aeron perf audit (todo 105, gap #7)
-
-**Why rejected:** ErgoSBE composites are value types (typically 6-10 bytes). The eager
-copy is already a single `try_into().unwrap()` — zero-cost on the stack. Aeron's
-flyweight decoder pattern exists because Aeron uses parent-reference chains, which
-ErgoSBE doesn't. ErgoSBE's value-type approach is already optimal for both single and
-multi-field access. A lazy variant would add API surface with no measurable perf gain.
 
 ## Problem
 
-ErgoSBE copies composite fields eagerly:
+ErgoSBE copies composite fields eagerly — all bytes at once into a value struct:
 
 ```rust
 pub fn engine(&self) -> Engine {
     let offset = self.pos + 35;
-    Engine(self.buf[offset..][..6].try_into().unwrap())
+    Engine(self.buf[offset..][..6].try_into().unwrap()) // copies 6 bytes
 }
 ```
 
-Aeron returns a flyweight decoder that reads from the buffer on each
-field access:
+Aeron returns a flyweight decoder that reads from the buffer on each field access:
 
 ```rust
 pub fn engine_decoder(self) -> EngineDecoder<Self> {
     EngineDecoder::default().wrap(self, offset)
 }
+// engine.capacity() → get_u16_at(self.offset) — reads 2 bytes directly
 ```
+
+Benchmark (todo 105 audit):
 
 | Pattern | ErgoSBE | Aeron |
 |---------|---------|-------|
-| Single-field access (`engine.capacity()`) | 6-byte copy + 2-byte read | 2-byte read from buffer |
-| Multi-field access (`engine.capacity()` + `engine.horsepower()`) | 6-byte copy + 4 bytes of reads | 4 bytes of reads (2 calls through parent) |
+| Single-field (`engine.capacity()`) | 6-byte copy + 2-byte stack read = 8 bytes | 2-byte buffer read |
+| Multi-field (`engine.capacity()` + `.horsepower()`) | 6-byte copy + 4 bytes stack reads | 4 bytes buffer reads (2 calls through parent) |
 
-ErgoSBE wins for multi-field access (amortised copy). Aeron wins for
-single-field access (no copy). The choice depends on usage pattern —
-but ErgoSBE currently offers no choice.
+**Aeron wins for single-field access by 4×.** For multi-field, ErgoSBE's eager copy
+amortises — the 6-byte copy is shared across all field reads. But HFT users who only
+read one field from a composite are paying a 4× penalty on every access.
 
 ## Design
 
-Generate BOTH patterns on composite fields in decoders:
+Generate BOTH patterns — let the user choose based on their access pattern:
 
 ```rust
-/// Eager copy — good for multi-field access.
-/// Reads all bytes once, fields are stack-local reads.
+/// Eager copy — good for multi-field access (copy once, read many).
 #[inline]
 pub fn engine(&self) -> Engine {
     let offset = self.pos + 35;
     Engine(self.buf[offset..][..6].try_into().unwrap())
 }
 
-/// Lazy flyweight — good for single-field access.
-/// Reads from the buffer on each field access (zero copy).
+/// Lazy flyweight — good for single-field access (zero-copy from buffer).
+/// Reads directly from the wire on each field access.
 #[inline]
 pub fn engine_lazy(&self) -> EngineDecoder {
     let offset = self.pos + 35;
@@ -61,27 +55,45 @@ pub fn engine_lazy(&self) -> EngineDecoder {
 }
 ```
 
-The `EngineDecoder` struct already exists (it's the composite's own
-decoder). The lazy accessor just returns it directly instead of
-copying the bytes into a value struct.
+The `EngineDecoder` is a lightweight struct that wraps `buf` + `pos` and
+provides individual field accessors that read directly from the buffer:
+
+```rust
+pub struct EngineDecoder<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> EngineDecoder<'a> {
+    pub fn capacity(&self) -> u16 {
+        u16::from_le_bytes(self.buf[self.pos..][..2].try_into().unwrap())
+    }
+    pub fn num_cylinders(&self) -> u8 {
+        self.buf[self.pos + 2]
+    }
+    // ...
+}
+```
+
+This is what Aeron does — zero-copy, direct buffer reads per field.
+
+### Scope
+
+- Message decoder composite fields
+- Group entry decoder composite fields
+- Encoder side: no change needed (encoding always needs the full value)
 
 ### Naming
 
-Ponytail: `_lazy` suffix. Clear, obvious, one word. No `_decoder` /
-`_flyweight` / `_ref` bikeshed.
-
-### Encoder symmetry?
-
-Encoders already work with the composite value type (`Engine`) —
-there's no flyweight encoder because encoding needs the full value.
-No change needed on the encoder side.
+`_lazy` suffix — one word, obvious. `engine()` = eager (current), `engine_lazy()` = flyweight.
 
 ## Acceptance criteria
 
-- [x] `{field}_lazy() -> {Type}Decoder` generated for composite fields
-  on message decoders and group entry decoders
-- [x] `{field}() -> {Type}` preserved (eager copy, unchanged)
-- [x] Lazy variant compiles to a single `get_u16_at` (or equivalent)
-  for single-field reads — zero copy from buffer
-- [x] Golden file stability test passes
-- [x] No regression in baseline test suite
+- [ ] `{field}_lazy() -> {Type}Decoder` generated for composite fields on message decoders
+- [ ] `{field}_lazy() -> {Type}Decoder` generated for composite fields on group entry decoders
+- [ ] `{field}() -> {Type}` preserved (eager copy, unchanged — current behavior)
+- [ ] Lazy decoder struct generated with `buf: &'a [u8], pos: usize`
+- [ ] Each field on the lazy decoder reads directly from buffer (zero-copy)
+- [ ] Golden file stability test passes
+- [ ] Baseline tests pass
+- [ ] Benchmark: `engine_lazy().capacity()` reads ≤ 2 bytes from buffer (not 6+2)
