@@ -2370,7 +2370,7 @@ fn generate_message_decoder(
                      return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n\
                          field: \"{}\",\n\
                          offset,\n\
-                         length: len,\n\
+                         length: len as u32,\n\
                      }});\n\
                  }}\n\
                  offset = data_end;\n\
@@ -2550,8 +2550,10 @@ fn generate_group_decoder(
         field_name = g.name
     ));
 
+    // Expose fast-path as_chunks if entry has no tail
+    let total_tail = g.groups.len() + g.var_data.len();
     // Group navigation methods: skip_n, nth, rewind, remaining
-    src.push_str(&format!(
+    src.push_str(
         "    #[inline]\n    pub const fn remaining(&self) -> usize {{\n\
                  self.count\n\
              }}\n\n\
@@ -2559,46 +2561,91 @@ fn generate_group_decoder(
                  self.pos = self.start;\n\
                  self.count = self.total;\n\
                  self\n\
-             }}\n\n\
-             #[inline]\n    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {{\n\
-                 if n > self.count {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{\n\
+             }}\n\n",
+    );
+
+    if total_tail == 0 {
+        src.push_str(&format!(
+            "#[inline]\n    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {{\
+\
+                 if n > self.count {{\
+\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{\
+\
                          field: \"{field_name}\",\n\
-                         needed: n * Self::ENTRY_BLOCK_LENGTH,\n\
-                         available: self.count * Self::ENTRY_BLOCK_LENGTH,\n\
+                         needed: n * Self::ENTRY_BLOCK_LENGTH,\
+\
+                         available: self.count * Self::ENTRY_BLOCK_LENGTH,\
+\
                      }});\n\
                  }}\n\
-                 for _ in 0..n {{\n\
+                 self.pos += n * Self::ENTRY_BLOCK_LENGTH;\n\
+                 self.count -= n;\n\
+                 Ok(())\
+\
+             }}\n\n",
+            field_name = g.name
+        ));
+    } else {
+        src.push_str(&format!(
+            "#[inline]\n    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {{\
+\
+                 if n > self.count {{\
+\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{\
+\
+                         field: \"{field_name}\",\n\
+                         needed: n * Self::ENTRY_BLOCK_LENGTH,\
+\
+                         available: self.count * Self::ENTRY_BLOCK_LENGTH,\
+\
+                     }});\n\
+                 }}\n\
+                 for _ in 0..n {{\
+\
                      let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
                      self.pos += entry.encoded_length()?;\n\
                      self.count -= 1;\n\
                  }}\n\
-                 Ok(())\n\
-             }}\n\n\
-             #[inline]\n    pub fn nth(&self, idx: usize) -> Result<{}EntryDecoder<'a>, sbe_rt::DecodeError> {{\n\
-                 if idx >= self.total {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{\n\
-                         field: \"{field_name}\",\n\
-                         needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,\n\
-                         available: self.total * Self::ENTRY_BLOCK_LENGTH,\n\
-                     }});\n\
-                 }}\n\
-                 let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;\n\
-                 if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{\n\
-                         field: \"{field_name}\",\n\
-                         needed: Self::ENTRY_BLOCK_LENGTH,\n\
-                         available: self.buf.len() - offset,\n\
-                     }});\n\
-                 }}\n\
-                 Ok({}EntryDecoder::wrap(self.buf, offset, self.acting_version))\n\
+                 Ok(())\
+\
              }}\n\n",
-        name, name, name,
+            name,
+            field_name = g.name
+        ));
+    }
+
+    src.push_str(&format!(
+        "#[inline]\n    pub fn nth(&self, idx: usize) -> Result<{}EntryDecoder<'a>, sbe_rt::DecodeError> {{\
+\
+             if idx >= self.total {{\
+\
+                 return Err(sbe_rt::DecodeError::BufferTooShort {{\
+\
+                     field: \"{field_name}\",\n\
+                     needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,\
+\
+                     available: self.total * Self::ENTRY_BLOCK_LENGTH,\
+\
+                 }});\n\
+             }}\n\
+             let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;\n\
+             if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {{\
+\
+                 return Err(sbe_rt::DecodeError::BufferTooShort {{\
+\
+                     field: \"{field_name}\",\n\
+                     needed: Self::ENTRY_BLOCK_LENGTH,\
+\
+                     available: self.buf.len() - offset,\
+\
+                 }});\n\
+             }}\n\
+             Ok({}EntryDecoder::wrap(self.buf, offset, self.acting_version))\n\
+         }}\n\n",
+        name, name,
         field_name = g.name
     ));
-
-    // Expose fast-path as_chunks if entry has no tail
-    let total_tail = g.groups.len() + g.var_data.len();
     if total_tail == 0 {
         src.push_str(&format!(
             "#[inline]\n    pub fn as_chunks(&self) -> Result<&'a [[u8; {}]], sbe_rt::DecodeError> {{\n\
@@ -2660,34 +2707,73 @@ fn generate_group_decoder(
     src.push_str("}\n\n");
 
     // Iterator implementation
-    src.push_str(&format!(
-        "impl<'a> Iterator for {}Decoder<'a> {{\n\
-             type Item = {}EntryDecoder<'a>;\n\
-             fn next(&mut self) -> Option<Self::Item> {{\n\
-                 if self.count == 0 {{\n\
-                     return None;\n\
-                 }}\n\
-                 let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
-                 let size = match entry.encoded_length() {{\n\
-                     Ok(s) => s,\n\
-                     Err(_) => {{\n\
-                         self.count = 0;\n\
-                         return Some(entry);\n\
+    if total_tail == 0 {
+        // Fast path: entries are fixed-size, advance by ENTRY_BLOCK_LENGTH
+        src.push_str(&format!(
+            "impl<'a> Iterator for {}Decoder<'a> {{\
+\
+                 type Item = {}EntryDecoder<'a>;\n\
+                 fn next(&mut self) -> Option<Self::Item> {{\
+\
+                     if self.count == 0 {{\
+\
+                         return None;\n\
                      }}\n\
-                 }};\n\
-                 self.pos += size;\n\
-                 self.count -= 1;\n\
-                 Some(entry)\n\
-             }}\n\
-         }}\n\n\
-         impl<'a> ExactSizeIterator for {}Decoder<'a> {{\n\
-             fn len(&self) -> usize {{\n\
-                 self.count\n\
-             }}\n\
-         }}\n\n",
-        name, name, name, name
-    ));
-
+                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
+                     self.pos += Self::ENTRY_BLOCK_LENGTH;\n\
+                     self.count -= 1;\n\
+                     Some(entry)\
+\
+                 }}\n\
+             }}\n\n\
+             impl<'a> ExactSizeIterator for {}Decoder<'a> {{\
+\
+                 fn len(&self) -> usize {{\
+\
+                     self.count\n\
+                 }}\n\
+             }}\n\n",
+            name, name, name, name
+        ));
+    } else {
+        // Safe path: entries have var-data tails, compute encoded length per entry
+        src.push_str(&format!(
+            "impl<'a> Iterator for {}Decoder<'a> {{\
+\
+                 type Item = {}EntryDecoder<'a>;\n\
+                 fn next(&mut self) -> Option<Self::Item> {{\
+\
+                     if self.count == 0 {{\
+\
+                         return None;\n\
+                     }}\n\
+                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
+                     let size = match entry.encoded_length() {{\
+\
+                         Ok(s) => s,\
+\
+                         Err(_) => {{\
+\
+                             self.count = 0;\n\
+                             return Some(entry);\n\
+                         }}\n\
+                     }};\n\
+                     self.pos += size;\n\
+                     self.count -= 1;\n\
+                     Some(entry)\
+\
+                 }}\n\
+             }}\n\n\
+             impl<'a> ExactSizeIterator for {}Decoder<'a> {{\
+\
+                 fn len(&self) -> usize {{\
+\
+                     self.count\n\
+                 }}\n\
+             }}\n\n",
+            name, name, name, name
+        ));
+    }
     // Entry Decoder Struct
     src.push_str(&format!(
         "pub struct {}EntryDecoder<'a> {{\n\
@@ -3524,7 +3610,7 @@ fn generate_message_encoder(
                          let mut group = {}Encoder::wrap(self.buf, self.pos + {}, count);\n\
                          f(&mut group);\n\
                          Ok({}Encoder {{\n\
-                             buf: self.buf,\n\
+                             buf: group.buf,\n\
                              message_start: self.message_start,\n\
                              pos: group.pos,\n\
                              _phantom: core::marker::PhantomData,\n\
@@ -3727,9 +3813,9 @@ fn generate_group_encoder(
              #[inline]\n             pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {{\n\
                  Self {{ buf, pos, count, written: 0 }}\n\
              }}\n\n\
-             #[must_use]\n             pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>\n\
+             #[must_use]\n             pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>\n\
              where\n\
-                 F: FnOnce(&mut {}EntryEncoder<'a>),\n\
+                 F: FnOnce(&mut {}EntryEncoder<'b>),\n\
              {{\n\
                  if self.written >= self.count {{\n\
                      return Err(sbe_rt::EncodeError::GroupFull {{ declared: self.count, attempted: self.written + 1 }});\n\

@@ -1268,7 +1268,7 @@ impl<'a> CarDecoder<'a> {
                 return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
                     field: "manufacturer",
                     offset,
-                    length: len,
+                    length: len as u32,
                 });
             }
             offset = data_end;
@@ -1289,7 +1289,7 @@ impl<'a> CarDecoder<'a> {
                 return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
                     field: "model",
                     offset,
-                    length: len,
+                    length: len as u32,
                 });
             }
             offset = data_end;
@@ -1310,7 +1310,7 @@ impl<'a> CarDecoder<'a> {
                 return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
                     field: "activation_code",
                     offset,
-                    length: len,
+                    length: len as u32,
                 });
             }
             offset = data_end;
@@ -1422,13 +1422,15 @@ impl<'a> FuelFiguresDecoder<'a> {
     }
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        { self.count }
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        self.pos = self.start;
-        self.count = self.total;
-        self
+        {
+            self.pos = self.start;
+            self.count = self.total;
+            self
+        }
     }
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
@@ -1650,13 +1652,15 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     }
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        { self.count }
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        self.pos = self.start;
-        self.count = self.total;
-        self
+        {
+            self.pos = self.start;
+            self.count = self.total;
+            self
+        }
     }
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
@@ -1857,13 +1861,15 @@ impl<'a> AccelerationDecoder<'a> {
     }
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        { self.count }
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        self.pos = self.start;
-        self.count = self.total;
-        self
+        {
+            self.pos = self.start;
+            self.count = self.total;
+            self
+        }
     }
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
@@ -1874,15 +1880,8 @@ impl<'a> AccelerationDecoder<'a> {
                 available: self.count * Self::ENTRY_BLOCK_LENGTH,
             });
         }
-        for _ in 0..n {
-            let entry = AccelerationEntryDecoder::wrap(
-                self.buf,
-                self.pos,
-                self.acting_version,
-            );
-            self.pos += entry.encoded_length()?;
-            self.count -= 1;
-        }
+        self.pos += n * Self::ENTRY_BLOCK_LENGTH;
+        self.count -= n;
         Ok(())
     }
     #[inline]
@@ -1933,14 +1932,7 @@ impl<'a> Iterator for AccelerationDecoder<'a> {
             self.pos,
             self.acting_version,
         );
-        let size = match entry.encoded_length() {
-            Ok(s) => s,
-            Err(_) => {
-                self.count = 0;
-                return Some(entry);
-            }
-        };
-        self.pos += size;
+        self.pos += Self::ENTRY_BLOCK_LENGTH;
         self.count -= 1;
         Some(entry)
     }
@@ -2178,7 +2170,7 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
         let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
         Ok(CarEncoder {
-            buf: self.buf,
+            buf: group.buf,
             message_start: self.message_start,
             pos: group.pos,
             _phantom: core::marker::PhantomData,
@@ -2210,7 +2202,7 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
         let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
         Ok(CarEncoder {
-            buf: self.buf,
+            buf: group.buf,
             message_start: self.message_start,
             pos: group.pos,
             _phantom: core::marker::PhantomData,
@@ -2427,9 +2419,9 @@ impl<'a> FuelFiguresEncoder<'a> {
         }
     }
     #[must_use]
-    pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut FuelFiguresEntryEncoder<'a>),
+        F: FnOnce(&mut FuelFiguresEntryEncoder<'b>),
     {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
@@ -2522,9 +2514,9 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         }
     }
     #[must_use]
-    pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'a>),
+        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'b>),
     {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
@@ -2614,9 +2606,9 @@ impl<'a> AccelerationEncoder<'a> {
         }
     }
     #[must_use]
-    pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut AccelerationEntryEncoder<'a>),
+        F: FnOnce(&mut AccelerationEntryEncoder<'b>),
     {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {

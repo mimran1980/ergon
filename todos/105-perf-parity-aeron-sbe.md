@@ -155,10 +155,14 @@ header reads and bounds checks even if the user never reads `usage_description`.
 `next()` to ensure the next entry's starting position is valid. Aeron trusts
 the group dimension header's `blockLength` and defers var-data validation.
 
-**Fix suggestion**: For groups where entries have var-data, either:
-- Split iteration into fixed+variable regions (iterate the fixed part, validate
-  var-data lazily on access), matching Aeron's approach
-- Or provide a separate fast iterator that skips per-entry tail scanning
+**Fix applied (partial)**:
+- Groups with no var-data/nested-groups in entries (`total_tail == 0`):
+  `Iterator::next()` advances by `ENTRY_BLOCK_LENGTH` directly; `skip_n()` does
+  bulk advance by `n * ENTRY_BLOCK_LENGTH`.
+- Groups with tails (`total_tail > 0`): still uses `encoded_length()` — fixing
+  this requires changing the API to use a mutable limit (like Aeron's approach)
+  that var-data accessors update. Until then, position correctness requires
+  scanning the tail to know where the next entry starts.
 
 ---
 
@@ -278,7 +282,8 @@ should not scan var-data per entry. Options:
 | Scalar | serial_number, model_year, etc. | OK | None |
 | Arrays | some_numbers, vehicle_code | **CRITICAL** | Bounds check + while-loop byte copy (~16 extra iterations) |
 | Composite | Engine | OK | 6-byte eager copy (better for multi-access) |
-| Group iter | fuel_figures iteration | **CRITICAL** | Per-entry `encoded_length()` scans var-data tail |
+| Group iter | Acceleration (no-tail group) | **FIXED** | Block-length advance; no tail scanning |
+| Group iter | fuel_figures iteration | **CRITICAL** | Per-entry `encoded_length()` scans var-data tail (needs mutable limit API change) |
 | Group iter | performance_figures iteration | **CRITICAL** | Per-entry `encoded_length()` scans acceleration sub-group |
 | Group iter | Iterator::next error path | MINOR | Swallows error, returns garbled entry |
 | Var-data | manufacturer(), model(), etc. | OK | `tail_offset_N()` re-walks previous groups each time |
@@ -295,11 +300,11 @@ should not scan var-data per entry. Options:
    since Rust 1.88) instead of byte-by-byte while loops, or generate separate
    non-const fast paths.
 
-2. **Per-entry `encoded_length()` in group iteration** -- Every `next()` call
-   scans all tail sections of each entry to compute its extent. For groups
-   with var-data or nested groups in entries, this makes iteration O(N * M)
-   where M is the cost of scanning each entry's tail. Fix: either lazy
-   tail validation, or a fixed-advance fast iteration mode.
+2. **Per-entry `encoded_length()` in group iteration** -- Fixed for groups
+   whose entries have no tails (no var-data, no nested groups). For groups
+   with tails, still O(N * M). The remaining fix requires an API change
+   (mutable limit in the group decoder that var-data accessors update,
+   matching Aeron's approach).
 
 Note: Issue #1 (while-loop byte copies) is the `const fn` pattern. The codegen
 needs to distinguish between const and non-const paths, using `try_into()` /
