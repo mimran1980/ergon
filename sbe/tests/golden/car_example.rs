@@ -1436,18 +1436,20 @@ impl<'a> FuelFiguresDecoder<'a> {
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+}
+impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
     pub const fn remaining(&self) -> usize {
-        { self.count }
+        self.count
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        {
-            self.pos = self.start;
-            self.count = self.total;
-            self
-        }
+        self.pos = self.start;
+        self.count = self.total;
+        self
     }
+}
+impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -1468,6 +1470,8 @@ impl<'a> FuelFiguresDecoder<'a> {
         }
         Ok(())
     }
+}
+impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
     pub fn nth(
         &self,
@@ -1666,18 +1670,20 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+}
+impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
     pub const fn remaining(&self) -> usize {
-        { self.count }
+        self.count
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        {
-            self.pos = self.start;
-            self.count = self.total;
-            self
-        }
+        self.pos = self.start;
+        self.count = self.total;
+        self
     }
+}
+impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -1698,6 +1704,8 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         }
         Ok(())
     }
+}
+impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
     pub fn nth(
         &self,
@@ -1875,18 +1883,20 @@ impl<'a> AccelerationDecoder<'a> {
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+}
+impl<'a> AccelerationDecoder<'a> {
     #[inline]
     pub const fn remaining(&self) -> usize {
-        { self.count }
+        self.count
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        {
-            self.pos = self.start;
-            self.count = self.total;
-            self
-        }
+        self.pos = self.start;
+        self.count = self.total;
+        self
     }
+}
+impl<'a> AccelerationDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -1900,6 +1910,8 @@ impl<'a> AccelerationDecoder<'a> {
         self.count -= n;
         Ok(())
     }
+}
+impl<'a> AccelerationDecoder<'a> {
     #[inline]
     pub fn nth(
         &self,
@@ -1922,6 +1934,8 @@ impl<'a> AccelerationDecoder<'a> {
         }
         Ok(AccelerationEntryDecoder::wrap(self.buf, offset, self.acting_version))
     }
+}
+impl<'a> AccelerationDecoder<'a> {
     #[inline]
     pub fn as_chunks(&self) -> Result<&'a [[u8; 6]], sbe_rt::DecodeError> {
         let len = self.count * 6;
