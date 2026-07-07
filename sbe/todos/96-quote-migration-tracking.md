@@ -5,7 +5,7 @@ codegen.rs to `quote!`. Todo 17 tracks this at a high level, but the remaining
 sections need an explicit checklist. CLAUDE.md says this is **non-negotiable** —
 no new `push_str` additions.
 
-**Status:** ✅ Progress — 143 `push_str(&format!(...))` remaining, 6 functions converted
+**Status:** ✅ Progress — **125** `push_str(&format!(...))` remaining, **8** functions converted
 
 ## ⛔ ANTI-REGRESSION RULE — STILL ACTIVE
 
@@ -19,9 +19,9 @@ more string pushers. This is non-negotiable."
 that adds new `push_str(&format!(...))` without removing at least as many is a
 regression and should be rejected. The count must only go down.
 
-## Audit (2026-07-07, after agent-a7c24534 conversion)
+## Audit (2026-07-07, after agent-a7c24534 + composite conversion)
 
-`sbe/src/codegen.rs` — `push_str(&format!(...))` count: **143** (down from 158)
+`sbe/src/codegen.rs` — `push_str(&format!(...))` count: **125** (down from 165)
 
 ### Current per-function counts
 
@@ -31,19 +31,19 @@ regression and should be rejected. The count must only go down.
  32  generate_message_encoder()        +1 pre-existing
  23  generate_any_message()             0
  21  gen_schema()                       0
- 20  generate_composite()               0
-  4  emit_field_consts()               ✅ CONVERTED
-  3  generate_message_field_meta()     ✅ CONVERTED
-  2  generate_nullification()          ✅ CONVERTED
+  0  generate_composite()              ✅ CONVERTED (-20)
+  0  generate_group_encoder()          ✅ CONVERTED (-11)
+  0  generate_decoder_display()        ✅ CONVERTED (-9)
+  0  emit_field_consts()               ✅ CONVERTED (-4)
+  0  generate_message_field_meta()     ✅ CONVERTED (-3)
+  0  generate_nullification()          ✅ CONVERTED (-2)
+  0  generate_schema_id_from_header()  ✅ CONVERTED (-1)
   1  generate_enum()                    0 (output only)
   1  generate_set()                     0 (output only)
-  1  generate_schema_id_from_header()  ✅ CONVERTED
-  0  generate_decoder_display()        ✅ CONVERTED (-9)
-  0  generate_group_encoder()          ✅ CONVERTED (-11)
 ```
 
-**Converted this session:** 2 functions, ~15 push_str(&format!(...)) calls eliminated.
-**Remaining:** 143 `push_str(&format!(...))` across 7 functions.
+**Converted:** 8 functions, ~50 push_str(&format!(...)) calls eliminated.
+**Remaining:** **125** `push_str(&format!(...))` across 5 functions.
 
 ### Effort estimate
 
@@ -88,14 +88,14 @@ regression and should be rejected. The count must only go down.
 - [x] **Audit complete (2026-07-06).**
 - [x] **Re-audit (2026-07-07)** — regression detected (+14 `push_str`), documented above.
 - [x] Convert `generate_nullification` — uses `quote!` fully, 0 `push_str` remain
-- [ ] Convert `generate_composite` templates to `quote!` (20 calls)
+- [x] Convert `generate_composite` — fully uses `quote!`, 0 push_str(&format!)
 - [ ] Convert `generate_message_decoder` templates to `quote!` (49 calls — largest)
 - [ ] Convert `generate_message_encoder` templates to `quote!` (32 calls)
 - [ ] Convert `generate_group_decoder` templates to `quote!` (40 calls)
 - [x] Convert `generate_group_encoder` templates to `quote!` (11 calls)
 - [ ] Convert `generate_any_message` remaining templates to `quote!` (23 calls)
 - [ ] Convert `gen_schema` to `quote!` (21 calls — last, orchestration)
-- [x] Convert all small functions: `emit_field_consts` (4), `generate_decoder_display` (9), `generate_message_field_meta` (3), `generate_schema_id_from_header` (1)
+- [x] Convert all small functions: `emit_field_consts` (4), `generate_decoder_display` (9), `generate_message_field_meta` (3), `generate_schema_id_from_header` (1), `generate_nullification` (2), `generate_group_encoder` (11), `generate_composite` (20)
 - [ ] **Zero `push_str(&format!(...))` in codegen.rs** — grep returns empty
 - [ ] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
 - [ ] Regen stability test passes

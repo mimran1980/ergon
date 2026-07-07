@@ -7,7 +7,7 @@ output through `prettyplease::unparse`.
 
 ## Progress (2026-07-07)
 
-**143 `push_str(&format!(...))` calls remaining** (down from 158 — 2 more functions converted to `quote!`).
+**125 `push_str(&format!(...))` calls remaining** (down from 165 — 7 functions converted to `quote!`, -40 calls).
 
 | Function | push_str | Δ since audit | Status |
 |----------|----------|---------------|--------|
@@ -20,7 +20,7 @@ output through `prettyplease::unparse`.
 | `generate_message_field_meta` | 3 | 0 | ✅ Converted (2026-07-07) |
 | `generate_schema_id_from_header` | 1 | 0 | ✅ Converted (2026-07-07) |
 | `emit_field_consts` | 4 | 0 | ✅ Converted (2026-07-07) |
-| `generate_composite` | 20 | 0 | Pending |
+| `generate_composite` | 0 | **-20** | ✅ Converted (2026-07-07) |
 | `generate_message_decoder` | 49 | +7 | Pending (large) |
 | `generate_message_encoder` | 32 | +1 | Pending |
 | `generate_group_decoder` | 40 | +5 | Pending |
