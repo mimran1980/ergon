@@ -102,18 +102,32 @@ pub struct ColumnDef {
     pub col_type: ColumnType,
 }
 
-/// Describes a table schema with columns, ordering, and engine.
+/// Describes a table schema with columns, ordering, engine, and optional TTL.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableSchema {
     pub columns: Vec<ColumnDef>,
     pub order_by: Vec<String>,
     pub engine: TableEngine,
+    pub ttl: Option<TtlConfig>,
+}
+
+/// ClickHouse TTL configuration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TtlConfig {
+    pub column: String,
+    pub interval: String, // e.g. "24 HOURS"
 }
 
 impl TableSchema {
     /// Create a new `TableSchema` with `MergeTree` engine.
     #[must_use]
     pub fn new(columns: Vec<ColumnDef>, order_by: Vec<String>) -> Self {
+        Self::with_ttl(columns, order_by, None)
+    }
+
+    /// Create with optional TTL.
+    #[must_use]
+    pub fn with_ttl(columns: Vec<ColumnDef>, order_by: Vec<String>, ttl: Option<TtlConfig>) -> Self {
         let mut columns = columns;
         if !columns.iter().any(|c| c.name == "_persist_time") {
             columns.push(ColumnDef {
@@ -130,6 +144,7 @@ impl TableSchema {
             columns,
             order_by,
             engine: TableEngine::MergeTree,
+            ttl,
         }
     }
 

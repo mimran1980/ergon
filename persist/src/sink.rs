@@ -996,11 +996,19 @@ fn build_create_sql(table: &str, schema: &TableSchema) -> String {
         .map(|c| format!("{} {}", c.name, c.col_type))
         .collect();
     let order_by = schema.order_by.join(", ");
-    format!(
-        "CREATE TABLE IF NOT EXISTS {table} (\n    {}\n) ENGINE = {engine} ORDER BY ({order_by})",
-        cols.join(",\n    "),
-        engine = schema.engine
-    )
+    let ttl = schema.ttl.as_ref().map(|t| format!("TTL {} + INTERVAL {}", t.column, t.interval));
+    match ttl {
+        Some(ttl) => format!(
+            "CREATE TABLE IF NOT EXISTS {table} (\n    {}\n) ENGINE = {engine} ORDER BY ({order_by}) {ttl}",
+            cols.join(",\n    "),
+            engine = schema.engine
+        ),
+        None => format!(
+            "CREATE TABLE IF NOT EXISTS {table} (\n    {}\n) ENGINE = {engine} ORDER BY ({order_by})",
+            cols.join(",\n    "),
+            engine = schema.engine
+        ),
+    }
 }
 
 /// Build an `INSERT INTO table (cols) VALUES ...` statement.
@@ -1250,6 +1258,7 @@ mod tests {
             ],
             order_by: vec!["_persist_time".into()],
             engine: TableEngine::MergeTree,
+            ttl: None,
         };
         let ddl = build_create_sql("trades", &schema);
         assert!(ddl.starts_with("CREATE TABLE IF NOT EXISTS trades ("));

@@ -247,6 +247,7 @@ impl SchemaRegistry {
             columns: schema_cols,
             order_by: Vec::new(),
             engine: crate::persist::TableEngine::MergeTree,
+            ttl: None,
         };
 
         self.schemas.insert(

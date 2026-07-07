@@ -18,8 +18,8 @@ pub mod sink;
 pub mod types;
 
 pub use persist::{
-    ColumnDef, Persist, PersistAs, SchemaDiff, TableEngine, TableSchema, TypeConflict, TypeWiden,
-    is_compatible_widen,
+    ColumnDef, Persist, PersistAs, SchemaDiff, TableEngine, TableSchema, TtlConfig, TypeConflict,
+    TypeWiden, is_compatible_widen,
 };
 pub use sink::{
     ClickhouseSink, ClickhouseSinkBuilder, DeadLetterFn, DroppedBatch, PersistCompression,
