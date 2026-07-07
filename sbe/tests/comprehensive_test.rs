@@ -308,3 +308,44 @@ fn constant_fields_return_correct_values() {
         assert_eq!(car2.discounted_model().raw(), 67u8); // 'C'
     "#);
 }
+
+// ── todo 80: schema hash / SHA256 ─────────────────────────────────────
+
+#[test]
+fn schema_constants_present_and_nonzero() {
+    let (_schema, src) = generate(&Paths::example_schema(), "schema_consts");
+    assert!(src.contains("SCHEMA_HASH"), "SCHEMA_HASH missing");
+    assert!(src.contains("SCHEMA_SHA256"), "SCHEMA_SHA256 missing");
+    assert!(src.contains("SEMANTIC_VERSION"), "SEMANTIC_VERSION missing");
+    compile_and_run("schema_consts", &src, r#"
+        assert!(SCHEMA_HASH != 0, "SCHEMA_HASH should be non-zero");
+        assert_eq!(SCHEMA_SHA256.len(), 32, "SHA256 is 32 bytes");
+        assert!(!SCHEMA_SHA256_HEX.is_empty(), "SCHEMA_SHA256_HEX non-empty");
+    "#);
+}
+
+// ── todo 69: buffer verify function ───────────────────────────────────
+
+#[test]
+fn verify_function_detects_invalid_messages() {
+    let (_schema, src) = generate(&Paths::example_schema(), "verify_fn");
+    compile_and_run("verify_fn", &src, r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1); car.model_year(2000);
+        car.available(BooleanType::F); car.code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0,0,[0,0,0]));
+        let car = car.fuel_figures(0, |_|{}).unwrap();
+        let car = car.performance_figures(0, |_|{}).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
+        let encoded = car.as_bytes();
+        // verify() should pass on valid message
+        assert!(CarDecoder::verify(encoded).is_ok());
+        // verify() should fail on truncated buffer
+        assert!(CarDecoder::verify(&encoded[..5]).is_err());
+    "#);
+}
