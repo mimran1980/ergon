@@ -36,27 +36,28 @@ read one field from a composite are paying a 4× penalty on every access.
 
 ## Design
 
-Generate BOTH patterns — let the user choose based on their access pattern:
+**The default must be the FAST path.** Flip the current API:
 
 ```rust
-/// Eager copy — good for multi-field access (copy once, read many).
+/// Flyweight decoder — DEFAULT. Zero-copy from buffer, reads per-field.
+/// Use this for single-field access (the common HFT case).
 #[inline]
-pub fn engine(&self) -> Engine {
-    let offset = self.pos + 35;
-    Engine(self.buf[offset..][..6].try_into().unwrap())
-}
-
-/// Lazy flyweight — good for single-field access (zero-copy from buffer).
-/// Reads directly from the wire on each field access.
-#[inline]
-pub fn engine_lazy(&self) -> EngineDecoder {
+pub fn engine(&self) -> EngineDecoder<'a> {
     let offset = self.pos + 35;
     EngineDecoder { buf: self.buf, pos: offset }
 }
+
+/// Eager copy to a value struct. Copy all bytes once, then stack reads.
+/// Use this for multi-field access to amortise the copy.
+#[inline]
+pub fn engine_as_struct(&self) -> Engine {
+    let offset = self.pos + 35;
+    Engine(self.buf[offset..][..6].try_into().unwrap())
+}
 ```
 
-The `EngineDecoder` is a lightweight struct that wraps `buf` + `pos` and
-provides individual field accessors that read directly from the buffer:
+The flyweight `EngineDecoder` is a lightweight struct wrapping `buf` + `pos`
+that reads directly from the wire on each field access — zero-copy:
 
 ```rust
 pub struct EngineDecoder<'a> {
@@ -71,29 +72,30 @@ impl<'a> EngineDecoder<'a> {
     pub fn num_cylinders(&self) -> u8 {
         self.buf[self.pos + 2]
     }
-    // ...
 }
 ```
 
-This is what Aeron does — zero-copy, direct buffer reads per field.
-
-### Scope
-
-- Message decoder composite fields
-- Group entry decoder composite fields
-- Encoder side: no change needed (encoding always needs the full value)
+This matches Aeron's approach — direct buffer reads per field.
 
 ### Naming
+- `engine()` — flyweight decoder (FAST, zero-copy, DEFAULT)
+- `engine_as_struct()` — eager value struct copy (for multi-field access)
 
-`_lazy` suffix — one word, obvious. `engine()` = eager (current), `engine_lazy()` = flyweight.
+This IS a breaking API change — `engine()` currently returns `Engine`.
+But performance is the #1 requirement, and the default should be fast.
+
+### Scope
+- Message decoder composite fields
+- Group entry decoder composite fields
+- Encoder: no change (encoding always needs the full value)
 
 ## Acceptance criteria
 
-- [ ] `{field}_lazy() -> {Type}Decoder` generated for composite fields on message decoders
-- [ ] `{field}_lazy() -> {Type}Decoder` generated for composite fields on group entry decoders
-- [ ] `{field}() -> {Type}` preserved (eager copy, unchanged — current behavior)
-- [ ] Lazy decoder struct generated with `buf: &'a [u8], pos: usize`
-- [ ] Each field on the lazy decoder reads directly from buffer (zero-copy)
+- [ ] `{field}() -> {Type}Decoder` flyweight (DEFAULT, zero-copy, fast)
+- [ ] `{field}_as_struct() -> {Type}` eager copy (for multi-field access)
+- [ ] Flyweight decoder struct: `buf: &'a [u8], pos: usize`
+- [ ] Each field on flyweight reads directly from buffer (zero-copy)
+- [ ] This IS a breaking API change — documented in migration guide
 - [ ] Golden file stability test passes
 - [ ] Baseline tests pass
-- [ ] Benchmark: `engine_lazy().capacity()` reads ≤ 2 bytes from buffer (not 6+2)
+- [ ] Benchmark: `engine().capacity()` reads ≤ 2 bytes from buffer (not 6+2)

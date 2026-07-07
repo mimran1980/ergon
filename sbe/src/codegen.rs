@@ -1178,6 +1178,7 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub enum #name_ident {
             #(#variant_names = #variant_discs,)*
+            /// Unknown enum value — the wire discriminant did not match any known variant.
             NullVal,
         }
 

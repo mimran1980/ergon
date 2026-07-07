@@ -160,6 +160,7 @@ pub mod sbe_rt {
 pub enum BooleanType {
     F = 0,
     T = 1,
+    /// Unknown enum value — the wire discriminant did not match any known variant.
     NullVal,
 }
 impl BooleanType {
@@ -204,6 +205,7 @@ pub enum Model {
     A = b'A',
     B = b'B',
     C = b'C',
+    /// Unknown enum value — the wire discriminant did not match any known variant.
     NullVal,
 }
 impl Model {
