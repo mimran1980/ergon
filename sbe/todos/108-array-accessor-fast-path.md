@@ -109,7 +109,7 @@ message body) get infallible array reads.
 
 ## Acceptance criteria
 
-- [x] `_unchecked` array accessors use bulk `copy_from_slice` + unrolled element
+- [ ] `_unchecked` array accessors use bulk `copy_from_slice` + unrolled element
   parsing instead of per-element while-loop (both group entry and message decoder)
 - [x] The existing `const fn raw_` accessors are preserved for const contexts
 - [ ] Benchmarks show array accessor latency within 10% of Aeron's

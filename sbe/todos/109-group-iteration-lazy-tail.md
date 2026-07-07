@@ -130,11 +130,11 @@ the buffer or doesn't access var-data fields on entries.
 
 ## Acceptance criteria
 
-- [x] `iter_fast()` method generated on group decoders where
+- [ ] `iter_fast()` method generated on group decoders where
   `total_tail > 0`
-- [x] `iter_fast()` advances by `ENTRY_BLOCK_LENGTH` without tail
+- [ ] `iter_fast()` advances by `ENTRY_BLOCK_LENGTH` without tail
   scanning
-- [x] Existing `Iterator` impl preserved (safe, scans tails)
+- [ ] Existing `Iterator` impl preserved (safe, scans tails)
 - [ ] Benchmark: `iter_fast()` within 10% of Aeron's `advance()` loop
 - [x] Golden file stability test passes
 - [x] No regression in baseline test suite
