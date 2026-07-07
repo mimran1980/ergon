@@ -3,8 +3,8 @@
 //! The [`PersistAs`] trait maps a Rust type to a single `ClickHouse` column.
 //! [`TableSchema`] manages column definitions and schema diff/migration.
 
-use std::fmt;
 use crate::types::ColumnType;
+use std::fmt;
 
 /// Maps a Rust type to a `ClickHouse` column type and binary encoding.
 ///
@@ -264,6 +264,68 @@ fn numeric_width(ct: &ColumnType) -> Option<u8> {
     }
 }
 
+// ── Persist trait (todo 03) ────────────────────────────────────────────────
+
+/// The main trait that structs implement to become persistable.
+///
+/// A type implementing `Persist` provides:
+///
+/// * [`table_schema()`](Persist::table_schema) — column definitions and DDL
+///   metadata for creating the ClickHouse table.
+/// * [`encode_row()`](Persist::encode_row) — copies field values from `self`
+///   into a mutable row instance.
+///
+/// The type is expected to also implement [`clickhouse::Row`] and
+/// [`serde::Serialize`] (usually via derive), making it usable with
+/// `clickhouse::Client::insert`.
+///
+/// # Examples
+///
+/// ```
+/// use ergo_clickhouse_persist::{Persist, TableSchema, ColumnDef, ColumnType};
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(clickhouse::Row, Serialize, Deserialize, Debug, PartialEq)]
+/// struct Trade {
+///     price: f64,
+///     qty: u64,
+///     symbol: String,
+/// }
+///
+/// impl Persist for Trade {
+///     fn table_schema() -> TableSchema {
+///         TableSchema::new(
+///             vec![
+///                 ColumnDef { name: "price".into(), col_type: ColumnType::Float64 },
+///                 ColumnDef { name: "qty".into(), col_type: ColumnType::UInt64 },
+///                 ColumnDef { name: "symbol".into(), col_type: ColumnType::String },
+///             ],
+///             vec!["_persist_time".into()],
+///         )
+///     }
+///
+///     fn encode_row(&self, row: &mut Self) {
+///         row.price = self.price;
+///         row.qty = self.qty;
+///         row.symbol.clone_from(&self.symbol);
+///     }
+/// }
+///
+/// assert_eq!(Trade::table_schema().columns.len(), 4);
+/// ```
+pub trait Persist {
+    /// Column definitions + DDL metadata for the ClickHouse table.
+    #[must_use]
+    fn table_schema() -> TableSchema;
+
+    /// Encode all fields from `self` into the provided row instance.
+    ///
+    /// For the simple case where the type itself is the row (the common
+    /// pattern), this method copies field values. When a separate domain type
+    /// exists, this is the place to map fields.
+    fn encode_row(&self, row: &mut Self);
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -274,7 +336,10 @@ mod tests {
 
     impl PersistAs for Price {
         fn column_type() -> ColumnType {
-            ColumnType::Decimal { precision: 18, scale: 8 }
+            ColumnType::Decimal {
+                precision: 18,
+                scale: 8,
+            }
         }
 
         fn encode_value(&self) -> Vec<u8> {
@@ -308,7 +373,11 @@ mod tests {
     #[test]
     fn test_option_price_encode_some() {
         let val: Option<Price> = Some(Price(42));
-        let expected = { let mut buf = vec![0]; buf.extend_from_slice(&42u64.to_le_bytes()); buf };
+        let expected = {
+            let mut buf = vec![0];
+            buf.extend_from_slice(&42u64.to_le_bytes());
+            buf
+        };
         assert_eq!(val.encode_value(), expected);
     }
 
@@ -326,7 +395,10 @@ mod tests {
     #[test]
     fn test_option_option_price_encode_some_some() {
         let val: Option<Option<Price>> = Some(Some(Price(42)));
-        assert_eq!(val.encode_value().as_slice(), &[0, 0, 42, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            val.encode_value().as_slice(),
+            &[0, 0, 42, 0, 0, 0, 0, 0, 0, 0]
+        );
     }
 
     #[test]
@@ -346,7 +418,10 @@ mod table_schema_tests {
     use super::*;
 
     fn col(name: &str, ct: ColumnType) -> ColumnDef {
-        ColumnDef { name: name.into(), col_type: ct }
+        ColumnDef {
+            name: name.into(),
+            col_type: ct,
+        }
     }
 
     #[test]
@@ -360,7 +435,10 @@ mod table_schema_tests {
     fn new_column_added() {
         let old = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         let new = TableSchema::new(
-            vec![col("price", ColumnType::UInt64), col("qty", ColumnType::UInt32)],
+            vec![
+                col("price", ColumnType::UInt64),
+                col("qty", ColumnType::UInt32),
+            ],
             vec![],
         );
         let diff = new.diff(&old);
@@ -412,7 +490,10 @@ mod table_schema_tests {
     #[test]
     fn removed_column_ignored() {
         let old = TableSchema::new(
-            vec![col("price", ColumnType::UInt64), col("qty", ColumnType::UInt32)],
+            vec![
+                col("price", ColumnType::UInt64),
+                col("qty", ColumnType::UInt32),
+            ],
             vec![],
         );
         let new = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
@@ -432,7 +513,14 @@ mod table_schema_tests {
             vec![col("_persist_time", ColumnType::DateTime64(9))],
             vec!["_persist_time".into()],
         );
-        assert_eq!(schema.columns.iter().filter(|c| c.name == "_persist_time").count(), 1);
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .filter(|c| c.name == "_persist_time")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -443,10 +531,7 @@ mod table_schema_tests {
 
     #[test]
     fn custom_order_by() {
-        let schema = TableSchema::new(
-            vec![col("price", ColumnType::UInt64)],
-            vec!["price".into()],
-        );
+        let schema = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec!["price".into()]);
         assert_eq!(schema.order_by, vec!["price"]);
     }
 
@@ -454,7 +539,10 @@ mod table_schema_tests {
     fn alter_table_ddl_generation() {
         let old = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         let new = TableSchema::new(
-            vec![col("price", ColumnType::UInt64), col("qty", ColumnType::UInt32)],
+            vec![
+                col("price", ColumnType::UInt64),
+                col("qty", ColumnType::UInt32),
+            ],
             vec![],
         );
         let ddl = new.diff(&old).alter_table_ddl("trades");
@@ -465,16 +553,116 @@ mod table_schema_tests {
     #[test]
     fn full_migration() {
         let old = TableSchema::new(
-            vec![col("price", ColumnType::UInt64), col("qty", ColumnType::UInt32), col("bad", ColumnType::UInt32)],
+            vec![
+                col("price", ColumnType::UInt64),
+                col("qty", ColumnType::UInt32),
+                col("bad", ColumnType::UInt32),
+            ],
             vec![],
         );
         let new = TableSchema::new(
-            vec![col("price", ColumnType::UInt64), col("qty", ColumnType::UInt64), col("side", ColumnType::String), col("bad", ColumnType::Float32)],
+            vec![
+                col("price", ColumnType::UInt64),
+                col("qty", ColumnType::UInt64),
+                col("side", ColumnType::String),
+                col("bad", ColumnType::Float32),
+            ],
             vec![],
         );
         let diff = new.diff(&old);
         assert_eq!(diff.new_columns.len(), 1); // side
         assert_eq!(diff.compatible_widens.len(), 1); // qty
         assert_eq!(diff.type_conflicts.len(), 1); // bad
+    }
+}
+
+#[cfg(test)]
+mod persist_trait_tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(clickhouse::Row, Serialize, Deserialize, Debug, PartialEq)]
+    struct TradeRow {
+        price: f64,
+        qty: u64,
+        symbol: String,
+    }
+
+    impl Persist for TradeRow {
+        fn table_schema() -> TableSchema {
+            TableSchema::new(
+                vec![
+                    ColumnDef {
+                        name: "price".into(),
+                        col_type: ColumnType::Float64,
+                    },
+                    ColumnDef {
+                        name: "qty".into(),
+                        col_type: ColumnType::UInt64,
+                    },
+                    ColumnDef {
+                        name: "symbol".into(),
+                        col_type: ColumnType::String,
+                    },
+                ],
+                vec![],
+            )
+        }
+
+        fn encode_row(&self, row: &mut Self) {
+            row.price = self.price;
+            row.qty = self.qty;
+            row.symbol.clone_from(&self.symbol);
+        }
+    }
+
+    #[test]
+    fn table_schema_returns_expected_columns() {
+        let schema = <TradeRow as Persist>::table_schema();
+        // 3 custom columns + _persist_time auto-added = 4
+        assert_eq!(schema.columns.len(), 4);
+        assert!(schema.columns.iter().any(|c| c.name == "price"));
+        assert!(schema.columns.iter().any(|c| c.name == "qty"));
+        assert!(schema.columns.iter().any(|c| c.name == "symbol"));
+        // _persist_time auto-added
+        assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
+    }
+
+    #[test]
+    fn encode_row_populates_row() {
+        let src = TradeRow {
+            price: 100.50,
+            qty: 10,
+            symbol: "AAPL".into(),
+        };
+        let mut dst = TradeRow {
+            price: 0.0,
+            qty: 0,
+            symbol: String::new(),
+        };
+        src.encode_row(&mut dst);
+        assert_eq!(dst.price, 100.50);
+        assert_eq!(dst.qty, 10);
+        assert_eq!(dst.symbol, "AAPL");
+    }
+
+    #[test]
+    fn serde_roundtrip() {
+        let original = TradeRow {
+            price: 99.99,
+            qty: 25,
+            symbol: "MSFT".into(),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: TradeRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, decoded);
+    }
+
+    /// Compile-time check: TradeRow satisfies bounds needed by
+    /// `clickhouse::Client::insert`.
+    #[test]
+    fn row_bounds_for_client_insert() {
+        fn assert_row_write<T: clickhouse::Row + serde::Serialize>() {}
+        assert_row_write::<TradeRow>();
     }
 }

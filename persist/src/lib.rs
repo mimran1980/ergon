@@ -9,13 +9,14 @@
 //! - [`dynamic`] — [`DynamicRecorder`], [`SchemaRegistry`], [`RowDecoder`]
 
 pub mod dynamic;
+pub mod feature_impls;
 pub mod persist;
 pub mod sbe;
 pub mod sink;
 pub mod types;
 
 pub use persist::{
-    ColumnDef, PersistAs, SchemaDiff, TableEngine, TableSchema, TypeConflict, TypeWiden,
+    ColumnDef, Persist, PersistAs, SchemaDiff, TableEngine, TableSchema, TypeConflict, TypeWiden,
     is_compatible_widen,
 };
 pub use types::ColumnType;
