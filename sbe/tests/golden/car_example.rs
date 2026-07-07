@@ -1640,6 +1640,14 @@ impl<'a> FuelFiguresDecoder<'a> {
 }
 impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
+    pub fn iter_fast(&mut self) -> FuelFiguresFastIter<'a, '_> {
+        FuelFiguresFastIter {
+            decoder: self,
+        }
+    }
+}
+impl<'a> FuelFiguresDecoder<'a> {
+    #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -1682,6 +1690,34 @@ impl<'a> FuelFiguresDecoder<'a> {
             });
         }
         Ok(FuelFiguresEntryDecoder::wrap(self.buf, offset, self.acting_version))
+    }
+}
+#[doc(hidden)]
+pub struct FuelFiguresFastIter<'a, 'd> {
+    decoder: &'d mut FuelFiguresDecoder<'a>,
+}
+impl<'a, 'd> Iterator for FuelFiguresFastIter<'a, 'd> {
+    type Item = FuelFiguresEntryDecoder<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.decoder.count == 0 {
+            return None;
+        }
+        let entry = FuelFiguresEntryDecoder::wrap(
+            self.decoder.buf,
+            self.decoder.pos,
+            self.decoder.acting_version,
+        );
+        self.decoder.pos += 6;
+        self.decoder.count -= 1;
+        Some(entry)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.decoder.count, Some(self.decoder.count))
+    }
+}
+impl<'a, 'd> ExactSizeIterator for FuelFiguresFastIter<'a, 'd> {
+    fn len(&self) -> usize {
+        self.decoder.count
     }
 }
 impl<'a> Iterator for FuelFiguresDecoder<'a> {
@@ -1874,6 +1910,14 @@ impl<'a> PerformanceFiguresDecoder<'a> {
 }
 impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
+    pub fn iter_fast(&mut self) -> PerformanceFiguresFastIter<'a, '_> {
+        PerformanceFiguresFastIter {
+            decoder: self,
+        }
+    }
+}
+impl<'a> PerformanceFiguresDecoder<'a> {
+    #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -1916,6 +1960,34 @@ impl<'a> PerformanceFiguresDecoder<'a> {
             });
         }
         Ok(PerformanceFiguresEntryDecoder::wrap(self.buf, offset, self.acting_version))
+    }
+}
+#[doc(hidden)]
+pub struct PerformanceFiguresFastIter<'a, 'd> {
+    decoder: &'d mut PerformanceFiguresDecoder<'a>,
+}
+impl<'a, 'd> Iterator for PerformanceFiguresFastIter<'a, 'd> {
+    type Item = PerformanceFiguresEntryDecoder<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.decoder.count == 0 {
+            return None;
+        }
+        let entry = PerformanceFiguresEntryDecoder::wrap(
+            self.decoder.buf,
+            self.decoder.pos,
+            self.decoder.acting_version,
+        );
+        self.decoder.pos += 1;
+        self.decoder.count -= 1;
+        Some(entry)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.decoder.count, Some(self.decoder.count))
+    }
+}
+impl<'a, 'd> ExactSizeIterator for PerformanceFiguresFastIter<'a, 'd> {
+    fn len(&self) -> usize {
+        self.decoder.count
     }
 }
 impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
