@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="org.ergo.sbe.persist"
+                   id="1000"
+                   version="0"
+                   semanticVersion="1.0.0"
+                   description="Dynamic schema/row messages for ClickHouse persistence"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Standard SBE header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+
+        <composite name="groupSize16Encoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+
+        <composite name="varString16Encoding">
+            <type name="length" primitiveType="uint16"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+
+        <composite name="symbolTableEncoding">
+            <type name="length" primitiveType="uint32"/>
+            <type name="varData" primitiveType="uint8" length="0"/>
+        </composite>
+    </types>
+
+    <!-- DynamicSchema: registers a table's column layout -->
+    <sbe:message name="DynamicSchema" id="1" description="Dynamic table schema registration">
+        <field name="schemaId" id="1" type="uint32"/>
+        <group name="metadata" id="10" dimensionType="groupSize16Encoding">
+            <field name="keyLen" id="11" type="uint16"/>
+            <field name="valLen" id="12" type="uint16"/>
+        </group>
+        <group name="columns" id="20" dimensionType="groupSize16Encoding">
+            <field name="fieldId" id="21" type="uint8"/>
+            <field name="nameLen" id="22" type="uint16"/>
+            <field name="typeTag" id="23" type="uint8"/>
+        </group>
+        <data name="tableName" id="30" type="varString16Encoding"/>
+        <data name="symbolTable" id="31" type="symbolTableEncoding"/>
+    </sbe:message>
+
+    <!-- DynamicRow: a single row of values -->
+    <sbe:message name="DynamicRow" id="2" description="Dynamic row values">
+        <field name="schemaId" id="1" type="uint32"/>
+        <group name="rowMetadata" id="10" dimensionType="groupSize16Encoding">
+            <field name="keyLen" id="11" type="uint16"/>
+            <field name="valLen" id="12" type="uint16"/>
+        </group>
+        <group name="int64Fields" id="100" dimensionType="groupSize16Encoding">
+            <field name="fieldId" id="101" type="uint8"/>
+            <field name="value" id="102" type="int64"/>
+        </group>
+        <group name="uint64Fields" id="110" dimensionType="groupSize16Encoding">
+            <field name="fieldId" id="111" type="uint8"/>
+            <field name="value" id="112" type="uint64"/>
+        </group>
+        <group name="float64Fields" id="120" dimensionType="groupSize16Encoding">
+            <field name="fieldId" id="121" type="uint8"/>
+            <field name="value" id="122" type="double"/>
+        </group>
+        <group name="boolFields" id="130" dimensionType="groupSize16Encoding">
+            <field name="fieldId" id="131" type="uint8"/>
+            <field name="value" id="132" type="uint8"/>
+        </group>
+        <group name="stringFields" id="140" dimensionType="groupSize16Encoding">
+            <field name="fieldId" id="141" type="uint8"/>
+            <field name="strLen" id="142" type="uint16"/>
+        </group>
+        <group name="nullFields" id="150" dimensionType="groupSize16Encoding">
+            <field name="fieldId" id="151" type="uint8"/>
+        </group>
+        <data name="symbolTable" id="200" type="symbolTableEncoding"/>
+    </sbe:message>
+</sbe:messageSchema>

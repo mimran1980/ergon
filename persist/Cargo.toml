@@ -11,25 +11,9 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 
-[features]
-default = []
-rust_decimal = ["dep:rust_decimal"]
-chrono = ["dep:chrono"]
-duration = []
-serde = ["dep:serde", "dep:serde_json"]
+[build-dependencies]
+ergosbe = { path = "../sbe" }
 
-[dependencies]
-clickhouse = "0.15"
-chrono = { version = "0.4", optional = true, features = ["now"] }
-rust_decimal = { version = "1", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
-
-[dev-dependencies]
-chrono = { version = "0.4", features = ["now"] }
-rust_decimal = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
-[lints]
-workspace = true
+# NOTE: inherited workspace lints are deliberately omitted here.
+# The generated SBE code contains unsafe blocks (opt-in _unchecked methods)
+# which would conflict with the workspace's `unsafe_code = "forbid"` lint.
