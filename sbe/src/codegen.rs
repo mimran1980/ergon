@@ -22,9 +22,9 @@
 
 use std::collections::HashSet;
 
-use quote::format_ident;
 use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use crate::{GenerationConfig, Schema};
+use quote::format_ident;
 use sha2::{Digest, Sha256};
 
 /// A single generated Rust module.
@@ -1728,7 +1728,8 @@ fn generate_message_decoder(
 
     // Identifiers for codegen
     let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-    let decoder_ident = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    let decoder_ident =
+        syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
     let header_pascal_ident = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
     let header_bl_ident = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
     let header_ti_ident = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
@@ -1737,11 +1738,13 @@ fn generate_message_decoder(
 
     let mut ts = proc_macro2::TokenStream::new();
     let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), proc_macro2::Span::call_site());
-    let schema_version_lit = syn::LitInt::new(&schema_version.to_string(), proc_macro2::Span::call_site());
+    let schema_version_lit =
+        syn::LitInt::new(&schema_version.to_string(), proc_macro2::Span::call_site());
     let msg_id_lit = syn::LitInt::new(&msg.id.to_string(), proc_macro2::Span::call_site());
     let bl_lit = syn::LitInt::new(&block_length.to_string(), proc_macro2::Span::call_site());
     let hdr_size_lit = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
-    let encoded_len_lit = syn::LitInt::new(&encoded_length.to_string(), proc_macro2::Span::call_site());
+    let encoded_len_lit =
+        syn::LitInt::new(&encoded_length.to_string(), proc_macro2::Span::call_site());
 
     // 1. Decoder Struct + optional doc comment
     if let Some(ref desc) = msg.description {
@@ -1776,7 +1779,10 @@ fn generate_message_decoder(
     } else {
         const STACK_LIMIT: usize = 65536;
         let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
-        let max_encoded_lit = syn::LitInt::new(&max_encoded_capped.to_string(), proc_macro2::Span::call_site());
+        let max_encoded_lit = syn::LitInt::new(
+            &max_encoded_capped.to_string(),
+            proc_macro2::Span::call_site(),
+        );
         let is_capped = max_encoded_length > STACK_LIMIT;
         let max_doc = if is_capped {
             "MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation"
@@ -1835,8 +1841,10 @@ fn generate_message_decoder(
         hvr = header_vr,
         en = schema_name,
     );
-    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&wrap_header)
-        .unwrap_or_else(|e| panic!("Failed to parse wrap_and_apply_header for {name}: {e}")));
+    impl_body.extend(
+        syn::parse_str::<proc_macro2::TokenStream>(&wrap_header)
+            .unwrap_or_else(|e| panic!("Failed to parse wrap_and_apply_header for {name}: {e}")),
+    );
 
     // 5. acting_version and acting_block_length
     impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(
@@ -1861,8 +1869,10 @@ fn generate_message_decoder(
                 let r_type = rust_type(*prim);
                 let r_type_ty: syn::Type = syn::parse_str(r_type).unwrap();
                 let prim_size = prim.size();
-                let offset_lit = syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
-                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                let offset_lit =
+                    syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
                 let order_fn = format_ident!("from_{order_suffix}_bytes");
 
                 if f.presence == Presence::Constant {
@@ -1879,7 +1889,8 @@ fn generate_message_decoder(
                             let expr = constant_value_expr(*prim, val);
                             let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                             if let Some(ref desc) = f.description {
-                                let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
+                                let desc_lit =
+                                    syn::LitStr::new(desc, proc_macro2::Span::call_site());
                                 impl_body.extend(quote::quote! {
                                     #[doc = #desc_lit]
                                 });
@@ -1894,12 +1905,16 @@ fn generate_message_decoder(
                     }
                 } else if let Some(len) = length {
                     let len_val = *len;
-                    let len_lit = syn::LitInt::new(&len_val.to_string(), proc_macro2::Span::call_site());
-                    let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let len_lit =
+                        syn::LitInt::new(&len_val.to_string(), proc_macro2::Span::call_site());
+                    let since_lit =
+                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + prim_size * len_val;
-                    let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    let offset_end_lit =
+                        syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     let total_size = prim_size * len_val;
-                    let total_size_lit = syn::LitInt::new(&total_size.to_string(), proc_macro2::Span::call_site());
+                    let total_size_lit =
+                        syn::LitInt::new(&total_size.to_string(), proc_macro2::Span::call_site());
                     // Build using format strings for the array copy loop
                     let field_accessor = format!(
                         "#[inline]\n\
@@ -1938,7 +1953,16 @@ fn generate_message_decoder(
                         order = order_suffix,
                         fn_name = f.name,
                     );
-                    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&field_accessor).unwrap_or_else(|e| panic!("Failed to parse array accessor for {}:: {} at pos: {}", name, f.name, e)));
+                    impl_body.extend(
+                        syn::parse_str::<proc_macro2::TokenStream>(&field_accessor).unwrap_or_else(
+                            |e| {
+                                panic!(
+                                    "Failed to parse array accessor for {}:: {} at pos: {}",
+                                    name, f.name, e
+                                )
+                            },
+                        ),
+                    );
 
                     // _unchecked version for arrays
                     let unchecked_arr = format!(
@@ -1963,7 +1987,9 @@ fn generate_message_decoder(
                         ps = prim_size,
                         order = order_suffix,
                     );
-                    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&unchecked_arr).unwrap());
+                    impl_body.extend(
+                        syn::parse_str::<proc_macro2::TokenStream>(&unchecked_arr).unwrap(),
+                    );
 
                     // raw_ accessor for arrays
                     let raw_ident = syn::Ident::new(
@@ -1979,7 +2005,8 @@ fn generate_message_decoder(
                             }
                         });
                     } else {
-                        let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                        let since_lit =
+                            syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                         impl_body.extend(quote::quote! {
                             #[inline]
                             pub const fn #raw_ident(&self) -> Option<[#r_type_ty; #len_lit]> {
@@ -2002,9 +2029,13 @@ fn generate_message_decoder(
                         } else {
                             format!("val == {null_val} as {r_type}")
                         };
-                        let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                        let since_lit =
+                            syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                         let offset_end = offset + prim_size;
-                        let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                        let offset_end_lit = syn::LitInt::new(
+                            &offset_end.to_string(),
+                            proc_macro2::Span::call_site(),
+                        );
                         let unchecked_val = format!(
                             "unsafe fn {snake}_unchecked(&self) -> {rt} {{\
                              let offset = self.pos + {off};\
@@ -2012,7 +2043,11 @@ fn generate_message_decoder(
                              bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {ps}) }});\
                              {rt}::{order}(bytes)\
                              }}",
-                            snake = fname_snake, rt = r_type, off = offset, ps = prim_size, order = order_fn,
+                            snake = fname_snake,
+                            rt = r_type,
+                            off = offset,
+                            ps = prim_size,
+                            order = order_fn,
                         );
                         if let Some(ref desc) = f.description {
                             let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
@@ -2032,14 +2067,25 @@ fn generate_message_decoder(
                                      Some(val)\n\
                                  }}\n\
                              }}\n",
-                            snake = fname_snake, rt = r_type, since = since, offset_end = offset_end,
-                            offset = offset, order = order_fn, ps = prim_size, null_check = null_check_expr,
+                            snake = fname_snake,
+                            rt = r_type,
+                            since = since,
+                            offset_end = offset_end,
+                            offset = offset,
+                            order = order_fn,
+                            ps = prim_size,
+                            null_check = null_check_expr,
                         );
-                        impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&accessor).unwrap());
+                        impl_body
+                            .extend(syn::parse_str::<proc_macro2::TokenStream>(&accessor).unwrap());
                     } else if since > 0 {
-                        let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                        let since_lit =
+                            syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                         let offset_end = offset + prim_size;
-                        let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                        let offset_end_lit = syn::LitInt::new(
+                            &offset_end.to_string(),
+                            proc_macro2::Span::call_site(),
+                        );
                         if let Some(ref desc) = f.description {
                             let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
                             impl_body.extend(quote::quote! { #[doc = #desc_lit] });
@@ -2086,13 +2132,17 @@ fn generate_message_decoder(
             } => {
                 let target_name = to_pascal_case(comp_name);
                 let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
-                let offset_lit = syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
-                let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
+                let offset_lit =
+                    syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                let comp_size_lit =
+                    syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
 
                 if since > 0 {
-                    let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let since_lit =
+                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + comp_size;
-                    let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    let offset_end_lit =
+                        syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #fname_ident(&self) -> Option<#target_ident> {
@@ -2132,14 +2182,17 @@ fn generate_message_decoder(
                 let r_type = rust_type(*encoding_type);
                 let r_type_ty: syn::Type = syn::parse_str(r_type).unwrap();
                 let prim_size = encoding_type.size();
-                let offset_lit = syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
-                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                let offset_lit =
+                    syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
                 let order_fn = format_ident!("from_{order_suffix}_bytes");
 
                 if f.presence == Presence::Constant {
                     if let Some(ref val) = f.constant_value {
                         let variant = val.rsplit('.').next().unwrap_or(val);
-                        let variant_ident = syn::Ident::new(variant, proc_macro2::Span::call_site());
+                        let variant_ident =
+                            syn::Ident::new(variant, proc_macro2::Span::call_site());
                         impl_body.extend(quote::quote! {
                             #[inline]
                             pub const fn #fname_ident(&self) -> #target_ident {
@@ -2148,9 +2201,11 @@ fn generate_message_decoder(
                         });
                     }
                 } else if since > 0 {
-                    let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let since_lit =
+                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + prim_size;
-                    let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    let offset_end_lit =
+                        syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #fname_ident(&self) -> Option<#target_ident> {
@@ -2190,14 +2245,17 @@ fn generate_message_decoder(
                 let r_type = rust_type(*encoding_type);
                 let r_type_ty: syn::Type = syn::parse_str(r_type).unwrap();
                 let prim_size = encoding_type.size();
-                let offset_lit = syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
-                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                let offset_lit =
+                    syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
                 let order_fn = format_ident!("from_{order_suffix}_bytes");
 
                 if f.presence == Presence::Constant {
                     if let Some(ref val) = f.constant_value {
                         let bits: u8 = val.parse().unwrap_or(0);
-                        let bits_lit = syn::LitInt::new(&bits.to_string(), proc_macro2::Span::call_site());
+                        let bits_lit =
+                            syn::LitInt::new(&bits.to_string(), proc_macro2::Span::call_site());
                         impl_body.extend(quote::quote! {
                             #[inline]
                             pub const fn #fname_ident(&self) -> #target_ident {
@@ -2206,9 +2264,11 @@ fn generate_message_decoder(
                         });
                     }
                 } else if since > 0 {
-                    let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let since_lit =
+                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + prim_size;
-                    let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    let offset_end_lit =
+                        syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #fname_ident(&self) -> Option<#target_ident> {
@@ -2293,11 +2353,15 @@ fn generate_message_decoder(
                  }}\n\
                  Ok(pos)\n\
              }}",
-            k1 = k1, k = k, ds = dim_size, gn = g_name_str,
-            dn = dim_name, cf = count_field, bf = bl_field,
+            k1 = k1,
+            k = k,
+            ds = dim_size,
+            gn = g_name_str,
+            dn = dim_name,
+            cf = count_field,
+            bf = bl_field,
             ge = format!("{}EntryDecoder", g_pascal),
         );
-        eprintln!("TAIL_VERIFY: {}", &tail);
         impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&tail).unwrap());
         k += 1;
     }
@@ -2306,7 +2370,8 @@ fn generate_message_decoder(
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let k1 = k + 1;
-        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
+        let prefix_size_lit =
+            syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
         let vd_type_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
         let vd_len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
         let vd_tail = format!(
@@ -2324,8 +2389,12 @@ fn generate_message_decoder(
                  }}\n\
                  Ok(start + {ps} + len)\n\
              }}",
-            k1 = k1, k = k, ps = prefix_size, vn = vd.name,
-            tp = type_pascal, lf = len_field,
+            k1 = k1,
+            k = k,
+            ps = prefix_size,
+            vn = vd.name,
+            tp = type_pascal,
+            lf = len_field,
         );
         impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&vd_tail).unwrap());
         k += 1;
@@ -2364,11 +2433,8 @@ fn generate_message_decoder(
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
         let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
-        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let vd_tail_ident = syn::Ident::new(
-            &format!("tail_offset_{}", vd_idx),
-            proc_macro2::Span::call_site(),
-        );
+        let prefix_size_lit =
+            syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
         let vd_tail_ident: syn::Ident = syn::Ident::new(
             &format!("tail_offset_{}", vd_idx),
             proc_macro2::Span::call_site(),
@@ -2409,7 +2475,10 @@ fn generate_message_decoder(
         }
 
         // UTF-8 str accessor
-        let str_ident = syn::Ident::new(&format!("{vd_snake}_as_str"), proc_macro2::Span::call_site());
+        let str_ident = syn::Ident::new(
+            &format!("{vd_snake}_as_str"),
+            proc_macro2::Span::call_site(),
+        );
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
@@ -2524,7 +2593,8 @@ fn generate_message_decoder(
     // 12. Trait impls
     let msg_id_lit = syn::LitInt::new(&msg.id.to_string(), proc_macro2::Span::call_site());
     let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), proc_macro2::Span::call_site());
-    let schema_version_lit = syn::LitInt::new(&schema_version.to_string(), proc_macro2::Span::call_site());
+    let schema_version_lit =
+        syn::LitInt::new(&schema_version.to_string(), proc_macro2::Span::call_site());
     ts.extend(quote::quote! {
 
         impl<'a> TryFrom<&'a [u8]> for #decoder_ident<'a> {
@@ -2568,17 +2638,18 @@ fn generate_message_decoder(
         generate_group_decoder(&mut str_buf, g, elements, byte_order);
     }
     if !str_buf.is_empty() {
-        let group_ts: proc_macro2::TokenStream = syn::parse_str(&str_buf)
-            .unwrap_or_else(|e| panic!("Failed to parse group decoder generated code for {name}: {e}"));
+        let group_ts: proc_macro2::TokenStream = syn::parse_str(&str_buf).unwrap_or_else(|e| {
+            panic!("Failed to parse group decoder generated code for {name}: {e}")
+        });
         ts.extend(group_ts);
     }
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)
     // Actually the impl block is opened but the `}` is emitted by the trait impls section above.
     // The quote! for trait impls starts with `}` to close the impl block first.
-    // Let me verify: the impl block opening uses `quote! { impl ... { ... }` 
+    // Let me verify: the impl block opening uses `quote! { impl ... { ... }`
     // Wait, no. Let me re-check the flow.
-    // 
+    //
     // Section 2 opens: quote! { impl ... { ...  (no closing })
     // Section 12 starts with: `}` (closing the impl)
     // So the impl is properly closed.
@@ -2587,7 +2658,6 @@ fn generate_message_decoder(
 
     ts
 }
-
 
 fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream {
     let name = to_pascal_case(&msg.name);
@@ -3708,8 +3778,7 @@ fn generate_message_encoder(
                 name: comp_name,
                 size: comp_size,
             } => {
-                let target_type: syn::Type =
-                    syn::parse_str(&to_pascal_case(comp_name)).unwrap();
+                let target_type: syn::Type = syn::parse_str(&to_pascal_case(comp_name)).unwrap();
                 let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
                     #[must_use]
@@ -3729,10 +3798,8 @@ fn generate_message_encoder(
                     // Constant enum fields have no setter
                     continue;
                 }
-                let target_type: syn::Type =
-                    syn::parse_str(&to_pascal_case(enum_name)).unwrap();
-                let r_type: syn::Type =
-                    syn::parse_str(rust_type(*encoding_type)).unwrap();
+                let target_type: syn::Type = syn::parse_str(&to_pascal_case(enum_name)).unwrap();
+                let r_type: syn::Type = syn::parse_str(rust_type(*encoding_type)).unwrap();
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
@@ -3765,8 +3832,7 @@ fn generate_message_encoder(
                 name: set_name,
                 encoding_type,
             } => {
-                let target_type: syn::Type =
-                    syn::parse_str(&to_pascal_case(set_name)).unwrap();
+                let target_type: syn::Type = syn::parse_str(&to_pascal_case(set_name)).unwrap();
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
@@ -3827,30 +3893,19 @@ fn generate_message_encoder(
                 let next_name = if tail_idx + 1 < msg.groups.len() {
                     to_pascal_case(&msg.groups[tail_idx + 1].name)
                 } else {
-                    to_pascal_case(
-                        &msg.var_data[tail_idx + 1 - msg.groups.len()].name,
-                    )
+                    to_pascal_case(&msg.var_data[tail_idx + 1 - msg.groups.len()].name)
                 };
-                syn::parse_str(&format!(
-                    "{}_encoder_state::Needs{}",
-                    snake_name, next_name
-                ))
-                .unwrap()
+                syn::parse_str(&format!("{}_encoder_state::Needs{}", snake_name, next_name))
+                    .unwrap()
             } else {
-                syn::parse_str(&format!(
-                    "{}_encoder_state::Complete",
-                    snake_name
-                ))
-                .unwrap()
+                syn::parse_str(&format!("{}_encoder_state::Complete", snake_name)).unwrap()
             };
 
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
             let g_pascal_enc =
                 syn::Ident::new(&format!("{}Encoder", to_pascal_case(&g.name)), span);
-            let (_dim_name, dim_size, _, _) =
-                get_dimension_info(elements, &g.dimension_type);
-            let (num_offset, num_size) =
-                get_dim_num_layout(elements, &g.dimension_type);
+            let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+            let (num_offset, num_size) = get_dim_num_layout(elements, &g.dimension_type);
             let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
             let num_offset_lit = syn::LitInt::new(&num_offset.to_string(), span);
             let num_size_lit = syn::LitInt::new(&num_size.to_string(), span);
@@ -3895,36 +3950,23 @@ fn generate_message_encoder(
         // VarData methods
         for vd in &msg.var_data {
             let vd_pascal = to_pascal_case(&vd.name);
-            let needs_state: syn::Path = syn::parse_str(&format!(
-                "{}_encoder_state::Needs{}",
-                snake_name, vd_pascal
-            ))
-            .unwrap();
+            let needs_state: syn::Path =
+                syn::parse_str(&format!("{}_encoder_state::Needs{}", snake_name, vd_pascal))
+                    .unwrap();
             let next_state: syn::Path = if tail_idx + 1 < total_tail {
-                let next_name = to_pascal_case(
-                    &msg.var_data[tail_idx + 1 - msg.groups.len()].name,
-                );
-                syn::parse_str(&format!(
-                    "{}_encoder_state::Needs{}",
-                    snake_name, next_name
-                ))
-                .unwrap()
+                let next_name = to_pascal_case(&msg.var_data[tail_idx + 1 - msg.groups.len()].name);
+                syn::parse_str(&format!("{}_encoder_state::Needs{}", snake_name, next_name))
+                    .unwrap()
             } else {
-                syn::parse_str(&format!(
-                    "{}_encoder_state::Complete",
-                    snake_name
-                ))
-                .unwrap()
+                syn::parse_str(&format!("{}_encoder_state::Complete", snake_name)).unwrap()
             };
 
             let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
             let vd_snake_unchecked =
                 syn::Ident::new(&format!("{}_unchecked", to_snake_case(&vd.name)), span);
-            let (_, prefix_size, _, len_type) =
-                get_vardata_info(elements, &vd.type_name);
+            let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
             let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
-            let len_rust_type: syn::Type =
-                syn::parse_str(rust_type(len_type)).unwrap();
+            let len_rust_type: syn::Type = syn::parse_str(rust_type(len_type)).unwrap();
 
             // Checked body: conditionally includes max_length guard
             let mut checked_body = proc_macro2::TokenStream::new();
@@ -3987,11 +4029,8 @@ fn generate_message_encoder(
         }
 
         // Complete state + AsRef
-        let complete_state: syn::Path = syn::parse_str(&format!(
-            "{}_encoder_state::Complete",
-            snake_name
-        ))
-        .unwrap();
+        let complete_state: syn::Path =
+            syn::parse_str(&format!("{}_encoder_state::Complete", snake_name)).unwrap();
         ts.extend(quote::quote! {
             impl<'a> #name_encoder_ident<'a, #complete_state> {
                 #[inline]
@@ -4041,7 +4080,7 @@ fn generate_message_encoder(
         });
     }
 
-        // ── Generate Repeating Groups encoders ──
+    // ── Generate Repeating Groups encoders ──
     let mut group_buf = String::new();
     for g in &msg.groups {
         generate_group_encoder(&mut group_buf, g, elements, byte_order);
@@ -4055,7 +4094,6 @@ fn generate_message_encoder(
 
     ts
 }
-
 
 fn generate_group_encoder(
     src: &mut String,
