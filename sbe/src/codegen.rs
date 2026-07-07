@@ -2459,31 +2459,33 @@ fn generate_message_decoder(
 
 fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
     let name = to_pascal_case(&msg.name);
-    src.push_str(&format!(
-        "impl<'a> core::fmt::Display for {}Decoder<'a> {{\n\
-             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{\n",
-        name
-    ));
-    src.push_str(&format!("        write!(f, \"{} {{{{ \")?;\n", name));
+    let decoder_ident = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    let mut body = proc_macro2::TokenStream::new();
+    let display_header = format!("{} {{{{ ", name);
+    body.extend(quote::quote! {
+        write!(f, #display_header)?;
+    });
     let mut out_idx = 0usize;
     for f in &msg.fields {
         let snake = to_snake_case(&f.name);
+        let f_ident = syn::Ident::new(&snake, proc_macro2::Span::call_site());
         let sep = if out_idx == 0 { "" } else { ", " };
         match &f.field_type {
             FieldType::Primitive(_prim, length) => {
                 if f.presence == Presence::Constant || length.is_some() {
                     continue;
                 }
+                let fmt_str = format!("{sep}{snake}: {{}}");
                 if f.presence == Presence::Optional || f.since_version > 0 {
-                    src.push_str(&format!(
-                        "        if let Some(v) = self.{}() {{ write!(f, \"{}{}: {{}}\", v)?; }}\n",
-                        snake, sep, snake,
-                    ));
+                    body.extend(quote::quote! {
+                        if let Some(v) = self.#f_ident() {
+                            write!(f, #fmt_str, v)?;
+                        }
+                    });
                 } else {
-                    src.push_str(&format!(
-                        "        {{ let v = self.{}(); write!(f, \"{}{}: {{}}\", v)?; }}\n",
-                        snake, sep, snake,
-                    ));
+                    body.extend(quote::quote! {
+                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                    });
                 }
                 out_idx += 1;
             }
@@ -2493,16 +2495,17 @@ fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
                 if f.presence == Presence::Constant {
                     continue;
                 }
+                let fmt_str = format!("{sep}{snake}: {enum_name}::{{e:?}}");
                 if f.since_version > 0 {
-                    src.push_str(&format!(
-                        "        if let Some(e) = self.{}() {{ write!(f, \"{}{}: {}::{{e:?}}\")?; }}\n",
-                        snake, sep, snake, enum_name,
-                    ));
+                    body.extend(quote::quote! {
+                        if let Some(e) = self.#f_ident() {
+                            write!(f, #fmt_str)?;
+                        }
+                    });
                 } else {
-                    src.push_str(&format!(
-                        "        {{ let e = self.{}(); write!(f, \"{}{}: {}::{{e:?}}\")?; }}\n",
-                        snake, sep, snake, enum_name,
-                    ));
+                    body.extend(quote::quote! {
+                        { let e = self.#f_ident(); write!(f, #fmt_str)?; }
+                    });
                 }
                 out_idx += 1;
             }
@@ -2512,27 +2515,41 @@ fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
     }
     for g in &msg.groups {
         let g_snake = to_snake_case(&g.name);
+        let g_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
         let sep = if out_idx == 0 { "" } else { ", " };
-        src.push_str(&format!(
-            "        if let Ok(g) = self.{}() {{\n\
-                 write!(f, \"{}{}: {{}} entries\", g.len())?;\n\
-             }}\n",
-            g_snake, sep, g_snake,
-        ));
+        let fmt_str = format!("{sep}{g_snake}: {{}} entries");
+        body.extend(quote::quote! {
+            if let Ok(g) = self.#g_ident() {
+                write!(f, #fmt_str, g.len())?;
+            }
+        });
         out_idx += 1;
     }
     for vd in &msg.var_data {
         let vd_snake = to_snake_case(&vd.name);
+        let vd_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let sep = if out_idx == 0 { "" } else { ", " };
-        src.push_str(&format!(
-            "        if let Ok(d) = self.{}() {{\n\
-                 write!(f, \"{}{}: {{}} bytes\", d.len())?;\n\
-             }}\n",
-            vd_snake, sep, vd_snake,
-        ));
+        let fmt_str = format!("{sep}{vd_snake}: {{}} bytes");
+        body.extend(quote::quote! {
+            if let Ok(d) = self.#vd_ident() {
+                write!(f, #fmt_str, d.len())?;
+            }
+        });
         out_idx += 1;
     }
-    src.push_str("        write!(f, \" }}\")\n    }\n}\n\n");
+    body.extend(quote::quote! {
+        write!(f, " }}")
+    });
+    let ts = quote::quote! {
+        impl<'a> core::fmt::Display for #decoder_ident<'a> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                #body
+            }
+        }
+    };
+    src.push_str(&ts.to_string());
+    src.push('\n');
+    src.push('\n');
 }
 
 fn generate_group_decoder(
@@ -3822,214 +3839,268 @@ fn generate_group_encoder(
             dim_tpl[0..2].copy_from_slice(&(g.block_length as u16).to_be_bytes());
         }
     }
-    let dim_repr: String = dim_tpl
+
+    let span = proc_macro2::Span::call_site();
+    let group_enc_ident = syn::Ident::new(&format!("{}Encoder", name), span);
+    let entry_enc_ident = syn::Ident::new(&format!("{}EntryEncoder", name), span);
+    let block_len_lit = syn::LitInt::new(&g.block_length.to_string(), span);
+    let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
+    let dim_bytes: Vec<syn::LitInt> = dim_tpl
         .iter()
-        .map(|b| format!("{}", b))
-        .collect::<Vec<_>>()
-        .join(", ");
+        .map(|b| syn::LitInt::new(&b.to_string(), span))
+        .collect();
+    let to_endian = syn::Ident::new(&format!("to_{order_suffix}_bytes"), span);
 
-    src.push_str(&format!(
-        "#[must_use = \"group encoder must call add() to write entries\"]\n\
-         pub struct {}Encoder<'a> {{\n\
-             buf: &'a mut [u8],\n\
-             pos: usize,\n\
-             count: u16,\n\
-             written: u16,\n\
-         }}\n\n\
-         impl<'a> {}Encoder<'a> {{\n\
-             pub const ENTRY_BLOCK_LENGTH: usize = {};\n\
-             pub const GROUP_DIM_TEMPLATE: [u8; {}] = [{}];\n             const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == {});\n\n\
-             #[inline]\n             pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {{\n\
-                 Self {{ buf, pos, count, written: 0 }}\n\
-             }}\n\n\
-             #[must_use]\n             pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>\n\
-             where\n\
-                 F: FnOnce(&mut {}EntryEncoder<'b>),\n\
-             {{\n\
-                 if self.written >= self.count {{\n\
-                     return Err(sbe_rt::EncodeError::GroupFull {{ declared: self.count, attempted: self.written + 1 }});\n\
-                 }}\n\
-                 let block_len = Self::ENTRY_BLOCK_LENGTH;\n\
-                 if self.pos + block_len > self.buf.len() {{\n\
-                     return Err(sbe_rt::EncodeError::BufferTooShort {{ needed: block_len, available: self.buf.len() - self.pos }});\n\
-                 }}\n\
-                 let mut entry = {}EntryEncoder::wrap(self.buf, self.pos);\n",
-        name, name, g.block_length, dim_size, dim_repr, dim_size, name, name
-    ));
-
-    generate_nullification(src, &g.fields, "self.pos", byte_order);
-
-    src.push_str(&format!(
-        "        f(&mut entry);\n\
-                 self.pos = entry.pos;\n\
-                 self.written += 1;\n\
-                 Ok(())\n\
-             }}\n\
-         }}\n\n"
-    ));
-
-    // Entry Encoder Struct
-    src.push_str(&format!(
-        "#[must_use = \"entry encoder fields must be set before the next entry\"]\n\
-         pub struct {}EntryEncoder<'a> {{\n\
-             buf: &'a mut [u8],\n\
-             entry_start: usize,\n\
-             pos: usize,\n\
-         }}\n\n\
-         impl<'a> {}EntryEncoder<'a> {{\n\
-             pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
-             #[inline]\n             pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
-                 Self {{\n\
-                     buf,\n\
-                     entry_start: pos,\n\
-                     pos: pos + Self::ENTRY_BLOCK_LENGTH,\n\
-                 }}\n\
-             }}\n\n",
-        name, name, g.block_length
-    ));
-
-    // Setters for group entry fields
+    // Build nullification for add() body (inline, uses self.buf)
+    let mut null_stmts = proc_macro2::TokenStream::new();
     for f in &g.fields {
-        let f_name = to_snake_case(&f.name);
-        let offset = f.offset;
-        let since = f.since_version;
+        if f.presence == Presence::Optional {
+            if let Some(null_val) = f.null_value {
+                let size = match f.field_type {
+                    FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
+                    FieldType::Composite { size, .. } => size,
+                    FieldType::Enum { encoding_type, .. } => encoding_type.size(),
+                    FieldType::Set { encoding_type, .. } => encoding_type.size(),
+                };
+                let null_val_expr: syn::Expr =
+                    syn::parse_str(&format!("{null_val}_u64")).unwrap();
+                let f_offset = syn::Index::from(f.offset);
+                let size_lit = syn::LitInt::new(&size.to_string(), span);
+                null_stmts.extend(quote::quote! {
+                    let null_bytes = #null_val_expr.#to_endian();
+                    let offset = self.pos + #f_offset;
+                    self.buf[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+                });
+            }
+        }
+    }
+
+    let mut add_body = quote::quote! {
+        if self.written >= self.count {
+            return Err(sbe_rt::EncodeError::GroupFull { declared: self.count, attempted: self.written + 1 });
+        }
+        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        if self.pos + block_len > self.buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort { needed: block_len, available: self.buf.len() - self.pos });
+        }
+        let mut entry = #entry_enc_ident::wrap(self.buf, self.pos);
+    };
+    if !null_stmts.is_empty() {
+        add_body.extend(null_stmts);
+    }
+    add_body.extend(quote::quote! {
+        f(&mut entry);
+        self.pos = entry.pos;
+        self.written += 1;
+        Ok(())
+    });
+
+    let mut ts = proc_macro2::TokenStream::new();
+    ts.extend(quote::quote! {
+        #[must_use = "group encoder must call add() to write entries"]
+        pub struct #group_enc_ident<'a> {
+            buf: &'a mut [u8],
+            pos: usize,
+            count: u16,
+            written: u16,
+        }
+
+        impl<'a> #group_enc_ident<'a> {
+            pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
+            pub const GROUP_DIM_TEMPLATE: [u8; #dim_size_lit] = [#(#dim_bytes),*];
+            const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == #dim_size_lit);
+
+            #[inline]
+            pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
+                Self { buf, pos, count, written: 0 }
+            }
+
+            #[must_use]
+            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+            where
+                F: FnOnce(&mut #entry_enc_ident<'b>),
+            {
+                #add_body
+            }
+        }
+    });
+
+    // Entry encoder struct + all methods in a single impl block
+    let mut entry_methods = proc_macro2::TokenStream::new();
+
+    entry_methods.extend(quote::quote! {
+        pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
+
+        #[inline]
+        pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+            Self {
+                buf,
+                entry_start: pos,
+                pos: pos + Self::ENTRY_BLOCK_LENGTH,
+            }
+        }
+    });
+
+    // Field setters
+    for f in &g.fields {
+        let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
+        let f_offset = syn::Index::from(f.offset);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
-                let r_type = rust_type(*prim);
+                let r_ty = syn::Ident::new(&rust_type(*prim), span);
                 let prim_size = prim.size();
                 if f.presence == Presence::Constant {
-                    // Constant fields have no setter
+                    continue;
                 } else if let Some(len) = length {
-                    src.push_str(&format!(
-                        "#[must_use]\n    pub fn {}(&mut self, val: [{}; {}]) -> &mut Self {{\n\
-                                 let offset = self.entry_start + {};\n\
-                                 let mut idx = 0;\n\
-                                 while idx < {} {{\n\
-                                     let val_bytes = val[idx].to_{}_bytes();\n\
-                                     self.buf[offset + idx * {}..offset + idx * {} + {}].copy_from_slice(&val_bytes);\n\
-                                     idx += 1;\n\
-                                 }}\n\
-                                 self\n\
-                             }}\n\n",
-                        f_name, r_type, len, offset, len, order_suffix, prim_size, prim_size, prim_size
-                    ));
+                    let len_lit = syn::LitInt::new(&len.to_string(), span);
+                    let sz = syn::LitInt::new(&prim_size.to_string(), span);
+                    entry_methods.extend(quote::quote! {
+                        #[must_use]
+                        pub fn #f_ident(&mut self, val: [#r_ty; #len_lit]) -> &mut Self {
+                            let offset = self.entry_start + #f_offset;
+                            let mut idx = 0;
+                            while idx < #len_lit {
+                                let val_bytes = val[idx].#to_endian();
+                                self.buf[offset + idx * #sz..offset + idx * #sz + #sz].copy_from_slice(&val_bytes);
+                                idx += 1;
+                            }
+                            self
+                        }
+                    });
                 } else {
-                    src.push_str(&format!(
-                        "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
-                                 let offset = self.entry_start + {};\n\
-                                 let val_bytes = val.to_{}_bytes();\n\
-                                 self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
-                                 self\n\
-                             }}\n\n",
-                        f_name, r_type, offset, order_suffix, prim_size
-                    ));
+                    let sz = syn::LitInt::new(&prim_size.to_string(), span);
+                    entry_methods.extend(quote::quote! {
+                        #[must_use]
+                        pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
+                            let offset = self.entry_start + #f_offset;
+                            let val_bytes = val.#to_endian();
+                            self.buf[offset..offset + #sz].copy_from_slice(&val_bytes);
+                            self
+                        }
+                    });
                 }
             }
             FieldType::Composite {
                 name: comp_name,
                 size: comp_size,
             } => {
-                let target_name = to_pascal_case(comp_name);
-                src.push_str(&format!(
-                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
-                             let offset = self.entry_start + {};\n\
-                             self.buf[offset..offset + {}].copy_from_slice(&val.0);\n\
-                             self\n\
-                         }}\n\n",
-                    f_name, target_name, offset, comp_size
-                ));
+                let target = syn::Ident::new(&to_pascal_case(comp_name), span);
+                let sz = syn::LitInt::new(&comp_size.to_string(), span);
+                entry_methods.extend(quote::quote! {
+                    #[must_use]
+                    pub fn #f_ident(&mut self, val: #target) -> &mut Self {
+                        let offset = self.entry_start + #f_offset;
+                        self.buf[offset..offset + #sz].copy_from_slice(&val.0);
+                        self
+                    }
+                });
             }
             FieldType::Enum {
                 name: enum_name,
                 encoding_type,
             } => {
-                let target_name = to_pascal_case(enum_name);
-                let r_type = rust_type(*encoding_type);
-                let prim_size = encoding_type.size();
-                src.push_str(&format!(
-                    "#[must_use]\n    pub fn {f_name}(&mut self, val: {target_name}) -> &mut Self {{\n\
-                             let offset = self.entry_start + {offset};\n\
-                             let val_bytes = (val as {r_type}).to_{order_suffix}_bytes();\n\
-                             self.buf[offset..offset + {prim_size}].copy_from_slice(&val_bytes);\n\
-                             self\n\
-                         }}\n\n",
-                    order_suffix = order_suffix, r_type = r_type,
-                ));
+                let target = syn::Ident::new(&to_pascal_case(enum_name), span);
+                let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
+                let sz = syn::LitInt::new(&encoding_type.size().to_string(), span);
+                entry_methods.extend(quote::quote! {
+                    #[must_use]
+                    pub fn #f_ident(&mut self, val: #target) -> &mut Self {
+                        let offset = self.entry_start + #f_offset;
+                        let val_bytes = (val as #r_ty).#to_endian();
+                        self.buf[offset..offset + #sz].copy_from_slice(&val_bytes);
+                        self
+                    }
+                });
             }
             FieldType::Set {
                 name: set_name,
                 encoding_type,
             } => {
-                let target_name = to_pascal_case(set_name);
-                let prim_size = encoding_type.size();
-                src.push_str(&format!(
-                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
-                             let offset = self.entry_start + {};\n\
-                             let val_bytes = val.0.to_{}_bytes();\n\
-                             self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
-                             self\n\
-                         }}\n\n",
-                    f_name, target_name, offset, order_suffix, prim_size
-                ));
+                let target = syn::Ident::new(&to_pascal_case(set_name), span);
+                let sz = syn::LitInt::new(&encoding_type.size().to_string(), span);
+                entry_methods.extend(quote::quote! {
+                    #[must_use]
+                    pub fn #f_ident(&mut self, val: #target) -> &mut Self {
+                        let offset = self.entry_start + #f_offset;
+                        let val_bytes = val.0.#to_endian();
+                        self.buf[offset..offset + #sz].copy_from_slice(&val_bytes);
+                        self
+                    }
+                });
             }
         }
     }
 
-    // Setters for nested groups in entry
-    let mut tail_idx = 0;
-    let total_tail = g.groups.len() + g.var_data.len();
+    // Nested group setters
     for ng in &g.groups {
-        let ng_pascal = to_pascal_case(&ng.name);
-        let ng_snake = to_snake_case(&ng.name);
-        let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
-        let (num_offset, num_size) = get_dim_num_layout(elements, &ng.dimension_type);
-        src.push_str(&format!(
-            "#[must_use]\n    pub fn {}<F>(&mut self, count: u16, f: F) -> Result<&mut Self, sbe_rt::EncodeError>\n\
-                 where\n\
-                     F: FnOnce(&mut {}Encoder<'a>),\n\
-                 {{\n\
-                     if self.pos + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::EncodeError::BufferTooShort {{ needed: {}, available: self.buf.len() - self.pos }});\n\
-                     }}\n\
-                     self.buf[self.pos..self.pos + {}].copy_from_slice(&{}Encoder::GROUP_DIM_TEMPLATE);\n\
-                     self.buf[self.pos + {}..self.pos + {} + {}].copy_from_slice(&count.to_{}_bytes());\n\
-                     let mut group = {}Encoder::wrap(self.buf, self.pos + {}, count);\n\
-                     f(&mut group);\n\
-                     self.pos = group.pos;\n\
-                     Ok(self)\n\
-                 }}\n\n",
-            ng_snake, ng_pascal, dim_size, dim_size,
-            dim_size, ng_pascal, num_offset, num_offset, num_size, order_suffix,
-            ng_pascal, dim_size
-        ));
-        tail_idx += 1;
+        let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
+        let ng_enc = syn::Ident::new(&format!("{}Encoder", to_pascal_case(&ng.name)), span);
+        let (_dim_name, ng_dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
+        let (num_off, num_sz) = get_dim_num_layout(elements, &ng.dimension_type);
+        let ng_dim = syn::LitInt::new(&ng_dim_size.to_string(), span);
+        let num_off_idx = syn::Index::from(num_off);
+        let num_sz_lit = syn::LitInt::new(&num_sz.to_string(), span);
+
+        entry_methods.extend(quote::quote! {
+            #[must_use]
+            pub fn #ng_snake<F>(&mut self, count: u16, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
+            where
+                F: FnOnce(&mut #ng_enc<'a>),
+            {
+                if self.pos + #ng_dim > self.buf.len() {
+                    return Err(sbe_rt::EncodeError::BufferTooShort { needed: #ng_dim, available: self.buf.len() - self.pos });
+                }
+                self.buf[self.pos..self.pos + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
+                self.buf[self.pos + #num_off_idx..self.pos + #num_off_idx + #num_sz_lit].copy_from_slice(&count.#to_endian());
+                let mut group = #ng_enc::wrap(self.buf, self.pos + #ng_dim, count);
+                f(&mut group);
+                self.pos = group.pos;
+                Ok(self)
+            }
+        });
     }
 
-    // Setters for nested var_data in entry
+    // VarData setters
     for vd in &g.var_data {
-        let vd_snake = to_snake_case(&vd.name);
-        let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
-        let len_rust_type = rust_type(len_type);
-        src.push_str(&format!(
-            "#[must_use]\n    pub fn {}(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {{\n\
-                     let needed = {} + data.len();\n\
-                     if self.pos + needed > self.buf.len() {{\n\
-                         return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() - self.pos }});\n\
-                     }}\n\
-                     let len_bytes = (data.len() as {}).to_{}_bytes();\n\
-                     self.buf[self.pos..self.pos + {}].copy_from_slice(&len_bytes);\n\
-                     let start = self.pos + {};\n\
-                     self.buf[start..start + data.len()].copy_from_slice(data);\n\
-                     self.pos = start + data.len();\n\
-                     Ok(self)\n\
-                 }}\n\n",
-            vd_snake, prefix_size, len_rust_type, order_suffix, prefix_size, prefix_size
-        ));
-        tail_idx += 1;
+        let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
+        let (_, prefix_sz, _, len_type) = get_vardata_info(elements, &vd.type_name);
+        let pfx = syn::LitInt::new(&prefix_sz.to_string(), span);
+        let len_ty = syn::Ident::new(&rust_type(len_type), span);
+
+        entry_methods.extend(quote::quote! {
+            #[must_use]
+            pub fn #vd_snake(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {
+                let needed = #pfx + data.len();
+                if self.pos + needed > self.buf.len() {
+                    return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: self.buf.len() - self.pos });
+                }
+                let len_bytes = (data.len() as #len_ty).#to_endian();
+                self.buf[self.pos..self.pos + #pfx].copy_from_slice(&len_bytes);
+                let start = self.pos + #pfx;
+                self.buf[start..start + data.len()].copy_from_slice(data);
+                self.pos = start + data.len();
+                Ok(self)
+            }
+        });
     }
 
-    src.push_str("}\n\n");
+    ts.extend(quote::quote! {
+        #[must_use = "entry encoder fields must be set before the next entry"]
+        pub struct #entry_enc_ident<'a> {
+            buf: &'a mut [u8],
+            entry_start: usize,
+            pos: usize,
+        }
+
+        impl<'a> #entry_enc_ident<'a> {
+            #entry_methods
+        }
+    });
+
+    src.push_str(&ts.to_string());
+    src.push('\n');
+    src.push('\n');
 
     // Recursively generate nested Repeating Groups encoders
     for ng in &g.groups {
