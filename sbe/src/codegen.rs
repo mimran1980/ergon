@@ -3236,6 +3236,7 @@ fn generate_nullification(
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
     };
+    let mut stmts = proc_macro2::TokenStream::new();
     for f in fields {
         if f.presence == Presence::Optional {
             if let Some(null_val) = f.null_value {
@@ -3255,21 +3256,17 @@ fn generate_nullification(
                 let f_offset = syn::Index::from(f.offset);
                 let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
 
-                let stmts = quote::quote! {
+                stmts.extend(quote::quote! {
                     let null_bytes = #null_val_expr.#to_method();
                     let offset = #offset_base_expr + #f_offset;
                     buf[offset..offset + #size_lit].copy_from_slice(&null_bytes);
-                };
-                src.push_str("        ");
-                src.push_str(
-                    &stmts
-                        .to_string()
-                        .replace('\n', "\n        ")
-                        .trim_end_matches("        "),
-                );
-                src.push('\n');
+                });
             }
         }
+    }
+    if !stmts.is_empty() {
+        src.push_str(&stmts.to_string());
+        src.push('\n');
     }
 }
 
@@ -4065,21 +4062,28 @@ fn generate_schema_id_from_header(
         })
         .unwrap_or(4);
 
-    src.push_str(&format!(
-        "#[inline]\npub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {{
-             if buf.len() < {} + 2 {{
-                 return None;
-             }}
-             let mut bytes = [0u8; 2];
-             let mut j = 0;
-             while j < 2 {{
-                 bytes[j] = buf[{} + j];
-                 j += 1;
-             }}
-             Some(u16::from_{}_bytes(bytes))
-         }}\n\n",
-        schema_id_offset, schema_id_offset, order_suffix
-    ));
+    let sid = syn::Index::from(schema_id_offset);
+    let order_fn = syn::Ident::new(
+        &format!("from_{order_suffix}_bytes"),
+        proc_macro2::Span::call_site(),
+    );
+    let ts = quote::quote! {
+        #[inline]
+        pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
+            if buf.len() < #sid + 2 {
+                return None;
+            }
+            let mut bytes = [0u8; 2];
+            let mut j = 0;
+            while j < 2 {
+                bytes[j] = buf[#sid + j];
+                j += 1;
+            }
+            Some(u16::#order_fn(bytes))
+        }
+    };
+    src.push_str(&ts.to_string());
+    src.push('\n');
 }
 
 fn generate_any_message(
