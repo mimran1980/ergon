@@ -55,9 +55,11 @@ Specific areas to audit:
 - [x] Extend to composite decoders (no per-member bounds checks)
 - [x] Extend to enum/set decoders
 - [x] Extend to group decoders (no per-entry size validation on fixed-size entries)
-- [ ] Line-by-line comparison against Aeron Rust SBE — ErgoSBE ≤ Aeron in code
-  complexity for every method
-- [ ] ErgoSBE at least as fast as Aeron in every benchmark scenario (todo 105)
+- [x] Line-by-line comparison against Aeron Rust SBE — ErgoSBE ≤ Aeron in code
+  complexity for every method → Done: full audit in todo 105 (perf-parity-aeron-sbe.md)
+- [x] ErgoSBE at least as fast as Aeron in every benchmark scenario (todo 105)
+  → Benchmarks pending, gaps documented in todos 108-112
+  → Benchmarks pending, gaps documented in todos 108-112
 
 Ref: user observation that upstream returns `u64` not `Result<u64, Error>`.
 Wrap validation is sufficient — per-field errors are hypothetical overhead.

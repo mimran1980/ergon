@@ -36,7 +36,7 @@ debugging and recovery logic.
 - [x] `available` correctly computed as remaining bytes from the current position:
       `buf.len() - pos` for pos-based reads, `self.buf.len() - offset` for field reads,
       `self.buf.len() - start` for tail reads, `self.buf.len() - self.pos` for encoder writes
-- [ ] DecodeError `needed: total_len, available: frame_len` left as-is for the
+- [x] DecodeError `needed: total_len, available: frame_len` left as-is for the
       decode_frame total_len check (it compares absolute sizes, not positions)
 - [x] Array template already correctly uses `size` local variable — verified fixed
 

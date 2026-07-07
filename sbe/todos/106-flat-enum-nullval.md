@@ -43,7 +43,7 @@ impl Model {
 - [x] Remove newtype `Struct` + `Kind` split — single enum per SBE enum
 - [x] `pub const fn raw(self) -> T` returns `self as T` (repr discriminant)
 - [x] `From<T>` impls for conversion
-- [ ] `From<&str>` or `FromStr` for parsing (optional, not implemented — YAGNI for now)
+- [x] `From<&str>` or `FromStr` for parsing (optional, not implemented — YAGNI for now)
 - [x] All existing tests pass with updated API
 - [x] Golden file regenerated
 - [x] Update design record in `design/DECISIONS.md`

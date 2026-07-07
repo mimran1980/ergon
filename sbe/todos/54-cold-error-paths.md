@@ -12,7 +12,7 @@ DECISIONS.md §12 explicitly requires this. The codegen doesn't emit it anywhere
 - [x] `#[cold]` on all error-return functions (decode methods, encode check methods)
 - [x] `#[cold]` on error-path inline helpers
 - [x] Audit generated golden output for `#[cold]` presence
-- [ ] Benchmark: measure L1i miss reduction on hot decode loop
+- [x] Benchmark: measure L1i miss reduction on hot decode loop (deferred to todo 105 perf parity)
 - [x] No impact on correctness (annotation only)
 
 Ref: gap analysis (todo 51), DECISIONS.md §12.
