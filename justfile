@@ -1,48 +1,77 @@
-# ErgoSBE — build, test, and lint recipes
+# ErgoSBE — build, test, lint, and samples
 
-# Default: build workspace crates (sbe + persist)
-default: build
+set shell := ["bash", "-cu"]
 
-# Build workspace crates only
+default:
+    @just --list --unsorted
+
+# ── Build ──────────────────────────────────────────────────────
+
 build:
     RUSTC_WRAPPER="" cargo build --workspace
 
-# Build all crates including samples
 build-all: build
     RUSTC_WRAPPER="" cargo build --manifest-path samples/exchange-orderbook/Cargo.toml
 
-# Run all workspace tests
+# ── Test ───────────────────────────────────────────────────────
+
 test:
     RUSTC_WRAPPER="" cargo test --workspace
 
-# Run all tests including samples
 test-all: test
     RUSTC_WRAPPER="" cargo test --manifest-path samples/exchange-orderbook/Cargo.toml
 
-# Format check
+# ── Format / Lint ──────────────────────────────────────────────
+
 fmt:
     cargo fmt --all --check
 
-# Format apply
 fmt-fix:
     cargo fmt --all
 
-# Clippy (workspace)
 clippy:
     RUSTC_WRAPPER="" cargo clippy --workspace --all-targets -- -D warnings
 
-# Clippy including samples
 clippy-all: clippy
     RUSTC_WRAPPER="" cargo clippy --manifest-path samples/exchange-orderbook/Cargo.toml --all-targets -- -D warnings
 
-# Full CI check: format, clippy, test
+fix:
+    cargo fmt --all
+    cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+
+# ── CI ─────────────────────────────────────────────────────────
+
 ci: fmt clippy test
     @echo "CI: all checks passed"
 
-# Full CI including samples
 ci-all: fmt clippy-all test-all
     @echo "CI-all: all checks passed"
 
-# Regenerate golden file after codegen changes
+# ── Golden file ────────────────────────────────────────────────
+
 update-golden:
     RUSTC_WRAPPER="" cargo test -p ergosbe --test stability_test -- update_golden --ignored
+
+# ── Samples ────────────────────────────────────────────────────
+
+samples-orderbook:
+    @echo "=== Starting ClickHouse ==="
+    @docker start ergo-clickhouse 2>/dev/null || docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 clickhouse/clickhouse-server
+    @echo "=== Waiting for ClickHouse ==="
+    @until curl -s http://localhost:8123/ping >/dev/null 2>&1; do sleep 1; done
+    @echo "=== Running exchange orderbook ==="
+    CLICKHOUSE_URL=http://localhost:8123 RUSTC_WRAPPER="" cargo run --manifest-path samples/exchange-orderbook/Cargo.toml
+
+samples-clickhouse-stop:
+    docker stop ergo-clickhouse 2>/dev/null || true
+    docker rm ergo-clickhouse 2>/dev/null || true
+
+# ── Docs ───────────────────────────────────────────────────────
+
+docs:
+    cargo doc --no-deps --workspace --open
+
+# ── Clean ───────────────────────────────────────────────────────
+
+clean:
+    cargo clean
