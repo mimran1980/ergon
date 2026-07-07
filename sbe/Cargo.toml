@@ -18,8 +18,10 @@ path = "src/lib.rs"
 [features]
 default = []
 bound-check-disabled = []
+persist = ["dep:ergo-clickhouse-persist"]
 
 [dependencies]
+ergo-clickhouse-persist = { optional = true, path = "../persist" }
 roxmltree = "0.20"
 thiserror = "2"
 miette = { version = "7", features = ["derive"] }

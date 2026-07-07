@@ -108,7 +108,7 @@ fn decode_message(buf: &[u8]) -> Result<(), sbe_rt::DecodeError> {
 5. **No `unsafe` by default** — `unsafe` is opt-in via `_unchecked()` methods or the
    `bound-check-disabled` feature.
 
-See [`design/DECISIONS.md`](design/DECISIONS.md) for the complete design rationale.
+See [`sbe/design/DECISIONS.md`](sbe/design/DECISIONS.md) for the complete design rationale.
 
 ## Development
 
