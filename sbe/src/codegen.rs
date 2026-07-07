@@ -3231,43 +3231,6 @@ fn generate_group_decoder(
         }
     }
 
-    // Fast iterator for groups with tails: advances by ENTRY_BLOCK_LENGTH only.
-    if total_tail > 0 {
-        let fast_iter_ident =
-            syn::Ident::new(&format!("{name}FastIter"), proc_macro2::Span::call_site());
-        ts.extend(quote::quote! {
-            #[inline]
-            pub fn iter_fast(&mut self) -> #fast_iter_ident<'a, '_> {
-                #fast_iter_ident { decoder: self }
-            }
-        });
-        ts.extend(quote::quote! {
-            #[doc(hidden)]
-            pub struct #fast_iter_ident<'a, 'd> {
-                decoder: &'d mut #decoder_ident<'a>,
-            }
-            impl<'a, 'd> Iterator for #fast_iter_ident<'a, 'd> {
-                type Item = #entry_decoder_ident<'a>;
-                fn next(&mut self) -> Option<Self::Item> {
-                    if self.decoder.count == 0 {
-                        return None;
-                    }
-                    let entry = #entry_decoder_ident::wrap(
-                        self.decoder.buf, self.decoder.pos, self.decoder.acting_version);
-                    self.decoder.pos += #block_len_lit;
-                    self.decoder.count -= 1;
-                    Some(entry)
-                }
-                fn size_hint(&self) -> (usize, Option<usize>) {
-                    (self.decoder.count, Some(self.decoder.count))
-                }
-            }
-            impl<'a, 'd> ExactSizeIterator for #fast_iter_ident<'a, 'd> {
-                fn len(&self) -> usize { self.decoder.count }
-            }
-        });
-    }
-
     // Iterator implementation
     if total_tail == 0 {
         ts.extend(quote::quote! {
