@@ -6,22 +6,22 @@ Groups in the SBE tail are sequential. To reach the third group you must step
 past the first two. Currently this requires manually reading dimension headers
 and computing strides. The decoder should do this for you.
 
-## skip_<group>()
+## skip_n() — generic group skip
 
-Skip an entire group without decoding it. Reads the dimension header, computes
-the region size, advances the decoder position past it:
+Skip `n` entries within an already-decoded group. Uses entry `encoded_length()`
+for groups with var-data tails; O(1) stride math for fixed-size entries.
 
 ```rust
-let car = CarDecoder::try_from(buf)?;
-car.skip_fuel_figures()?;  // read dim header, advance past all fuel figure entries
-// car.performance_figures() now reads from the correct position
+let mut ff = car.fuel_figures()?;
+ff.skip_n(1)?;   // skip first entry, now positioned at entry 1
+let entry = ff.next().unwrap();  // reads entry 1 (second entry)
 ```
 
 - [x] `skip_n()` generated for every repeating group (generic, not per-group named)
-- [x] Reads the dimension header (blockLength + numInGroup)
-- [x] Returns `Result<(), DecodeError>` (validates extent fits in buffer)
+- [x] Uses entry `encoded_length()` for groups with var-data tails; O(1) stride for fixed-size groups
+- [x] Returns `Result<(), DecodeError>` (validates n <= remaining count)
 - [ ] `unsafe fn skip_n_unchecked()` — skips without extent validation
-- [x] Updates internal position so subsequent tail accessors read from the right offset
+- [x] Updates internal position so subsequent entries/navigation read from the right offset
 
 ## skip_all() — skip to end of message
 
@@ -97,4 +97,8 @@ asks.rewind();  // re-read if needed
 ## Verification / Unit Testing
 - [ ] Create unit tests `test_group_skip_and_index` verifying `skip_n()`, `nth()`, `rewind()`, and `as_chunks()` navigate groups correctly and return errors for out of bounds access.
 
-Audit note (2026-07-06): Verified. `skip_n()`, `nth()` (O(1) stride), and `rewind()` confirmed in codegen.rs lines 2638-2683 and golden car_example.rs lines 1553-1589. `skip_all()`, `_unchecked` variants, and dedicated unit tests remain unimplemented.
+Audit note (2026-07-07): Verified. `skip_n()`, `nth()` (O(1) stride), `rewind()`, `remaining()`, and `is_empty()` confirmed in:
+- codegen.rs lines 2546-2648 (group decoder impl)
+- golden car_example.rs lines 1420-1476, 1650-1706, 1859-1908 (all three group decoders)
+
+`skip_all()` (message-level), `skip_n_unchecked()`, and dedicated unit tests remain unimplemented. No test currently exercises `skip_n()`, `nth()`, or `rewind()` at runtime.
