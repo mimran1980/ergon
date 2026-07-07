@@ -2683,6 +2683,10 @@ pub mod car_field_meta {
         pub offset: usize,
         pub since_version: u16,
         pub field_type: &'static str,
+        pub presence: &'static str,
+        pub null_value: Option<&'static str>,
+        pub semantic_type: Option<&'static str>,
+        pub description: Option<&'static str>,
     }
     pub const FIELDS: &[FieldInfo] = &[
         FieldInfo {
@@ -2691,6 +2695,10 @@ pub mod car_field_meta {
             offset: 0,
             since_version: 0,
             field_type: "u64",
+            presence: "required",
+            null_value: Some("18446744073709551615"),
+            semantic_type: None,
+            description: None,
         },
         FieldInfo {
             name: "modelYear",
@@ -2698,6 +2706,10 @@ pub mod car_field_meta {
             offset: 8,
             since_version: 0,
             field_type: "u16",
+            presence: "required",
+            null_value: Some("65535"),
+            semantic_type: None,
+            description: None,
         },
         FieldInfo {
             name: "available",
@@ -2705,6 +2717,10 @@ pub mod car_field_meta {
             offset: 10,
             since_version: 0,
             field_type: "BooleanType",
+            presence: "required",
+            null_value: None,
+            semantic_type: None,
+            description: None,
         },
         FieldInfo {
             name: "code",
@@ -2712,6 +2728,10 @@ pub mod car_field_meta {
             offset: 11,
             since_version: 0,
             field_type: "Model",
+            presence: "required",
+            null_value: None,
+            semantic_type: None,
+            description: None,
         },
         FieldInfo {
             name: "someNumbers",
@@ -2719,6 +2739,10 @@ pub mod car_field_meta {
             offset: 12,
             since_version: 0,
             field_type: "u32",
+            presence: "required",
+            null_value: Some("4294967295"),
+            semantic_type: None,
+            description: None,
         },
         FieldInfo {
             name: "vehicleCode",
@@ -2726,6 +2750,10 @@ pub mod car_field_meta {
             offset: 28,
             since_version: 0,
             field_type: "u8",
+            presence: "required",
+            null_value: Some("0"),
+            semantic_type: None,
+            description: None,
         },
         FieldInfo {
             name: "extras",
@@ -2733,6 +2761,10 @@ pub mod car_field_meta {
             offset: 34,
             since_version: 0,
             field_type: "OptionalExtras",
+            presence: "required",
+            null_value: None,
+            semantic_type: None,
+            description: None,
         },
         FieldInfo {
             name: "discountedModel",
@@ -2740,6 +2772,10 @@ pub mod car_field_meta {
             offset: 35,
             since_version: 0,
             field_type: "Model",
+            presence: "constant",
+            null_value: None,
+            semantic_type: None,
+            description: None,
         },
         FieldInfo {
             name: "engine",
@@ -2747,6 +2783,10 @@ pub mod car_field_meta {
             offset: 35,
             since_version: 0,
             field_type: "Engine",
+            presence: "required",
+            null_value: None,
+            semantic_type: None,
+            description: None,
         },
     ];
 }

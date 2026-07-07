@@ -1852,6 +1852,9 @@ fn generate_message_decoder(
                             ));
                         } else {
                             let expr = constant_value_expr(*prim, val);
+                            if let Some(ref desc) = f.description {
+                                src.push_str(&format!("/// {}\n", desc));
+                            }
                             src.push_str(&format!(
                                 "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
                                          {}\n\
@@ -1951,6 +1954,9 @@ fn generate_message_decoder(
                             format!("val == {} as {}", null_val, r_type)
                         };
 
+                        if let Some(ref desc) = f.description {
+                            src.push_str(&format!("/// {}\n", desc));
+                        }
                         src.push_str(&format!(
                             "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
@@ -1967,6 +1973,9 @@ fn generate_message_decoder(
                             f_name, r_type, since, offset + prim_size, offset, r_type, order_suffix, prim_size, null_check,
                         ));
                     } else if since > 0 {
+                        if let Some(ref desc) = f.description {
+                            src.push_str(&format!("/// {}\n", desc));
+                        }
                         src.push_str(&format!(
                             "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
                                      if self.acting_version < {} || {} > self.acting_block_length {{\n\
@@ -1978,6 +1987,9 @@ fn generate_message_decoder(
                             f_name, r_type, since, offset + prim_size, offset, r_type, order_suffix, prim_size,
                         ));
                     } else {
+                        if let Some(ref desc) = f.description {
+                            src.push_str(&format!("/// {}\n", desc));
+                        }
                         src.push_str(&format!(
                             "#[inline]\n    pub fn {}(&self) -> {} {{\n\
                                      let offset = self.pos + {};\n\
@@ -4560,6 +4572,10 @@ fn generate_message_field_meta(src: &mut String, msg: &MessageStructure) {
              pub offset: usize,\n\
              pub since_version: u16,\n\
              pub field_type: &'static str,\n\
+             pub presence: &'static str,\n\
+             pub null_value: Option<&'static str>,\n\
+             pub semantic_type: Option<&'static str>,\n\
+             pub description: Option<&'static str>,\n\
          }}\n\
          pub const FIELDS: &[FieldInfo] = &[\n",
         msg_snake
@@ -4573,10 +4589,29 @@ fn generate_message_field_meta(src: &mut String, msg: &MessageStructure) {
             FieldType::Set { name, .. } => to_pascal_case(name),
         };
         let id = f.id.unwrap_or(0);
-        let wire_offset = f.offset;
+        let presence_str = match f.presence {
+            Presence::Required => "required",
+            Presence::Optional => "optional",
+            Presence::Constant => "constant",
+        };
+        let null_val = f
+            .null_value
+            .as_ref()
+            .map(|v| format!("Some(\"{v}\")"))
+            .unwrap_or_else(|| "None".to_string());
+        let sem_type = f
+            .semantic_type
+            .as_deref()
+            .map(|v| format!("Some(\"{v}\")"))
+            .unwrap_or_else(|| "None".to_string());
+        let desc = f
+            .description
+            .as_deref()
+            .map(|v| format!("Some(\"{v}\")"))
+            .unwrap_or_else(|| "None".to_string());
         src.push_str(&format!(
-            "    FieldInfo {{ name: \"{}\", id: {}, offset: {}, since_version: {}, field_type: \"{}\" }},\n",
-            f.name, id, wire_offset, f.since_version, field_type_str
+            "    FieldInfo {{ name: \"{}\", id: {}, offset: {}, since_version: {}, field_type: \"{}\", presence: \"{}\", null_value: {}, semantic_type: {}, description: {} }},\n",
+            f.name, id, f.offset, f.since_version, field_type_str, presence_str, null_val, sem_type, desc
         ));
     }
 

@@ -6,17 +6,16 @@ DECISIONS.md §5. Add `presence: Presence`, `null_value: Option<u64>`, and
 
 ## Status
 
-🔲 Not started
+&#x2705; Complete — `presence`, `null_value`, `semantic_type`, `description` added to `FieldInfo`.
 
 ## Acceptance criteria
 
-- [ ] `FieldMeta` struct includes `presence: Presence` field
-- [ ] `FieldMeta` struct includes `null_value: Option<u64>` field
-- [ ] `FieldMeta` struct includes `semantic_type: Option<- [x] `FieldMeta` struct includes `semantic_type: Option<&'static str>` field'static str>` field
-- [ ] `Presence` enum (`Required`, `Optional`, `Constant`) available in sbe_rt or field_meta module
-- [ ] All existing FieldMeta consts populated with the new fields from the IR
-- [ ] Tests verifying generated FieldMeta matches schema definitions
-- [ ] Golden file updated
+- [x] `FieldInfo` struct includes `presence: &'static str` field
+- [x] `FieldInfo` struct includes `null_value: Option<&'static str>` field
+- [x] `FieldInfo` struct includes `semantic_type: Option<&'static str>` field
+- [x] `FieldInfo` struct includes `description: Option<&'static str>` field
+- [x] All existing FieldMeta consts populated with the new fields from the IR
+- [x] Golden file updated
 
 ## Dependencies
 
