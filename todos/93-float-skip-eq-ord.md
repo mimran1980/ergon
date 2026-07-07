@@ -10,12 +10,12 @@ DECISIONS.md §4 specifies this.
 
 ## Acceptance criteria
 
-- [x] Composites with at least one float field derive `Clone, Copy, Debug, PartialEq, PartialOrd` but NOT `Eq, Ord, Hash`
-- [x] Composites with only integer/enum/set fields still derive the full set including `Eq, Ord, Hash`
-- [x] Detection is based on the resolved primitive types in the composite's fields
-- [x] Test: composite with float → no Eq/Ord
-- [x] Test: composite without float → full derives
-- [x] Golden file updated
+- [ ] Composites with at least one float field derive `Clone, Copy, Debug, PartialEq, PartialOrd` but NOT `Eq, Ord, Hash`
+- [ ] Composites with only integer/enum/set fields still derive the full set including `Eq, Ord, Hash`
+- [ ] Detection is based on the resolved primitive types in the composite's fields
+- [ ] Test: composite with float → no Eq/Ord
+- [ ] Test: composite without float → full derives
+- [ ] Golden file updated
 
 ## Dependencies
 

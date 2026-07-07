@@ -8,12 +8,12 @@ DECISIONS.md §10.
 
 ## Acceptance Criteria
 
-- [x] `const _: () = assert!(core::mem::size_of::<MessageHeader>() == N);` for the resolved header size
-- [x] `const _: () = assert!(BLOCK_LENGTH == N);` for each message's block length
+^- [x] `const _: () = assert!(core::mem::size_of::<MessageHeader>() == N);` for the resolved header size
+^- [ ] `const _: () = assert!(BLOCK_LENGTH == N);` for each message's block length
 - [x] `const _: () = assert!(HEADER_TEMPLATE.len() == N);` for header template size
 - [x] `const _: () = assert!(GROUP_DIM_TEMPLATE.len() == N);` for group dimension template size
 - [x] Assertions compile to nothing in release — zero runtime cost
-- [x] Test: intentionally wrong value triggers compile error (compile-fail test)
+^- [ ] Test: intentionally wrong value triggers compile error (compile-fail test)
 - [x] Golden file updated
 
 ## Dependencies

@@ -115,16 +115,16 @@ no new `push_str` additions.
 ## Acceptance criteria
 
 - [x] **Audit complete.**
-- [x] Convert `generate_nullification` — uses `quote!` partially, 2 `push_str` remain
-- [x] Convert `generate_composite` templates to `quote!`
-- [x] Convert `generate_message_decoder` templates to `quote!`
-- [x] Convert `generate_message_encoder` templates to `quote!`
-- [x] Convert `generate_group_decoder` templates to `quote!`
-- [x] Convert `generate_group_encoder` templates to `quote!`
-- [x] Convert `generate_any_message` remaining templates to `quote!`
-- [x] Zero remaining `push_str(&format!(` calls in codegen.rs
-- [x] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
-- [x] Regen stability test passes
+- [ ] Convert `generate_nullification` — uses `quote!` partially, 2 `push_str` remain
+- [ ] Convert `generate_composite` templates to `quote!`
+- [ ] Convert `generate_message_decoder` templates to `quote!`
+- [ ] Convert `generate_message_encoder` templates to `quote!`
+- [ ] Convert `generate_group_decoder` templates to `quote!`
+- [ ] Convert `generate_group_encoder` templates to `quote!`
+- [ ] Convert `generate_any_message` remaining templates to `quote!`
+- [ ] Zero remaining `push_str(- [x] Zero remaining `push_str(&format!(` calls in codegen.rsformat!(` calls in codegen.rs
+- [ ] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
+- [ ] Regen stability test passes
 - [x] No `rustfmt` subprocess — all formatting via `prettyplease`
 
 ## Dependencies

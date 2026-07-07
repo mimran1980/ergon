@@ -9,7 +9,7 @@ before proceeding to the next wave of work.
 ## Setup
 
 - [x] Created `ci-monitor.sh` — checks latest CI runs and reports failed jobs
-- [x] Added `.justfile` with `just ci-status` recipe
+- [ ] Added `.justfile` with `just ci-status` recipe
 - [x] Tooling uses `gh run list` + `jq` — requires `gh` auth (run outside sandbox)
 
 ## Routine

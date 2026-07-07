@@ -10,13 +10,13 @@ DECISIONS.md §5. Add `presence: Presence`, `null_value: Option<u64>`, and
 
 ## Acceptance criteria
 
-- [x] `FieldMeta` struct includes `presence: Presence` field
-- [x] `FieldMeta` struct includes `null_value: Option<u64>` field
-- [x] `FieldMeta` struct includes `semantic_type: Option<&'static str>` field
-- [x] `Presence` enum (`Required`, `Optional`, `Constant`) available in sbe_rt or field_meta module
-- [x] All existing FieldMeta consts populated with the new fields from the IR
-- [x] Tests verifying generated FieldMeta matches schema definitions
-- [x] Golden file updated
+- [ ] `FieldMeta` struct includes `presence: Presence` field
+- [ ] `FieldMeta` struct includes `null_value: Option<u64>` field
+- [ ] `FieldMeta` struct includes `semantic_type: Option<- [x] `FieldMeta` struct includes `semantic_type: Option<&'static str>` field'static str>` field
+- [ ] `Presence` enum (`Required`, `Optional`, `Constant`) available in sbe_rt or field_meta module
+- [ ] All existing FieldMeta consts populated with the new fields from the IR
+- [ ] Tests verifying generated FieldMeta matches schema definitions
+- [ ] Golden file updated
 
 ## Dependencies
 
