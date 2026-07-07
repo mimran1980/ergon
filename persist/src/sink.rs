@@ -526,25 +526,27 @@ impl PersistSenderBuilder {
     /// The type parameter `T` must implement [`Persist`] and [`Serialize`].
     #[must_use]
     pub fn build<T: Persist + Serialize>(self) -> PersistSender<T> {
-        let table_name = self.table_name.clone();
-        let inner = self.inner.clone();
+        let batch = Arc::new(Mutex::new(Vec::new()));
+        let last_flush = Arc::new(Mutex::new(Instant::now()));
+
         let sender = PersistSender {
-            inner: self.inner,
-            table_name: self.table_name,
+            inner: self.inner.clone(),
+            table_name: self.table_name.clone(),
             metadata: self.metadata,
             batch_size: self.batch_size,
             flush_interval: self.flush_interval,
-            batch: Mutex::new(Vec::new()),
-            last_flush: Mutex::new(Instant::now()),
+            batch: batch.clone(),
+            last_flush: last_flush.clone(),
             _phantom: PhantomData,
         };
 
-        // Register a flush closure for global sink::flush().
-        let flush: PersistSenderFlush = PersistSenderFlush {
-            inner: inner,
-            table_name: table_name,
+        let flush = SenderFlush {
+            inner: self.inner,
+            table_name: self.table_name,
+            batch,
+            last_flush,
         };
-        sender.inner.register_sender(Arc::new(move || flush.flush_named()));
+        sender.inner.register_sender(Arc::new(move || flush.flush()));
         sender
     }
 }
@@ -561,9 +563,39 @@ pub struct PersistSender<T> {
     metadata: Vec<(String, String)>,
     batch_size: usize,
     flush_interval: Duration,
-    batch: Mutex<Vec<String>>, // accumulated SQL VALUE tuples
-    last_flush: Mutex<Instant>,
+    batch: Arc<Mutex<Vec<String>>>, // accumulated SQL VALUE tuples
+    last_flush: Arc<Mutex<Instant>>,
     _phantom: PhantomData<T>,
+}
+// ── SenderFlush ─────────────────────────────────────────────────────────────
+
+/// Flush helper registered for global [`ClickhouseSink::flush`].
+///
+/// Holds the shared batch and last-flush timestamp so the closure can
+/// flush without a type parameter.
+struct SenderFlush {
+    inner: Arc<SinkInner>,
+    table_name: String,
+    batch: Arc<Mutex<Vec<String>>>,
+    last_flush: Arc<Mutex<Instant>>,
+}
+
+impl SenderFlush {
+    fn flush(&self) {
+        let rows: Vec<String> = std::mem::take(&mut *self.batch.lock().unwrap());
+        if rows.is_empty() {
+            return;
+        }
+        let values = rows.join(", ");
+        let sql = format!("INSERT INTO {} VALUES {}", self.table_name, values);
+        if let Err(e) = self.inner.exec_insert(&sql) {
+            warn!(
+                "ClickhouseSink: global flush failed for {}.{} ({} rows): {}",
+                self.inner.database, self.table_name, rows.len(), e
+            );
+        }
+        *self.last_flush.lock().unwrap() = Instant::now();
+    }
 }
 
 impl<T: Persist + Serialize> PersistSender<T> {

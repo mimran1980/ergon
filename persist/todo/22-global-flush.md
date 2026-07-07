@@ -50,8 +50,15 @@ on drop via Weak reference.
 
 ## Acceptance criteria
 
-- [ ] `ClickhouseSink::flush()` flushes all active senders
-- [ ] Senders auto-register on `build()`, auto-deregister on `Drop`
-- [ ] Calling `flush()` on a sink with no senders is a no-op (not an error)
-- [ ] Thread-safe: multiple senders can be built concurrently from the same sink
+- [x] `ClickhouseSink::flush()` flushes all active senders
+- [x] Senders auto-register on `build()`, auto-deregister on `Drop`
+- [x] Calling `flush()` on a sink with no senders is a no-op (not an error)
+- [x] Thread-safe: multiple senders can be built concurrently from the same sink
 - [ ] Integration test: two senders, both with buffered rows, global flush clears both
+
+## Implementation notes
+
+- `SinkInner` holds `Mutex<Vec<Weak<dyn Fn() + Send + Sync>>>`
+- `SenderFlush` struct (no type parameter) holds shared `Arc<Mutex<Vec<String>>>` and `Arc<Mutex<Instant>>`
+- `PersistSender::batch` and `last_flush` changed from `Mutex` to `Arc<Mutex>`
+- `flush()` upgrades each `Weak`, calls the closure, retains only live senders
