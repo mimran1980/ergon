@@ -13,7 +13,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use log::warn;
@@ -362,6 +362,8 @@ struct SinkInner {
     #[allow(dead_code)]
     database: String,
     schema_cache: Mutex<HashMap<String, TableSchema>>,
+    /// Registered senders for global flush.
+    senders: Mutex<Vec<Weak<dyn Fn() + Send + Sync>>>,
 }
 
 impl SinkInner {
@@ -389,6 +391,7 @@ impl SinkInner {
             cmd_tx,
             database,
             schema_cache: Mutex::new(HashMap::new()),
+            senders: Mutex::new(Vec::new()),
         }
     }
 
@@ -409,6 +412,15 @@ impl SinkInner {
     /// Execute a DDL statement (CREATE TABLE, ALTER TABLE, DROP TABLE).
     fn exec_ddl(&self, sql: &str) -> Result<(), SinkError> {
         self.exec(sql).map_err(|e| SinkError::Ddl(format!("{sql}: {e}")))
+    }
+
+
+    /// Register a sender's flush closure for global flush.
+    ///
+    /// The closure is held as a [`Weak`] reference — it auto-deregisters
+    /// when the sender is dropped.
+    fn register_sender(&self, flush: Arc<dyn Fn() + Send + Sync>) {
+        self.senders.lock().unwrap().push(Arc::downgrade(&flush));
     }
 
     /// Execute an INSERT statement.
@@ -448,12 +460,12 @@ impl ClickhouseSink {
         }
     }
 
-    /// Flush all pending batches.
-    ///
-    /// ponytail: Each [`PersistSender`] manages its own batch independently.
-    /// Global flush requires sender tracking; for now this is a no-op.
-    /// When per-sender flush is needed, call `.flush()` on the sender directly.
+    /// Flush all pending batches across every active sender.
     pub fn flush(&self) -> Result<(), SinkError> {
+        let mut senders = self.inner.senders.lock().unwrap();
+        senders.retain(|s| {
+            s.upgrade().map(|f| { f(); true }).unwrap_or(false)
+        });
         Ok(())
     }
 
@@ -514,7 +526,9 @@ impl PersistSenderBuilder {
     /// The type parameter `T` must implement [`Persist`] and [`Serialize`].
     #[must_use]
     pub fn build<T: Persist + Serialize>(self) -> PersistSender<T> {
-        PersistSender {
+        let table_name = self.table_name.clone();
+        let inner = self.inner.clone();
+        let sender = PersistSender {
             inner: self.inner,
             table_name: self.table_name,
             metadata: self.metadata,
@@ -523,7 +537,15 @@ impl PersistSenderBuilder {
             batch: Mutex::new(Vec::new()),
             last_flush: Mutex::new(Instant::now()),
             _phantom: PhantomData,
-        }
+        };
+
+        // Register a flush closure for global sink::flush().
+        let flush: PersistSenderFlush = PersistSenderFlush {
+            inner: inner,
+            table_name: table_name,
+        };
+        sender.inner.register_sender(Arc::new(move || flush.flush_named()));
+        sender
     }
 }
 
