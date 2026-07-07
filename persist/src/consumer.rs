@@ -570,7 +570,7 @@ mod tests {
         for (k, v) in metadata {
             b = b.metadata(*k, *v);
         }
-        b.build()
+        b.build().unwrap()
     }
 
     /// Build a fixture: ONE recorder → matching schema + row bytes.

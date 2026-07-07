@@ -258,7 +258,8 @@ async fn test_dynamic_persist_roundtrip() {
     let mut rec = DynamicRecorderBuilder::new(table)
         .field("price", ColumnType::UInt64)
         .field("qty", ColumnType::UInt32)
-        .build();
+        .build()
+        .unwrap();
     let schema_id = rec.schema_id;
     let bytes = rec
         .record(&[DynamicValue::UInt64(150), DynamicValue::UInt64(5)])

@@ -121,6 +121,12 @@ pub enum DynamicRecorderError {
     },
     /// An internal SBE encoding error (buffer too short, var data too long, …).
     Encode(String),
+    /// A field's [`ColumnType`] is not supported by the dynamic recorder.
+    UnsupportedColumnType { column_name: String, column_type: crate::types::ColumnType },
+    /// Table name must not be empty.
+    EmptyTableName,
+    /// At least one field must be registered.
+    NoFields,
 }
 
 impl fmt::Display for DynamicRecorderError {
@@ -140,6 +146,11 @@ impl fmt::Display for DynamicRecorderError {
                 )
             }
             Self::Encode(msg) => write!(f, "encoding error: {msg}"),
+            Self::UnsupportedColumnType { column_name, column_type } => {
+                write!(f, "unsupported column type '{column_type}' for field '{column_name}'")
+            }
+            Self::EmptyTableName => write!(f, "table name must not be empty"),
+            Self::NoFields => write!(f, "at least one field must be registered"),
         }
     }
 }
@@ -161,7 +172,7 @@ impl std::error::Error for DynamicRecorderError {}
 ///     .field("qty", ColumnType::UInt64)
 ///     .field("symbol", ColumnType::String)
 ///     .metadata("source", "exchange_a")
-///     .build();
+///     .build().unwrap();
 /// let buf = rec.record(&[
 ///     DynamicValue::Float64(100.50),
 ///     DynamicValue::UInt64(1000),
@@ -207,18 +218,24 @@ impl DynamicRecorderBuilder {
 
     /// Consume the builder and produce a [`DynamicRecorder`].
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if any registered field has an unsupported [`ColumnType`].
-    pub fn build(self) -> DynamicRecorder {
+    /// Returns [`DynamicRecorderError::UnsupportedColumnType`] if any registered
+    /// field has an unsupported [`ColumnType`].
+    pub fn build(self) -> Result<DynamicRecorder, DynamicRecorderError> {
+        if self.table_name.is_empty() {
+            return Err(DynamicRecorderError::EmptyTableName);
+        }
+        if self.fields.is_empty() {
+            return Err(DynamicRecorderError::NoFields);
+        }
         // Validate all column types are supported
         for (name, ct) in &self.fields {
             if DynamicValueType::from_column_type(ct).is_none() {
-                panic!(
-                    "DynamicRecorder: unsupported column type '{}' for field '{}'. \
-                     Supported types: Int*, UInt*, Float32, Float64, Bool, String, FixedString",
-                    ct, name
-                );
+                return Err(DynamicRecorderError::UnsupportedColumnType {
+                    column_name: name.clone(),
+                    column_type: ct.clone(),
+                });
             }
         }
 
@@ -292,7 +309,7 @@ impl DynamicRecorderBuilder {
 
         let buffer = Vec::with_capacity(max_size);
 
-        DynamicRecorder {
+        Ok(DynamicRecorder {
             schema_id,
             field_descriptors,
             metadata_entries,
@@ -305,7 +322,7 @@ impl DynamicRecorderBuilder {
             string_count,
             nullable_count,
             buffer,
-        }
+        })
     }
 }
 
@@ -685,6 +702,7 @@ mod tests {
             .field("symbol", ColumnType::String)
             .field("is_active", ColumnType::Bool)
             .build()
+            .unwrap()
     }
 
     fn simple_values() -> Vec<DynamicValue> {
@@ -764,14 +782,14 @@ mod tests {
             .field("a", ColumnType::Int64)
             .field("b", ColumnType::String)
             .metadata("k1", "v1")
-            .build();
+            .build().unwrap();
 
         // Same registration, same metadata → same schema_id.
         let rec2 = DynamicRecorderBuilder::new("t")
             .field("a", ColumnType::Int64)
             .field("b", ColumnType::String)
             .metadata("k1", "v1")
-            .build();
+            .build().unwrap();
         assert_eq!(rec1.schema_id, rec2.schema_id);
 
         // Different field → different schema_id.
@@ -779,7 +797,7 @@ mod tests {
             .field("a", ColumnType::Int64)
             .field("c", ColumnType::String) // different name
             .metadata("k1", "v1")
-            .build();
+            .build().unwrap();
         assert_ne!(rec1.schema_id, rec3.schema_id);
 
         // Different metadata → different schema_id.
@@ -787,7 +805,7 @@ mod tests {
             .field("a", ColumnType::Int64)
             .field("b", ColumnType::String)
             .metadata("k1", "v2") // different value
-            .build();
+            .build().unwrap();
         assert_ne!(rec1.schema_id, rec4.schema_id);
 
         // Different registration order → same schema_id (sorted internally).
@@ -795,7 +813,7 @@ mod tests {
             .field("b", ColumnType::String)
             .field("a", ColumnType::Int64)
             .metadata("k1", "v1")
-            .build();
+            .build().unwrap();
         assert_eq!(rec1.schema_id, rec5.schema_id);
     }
 
@@ -807,7 +825,7 @@ mod tests {
             .field("val", ColumnType::Int64)
             .metadata("source", "exchange_a")
             .metadata("env", "prod")
-            .build();
+            .build().unwrap();
 
         let buf = rec.record(&[DynamicValue::Int64(42)]).unwrap();
 
@@ -838,7 +856,7 @@ mod tests {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("x", ColumnType::Int64)
             .metadata("key1", "val1")
-            .build();
+            .build().unwrap();
 
         let buf1 = rec.record(&[DynamicValue::Int64(1)]).unwrap().to_vec();
         let buf2 = rec.record(&[DynamicValue::Int64(2)]).unwrap().to_vec();
@@ -866,7 +884,7 @@ mod tests {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("name", ColumnType::String)
             .field("code", ColumnType::String)
-            .build();
+            .build().unwrap();
 
         let buf = rec
             .record(&[
@@ -896,7 +914,7 @@ mod tests {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("msg", ColumnType::String)
             .metadata("tag", "xyz")
-            .build();
+            .build().unwrap();
 
         let buf = rec.record(&[DynamicValue::String("data".into())]).unwrap();
 
@@ -918,7 +936,7 @@ mod tests {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("val", ColumnType::Int64)
             .field("name", ColumnType::String)
-            .build();
+            .build().unwrap();
 
         let buf = rec
             .record(&[DynamicValue::Null, DynamicValue::Null])
@@ -949,7 +967,7 @@ mod tests {
     fn test_empty_metadata_produces_valid_sbe() {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("x", ColumnType::Float64)
-            .build();
+            .build().unwrap();
 
         let buf = rec.record(&[DynamicValue::Float64(1.0)]).unwrap();
 
@@ -972,7 +990,7 @@ mod tests {
             .metadata("a", "1")
             .metadata("b", "2")
             .metadata("c", "3")
-            .build();
+            .build().unwrap();
 
         let buf = rec.record(&[DynamicValue::Int64(0)]).unwrap();
 
@@ -1000,7 +1018,7 @@ mod tests {
     fn test_value_type_mismatch_errors() {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("price", ColumnType::Float64)
-            .build();
+            .build().unwrap();
         let err = rec.record(&[DynamicValue::Int64(42)]).unwrap_err();
         assert!(matches!(
             err,
@@ -1016,7 +1034,7 @@ mod tests {
             .field("price", ColumnType::Float64)
             .field("qty", ColumnType::UInt64)
             .field("symbol", ColumnType::String)
-            .build();
+            .build().unwrap();
 
         let price = DynamicValue::Float64(100.50);
         let qty = DynamicValue::UInt64(1000);
@@ -1046,14 +1064,14 @@ mod tests {
             .field("b", ColumnType::UInt64)
             .metadata("z", "1")
             .metadata("y", "2")
-            .build();
+            .build().unwrap();
 
         let b = DynamicRecorderBuilder::new("x")
             .field("b", ColumnType::UInt64)
             .field("a", ColumnType::Int64)
             .metadata("y", "2")
             .metadata("z", "1")
-            .build();
+            .build().unwrap();
 
         assert_eq!(a.schema_id, b.schema_id);
 
@@ -1063,7 +1081,7 @@ mod tests {
             .field("b", ColumnType::UInt64)
             .metadata("z", "9") // changed value
             .metadata("y", "2")
-            .build();
+            .build().unwrap();
 
         assert_ne!(a.schema_id, c.schema_id);
     }
@@ -1080,7 +1098,7 @@ mod tests {
             .field("s", ColumnType::String)
             .field("n", ColumnType::Int64) // nullable field (Null value)
             .metadata("rt", "check")
-            .build();
+            .build().unwrap();
         let schema_id = rec.schema_id;
 
         let buf = rec
@@ -1160,7 +1178,7 @@ mod tests {
     fn test_nullable_column_type() {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("val", ColumnType::Nullable(Box::new(ColumnType::Int64)))
-            .build();
+            .build().unwrap();
 
         // Null value is accepted for nullable field.
         let buf = rec.record(&[DynamicValue::Null]).unwrap();
