@@ -6,3 +6,6 @@ Cargo.lock
 CLAUDE.md
 .claude/
 tmp/
+samples/target/
+samples/target/
+samples/target/
