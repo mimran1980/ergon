@@ -1,5 +1,7 @@
 # PersistAs trait + blanket Option impl
 
+**Status: DONE**
+
 **Blocked by:** 00
 **Blocks:** 03, 07
 
@@ -28,9 +30,9 @@ Blanket impl:
 
 ## Acceptance criteria
 
-- [ ] `PersistAs` trait defined with all three methods and sensible defaults
-- [ ] `impl<T: PersistAs> PersistAs for Option<T>` — produces `Nullable(...)` column type, handles `None`/`Some`
-- [ ] Unit test: custom type `Price(u64)` implements `PersistAs` → `Decimal(18,8)`, roundtrips correctly
-- [ ] Unit test: `Option<Price>` → column type is `Nullable(Decimal(18, 8))`
-- [ ] Unit test: `Option<Option<Price>>` — not allowed at type level, but `Option<T>` where `T: PersistAs` compiles and works
-- [ ] Doc examples on the trait
+- [x] `PersistAs` trait defined with all three methods and sensible defaults
+- [x] `impl<T: PersistAs> PersistAs for Option<T>` — produces `Nullable(...)` column type, handles `None`/`Some`
+- [x] Unit test: custom type `Price(u64)` implements `PersistAs` → `Decimal(18,8)`, roundtrips correctly
+- [x] Unit test: `Option<Price>` → column type is `Nullable(Decimal(18, 8))`
+- [x] Unit test: `Option<Option<Price>>` — not allowed at type level, but `Option<T>` where `T: PersistAs` compiles and works
+- [x] Doc examples on the trait
