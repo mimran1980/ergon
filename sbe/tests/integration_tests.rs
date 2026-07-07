@@ -82,7 +82,7 @@ fn test_fixed_entry_group_access() {
 
         // Navigate to acceleration group
         let mut perf = car.performance_figures().unwrap();
-        let pf = perf.next().unwrap();
+        let pf = perf.next().unwrap().unwrap();
         let mut accel = pf.acceleration().unwrap();
 
         // Test as_chunks()
