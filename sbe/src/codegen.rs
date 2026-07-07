@@ -22,6 +22,7 @@
 
 use std::collections::HashSet;
 
+use quote::format_ident;
 use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use crate::{GenerationConfig, Schema};
 use sha2::{Digest, Sha256};
@@ -217,8 +218,7 @@ impl Generator {
             .collect();
 
         for msg in &messages {
-            generate_message_decoder(
-                &mut src,
+            let decoder_ts = generate_message_decoder(
                 msg,
                 &elements,
                 ir.byte_order,
@@ -227,8 +227,9 @@ impl Generator {
                 &ir.header_type,
                 &ir.package,
             );
-            generate_message_encoder(
-                &mut src,
+            src.push_str(&decoder_ts.to_string());
+            src.push('\n');
+            let encoder_ts = generate_message_encoder(
                 msg,
                 &elements,
                 ir.byte_order,
@@ -236,6 +237,8 @@ impl Generator {
                 ir.version,
                 &ir.header_type,
             );
+            src.push_str(&encoder_ts.to_string());
+            src.push('\n');
             generate_message_field_meta(&mut src, msg);
         }
 
@@ -519,6 +522,7 @@ fn max_encoding_value(prim: PrimitiveType) -> u64 {
 /// Emit `*_NULL`, `*_MIN`, `*_MAX` compile-time constants for a message field.
 fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
     let upper_name = to_upper_snake_case(&f.name);
+    let mut any = false;
     let mut tokens = proc_macro2::TokenStream::new();
     match &f.field_type {
         FieldType::Primitive(prim, _) => {
@@ -534,6 +538,7 @@ fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
+                any = true;
             }
             if let Some(val) = f.min_value {
                 let name_ident =
@@ -543,6 +548,7 @@ fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
+                any = true;
             }
             if let Some(val) = f.max_value {
                 let name_ident =
@@ -552,11 +558,12 @@ fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
+                any = true;
             }
         }
         FieldType::Enum {
             name,
-            ..
+            encoding_type,
         } => {
             let target_name = to_pascal_case(name);
             let name_ident = syn::Ident::new(
@@ -567,6 +574,7 @@ fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
             tokens.extend(quote::quote! {
                 pub const #name_ident: #target_ident = #target_ident::NullVal;
             });
+            any = true;
         }
         FieldType::Composite { .. } | FieldType::Set { .. } => {}
     }
@@ -1644,7 +1652,6 @@ fn generate_dim_new_call(
 }
 
 fn generate_message_decoder(
-    src: &mut String,
     msg: &MessageStructure,
     elements: &SchemaElements,
     byte_order: ByteOrder,
@@ -1652,7 +1659,7 @@ fn generate_message_decoder(
     schema_version: u16,
     header_type: &str,
     schema_name: &str,
-) {
+) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
     let order_suffix = match byte_order {
@@ -1719,264 +1726,358 @@ fn generate_message_decoder(
     }
     let max_encoded_length = header_size + block_length + max_tail;
 
-    // 1. Decoder Struct
-    if let Some(ref desc) = msg.description {
-        src.push_str(&format!("/// {}\n", desc));
-    }
-    src.push_str(&format!(
-        "#[derive(Clone, Copy)]\n\
-         pub struct {}Decoder<'a> {{\n\
-             buf: &'a [u8],\n\
-             pos: usize,\n\
-             acting_version: u16,\n\
-             acting_block_length: usize,\n\
-         }}\n\n",
-        name
-    ));
+    // Identifiers for codegen
+    let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+    let decoder_ident = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    let header_pascal_ident = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
+    let header_bl_ident = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
+    let header_ti_ident = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
+    let header_si_ident = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
+    let header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
 
+    let mut ts = proc_macro2::TokenStream::new();
+    let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), proc_macro2::Span::call_site());
+    let schema_version_lit = syn::LitInt::new(&schema_version.to_string(), proc_macro2::Span::call_site());
+    let msg_id_lit = syn::LitInt::new(&msg.id.to_string(), proc_macro2::Span::call_site());
+    let bl_lit = syn::LitInt::new(&block_length.to_string(), proc_macro2::Span::call_site());
+    let hdr_size_lit = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
+    let encoded_len_lit = syn::LitInt::new(&encoded_length.to_string(), proc_macro2::Span::call_site());
+
+    // 1. Decoder Struct + optional doc comment
+    if let Some(ref desc) = msg.description {
+        let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
+        ts.extend(quote::quote! {
+            #[doc = #desc_lit]
+        });
+    }
+    ts.extend(quote::quote! {
+        #[derive(Clone, Copy)]
+        pub struct #decoder_ident<'a> {
+            buf: &'a [u8],
+            pos: usize,
+            acting_version: u16,
+            acting_block_length: usize,
+        }
+    });
+
+    // 2. impl block with compile-time constants
+    let mut impl_body = proc_macro2::TokenStream::new();
     if is_fixed {
-        src.push_str(&format!(
-            "impl<'a> {}Decoder<'a> {{\n\
-                 pub const SCHEMA_ID: u16 = {};\n\
-                 pub const SCHEMA_VERSION: u16 = {};\n\
-                 pub const TEMPLATE_ID: u16 = {};\n\
-                 pub const BLOCK_LENGTH: usize = {};\n                 const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == {});\n\
-                 /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
-                 pub const ENCODED_LENGTH: usize = {};\n                 const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
-            name, schema_id, schema_version, msg.id, block_length, block_length, encoded_length,
-        ));
+        impl_body.extend(quote::quote! {
+            pub const SCHEMA_ID: u16 = #schema_id_lit;
+            pub const SCHEMA_VERSION: u16 = #schema_version_lit;
+            pub const TEMPLATE_ID: u16 = #msg_id_lit;
+            pub const BLOCK_LENGTH: usize = #bl_lit;
+            const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #bl_lit);
+            /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`
+            pub const ENCODED_LENGTH: usize = #encoded_len_lit;
+            const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+        });
     } else {
         const STACK_LIMIT: usize = 65536;
         let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
+        let max_encoded_lit = syn::LitInt::new(&max_encoded_capped.to_string(), proc_macro2::Span::call_site());
         let is_capped = max_encoded_length > STACK_LIMIT;
         let max_doc = if is_capped {
-            "/// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation\n"
+            "MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation"
         } else {
-            "/// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`\n"
+            "Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`"
         };
-        src.push_str(&format!(
-            "impl<'a> {}Decoder<'a> {{\n\
-                 pub const SCHEMA_ID: u16 = {};\n\
-                 pub const SCHEMA_VERSION: u16 = {};\n\
-                 pub const TEMPLATE_ID: u16 = {};\n\
-                 pub const BLOCK_LENGTH: usize = {};\n                 const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == {});\n\
-                 {}\
-                 pub const MAX_ENCODED_LENGTH: usize = {};\n                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
-            name, schema_id, schema_version, msg.id, block_length, block_length, max_doc, max_encoded_capped
-        ));
+        let max_doc_lit = syn::LitStr::new(max_doc, proc_macro2::Span::call_site());
+        impl_body.extend(quote::quote! {
+            pub const SCHEMA_ID: u16 = #schema_id_lit;
+            pub const SCHEMA_VERSION: u16 = #schema_version_lit;
+            pub const TEMPLATE_ID: u16 = #msg_id_lit;
+            pub const BLOCK_LENGTH: usize = #bl_lit;
+            const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #bl_lit);
+            #[doc = #max_doc_lit]
+            pub const MAX_ENCODED_LENGTH: usize = #max_encoded_lit;
+            const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+        });
     }
-    src.push_str(&format!(
-        "#[inline]\n    pub const fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {{\n\
-                 Self {{\n\
-                     buf,\n\
-                     pos,\n\
-                     acting_block_length,\n\
-                     acting_version,\n\
-                 }}\n\
-             }}\n\n\
-             #[inline]\n             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\n\
-                 #[cfg(not(feature = \"bound-check-disabled\"))]\n\
-                 let header_bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
-                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
-                 }})?.try_into().unwrap();\n\
-                 #[cfg(feature = \"bound-check-disabled\")]\n\
-                 let header_bytes: [u8; {}] = unsafe {{\n\
-                     core::ptr::read_unaligned(buf.as_ptr().add(pos) as *const [u8; {}])\n\
-                 }};\n\
-                 let header = {}(header_bytes);\n\
-                 if header.{}() != Self::SCHEMA_ID {{\n\
-                     return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{}() , expected_name: \"{expected_name}\" }});\n\
-                 }}\n\
-                 Ok(Self::wrap(buf, pos + {}, header.{}() as usize, header.{}()))\n\
-             }}\n\n\n\n",
-        header_size, header_size, header_size, header_size, header_size, header_pascal, header_si, header_si, header_size, header_bl, header_vr,
-        field_name = "message header", expected_name = schema_name
-    ));
 
-    src.push_str(
-        "#[inline]\n    pub const fn acting_version(&self) -> u16 {\n        self.acting_version\n    }\n\n",
+    // 3. wrap() function
+    impl_body.extend(quote::quote! {
+        #[inline]
+        pub const fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
+            Self {
+                buf,
+                pos,
+                acting_block_length,
+                acting_version,
+            }
+        }
+    });
+
+    // 4. wrap_and_apply_header - too complex for pure quote due to cfg + named format args
+    // Build using format! + parse_str for reliability
+    let wrap_header = format!(
+        "    #[inline]\n\
+         pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
+             #[cfg(not(feature = \"bound-check-disabled\"))]\n\
+             let header_bytes: [u8; {hs}] = buf.get(pos..pos + {hs}).ok_or_else(|| {{\n\
+                 sbe_rt::DecodeError::BufferTooShort {{ field: \"message header\", needed: {hs}, available: buf.len() - pos }}\n\
+             }})?.try_into().unwrap();\n\
+             #[cfg(feature = \"bound-check-disabled\")]\n\
+             let header_bytes: [u8; {hs}] = unsafe {{\n\
+                 core::ptr::read_unaligned(buf.as_ptr().add(pos) as *const [u8; {hs}])\n\
+             }};\n\
+             let header = {hp}(header_bytes);\n\
+             if header.{hsie}() != Self::SCHEMA_ID {{\n\
+                 return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{hsie}() , expected_name: \"{en}\" }});\n\
+             }}\n\
+             Ok(Self::wrap(buf, pos + {hs}, header.{hbl}() as usize, header.{hvr}()))\n\
+         }}\n",
+        hs = header_size,
+        hp = header_pascal,
+        hsie = header_si,
+        hbl = header_bl,
+        hvr = header_vr,
+        en = schema_name,
     );
-    src.push_str("    pub const fn acting_block_length(&self) -> usize {\n        self.acting_block_length\n    }\n\n");
+    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&wrap_header)
+        .unwrap_or_else(|e| panic!("Failed to parse wrap_and_apply_header for {name}: {e}")));
 
-    // Fields Getters
+    // 5. acting_version and acting_block_length
+    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(
+        "#[inline]\n    pub const fn acting_version(&self) -> u16 {\n        self.acting_version\n    }\n\n    pub const fn acting_block_length(&self) -> usize {\n        self.acting_block_length\n    }\n\n"
+    ).unwrap());
+
+    // 6. Field getters
     for f in &msg.fields {
-        let f_name = to_snake_case(&f.name);
+        let fname_snake = to_snake_case(&f.name);
         let offset = f.offset;
         let since = f.since_version;
+        let fname_ident = syn::Ident::new(&fname_snake, proc_macro2::Span::call_site());
+
+        // Create unsafe unchecked fn ident
+        let unchecked_ident = syn::Ident::new(
+            &format!("{fname_snake}_unchecked"),
+            proc_macro2::Span::call_site(),
+        );
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
                 let r_type = rust_type(*prim);
+                let r_type_ty: syn::Type = syn::parse_str(r_type).unwrap();
                 let prim_size = prim.size();
+                let offset_lit = syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                let order_fn = format_ident!("from_{order_suffix}_bytes");
 
                 if f.presence == Presence::Constant {
                     if let Some(ref val) = f.constant_value {
                         if *prim == PrimitiveType::Char && val.len() > 1 {
-                            src.push_str(&format!(
-                                "#[inline]\n    pub const fn {}(&self) -> &'static str {{\n\
-                                         \"{}\"\n\
-                                     }}\n\n",
-                                f_name, val
-                            ));
+                            let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
+                            impl_body.extend(quote::quote! {
+                                #[inline]
+                                pub const fn #fname_ident(&self) -> &'static str {
+                                    #val_lit
+                                }
+                            });
                         } else {
                             let expr = constant_value_expr(*prim, val);
+                            let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                             if let Some(ref desc) = f.description {
-                                src.push_str(&format!("/// {}\n", desc));
+                                let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
+                                impl_body.extend(quote::quote! {
+                                    #[doc = #desc_lit]
+                                });
                             }
-                            src.push_str(&format!(
-                                "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                                         {}\n\
-                                     }}\n\n",
-                                f_name, r_type, expr
-                            ));
+                            impl_body.extend(quote::quote! {
+                                #[inline]
+                                pub const fn #fname_ident(&self) -> #r_type_ty {
+                                    #expr_parsed
+                                }
+                            });
                         }
                     }
                 } else if let Some(len) = length {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const fn {}(&self) -> Result<[{}; {}], sbe_rt::DecodeError> {{\n\
-                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                     return Ok([0 as {}; {}]);\n\
+                    let len_val = *len;
+                    let len_lit = syn::LitInt::new(&len_val.to_string(), proc_macro2::Span::call_site());
+                    let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let offset_end = offset + prim_size * len_val;
+                    let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    let total_size = prim_size * len_val;
+                    let total_size_lit = syn::LitInt::new(&total_size.to_string(), proc_macro2::Span::call_site());
+                    // Build using format strings for the array copy loop
+                    let field_accessor = format!(
+                        "#[inline]\n\
+                         pub const fn {fn_snake}(&self) -> Result<[{rt}; {len}], sbe_rt::DecodeError> {{\n\
+                             if self.acting_version < {since} || {offset_end} > self.acting_block_length {{\n\
+                                 return Ok([0 as {rt}; {len}]);\n\
+                             }}\n\
+                             let offset = self.pos + {offset};\n\
+                             let size = {total_size};\n\
+                             if offset + size > self.buf.len() {{\n\
+                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{fn_name}\", needed: size, available: self.buf.len() - offset }});\n\
+                             }}\n\
+                             let mut res = [0 as {rt}; {len}];\n\
+                             let mut idx = 0;\n\
+                             while idx < {len} {{\n\
+                                 let offset = self.pos + {offset} + idx * {ps};\n\
+                                 let mut bytes = [0u8; {ps}];\n\
+                                 let mut j = 0;\n\
+                                 while j < {ps} {{\n\
+                                     bytes[j] = self.buf[offset + j];\n\
+                                     j += 1;\n\
                                  }}\n\
-                                 let offset = self.pos + {};\n\
-                                 let size = {};\n\
-                                 if offset + size > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: size, available: self.buf.len() - offset }});\n\
-                                 }}\n\
-                                 let mut res = [0 as {}; {}];\n\
-                                 let mut idx = 0;\n\
-                                 while idx < {} {{\n\
-                                     let offset = self.pos + {} + idx * {};\n\
-                                     let mut bytes = [0u8; {}];\n\
-                                     let mut j = 0;\n\
-                                     while j < {} {{\n\
-                                         bytes[j] = self.buf[offset + j];\n\
-                                         j += 1;\n\
-                                     }}\n\
-                                     res[idx] = {}::from_{}_bytes(bytes);\n\
-                                     idx += 1;\n\
-                                 }}\n\
-                                 Ok(res)\n\
-                             }}\n\n",
-                        f_name, r_type, len, since, offset + prim_size * len, r_type, len, offset, prim_size * len, r_type, len, len, offset, prim_size, prim_size, prim_size, r_type, order_suffix,
-                        field_name = f.name
-                    ));
+                                 res[idx] = {rt}::from_{order}_bytes(bytes);\n\
+                                 idx += 1;\n\
+                             }}\n\
+                             Ok(res)\n\
+                         }}\n",
+                        fn_snake = fname_snake,
+                        rt = r_type,
+                        len = len_val,
+                        since = since,
+                        offset_end = offset_end,
+                        offset = offset,
+                        total_size = total_size,
+                        ps = prim_size,
+                        order = order_suffix,
+                        fn_name = f.name,
+                    );
+                    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&field_accessor).unwrap_or_else(|e| panic!("Failed to parse array accessor for {}:: {} at pos: {}", name, f.name, e)));
 
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> [{}; {}] {{\n\
-                                 let offset = self.pos + {};\n\
-                                 let mut res = [0 as {}; {}];\n\
-                                 let mut idx = 0;\n\
-                                 while idx < {} {{\n\
-                                     let offset = self.pos + {} + idx * {};\n\
-                                     let mut bytes = [0u8; {}];
+                    // _unchecked version for arrays
+                    let unchecked_arr = format!(
+                        "#[inline]\n\
+                         pub const unsafe fn {fn_snake}_unchecked(&self) -> [{rt}; {len}] {{\n\
+                             let offset = self.pos + {offset};\n\
+                             let mut res = [0 as {rt}; {len}];\n\
+                             let mut idx = 0;\n\
+                             while idx < {len} {{\n\
+                                 let offset = self.pos + {offset} + idx * {ps};\n\
+                                 let mut bytes = [0u8; {ps}];\n\
+                                 bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {ps}) }});\n\
+                                 res[idx] = {rt}::from_{order}_bytes(bytes);\n\
+                                 idx += 1;\n\
+                             }}\n\
+                             res\n\
+                         }}\n",
+                        fn_snake = fname_snake,
+                        rt = r_type,
+                        len = len_val,
+                        offset = offset,
+                        ps = prim_size,
+                        order = order_suffix,
+                    );
+                    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&unchecked_arr).unwrap());
 
-                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                     res[idx] = {}::from_{}_bytes(bytes);\n\
-                                     idx += 1;\n\
-                                 }}\n\
-                                 res\n\
-                             }}\n\n",
-                        f_name,
-                        r_type,
-                        len,
-                        offset,
-                        r_type,
-                        len,
-                        len,
-                        offset,
-                        prim_size,
-                        prim_size,
-                        prim_size,
-                        r_type,
-                        order_suffix
-                    ));
-
+                    // raw_ accessor for arrays
+                    let raw_ident = syn::Ident::new(
+                        &format!("raw_{fname_snake}"),
+                        proc_macro2::Span::call_site(),
+                    );
                     if since == 0 {
-                        src.push_str(&format!(
-                            "#[inline]\n    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
-                                     #[allow(unused_unsafe)]\n\
-                                     unsafe {{ self.{}_unchecked() }}\n\
-                                 }}\n\n",
-                            f_name, r_type, len, f_name
-                        ));
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub const fn #raw_ident(&self) -> [#r_type_ty; #len_lit] {
+                                #[allow(unused_unsafe)]
+                                unsafe { self.#unchecked_ident() }
+                            }
+                        });
                     } else {
-                        src.push_str(&format!(
-                            "#[inline]\n    pub const fn raw_{}(&self) -> Option<[{}; {}]> {{\n\
-                                     if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                         return None;\n\
-                                     }}\n\
-                                     #[allow(unused_unsafe)]\n\
-                                     Some(unsafe {{ self.{}_unchecked() }})\n\
-                                 }}\n\n",
-                            f_name, r_type, len, since, offset + prim_size * len, f_name
-                        ));
+                        let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub const fn #raw_ident(&self) -> Option<[#r_type_ty; #len_lit]> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                #[allow(unused_unsafe)]
+                                Some(unsafe { self.#unchecked_ident() })
+                            }
+                        });
                     }
                 } else {
+                    // Non-array primitive
                     if f.presence == Presence::Optional {
                         let null_val = f.null_value.unwrap_or(0);
-                        let null_check = if *prim == PrimitiveType::Float {
-                            format!("val.to_bits() == {} as u32", null_val)
+                        let null_check_expr = if *prim == PrimitiveType::Float {
+                            format!("val.to_bits() == {null_val} as u32")
                         } else if *prim == PrimitiveType::Double {
-                            format!("val.to_bits() == {}", null_val)
+                            format!("val.to_bits() == {null_val}")
                         } else {
-                            format!("val == {} as {}", null_val, r_type)
+                            format!("val == {null_val} as {r_type}")
                         };
-
+                        let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                        let offset_end = offset + prim_size;
+                        let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                        let unchecked_val = format!(
+                            "unsafe fn {snake}_unchecked(&self) -> {rt} {{\
+                             let offset = self.pos + {off};\
+                             let mut bytes = [0u8; {ps}];\
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {ps}) }});\
+                             {rt}::{order}(bytes)\
+                             }}",
+                            snake = fname_snake, rt = r_type, off = offset, ps = prim_size, order = order_fn,
+                        );
                         if let Some(ref desc) = f.description {
-                            src.push_str(&format!("/// {}\n", desc));
+                            let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
+                            impl_body.extend(quote::quote! { #[doc = #desc_lit] });
                         }
-                        src.push_str(&format!(
-                            "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
-                                     if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                         return None;\n\
-                                     }}\n\
-                                     let offset = self.pos + {};\n\
-                                     let val = {}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap());\n\
-                                     if {} {{\n\
-                                         None\n\
-                                     }} else {{\n\
-                                         Some(val)\n\
-                                     }}\n\
-                                 }}\n\n",
-                            f_name, r_type, since, offset + prim_size, offset, r_type, order_suffix, prim_size, null_check,
-                        ));
+                        let accessor = format!(
+                            "#[inline]\n\
+                             pub fn {snake}(&self) -> Option<{rt}> {{\n\
+                                 if self.acting_version < {since} || {offset_end} > self.acting_block_length {{\n\
+                                     return None;\n\
+                                 }}\n\
+                                 let offset = self.pos + {offset};\n\
+                                 let val = {rt}::{order}(self.buf[offset..][..{ps}].try_into().unwrap());\n\
+                                 if {null_check} {{\n\
+                                     None\n\
+                                 }} else {{\n\
+                                     Some(val)\n\
+                                 }}\n\
+                             }}\n",
+                            snake = fname_snake, rt = r_type, since = since, offset_end = offset_end,
+                            offset = offset, order = order_fn, ps = prim_size, null_check = null_check_expr,
+                        );
+                        impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&accessor).unwrap());
                     } else if since > 0 {
+                        let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                        let offset_end = offset + prim_size;
+                        let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                         if let Some(ref desc) = f.description {
-                            src.push_str(&format!("/// {}\n", desc));
+                            let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
+                            impl_body.extend(quote::quote! { #[doc = #desc_lit] });
                         }
-                        src.push_str(&format!(
-                            "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
-                                     if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                         return None;\n\
-                                     }}\n\
-                                     let offset = self.pos + {};\n\
-                                     Some({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
-                                 }}\n\n",
-                            f_name, r_type, since, offset + prim_size, offset, r_type, order_suffix, prim_size,
-                        ));
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #fname_ident(&self) -> Option<#r_type_ty> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                let offset = self.pos + #offset_lit;
+                                Some(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                            }
+                        });
                     } else {
                         if let Some(ref desc) = f.description {
-                            src.push_str(&format!("/// {}\n", desc));
+                            let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
+                            impl_body.extend(quote::quote! { #[doc = #desc_lit] });
                         }
-                        src.push_str(&format!(
-                            "#[inline]\n    pub fn {}(&self) -> {} {{\n\
-                                     let offset = self.pos + {};\n\
-                                     {}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap())\n\
-                                 }}\n\n",
-                            f_name, r_type, offset, r_type, order_suffix, prim_size,
-                        ));
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #fname_ident(&self) -> #r_type_ty {
+                                let offset = self.pos + #offset_lit;
+                                #r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap())
+                            }
+                        });
                     }
 
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                                 let offset = self.pos + {};\n\
-                                 let mut bytes = [0u8; {}];
-
-                                 bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                 {}::from_{}_bytes(bytes)\n\
-                             }}\n\n",
-                        f_name, r_type, offset, prim_size, prim_size, r_type, order_suffix
-                    ));
+                    // _unchecked for non-array primitives
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub const unsafe fn #unchecked_ident(&self) -> #r_type_ty {
+                            let offset = self.pos + #offset_lit;
+                            let mut bytes = [0u8; #prim_size_lit];
+                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                            #r_type_ty::#order_fn(bytes)
+                        }
+                    });
                 }
             }
             FieldType::Composite {
@@ -1984,466 +2085,511 @@ fn generate_message_decoder(
                 size: comp_size,
             } => {
                 let target_name = to_pascal_case(comp_name);
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let offset_lit = syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
+
                 if since > 0 {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
-                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                     return None;\n\
-                                 }}\n\
-                                 let offset = self.pos + {};\n\
-                                 Some({}(self.buf[offset..][..{}].try_into().unwrap()))\n\
-                             }}\n\n",
-                        f_name,
-                        target_name,
-                        since,
-                        offset + comp_size,
-                        offset,
-                        target_name,
-                        comp_size,
-                    ));
+                    let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let offset_end = offset + comp_size;
+                    let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fname_ident(&self) -> Option<#target_ident> {
+                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap()))
+                        }
+                    });
                 } else {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub fn {}(&self) -> {} {{\n\
-                                 let offset = self.pos + {};\n\
-                                 {}(self.buf[offset..][..{}].try_into().unwrap())\n\
-                             }}\n\n",
-                        f_name, target_name, offset, target_name, comp_size,
-                    ));
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fname_ident(&self) -> #target_ident {
+                            let offset = self.pos + #offset_lit;
+                            #target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap())
+                        }
+                    });
                 }
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             let mut bytes = [0u8; {}];
-
-                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                             {}(bytes)\n\
-                         }}\n\n",
-                    f_name, target_name, offset, comp_size, comp_size, target_name
-                ));
+                impl_body.extend(quote::quote! {
+                    #[inline]
+                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        let mut bytes = [0u8; #comp_size_lit];
+                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #comp_size_lit) });
+                        #target_ident(bytes)
+                    }
+                });
             }
             FieldType::Enum {
                 name: enum_name,
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(enum_name);
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
                 let r_type = rust_type(*encoding_type);
+                let r_type_ty: syn::Type = syn::parse_str(r_type).unwrap();
                 let prim_size = encoding_type.size();
+                let offset_lit = syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                let order_fn = format_ident!("from_{order_suffix}_bytes");
 
                 if f.presence == Presence::Constant {
                     if let Some(ref val) = f.constant_value {
                         let variant = val.rsplit('.').next().unwrap_or(val);
-                        src.push_str(&format!(
-                            "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                                     {}::{}\n\
-                                 }}\n\n",
-                            f_name, target_name, target_name, variant
-                        ));
+                        let variant_ident = syn::Ident::new(variant, proc_macro2::Span::call_site());
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub const fn #fname_ident(&self) -> #target_ident {
+                                #target_ident::#variant_ident
+                            }
+                        });
                     }
                 } else if since > 0 {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
-                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                     return None;\n\
-                                 }}\n\
-                                 let offset = self.pos + {};\n\
-                                 Some({}::from_raw({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap())))\n\
-                             }}\n\n",
-                        f_name, target_name, since, offset + prim_size, offset, target_name, r_type, order_suffix, prim_size,
-                    ));
+                    let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let offset_end = offset + prim_size;
+                    let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fname_ident(&self) -> Option<#target_ident> {
+                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap())))
+                        }
+                    });
                 } else {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub fn {}(&self) -> {} {{\n\
-                                 let offset = self.pos + {};\n\
-                                 {}::from_raw({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
-                             }}\n\n",
-                        f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
-                    ));
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fname_ident(&self) -> #target_ident {
+                            let offset = self.pos + #offset_lit;
+                            #target_ident::from_raw(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                        }
+                    });
                 }
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             let mut bytes = [0u8; {}];
-
-                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                             {}::from_raw({}::from_{}_bytes(bytes))\n\
-                         }}\n\n",
-                    f_name,
-                    target_name,
-                    offset,
-                    prim_size,
-                    prim_size,
-                    target_name,
-                    r_type,
-                    order_suffix
-                ));
+                impl_body.extend(quote::quote! {
+                    #[inline]
+                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        let mut bytes = [0u8; #prim_size_lit];
+                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                        #target_ident::from_raw(#r_type_ty::#order_fn(bytes))
+                    }
+                });
             }
             FieldType::Set {
                 name: set_name,
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(set_name);
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
                 let r_type = rust_type(*encoding_type);
+                let r_type_ty: syn::Type = syn::parse_str(r_type).unwrap();
                 let prim_size = encoding_type.size();
+                let offset_lit = syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                let order_fn = format_ident!("from_{order_suffix}_bytes");
 
                 if f.presence == Presence::Constant {
                     if let Some(ref val) = f.constant_value {
                         let bits: u8 = val.parse().unwrap_or(0);
-                        src.push_str(&format!(
-                            "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
-                                     {}({})\n\
-                                 }}\n\n",
-                            f_name, target_name, target_name, bits
-                        ));
+                        let bits_lit = syn::LitInt::new(&bits.to_string(), proc_macro2::Span::call_site());
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub const fn #fname_ident(&self) -> #target_ident {
+                                #target_ident(#bits_lit)
+                            }
+                        });
                     }
                 } else if since > 0 {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
-                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                     return None;\n\
-                                 }}\n\
-                                 let offset = self.pos + {};\n\
-                                 Some({}({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap())))\n\
-                             }}\n\n",
-                        f_name, target_name, since, offset + prim_size, offset, target_name, r_type, order_suffix, prim_size,
-                    ));
+                    let since_lit = syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let offset_end = offset + prim_size;
+                    let offset_end_lit = syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fname_ident(&self) -> Option<#target_ident> {
+                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_ident(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap())))
+                        }
+                    });
                 } else {
-                    src.push_str(&format!(
-                        "#[inline]\n    pub fn {}(&self) -> {} {{\n\
-                                 let offset = self.pos + {};\n\
-                                 {}({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
-                             }}\n\n",
-                        f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
-                    ));
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fname_ident(&self) -> #target_ident {
+                            let offset = self.pos + #offset_lit;
+                            #target_ident(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                        }
+                    });
                 }
 
-                src.push_str(&format!(
-                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                             let offset = self.pos + {};\n\
-                             let mut bytes = [0u8; {}];
-
-                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                             {}({}::from_{}_bytes(bytes))\n\
-                         }}\n\n",
-                    f_name,
-                    target_name,
-                    offset,
-                    prim_size,
-                    prim_size,
-                    target_name,
-                    r_type,
-                    order_suffix
-                ));
+                impl_body.extend(quote::quote! {
+                    #[inline]
+                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        let mut bytes = [0u8; #prim_size_lit];
+                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                        #target_ident(#r_type_ty::#order_fn(bytes))
+                    }
+                });
             }
         }
-        {
-            let const_ts = emit_field_consts(f);
-            let const_str = const_ts.to_string();
-            for line in const_str.lines() {
-                if !line.is_empty() {
-                    src.push_str("    ");
-                    src.push_str(line);
-                    src.push('\n');
-                }
-            }
-        }
+        // Emit field constants
+        let field_consts_ts = emit_field_consts(f);
+        impl_body.extend(field_consts_ts);
     }
 
-    // Tail Offsets Helpers
+    // 7. Tail offset helpers
     let total_tail = msg.groups.len() + msg.var_data.len();
-    src.push_str(&format!(
-        "    #[inline]\n\
-             fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 Ok(self.pos + self.acting_block_length)\n\
-             }}\n\n"
-    ));
 
-    let mut k = 0;
+    // tail_offset_0
+    impl_body.extend(quote::quote! {
+        #[inline]
+        fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+            Ok(self.pos + self.acting_block_length)
+        }
+    });
+
+    let mut k = 0usize;
     for g in &msg.groups {
         let (dim_name, dim_size, bl_field, count_field) =
             get_dimension_info(elements, &g.dimension_type);
         let g_pascal = to_pascal_case(&g.name);
-        src.push_str(&format!(
+        let dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
+        let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
+        let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
+        let g_entry_ident = syn::Ident::new(
+            &format!("{}EntryDecoder", g_pascal),
+            proc_macro2::Span::call_site(),
+        );
+        let k1 = k + 1;
+        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
+        let tail_k = format_ident!("tail_offset_{k}");
+        let tail_k1 = format_ident!("tail_offset_{k1}");
+        let g_name_str = g.name.as_str();
+
+        let tail = format!(
             "    #[inline]\n\
-                 fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                     let start = self.tail_offset_{}()?;\n\
-                     if start + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
-                     }}\n\
-                     let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
-                     let header = {}(bytes);\n\
-                     let count = header.{}() as usize;\n\
-                     let block_len = header.{}() as usize;\n\
-                     let mut pos = start + {};\n\
-                     let mut idx = 0;\n\
-                     while idx < count {{\n\
-                         pos = {}EntryDecoder::skip(self.buf, pos, block_len, self.acting_version)?;\n\
-                         idx += 1;\n\
-                     }}\n\
-                     Ok(pos)\n\
-                 }}\n\n",
-            k + 1, k, dim_size, dim_size, dim_size, dim_size, dim_name, count_field, bl_field, dim_size, g_pascal,
-            field_name = g.name
-        ));
+             fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                 let start = self.tail_offset_{k}()?;\n\
+                 if start + {ds} > self.buf.len() {{\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{gn}\", needed: {ds}, available: self.buf.len() - start }});\n\
+                 }}\n\
+                 let bytes: [u8; {ds}] = self.buf[start..start + {ds}].try_into().unwrap();\n\
+                 let header = {dn}(bytes);\n\
+                 let count = header.{cf}() as usize;\n\
+                 let block_len = header.{bf}() as usize;\n\
+                 let mut pos = start + {ds};\n\
+                 let mut idx = 0;\n\
+                 while idx < count {{\n\
+                     pos = {ge}::skip(self.buf, pos, block_len, self.acting_version)?;\n\
+                     idx += 1;\n\
+                 }}\n\
+                 Ok(pos)\n\
+             }}",
+            k1 = k1, k = k, ds = dim_size, gn = g_name_str,
+            dn = dim_name, cf = count_field, bf = bl_field,
+            ge = format!("{}EntryDecoder", g_pascal),
+        );
+        eprintln!("TAIL_VERIFY: {}", &tail);
+        impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&tail).unwrap());
         k += 1;
     }
 
+    // VarData tail offsets
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        src.push_str(&format!(
+        let k1 = k + 1;
+        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
+        let vd_type_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
+        let vd_len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
+        let vd_tail = format!(
             "    #[inline]\n\
-                 fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                     let start = self.tail_offset_{}()?;\n\
-                     if start + {} > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
-                     }}\n\
-                     let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
-                     let header = {}(bytes);\n\
-                     let len = header.{}() as usize;\n\
-                     if start + {} + len > self.buf.len() {{\n\
-                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {} + len, available: self.buf.len() - start }});\n\
-                     }}\n\
-                     Ok(start + {} + len)\n\
-                 }}\n\n",
-            k + 1, k, prefix_size, prefix_size, prefix_size, prefix_size, type_pascal, len_field, prefix_size, prefix_size, prefix_size,
-            field_name = vd.name
-        ));
+             fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                 let start = self.tail_offset_{k}()?;\n\
+                 if start + {ps} > self.buf.len() {{\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps}, available: self.buf.len() - start }});\n\
+                 }}\n\
+                 let bytes: [u8; {ps}] = self.buf[start..start + {ps}].try_into().unwrap();\n\
+                 let header = {tp}(bytes);\n\
+                 let len = header.{lf}() as usize;\n\
+                 if start + {ps} + len > self.buf.len() {{\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps} + len, available: self.buf.len() - start }});\n\
+                 }}\n\
+                 Ok(start + {ps} + len)\n\
+             }}",
+            k1 = k1, k = k, ps = prefix_size, vn = vd.name,
+            tp = type_pascal, lf = len_field,
+        );
+        impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&vd_tail).unwrap());
         k += 1;
     }
 
-    // Accessors for Groups
-    let mut g_idx = 0;
+    // 8. Group accessors
+    let mut g_idx = 0usize;
     for g in &msg.groups {
         let g_pascal = to_pascal_case(&g.name);
         let g_snake = to_snake_case(&g.name);
-        src.push_str(&format!(
-            "#[inline]\n    pub fn {}(&self) -> Result<{}Decoder<'a>, sbe_rt::DecodeError> {{\n\
-                     let offset = self.tail_offset_{}()?;\n\
-                     {}Decoder::wrap(self.buf, offset, self.acting_version)\n\
-                 }}\n\n",
-            g_snake, g_pascal, g_idx, g_pascal
-        ));
+        let g_snake_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
+        let g_decoder_ident = syn::Ident::new(
+            &format!("{g_pascal}Decoder"),
+            proc_macro2::Span::call_site(),
+        );
+        let m_idx_lit = syn::LitInt::new(&g_idx.to_string(), proc_macro2::Span::call_site());
+        let tail_offset_ident: syn::Ident = syn::Ident::new(
+            &format!("tail_offset_{}", g_idx),
+            proc_macro2::Span::call_site(),
+        );
+        impl_body.extend(quote::quote! {
+            #[inline]
+            pub fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+                let offset = self.#tail_offset_ident()?;
+                #g_decoder_ident::wrap(self.buf, offset, self.acting_version)
+            }
+        });
         g_idx += 1;
     }
 
-    // Accessors for VarData
+    // 9. VarData accessors
     let mut vd_idx = msg.groups.len();
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let vd_snake = to_snake_case(&vd.name);
-        let mut vd_body = format!(
-            "#[inline]\n    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
-                     let offset = self.tail_offset_{}()?;\n\
-                     let bytes: [u8; {}] = self.buf[offset..offset + {}].try_into().unwrap();\n\
-                     let header = {}(bytes);\n\
-                     let len = header.{}() as usize;\n",
-            vd_snake, vd_idx, prefix_size, prefix_size, type_pascal, len_field
+        let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
+        let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
+        let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
+        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
+        let vd_tail_ident = syn::Ident::new(
+            &format!("tail_offset_{}", vd_idx),
+            proc_macro2::Span::call_site(),
         );
+        let vd_tail_ident: syn::Ident = syn::Ident::new(
+            &format!("tail_offset_{}", vd_idx),
+            proc_macro2::Span::call_site(),
+        );
+
         if let Some(max) = vd.max_length {
-            vd_body.push_str(&format!(
-                "                     if len > {} {{\n\
-                                             return Err(sbe_rt::DecodeError::InvalidVarDataLength {{ field: \"{}\", length: len as u32, max_length: {} }});\n\
-                                         }}\n",
-                max, vd_snake, max
-            ));
+            let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
+            impl_body.extend(quote::quote! {
+                #[inline]
+                pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let offset = self.#vd_tail_ident()?;
+                    let bytes: [u8; #prefix_size_lit] = self.buf[offset..offset + #prefix_size_lit].try_into().unwrap();
+                    let header = #type_pascal_ident(bytes);
+                    let len = header.#len_field_ident() as usize;
+                    if len > #max_lit {
+                        return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                            field: stringify!(#vd_snake_ident),
+                            length: len as u32,
+                            max_length: #max_lit,
+                        });
+                    }
+                    let data_offset = offset + #prefix_size_lit;
+                    Ok(&self.buf[data_offset .. data_offset + len])
+                }
+            });
+        } else {
+            impl_body.extend(quote::quote! {
+                #[inline]
+                pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let offset = self.#vd_tail_ident()?;
+                    let bytes: [u8; #prefix_size_lit] = self.buf[offset..offset + #prefix_size_lit].try_into().unwrap();
+                    let header = #type_pascal_ident(bytes);
+                    let len = header.#len_field_ident() as usize;
+                    let data_offset = offset + #prefix_size_lit;
+                    Ok(&self.buf[data_offset .. data_offset + len])
+                }
+            });
         }
-        vd_body.push_str(&format!(
-            "                     let data_offset = offset + {};\n\
-                             Ok(&self.buf[data_offset .. data_offset + len])\n\
-                         }}\n\n",
-            prefix_size
-        ));
-        src.push_str(&vd_body);
 
         // UTF-8 str accessor
-        src.push_str(&format!(
-            "#[inline]\n    pub fn {}_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {{\n\
-                     let bytes = self.{}()?;\n\
-                     core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))\n\
-                 }}\n\n",
-            vd_snake, vd_snake
-        ));
+        let str_ident = syn::Ident::new(&format!("{vd_snake}_as_str"), proc_macro2::Span::call_site());
+        impl_body.extend(quote::quote! {
+            #[inline]
+            pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                let bytes = self.#vd_snake_ident()?;
+                core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
+            }
+        });
 
-        // Zero-cost UTF-8 validation skip. Caller guarantees valid UTF-8.
-        src.push_str(&format!(
-            "#[inline]\n    pub unsafe fn {snake}_as_str_unchecked(&self) -> &'a str {{ let data = self.{snake}().unwrap_or(&[]);\n                unsafe {{ core::str::from_utf8_unchecked(data) }}\n            }}\n\n",
-            snake = vd_snake
-        ));
+        // zero-cost UTF-8 unchecked
+        let str_unchecked_ident = syn::Ident::new(
+            &format!("{vd_snake}_as_str_unchecked"),
+            proc_macro2::Span::call_site(),
+        );
+        impl_body.extend(quote::quote! {
+            #[inline]
+            pub unsafe fn #str_unchecked_ident(&self) -> &'a str {
+                let data = self.#vd_snake_ident().unwrap_or(&[]);
+                unsafe { core::str::from_utf8_unchecked(data) }
+            }
+        });
 
-        // Allocating String convenience accessor
-        src.push_str(&format!(
-            "#[inline]\n    pub fn {}_as_string(&self) -> Result<String, sbe_rt::DecodeError> {{\n\
-                     Ok(self.{}_as_str()?.to_string())\n\
-                 }}\n\n",
-            vd_snake, vd_snake
-        ));
+        // String convenience
+        let string_ident = syn::Ident::new(
+            &format!("{vd_snake}_as_string"),
+            proc_macro2::Span::call_site(),
+        );
+        impl_body.extend(quote::quote! {
+            #[inline]
+            pub fn #string_ident(&self) -> Result<String, sbe_rt::DecodeError> {
+                Ok(self.#str_ident()?.to_string())
+            }
+        });
 
-        // Raw slice accessor for further decoding
-        src.push_str(&format!(
-            "#[inline]\n    pub fn {}_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
-                     self.{}()\n\
-                 }}\n\n",
-            vd_snake, vd_snake
-        ));
+        // Raw slice
+        let slice_ident = syn::Ident::new(
+            &format!("{vd_snake}_as_slice"),
+            proc_macro2::Span::call_site(),
+        );
+        impl_body.extend(quote::quote! {
+            #[inline]
+            pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                self.#vd_snake_ident()
+            }
+        });
 
         vd_idx += 1;
     }
 
-    // Message size/as_bytes
-    src.push_str(&format!(
-        "#[inline]\n    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 let end = self.tail_offset_{}()?;\n\
-                 Ok(end - self.pos)\n\
-             }}\n\n\
-             #[inline]\n             pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 let len = self.encoded_length()?;\n\
-                 Ok(len + {})\n\
-             }}\n\n\
-             #[inline]\n             pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
-                 let len = self.encoded_length_with_header()?;\n\
-                 let start = self.pos - {};\n\
-                 Ok(&self.buf[start .. start + len])\n\
-             }}\n",
-        total_tail, header_size, header_size
-    ));
+    // 10. encoded_length, encoded_length_with_header, as_bytes
+    let total_tail_ident: syn::Ident = syn::Ident::new(
+        &format!("tail_offset_{}", total_tail),
+        proc_macro2::Span::call_site(),
+    );
+    impl_body.extend(quote::quote! {
+        #[inline]
+        pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+            let end = self.#total_tail_ident()?;
+            Ok(end - self.pos)
+        }
 
-    // ponytail: linear buffer walk, no nested-entry tree recursion
-    src.push_str(&format!(
-        "    #[inline]\n    pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {{\n\
-             if buf.len() < {} {{\n\
-                 return Err(sbe_rt::VerifyError::HeaderTooShort);\n\
-             }}\n\
-             let header_bytes: [u8; {}] = buf[..{}].try_into().unwrap();\n\
-             let header = {}(header_bytes);\n\
-             let block_length = header.{}() as usize;\n\
-             if block_length < Self::BLOCK_LENGTH {{\n\
-                 return Err(sbe_rt::VerifyError::InvalidBlockLength {{\n\
-                     expected_min: Self::BLOCK_LENGTH,\n\
-                     actual: block_length,\n\
-                 }});\n\
-             }}\n\
-             let body_end = {} + block_length;\n\
-             if body_end > buf.len() {{\n\
-                 return Err(sbe_rt::VerifyError::MessageTooShort {{\n\
-                     needed: body_end,\n\
-                     available: buf.len(),\n\
-                 }});\n\
-             }}\n\
-             let mut offset = body_end;\n",
-        header_size, header_size, header_size, header_pascal, header_bl, header_size
+        #[inline]
+        pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
+            let len = self.encoded_length()?;
+            Ok(len + #hdr_size_lit)
+        }
+
+        #[inline]
+        pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+            let len = self.encoded_length_with_header()?;
+            let start = self.pos - #hdr_size_lit;
+            Ok(&self.buf[start .. start + len])
+        }
+    });
+
+    // 11. verify function - build as single String for parse_str
+    let mut verify_body = String::new();
+    verify_body.push_str(&format!(
+        "    #[inline]\n         pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {{\n             if buf.len() < {hs} {{\n                 return Err(sbe_rt::VerifyError::HeaderTooShort);\n             }}\n             let header_bytes: [u8; {hs}] = buf[..{hs}].try_into().unwrap();\n             let header = {hp}(header_bytes);\n             let block_length = header.{hbl}() as usize;\n             if block_length < Self::BLOCK_LENGTH {{\n                 return Err(sbe_rt::VerifyError::InvalidBlockLength {{\n                     expected_min: Self::BLOCK_LENGTH,\n                     actual: block_length,\n                 }});\n             }}\n             let body_end = {hs} + block_length;\n             if body_end > buf.len() {{\n                 return Err(sbe_rt::VerifyError::MessageTooShort {{\n                     needed: body_end,\n                     available: buf.len(),\n                 }});\n             }}\n             let mut offset = body_end;\n",
+        hs = header_size, hp = header_pascal, hbl = header_bl,
     ));
 
     for g in &msg.groups {
         let (dim_name, dim_size, _, count_field) = get_dimension_info(elements, &g.dimension_type);
         let g_snake = to_snake_case(&g.name);
         let entry_bl = g.block_length;
-        src.push_str(&format!(
-            "    {{\n\
-                 if offset + {} > buf.len() {{\n\
-                     return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {{\n\
-                         field: \"{}\",\n\
-                         offset,\n\
-                     }});\n\
-                 }}\n\
-                 let bytes: [u8; {}] = buf[offset..offset + {}].try_into().unwrap();\n\
-                 let dim = {}(bytes);\n\
-                 let count = dim.{}() as usize;\n\
-                 let entries_end = offset + {} + count * {};\n\
-                 if entries_end > buf.len() {{\n\
-                     return Err(sbe_rt::VerifyError::MessageTooShort {{\n\
-                         needed: entries_end,\n\
-                         available: buf.len(),\n\
-                     }});\n\
-                 }}\n\
-                 offset = entries_end;\n\
-             }}\n",
-            dim_size, g_snake, dim_size, dim_size, dim_name, count_field, dim_size, entry_bl
+        verify_body.push_str(&format!(
+            "    {{\n                 if offset + {ds} > buf.len() {{\n                     return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {{\n                         field: \"{gs}\",\n                         offset,\n                     }});\n                 }}\n                 let bytes: [u8; {ds}] = buf[offset..offset + {ds}].try_into().unwrap();\n                 let dim = {dn}(bytes);\n                 let count = dim.{cf}() as usize;\n                 let entries_end = offset + {ds} + count * {ebl};\n                 if entries_end > buf.len() {{\n                     return Err(sbe_rt::VerifyError::MessageTooShort {{\n                         needed: entries_end,\n                         available: buf.len(),\n                     }});\n                 }}\n                 offset = entries_end;\n             }}",
+            ds = dim_size, gs = g_snake, dn = dim_name, cf = count_field, ebl = entry_bl,
         ));
     }
 
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let vd_snake = to_snake_case(&vd.name);
-        src.push_str(&format!(
-            "    {{\n\
-                 if offset + {} > buf.len() {{\n\
-                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n\
-                         field: \"{}\",\n\
-                         offset,\n\
-                         length: 0,\n\
-                     }});\n\
-                 }}\n\
-                 let bytes: [u8; {}] = buf[offset..offset + {}].try_into().unwrap();\n\
-                 let var_header = {}(bytes);\n\
-                 let len = var_header.{}();\n\
-                 let data_end = offset + {} + len as usize;\n\
-                 if data_end > buf.len() {{\n\
-                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n\
-                         field: \"{}\",\n\
-                         offset,\n\
-                         length: len as u32,\n\
-                     }});\n\
-                 }}\n\
-                 offset = data_end;\n\
-             }}\n",
-            prefix_size,
-            vd_snake,
-            prefix_size,
-            prefix_size,
-            type_pascal,
-            len_field,
-            prefix_size,
-            vd_snake
+        verify_body.push_str(&format!(
+            "    {{\n                 if offset + {ps} > buf.len() {{\n                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n                         field: \"{vs}\",\n                         offset,\n                         length: 0,\n                     }});\n                 }}\n                 let bytes: [u8; {ps}] = buf[offset..offset + {ps}].try_into().unwrap();\n                 let var_header = {tp}(bytes);\n                 let len = var_header.{lf}();\n                 let data_end = offset + {ps} + len as usize;\n                 if data_end > buf.len() {{\n                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n                         field: \"{vs}\",\n                         offset,\n                         length: len as u32,\n                     }});\n                 }}\n                 offset = data_end;\n             }}",
+            ps = prefix_size, vs = vd_snake, tp = type_pascal, lf = len_field,
         ));
     }
 
-    src.push_str("    Ok(())\n    }\n\n");
+    verify_body.push_str("    Ok(())\n    }\n");
+    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&verify_body)
+        .unwrap_or_else(|e| panic!("verify_body parse error for {name}: {e}\n---verify_body---\n{verify_body}\n---end---")));
 
-    src.push_str(&format!(
-        "}}\n\n\
-         impl<'a> TryFrom<&'a [u8]> for {}Decoder<'a> {{\n\
-             type Error = sbe_rt::DecodeError;\n\n\
-             fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {{\n\
-                 Self::wrap_and_apply_header(buf, 0)\n\
-             }}\n\
-         }}\n\n\
-         impl<'a> sbe_rt::private::Sealed for {}Decoder<'a> {{}}\n\n\
-         impl<'a> sbe_rt::SbeMessage for {}Decoder<'a> {{\n\
-             const TEMPLATE_ID: u16 = {};\n\
-             const BLOCK_LENGTH: usize = {};\n\
-             const SCHEMA_ID: u16 = {};\n\
-             const SCHEMA_VERSION: u16 = {};\n\
-         }}\n\n\
-         impl<'a> AsRef<[u8]> for {}Decoder<'a> {{\n\
-             fn as_ref(&self) -> &[u8] {{\n\
-                 self.as_bytes().unwrap_or(&[])\n\
-             }}\n\
-         }}\n\n\
-         impl<'a> {}Decoder<'a> {{\n\
-             pub fn as_ref_opt(&self) -> Option<&[u8]> {{\n\
-                 self.as_bytes().ok()\n\
-             }}\n\
-         }}\n\n",
-        name, name, name, msg.id, block_length, schema_id, schema_version, name, name
-    ));
-
-    // Generate Display impl for this decoder
-    generate_decoder_display(src, msg);
-
-    // Recursively generate Repeating Groups decoders for this message
-    for g in &msg.groups {
-        let group_ts = generate_group_decoder(g, elements, byte_order);
-        let formatted = prettyplease::unparse(
-            &syn::parse2::<syn::File>(group_ts).unwrap_or_else(|_| syn::File { shebang: None, attrs: vec![], items: vec![] })
-        );
-        if !formatted.is_empty() {
-            src.push_str(&formatted);
+    // Wrap all impl_body items inside the impl block
+    ts.extend(quote::quote! {
+        impl<'a> #decoder_ident<'a> {
+            #impl_body
         }
+    });
+
+    // 12. Trait impls
+    let msg_id_lit = syn::LitInt::new(&msg.id.to_string(), proc_macro2::Span::call_site());
+    let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), proc_macro2::Span::call_site());
+    let schema_version_lit = syn::LitInt::new(&schema_version.to_string(), proc_macro2::Span::call_site());
+    ts.extend(quote::quote! {
+
+        impl<'a> TryFrom<&'a [u8]> for #decoder_ident<'a> {
+            type Error = sbe_rt::DecodeError;
+
+            fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+                Self::wrap_and_apply_header(buf, 0)
+            }
+        }
+
+        impl<'a> sbe_rt::private::Sealed for #decoder_ident<'a> {}
+
+        impl<'a> sbe_rt::SbeMessage for #decoder_ident<'a> {
+            const TEMPLATE_ID: u16 = #msg_id_lit;
+            const BLOCK_LENGTH: usize = #bl_lit;
+            const SCHEMA_ID: u16 = #schema_id_lit;
+            const SCHEMA_VERSION: u16 = #schema_version_lit;
+        }
+
+        impl<'a> AsRef<[u8]> for #decoder_ident<'a> {
+            fn as_ref(&self) -> &[u8] {
+                self.as_bytes().unwrap_or(&[])
+            }
+        }
+
+        impl<'a> #decoder_ident<'a> {
+            pub fn as_ref_opt(&self) -> Option<&[u8]> {
+                self.as_bytes().ok()
+            }
+        }
+    });
+
+    // 13. Display impl
+    let display_ts = generate_decoder_display(msg);
+    ts.extend(display_ts);
+
+    // 14. Repeating Group decoders
+    // generate_group_decoder still writes to &mut String, so use a string buffer
+    let mut str_buf = String::new();
+    for g in &msg.groups {
+        generate_group_decoder(&mut str_buf, g, elements, byte_order);
     }
+    if !str_buf.is_empty() {
+        let group_ts: proc_macro2::TokenStream = syn::parse_str(&str_buf)
+            .unwrap_or_else(|e| panic!("Failed to parse group decoder generated code for {name}: {e}"));
+        ts.extend(group_ts);
+    }
+
+    // 15. Close the main impl block (if is_fixed or not, the block is closed already)
+    // Actually the impl block is opened but the `}` is emitted by the trait impls section above.
+    // The quote! for trait impls starts with `}` to close the impl block first.
+    // Let me verify: the impl block opening uses `quote! { impl ... { ... }` 
+    // Wait, no. Let me re-check the flow.
+    // 
+    // Section 2 opens: quote! { impl ... { ...  (no closing })
+    // Section 12 starts with: `}` (closing the impl)
+    // So the impl is properly closed.
+
+    // Group decoders don't need the impl to still be open - they're separate impl blocks
+
+    ts
 }
 
-fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
+
+fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream {
     let name = to_pascal_case(&msg.name);
     let decoder_ident =
         syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
@@ -2534,16 +2680,15 @@ fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
             }
         }
     };
-    src.push_str(&ts.to_string());
-    src.push('\n');
-    src.push('\n');
+    ts
 }
 
 fn generate_group_decoder(
+    src: &mut String,
     g: &MessageGroup,
     elements: &SchemaElements,
     byte_order: ByteOrder,
-) -> proc_macro2::TokenStream {
+) {
     let name = to_pascal_case(&g.name);
     let (dim_name, dim_size, bl_field, count_field) =
         get_dimension_info(elements, &g.dimension_type);
@@ -2551,426 +2696,447 @@ fn generate_group_decoder(
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
     };
+
+    src.push_str(&format!(
+        "pub struct {}Decoder<'a> {{\n\
+             buf: &'a [u8],\n\
+             pos: usize,\n\
+             count: usize,\n\
+             start: usize,\n\
+             total: usize,\n\
+             acting_version: u16,\n\
+         }}\n\n\
+         impl<'a> {}Decoder<'a> {{\n\
+             pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
+             #[inline]\n             pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {{\n\
+                 let bytes: [u8; {}] = buf.get(pos..pos + {}).ok_or_else(|| {{\n\
+                     sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: buf.len() - pos }}\n\
+                 }})?.try_into().unwrap();\n\
+                 let header = {}(bytes);\n\
+                 let count = header.{}() as usize;\n\
+                 Ok(Self {{\n\
+                     buf,\n\
+                     pos: pos + {},\n\
+                     count,\n\
+                     start: pos + {},\n\
+                     total: count,\n\
+                     acting_version,\n\
+                 }})\n\
+             }}\n\n\
+             #[inline]\n             pub fn is_empty(&self) -> bool {{\n\
+                 self.count == 0\n\
+             }}\n\n",
+        name, name, g.block_length, dim_size, dim_size, dim_size, dim_name, count_field, dim_size, dim_size,
+        field_name = g.name
+    ));
+
+    // Expose fast-path as_chunks if entry has no tail
     let total_tail = g.groups.len() + g.var_data.len();
+    // Group navigation methods: skip_n, nth, rewind, remaining
+    src.push_str(
+        "    #[inline]\n    pub const fn remaining(&self) -> usize {{\n\
+                 self.count\n\
+             }}\n\n\
+             #[inline]\n    pub fn rewind(&mut self) -> &mut Self {{\n\
+                 self.pos = self.start;\n\
+                 self.count = self.total;\n\
+                 self\n\
+             }}\n\n",
+    );
 
-    let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-    let decoder_ident = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
-    let entry_dec_ident = syn::Ident::new(&format!("{}EntryDecoder", name), proc_macro2::Span::call_site());
-    let dim_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
-    let bl_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-    let count_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-    let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-    let bl_lit = syn::LitInt::new(&g.block_length.to_string(), proc_macro2::Span::call_site());
-    let field_name_str = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
-    let from_method = syn::Ident::new(&format!("from_{order_suffix}_bytes"), proc_macro2::Span::call_site());
-
-    let mut tokens = proc_macro2::TokenStream::new();
-
-    // Group Decoder struct + impl with basic methods
-    tokens.extend(quote::quote! {
-        pub struct #decoder_ident<'a> {
-            buf: &'a [u8],
-            pos: usize,
-            count: usize,
-            start: usize,
-            total: usize,
-            acting_version: u16,
-        }
-
-        impl<'a> #decoder_ident<'a> {
-            pub const ENTRY_BLOCK_LENGTH: usize = #bl_lit;
-
-            #[inline]
-            pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {
-                let bytes: [u8; #dim_size_lit] = buf.get(pos..pos + #dim_size_lit).ok_or_else(|| {
-                    sbe_rt::DecodeError::BufferTooShort { field: #field_name_str, needed: #dim_size_lit, available: buf.len() - pos }
-                })?.try_into().unwrap();
-                let header = #dim_ident(bytes);
-                let count = header.#count_ident() as usize;
-                Ok(Self {
-                    buf,
-                    pos: pos + #dim_size_lit,
-                    count,
-                    start: pos + #dim_size_lit,
-                    total: count,
-                    acting_version,
-                })
-            }
-
-            #[inline]
-            pub fn is_empty(&self) -> bool {
-                self.count == 0
-            }
-
-            #[inline]
-            pub const fn remaining(&self) -> usize {
-                self.count
-            }
-
-            #[inline]
-            pub fn rewind(&mut self) -> &mut Self {
-                self.pos = self.start;
-                self.count = self.total;
-                self
-            }
-        }
-    });
-
-    // skip_n method - two variants based on total_tail
     if total_tail == 0 {
-        tokens.extend(quote::quote! {
-            impl<'a> #decoder_ident<'a> {
-                #[inline]
-                pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-                    if n > self.count {
-                        return Err(sbe_rt::DecodeError::BufferTooShort {
-                            field: #field_name_str,
-                            needed: n * Self::ENTRY_BLOCK_LENGTH,
-                            available: self.count * Self::ENTRY_BLOCK_LENGTH,
-                        });
-                    }
-                    self.pos += n * Self::ENTRY_BLOCK_LENGTH;
-                    self.count -= n;
-                    Ok(())
-                }
-            }
-        });
+        src.push_str(&format!(
+            "#[inline]\n    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {{\
+\
+                 if n > self.count {{\
+\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{\
+\
+                         field: \"{field_name}\",\n\
+                         needed: n * Self::ENTRY_BLOCK_LENGTH,\
+\
+                         available: self.count * Self::ENTRY_BLOCK_LENGTH,\
+\
+                     }});\n\
+                 }}\n\
+                 self.pos += n * Self::ENTRY_BLOCK_LENGTH;\n\
+                 self.count -= n;\n\
+                 Ok(())\
+\
+             }}\n\n",
+            field_name = g.name
+        ));
     } else {
-        tokens.extend(quote::quote! {
-            impl<'a> #decoder_ident<'a> {
-                #[inline]
-                pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-                    if n > self.count {
-                        return Err(sbe_rt::DecodeError::BufferTooShort {
-                            field: #field_name_str,
-                            needed: n * Self::ENTRY_BLOCK_LENGTH,
-                            available: self.count * Self::ENTRY_BLOCK_LENGTH,
-                        });
-                    }
-                    for _ in 0..n {
-                        let entry = #entry_dec_ident::wrap(self.buf, self.pos, self.acting_version);
-                        self.pos += entry.encoded_length()?;
-                        self.count -= 1;
-                    }
-                    Ok(())
-                }
-            }
-        });
+        src.push_str(&format!(
+            "#[inline]\n    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {{\
+\
+                 if n > self.count {{\
+\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{\
+\
+                         field: \"{field_name}\",\n\
+                         needed: n * Self::ENTRY_BLOCK_LENGTH,\
+\
+                         available: self.count * Self::ENTRY_BLOCK_LENGTH,\
+\
+                     }});\n\
+                 }}\n\
+                 for _ in 0..n {{\
+\
+                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
+                     self.pos += entry.encoded_length()?;\n\
+                     self.count -= 1;\n\
+                 }}\n\
+                 Ok(())\
+\
+             }}\n\n",
+            name,
+            field_name = g.name
+        ));
     }
 
-    // nth method
-    tokens.extend(quote::quote! {
-        impl<'a> #decoder_ident<'a> {
-            #[inline]
-            pub fn nth(&self, idx: usize) -> Result<#entry_dec_ident<'a>, sbe_rt::DecodeError> {
-                if idx >= self.total {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #field_name_str,
-                        needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
-                        available: self.total * Self::ENTRY_BLOCK_LENGTH,
-                    });
-                }
-                let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
-                if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #field_name_str,
-                        needed: Self::ENTRY_BLOCK_LENGTH,
-                        available: self.buf.len() - offset,
-                    });
-                }
-                Ok(#entry_dec_ident::wrap(self.buf, offset, self.acting_version))
-            }
-        }
-    });
-
-    // as_chunks and columnar slice access for fixed-size groups (no tail)
+    src.push_str(&format!(
+        "#[inline]\n    pub fn nth(&self, idx: usize) -> Result<{}EntryDecoder<'a>, sbe_rt::DecodeError> {{\
+\
+             if idx >= self.total {{\
+\
+                 return Err(sbe_rt::DecodeError::BufferTooShort {{\
+\
+                     field: \"{field_name}\",\n\
+                     needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,\
+\
+                     available: self.total * Self::ENTRY_BLOCK_LENGTH,\
+\
+                 }});\n\
+             }}\n\
+             let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;\n\
+             if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {{\
+\
+                 return Err(sbe_rt::DecodeError::BufferTooShort {{\
+\
+                     field: \"{field_name}\",\n\
+                     needed: Self::ENTRY_BLOCK_LENGTH,\
+\
+                     available: self.buf.len() - offset,\
+\
+                 }});\n\
+             }}\n\
+             Ok({}EntryDecoder::wrap(self.buf, offset, self.acting_version))\n\
+         }}\n\n",
+        name, name,
+        field_name = g.name
+    ));
     if total_tail == 0 {
-        tokens.extend(quote::quote! {
-            impl<'a> #decoder_ident<'a> {
-                #[inline]
-                pub fn as_chunks(&self) -> Result<&'a [[u8; #bl_lit]], sbe_rt::DecodeError> {
-                    let len = self.count * #bl_lit;
-                    if self.pos + len > self.buf.len() {
-                        return Err(sbe_rt::DecodeError::BufferTooShort { field: #field_name_str, needed: len, available: self.buf.len() - self.pos });
-                    }
-                    let bytes = &self.buf[self.pos .. self.pos + len];
-                    let (chunks, _) = bytes.as_chunks::<#bl_lit>();
-                    Ok(chunks)
-                }
-            }
-        });
-
+        src.push_str(&format!(
+            "#[inline]\n    pub fn as_chunks(&self) -> Result<&'a [[u8; {}]], sbe_rt::DecodeError> {{\n\
+                     let len = self.count * {};\n\
+                     if self.pos + len > self.buf.len() {{\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: len, available: self.buf.len() - self.pos }});\n\
+                     }}\n\
+                     let bytes = &self.buf[self.pos .. self.pos + len];\n\
+                     let (chunks, _) = bytes.as_chunks::<{}>();\n\
+                     Ok(chunks)\n\
+                 }}\n\n",
+            g.block_length, g.block_length, g.block_length,
+            field_name = g.name
+        ));
         // SoA columnar slice access for single-field fixed-size groups.
-        let non_const_count = g.fields.iter().filter(|f| f.presence != Presence::Constant).count();
+        // A group with exactly one non-constant field has that field occupying
+        // the entire entry block, so the field data is contiguous in memory
+        // and we can return a zero-copy &[T] via from_raw_parts.
+        let non_const_count = g
+            .fields
+            .iter()
+            .filter(|f| f.presence != Presence::Constant)
+            .count();
         if non_const_count == 1 {
             for f in &g.fields {
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                let f_ident = syn::Ident::new(&to_snake_case(&f.name), proc_macro2::Span::call_site());
-                let (f_size, slice_type_str) = match &f.field_type {
+                let f_name = to_snake_case(&f.name);
+                let (f_size, slice_type) = match &f.field_type {
                     FieldType::Primitive(prim, None) => (prim.size(), rust_type(*prim)),
+                    // Fixed arrays, composites, enums, and sets don't map to a single
+                    // primitive type. Use as_chunks() for bulk entry access instead.
                     _ => continue,
                 };
-                let slice_type: syn::Type = syn::parse_str(slice_type_str).unwrap();
-                let f_size_lit = syn::LitInt::new(&f_size.to_string(), proc_macro2::Span::call_site());
-                let slice_ident = syn::Ident::new(&format!("{}_as_slice", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                tokens.extend(quote::quote! {
-                    impl<'a> #decoder_ident<'a> {
-                        #[inline]
-                        pub fn #slice_ident(&self) -> Result<&'a [#slice_type], sbe_rt::DecodeError> {
-                            let len = self.count * #f_size_lit;
-                            if self.pos + len > self.buf.len() {
-                                return Err(sbe_rt::DecodeError::BufferTooShort { field: #field_name_str, needed: len, available: self.buf.len() - self.pos });
-                            }
-                            // SAFETY: SBE message buffers are allocated with sufficient
-                            // alignment for all primitive types. The bounds check above
-                            // guarantees at least count * sizeof(T) readable bytes.
-                            Ok(unsafe {
-                                core::slice::from_raw_parts(
-                                    self.buf.as_ptr().add(self.pos) as *const #slice_type,
-                                    self.count,
-                                )
-                            })
-                        }
-                    }
-                });
+                src.push_str(&format!(
+                    "#[inline]\n\
+                     pub fn {}_as_slice(&self) -> Result<&'a [{}], sbe_rt::DecodeError> {{\n\
+                         let len = self.count * {};\n\
+                         if self.pos + len > self.buf.len() {{\n\
+                             return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{g_name}\", needed: len, available: self.buf.len() - self.pos }});\n\
+                         }}\n\
+                         // SAFETY: SBE message buffers are allocated with sufficient\n\
+                         // alignment for all primitive types. The bounds check above\n\
+                         // guarantees at least count * sizeof(T) readable bytes.\n\
+                         Ok(unsafe {{\n\
+                             core::slice::from_raw_parts(\n\
+                                 self.buf.as_ptr().add(self.pos) as *const {},\n\
+                                 self.count,\n\
+                             )\n\
+                         }})\n\
+                     }}\n\n",
+                    f_name, slice_type, f_size, slice_type,
+                    g_name = g.name
+                ));
             }
         }
     }
+    src.push_str("}\n\n");
 
     // Iterator implementation
     if total_tail == 0 {
-        tokens.extend(quote::quote! {
-            impl<'a> Iterator for #decoder_ident<'a> {
-                type Item = #entry_dec_ident<'a>;
-
-                fn next(&mut self) -> Option<Self::Item> {
-                    if self.count == 0 {
-                        return None;
-                    }
-                    let entry = #entry_dec_ident::wrap(self.buf, self.pos, self.acting_version);
-                    self.pos += Self::ENTRY_BLOCK_LENGTH;
-                    self.count -= 1;
-                    Some(entry)
-                }
-            }
-
-            impl<'a> ExactSizeIterator for #decoder_ident<'a> {
-                fn len(&self) -> usize {
-                    self.count
-                }
-            }
-        });
+        // Fast path: entries are fixed-size, advance by ENTRY_BLOCK_LENGTH
+        src.push_str(&format!(
+            "impl<'a> Iterator for {}Decoder<'a> {{\
+\
+                 type Item = {}EntryDecoder<'a>;\n\
+                 fn next(&mut self) -> Option<Self::Item> {{\
+\
+                     if self.count == 0 {{\
+\
+                         return None;\n\
+                     }}\n\
+                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
+                     self.pos += Self::ENTRY_BLOCK_LENGTH;\n\
+                     self.count -= 1;\n\
+                     Some(entry)\
+\
+                 }}\n\
+             }}\n\n\
+             impl<'a> ExactSizeIterator for {}Decoder<'a> {{\
+\
+                 fn len(&self) -> usize {{\
+\
+                     self.count\n\
+                 }}\n\
+             }}\n\n",
+            name, name, name, name
+        ));
     } else {
-        tokens.extend(quote::quote! {
-            impl<'a> Iterator for #decoder_ident<'a> {
-                type Item = #entry_dec_ident<'a>;
-
-                fn next(&mut self) -> Option<Self::Item> {
-                    if self.count == 0 {
-                        return None;
-                    }
-                    let entry = #entry_dec_ident::wrap(self.buf, self.pos, self.acting_version);
-                    let size = match entry.encoded_length() {
-                        Ok(s) => s,
-                        Err(_) => {
-                            self.count = 0;
-                            return Some(entry);
-                        }
-                    };
-                    self.pos += size;
-                    self.count -= 1;
-                    Some(entry)
-                }
-            }
-
-            impl<'a> ExactSizeIterator for #decoder_ident<'a> {
-                fn len(&self) -> usize {
-                    self.count
-                }
-            }
-        });
+        // Safe path: entries have var-data tails, compute encoded length per entry
+        src.push_str(&format!(
+            "impl<'a> Iterator for {}Decoder<'a> {{\
+\
+                 type Item = {}EntryDecoder<'a>;\n\
+                 fn next(&mut self) -> Option<Self::Item> {{\
+\
+                     if self.count == 0 {{\
+\
+                         return None;\n\
+                     }}\n\
+                     let entry = {}EntryDecoder::wrap(self.buf, self.pos, self.acting_version);\n\
+                     let size = match entry.encoded_length() {{\
+\
+                         Ok(s) => s,\
+\
+                         Err(_) => {{\
+\
+                             self.count = 0;\n\
+                             return Some(entry);\n\
+                         }}\n\
+                     }};\n\
+                     self.pos += size;\n\
+                     self.count -= 1;\n\
+                     Some(entry)\
+\
+                 }}\n\
+             }}\n\n\
+             impl<'a> ExactSizeIterator for {}Decoder<'a> {{\
+\
+                 fn len(&self) -> usize {{\
+\
+                     self.count\n\
+                 }}\n\
+             }}\n\n",
+            name, name, name, name
+        ));
     }
-
     // Entry Decoder Struct
-    tokens.extend(quote::quote! {
-        pub struct #entry_dec_ident<'a> {
-            buf: &'a [u8],
-            pos: usize,
-            acting_version: u16,
-        }
-    });
-
-    // Entry Decoder impl with basic methods (separate quote::quote! block for brace clarity)
-    tokens.extend(quote::quote! {
-        impl<'a> #entry_dec_ident<'a> {
-            pub const ENTRY_BLOCK_LENGTH: usize = #bl_lit;
-
-            #[inline]
-            pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
-                Self { buf, pos, acting_version }
-            }
-        }
-    });
+    src.push_str(&format!(
+        "pub struct {}EntryDecoder<'a> {{\n\
+             buf: &'a [u8],\n\
+             pos: usize,\n\
+             acting_version: u16,\n\
+         }}\n\n\
+         impl<'a> {}EntryDecoder<'a> {{\n\
+             pub const ENTRY_BLOCK_LENGTH: usize = {};\n\n\
+             #[inline]\n             pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {{\n\
+                 Self {{ buf, pos, acting_version }}\n\
+             }}\n\n",
+        name, name, g.block_length
+    ));
 
     // Fields of group entry
-    let mut field_methods = proc_macro2::TokenStream::new();
     for f in &g.fields {
-        let f_ident = syn::Ident::new(&to_snake_case(&f.name), proc_macro2::Span::call_site());
-        let offset_lit = syn::LitInt::new(&f.offset.to_string(), proc_macro2::Span::call_site());
+        let f_name = to_snake_case(&f.name);
+        let offset = f.offset;
+        let since = f.since_version;
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
-                let r_type_str = rust_type(*prim);
-                let r_type_ty: syn::Type = syn::parse_str(r_type_str).unwrap();
+                let r_type = rust_type(*prim);
                 let prim_size = prim.size();
-                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
                 if f.presence == Presence::Constant {
                     if let Some(ref val) = f.constant_value {
                         if *prim == PrimitiveType::Char && val.len() > 1 {
-                            let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
-                            field_methods.extend(quote::quote! {
-                                #[inline]
-                                pub const fn #f_ident(&self) -> &'static str {
-                                    #val_lit
-                                }
-                            });
+                            src.push_str(&format!(
+                                "#[inline]\n    pub const fn {}(&self) -> &'static str {{\n\
+                                         \"{}\"\n\
+                                     }}\n\n",
+                                f_name, val
+                            ));
                         } else {
-                            let expr_str = constant_value_expr(*prim, val);
-                            let expr: syn::Expr = syn::parse_str(&expr_str).unwrap();
-                            field_methods.extend(quote::quote! {
-                                #[inline]
-                                pub const fn #f_ident(&self) -> #r_type_ty {
-                                    #expr
-                                }
-                            });
+                            let expr = constant_value_expr(*prim, val);
+                            src.push_str(&format!(
+                                "#[inline]\n    pub const fn {}(&self) -> {} {{\n\
+                                         {}\n\
+                                     }}\n\n",
+                                f_name, r_type, expr
+                            ));
                         }
                     }
                 } else if let Some(len) = length {
-                    let len_lit = syn::LitInt::new(&len.to_string(), proc_macro2::Span::call_site());
-                    let f_name_str = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
-                    let total_size_lit = syn::LitInt::new(&(prim_size * len).to_string(), proc_macro2::Span::call_site());
-                    let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                    let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                    let array_ty: syn::Type = syn::parse_str(&format!("[{}; {}]", r_type_str, len)).unwrap();
+                    src.push_str(&format!(
+                        "#[inline]\n    pub const fn {}(&self) -> Result<[{}; {}], sbe_rt::DecodeError> {{\n\
+                                 let offset = self.pos + {};\n\
+                                 let size = {};\n\
+                                 if offset + size > self.buf.len() {{\n\
+                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: size, available: self.buf.len() - offset }});\n\
+                                 }}\n\
+                                 let mut res = [0 as {}; {}];\n\
+                                 let mut idx = 0;\n\
+                                 while idx < {} {{\n\
+                                     let offset = self.pos + {} + idx * {};\n\
+                                     let mut bytes = [0u8; {}];\n\
+                                     let mut j = 0;\n\
+                                     while j < {} {{\n\
+                                         bytes[j] = self.buf[offset + j];\n\
+                                         j += 1;\n\
+                                     }}\n\
+                                     res[idx] = {}::from_{}_bytes(bytes);\n\
+                                     idx += 1;\n\
+                                 }}\n\
+                                 Ok(res)\n\
+                             }}\n\n",
+                        f_name, r_type, len, offset, prim_size * len, r_type, len, len, offset, prim_size, prim_size, prim_size, r_type, order_suffix,
+                        field_name = f.name
+                    ));
 
-                    field_methods.extend(quote::quote! {
-                        #[inline]
-                        pub const fn #f_ident(&self) -> Result<#array_ty, sbe_rt::DecodeError> {
-                            let offset = self.pos + #offset_lit;
-                            let size = #total_size_lit;
-                            if offset + size > self.buf.len() {
-                                return Err(sbe_rt::DecodeError::BufferTooShort { field: #f_name_str, needed: size, available: self.buf.len() - offset });
-                            }
-                            let mut res = [0 as #r_type_ty; #len_lit];
-                            let mut idx = 0;
-                            while idx < #len_lit {
-                                let offset = self.pos + #offset_lit + idx * #prim_size_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                let mut j = 0;
-                                while j < #prim_size_lit {
-                                    bytes[j] = self.buf[offset + j];
-                                    j += 1;
-                                }
-                                res[idx] = #r_type_ty::#from_method(bytes);
-                                idx += 1;
-                            }
-                            Ok(res)
-                        }
+                    src.push_str(&format!(
+                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> [{}; {}] {{\n\
+                                 let offset = self.pos + {};\n\
+                                 let mut res = [0 as {}; {}];\n\
+                                 let mut idx = 0;\n\
+                                 while idx < {} {{\n\
+                                     let offset = self.pos + {} + idx * {};\n\
+                                     let mut bytes = [0u8; {}];
 
-                        #[inline]
-                        pub const unsafe fn #unchecked_ident(&self) -> #array_ty {
-                            let offset = self.pos + #offset_lit;
-                            let mut res = [0 as #r_type_ty; #len_lit];
-                            let mut idx = 0;
-                            while idx < #len_lit {
-                                let offset = self.pos + #offset_lit + idx * #prim_size_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                                res[idx] = #r_type_ty::#from_method(bytes);
-                                idx += 1;
-                            }
-                            res
-                        }
+                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                                     res[idx] = {}::from_{}_bytes(bytes);\n\
+                                     idx += 1;\n\
+                                 }}\n\
+                                 res\n\
+                             }}\n\n",
+                        f_name,
+                        r_type,
+                        len,
+                        offset,
+                        r_type,
+                        len,
+                        len,
+                        offset,
+                        prim_size,
+                        prim_size,
+                        prim_size,
+                        r_type,
+                        order_suffix
+                    ));
 
-                        #[inline]
-                        pub const fn #raw_ident(&self) -> #array_ty {
-                            #[allow(unused_unsafe)]
-                            unsafe { self.#unchecked_ident() }
-                        }
-                    });
+                    src.push_str(&format!(
+                        "#[inline]\n    pub const fn raw_{}(&self) -> [{}; {}] {{\n\
+                                 #[allow(unused_unsafe)]\n\
+                                 unsafe {{ self.{}_unchecked() }}\n\
+                             }}\n\n",
+                        f_name, r_type, len, f_name
+                    ));
                 } else {
                     if f.presence == Presence::Optional {
                         let null_val = f.null_value.unwrap_or(0);
-                        let null_check_str = if *prim == PrimitiveType::Float {
+                        let null_check = if *prim == PrimitiveType::Float {
                             format!("val.to_bits() == {} as u32", null_val)
                         } else if *prim == PrimitiveType::Double {
                             format!("val.to_bits() == {}", null_val)
                         } else {
-                            format!("val == {} as {}", null_val, r_type_str)
+                            format!("val == {} as {}", null_val, r_type)
                         };
-                        let null_check: syn::Expr = syn::parse_str(&null_check_str).unwrap();
-                        let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                        let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
 
-                        field_methods.extend(quote::quote! {
-                            #[inline]
-                            pub fn #f_ident(&self) -> Option<#r_type_ty> {
-                                let offset = self.pos + #offset_lit;
-                                let val = #r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap());
-                                if #null_check {
-                                    None
-                                } else {
-                                    Some(val)
-                                }
-                            }
+                        src.push_str(&format!(
+                            "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
+                                     let offset = self.pos + {};\n\
+                                     let val = {}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap());\n\
+                                     if {} {{\n\
+                                         None\n\
+                                     }} else {{\n\
+                                         Some(val)\n\
+                                     }}\n\
+                                 }}\n\n",
+                            f_name, r_type, offset, r_type, order_suffix, prim_size, null_check,
+                        ));
 
-                            #[inline]
-                            pub const unsafe fn #unchecked_ident(&self) -> Option<#r_type_ty> {
-                                let offset = self.pos + #offset_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                                let val = #r_type_ty::#from_method(bytes);
-                                if #null_check {
-                                    None
-                                } else {
-                                    Some(val)
-                                }
-                            }
+                        src.push_str(&format!(
+                            "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> Option<{}> {{\n\
+                                     let offset = self.pos + {};\n\
+                                     let mut bytes = [0u8; {}];
 
-                            #[inline]
-                            pub const fn #raw_ident(&self) -> Option<#r_type_ty> {
-                                #[allow(unused_unsafe)]
-                                unsafe { self.#unchecked_ident() }
-                            }
-                        });
+                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                                     let val = {}::from_{}_bytes(bytes);\n\
+                                     if {} {{\n\
+                                         None\n\
+                                     }} else {{\n\
+                                         Some(val)\n\
+                                     }}\n\
+                                 }}\n\n",
+                            f_name, r_type, offset, prim_size, prim_size, r_type, order_suffix, null_check,
+                        ));
+
+                        src.push_str(&format!(
+                            "#[inline]\n    pub const fn raw_{}(&self) -> Option<{}> {{\n\
+                                     #[allow(unused_unsafe)]\n\
+                                     unsafe {{ self.{}_unchecked() }}\n\
+                                 }}\n\n",
+                            f_name, r_type, f_name,
+                        ));
                     } else {
-                        let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                        let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                        src.push_str(&format!(
+                            "#[inline]\n    pub fn {}(&self) -> {} {{\n\
+                                     let offset = self.pos + {};\n\
+                                     {}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap())\n\
+                                 }}\n\n",
+                            f_name, r_type, offset, r_type, order_suffix, prim_size,
+                        ));
 
-                        field_methods.extend(quote::quote! {
-                            #[inline]
-                            pub fn #f_ident(&self) -> #r_type_ty {
-                                let offset = self.pos + #offset_lit;
-                                #r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap())
-                            }
+                        src.push_str(&format!(
+                            "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                                     let offset = self.pos + {};\n\
+                                     let mut bytes = [0u8; {}];
 
-                            #[inline]
-                            pub const unsafe fn #unchecked_ident(&self) -> #r_type_ty {
-                                let offset = self.pos + #offset_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                                #r_type_ty::#from_method(bytes)
-                            }
+                                     bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                                     {}::from_{}_bytes(bytes)\n\
+                                 }}\n\n",
+                            f_name, r_type, offset, prim_size, prim_size, r_type, order_suffix
+                        ));
 
-                            #[inline]
-                            pub const fn #raw_ident(&self) -> #r_type_ty {
-                                #[allow(unused_unsafe)]
-                                unsafe { self.#unchecked_ident() }
-                            }
-                        });
+                        src.push_str(&format!(
+                            "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
+                                     #[allow(unused_unsafe)]\n\
+                                     unsafe {{ self.{}_unchecked() }}\n\
+                                 }}\n\n",
+                            f_name, r_type, f_name
+                        ));
                     }
                 }
             }
@@ -2979,75 +3145,73 @@ fn generate_group_decoder(
                 size: comp_size,
             } => {
                 let target_name = to_pascal_case(comp_name);
-                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
-                let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
-                let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                src.push_str(&format!(
+                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             {}(self.buf[offset..][..{}].try_into().unwrap())\n\
+                         }}\n\n",
+                    f_name, target_name, offset, target_name, comp_size,
+                ));
 
-                field_methods.extend(quote::quote! {
-                    #[inline]
-                    pub fn #f_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap())
-                    }
+                src.push_str(&format!(
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             let mut bytes = [0u8; {}];
 
-                    #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #comp_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #comp_size_lit) });
-                        #target_ident(bytes)
-                    }
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                             {}(bytes)\n\
+                         }}\n\n",
+                    f_name, target_name, offset, comp_size, comp_size, target_name
+                ));
 
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #target_ident {
-                        #[allow(unused_unsafe)]
-                        unsafe { self.#unchecked_ident() }
-                    }
-                });
+                src.push_str(&format!(
+                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
+                             #[allow(unused_unsafe)]\n\
+                             unsafe {{ self.{}_unchecked() }}\n\
+                         }}\n\n",
+                    f_name, target_name, f_name
+                ));
             }
             FieldType::Enum {
                 name: enum_name,
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(enum_name);
-                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
-                let enc_type_str = rust_type(*encoding_type);
-                let enc_type_ty: syn::Type = syn::parse_str(enc_type_str).unwrap();
-                let enc_size = encoding_type.size();
-                let enc_size_lit = syn::LitInt::new(&enc_size.to_string(), proc_macro2::Span::call_site());
-                let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                let r_type = rust_type(*encoding_type);
+                let prim_size = encoding_type.size();
 
-                field_methods.extend(quote::quote! {
-                    #[inline]
-                    pub fn #f_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#enc_type_ty::#from_method(self.buf[offset..][..#enc_size_lit].try_into().unwrap()))
-                    }
+                src.push_str(&format!(
+                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             {}::from_raw({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
+                         }}\n\n",
+                    f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
+                ));
 
-                    #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #enc_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #enc_size_lit) });
-                        #target_ident::from_raw(#enc_type_ty::#from_method(bytes))
-                    }
+                src.push_str(&format!(
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             let mut bytes = [0u8; {}];
 
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #enc_type_ty {
-                        unsafe { self.#unchecked_ident() as #enc_type_ty }
-                    }
-                });
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                             {}::from_raw({}::from_{}_bytes(bytes))\n\
+                         }}\n\n",
+                    f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
+                ));
 
+                // raw_ for enum returns the raw discriminant value
+                src.push_str(&format!(
+                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
+                             unsafe {{ self.{}_unchecked() as {} }}\n\
+                         }}\n\n",
+                    f_name, r_type, f_name, r_type
+                ));
+                // Boolean fields get an additional getter that returns bool directly
                 if enum_name == "BooleanType" {
-                    let bool_ident = syn::Ident::new(&format!("{}_bool", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                    field_methods.extend(quote::quote! {
-                        #[inline]
-                        pub const fn #bool_ident(&self) -> bool {
-                            (self.#f_ident() as #enc_type_ty) != 0
-                        }
-                    });
+                    src.push_str(&format!(
+                        "#[inline]\n    pub const fn {f}_bool(&self) -> bool {{\n                         (self.{f}() as {r_type}) != 0\n                     }}\n\n",
+                        f = f_name, r_type = r_type,
+                    ));
                 }
             }
             FieldType::Set {
@@ -3055,147 +3219,115 @@ fn generate_group_decoder(
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(set_name);
-                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
-                let enc_type_str = rust_type(*encoding_type);
-                let enc_type_ty: syn::Type = syn::parse_str(enc_type_str).unwrap();
-                let enc_size = encoding_type.size();
-                let enc_size_lit = syn::LitInt::new(&enc_size.to_string(), proc_macro2::Span::call_site());
-                let unchecked_ident = syn::Ident::new(&format!("{}_unchecked", to_snake_case(&f.name)), proc_macro2::Span::call_site());
-                let raw_ident = syn::Ident::new(&format!("raw_{}", to_snake_case(&f.name)), proc_macro2::Span::call_site());
+                let r_type = rust_type(*encoding_type);
+                let prim_size = encoding_type.size();
 
-                field_methods.extend(quote::quote! {
-                    #[inline]
-                    pub fn #f_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident(#enc_type_ty::#from_method(self.buf[offset..][..#enc_size_lit].try_into().unwrap()))
-                    }
+                src.push_str(&format!(
+                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             {}({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
+                         }}\n\n",
+                    f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
+                ));
 
-                    #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #enc_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #enc_size_lit) });
-                        #target_ident(#enc_type_ty::#from_method(bytes))
-                    }
+                src.push_str(&format!(
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             let mut bytes = [0u8; {}];
 
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #enc_type_ty {
-                        #[allow(unused_unsafe)]
-                        unsafe { self.#unchecked_ident().0 }
-                    }
-                });
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                             {}({}::from_{}_bytes(bytes))\n\
+                         }}\n\n",
+                    f_name, target_name, offset, prim_size, prim_size, target_name, r_type, order_suffix
+                ));
+
+                // raw_ for set returns the raw bitmask value
+                src.push_str(&format!(
+                    "#[inline]\n    pub const fn raw_{}(&self) -> {} {{\n\
+                             #[allow(unused_unsafe)]\n\
+                             unsafe {{ self.{}_unchecked().0 }}\n\
+                         }}\n\n",
+                    f_name, r_type, f_name
+                ));
             }
         }
-        tokens.extend(emit_field_consts(f));
+        let fconsts_ts = emit_field_consts(f);
+        src.push_str(&fconsts_ts.to_string());
     }
 
-    // Emit all field methods inside a single impl block
-    tokens.extend(quote::quote! {
-        impl<'a> #entry_dec_ident<'a> {
-            #field_methods
-        }
-    });
+    // Group entry tail offsets
+    src.push_str(&format!(
+        "    #[inline]\n\
+             fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                 Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)\n\
+             }}\n\n"
+    ));
 
-        // Open a new impl block for tail + other methods (previous impl was closed above)
-    tokens.extend(quote::quote! {
-        impl<'a> #entry_dec_ident<'a> {
-            #[inline]
-            fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
-                Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
-            }
-        }
-    });
-
-    // tail_offset_N for nested groups
-    let mut k = 0usize;
+    let mut k = 0;
     for ng in &g.groups {
         let (dim_name, dim_size, bl_field, count_field) =
             get_dimension_info(elements, &ng.dimension_type);
         let ng_pascal = to_pascal_case(&ng.name);
-        let ng_pascal_dec = syn::Ident::new(&format!("{}EntryDecoder", ng_pascal), proc_macro2::Span::call_site());
-        let next_k = k + 1;
-        let dim_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
-        let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let ng_name_str = syn::LitStr::new(&ng.name, proc_macro2::Span::call_site());
-        let tail_k_ident = syn::Ident::new(&format!("tail_offset_{}", k), proc_macro2::Span::call_site());
-        let tail_k1_ident = syn::Ident::new(&format!("tail_offset_{}", next_k), proc_macro2::Span::call_site());
-
-        tokens.extend(quote::quote! {
-            impl<'a> #entry_dec_ident<'a> {
-                #[inline]
-                fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
-                    let start = self.#tail_k_ident()?;
-                    if start + #dim_size_lit > self.buf.len() {
-                        return Err(sbe_rt::DecodeError::BufferTooShort { field: #ng_name_str, needed: #dim_size_lit, available: self.buf.len() - start });
-                    }
-                    let bytes: [u8; #dim_size_lit] = self.buf[start..start + #dim_size_lit].try_into().unwrap();
-                    let header = #dim_ident(bytes);
-                    let count = header.#count_field_ident() as usize;
-                    let block_len = header.#bl_field_ident() as usize;
-                    let mut pos = start + #dim_size_lit;
-                    let mut idx = 0;
-                    while idx < count {
-                        pos = #ng_pascal_dec::skip(self.buf, pos, block_len, self.acting_version)?;
-                        idx += 1;
-                    }
-                    Ok(pos)
-                }
-            }
-        });
+        src.push_str(&format!(
+            "    #[inline]\n\
+                 fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                     let start = self.tail_offset_{}()?;\n\
+                     if start + {} > self.buf.len() {{\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
+                     }}\n\
+                     let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
+                     let header = {}(bytes);\n\
+                     let count = header.{}() as usize;\n\
+                     let block_len = header.{}() as usize;\n\
+                     let mut pos = start + {};\n\
+                     let mut idx = 0;\n\
+                     while idx < count {{\n\
+                         pos = {}EntryDecoder::skip(self.buf, pos, block_len, self.acting_version)?;\n\
+                         idx += 1;\n\
+                     }}\n\
+                     Ok(pos)\n\
+                 }}\n\n",
+            k + 1, k, dim_size, dim_size, dim_size, dim_size, dim_name, count_field, bl_field, dim_size, ng_pascal,
+            field_name = ng.name
+        ));
         k += 1;
     }
 
-    // tail_offset_N for var_data
     for vd in &g.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let next_k = k + 1;
-        let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
-        let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
-        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let vd_name_str = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
-        let tail_k_ident = syn::Ident::new(&format!("tail_offset_{}", k), proc_macro2::Span::call_site());
-        let tail_k1_ident = syn::Ident::new(&format!("tail_offset_{}", next_k), proc_macro2::Span::call_site());
-
-        tokens.extend(quote::quote! {
-            impl<'a> #entry_dec_ident<'a> {
-                #[inline]
-                fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
-                    let start = self.#tail_k_ident()?;
-                    if start + #prefix_size_lit > self.buf.len() {
-                        return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_str, needed: #prefix_size_lit, available: self.buf.len() - start });
-                    }
-                    let bytes: [u8; #prefix_size_lit] = self.buf[start..start + #prefix_size_lit].try_into().unwrap();
-                    let header = #type_pascal_ident(bytes);
-                    let len = header.#len_field_ident() as usize;
-                    if start + #prefix_size_lit + len > self.buf.len() {
-                        return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_str, needed: #prefix_size_lit + len, available: self.buf.len() - start });
-                    }
-                    Ok(start + #prefix_size_lit + len)
-                }
-            }
-        });
+        src.push_str(&format!(
+            "    #[inline]\n\
+                 fn tail_offset_{}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                     let start = self.tail_offset_{}()?;\n\
+                     if start + {} > self.buf.len() {{\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - start }});\n\
+                     }}\n\
+                     let bytes: [u8; {}] = self.buf[start..start + {}].try_into().unwrap();\n\
+                     let header = {}(bytes);\n\
+                     let len = header.{}() as usize;\n\
+                     if start + {} + len > self.buf.len() {{\n\
+                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {} + len, available: self.buf.len() - start }});\n\
+                     }}\n\
+                     Ok(start + {} + len)\n\
+                 }}\n\n",
+            k + 1, k, prefix_size, prefix_size, prefix_size, prefix_size, type_pascal, len_field, prefix_size, prefix_size, prefix_size,
+            field_name = vd.name
+        ));
         k += 1;
     }
 
     // Accessors for nested groups
-    let mut ng_idx = 0usize;
+    let mut ng_idx = 0;
     for ng in &g.groups {
         let ng_pascal = to_pascal_case(&ng.name);
-        let ng_dec_ident = syn::Ident::new(&format!("{}Decoder", ng_pascal), proc_macro2::Span::call_site());
-        let ng_snake_ident = syn::Ident::new(&to_snake_case(&ng.name), proc_macro2::Span::call_site());
-        let tail_ng_idx_ident = syn::Ident::new(&format!("tail_offset_{}", ng_idx), proc_macro2::Span::call_site());
-
-        tokens.extend(quote::quote! {
-            impl<'a> #entry_dec_ident<'a> {
-                #[inline]
-                pub fn #ng_snake_ident(&self) -> Result<#ng_dec_ident<'a>, sbe_rt::DecodeError> {
-                    let offset = self.#tail_ng_idx_ident()?;
-                    #ng_dec_ident::wrap(self.buf, offset, self.acting_version)
-                }
-            }
-        });
+        let ng_snake = to_snake_case(&ng.name);
+        src.push_str(&format!(
+            "#[inline]\n    pub fn {}(&self) -> Result<{}Decoder<'a>, sbe_rt::DecodeError> {{\n\
+                     let offset = self.tail_offset_{}()?;\n\
+                     {}Decoder::wrap(self.buf, offset, self.acting_version)\n\
+                 }}\n\n",
+            ng_snake, ng_pascal, ng_idx, ng_pascal
+        ));
         ng_idx += 1;
     }
 
@@ -3203,53 +3335,42 @@ fn generate_group_decoder(
     let mut nvd_idx = g.groups.len();
     for vd in &g.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let vd_snake_ident = syn::Ident::new(&to_snake_case(&vd.name), proc_macro2::Span::call_site());
-        let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
-        let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
-        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let tail_nvd_idx_ident = syn::Ident::new(&format!("tail_offset_{}", nvd_idx), proc_macro2::Span::call_site());
-
-        tokens.extend(quote::quote! {
-            impl<'a> #entry_dec_ident<'a> {
-                #[inline]
-                pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                    let offset = self.#tail_nvd_idx_ident()?;
-                    let bytes: [u8; #prefix_size_lit] = self.buf[offset..offset + #prefix_size_lit].try_into().unwrap();
-                    let header = #type_pascal_ident(bytes);
-                    let len = header.#len_field_ident() as usize;
-                    let data_offset = offset + #prefix_size_lit;
-                    Ok(&self.buf[data_offset .. data_offset + len])
-                }
-            }
-        });
+        let vd_snake = to_snake_case(&vd.name);
+        src.push_str(&format!(
+            "#[inline]\n    pub fn {}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{\n\
+                     let offset = self.tail_offset_{}()?;\n\
+                     let bytes: [u8; {}] = self.buf[offset..offset + {}].try_into().unwrap();\n\
+                     let header = {}(bytes);\n\
+                     let len = header.{}() as usize;\n\
+                     let data_offset = offset + {};\n\
+                     Ok(&self.buf[data_offset .. data_offset + len])\n\
+                 }}\n\n",
+            vd_snake, nvd_idx, prefix_size, prefix_size, type_pascal, len_field, prefix_size
+        ));
         nvd_idx += 1;
     }
 
-    // encoded_length and skip methods
-    let tail_total_ident = syn::Ident::new(&format!("tail_offset_{}", total_tail), proc_macro2::Span::call_site());
-    tokens.extend(quote::quote! {
-        impl<'a> #entry_dec_ident<'a> {
-            #[inline]
-            pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-                Ok(self.#tail_total_ident()? - self.pos)
-            }
+    src.push_str(&format!(
+        "#[inline]\n    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                 Ok(self.tail_offset_{}()? - self.pos)\n\
+             }}\n\n",
+        total_tail
+    ));
 
-            #[inline]
-            pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
-                let entry = Self::wrap(buf, pos, acting_version);
-                entry.#tail_total_ident()
-            }
-        }
-    });
+    src.push_str(&format!(
+        "#[inline]\n    pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                 let entry = Self::wrap(buf, pos, acting_version);\n\
+                 entry.tail_offset_{}()\n\
+             }}\n",
+        total_tail
+    ));
 
-
+    src.push_str("}\n\n");
 
     // Recursively generate nested Repeating Groups decoders
     for ng in &g.groups {
-        tokens.extend(generate_group_decoder(ng, elements, byte_order));
+        generate_group_decoder(src, ng, elements, byte_order);
     }
-
-    tokens
 }
 
 fn generate_nullification(
@@ -3297,14 +3418,13 @@ fn generate_nullification(
 }
 
 fn generate_message_encoder(
-    src: &mut String,
     msg: &MessageStructure,
     elements: &SchemaElements,
     byte_order: ByteOrder,
     schema_id: u16,
     schema_version: u16,
     header_type: &str,
-) {
+) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
     let order_suffix = match byte_order {
@@ -3331,7 +3451,6 @@ fn generate_message_encoder(
         .and_then(|c| c[0].encoding.offset)
         .unwrap_or(8);
 
-    // Generate Encoder phantom states if we have variable length tail elements
     let total_tail = msg.groups.len() + msg.var_data.len();
     let is_fixed = total_tail == 0;
     let encoded_length = header_size + block_length;
@@ -3346,95 +3465,14 @@ fn generate_message_encoder(
     }
     let max_encoded_length = header_size + block_length + max_tail;
 
-    if total_tail > 0 {
-        src.push_str(&format!(
-            "pub mod {}_encoder_state {{\n",
-            to_snake_case(&msg.name)
-        ));
-        let mut tail_idx = 0;
-        for g in &msg.groups {
-            src.push_str(&format!(
-                "    pub struct Needs{};\n",
-                to_pascal_case(&g.name)
-            ));
-            tail_idx += 1;
-        }
-        for vd in &msg.var_data {
-            src.push_str(&format!(
-                "    pub struct Needs{};\n",
-                to_pascal_case(&vd.name)
-            ));
-            tail_idx += 1;
-        }
-        src.push_str("    pub struct Complete;\n");
-        src.push_str("}\n\n");
-    }
+    const STACK_LIMIT: usize = 65536;
+    let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
+    let is_capped = max_encoded_length > STACK_LIMIT;
 
-    if total_tail > 0 {
-        let first_state = &msg
-            .groups
-            .first()
-            .map(|g| to_pascal_case(&g.name))
-            .unwrap_or_else(|| to_pascal_case(&msg.var_data.first().unwrap().name));
-        src.push_str(&format!(
-            "#[must_use = \"encoder must be consumed to write the message\"]\n\
-             pub struct {}Encoder<'a, State = {}_encoder_state::Needs{}> {{\n\
-                 buf: &'a mut [u8],\n\
-                 message_start: usize,\n\
-                 pos: usize,\n\
-                 _phantom: core::marker::PhantomData<State>,\n\
-             }}\n\n",
-            name,
-            to_snake_case(&msg.name),
-            first_state
-        ));
-    } else {
-        src.push_str(&format!(
-            "#[must_use = \"encoder must be consumed to write the message\"]\n\
-             pub struct {}Encoder<'a> {{\n\
-                 buf: &'a mut [u8],\n\
-                 message_start: usize,\n\
-                 pos: usize,\n\
-             }}\n\n",
-            name
-        ));
-    }
+    let span = proc_macro2::Span::call_site();
+    let snake_name = to_snake_case(&msg.name);
+    let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
 
-    if total_tail > 0 {
-        src.push_str(&format!("impl<'a, State> {}Encoder<'a, State> {{\n", name));
-    } else {
-        src.push_str(&format!("impl<'a> {}Encoder<'a> {{\n", name));
-    }
-
-    if is_fixed {
-        src.push_str(&format!(
-            "    pub const SCHEMA_ID: u16 = {};\n\
-                 pub const SCHEMA_VERSION: u16 = {};\n\
-                 pub const TEMPLATE_ID: u16 = {};\n\
-                 pub const BLOCK_LENGTH: usize = {};\n                 const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == {});\n\
-                 /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`\n\
-                 pub const ENCODED_LENGTH: usize = {};\n                 const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
-            schema_id, schema_version, msg.id, block_length, block_length, encoded_length
-        ));
-    } else {
-        const STACK_LIMIT: usize = 65536;
-        let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
-        let is_capped = max_encoded_length > STACK_LIMIT;
-        let max_doc = if is_capped {
-            "    /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation\n"
-        } else {
-            "    /// Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`\n"
-        };
-        src.push_str(&format!(
-            "    pub const SCHEMA_ID: u16 = {};\n\
-                 pub const SCHEMA_VERSION: u16 = {};\n\
-                 pub const TEMPLATE_ID: u16 = {};\n\
-                 pub const BLOCK_LENGTH: usize = {};\n                 const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == {});\n\
-                 {}\
-                 pub const MAX_ENCODED_LENGTH: usize = {};\n                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);\n\n",
-            schema_id, schema_version, msg.id, block_length, block_length, max_doc, max_encoded_capped
-        ));
-    }
     // Pre-compute HEADER_TEMPLATE bytes at codegen time.
     let mut header_tpl = vec![0u8; header_size];
     let hdr_bl = block_length as u16;
@@ -3452,122 +3490,236 @@ fn generate_message_encoder(
             header_tpl[6..8].copy_from_slice(&schema_version.to_be_bytes());
         }
     }
-    let hdr_repr: String = header_tpl
+    let hdr_lits: Vec<syn::LitInt> = header_tpl
         .iter()
-        .map(|b| format!("{}", b))
-        .collect::<Vec<_>>()
-        .join(", ");
-    src.push_str(&format!(
-        "    pub const HEADER_TEMPLATE: [u8; {}] = [{}];\n             const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == {});\n\n",
-        header_size, hdr_repr, header_size
-    ));
+        .map(|b| syn::LitInt::new(&b.to_string(), span))
+        .collect();
 
+    // Helper literals
+    let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
+    let block_length_lit = syn::LitInt::new(&block_length.to_string(), span);
+    let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), span);
+    let schema_version_lit = syn::LitInt::new(&schema_version.to_string(), span);
+    let msg_id_lit = syn::LitInt::new(&msg.id.to_string(), span);
+    let encoded_length_lit = syn::LitInt::new(&encoded_length.to_string(), span);
+    let max_encoded_capped_lit = syn::LitInt::new(&max_encoded_capped.to_string(), span);
+    let to_endian = syn::Ident::new(&format!("to_{}_bytes", order_suffix), span);
+
+    let mut ts = proc_macro2::TokenStream::new();
+
+    // ── State module ──
     if total_tail > 0 {
-        let first_state = &msg
+        let state_mod_ident = syn::Ident::new(&format!("{}_encoder_state", snake_name), span);
+        let mut needs_structs = proc_macro2::TokenStream::new();
+        for g in &msg.groups {
+            let needs_ident = syn::Ident::new(&format!("Needs{}", to_pascal_case(&g.name)), span);
+            needs_structs.extend(quote::quote! { pub struct #needs_ident; });
+        }
+        for vd in &msg.var_data {
+            let needs_ident = syn::Ident::new(&format!("Needs{}", to_pascal_case(&vd.name)), span);
+            needs_structs.extend(quote::quote! { pub struct #needs_ident; });
+        }
+        ts.extend(quote::quote! {
+            pub mod #state_mod_ident {
+                #needs_structs
+                pub struct Complete;
+            }
+        });
+    }
+
+    // ── Encoder struct ──
+    if total_tail > 0 {
+        let first_state = msg
             .groups
             .first()
             .map(|g| to_pascal_case(&g.name))
             .unwrap_or_else(|| to_pascal_case(&msg.var_data.first().unwrap().name));
-        src.push_str(&format!(
-            "#[inline]\n    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
-                     Self {{\n\
-                         buf,\n\
-                         message_start: pos,\n\
-                         pos: pos + {} + {},\n\
-                         _phantom: core::marker::PhantomData,\n\
-                     }}\n\
-                 }}\n\n\
-                 #[inline]\n                 pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {{\n\
-                     let needed = {} + {};\n\
-                     if pos + needed > buf.len() {{\n\
-                         return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: buf.len() - pos }});\n\
-                     }}\n\
-                     buf[pos..pos + {}].copy_from_slice(&Self::HEADER_TEMPLATE);\n",
-            header_size, block_length, header_size, block_length, header_size
-        ));
-        generate_nullification(src, &msg.fields, "pos + 8", byte_order);
-        src.push_str("        Ok(Self::wrap(buf, pos))\n    }\n\n");
+        let first_state_path: syn::Path = syn::parse_str(&format!(
+            "{}_encoder_state::Needs{}",
+            snake_name, first_state
+        ))
+        .unwrap();
+        ts.extend(quote::quote! {
+            #[must_use = "encoder must be consumed to write the message"]
+            pub struct #name_encoder_ident<'a, State = #first_state_path> {
+                buf: &'a mut [u8],
+                message_start: usize,
+                pos: usize,
+                _phantom: core::marker::PhantomData<State>,
+            }
+        });
     } else {
-        src.push_str(&format!(
-            "#[inline]\n    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {{\n\
-                     Self {{\n\
-                         buf,\n\
-                         message_start: pos,\n\
-                         pos: pos + {} + {},\n\
-                     }}\n\
-                 }}\n\n\
-                 #[inline]\n                 pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {{\n\
-                     let needed = {} + {};\n\
-                     if pos + needed > buf.len() {{\n\
-                         return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: buf.len() - pos }});\n\
-                     }}\n\
-                     buf[pos..pos + {}].copy_from_slice(&Self::HEADER_TEMPLATE);\n",
-            header_size, block_length, header_size, block_length, header_size
-        ));
-        generate_nullification(src, &msg.fields, "pos + 8", byte_order);
-        src.push_str("        Ok(Self::wrap(buf, pos))\n    }\n\n");
+        ts.extend(quote::quote! {
+            #[must_use = "encoder must be consumed to write the message"]
+            pub struct #name_encoder_ident<'a> {
+                buf: &'a mut [u8],
+                message_start: usize,
+                pos: usize,
+            }
+        });
     }
 
-    // Setters for fixed fields
+    // ── Shared impl block ──
+    // Constants, HEADER_TEMPLATE, wrap(), wrap_and_apply_header(), field
+    // setters, encoded_length() all live here.
+    let mut impl_contents = proc_macro2::TokenStream::new();
+
+    // Constants
+    if is_fixed {
+        impl_contents.extend(quote::quote! {
+            pub const SCHEMA_ID: u16 = #schema_id_lit;
+            pub const SCHEMA_VERSION: u16 = #schema_version_lit;
+            pub const TEMPLATE_ID: u16 = #msg_id_lit;
+            pub const BLOCK_LENGTH: usize = #block_length_lit;
+            const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #block_length_lit);
+            /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`
+            pub const ENCODED_LENGTH: usize = #encoded_length_lit;
+            const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+        });
+    } else {
+        let max_doc_attr = if is_capped {
+            quote::quote! {
+                #[doc = "MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation"]
+            }
+        } else {
+            quote::quote! {
+                #[doc = "Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`"]
+            }
+        };
+        impl_contents.extend(quote::quote! {
+            pub const SCHEMA_ID: u16 = #schema_id_lit;
+            pub const SCHEMA_VERSION: u16 = #schema_version_lit;
+            pub const TEMPLATE_ID: u16 = #msg_id_lit;
+            pub const BLOCK_LENGTH: usize = #block_length_lit;
+            const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #block_length_lit);
+            #max_doc_attr
+            pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
+            const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+        });
+    }
+
+    // HEADER_TEMPLATE
+    impl_contents.extend(quote::quote! {
+        pub const HEADER_TEMPLATE: [u8; #header_size_lit] = [#(#hdr_lits),*];
+        const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
+    });
+
+    // wrap() and wrap_and_apply_header()
+    let phantom_field = if total_tail > 0 {
+        Some(quote::quote! { _phantom: core::marker::PhantomData, })
+    } else {
+        None
+    };
+    let wrap_fn = quote::quote! {
+        #[inline]
+        pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+            Self {
+                buf,
+                message_start: pos,
+                pos: pos + #header_size_lit + #block_length_lit,
+                #phantom_field
+            }
+        }
+    };
+    impl_contents.extend(wrap_fn);
+
+    let mut wrap_apply_body = quote::quote! {
+        let needed = #header_size_lit + #block_length_lit;
+        if pos + needed > buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available: buf.len() - pos,
+            });
+        }
+        buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
+    };
+    // Insert nullification
+    {
+        let mut null_buf = String::new();
+        generate_nullification(&mut null_buf, &msg.fields, "pos + 8", byte_order);
+        if !null_buf.is_empty() {
+            let null_ts: proc_macro2::TokenStream = null_buf
+                .parse()
+                .expect("generate_nullification produced invalid token stream");
+            wrap_apply_body.extend(null_ts);
+        }
+    }
+    wrap_apply_body.extend(quote::quote! {
+        Ok(Self::wrap(buf, pos))
+    });
+    let wrap_apply_fn = quote::quote! {
+        #[inline]
+        pub fn wrap_and_apply_header(
+            buf: &'a mut [u8],
+            pos: usize,
+        ) -> Result<Self, sbe_rt::EncodeError> {
+            #wrap_apply_body
+        }
+    };
+    impl_contents.extend(wrap_apply_fn);
+
+    // ── Field setters ──
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
-        let offset = f.offset;
-        let since = f.since_version;
+        let f_ident = syn::Ident::new(&f_name, span);
+        let body_offset = header_size + f.offset;
+        let body_offset_lit = syn::LitInt::new(&body_offset.to_string(), span);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
-                let r_type = rust_type(*prim);
-                let prim_size = prim.size();
                 if f.presence == Presence::Constant {
                     // Constant fields have no setter
-                } else if let Some(len) = length {
-                    src.push_str(&format!(
-                        "#[must_use]\n    pub fn {}(&mut self, val: [{}; {}]) -> &mut Self {{\n\
-                                 let offset = self.message_start + {} + {};\n\
-                                 let mut idx = 0;\n\
-                                 while idx < {} {{\n\
-                                     let val_bytes = val[idx].to_{}_bytes();\n\
-                                     self.buf[offset + idx * {}..offset + idx * {} + {}].copy_from_slice(&val_bytes);\n\
-                                     idx += 1;\n\
-                                 }}\n\
-                                 self\n\
-                             }}\n\n",
-                        f_name,
-                        r_type,
-                        len,
-                        header_size,
-                        offset,
-                        len,
-                        order_suffix,
-                        prim_size,
-                        prim_size,
-                        prim_size
-                    ));
+                    continue;
+                }
+                let prim_size = prim.size();
+                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
+                let r_type: syn::Type = syn::parse_str(rust_type(*prim)).unwrap();
+                if let Some(len) = length {
+                    let len_lit = syn::LitInt::new(&len.to_string(), span);
+                    impl_contents.extend(quote::quote! {
+                        #[must_use]
+                        pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
+                            let offset = self.message_start + #body_offset_lit;
+                            let mut idx = 0usize;
+                            while idx < #len_lit {
+                                let val_bytes = val[idx].#to_endian();
+                                self.buf[offset + idx * #prim_size_lit
+                                    ..offset + idx * #prim_size_lit + #prim_size_lit]
+                                    .copy_from_slice(&val_bytes);
+                                idx += 1;
+                            }
+                            self
+                        }
+                    });
                 } else {
-                    src.push_str(&format!(
-                        "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
-                                 let offset = self.message_start + {} + {};\n\
-                                 let val_bytes = val.to_{}_bytes();\n\
-                                 self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
-                                 self\n\
-                             }}\n\n",
-                        f_name, r_type, header_size, offset, order_suffix, prim_size
-                    ));
+                    impl_contents.extend(quote::quote! {
+                        #[must_use]
+                        pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
+                            let offset = self.message_start + #body_offset_lit;
+                            let val_bytes = val.#to_endian();
+                            self.buf[offset..offset + #prim_size_lit]
+                                .copy_from_slice(&val_bytes);
+                            self
+                        }
+                    });
                 }
             }
             FieldType::Composite {
                 name: comp_name,
                 size: comp_size,
             } => {
-                let target_name = to_pascal_case(comp_name);
-                src.push_str(&format!(
-                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
-                             let offset = self.message_start + {} + {};\n\
-                             self.buf[offset..offset + {}].copy_from_slice(&val.0);\n\
-                             self\n\
-                         }}\n\n",
-                    f_name, target_name, header_size, offset, comp_size
-                ));
+                let target_type: syn::Type =
+                    syn::parse_str(&to_pascal_case(comp_name)).unwrap();
+                let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), span);
+                impl_contents.extend(quote::quote! {
+                    #[must_use]
+                    pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
+                        let offset = self.message_start + #body_offset_lit;
+                        self.buf[offset..offset + #comp_size_lit]
+                            .copy_from_slice(&val.0);
+                        self
+                    }
+                });
             }
             FieldType::Enum {
                 name: enum_name,
@@ -3575,258 +3727,335 @@ fn generate_message_encoder(
             } => {
                 if f.presence == Presence::Constant {
                     // Constant enum fields have no setter
-                } else {
-                    let target_name = to_pascal_case(enum_name);
-                    let r_type = rust_type(*encoding_type);
-                    let prim_size = encoding_type.size();
-                    src.push_str(&format!(
-                        "#[must_use]\n    pub fn {f_name}(&mut self, val: {target_name}) -> &mut Self {{\n\
-                             let offset = self.message_start + {header_size} + {offset};\n\
-                             let val_bytes = (val as {r_type}).to_{order_suffix}_bytes();\n\
-                             self.buf[offset..offset + {prim_size}].copy_from_slice(&val_bytes);\n\
-                             self\n\
-                         }}\n\n",
-                        order_suffix = order_suffix, r_type = r_type,
-                    ));
-                    // Boolean fields get an additional setter that accepts bool directly
-                    if enum_name == "BooleanType" {
-                        src.push_str(&format!(
-                            "#[must_use]\n    pub fn {f_name}_bool(&mut self, val: bool) -> &mut Self {{\n    let offset = self.message_start + {header_size} + {offset};\n    let enum_val: {target_name} = val.into();\n    let val_bytes = (enum_val as {r_type}).to_{order_suffix}_bytes();\n    self.buf[offset..offset + {prim_size}].copy_from_slice(&val_bytes);\n    self\n                         }}\n\n",
-                            f_name=f_name, header_size=header_size, offset=offset,
-                            target_name=target_name, order_suffix=order_suffix, prim_size=prim_size, r_type=r_type,
-                        ));
+                    continue;
+                }
+                let target_type: syn::Type =
+                    syn::parse_str(&to_pascal_case(enum_name)).unwrap();
+                let r_type: syn::Type =
+                    syn::parse_str(rust_type(*encoding_type)).unwrap();
+                let prim_size = encoding_type.size();
+                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
+                impl_contents.extend(quote::quote! {
+                    #[must_use]
+                    pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
+                        let offset = self.message_start + #body_offset_lit;
+                        let val_bytes = (val as #r_type).#to_endian();
+                        self.buf[offset..offset + #prim_size_lit]
+                            .copy_from_slice(&val_bytes);
+                        self
                     }
+                });
+                // Boolean fields get an additional setter that accepts bool directly
+                if enum_name == "BooleanType" {
+                    let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
+                    impl_contents.extend(quote::quote! {
+                        #[must_use]
+                        pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
+                            let offset = self.message_start + #body_offset_lit;
+                            let enum_val: #target_type = val.into();
+                            let val_bytes = (enum_val as #r_type).#to_endian();
+                            self.buf[offset..offset + #prim_size_lit]
+                                .copy_from_slice(&val_bytes);
+                            self
+                        }
+                    });
                 }
             }
             FieldType::Set {
                 name: set_name,
                 encoding_type,
             } => {
-                let target_name = to_pascal_case(set_name);
+                let target_type: syn::Type =
+                    syn::parse_str(&to_pascal_case(set_name)).unwrap();
                 let prim_size = encoding_type.size();
-                src.push_str(&format!(
-                    "#[must_use]\n    pub fn {}(&mut self, val: {}) -> &mut Self {{\n\
-                             let offset = self.message_start + {} + {};\n\
-                             let val_bytes = val.0.to_{}_bytes();\n\
-                             self.buf[offset..offset + {}].copy_from_slice(&val_bytes);\n\
-                             self\n\
-                         }}\n\n",
-                    f_name, target_name, header_size, offset, order_suffix, prim_size
-                ));
+                let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
+                impl_contents.extend(quote::quote! {
+                    #[must_use]
+                    pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
+                        let offset = self.message_start + #body_offset_lit;
+                        let val_bytes = val.0.#to_endian();
+                        self.buf[offset..offset + #prim_size_lit]
+                            .copy_from_slice(&val_bytes);
+                        self
+                    }
+                });
             }
         }
     }
 
-    src.push_str(&format!(
-        "#[inline]\n    pub fn encoded_length(&self) -> usize {{\n\
-                 self.pos - (self.message_start + {})\n\
-             }}\n\n\
-             #[inline]\n             pub fn encoded_length_with_header(&self) -> usize {{\n\
-                 self.pos - self.message_start\n\
-             }}\n",
-        header_size
-    ));
-    src.push_str("}\n\n");
+    // encoded_length methods
+    impl_contents.extend(quote::quote! {
+        #[inline]
+        pub fn encoded_length(&self) -> usize {
+            self.pos - (self.message_start + #header_size_lit)
+        }
 
-    // Tail state transition methods
+        #[inline]
+        pub fn encoded_length_with_header(&self) -> usize {
+            self.pos - self.message_start
+        }
+    });
+
+    // Close the impl block
+    if total_tail > 0 {
+        ts.extend(quote::quote! {
+            impl<'a, State> #name_encoder_ident<'a, State> {
+                #impl_contents
+            }
+        });
+    } else {
+        ts.extend(quote::quote! {
+            impl<'a> #name_encoder_ident<'a> {
+                #impl_contents
+            }
+        });
+    }
+
+    // ── Tail state transition methods ──
     if total_tail > 0 {
         let mut tail_idx = 0;
+
         // Group methods
         for g in &msg.groups {
-            let next_state = if tail_idx + 1 < total_tail {
+            let needs_state: syn::Path = syn::parse_str(&format!(
+                "{}_encoder_state::Needs{}",
+                snake_name,
+                to_pascal_case(&g.name)
+            ))
+            .unwrap();
+            let next_state: syn::Path = if tail_idx + 1 < total_tail {
                 let next_name = if tail_idx + 1 < msg.groups.len() {
                     to_pascal_case(&msg.groups[tail_idx + 1].name)
                 } else {
-                    to_pascal_case(&msg.var_data[tail_idx + 1 - msg.groups.len()].name)
+                    to_pascal_case(
+                        &msg.var_data[tail_idx + 1 - msg.groups.len()].name,
+                    )
                 };
-                format!(
+                syn::parse_str(&format!(
                     "{}_encoder_state::Needs{}",
-                    to_snake_case(&msg.name),
-                    next_name
-                )
+                    snake_name, next_name
+                ))
+                .unwrap()
             } else {
-                format!("{}_encoder_state::Complete", to_snake_case(&msg.name))
+                syn::parse_str(&format!(
+                    "{}_encoder_state::Complete",
+                    snake_name
+                ))
+                .unwrap()
             };
 
-            let g_pascal = to_pascal_case(&g.name);
-            let g_snake = to_snake_case(&g.name);
-            let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
-            let (num_offset, num_size) = get_dim_num_layout(elements, &g.dimension_type);
+            let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
+            let g_pascal_enc =
+                syn::Ident::new(&format!("{}Encoder", to_pascal_case(&g.name)), span);
+            let (_dim_name, dim_size, _, _) =
+                get_dimension_info(elements, &g.dimension_type);
+            let (num_offset, num_size) =
+                get_dim_num_layout(elements, &g.dimension_type);
+            let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
+            let num_offset_lit = syn::LitInt::new(&num_offset.to_string(), span);
+            let num_size_lit = syn::LitInt::new(&num_size.to_string(), span);
 
-            src.push_str(&format!(
-                "impl<'a> {}Encoder<'a, {}_encoder_state::Needs{}> {{\n\
-                     #[must_use]\n                     pub fn {}<F>(mut self, count: u16, f: F) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError>\n\
-                     where\n\
-                         F: FnOnce(&mut {}Encoder<'a>),\n\
-                     {{\n\
-                         if self.pos + {} > self.buf.len() {{\n\
-                             return Err(sbe_rt::EncodeError::BufferTooShort {{ needed: {}, available: self.buf.len() - self.pos }});\n\
-                         }}\n\
-                         self.buf[self.pos..self.pos + {}].copy_from_slice(&{}Encoder::GROUP_DIM_TEMPLATE);\n\
-                         self.buf[self.pos + {}..self.pos + {} + {}].copy_from_slice(&count.to_{}_bytes());\n\
-                         let mut group = {}Encoder::wrap(self.buf, self.pos + {}, count);\n\
-                         f(&mut group);\n\
-                         Ok({}Encoder {{\n\
-                             buf: group.buf,\n\
-                             message_start: self.message_start,\n\
-                             pos: group.pos,\n\
-                             _phantom: core::marker::PhantomData,\n\
-                         }})\n\
-                     }}\n\n\
-                 }}\n\n",
-                name, to_snake_case(&msg.name), g_pascal, g_snake, name, next_state, g_pascal, dim_size, dim_size,
-                dim_size, g_pascal, num_offset, num_offset, num_size, order_suffix,
-                g_pascal, dim_size, name
-            ));
+            ts.extend(quote::quote! {
+                impl<'a> #name_encoder_ident<'a, #needs_state> {
+                    #[must_use]
+                    pub fn #g_snake<F>(
+                        mut self,
+                        count: u16,
+                        f: F,
+                    ) -> Result<#name_encoder_ident<'a, #next_state>, sbe_rt::EncodeError>
+                    where
+                        F: FnOnce(&mut #g_pascal_enc<'a>),
+                    {
+                        if self.pos + #dim_size_lit > self.buf.len() {
+                            return Err(sbe_rt::EncodeError::BufferTooShort {
+                                needed: #dim_size_lit,
+                                available: self.buf.len() - self.pos,
+                            });
+                        }
+                        self.buf[self.pos..self.pos + #dim_size_lit]
+                            .copy_from_slice(&#g_pascal_enc::GROUP_DIM_TEMPLATE);
+                        self.buf
+                            [self.pos + #num_offset_lit..self.pos + #num_offset_lit + #num_size_lit]
+                            .copy_from_slice(&count.#to_endian());
+                        let mut group =
+                            #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
+                        f(&mut group);
+                        Ok(#name_encoder_ident {
+                            buf: group.buf,
+                            message_start: self.message_start,
+                            pos: group.pos,
+                            _phantom: core::marker::PhantomData,
+                        })
+                    }
+                }
+            });
             tail_idx += 1;
         }
 
         // VarData methods
         for vd in &msg.var_data {
-            let next_state = if tail_idx + 1 < total_tail {
-                let next_name = to_pascal_case(&msg.var_data[tail_idx + 1 - msg.groups.len()].name);
-                format!(
+            let vd_pascal = to_pascal_case(&vd.name);
+            let needs_state: syn::Path = syn::parse_str(&format!(
+                "{}_encoder_state::Needs{}",
+                snake_name, vd_pascal
+            ))
+            .unwrap();
+            let next_state: syn::Path = if tail_idx + 1 < total_tail {
+                let next_name = to_pascal_case(
+                    &msg.var_data[tail_idx + 1 - msg.groups.len()].name,
+                );
+                syn::parse_str(&format!(
                     "{}_encoder_state::Needs{}",
-                    to_snake_case(&msg.name),
-                    next_name
-                )
+                    snake_name, next_name
+                ))
+                .unwrap()
             } else {
-                format!("{}_encoder_state::Complete", to_snake_case(&msg.name))
+                syn::parse_str(&format!(
+                    "{}_encoder_state::Complete",
+                    snake_name
+                ))
+                .unwrap()
             };
 
-            let vd_pascal = to_pascal_case(&vd.name);
-            let vd_snake = to_snake_case(&vd.name);
-            let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
-            let len_rust_type = rust_type(len_type);
+            let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
+            let vd_snake_unchecked =
+                syn::Ident::new(&format!("{}_unchecked", to_snake_case(&vd.name)), span);
+            let (_, prefix_size, _, len_type) =
+                get_vardata_info(elements, &vd.type_name);
+            let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+            let len_rust_type: syn::Type =
+                syn::parse_str(rust_type(len_type)).unwrap();
 
-            // Build the method body, conditionally including max_length check
-            let mut method_body = String::new();
+            // Checked body: conditionally includes max_length guard
+            let mut checked_body = proc_macro2::TokenStream::new();
             if let Some(max) = vd.max_length {
-                method_body.push_str(&format!(
-                    "if data.len() > {} {{\n\
-                         return Err(sbe_rt::EncodeError::VarDataTooLong {{ field: \"{}\", max_length: {}, actual: data.len() }});\n\
-                     }}\n",
-                    max, vd.name, max
-                ));
+                let max_lit = syn::LitInt::new(&max.to_string(), span);
+                let vd_name_str = &vd.name;
+                checked_body.extend(quote::quote! {
+                    if data.len() > #max_lit {
+                        return Err(sbe_rt::EncodeError::VarDataTooLong {
+                            field: #vd_name_str,
+                            max_length: #max_lit,
+                            actual: data.len(),
+                        });
+                    }
+                });
             }
-            method_body.push_str(&format!(
-                "let needed = {} + data.len();\n\
-                 if self.pos + needed > self.buf.len() {{\n\
-                     return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() - self.pos }});\n\
-                 }}\n\
-                 let len_bytes = (data.len() as {}).to_{}_bytes();\n\
-                 self.buf[self.pos..self.pos + {}].copy_from_slice(&len_bytes);\n\
-                 let start = self.pos + {};\n\
-                 self.buf[start..start + data.len()].copy_from_slice(data);\n\
-                 Ok({}Encoder {{\n\
-                     buf: self.buf,\n\
-                     message_start: self.message_start,\n\
-                     pos: start + data.len(),\n\
-                     _phantom: core::marker::PhantomData,\n\
-                 }})",
-                prefix_size, len_rust_type, order_suffix, prefix_size, prefix_size, name
-            ));
 
-            // Unchecked variant: same as above but skips the max_length check
-            let unchecked_body = format!(
-                "let needed = {} + data.len();\n\
-                 if self.pos + needed > self.buf.len() {{\n\
-                     return Err(sbe_rt::EncodeError::BufferTooShort {{ needed, available: self.buf.len() - self.pos }});\n\
-                 }}\n\
-                 let len_bytes = (data.len() as {}).to_{}_bytes();\n\
-                 self.buf[self.pos..self.pos + {}].copy_from_slice(&len_bytes);\n\
-                 let start = self.pos + {};\n\
-                 self.buf[start..start + data.len()].copy_from_slice(data);\n\
-                 Ok({}Encoder {{\n\
-                     buf: self.buf,\n\
-                     message_start: self.message_start,\n\
-                     pos: start + data.len(),\n\
-                     _phantom: core::marker::PhantomData,\n\
-                 }})",
-                prefix_size, len_rust_type, order_suffix, prefix_size, prefix_size, name
-            );
+            let shared_body = quote::quote! {
+                let needed = #prefix_size_lit + data.len();
+                if self.pos + needed > self.buf.len() {
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        needed,
+                        available: self.buf.len() - self.pos,
+                    });
+                }
+                let len_bytes = (data.len() as #len_rust_type).#to_endian();
+                self.buf[self.pos..self.pos + #prefix_size_lit]
+                    .copy_from_slice(&len_bytes);
+                let start = self.pos + #prefix_size_lit;
+                self.buf[start..start + data.len()].copy_from_slice(data);
+                Ok(#name_encoder_ident {
+                    buf: self.buf,
+                    message_start: self.message_start,
+                    pos: start + data.len(),
+                    _phantom: core::marker::PhantomData,
+                })
+            };
 
-            src.push_str(&format!(
-                "impl<'a> {}Encoder<'a, {}_encoder_state::Needs{}> {{\n\
-                     #[must_use]\n                     pub fn {}(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
-                         {}\
-                     }}\n\
-                     #[must_use]\n                     pub fn {}_unchecked(mut self, data: &[u8]) -> Result<{}Encoder<'a, {}>, sbe_rt::EncodeError> {{\n\
-                         {}\
-                     }}\n\
-                 }}\n\n",
-                name,
-                to_snake_case(&msg.name),
-                vd_pascal,
-                vd_snake,
-                name,
-                next_state,
-                method_body,
-                vd_snake,
-                name,
-                next_state,
-                unchecked_body
-            ));
+            ts.extend(quote::quote! {
+                impl<'a> #name_encoder_ident<'a, #needs_state> {
+                    #[must_use]
+                    pub fn #vd_snake(
+                        mut self,
+                        data: &[u8],
+                    ) -> Result<#name_encoder_ident<'a, #next_state>, sbe_rt::EncodeError> {
+                        #checked_body
+                        #shared_body
+                    }
+
+                    #[must_use]
+                    pub fn #vd_snake_unchecked(
+                        mut self,
+                        data: &[u8],
+                    ) -> Result<#name_encoder_ident<'a, #next_state>, sbe_rt::EncodeError> {
+                        #shared_body
+                    }
+                }
+            });
             tail_idx += 1;
         }
 
-        // Complete state impl
-        src.push_str(&format!(
-            "impl<'a> {}Encoder<'a, {}_encoder_state::Complete> {{\n\
-                 #[inline]\n                 pub fn as_bytes(&self) -> &[u8] {{\n\
-                     &self.buf[self.message_start .. self.pos]\n\
-                 }}\n\
-             }}\n\n\
-             impl<'a> AsRef<[u8]> for {}Encoder<'a, {}_encoder_state::Complete> {{\n\
-                 fn as_ref(&self) -> &[u8] {{\n\
-                     self.as_bytes()\n\
-                 }}\n\
-             }}\n\n",
-            name,
-            to_snake_case(&msg.name),
-            name,
-            to_snake_case(&msg.name)
-        ));
+        // Complete state + AsRef
+        let complete_state: syn::Path = syn::parse_str(&format!(
+            "{}_encoder_state::Complete",
+            snake_name
+        ))
+        .unwrap();
+        ts.extend(quote::quote! {
+            impl<'a> #name_encoder_ident<'a, #complete_state> {
+                #[inline]
+                pub fn as_bytes(&self) -> &[u8] {
+                    &self.buf[self.message_start..self.pos]
+                }
+            }
+
+            impl<'a> AsRef<[u8]> for #name_encoder_ident<'a, #complete_state> {
+                fn as_ref(&self) -> &[u8] {
+                    self.as_bytes()
+                }
+            }
+        });
     } else {
-        src.push_str(&format!(
-            "impl<'a> AsRef<[u8]> for {}Encoder<'a> {{\n\
-                 fn as_ref(&self) -> &[u8] {{\n\
-                     &self.buf[self.message_start .. self.pos]\n\
-                 }}\n\
-             }}\n\n",
-            name
-        ));
+        ts.extend(quote::quote! {
+            impl<'a> AsRef<[u8]> for #name_encoder_ident<'a> {
+                fn as_ref(&self) -> &[u8] {
+                    &self.buf[self.message_start..self.pos]
+                }
+            }
+        });
     }
 
+    // ── Sealed + SbeMessage ──
     if total_tail > 0 {
-        src.push_str(&format!(
-            "impl<'a, State> sbe_rt::private::Sealed for {}Encoder<'a, State> {{}}\n\n\
-             impl<'a, State> sbe_rt::SbeMessage for {}Encoder<'a, State> {{\n\
-                 const TEMPLATE_ID: u16 = {};\n\
-                 const BLOCK_LENGTH: usize = {};\n\
-                 const SCHEMA_ID: u16 = {};\n\
-                 const SCHEMA_VERSION: u16 = {};\n\
-             }}\n\n",
-            name, name, msg.id, block_length, schema_id, schema_version
-        ));
+        ts.extend(quote::quote! {
+            impl<'a, State> sbe_rt::private::Sealed for #name_encoder_ident<'a, State> {}
+
+            impl<'a, State> sbe_rt::SbeMessage for #name_encoder_ident<'a, State> {
+                const TEMPLATE_ID: u16 = #msg_id_lit;
+                const BLOCK_LENGTH: usize = #block_length_lit;
+                const SCHEMA_ID: u16 = #schema_id_lit;
+                const SCHEMA_VERSION: u16 = #schema_version_lit;
+            }
+        });
     } else {
-        src.push_str(&format!(
-            "impl<'a> sbe_rt::private::Sealed for {}Encoder<'a> {{}}\n\n\
-             impl<'a> sbe_rt::SbeMessage for {}Encoder<'a> {{\n\
-                 const TEMPLATE_ID: u16 = {};\n\
-                 const BLOCK_LENGTH: usize = {};\n\
-                 const SCHEMA_ID: u16 = {};\n\
-                 const SCHEMA_VERSION: u16 = {};\n\
-             }}\n\n",
-            name, name, msg.id, block_length, schema_id, schema_version
-        ));
+        ts.extend(quote::quote! {
+            impl<'a> sbe_rt::private::Sealed for #name_encoder_ident<'a> {}
+
+            impl<'a> sbe_rt::SbeMessage for #name_encoder_ident<'a> {
+                const TEMPLATE_ID: u16 = #msg_id_lit;
+                const BLOCK_LENGTH: usize = #block_length_lit;
+                const SCHEMA_ID: u16 = #schema_id_lit;
+                const SCHEMA_VERSION: u16 = #schema_version_lit;
+            }
+        });
     }
 
-    // Recursively generate Repeating Groups encoders for this message
+        // ── Generate Repeating Groups encoders ──
+    let mut group_buf = String::new();
     for g in &msg.groups {
-        generate_group_encoder(src, g, elements, byte_order);
+        generate_group_encoder(&mut group_buf, g, elements, byte_order);
     }
+    if !group_buf.is_empty() {
+        let group_ts: proc_macro2::TokenStream = group_buf
+            .parse()
+            .expect("generate_group_encoder produced invalid token stream");
+        ts.extend(group_ts);
+    }
+
+    ts
 }
+
 
 fn generate_group_encoder(
     src: &mut String,

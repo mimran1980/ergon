@@ -664,7 +664,7 @@ impl Engine {
         Self(bytes)
     }
 }
-/// Description of a basic Car
+///Description of a basic Car
 #[derive(Clone, Copy)]
 pub struct CarDecoder<'a> {
     buf: &'a [u8],
@@ -678,7 +678,7 @@ impl<'a> CarDecoder<'a> {
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 41;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 41);
-    /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
+    ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     #[inline]
@@ -1098,7 +1098,7 @@ impl<'a> CarDecoder<'a> {
         let len = header.length() as usize;
         if len > 1073741824 {
             return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "manufacturer",
+                field: stringify!(manufacturer),
                 length: len as u32,
                 max_length: 1073741824,
             });
@@ -1132,7 +1132,7 @@ impl<'a> CarDecoder<'a> {
         let len = header.length() as usize;
         if len > 1073741824 {
             return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "model",
+                field: stringify!(model),
                 length: len as u32,
                 max_length: 1073741824,
             });
@@ -1166,7 +1166,7 @@ impl<'a> CarDecoder<'a> {
         let len = header.length() as usize;
         if len > 1073741824 {
             return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "activation_code",
+                field: stringify!(activation_code),
                 length: len as u32,
                 max_length: 1073741824,
             });
@@ -1438,16 +1438,16 @@ impl<'a> FuelFiguresDecoder<'a> {
     }
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        { self.count }
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        self.pos = self.start;
-        self.count = self.total;
-        self
+        {
+            self.pos = self.start;
+            self.count = self.total;
+            self
+        }
     }
-}
-impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -1468,8 +1468,6 @@ impl<'a> FuelFiguresDecoder<'a> {
         }
         Ok(())
     }
-}
-impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
     pub fn nth(
         &self,
@@ -1532,14 +1530,6 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
-}
-pub const SPEED_NULL: u16 = 65535_u16;
-pub const SPEED_MIN: u16 = 0_u16;
-pub const SPEED_MAX: u16 = 65534_u16;
-pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
-pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
-pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
-impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn speed(&self) -> u16 {
         let offset = self.pos + 0;
@@ -1559,6 +1549,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const fn raw_speed(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.speed_unchecked() }
     }
+    pub const SPEED_NULL: u16 = 65535_u16;
+    pub const SPEED_MIN: u16 = 0_u16;
+    pub const SPEED_MAX: u16 = 65534_u16;
     #[inline]
     pub fn mpg(&self) -> f32 {
         let offset = self.pos + 2;
@@ -1578,14 +1571,13 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const fn raw_mpg(&self) -> f32 {
         #[allow(unused_unsafe)] unsafe { self.mpg_unchecked() }
     }
-}
-impl<'a> FuelFiguresEntryDecoder<'a> {
+    pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
+    pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
+    pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
     }
-}
-impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
         let start = self.tail_offset_0()?;
@@ -1608,8 +1600,6 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         }
         Ok(start + 4 + len)
     }
-}
-impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
@@ -1619,8 +1609,6 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
-}
-impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.tail_offset_1()? - self.pos)
@@ -1680,16 +1668,16 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     }
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        { self.count }
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        self.pos = self.start;
-        self.count = self.total;
-        self
+        {
+            self.pos = self.start;
+            self.count = self.total;
+            self
+        }
     }
-}
-impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -1710,8 +1698,6 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         }
         Ok(())
     }
-}
-impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
     pub fn nth(
         &self,
@@ -1774,11 +1760,6 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
-}
-pub const OCTANE_RATING_NULL: u8 = 255_u8;
-pub const OCTANE_RATING_MIN: u8 = 90_u8;
-pub const OCTANE_RATING_MAX: u8 = 110_u8;
-impl<'a> PerformanceFiguresEntryDecoder<'a> {
     #[inline]
     pub fn octane_rating(&self) -> u8 {
         let offset = self.pos + 0;
@@ -1798,14 +1779,13 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const fn raw_octane_rating(&self) -> u8 {
         #[allow(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
     }
-}
-impl<'a> PerformanceFiguresEntryDecoder<'a> {
+    pub const OCTANE_RATING_NULL: u8 = 255_u8;
+    pub const OCTANE_RATING_MIN: u8 = 90_u8;
+    pub const OCTANE_RATING_MAX: u8 = 110_u8;
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
     }
-}
-impl<'a> PerformanceFiguresEntryDecoder<'a> {
     #[inline]
     fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
         let start = self.tail_offset_0()?;
@@ -1833,15 +1813,11 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         }
         Ok(pos)
     }
-}
-impl<'a> PerformanceFiguresEntryDecoder<'a> {
     #[inline]
     pub fn acceleration(&self) -> Result<AccelerationDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
         AccelerationDecoder::wrap(self.buf, offset, self.acting_version)
     }
-}
-impl<'a> PerformanceFiguresEntryDecoder<'a> {
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.tail_offset_1()? - self.pos)
@@ -1901,16 +1877,16 @@ impl<'a> AccelerationDecoder<'a> {
     }
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        { self.count }
     }
     #[inline]
     pub fn rewind(&mut self) -> &mut Self {
-        self.pos = self.start;
-        self.count = self.total;
-        self
+        {
+            self.pos = self.start;
+            self.count = self.total;
+            self
+        }
     }
-}
-impl<'a> AccelerationDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -1924,8 +1900,6 @@ impl<'a> AccelerationDecoder<'a> {
         self.count -= n;
         Ok(())
     }
-}
-impl<'a> AccelerationDecoder<'a> {
     #[inline]
     pub fn nth(
         &self,
@@ -1948,8 +1922,6 @@ impl<'a> AccelerationDecoder<'a> {
         }
         Ok(AccelerationEntryDecoder::wrap(self.buf, offset, self.acting_version))
     }
-}
-impl<'a> AccelerationDecoder<'a> {
     #[inline]
     pub fn as_chunks(&self) -> Result<&'a [[u8; 6]], sbe_rt::DecodeError> {
         let len = self.count * 6;
@@ -1997,14 +1969,6 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
-}
-pub const MPH_NULL: u16 = 65535_u16;
-pub const MPH_MIN: u16 = 0_u16;
-pub const MPH_MAX: u16 = 65534_u16;
-pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
-pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
-pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
-impl<'a> AccelerationEntryDecoder<'a> {
     #[inline]
     pub fn mph(&self) -> u16 {
         let offset = self.pos + 0;
@@ -2024,6 +1988,9 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const fn raw_mph(&self) -> u16 {
         #[allow(unused_unsafe)] unsafe { self.mph_unchecked() }
     }
+    pub const MPH_NULL: u16 = 65535_u16;
+    pub const MPH_MIN: u16 = 0_u16;
+    pub const MPH_MAX: u16 = 65534_u16;
     #[inline]
     pub fn seconds(&self) -> f32 {
         let offset = self.pos + 2;
@@ -2043,14 +2010,13 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const fn raw_seconds(&self) -> f32 {
         #[allow(unused_unsafe)] unsafe { self.seconds_unchecked() }
     }
-}
-impl<'a> AccelerationEntryDecoder<'a> {
+    pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
+    pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
+    pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
     }
-}
-impl<'a> AccelerationEntryDecoder<'a> {
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.tail_offset_0()? - self.pos)
@@ -2087,7 +2053,7 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 41;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 41);
-    /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
+    ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];
@@ -2118,28 +2084,28 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     #[must_use]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
-        let offset = self.message_start + 8 + 0;
+        let offset = self.message_start + 8;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 8].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
-        let offset = self.message_start + 8 + 8;
+        let offset = self.message_start + 16;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
-        let offset = self.message_start + 8 + 10;
+        let offset = self.message_start + 18;
         let val_bytes = (val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
-        let offset = self.message_start + 8 + 10;
+        let offset = self.message_start + 18;
         let enum_val: BooleanType = val.into();
         let val_bytes = (enum_val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
@@ -2147,15 +2113,15 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     #[must_use]
     pub fn code(&mut self, val: Model) -> &mut Self {
-        let offset = self.message_start + 8 + 11;
+        let offset = self.message_start + 19;
         let val_bytes = (val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
-        let offset = self.message_start + 8 + 12;
-        let mut idx = 0;
+        let offset = self.message_start + 20;
+        let mut idx = 0usize;
         while idx < 4 {
             let val_bytes = val[idx].to_le_bytes();
             self.buf[offset + idx * 4..offset + idx * 4 + 4].copy_from_slice(&val_bytes);
@@ -2165,8 +2131,8 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     #[must_use]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
-        let offset = self.message_start + 8 + 28;
-        let mut idx = 0;
+        let offset = self.message_start + 36;
+        let mut idx = 0usize;
         while idx < 6 {
             let val_bytes = val[idx].to_le_bytes();
             self.buf[offset + idx * 1..offset + idx * 1 + 1].copy_from_slice(&val_bytes);
@@ -2176,14 +2142,14 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     #[must_use]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
-        let offset = self.message_start + 8 + 34;
+        let offset = self.message_start + 42;
         let val_bytes = val.0.to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
-        let offset = self.message_start + 8 + 35;
+        let offset = self.message_start + 43;
         self.buf[offset..offset + 6].copy_from_slice(&val.0);
         self
     }
