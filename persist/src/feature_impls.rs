@@ -103,7 +103,6 @@ impl PersistAs for chrono::NaiveDate {
 /// `std::time::Duration` maps to `Interval`.
 ///
 /// Encoded as total nanoseconds in little-endian i64.
-#[cfg(feature = "duration")]
 impl PersistAs for std::time::Duration {
     fn column_type() -> ColumnType {
         ColumnType::Interval
@@ -113,6 +112,24 @@ impl PersistAs for std::time::Duration {
         let nanos = self.as_nanos();
         let scaled = i64::try_from(nanos).expect("Duration out of range for i64 nanoseconds");
         scaled.to_le_bytes().to_vec()
+    }
+}
+
+
+// ── chrono::TimeDelta ─────────────────────────────────────────────
+
+/// `chrono::TimeDelta` maps to `Interval`.
+///
+/// Encoded as total nanoseconds in little-endian i64.
+#[cfg(feature = "chrono")]
+impl PersistAs for chrono::TimeDelta {
+    fn column_type() -> ColumnType {
+        ColumnType::Interval
+    }
+
+    fn encode_value(&self) -> Vec<u8> {
+        let nanos = self.num_nanoseconds().expect("TimeDelta out of range for i64 nanoseconds");
+        nanos.to_le_bytes().to_vec()
     }
 }
 
@@ -273,7 +290,6 @@ mod tests {
     // ── duration ────────────────────────────────────────────────────────
 
     #[test]
-    #[cfg(feature = "duration")]
     fn duration_column_type() {
         assert_eq!(
             <std::time::Duration as PersistAs>::column_type(),
@@ -282,18 +298,43 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "duration")]
     fn duration_encode_zero() {
         let d = std::time::Duration::ZERO;
         assert_eq!(d.encode_value(), vec![0u8; 8]);
     }
 
     #[test]
-    #[cfg(feature = "duration")]
     fn duration_encode_one_second() {
         let d = std::time::Duration::new(1, 0);
         assert_eq!(d.encode_value(), 1_000_000_000i64.to_le_bytes().to_vec());
     }
+
+
+    // ── chrono::TimeDelta ────────────────────────────────────────────
+
+    #[test]
+    #[cfg(feature = "chrono")]
+    fn time_delta_column_type() {
+        assert_eq!(
+            <chrono::TimeDelta as PersistAs>::column_type(),
+            ColumnType::Interval
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "chrono")]
+    fn time_delta_encode_zero() {
+        let d = chrono::TimeDelta::nanoseconds(0);
+        assert_eq!(d.encode_value(), vec![0u8; 8]);
+    }
+
+    #[test]
+    #[cfg(feature = "chrono")]
+    fn time_delta_encode_one_second() {
+        let d = chrono::TimeDelta::nanoseconds(1_000_000_000);
+        assert_eq!(d.encode_value(), 1_000_000_000i64.to_le_bytes().to_vec());
+    }
+
 
     // ── serde ───────────────────────────────────────────────────────────
 
