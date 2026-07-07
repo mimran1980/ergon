@@ -1532,4 +1532,27 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         assert_eq!(builder.retry_config.max_backoff, Duration::from_secs(10));
         assert_eq!(builder.retry_config.max_retries, 5);
     }
+
+    // ── global flush (todo 22) ──────────────────────────────────────────
+
+    #[test]
+    fn test_sink_flush_no_senders_is_noop() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .build()
+            .unwrap();
+        sink.flush(); // no-op, not an error
+    }
+
+    #[test]
+    fn test_sink_builder_creates_viable_sink() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .batch_size(500)
+            .flush_interval(Duration::from_millis(50))
+            .build()
+            .unwrap();
+        let _sender_builder = sink.sender("test_table");
+        // sender builder created — registration tested at integration level
+    }
 }
