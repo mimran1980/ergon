@@ -21,6 +21,7 @@
 //! encoding.
 
 use std::collections::HashSet;
+use std::fmt::Write;
 
 use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use crate::{GenerationConfig, Schema};
@@ -146,10 +147,12 @@ impl Generator {
         // When including this code via include!() in edition 2024, the caller
         // must suppress these lints at the module level themselves, OR the
         // codegen must be updated to emit a separate module file (not include!).
-        src.push_str(&format!(
+        write!(
+            src,
             "//! Generated from SBE schema package `{}` id {} version {}.\n\n",
             schema.package, schema.id, schema.version
-        ));
+        )
+        .unwrap();
         src.push_str("#![allow(non_camel_case_types)]\n");
         src.push_str("#![allow(non_snake_case)]\n");
         src.push_str("#![allow(clippy::identity_op)]\n");
@@ -165,7 +168,7 @@ impl Generator {
         // This covers shared types + the sbe_rt runtime module.
         if is_importing {
             if let Some(ref shared_mod) = self.config.shared_module {
-                src.push_str(&format!("pub use super::{}::*;\n\n", shared_mod));
+                write!(src, "pub use super::{}::*;\n\n", shared_mod).unwrap();
             }
         }
 
@@ -207,7 +210,7 @@ impl Generator {
         // Generate MessageHeader alias if custom name is used (skip if shared)
         let header_pascal = to_pascal_case(&ir.header_type);
         if header_pascal != "MessageHeader" && !shared.contains(&header_pascal) {
-            src.push_str(&format!("pub type MessageHeader = {};\n\n", header_pascal));
+            write!(src, "pub type MessageHeader = {};\n\n", header_pascal).unwrap();
         }
 
         // 6. Generate Messages (Decoders and Encoders) — always generated
@@ -244,30 +247,31 @@ impl Generator {
 
         // 7. Generate schema-level constants — SEMANTIC_VERSION, SCHEMA_HASH, SCHEMA_SHA256, SCHEMA_SHA256_HEX
         if let Some(ref sem_ver) = schema.ir.semantic_version {
-            src.push_str(&format!(
+            write!(
+                src,
                 "pub const SEMANTIC_VERSION: &str = \"{}\";\n\n",
                 sem_ver
-            ));
+            )
+            .unwrap();
         }
         let schema_hash = compute_schema_hash(&schema.package, schema.id, schema.version);
-        src.push_str(&format!(
-            "pub const SCHEMA_HASH: u64 = {};\n\n",
-            schema_hash
-        ));
+        write!(src, "pub const SCHEMA_HASH: u64 = {};\n\n", schema_hash).unwrap();
         let sha256_hash = compute_schema_sha256(&schema.ir);
         src.push_str("pub const SCHEMA_SHA256: [u8; 32] = [");
         for (i, &b) in sha256_hash.iter().enumerate() {
             if i > 0 {
                 src.push_str(", ");
             }
-            src.push_str(&format!("0x{:02x}", b));
+            write!(src, "0x{:02x}", b).unwrap();
         }
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
-        src.push_str(&format!(
+        write!(
+            src,
             "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n",
             hex
-        ));
+        )
+        .unwrap();
         // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
@@ -2562,35 +2566,107 @@ fn generate_message_decoder(
         }
     });
 
-    // 11. verify function - build as single String for parse_str
-    let mut verify_body = String::new();
-    verify_body.push_str(&format!(
-        "    #[inline]\n         pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {{\n             if buf.len() < {hs} {{\n                 return Err(sbe_rt::VerifyError::HeaderTooShort);\n             }}\n             let header_bytes: [u8; {hs}] = buf[..{hs}].try_into().unwrap();\n             let header = {hp}(header_bytes);\n             let block_length = header.{hbl}() as usize;\n             if block_length < Self::BLOCK_LENGTH {{\n                 return Err(sbe_rt::VerifyError::InvalidBlockLength {{\n                     expected_min: Self::BLOCK_LENGTH,\n                     actual: block_length,\n                 }});\n             }}\n             let body_end = {hs} + block_length;\n             if body_end > buf.len() {{\n                 return Err(sbe_rt::VerifyError::MessageTooShort {{\n                     needed: body_end,\n                     available: buf.len(),\n                 }});\n             }}\n             let mut offset = body_end;\n",
-        hs = header_size, hp = header_pascal, hbl = header_bl,
-    ));
+    // 11. verify function - built as TokenStream directly
+    let hs_lit = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
+    let hp_ident = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
+    let hbl_ident = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
 
+    let mut verify_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
+
+    // Header + block_length preamble
+    verify_stmts.push(quote::quote! {
+        if buf.len() < #hs_lit {
+            return Err(sbe_rt::VerifyError::HeaderTooShort);
+        }
+        let header_bytes: [u8; #hs_lit] = buf[..#hs_lit].try_into().unwrap();
+        let header = #hp_ident(header_bytes);
+        let block_length = header.#hbl_ident() as usize;
+        if block_length < Self::BLOCK_LENGTH {
+            return Err(sbe_rt::VerifyError::InvalidBlockLength {
+                expected_min: Self::BLOCK_LENGTH,
+                actual: block_length,
+            });
+        }
+        let body_end = #hs_lit + block_length;
+        if body_end > buf.len() {
+            return Err(sbe_rt::VerifyError::MessageTooShort {
+                needed: body_end,
+                available: buf.len(),
+            });
+        }
+        let mut offset = body_end;
+    });
+
+    // Group dimension checks
     for g in &msg.groups {
         let (dim_name, dim_size, _, count_field) = get_dimension_info(elements, &g.dimension_type);
         let g_snake = to_snake_case(&g.name);
-        let entry_bl = g.block_length;
-        verify_body.push_str(&format!(
-            "    {{\n                 if offset + {ds} > buf.len() {{\n                     return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {{\n                         field: \"{gs}\",\n                         offset,\n                     }});\n                 }}\n                 let bytes: [u8; {ds}] = buf[offset..offset + {ds}].try_into().unwrap();\n                 let dim = {dn}(bytes);\n                 let count = dim.{cf}() as usize;\n                 let entries_end = offset + {ds} + count * {ebl};\n                 if entries_end > buf.len() {{\n                     return Err(sbe_rt::VerifyError::MessageTooShort {{\n                         needed: entries_end,\n                         available: buf.len(),\n                     }});\n                 }}\n                 offset = entries_end;\n             }}",
-            ds = dim_size, gs = g_snake, dn = dim_name, cf = count_field, ebl = entry_bl,
-        ));
+        let ds_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
+        let dn_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
+        let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
+        let ebl_lit = syn::LitInt::new(&g.block_length.to_string(), proc_macro2::Span::call_site());
+        verify_stmts.push(quote::quote! {
+            {
+                if offset + #ds_lit > buf.len() {
+                    return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                        field: #g_snake,
+                        offset,
+                    });
+                }
+                let bytes: [u8; #ds_lit] = buf[offset..offset + #ds_lit].try_into().unwrap();
+                let dim = #dn_ident(bytes);
+                let count = dim.#cf_ident() as usize;
+                let entries_end = offset + #ds_lit + count * #ebl_lit;
+                if entries_end > buf.len() {
+                    return Err(sbe_rt::VerifyError::MessageTooShort {
+                        needed: entries_end,
+                        available: buf.len(),
+                    });
+                }
+                offset = entries_end;
+            }
+        });
     }
 
+    // VarData checks
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let vd_snake = to_snake_case(&vd.name);
-        verify_body.push_str(&format!(
-            "    {{\n                 if offset + {ps} > buf.len() {{\n                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n                         field: \"{vs}\",\n                         offset,\n                         length: 0,\n                     }});\n                 }}\n                 let bytes: [u8; {ps}] = buf[offset..offset + {ps}].try_into().unwrap();\n                 let var_header = {tp}(bytes);\n                 let len = var_header.{lf}();\n                 let data_end = offset + {ps} + len as usize;\n                 if data_end > buf.len() {{\n                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {{\n                         field: \"{vs}\",\n                         offset,\n                         length: len as u32,\n                     }});\n                 }}\n                 offset = data_end;\n             }}",
-            ps = prefix_size, vs = vd_snake, tp = type_pascal, lf = len_field,
-        ));
+        let ps_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
+        let tp_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
+        let lf_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
+        verify_stmts.push(quote::quote! {
+            {
+                if offset + #ps_lit > buf.len() {
+                    return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                        field: #vd_snake,
+                        offset,
+                        length: 0,
+                    });
+                }
+                let bytes: [u8; #ps_lit] = buf[offset..offset + #ps_lit].try_into().unwrap();
+                let var_header = #tp_ident(bytes);
+                let len = var_header.#lf_ident();
+                let data_end = offset + #ps_lit + len as usize;
+                if data_end > buf.len() {
+                    return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                        field: #vd_snake,
+                        offset,
+                        length: len as u32,
+                    });
+                }
+                offset = data_end;
+            }
+        });
     }
 
-    verify_body.push_str("    Ok(())\n    }\n");
-    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&verify_body)
-        .unwrap_or_else(|e| panic!("verify_body parse error for {name}: {e}\n---verify_body---\n{verify_body}\n---end---")));
+    impl_body.extend(quote::quote! {
+        #[inline]
+        pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
+            #(#verify_stmts)*
+            Ok(())
+        }
+    });
 
     // Wrap all impl_body items inside the impl block
     ts.extend(quote::quote! {
