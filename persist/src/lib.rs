@@ -21,7 +21,8 @@ pub use persist::{
     is_compatible_widen,
 };
 pub use sink::{
-    ClickhouseSink, ClickhouseSinkBuilder, PersistSender, PersistSenderBuilder, SinkError,
+    ClickhouseSink, ClickhouseSinkBuilder, PersistCompression, PersistSender, PersistSenderBuilder,
+    SinkError,
 };
 pub use types::ColumnType;
 pub use types::default_column_type;

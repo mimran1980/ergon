@@ -10,6 +10,8 @@
 use std::collections::HashMap;
 use std::env;
 use std::fmt;
+use std::fs::File;
+use std::io::BufReader;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -58,6 +60,23 @@ impl From<serde_json::Error> for SinkError {
     }
 }
 
+// ── Compression ──────────────────────────────────────────────────────────────
+
+/// Compression mode for ClickHouse HTTP transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistCompression {
+    /// No compression.
+    None,
+    /// LZ4 compression (default).
+    Lz4,
+}
+
+impl Default for PersistCompression {
+    fn default() -> Self {
+        Self::Lz4
+    }
+}
+
 // ── ClickhouseSinkBuilder ──────────────────────────────────────────────────
 
 /// Builder for [`ClickhouseSink`].
@@ -72,6 +91,7 @@ impl From<serde_json::Error> for SinkError {
 /// | database        | `default` |
 /// | batch_size      | 1000 |
 /// | flush_interval  | 100 ms |
+/// | compression     | `Lz4` |
 pub struct ClickhouseSinkBuilder {
     url: Option<String>,
     user: Option<String>,
@@ -79,6 +99,9 @@ pub struct ClickhouseSinkBuilder {
     database: Option<String>,
     batch_size: usize,
     flush_interval: Duration,
+    compression: PersistCompression,
+    tls_skip_verify: bool,
+    tls_ca_cert: Option<String>,
 }
 
 impl Default for ClickhouseSinkBuilder {
@@ -90,6 +113,9 @@ impl Default for ClickhouseSinkBuilder {
             database: None,
             batch_size: 1000,
             flush_interval: Duration::from_millis(100),
+            compression: PersistCompression::default(),
+            tls_skip_verify: false,
+            tls_ca_cert: None,
         }
     }
 }
@@ -143,6 +169,27 @@ impl ClickhouseSinkBuilder {
         self
     }
 
+    /// Wire compression mode. Default: `Lz4`.
+    #[must_use]
+    pub fn compression(mut self, c: PersistCompression) -> Self {
+        self.compression = c;
+        self
+    }
+
+    /// Skip TLS certificate verification (dev environments only).
+    #[must_use]
+    pub fn tls_skip_verify(mut self) -> Self {
+        self.tls_skip_verify = true;
+        self
+    }
+
+    /// Path to a PEM-encoded CA certificate bundle for custom TLS roots.
+    #[must_use]
+    pub fn tls_ca_cert(mut self, path: &str) -> Self {
+        self.tls_ca_cert = Some(path.into());
+        self
+    }
+
     /// Consume the builder and create a [`ClickhouseSink`].
     ///
     /// # Errors
@@ -160,14 +207,15 @@ impl ClickhouseSinkBuilder {
             .or_else(|| env::var("CLICKHOUSE_DB").ok())
             .unwrap_or_else(|| "default".into());
 
-        let mut client = clickhouse::Client::default().with_url(&url);
-        if let Some(ref user) = self.user {
-            client = client.with_user(user);
-        }
-        if let Some(ref password) = self.password {
-            client = client.with_password(password);
-        }
-        client = client.with_database(&database);
+        let client = build_client(
+            &url,
+            &database,
+            self.user.as_deref(),
+            self.password.as_deref(),
+            self.compression,
+            self.tls_skip_verify,
+            self.tls_ca_cert.as_deref(),
+        )?;
 
         let inner = SinkInner::spawn(client, database.clone());
 
@@ -175,6 +223,125 @@ impl ClickhouseSinkBuilder {
             inner: Arc::new(inner),
         })
     }
+}
+
+// ── Noop TLS verifier (skip-verify) ─────────────────────────────────────────
+
+#[derive(Debug)]
+struct NoopVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoopVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA1,
+            rustls::SignatureScheme::ECDSA_SHA1_Legacy,
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::ED448,
+        ]
+    }
+}
+
+// ── Client builder ──────────────────────────────────────────────────────────
+
+/// Construct a [`clickhouse::Client`] with compression and optional TLS config.
+fn build_client(
+    url: &str,
+    database: &str,
+    user: Option<&str>,
+    password: Option<&str>,
+    compression: PersistCompression,
+    tls_skip_verify: bool,
+    tls_ca_cert: Option<&str>,
+) -> Result<clickhouse::Client, SinkError> {
+    let mut client = if tls_skip_verify {
+        let tls_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoopVerifier))
+            .with_no_client_auth();
+        let connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(tls_config)
+            .https_or_http()
+            .enable_http1()
+            .wrap_connector(hyper_util::client::legacy::connect::HttpConnector::new());
+        let hyper_client =
+            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build(connector);
+        clickhouse::Client::with_http_client(hyper_client)
+    } else if let Some(ca_path) = tls_ca_cert {
+        let f = File::open(ca_path)
+            .map_err(|e| SinkError::Runtime(format!("cannot open CA cert {ca_path}: {e}")))?;
+        let mut reader = BufReader::new(f);
+        let certs = rustls_pemfile::certs(&mut reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| SinkError::Runtime(format!("cannot parse CA cert: {e}")))?;
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.add_parsable_certificates(certs);
+        let tls_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(tls_config)
+            .https_or_http()
+            .enable_http1()
+            .wrap_connector(hyper_util::client::legacy::connect::HttpConnector::new());
+        let hyper_client =
+            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build(connector);
+        clickhouse::Client::with_http_client(hyper_client)
+    } else {
+        clickhouse::Client::default()
+    };
+
+    client = client.with_url(url).with_database(database);
+    if let Some(user) = user {
+        client = client.with_user(user);
+    }
+    if let Some(password) = password {
+        client = client.with_password(password);
+    }
+    if compression == PersistCompression::Lz4 {
+        client = client.with_compression(clickhouse::Compression::Lz4);
+    }
+
+    Ok(client)
 }
 
 // ── Background worker thread ──────────────────────────────────────────────

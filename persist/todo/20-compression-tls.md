@@ -55,10 +55,10 @@ The builder options are for custom certificate configurations.
 
 ## Acceptance criteria
 
-- [ ] `ClickhouseSinkBuilder::compression()` accepts `None` / `Lz4`
-- [ ] LZ4 compression enabled on `clickhouse::Client` when configured
-- [ ] TLS enabled automatically for `https://` ClickHouse URLs
-- [ ] `tls_skip_verify()` for dev environments with self-signed certs
-- [ ] `tls_ca_cert()` for custom CA bundles
-- [ ] Integration test with LZ4 verifies compression roundtrip
-- [ ] No regression in existing tests
+- [x] `ClickhouseSinkBuilder::compression()` accepts `None` / `Lz4`
+- [x] LZ4 compression enabled on `clickhouse::Client` when configured
+- [x] TLS enabled automatically for `https://` ClickHouse URLs
+- [x] `tls_skip_verify()` for dev environments with self-signed certs
+- [x] `tls_ca_cert()` for custom CA bundles
+- [ ] Integration test with LZ4 verifies compression roundtrip (needs Docker ClickHouse, same pattern as existing `#[ignore]` integration tests)
+- [x] No regression in existing tests
