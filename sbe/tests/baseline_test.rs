@@ -500,6 +500,58 @@ fn group_decoder_is_empty() {
 // is verified by decode_baseline_fixture (fuel_figures[0].speed == 30 etc.)
 // and group_decoder_is_empty.
 
+// ── compute_encoded_length (todo 116) ────────────────────────────────
+
+#[test]
+fn compute_encoded_length_matches_actual() {
+    let (_schema, src) = generate(&Paths::example_schema(), "pre_encode_len");
+    compile_and_run(
+        "pre_encode_len",
+        &src,
+        r#"
+        // Baseline: zero groups / zero var-data
+        // Groups and var-data are always present (dim headers + length prefixes even at 0)
+        let empty = <CarEncoder>::compute_encoded_length(0, 0, 0, 0, 0);
+        assert_eq!(empty, 61); // 41 (block) + 2×4 (group dims) + 3×4 (vardata prefixes)
+        let empty_full = <CarEncoder>::compute_encoded_length_with_message_header(0, 0, 0, 0, 0);
+        assert_eq!(empty_full, 69); // 61 + 8-byte header
+
+        // with_message_header = body + 8
+        let body = <CarEncoder>::compute_encoded_length(1, 0, 5, 4, 6);
+        let full = <CarEncoder>::compute_encoded_length_with_message_header(1, 0, 5, 4, 6);
+        assert_eq!(full, body + 8);
+
+        // Computed length must be ≤ MAX_ENCODED_LENGTH (worst-case bound)
+        let computed = <CarEncoder>::compute_encoded_length(3, 2, 100, 100, 100);
+        assert!(computed <= <CarEncoder>::MAX_ENCODED_LENGTH,
+            "computed {computed} exceeds MAX_ENCODED_LENGTH {}",
+            <CarEncoder>::MAX_ENCODED_LENGTH);
+
+        // Encode a simple message (no nested groups, no entry var-data)
+        // and verify the pre-computed length matches actual encoded length
+        let body_len = <CarEncoder>::compute_encoded_length(0, 0, 5, 4, 6);
+        let full_len = body_len + 8;
+        let mut buf = vec![0u8; full_len];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civc").unwrap();
+        let car = car.activation_code(b"abc123").unwrap();
+        assert_eq!(body_len, car.encoded_length(), "body_len mismatch");
+        assert_eq!(full_len, car.encoded_length_with_header(), "full_len mismatch");
+    "#,
+    );
+}
+
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────
 
 #[test]
