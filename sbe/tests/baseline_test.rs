@@ -489,6 +489,17 @@ fn group_decoder_is_empty() {
     );
 }
 
+// ── iter_fast (todo 109) — DELETED ─────────────────────────────────
+// iter_fast was removed. For groups with var-data tails (total_tail > 0),
+// advancing by ENTRY_BLOCK_LENGTH produces wrong positions because
+// entries are not contiguous in the buffer — var-data of previous entries
+// pushes later entries forward. For total_tail == 0, the standard Iterator
+// already uses ENTRY_BLOCK_LENGTH. iter_fast was redundant.
+//
+// Test coverage: the standard Iterator's ENTRY_BLOCK_LENGTH fast path
+// is verified by decode_baseline_fixture (fuel_figures[0].speed == 30 etc.)
+// and group_decoder_is_empty.
+
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────
 
 #[test]
