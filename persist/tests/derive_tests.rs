@@ -264,52 +264,52 @@ mod full_example_tests {
 
     #[test]
     fn test_full_example_schema() {
-    let schema = <FullExample as Persist>::table_schema();
-    // expected: event_time, sym (Decimal), extra (Json), _persist_time = 5
-    assert_eq!(schema.columns.len(), 5);
+        let schema = <FullExample as Persist>::table_schema();
+        // expected: event_time, sym (Decimal), extra (Json), _persist_time = 5
+        assert_eq!(schema.columns.len(), 5);
 
-    assert_eq!(
-        schema
-            .columns
-            .iter()
-            .find(|c| c.name == "event_time")
-            .unwrap()
-            .col_type,
-        ColumnType::DateTime64(9)
-    );
-    assert_eq!(
-        schema
-            .columns
-            .iter()
-            .find(|c| c.name == "sym")
-            .unwrap()
-            .col_type,
-        ColumnType::String
-    );
-    assert_eq!(
-        schema
-            .columns
-            .iter()
-            .find(|c| c.name == "price")
-            .unwrap()
-            .col_type,
-        ColumnType::Decimal {
-            precision: 18,
-            scale: 8
-        }
-    );
-    assert_eq!(
-        schema
-            .columns
-            .iter()
-            .find(|c| c.name == "extra")
-            .unwrap()
-            .col_type,
-        ColumnType::Json
-    );
-    assert!(!schema.columns.iter().any(|c| c.name == "internal"));
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .find(|c| c.name == "event_time")
+                .unwrap()
+                .col_type,
+            ColumnType::DateTime64(9)
+        );
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .find(|c| c.name == "sym")
+                .unwrap()
+                .col_type,
+            ColumnType::String
+        );
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .find(|c| c.name == "price")
+                .unwrap()
+                .col_type,
+            ColumnType::Decimal {
+                precision: 18,
+                scale: 8
+            }
+        );
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .find(|c| c.name == "extra")
+                .unwrap()
+                .col_type,
+            ColumnType::Json
+        );
+        assert!(!schema.columns.iter().any(|c| c.name == "internal"));
 
-    assert_eq!(schema.order_by, vec!["event_time".to_string()]);
+        assert_eq!(schema.order_by, vec!["event_time".to_string()]);
     }
 
     #[test]

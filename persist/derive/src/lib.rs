@@ -234,24 +234,30 @@ fn parse_column_type_string(s: &str) -> TokenStream2 {
         .strip_prefix("DateTime(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return rest.trim().parse::<u8>()
-            .map_or_else(|_| map_err(s), |p| quote! { ergo_clickhouse_persist::ColumnType::DateTime(#p) });
+        return rest.trim().parse::<u8>().map_or_else(
+            |_| map_err(s),
+            |p| quote! { ergo_clickhouse_persist::ColumnType::DateTime(#p) },
+        );
     }
 
     if let Some(rest) = s
         .strip_prefix("DateTime64(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return rest.trim().parse::<u8>()
-            .map_or_else(|_| map_err(s), |p| quote! { ergo_clickhouse_persist::ColumnType::DateTime64(#p) });
+        return rest.trim().parse::<u8>().map_or_else(
+            |_| map_err(s),
+            |p| quote! { ergo_clickhouse_persist::ColumnType::DateTime64(#p) },
+        );
     }
 
     if let Some(rest) = s
         .strip_prefix("FixedString(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return rest.trim().parse::<usize>()
-            .map_or_else(|_| map_err(s), |n| quote! { ergo_clickhouse_persist::ColumnType::FixedString(#n) });
+        return rest.trim().parse::<usize>().map_or_else(
+            |_| map_err(s),
+            |n| quote! { ergo_clickhouse_persist::ColumnType::FixedString(#n) },
+        );
     }
 
     map_err(s)

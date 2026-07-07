@@ -542,10 +542,8 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
                 any = true;
             }
             if let Some(val) = f.min_value {
-                let name_ident = syn::Ident::new(
-                    &format!("{upper_name}_MIN"),
-                    proc_macro2::Span::call_site(),
-                );
+                let name_ident =
+                    syn::Ident::new(&format!("{upper_name}_MIN"), proc_macro2::Span::call_site());
                 let expr = field_const_value_expr(val, *prim);
                 let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                 tokens.extend(quote::quote! {
@@ -554,10 +552,8 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
                 any = true;
             }
             if let Some(val) = f.max_value {
-                let name_ident = syn::Ident::new(
-                    &format!("{upper_name}_MAX"),
-                    proc_macro2::Span::call_site(),
-                );
+                let name_ident =
+                    syn::Ident::new(&format!("{upper_name}_MAX"), proc_macro2::Span::call_site());
                 let expr = field_const_value_expr(val, *prim);
                 let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                 tokens.extend(quote::quote! {
@@ -575,8 +571,7 @@ fn emit_field_consts(src: &mut String, f: &MessageField) {
                 &format!("{upper_name}_NULL"),
                 proc_macro2::Span::call_site(),
             );
-            let target_ident =
-                syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+            let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
             tokens.extend(quote::quote! {
                 pub const #name_ident: #target_ident = #target_ident::NullVal;
             });
@@ -1363,8 +1358,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 if *presence == Presence::Constant {
                     if let Some(val) = constant_value {
                         if *prim == PrimitiveType::Char && val.len() > 1 {
-                            let val_lit =
-                                syn::LitStr::new(val, proc_macro2::Span::call_site());
+                            let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
                             getters.extend(quote::quote! {
                                 #[inline]
                                 pub const fn #field_ident(&self) -> &'static str {
@@ -1455,8 +1449,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 size: comp_size,
             } => {
                 let target_name = to_pascal_case(comp_name);
-                let target_ident =
-                    syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
                 let comp_size_lit =
                     syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
 
@@ -1488,8 +1481,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(enum_name);
-                let target_ident =
-                    syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
                 let r_type = rust_type(*encoding_type);
                 let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
                 let prim_size = encoding_type.size();
@@ -1525,8 +1517,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 encoding_type,
             } => {
                 let target_name = to_pascal_case(set_name);
-                let target_ident =
-                    syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
                 let r_type = rust_type(*encoding_type);
                 let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
                 let prim_size = encoding_type.size();
@@ -2459,7 +2450,8 @@ fn generate_message_decoder(
 
 fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
     let name = to_pascal_case(&msg.name);
-    let decoder_ident = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    let decoder_ident =
+        syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
     let mut body = proc_macro2::TokenStream::new();
     let display_header = format!("{} {{{{ ", name);
     body.extend(quote::quote! {
@@ -3862,8 +3854,7 @@ fn generate_group_encoder(
                     FieldType::Enum { encoding_type, .. } => encoding_type.size(),
                     FieldType::Set { encoding_type, .. } => encoding_type.size(),
                 };
-                let null_val_expr: syn::Expr =
-                    syn::parse_str(&format!("{null_val}_u64")).unwrap();
+                let null_val_expr: syn::Expr = syn::parse_str(&format!("{null_val}_u64")).unwrap();
                 let f_offset = syn::Index::from(f.offset);
                 let size_lit = syn::LitInt::new(&size.to_string(), span);
                 null_stmts.extend(quote::quote! {

@@ -416,7 +416,6 @@ impl DynamicRecorder {
                         DynamicValueType::Float64 => "Float64",
                         DynamicValueType::Bool => "Bool",
                         DynamicValueType::String => "String",
-
                     };
                     let actual_name = match v {
                         DynamicValue::Int64(_) => "Int64",

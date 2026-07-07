@@ -50,7 +50,7 @@
     clippy::question_mark,
     unused_braces,
     unused_assignments,
-    unused_comparisons,
+    unused_comparisons
 )]
 
 include!("gen/persist_sbe.rs");
