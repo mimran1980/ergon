@@ -2,6 +2,8 @@
 
 **Blocks:** 01, 02, 06
 
+## Status: DONE
+
 The foundational type system for ClickHouse column types. Every other module
 depends on this. Must be exhaustive, well-tested, and produce valid ClickHouse
 DDL.

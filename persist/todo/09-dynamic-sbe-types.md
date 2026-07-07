@@ -3,6 +3,8 @@
 **Blocked by:** none (pure ErgoSBE schema work)
 **Blocks:** 10
 
+## Status: DONE
+
 Define the SBE schema and generate Rust types for the dynamic table protocol.
 These are fixed, generic message types — no runtime codegen needed.
 
