@@ -1500,4 +1500,36 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         assert_eq!(builder.batch_size, 500);
         assert_eq!(builder.flush_interval, Duration::from_secs(1));
     }
+
+    #[test]
+    fn test_builder_compression_default_is_lz4() {
+        let builder = ClickhouseSinkBuilder::new();
+        assert_eq!(builder.compression, PersistCompression::Lz4);
+    }
+
+    #[test]
+    fn test_builder_compression_set_to_none() {
+        let builder = ClickhouseSinkBuilder::new().compression(PersistCompression::None);
+        assert_eq!(builder.compression, PersistCompression::None);
+    }
+
+    #[test]
+    fn test_builder_tls_skip_verify() {
+        let builder = ClickhouseSinkBuilder::new().tls_skip_verify();
+        assert!(builder.tls_skip_verify);
+    }
+
+    #[test]
+    fn test_builder_tls_ca_cert() {
+        let builder = ClickhouseSinkBuilder::new().tls_ca_cert("/path/to/ca.pem");
+        assert_eq!(builder.tls_ca_cert.as_deref(), Some("/path/to/ca.pem"));
+    }
+
+    #[test]
+    fn test_builder_retry_config_defaults() {
+        let builder = ClickhouseSinkBuilder::new();
+        assert_eq!(builder.retry_config.initial_backoff, Duration::from_millis(100));
+        assert_eq!(builder.retry_config.max_backoff, Duration::from_secs(10));
+        assert_eq!(builder.retry_config.max_retries, 5);
+    }
 }

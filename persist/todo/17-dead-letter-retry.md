@@ -72,8 +72,8 @@ If no dead-letter is configured, rows are dropped (current behavior) but a
 
 ## Acceptance criteria
 
-- [ ] Exponential backoff retry on ClickHouse connection/insert failures
-- [ ] Configurable `RetryConfig` on `ClickhouseSinkBuilder`
+- [x] Exponential backoff retry on ClickHouse connection/insert failures
+- [x] Configurable `RetryConfig` on `ClickhouseSinkBuilder`
 - [ ] `dead_letter()` callback on `PersistSenderBuilder`
 - [ ] Default: no dead-letter → drop + increment counter
 - [ ] `persist_retries_total` and `persist_dropped_rows_total` counters
