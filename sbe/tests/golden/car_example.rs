@@ -2053,7 +2053,7 @@ impl<'a, State> CarEncoder<'a, State> {
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 41;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 41);
-    /// MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
+    ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];
@@ -2084,28 +2084,28 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     #[must_use]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
-        let offset = self.message_start + 8 + 0;
+        let offset = self.message_start + 8;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 8].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
-        let offset = self.message_start + 8 + 8;
+        let offset = self.message_start + 16;
         let val_bytes = val.to_le_bytes();
         self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
-        let offset = self.message_start + 8 + 10;
+        let offset = self.message_start + 18;
         let val_bytes = (val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
-        let offset = self.message_start + 8 + 10;
+        let offset = self.message_start + 18;
         let enum_val: BooleanType = val.into();
         let val_bytes = (enum_val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
@@ -2113,15 +2113,15 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     #[must_use]
     pub fn code(&mut self, val: Model) -> &mut Self {
-        let offset = self.message_start + 8 + 11;
+        let offset = self.message_start + 19;
         let val_bytes = (val as u8).to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
-        let offset = self.message_start + 8 + 12;
-        let mut idx = 0;
+        let offset = self.message_start + 20;
+        let mut idx = 0usize;
         while idx < 4 {
             let val_bytes = val[idx].to_le_bytes();
             self.buf[offset + idx * 4..offset + idx * 4 + 4].copy_from_slice(&val_bytes);
@@ -2131,8 +2131,8 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     #[must_use]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
-        let offset = self.message_start + 8 + 28;
-        let mut idx = 0;
+        let offset = self.message_start + 36;
+        let mut idx = 0usize;
         while idx < 6 {
             let val_bytes = val[idx].to_le_bytes();
             self.buf[offset + idx * 1..offset + idx * 1 + 1].copy_from_slice(&val_bytes);
@@ -2142,14 +2142,14 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     #[must_use]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
-        let offset = self.message_start + 8 + 34;
+        let offset = self.message_start + 42;
         let val_bytes = val.0.to_le_bytes();
         self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
         self
     }
     #[must_use]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
-        let offset = self.message_start + 8 + 35;
+        let offset = self.message_start + 43;
         self.buf[offset..offset + 6].copy_from_slice(&val.0);
         self
     }
