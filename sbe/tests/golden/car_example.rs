@@ -835,19 +835,16 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub const unsafe fn some_numbers_unchecked(&self) -> [u32; 4] {
         let offset = self.pos + 12;
-        let mut res = [0 as u32; 4];
-        let mut idx = 0;
-        while idx < 4 {
-            let offset = self.pos + 12 + idx * 4;
-            let mut bytes = [0u8; 4];
-            bytes
-                .copy_from_slice(unsafe {
-                    core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 4)
-                });
-            res[idx] = u32::from_le_bytes(bytes);
-            idx += 1;
-        }
-        res
+        let mut all = [0u8; 16];
+        all.copy_from_slice(unsafe {
+            core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 16)
+        });
+        [
+            u32::from_le_bytes([all[0], all[1], all[2], all[3]]),
+            u32::from_le_bytes([all[4], all[5], all[6], all[7]]),
+            u32::from_le_bytes([all[8], all[9], all[10], all[11]]),
+            u32::from_le_bytes([all[12], all[13], all[14], all[15]]),
+        ]
     }
     #[inline]
     pub const fn raw_some_numbers(&self) -> [u32; 4] {
@@ -888,19 +885,18 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub const unsafe fn vehicle_code_unchecked(&self) -> [u8; 6] {
         let offset = self.pos + 28;
-        let mut res = [0 as u8; 6];
-        let mut idx = 0;
-        while idx < 6 {
-            let offset = self.pos + 28 + idx * 1;
-            let mut bytes = [0u8; 1];
-            bytes
-                .copy_from_slice(unsafe {
-                    core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
-                });
-            res[idx] = u8::from_le_bytes(bytes);
-            idx += 1;
-        }
-        res
+        let mut all = [0u8; 6];
+        all.copy_from_slice(unsafe {
+            core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 6)
+        });
+        [
+            u8::from_le_bytes([all[0]]),
+            u8::from_le_bytes([all[1]]),
+            u8::from_le_bytes([all[2]]),
+            u8::from_le_bytes([all[3]]),
+            u8::from_le_bytes([all[4]]),
+            u8::from_le_bytes([all[5]]),
+        ]
     }
     #[inline]
     pub const fn raw_vehicle_code(&self) -> [u8; 6] {

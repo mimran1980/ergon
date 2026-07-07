@@ -1928,7 +1928,7 @@ fn generate_message_decoder(
                     let total_size = prim_size * len_val;
                     let total_size_lit =
                         syn::LitInt::new(&total_size.to_string(), proc_macro2::Span::call_site());
-                    // Build using format strings for the array copy loop
+                    // Build using format strings for the array copy loop (const fn: while-loop needed)
                     let field_accessor = format!(
                         "#[inline]\n\
                          pub const fn {fn_snake}(&self) -> Result<[{rt}; {len}], sbe_rt::DecodeError> {{\n\
@@ -1977,32 +1977,30 @@ fn generate_message_decoder(
                         ),
                     );
 
-                    // _unchecked version for arrays
-                    let unchecked_arr = format!(
-                        "#[inline]\n\
-                         pub const unsafe fn {fn_snake}_unchecked(&self) -> [{rt}; {len}] {{\n\
-                             let offset = self.pos + {offset};\n\
-                             let mut res = [0 as {rt}; {len}];\n\
-                             let mut idx = 0;\n\
-                             while idx < {len} {{\n\
-                                 let offset = self.pos + {offset} + idx * {ps};\n\
-                                 let mut bytes = [0u8; {ps}];\n\
-                                 bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {ps}) }});\n\
-                                 res[idx] = {rt}::from_{order}_bytes(bytes);\n\
-                                 idx += 1;\n\
-                             }}\n\
-                             res\n\
-                         }}\n",
-                        fn_snake = fname_snake,
-                        rt = r_type,
-                        len = len_val,
-                        offset = offset,
-                        ps = prim_size,
-                        order = order_suffix,
-                    );
-                    impl_body.extend(
-                        syn::parse_str::<proc_macro2::TokenStream>(&unchecked_arr).unwrap(),
-                    );
+                    // ponytail: bulk copy + unrolled element parsing for _unchecked
+                    let mut unchecked_elements: Vec<proc_macro2::TokenStream> = Vec::new();
+                    for i in 0..len_val {
+                        let byte_indices: Vec<syn::Expr> = (0..prim_size)
+                            .map(|b| {
+                                let bi = i * prim_size + b;
+                                let bi_lit = syn::LitInt::new(&bi.to_string(), proc_macro2::Span::call_site());
+                                syn::parse_quote! { all[#bi_lit] }
+                            })
+                            .collect();
+                        unchecked_elements.push(quote::quote! {
+                            #r_type_ty::#order_fn([#(#byte_indices),*])
+                        });
+                    }
+
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub const unsafe fn #unchecked_ident(&self) -> [#r_type_ty; #len_lit] {
+                            let offset = self.pos + #offset_lit;
+                            let mut all = [0u8; #total_size_lit];
+                            all.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #total_size_lit) });
+                            [#(#unchecked_elements),*]
+                        }
+                    });
 
                     // raw_ accessor for arrays
                     let raw_ident = syn::Ident::new(
@@ -3157,6 +3155,8 @@ fn generate_group_decoder(
                         proc_macro2::Span::call_site(),
                     );
 
+                    // ponytail: while-loop due to const fn — slice indexing not const-stable
+                    // _unchecked variant below does bulk copy_from_slice + unrolled elements
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub const fn #f_name_ident(&self) -> Result<[#r_type_ty; #len_lit], sbe_rt::DecodeError> {
@@ -3182,20 +3182,28 @@ fn generate_group_decoder(
                         }
                     });
 
+                    // ponytail: bulk copy + unrolled element parsing for _unchecked
+                    let mut unchecked_elements: Vec<proc_macro2::TokenStream> = Vec::new();
+                    for i in 0..*len {
+                        let byte_indices: Vec<syn::Expr> = (0..prim_size)
+                            .map(|b| {
+                                let bi = i * prim_size + b;
+                                let bi_lit = syn::LitInt::new(&bi.to_string(), proc_macro2::Span::call_site());
+                                syn::parse_quote! { all[#bi_lit] }
+                            })
+                            .collect();
+                        unchecked_elements.push(quote::quote! {
+                            #r_type_ty::#order_fn([#(#byte_indices),*])
+                        });
+                    }
+
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub const unsafe fn #unchecked_ident(&self) -> [#r_type_ty; #len_lit] {
                             let offset = self.pos + #offset_lit;
-                            let mut res = [0 as #r_type_ty; #len_lit];
-                            let mut idx = 0;
-                            while idx < #len_lit {
-                                let offset = self.pos + #offset_lit + idx * #prim_size_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                                res[idx] = #r_type_ty::#order_fn(bytes);
-                                idx += 1;
-                            }
-                            res
+                            let mut all = [0u8; #len_times_prim];
+                            all.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #len_times_prim) });
+                            [#(#unchecked_elements),*]
                         }
                     });
 

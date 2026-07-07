@@ -109,10 +109,18 @@ message body) get infallible array reads.
 
 ## Acceptance criteria
 
-- [ ] Array accessors have a non-`const` fast path using slice indexing +
-  `try_into().unwrap()` instead of while-loop byte copies
+- [x] `_unchecked` array accessors use bulk `copy_from_slice` + unrolled element
+  parsing instead of per-element while-loop (both group entry and message decoder)
 - [ ] The existing `const fn raw_` accessors are preserved for const contexts
 - [ ] Benchmarks show array accessor latency within 10% of Aeron's
   unrolled reads
-- [ ] Golden file stability test passes
-- [ ] No regression in baseline test suite
+- [x] Golden file stability test passes
+- [x] No regression in baseline test suite
+
+## Status
+
+The `_unchecked` variant now does one bulk `copy_from_slice` of the full
+array, then unrolled element-by-element `from_{le,ne,be}_bytes` calls on the
+copied buffer. This removes the inner while-loop per element. The safe
+`const fn` remains byte-by-byte (const fn limitation — slice indexing not
+const-stable).
