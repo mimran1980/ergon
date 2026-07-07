@@ -123,13 +123,13 @@ fn decode_baseline_fixture() {
         // Scalar fields
         assert_eq!(1234, car.serial_number(), "serial_number");
         assert_eq!(2013, car.model_year(), "model_year");
-        assert_eq!(BooleanType::T, car.available().unwrap(), "available");
-        assert_eq!(Model::A, car.code().unwrap(), "code");
+        assert_eq!(BooleanType::T, car.available(), "available");
+        assert_eq!(Model::A, car.code(), "code");
 
         assert_eq!([1u32, 2, 3, 4], car.some_numbers().unwrap(), "someNumbers");
         assert_eq!([97, 98, 99, 100, 101, 102], car.vehicle_code().unwrap(), "vehicleCode");
 
-        let extras = car.extras().unwrap();
+        let extras = car.extras();
         assert_eq!(6, extras.raw(), "extras raw");
         assert!(extras.cruise_control(), "cruiseControl");
         assert!(extras.sports_pack(), "sportsPack");
@@ -146,7 +146,7 @@ fn decode_baseline_fixture() {
         // byte-exact decode from the fixture impossible for those fields.
         // The round-trip test (below) verifies self-consistent encode/decode
         // for all engine fields.
-        let engine = car.engine().unwrap();
+        let engine = car.engine();
         assert_eq!(2000, engine.capacity(), "engine.capacity");
         assert_eq!(4, engine.num_cylinders(), "engine.numCylinders");
 
@@ -154,16 +154,16 @@ fn decode_baseline_fixture() {
         let fuel_figures: Vec<_> = car.fuel_figures().unwrap().collect::<Vec<_>>();
         assert_eq!(3, fuel_figures.len(), "fuelFigures count");
 
-        assert_eq!(30, fuel_figures[0].speed().unwrap(), "ff[0].speed");
-        assert!((fuel_figures[0].mpg().unwrap() - 35.9).abs() < 0.01, "ff[0].mpg");
+        assert_eq!(30, fuel_figures[0].speed(), "ff[0].speed");
+        assert!((fuel_figures[0].mpg() - 35.9).abs() < 0.01, "ff[0].mpg");
         assert_eq!(b"Urban Cycle",   fuel_figures[0].usage_description().unwrap(), "ff[0].usage");
 
-        assert_eq!(55, fuel_figures[1].speed().unwrap(), "ff[1].speed");
-        assert!((fuel_figures[1].mpg().unwrap() - 49.0).abs() < 0.01, "ff[1].mpg");
+        assert_eq!(55, fuel_figures[1].speed(), "ff[1].speed");
+        assert!((fuel_figures[1].mpg() - 49.0).abs() < 0.01, "ff[1].mpg");
         assert_eq!(b"Combined Cycle", fuel_figures[1].usage_description().unwrap(), "ff[1].usage");
 
-        assert_eq!(75, fuel_figures[2].speed().unwrap(), "ff[2].speed");
-        assert!((fuel_figures[2].mpg().unwrap() - 40.0).abs() < 0.01, "ff[2].mpg");
+        assert_eq!(75, fuel_figures[2].speed(), "ff[2].speed");
+        assert!((fuel_figures[2].mpg() - 40.0).abs() < 0.01, "ff[2].mpg");
         assert_eq!(b"Highway Cycle",  fuel_figures[2].usage_description().unwrap(), "ff[2].usage");
 
         // Group: performanceFigures (2 entries), each with nested acceleration group
@@ -171,26 +171,26 @@ fn decode_baseline_fixture() {
         assert_eq!(2, perf.len(), "performanceFigures count");
 
         // --- 95 octane ---
-        assert_eq!(95, perf[0].octane_rating().unwrap(), "pf[0].octaneRating");
+        assert_eq!(95, perf[0].octane_rating(), "pf[0].octaneRating");
         let accel0: Vec<_> = perf[0].acceleration().unwrap().collect::<Vec<_>>();
         assert_eq!(3, accel0.len(), "pf[0].acceleration count");
-        assert_eq!(30,  accel0[0].mph().unwrap(), "pf[0].acc[0].mph");
-        assert!((accel0[0].seconds().unwrap() - 4.0).abs() < 0.01, "pf[0].acc[0].seconds");
-        assert_eq!(60,  accel0[1].mph().unwrap(), "pf[0].acc[1].mph");
-        assert!((accel0[1].seconds().unwrap() - 7.5).abs() < 0.01, "pf[0].acc[1].seconds");
-        assert_eq!(100, accel0[2].mph().unwrap(), "pf[0].acc[2].mph");
-        assert!((accel0[2].seconds().unwrap() - 12.2).abs() < 0.01, "pf[0].acc[2].seconds");
+        assert_eq!(30,  accel0[0].mph(), "pf[0].acc[0].mph");
+        assert!((accel0[0].seconds() - 4.0).abs() < 0.01, "pf[0].acc[0].seconds");
+        assert_eq!(60,  accel0[1].mph(), "pf[0].acc[1].mph");
+        assert!((accel0[1].seconds() - 7.5).abs() < 0.01, "pf[0].acc[1].seconds");
+        assert_eq!(100, accel0[2].mph(), "pf[0].acc[2].mph");
+        assert!((accel0[2].seconds() - 12.2).abs() < 0.01, "pf[0].acc[2].seconds");
 
         // --- 99 octane ---
-        assert_eq!(99, perf[1].octane_rating().unwrap(), "pf[1].octaneRating");
+        assert_eq!(99, perf[1].octane_rating(), "pf[1].octaneRating");
         let accel1: Vec<_> = perf[1].acceleration().unwrap().collect::<Vec<_>>();
         assert_eq!(3, accel1.len(), "pf[1].acceleration count");
-        assert_eq!(30,  accel1[0].mph().unwrap(), "pf[1].acc[0].mph");
-        assert!((accel1[0].seconds().unwrap() - 3.8).abs() < 0.01, "pf[1].acc[0].seconds");
-        assert_eq!(60,  accel1[1].mph().unwrap(), "pf[1].acc[1].mph");
-        assert!((accel1[1].seconds().unwrap() - 7.1).abs() < 0.01, "pf[1].acc[1].seconds");
-        assert_eq!(100, accel1[2].mph().unwrap(), "pf[1].acc[2].mph");
-        assert!((accel1[2].seconds().unwrap() - 11.8).abs() < 0.01, "pf[1].acc[2].seconds");
+        assert_eq!(30,  accel1[0].mph(), "pf[1].acc[0].mph");
+        assert!((accel1[0].seconds() - 3.8).abs() < 0.01, "pf[1].acc[0].seconds");
+        assert_eq!(60,  accel1[1].mph(), "pf[1].acc[1].mph");
+        assert!((accel1[1].seconds() - 7.1).abs() < 0.01, "pf[1].acc[1].seconds");
+        assert_eq!(100, accel1[2].mph(), "pf[1].acc[2].mph");
+        assert!((accel1[2].seconds() - 11.8).abs() < 0.01, "pf[1].acc[2].seconds");
 
         // Var-data fields
         assert_eq!(b"Honda",     car.manufacturer().unwrap(), "manufacturer");
@@ -288,17 +288,17 @@ fn encode_baseline_roundtrip() {
 
         assert_eq!(1234, car2.serial_number(), "rt.serial_number");
         assert_eq!(2013, car2.model_year(), "rt.model_year");
-        assert_eq!(BooleanType::T, car2.available().unwrap(), "rt.available");
-        assert_eq!(Model::A, car2.code().unwrap(), "rt.code");
+        assert_eq!(BooleanType::T, car2.available(), "rt.available");
+        assert_eq!(Model::A, car2.code(), "rt.code");
         assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap(), "rt.someNumbers");
         assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code().unwrap(), "rt.vehicleCode");
 
-        let extras2 = car2.extras().unwrap();
+        let extras2 = car2.extras();
         assert!(extras2.cruise_control(), "rt.cruiseControl");
         assert!(extras2.sports_pack(), "rt.sportsPack");
         assert!(!extras2.sun_roof(), "rt.sunRoof");
 
-        let e2 = car2.engine().unwrap();
+        let e2 = car2.engine();
         assert_eq!(2000, e2.capacity(), "rt.engine.capacity");
         assert_eq!(4, e2.num_cylinders(), "rt.engine.numCylinders");
         assert_eq!(9000, e2.max_rpm(), "rt.engine.maxRpm");
@@ -307,19 +307,19 @@ fn encode_baseline_roundtrip() {
 
         let ff2: Vec<_> = car2.fuel_figures().unwrap().collect::<Vec<_>>();
         assert_eq!(3, ff2.len());
-        assert_eq!(30, ff2[0].speed().unwrap());  assert!((ff2[0].mpg().unwrap() - 35.9).abs() < 0.01);
+        assert_eq!(30, ff2[0].speed());  assert!((ff2[0].mpg() - 35.9).abs() < 0.01);
         assert_eq!(b"Urban Cycle", ff2[0].usage_description().unwrap());
-        assert_eq!(55, ff2[1].speed().unwrap());  assert!((ff2[1].mpg().unwrap() - 49.0).abs() < 0.01);
+        assert_eq!(55, ff2[1].speed());  assert!((ff2[1].mpg() - 49.0).abs() < 0.01);
         assert_eq!(b"Combined Cycle", ff2[1].usage_description().unwrap());
-        assert_eq!(75, ff2[2].speed().unwrap());  assert!((ff2[2].mpg().unwrap() - 40.0).abs() < 0.01);
+        assert_eq!(75, ff2[2].speed());  assert!((ff2[2].mpg() - 40.0).abs() < 0.01);
         assert_eq!(b"Highway Cycle", ff2[2].usage_description().unwrap());
 
         let pf2: Vec<_> = car2.performance_figures().unwrap().collect::<Vec<_>>();
         assert_eq!(2, pf2.len());
-        assert_eq!(95, pf2[0].octane_rating().unwrap());
+        assert_eq!(95, pf2[0].octane_rating());
         let a0: Vec<_> = pf2[0].acceleration().unwrap().collect::<Vec<_>>();
         assert_eq!(3, a0.len());
-        assert_eq!(30, a0[0].mph().unwrap());  assert!((a0[0].seconds().unwrap() - 4.0).abs() < 0.01);
+        assert_eq!(30, a0[0].mph());  assert!((a0[0].seconds() - 4.0).abs() < 0.01);
 
         assert_eq!(b"Honda",     car2.manufacturer().unwrap(), "rt.manufacturer");
         assert_eq!(b"Civic VTi", car2.model().unwrap(), "rt.model");
@@ -765,7 +765,7 @@ fn boolean_roundtrip_runtime() {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        let available = car2.available().unwrap();
+        let available = car2.available();
         assert_eq!(available, BooleanType::T, "round-trip available via available_bool(true)");
         assert_ne!(available.raw(), 0, "BooleanType::T raw != 0");
 
@@ -788,7 +788,7 @@ fn boolean_roundtrip_runtime() {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        let available = car2.available().unwrap();
+        let available = car2.available();
         assert_eq!(available, BooleanType::F, "round-trip available via BooleanType::F");
         assert_eq!(available.raw(), 0, "BooleanType::F raw == 0");
         "#,
@@ -847,8 +847,8 @@ fn bounds_checking_switch() {
         let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
         assert_eq!(42, car2.serial_number());
         assert_eq!(2000, car2.model_year());
-        assert_eq!(BooleanType::T, car2.available().unwrap());
-        assert_eq!(Model::A, car2.code().unwrap());
+        assert_eq!(BooleanType::T, car2.available());
+        assert_eq!(Model::A, car2.code());
         assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap());
         assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code().unwrap());
         let ff: Vec<_> = car2.fuel_figures().unwrap().collect::<Vec<_>>();

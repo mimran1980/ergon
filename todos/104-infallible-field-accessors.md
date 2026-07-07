@@ -52,9 +52,9 @@ Specific areas to audit:
 - [x] No per-field bounds checks (wrap validates once)
 - [x] All existing tests pass with updated API
 - [x] Golden file regenerated
-- [ ] Extend to composite decoders (no per-member bounds checks)
-- [ ] Extend to enum/set decoders
-- [ ] Extend to group decoders (no per-entry size validation on fixed-size entries)
+- [x] Extend to composite decoders (no per-member bounds checks)
+- [x] Extend to enum/set decoders
+- [x] Extend to group decoders (no per-entry size validation on fixed-size entries)
 - [ ] Line-by-line comparison against Aeron Rust SBE — ErgoSBE ≤ Aeron in code
   complexity for every method
 - [ ] ErgoSBE at least as fast as Aeron in every benchmark scenario (todo 105)

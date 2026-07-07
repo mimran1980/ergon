@@ -139,13 +139,13 @@ proptest! {
 
         prop_assert_eq!(serial_number, decoded.serial_number());
         prop_assert_eq!(model_year, decoded.model_year());
-        prop_assert_eq!(available, decoded.available().unwrap());
-        prop_assert_eq!(code, decoded.code().unwrap());
+        prop_assert_eq!(available, decoded.available());
+        prop_assert_eq!(code, decoded.code());
         prop_assert_eq!(some_numbers, decoded.some_numbers().unwrap());
         prop_assert_eq!(vehicle_code, decoded.vehicle_code().unwrap());
-        prop_assert_eq!(extras, decoded.extras().unwrap());
+        prop_assert_eq!(extras, decoded.extras());
 
-        let de = decoded.engine().unwrap();
+        let de = decoded.engine();
         prop_assert_eq!(engine.capacity(), de.capacity());
         prop_assert_eq!(engine.num_cylinders(), de.num_cylinders());
         prop_assert_eq!(engine.manufacturer_code(), de.manufacturer_code());
@@ -259,8 +259,8 @@ proptest! {
         prop_assert_eq!(entries.len(), fuel.len(), "fuel figures count");
 
         for (i, (speed, mpg, usage)) in entries.iter().enumerate() {
-            prop_assert_eq!(*speed, fuel[i].speed().unwrap(), "ff[{}].speed", i);
-            let mpg_diff = (mpg - fuel[i].mpg().unwrap()).abs();
+            prop_assert_eq!(*speed, fuel[i].speed(), "ff[{}].speed", i);
+            let mpg_diff = (mpg - fuel[i].mpg()).abs();
             prop_assert!(mpg_diff < f32::EPSILON, "ff[{}].mpg diff={}", i, mpg_diff);
             prop_assert_eq!(&usage[..], fuel[i].usage_description().unwrap(), "ff[{}].usage", i);
         }
@@ -350,24 +350,24 @@ fn boundary_values() {
 
     assert_eq!(u64::MAX, decoded.serial_number());
     assert_eq!(u16::MAX, decoded.model_year());
-    assert_eq!(BooleanType::T, decoded.available().unwrap());
-    assert_eq!(Model::C, decoded.code().unwrap());
+    assert_eq!(BooleanType::T, decoded.available());
+    assert_eq!(Model::C, decoded.code());
     assert_eq!([u32::MAX; 4], decoded.some_numbers().unwrap());
     assert_eq!([u8::MAX; 6], decoded.vehicle_code().unwrap());
-    let extras2 = decoded.extras().unwrap();
+    let extras2 = decoded.extras();
     assert!(extras2.sun_roof());
     assert!(extras2.sports_pack());
     assert!(extras2.cruise_control());
 
-    let de = decoded.engine().unwrap();
+    let de = decoded.engine();
     assert_eq!(u16::MAX, de.capacity());
     assert_eq!(u8::MAX, de.num_cylinders());
 
     let ff: Vec<_> = decoded.fuel_figures().unwrap().collect::<Vec<_>>();
     assert_eq!(1, ff.len());
-    assert_eq!(u16::MAX, ff[0].speed().unwrap());
+    assert_eq!(u16::MAX, ff[0].speed());
     // f32::MAX is the largest finite f32; check round-trip within epsilon
-    assert!((f32::MAX - ff[0].mpg().unwrap()).abs() < 1.0, "ff[0].mpg");
+    assert!((f32::MAX - ff[0].mpg()).abs() < 1.0, "ff[0].mpg");
 
     assert_eq!(b"MAX", decoded.manufacturer().unwrap());
     assert_eq!(b"MAX", decoded.model().unwrap());

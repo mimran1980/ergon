@@ -1983,26 +1983,32 @@ fn generate_message_decoder(
                 size: comp_size,
             } => {
                 let target_name = to_pascal_case(comp_name);
-                src.push_str(&format!(
-                    "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
-                             if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                 return Ok({}([0u8; {}]));\n\
-                             }}\n\
-                             let offset = self.pos + {};\n\
-                             if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
-                             }}\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.buf[offset + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             Ok({}(bytes))\n\
-                         }}\n\n",
-                    f_name, target_name, since, offset + comp_size, target_name, comp_size, offset, comp_size, comp_size, comp_size, comp_size, target_name,
-                    field_name = f.name
-                ));
+                if since > 0 {
+                    src.push_str(&format!(
+                        "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
+                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
+                                     return None;\n\
+                                 }}\n\
+                                 let offset = self.pos + {};\n\
+                                 Some({}(self.buf[offset..][..{}].try_into().unwrap()))\n\
+                             }}\n\n",
+                        f_name,
+                        target_name,
+                        since,
+                        offset + comp_size,
+                        offset,
+                        target_name,
+                        comp_size,
+                    ));
+                } else {
+                    src.push_str(&format!(
+                        "#[inline]\n    pub fn {}(&self) -> {} {{\n\
+                                 let offset = self.pos + {};\n\
+                                 {}(self.buf[offset..][..{}].try_into().unwrap())\n\
+                             }}\n\n",
+                        f_name, target_name, offset, target_name, comp_size,
+                    ));
+                }
 
                 src.push_str(&format!(
                     "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
@@ -2033,46 +2039,44 @@ fn generate_message_decoder(
                             f_name, target_name, target_name, variant
                         ));
                     }
+                } else if since > 0 {
+                    src.push_str(&format!(
+                        "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
+                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
+                                     return None;\n\
+                                 }}\n\
+                                 let offset = self.pos + {};\n\
+                                 Some({}::from_raw({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap())))\n\
+                             }}\n\n",
+                        f_name, target_name, since, offset + prim_size, offset, target_name, r_type, order_suffix, prim_size,
+                    ));
                 } else {
                     src.push_str(&format!(
-                        "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
-                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                     return Ok({}::NullVal);\n\
-                                 }}\n\
+                        "#[inline]\n    pub fn {}(&self) -> {} {{\n\
                                  let offset = self.pos + {};\n\
-                                 if offset + {} > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
-                                 }}\n\
-                                 let mut bytes = [0u8; {}];\n\
-                                 let mut j = 0;\n\
-                                 while j < {} {{\n\
-                                     bytes[j] = self.buf[offset + j];\n\
-                                     j += 1;\n\
-                                 }}\n\
-                                 Ok({}::from_raw({}::from_{}_bytes(bytes)))\n\
+                                 {}::from_raw({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
                              }}\n\n",
-                        f_name, target_name, since, offset + prim_size, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
-                        field_name = f.name
-                    ));
-
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                                 let offset = self.pos + {};\n\
-                                 let mut bytes = [0u8; {}];
-
-                                 bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                 {}::from_raw({}::from_{}_bytes(bytes))\n\
-                             }}\n\n",
-                        f_name,
-                        target_name,
-                        offset,
-                        prim_size,
-                        prim_size,
-                        target_name,
-                        r_type,
-                        order_suffix
+                        f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
                     ));
                 }
+
+                src.push_str(&format!(
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             let mut bytes = [0u8; {}];
+
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                             {}::from_raw({}::from_{}_bytes(bytes))\n\
+                         }}\n\n",
+                    f_name,
+                    target_name,
+                    offset,
+                    prim_size,
+                    prim_size,
+                    target_name,
+                    r_type,
+                    order_suffix
+                ));
             }
             FieldType::Set {
                 name: set_name,
@@ -2092,46 +2096,44 @@ fn generate_message_decoder(
                             f_name, target_name, target_name, bits
                         ));
                     }
+                } else if since > 0 {
+                    src.push_str(&format!(
+                        "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
+                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
+                                     return None;\n\
+                                 }}\n\
+                                 let offset = self.pos + {};\n\
+                                 Some({}({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap())))\n\
+                             }}\n\n",
+                        f_name, target_name, since, offset + prim_size, offset, target_name, r_type, order_suffix, prim_size,
+                    ));
                 } else {
                     src.push_str(&format!(
-                        "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
-                                 if self.acting_version < {} || {} > self.acting_block_length {{\n\
-                                     return Ok({}(0 as {}));\n\
-                                 }}\n\
+                        "#[inline]\n    pub fn {}(&self) -> {} {{\n\
                                  let offset = self.pos + {};\n\
-                                 if offset + {} > self.buf.len() {{\n\
-                                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
-                                 }}\n\
-                                 let mut bytes = [0u8; {}];\n\
-                                 let mut j = 0;\n\
-                                 while j < {} {{\n\
-                                     bytes[j] = self.buf[offset + j];\n\
-                                     j += 1;\n\
-                                 }}\n\
-                                 Ok({}({}::from_{}_bytes(bytes)))\n\
+                                 {}({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
                              }}\n\n",
-                        f_name, target_name, since, offset + prim_size, target_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
-                        field_name = f.name
-                    ));
-
-                    src.push_str(&format!(
-                        "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
-                                 let offset = self.pos + {};\n\
-                                 let mut bytes = [0u8; {}];
-
-                                 bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
-                                 {}({}::from_{}_bytes(bytes))\n\
-                             }}\n\n",
-                        f_name,
-                        target_name,
-                        offset,
-                        prim_size,
-                        prim_size,
-                        target_name,
-                        r_type,
-                        order_suffix
+                        f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
                     ));
                 }
+
+                src.push_str(&format!(
+                    "#[inline]\n    pub const unsafe fn {}_unchecked(&self) -> {} {{\n\
+                             let offset = self.pos + {};\n\
+                             let mut bytes = [0u8; {}];
+
+                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {}) }});\n\
+                             {}({}::from_{}_bytes(bytes))\n\
+                         }}\n\n",
+                    f_name,
+                    target_name,
+                    offset,
+                    prim_size,
+                    prim_size,
+                    target_name,
+                    r_type,
+                    order_suffix
+                ));
             }
         }
         emit_field_consts(src, f);
@@ -2454,10 +2456,17 @@ fn generate_decoder_display(src: &mut String, msg: &MessageStructure) {
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                src.push_str(&format!(
-                    "        if let Ok(e) = self.{}() {{ write!(f, \"{}{}: {}::{{e:?}}\")?; }}\n",
-                    snake, sep, snake, enum_name,
-                ));
+                if f.since_version > 0 {
+                    src.push_str(&format!(
+                        "        if let Some(e) = self.{}() {{ write!(f, \"{}{}: {}::{{e:?}}\")?; }}\n",
+                        snake, sep, snake, enum_name,
+                    ));
+                } else {
+                    src.push_str(&format!(
+                        "        {{ let e = self.{}(); write!(f, \"{}{}: {}::{{e:?}}\")?; }}\n",
+                        snake, sep, snake, enum_name,
+                    ));
+                }
                 out_idx += 1;
             }
             FieldType::Set { .. } => {}
@@ -2795,26 +2804,16 @@ fn generate_group_decoder(
                         };
 
                         src.push_str(&format!(
-                            "#[inline]\n    pub const fn {}(&self) -> Result<Option<{}>, sbe_rt::DecodeError> {{\n\
+                            "#[inline]\n    pub fn {}(&self) -> Option<{}> {{\n\
                                      let offset = self.pos + {};\n\
-                                     if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
-                                     }}\n\
-                                     let mut bytes = [0u8; {}];\n\
-                                     let mut j = 0;\n\
-                                     while j < {} {{\n\
-                                         bytes[j] = self.buf[offset + j];\n\
-                                         j += 1;\n\
-                                     }}\n\
-                                     let val = {}::from_{}_bytes(bytes);\n\
+                                     let val = {}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap());\n\
                                      if {} {{\n\
-                                         Ok(None)\n\
+                                         None\n\
                                      }} else {{\n\
-                                         Ok(Some(val))\n\
+                                         Some(val)\n\
                                      }}\n\
                                  }}\n\n",
-                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix, null_check,
-                            field_name = f.name
+                            f_name, r_type, offset, r_type, order_suffix, prim_size, null_check,
                         ));
 
                         src.push_str(&format!(
@@ -2842,21 +2841,11 @@ fn generate_group_decoder(
                         ));
                     } else {
                         src.push_str(&format!(
-                            "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                            "#[inline]\n    pub fn {}(&self) -> {} {{\n\
                                      let offset = self.pos + {};\n\
-                                     if offset + {} > self.buf.len() {{\n\
-                                         return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
-                                     }}\n\
-                                     let mut bytes = [0u8; {}];\n\
-                                     let mut j = 0;\n\
-                                     while j < {} {{\n\
-                                         bytes[j] = self.buf[offset + j];\n\
-                                         j += 1;\n\
-                                     }}\n\
-                                     Ok({}::from_{}_bytes(bytes))\n\
+                                     {}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap())\n\
                                  }}\n\n",
-                            f_name, r_type, offset, prim_size, prim_size, prim_size, prim_size, r_type, order_suffix,
-                            field_name = f.name
+                            f_name, r_type, offset, r_type, order_suffix, prim_size,
                         ));
 
                         src.push_str(&format!(
@@ -2886,21 +2875,11 @@ fn generate_group_decoder(
             } => {
                 let target_name = to_pascal_case(comp_name);
                 src.push_str(&format!(
-                    "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
                              let offset = self.pos + {};\n\
-                             if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
-                             }}\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.buf[offset + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             Ok({}(bytes))\n\
+                             {}(self.buf[offset..][..{}].try_into().unwrap())\n\
                          }}\n\n",
-                    f_name, target_name, offset, comp_size, comp_size, comp_size, comp_size, target_name,
-                    field_name = f.name
+                    f_name, target_name, offset, target_name, comp_size,
                 ));
 
                 src.push_str(&format!(
@@ -2931,21 +2910,11 @@ fn generate_group_decoder(
                 let prim_size = encoding_type.size();
 
                 src.push_str(&format!(
-                    "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
                              let offset = self.pos + {};\n\
-                             if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
-                             }}\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.buf[offset + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             Ok({}::from_raw({}::from_{}_bytes(bytes)))\n\
+                             {}::from_raw({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
                          }}\n\n",
-                    f_name, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
-                    field_name = f.name
+                    f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
                 ));
 
                 src.push_str(&format!(
@@ -2969,7 +2938,7 @@ fn generate_group_decoder(
                 // Boolean fields get an additional getter that returns bool directly
                 if enum_name == "BooleanType" {
                     src.push_str(&format!(
-                        "#[inline]\n    pub const fn {f}_bool(&self) -> Result<bool, sbe_rt::DecodeError> {{\n                         match self.{f}() {{\n                             Ok(v) => Ok((v as {r_type}) != 0),\n                             Err(e) => Err(e),\n                         }}\n                     }}\n\n",
+                        "#[inline]\n    pub const fn {f}_bool(&self) -> bool {{\n                         (self.{f}() as {r_type}) != 0\n                     }}\n\n",
                         f = f_name, r_type = r_type,
                     ));
                 }
@@ -2983,21 +2952,11 @@ fn generate_group_decoder(
                 let prim_size = encoding_type.size();
 
                 src.push_str(&format!(
-                    "#[inline]\n    pub const fn {}(&self) -> Result<{}, sbe_rt::DecodeError> {{\n\
+                    "#[inline]\n    pub fn {}(&self) -> {} {{\n\
                              let offset = self.pos + {};\n\
-                             if offset + {} > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{field_name}\", needed: {}, available: self.buf.len() - offset }});\n\
-                             }}\n\
-                             let mut bytes = [0u8; {}];\n\
-                             let mut j = 0;\n\
-                             while j < {} {{\n\
-                                 bytes[j] = self.buf[offset + j];\n\
-                                 j += 1;\n\
-                             }}\n\
-                             Ok({}({}::from_{}_bytes(bytes)))\n\
+                             {}({}::from_{}_bytes(self.buf[offset..][..{}].try_into().unwrap()))\n\
                          }}\n\n",
-                    f_name, target_name, offset, prim_size, prim_size, prim_size, prim_size, target_name, r_type, order_suffix,
-                    field_name = f.name
+                    f_name, target_name, offset, target_name, r_type, order_suffix, prim_size,
                 ));
 
                 src.push_str(&format!(

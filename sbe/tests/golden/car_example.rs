@@ -769,25 +769,11 @@ impl<'a> CarDecoder<'a> {
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
     #[inline]
-    pub const fn available(&self) -> Result<BooleanType, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 11 > self.acting_block_length {
-            return Ok(BooleanType::NullVal);
-        }
+    pub fn available(&self) -> BooleanType {
         let offset = self.pos + 10;
-        if offset + 1 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "available",
-                needed: 1,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(BooleanType::from_raw(u8::from_le_bytes(bytes)))
+        BooleanType::from_raw(
+            u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()),
+        )
     }
     #[inline]
     pub const unsafe fn available_unchecked(&self) -> BooleanType {
@@ -801,25 +787,9 @@ impl<'a> CarDecoder<'a> {
     }
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     #[inline]
-    pub const fn code(&self) -> Result<Model, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 12 > self.acting_block_length {
-            return Ok(Model::NullVal);
-        }
+    pub fn code(&self) -> Model {
         let offset = self.pos + 11;
-        if offset + 1 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "code",
-                needed: 1,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(Model::from_raw(u8::from_le_bytes(bytes)))
+        Model::from_raw(u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()))
     }
     #[inline]
     pub const unsafe fn code_unchecked(&self) -> Model {
@@ -939,25 +909,9 @@ impl<'a> CarDecoder<'a> {
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
     #[inline]
-    pub const fn extras(&self) -> Result<OptionalExtras, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 35 > self.acting_block_length {
-            return Ok(OptionalExtras(0 as u8));
-        }
+    pub fn extras(&self) -> OptionalExtras {
         let offset = self.pos + 34;
-        if offset + 1 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "extras",
-                needed: 1,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(OptionalExtras(u8::from_le_bytes(bytes)))
+        OptionalExtras(u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()))
     }
     #[inline]
     pub const unsafe fn extras_unchecked(&self) -> OptionalExtras {
@@ -973,27 +927,21 @@ impl<'a> CarDecoder<'a> {
     pub const fn discounted_model(&self) -> Model {
         Model::C
     }
+    #[inline]
+    pub const unsafe fn discounted_model_unchecked(&self) -> Model {
+        let offset = self.pos + 35;
+        let mut bytes = [0u8; 1];
+        bytes
+            .copy_from_slice(unsafe {
+                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
+            });
+        Model::from_raw(u8::from_le_bytes(bytes))
+    }
     pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
     #[inline]
-    pub const fn engine(&self) -> Result<Engine, sbe_rt::DecodeError> {
-        if self.acting_version < 0 || 41 > self.acting_block_length {
-            return Ok(Engine([0u8; 6]));
-        }
+    pub fn engine(&self) -> Engine {
         let offset = self.pos + 35;
-        if offset + 6 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "engine",
-                needed: 6,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 6];
-        let mut j = 0;
-        while j < 6 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(Engine(bytes))
+        Engine(self.buf[offset..][..6].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn engine_unchecked(&self) -> Engine {
@@ -1404,10 +1352,12 @@ impl<'a> core::fmt::Display for CarDecoder<'a> {
             let v = self.model_year();
             write!(f, ", model_year: {}", v)?;
         }
-        if let Ok(e) = self.available() {
+        {
+            let e = self.available();
             write!(f, ", available: BooleanType::{e:?}")?;
         }
-        if let Ok(e) = self.code() {
+        {
+            let e = self.code();
             write!(f, ", code: Model::{e:?}")?;
         }
         if let Ok(g) = self.fuel_figures() {
@@ -1563,22 +1513,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         Self { buf, pos, acting_version }
     }
     #[inline]
-    pub const fn speed(&self) -> Result<u16, sbe_rt::DecodeError> {
+    pub fn speed(&self) -> u16 {
         let offset = self.pos + 0;
-        if offset + 2 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "speed",
-                needed: 2,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(u16::from_le_bytes(bytes))
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn speed_unchecked(&self) -> u16 {
@@ -1598,22 +1535,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const SPEED_MIN: u16 = 0_u16;
     pub const SPEED_MAX: u16 = 65534_u16;
     #[inline]
-    pub const fn mpg(&self) -> Result<f32, sbe_rt::DecodeError> {
+    pub fn mpg(&self) -> f32 {
         let offset = self.pos + 2;
-        if offset + 4 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "mpg",
-                needed: 4,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(f32::from_le_bytes(bytes))
+        f32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn mpg_unchecked(&self) -> f32 {
@@ -1817,22 +1741,9 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         Self { buf, pos, acting_version }
     }
     #[inline]
-    pub const fn octane_rating(&self) -> Result<u8, sbe_rt::DecodeError> {
+    pub fn octane_rating(&self) -> u8 {
         let offset = self.pos + 0;
-        if offset + 1 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "octaneRating",
-                needed: 1,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 1];
-        let mut j = 0;
-        while j < 1 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(u8::from_le_bytes(bytes))
+        u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn octane_rating_unchecked(&self) -> u8 {
@@ -2051,22 +1962,9 @@ impl<'a> AccelerationEntryDecoder<'a> {
         Self { buf, pos, acting_version }
     }
     #[inline]
-    pub const fn mph(&self) -> Result<u16, sbe_rt::DecodeError> {
+    pub fn mph(&self) -> u16 {
         let offset = self.pos + 0;
-        if offset + 2 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "mph",
-                needed: 2,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 2];
-        let mut j = 0;
-        while j < 2 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(u16::from_le_bytes(bytes))
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn mph_unchecked(&self) -> u16 {
@@ -2086,22 +1984,9 @@ impl<'a> AccelerationEntryDecoder<'a> {
     pub const MPH_MIN: u16 = 0_u16;
     pub const MPH_MAX: u16 = 65534_u16;
     #[inline]
-    pub const fn seconds(&self) -> Result<f32, sbe_rt::DecodeError> {
+    pub fn seconds(&self) -> f32 {
         let offset = self.pos + 2;
-        if offset + 4 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "seconds",
-                needed: 4,
-                available: self.buf.len() - offset,
-            });
-        }
-        let mut bytes = [0u8; 4];
-        let mut j = 0;
-        while j < 4 {
-            bytes[j] = self.buf[offset + j];
-            j += 1;
-        }
-        Ok(f32::from_le_bytes(bytes))
+        f32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
     }
     #[inline]
     pub const unsafe fn seconds_unchecked(&self) -> f32 {

@@ -83,8 +83,8 @@ fn car_encode_decode_perf_smoke() {
             let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
             assert_eq!(1234, car2.serial_number());
             assert_eq!(2013, car2.model_year());
-            assert_eq!(BooleanType::T, car2.available().unwrap());
-            assert_eq!(Model::A, car2.code().unwrap());
+            assert_eq!(BooleanType::T, car2.available());
+            assert_eq!(Model::A, car2.code());
             assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap());
             assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code().unwrap());
         }
