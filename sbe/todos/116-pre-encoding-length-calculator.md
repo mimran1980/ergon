@@ -54,7 +54,7 @@ field gets a named parameter.
 
 ## Acceptance criteria
 
-- [ ] `encoded_length()` generated on message encoders with groups or var-data
+- [x] `encoded_length()` generated on message encoders with groups or var-data
 - [x] Parameters: one `usize` per group (entry count) + one `usize` per var-data (byte length)
 - [x] Returns exact total message length in bytes
 - [x] `const fn` where possible
