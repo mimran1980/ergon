@@ -284,7 +284,7 @@ impl From<OptionalExtras> for u8 {
         val.0
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct MessageHeader(pub [u8; 8]);
 impl MessageHeader {
@@ -362,7 +362,7 @@ impl MessageHeader {
         Self(bytes)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct GroupSizeEncoding(pub [u8; 4]);
 impl GroupSizeEncoding {
@@ -403,7 +403,7 @@ impl GroupSizeEncoding {
         Self(bytes)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct VarStringEncoding(pub [u8; 4]);
 impl VarStringEncoding {
@@ -455,7 +455,7 @@ impl VarStringEncoding {
         Self(bytes)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct VarAsciiEncoding(pub [u8; 4]);
 impl VarAsciiEncoding {
@@ -507,7 +507,7 @@ impl VarAsciiEncoding {
         Self(bytes)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct VarDataEncoding(pub [u8; 4]);
 impl VarDataEncoding {
@@ -559,7 +559,7 @@ impl VarDataEncoding {
         Self(bytes)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Booster(pub [u8; 1]);
 impl Booster {
@@ -584,7 +584,7 @@ impl Booster {
         Self(bytes)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Engine(pub [u8; 6]);
 impl Engine {
@@ -1111,6 +1111,11 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
     #[inline]
+    pub unsafe fn manufacturer_as_str_unchecked(&self) -> &'a str {
+        let data = self.manufacturer().unwrap_or(&[]);
+        unsafe { core::str::from_utf8_unchecked(data) }
+    }
+    #[inline]
     pub fn manufacturer_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
         Ok(self.manufacturer_as_str()?.to_string())
     }
@@ -1140,6 +1145,11 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
     }
     #[inline]
+    pub unsafe fn model_as_str_unchecked(&self) -> &'a str {
+        let data = self.model().unwrap_or(&[]);
+        unsafe { core::str::from_utf8_unchecked(data) }
+    }
+    #[inline]
     pub fn model_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
         Ok(self.model_as_str()?.to_string())
     }
@@ -1167,6 +1177,11 @@ impl<'a> CarDecoder<'a> {
     pub fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
+    }
+    #[inline]
+    pub unsafe fn activation_code_as_str_unchecked(&self) -> &'a str {
+        let data = self.activation_code().unwrap_or(&[]);
+        unsafe { core::str::from_utf8_unchecked(data) }
     }
     #[inline]
     pub fn activation_code_as_string(&self) -> Result<String, sbe_rt::DecodeError> {

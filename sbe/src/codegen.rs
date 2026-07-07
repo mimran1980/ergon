@@ -1273,16 +1273,32 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
     let name = to_pascal_case(raw_name);
     let size = tokens[0].encoding.offset.unwrap_or(0);
 
+    let members = parse_composite_members(tokens);
+
+    let has_float = members.iter().any(|m| {
+        matches!(
+            &m.member_type,
+            MemberType::Primitive {
+                prim: PrimitiveType::Float | PrimitiveType::Double,
+                ..
+            }
+        )
+    });
+
+    let derives = if has_float {
+        "Clone, Copy, Debug, PartialEq, PartialOrd"
+    } else {
+        "Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash"
+    };
+
     src.push_str(&format!(
-        "#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]\n\
+        "#[derive({})]\n\
          #[repr(transparent)]\n\
          pub struct {}(pub [u8; {}]);\n\n",
-        name, size
+        derives, name, size
     ));
 
     src.push_str(&format!("impl {} {{\n", name));
-
-    let members = parse_composite_members(tokens);
     let order_suffix = match byte_order {
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
@@ -2257,6 +2273,12 @@ fn generate_message_decoder(
                      core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))\n\
                  }}\n\n",
             vd_snake, vd_snake
+        ));
+
+        // Zero-cost UTF-8 validation skip. Caller guarantees valid UTF-8.
+        src.push_str(&format!(
+            "#[inline]\n    pub unsafe fn {snake}_as_str_unchecked(&self) -> &'a str {{ let data = self.{snake}().unwrap_or(&[]);\n                unsafe {{ core::str::from_utf8_unchecked(data) }}\n            }}\n\n",
+            snake = vd_snake
         ));
 
         // Allocating String convenience accessor
