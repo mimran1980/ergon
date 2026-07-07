@@ -3354,7 +3354,7 @@ fn generate_message_encoder(
             .map(|g| to_pascal_case(&g.name))
             .unwrap_or_else(|| to_pascal_case(&msg.var_data.first().unwrap().name));
         src.push_str(&format!(
-            "#[must_use]\n\
+            "#[must_use = \"encoder must be consumed to write the message\"]\n\
              pub struct {}Encoder<'a, State = {}_encoder_state::Needs{}> {{\n\
                  buf: &'a mut [u8],\n\
                  message_start: usize,\n\
@@ -3367,7 +3367,7 @@ fn generate_message_encoder(
         ));
     } else {
         src.push_str(&format!(
-            "#[must_use]\n\
+            "#[must_use = \"encoder must be consumed to write the message\"]\n\
              pub struct {}Encoder<'a> {{\n\
                  buf: &'a mut [u8],\n\
                  message_start: usize,\n\
@@ -3834,7 +3834,7 @@ fn generate_group_encoder(
         .join(", ");
 
     src.push_str(&format!(
-        "#[must_use]\n\
+        "#[must_use = \"group encoder must call add() to write entries\"]\n\
          pub struct {}Encoder<'a> {{\n\
              buf: &'a mut [u8],\n\
              pos: usize,\n\
@@ -3875,7 +3875,7 @@ fn generate_group_encoder(
 
     // Entry Encoder Struct
     src.push_str(&format!(
-        "#[must_use]\n\
+        "#[must_use = \"entry encoder fields must be set before the next entry\"]\n\
          pub struct {}EntryEncoder<'a> {{\n\
              buf: &'a mut [u8],\n\
              entry_start: usize,\n\

@@ -1000,7 +1000,9 @@ fn generated_code_has_inline_annotations() {
 fn generated_code_has_must_use_annotations() {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
-    let count = src.matches("#[must_use]").count();
+    let count_plain = src.matches("#[must_use]").count();
+    let count_msg = src.matches("#[must_use = \"").count();
+    let count = count_plain + count_msg;
     assert!(
         count >= 20,
         "expected >=20 #[must_use] annotations on encoder types/methods \
@@ -1010,7 +1012,7 @@ fn generated_code_has_must_use_annotations() {
     let lines: Vec<&str> = src.lines().collect();
     let must_use_followed_by: Vec<&str> = lines
         .windows(2)
-        .filter(|w| w[0].trim() == "#[must_use]")
+        .filter(|w| w[0].trim().starts_with("#[must_use"))
         .map(|w| w[1].trim())
         .collect();
 
