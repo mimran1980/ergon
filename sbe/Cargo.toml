@@ -1,0 +1,78 @@
+[package]
+name = "ergosbe"
+description = "Opinionated, idiomatic Rust code generation for Simple Binary Encoding."
+keywords = ["sbe", "codegen", "binary", "protocol", "trading"]
+categories = ["encoding", "parser-implementations", "development-tools"]
+readme = "../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+bound-check-disabled = []
+
+[dependencies]
+roxmltree = "0.20"
+thiserror = "2"
+miette = { version = "7", features = ["derive"] }
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+prettyplease = "0.2"
+sha2 = "0.10"
+
+[[bench]]
+name = "decode_bench"
+harness = false
+
+[[bench]]
+name = "encode_bench"
+harness = false
+
+[[bench]]
+name = "throughput_bench"
+harness = false
+
+[[test]]
+name = "smoke_test"
+
+[[test]]
+name = "baseline_test"
+
+[[test]]
+name = "benchmark_test"
+
+[[test]]
+name = "error_validation_test"
+
+[[test]]
+name = "integration_tests"
+
+[[test]]
+name = "issue_regression_test"
+
+[[test]]
+name = "proptest_roundtrip"
+
+[[test]]
+name = "schema_edge_cases_test"
+
+[[test]]
+name = "stability_test"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

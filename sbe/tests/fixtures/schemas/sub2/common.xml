@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<types xmlns:sbe="http://fixprotocol.io/2016/sbe">
+    <composite name="messageHeader">
+        <type name="blockLength" primitiveType="uint16"/>
+        <type name="templateId" primitiveType="uint16"/>
+        <type name="schemaId" primitiveType="uint16"/>
+        <type name="version" primitiveType="uint16"/>
+    </composite>
+</types>

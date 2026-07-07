@@ -1,33 +1,114 @@
 # ErgoSBE
 
-Opinionated, idiomatic Rust code generation for Simple Binary Encoding.
+Opinionated, idiomatic Rust code generation for [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/) (SBE).
 
-ErgoSBE is an early-stage open source project for generating Rust codecs from
-SBE schemas without copying the Java reference implementation's shape into
-Rust. The project starts private while the initial direction settles, then will
-move public once the first useful generator path is ready.
+ErgoSBE reads SBE XML schemas and produces safe, fast, version-aware Rust codecs.
+Wire-compatible with the official SBE reference implementation; API-shaped for Rust,
+not translated from Java.
 
-## Core Values
+## Features
 
-1. Wire compatible with the official SBE.
-2. Idiomatic Rust, not Java translated into Rust.
-3. Performance-first suitable for low-latency trading.
+- **XML schema parsing** — parse SBE schemas with XInclude support, miette diagnostics
+- **Encoder/Decoder generation** — zero-allocation `Copy` decoders, fluent encoder API
+- **Infallible field accessors** — scalar, enum, set, and composite accessors are plain `fn(&self) -> T`, no unwrapping
+- **Flat enum generation** — enums are true Rust `enum`s with a `NullVal` variant for unknown wire values (no separate `Kind` type)
+- **Buffer verification** — `Decoder::verify(&[u8])` validates an entire message buffer before decoding, reporting group/vardata bounds
+- **Version-aware decoding** — all accessors respect the wire message version
+- **Repeating groups** — `ExactSizeIterator`-based group access with entry decoders
+- **Variable-length data** — var-data with length-prefixed byte slices and optional UTF-8 accessors
+- **AnyMessage dispatch** — `AnyMessage` enum with `Unknown` forwarding for external frames
+- **FrameCursor** — iterate externally-framed SBE feed buffers (length-prefix or fixed-size)
+- **Multi-schema** — `generate_multi` for projects with shared type definitions across schemas
+- **Type-state tail encoding** — encoder enforces tail element ordering at compile time
+- **Optional/null handling** — `Option<T>` return types for optional and version-gated fields
+- **Unchecked accessors** — `unsafe fn foo_unchecked()` for HFT hot loops (no bounds check)
+- **Compile-time constants** — `FIELD_NULL`, `FIELD_MIN`, `FIELD_MAX` on every decoded field
 
-## Intended Shape
+## Quick start
 
-ErgoSBE will focus on:
+### 1. Add dependency
 
-- XML schema parsing into a small Rust-first intermediate representation.
-- Generated encoders and decoders that preserve official SBE wire layout.
-- Borrowed, low-allocation access patterns by default.
-- Predictable code generation suitable for review, benchmarking, and audit.
-- Benchmarks against realistic market-data style message layouts.
+```toml
+[build-dependencies]
+ergosbe = "0.1"
+```
 
-## Current Status
+### 2. Create `build.rs`
 
-This repository is the initial project scaffold. The public API currently
-contains configuration, schema metadata, and the generator boundary. SBE XML
-parsing, IR validation, and full encoder/decoder emission are next.
+```rust
+use ergosbe::{parse_file, Generator, GenerationConfig, Schema};
+
+fn main() {
+    // Parse an SBE XML schema file (with XInclude resolution)
+    let ir = parse_file("schemas/my_schema.xml").unwrap();
+    let schema = Schema::from_ir(ir);
+
+    // Configure the generator
+    let config = GenerationConfig::new("my_messages");
+    let generator = Generator::new(config);
+
+    // Generate Rust source
+    let output = generator.generate(&schema);
+
+    // Write to the output directory
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    for module in output.modules() {
+        std::fs::write(
+            format!("{}/{}", out_dir, module.path),
+            &module.source,
+        ).unwrap();
+    }
+}
+```
+
+### 3. Use generated code
+
+Scalar, enum, set, and composite field accessors are **infallible** -- no `?`, no `unwrap`:
+
+```rust
+// Include the generated module
+include!(concat!(env!("OUT_DIR"), "/my_messages.rs"));
+
+fn decode_message(buf: &[u8]) -> Result<(), sbe_rt::DecodeError> {
+    let car = CarDecoder::wrap_and_apply_header(buf, 0)?;
+    let serial = car.serial_number();           // u64 -- infallible
+    let year = car.model_year();                // u16 -- infallible
+    let model = car.code();                     // Model (flat enum) -- infallible
+    let extras = car.extras();                  // OptionalExtras (set) -- infallible
+    let engine = car.engine();                  // Engine (composite) -- infallible
+    println!("Car #{} ({})", serial, year);
+
+    // Groups and var-data still return Result:
+    for entry in car.fuel_figures()? {
+        let speed = entry.speed();              // u16 -- infallible
+        println!("Speed: {}", speed);
+    }
+    Ok(())
+}
+```
+
+## Architecture
+
+| Layer | Module | Description |
+|-------|--------|-------------|
+| Schema Input | `xml`, `schema` | Parse SBE XML, resolve includes, validate |
+| Intermediate Repr | `ir`, `resolve` | Token stream, offset/block-length pass |
+| Generation Options | `config` | Module name, wire-compatibility policy |
+| Code Generation | `codegen` | Rust source production |
+
+## Design philosophy
+
+1. **Wire compatible** — generated bytes match official SBE byte-for-byte.
+2. **Idiomatic Rust** — not Java-in-Rust. Decoders are `Copy` flyweights; encoders use
+   type-state for tail fields.
+3. **Zero allocation by default** — decoders borrow the input buffer; no heap allocation
+   on the hot path.
+4. **Version-aware** — every accessor gates on the wire `actingVersion` and
+   `actingBlockLength`.
+5. **No `unsafe` by default** — `unsafe` is opt-in via `_unchecked()` methods or the
+   `bound-check-disabled` feature.
+
+See [`design/DECISIONS.md`](design/DECISIONS.md) for the complete design rationale.
 
 ## Development
 
