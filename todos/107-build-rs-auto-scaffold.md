@@ -29,7 +29,7 @@ println!("cargo:rerun-if-changed=schemas/my-schema.xml");
 
 ## Acceptance criteria
 
-- [ ] `GeneratedModule` fields (`path`, `source`) are documented
+- [x] `GeneratedModule` fields (`path`, `source`) are documented (doc comments on codegen.rs:32-35)
 - [ ] Build script template in user guide
 - [ ] `cargo:rerun-if-changed` directives emitted automatically or documented
 - [ ] Directory creation handled (not left to caller)
