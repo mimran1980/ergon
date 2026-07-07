@@ -612,6 +612,62 @@ fn fixed_entry_group_entries_iterator() {
     );
 }
 
+// ── array accessor fast path (todo 108) ─────────────────────────────
+
+#[test]
+fn array_accessor_all_paths_return_same_values() {
+    let (_schema, src) = generate(&Paths::example_schema(), "array_paths");
+    compile_and_run("array_paths", &src, r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"abcdef").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+
+        // Safe path (const fn, while-loop copy) — some_numbers returns Result
+        let safe: [u32; 4] = car2.some_numbers().unwrap();
+        assert_eq!(safe, [1u32, 2, 3, 4]);
+
+        // raw_ path (const fn, while-loop, no Result wrapping)
+        let raw: [u32; 4] = car2.raw_some_numbers();
+        assert_eq!(raw, [1u32, 2, 3, 4]);
+
+        // _unchecked path (bulk copy_from_slice, const unsafe fn)
+        let unchecked: [u32; 4] = unsafe { car2.some_numbers_unchecked() };
+        assert_eq!(unchecked, [1u32, 2, 3, 4]);
+
+        // All three paths produce identical values
+        assert_eq!(safe, raw);
+        assert_eq!(raw, unchecked);
+
+        // vehicle_code (byte array) — same three paths
+        let vs: [u8; 6] = car2.vehicle_code().unwrap();
+        assert_eq!(vs, [97, 98, 99, 100, 101, 102]);
+        let vr: [u8; 6] = car2.raw_vehicle_code();
+        assert_eq!(vr, vs);
+        let vu: [u8; 6] = unsafe { car2.vehicle_code_unchecked() };
+        assert_eq!(vu, vs);
+
+        // Edge: safe path returns Err on short buffer (simulate by passing empty buf)
+        let empty_buf: &[u8] = &[0u8; 8];
+        let bad = CarDecoder::wrap_and_apply_header(empty_buf, 0);
+        assert!(bad.is_err(), "wrap_and_apply_header on 8-byte buffer should fail");
+    "#);
+}
+
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────
 
 #[test]
