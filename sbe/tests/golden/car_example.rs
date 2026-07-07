@@ -362,6 +362,33 @@ impl MessageHeader {
         Self(bytes)
     }
 }
+#[derive(Clone, Copy)]
+pub struct MessageHeaderDecoder<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+impl<'a> MessageHeaderDecoder<'a> {
+    #[inline]
+    pub fn block_length(&self) -> u16 {
+        let offset = self.pos + 0;
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+    }
+    #[inline]
+    pub fn template_id(&self) -> u16 {
+        let offset = self.pos + 2;
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+    }
+    #[inline]
+    pub fn schema_id(&self) -> u16 {
+        let offset = self.pos + 4;
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+    }
+    #[inline]
+    pub fn version(&self) -> u16 {
+        let offset = self.pos + 6;
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct GroupSizeEncoding(pub [u8; 4]);
@@ -401,6 +428,23 @@ impl GroupSizeEncoding {
             j += 1;
         }
         Self(bytes)
+    }
+}
+#[derive(Clone, Copy)]
+pub struct GroupSizeEncodingDecoder<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+impl<'a> GroupSizeEncodingDecoder<'a> {
+    #[inline]
+    pub fn block_length(&self) -> u16 {
+        let offset = self.pos + 0;
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+    }
+    #[inline]
+    pub fn num_in_group(&self) -> u16 {
+        let offset = self.pos + 2;
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -455,6 +499,35 @@ impl VarStringEncoding {
         Self(bytes)
     }
 }
+#[derive(Clone, Copy)]
+pub struct VarStringEncodingDecoder<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+impl<'a> VarStringEncodingDecoder<'a> {
+    #[inline]
+    pub fn length(&self) -> u32 {
+        let offset = self.pos + 0;
+        u32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
+    }
+    #[inline]
+    pub fn var_data(&self) -> [u8; 0] {
+        let mut res = [0 as u8; 0];
+        let mut idx = 0;
+        while idx < 0 {
+            let offset = self.pos + 4 + idx * 1;
+            let mut bytes = [0u8; 1];
+            let mut j = 0;
+            while j < 1 {
+                bytes[j] = self.buf[offset + j];
+                j += 1;
+            }
+            res[idx] = u8::from_le_bytes(bytes);
+            idx += 1;
+        }
+        res
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct VarAsciiEncoding(pub [u8; 4]);
@@ -505,6 +578,35 @@ impl VarAsciiEncoding {
             idx += 1;
         }
         Self(bytes)
+    }
+}
+#[derive(Clone, Copy)]
+pub struct VarAsciiEncodingDecoder<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+impl<'a> VarAsciiEncodingDecoder<'a> {
+    #[inline]
+    pub fn length(&self) -> u32 {
+        let offset = self.pos + 0;
+        u32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
+    }
+    #[inline]
+    pub fn var_data(&self) -> [u8; 0] {
+        let mut res = [0 as u8; 0];
+        let mut idx = 0;
+        while idx < 0 {
+            let offset = self.pos + 4 + idx * 1;
+            let mut bytes = [0u8; 1];
+            let mut j = 0;
+            while j < 1 {
+                bytes[j] = self.buf[offset + j];
+                j += 1;
+            }
+            res[idx] = u8::from_le_bytes(bytes);
+            idx += 1;
+        }
+        res
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -559,6 +661,35 @@ impl VarDataEncoding {
         Self(bytes)
     }
 }
+#[derive(Clone, Copy)]
+pub struct VarDataEncodingDecoder<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+impl<'a> VarDataEncodingDecoder<'a> {
+    #[inline]
+    pub fn length(&self) -> u32 {
+        let offset = self.pos + 0;
+        u32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
+    }
+    #[inline]
+    pub fn var_data(&self) -> [u8; 0] {
+        let mut res = [0 as u8; 0];
+        let mut idx = 0;
+        while idx < 0 {
+            let offset = self.pos + 4 + idx * 1;
+            let mut bytes = [0u8; 1];
+            let mut j = 0;
+            while j < 1 {
+                bytes[j] = self.buf[offset + j];
+                j += 1;
+            }
+            res[idx] = u8::from_le_bytes(bytes);
+            idx += 1;
+        }
+        res
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Booster(pub [u8; 1]);
@@ -582,6 +713,18 @@ impl Booster {
             j += 1;
         }
         Self(bytes)
+    }
+}
+#[derive(Clone, Copy)]
+pub struct BoosterDecoder<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+impl<'a> BoosterDecoder<'a> {
+    #[inline]
+    pub fn horse_power(&self) -> u8 {
+        let offset = self.pos + 0;
+        u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap())
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -662,6 +805,48 @@ impl Engine {
             idx += 1;
         }
         Self(bytes)
+    }
+}
+#[derive(Clone, Copy)]
+pub struct EngineDecoder<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+impl<'a> EngineDecoder<'a> {
+    #[inline]
+    pub fn capacity(&self) -> u16 {
+        let offset = self.pos + 0;
+        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+    }
+    #[inline]
+    pub fn num_cylinders(&self) -> u8 {
+        let offset = self.pos + 2;
+        u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap())
+    }
+    #[inline]
+    pub const fn max_rpm(&self) -> u16 {
+        9000
+    }
+    #[inline]
+    pub fn manufacturer_code(&self) -> [u8; 3] {
+        let mut res = [0 as u8; 3];
+        let mut idx = 0;
+        while idx < 3 {
+            let offset = self.pos + 3 + idx * 1;
+            let mut bytes = [0u8; 1];
+            let mut j = 0;
+            while j < 1 {
+                bytes[j] = self.buf[offset + j];
+                j += 1;
+            }
+            res[idx] = u8::from_le_bytes(bytes);
+            idx += 1;
+        }
+        res
+    }
+    #[inline]
+    pub const fn fuel(&self) -> &'static str {
+        "Petrol"
     }
 }
 ///Description of a basic Car
@@ -949,6 +1134,14 @@ impl<'a> CarDecoder<'a> {
                 core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 6)
             });
         Engine(bytes)
+    }
+    #[inline]
+    pub fn engine_lazy(&self) -> EngineDecoder<'_> {
+        let offset = self.pos + 35;
+        EngineDecoder {
+            buf: self.buf,
+            pos: offset,
+        }
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1492,7 +1685,7 @@ impl<'a> FuelFiguresDecoder<'a> {
     }
 }
 impl<'a> Iterator for FuelFiguresDecoder<'a> {
-    type Item = FuelFiguresEntryDecoder<'a>;
+    type Item = Result<FuelFiguresEntryDecoder<'a>, sbe_rt::DecodeError>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.count == 0 {
             return None;
@@ -1504,14 +1697,14 @@ impl<'a> Iterator for FuelFiguresDecoder<'a> {
         );
         let size = match entry.encoded_length() {
             Ok(s) => s,
-            Err(_) => {
+            Err(e) => {
                 self.count = 0;
-                return Some(entry);
+                return Some(Err(e));
             }
         };
         self.pos += size;
         self.count -= 1;
-        Some(entry)
+        Some(Ok(entry))
     }
 }
 impl<'a> ExactSizeIterator for FuelFiguresDecoder<'a> {
@@ -1726,7 +1919,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     }
 }
 impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
-    type Item = PerformanceFiguresEntryDecoder<'a>;
+    type Item = Result<PerformanceFiguresEntryDecoder<'a>, sbe_rt::DecodeError>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.count == 0 {
             return None;
@@ -1738,14 +1931,14 @@ impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
         );
         let size = match entry.encoded_length() {
             Ok(s) => s,
-            Err(_) => {
+            Err(e) => {
                 self.count = 0;
-                return Some(entry);
+                return Some(Err(e));
             }
         };
         self.pos += size;
         self.count -= 1;
-        Some(entry)
+        Some(Ok(entry))
     }
 }
 impl<'a> ExactSizeIterator for PerformanceFiguresDecoder<'a> {

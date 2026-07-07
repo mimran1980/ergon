@@ -1569,6 +1569,163 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
     };
     src.push_str(&ts.to_string());
     src.push('\n');
+
+    // ── 5b. Composite decoder (flyweight / _lazy accessor) ──
+    let mut decoder_getters = proc_macro2::TokenStream::new();
+    for m in &members {
+        let field_name = to_snake_case(&m.name);
+        let field_ident = syn::Ident::new(&field_name, proc_macro2::Span::call_site());
+        let offset_lit = syn::LitInt::new(&m.offset.to_string(), proc_macro2::Span::call_site());
+
+        match &m.member_type {
+            MemberType::Primitive {
+                prim,
+                length,
+                presence,
+                constant_value,
+            } => {
+                let r_type_str = rust_type(*prim);
+                let r_type_ty: syn::Type = syn::parse_str(r_type_str).unwrap();
+                let prim_size = prim.size();
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+
+                if *presence == Presence::Constant {
+                    if let Some(val) = constant_value {
+                        if *prim == PrimitiveType::Char && val.len() > 1 {
+                            let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
+                            decoder_getters.extend(quote::quote! {
+                                #[inline]
+                                pub const fn #field_ident(&self) -> &'static str {
+                                    #val_lit
+                                }
+                            });
+                        } else {
+                            let expr_str = constant_value_expr(*prim, val);
+                            let expr: syn::Expr = syn::parse_str(&expr_str).unwrap();
+                            decoder_getters.extend(quote::quote! {
+                                #[inline]
+                                pub const fn #field_ident(&self) -> #r_type_ty {
+                                    #expr
+                                }
+                            });
+                        }
+                    }
+                    continue;
+                }
+
+                if let Some(len) = length {
+                    let len_lit =
+                        syn::LitInt::new(&len.to_string(), proc_macro2::Span::call_site());
+                    decoder_getters.extend(quote::quote! {
+                        #[inline]
+                        pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
+                            let mut res = [0 as #r_type_ty; #len_lit];
+                            let mut idx = 0;
+                            while idx < #len_lit {
+                                let offset = self.pos + #offset_lit + idx * #prim_size_lit;
+                                let mut bytes = [0u8; #prim_size_lit];
+                                let mut j = 0;
+                                while j < #prim_size_lit {
+                                    bytes[j] = self.buf[offset + j];
+                                    j += 1;
+                                }
+                                res[idx] = #r_type_ty::#from_method(bytes);
+                                idx += 1;
+                            }
+                            res
+                        }
+                    });
+                } else {
+                    decoder_getters.extend(quote::quote! {
+                        #[inline]
+                        pub fn #field_ident(&self) -> #r_type_ty {
+                            let offset = self.pos + #offset_lit;
+                            #r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap())
+                        }
+                    });
+                }
+            }
+            MemberType::Composite {
+                name: comp_name,
+                size: comp_size,
+            } => {
+                let target_name = to_pascal_case(comp_name);
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let comp_size_lit =
+                    syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
+
+                decoder_getters.extend(quote::quote! {
+                    #[inline]
+                    pub fn #field_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        let mut bytes = [0u8; #comp_size_lit];
+                        let mut j = 0;
+                        while j < #comp_size_lit {
+                            bytes[j] = self.buf[offset + j];
+                            j += 1;
+                        }
+                        #target_ident(bytes)
+                    }
+                });
+            }
+            MemberType::Enum {
+                name: enum_name,
+                encoding_type,
+            } => {
+                let target_name = to_pascal_case(enum_name);
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let r_type = rust_type(*encoding_type);
+                let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
+                let prim_size = encoding_type.size();
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+
+                decoder_getters.extend(quote::quote! {
+                    #[inline]
+                    pub fn #field_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        #target_ident::from_raw(#r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                    }
+                });
+            }
+            MemberType::Set {
+                name: set_name,
+                encoding_type,
+            } => {
+                let target_name = to_pascal_case(set_name);
+                let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+                let r_type = rust_type(*encoding_type);
+                let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
+                let prim_size = encoding_type.size();
+                let prim_size_lit =
+                    syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+
+                decoder_getters.extend(quote::quote! {
+                    #[inline]
+                    pub fn #field_ident(&self) -> #target_ident {
+                        let offset = self.pos + #offset_lit;
+                        #target_ident(#r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                    }
+                });
+            }
+        }
+    }
+
+    let decoder_name = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    let decoder_ts = quote::quote! {
+        #[derive(Clone, Copy)]
+        pub struct #decoder_name<'a> {
+            buf: &'a [u8],
+            pos: usize,
+        }
+
+        impl<'a> #decoder_name<'a> {
+            #decoder_getters
+        }
+    };
+    src.push_str(&decoder_ts.to_string());
+    src.push('\n');
 }
 
 fn get_dimension_info(
@@ -2183,6 +2340,41 @@ fn generate_message_decoder(
                         #target_ident(bytes)
                     }
                 });
+
+                // Lazy flyweight accessor (_lazy)
+                let lazy_ident = syn::Ident::new(
+                    &format!("{}_lazy", fname_snake),
+                    proc_macro2::Span::call_site(),
+                );
+                if since > 0 {
+                    let since_lit =
+                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let offset_end = offset + comp_size;
+                    let offset_end_lit =
+                        syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    let target_decoder_name =
+                        syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #lazy_ident(&self) -> Option<#target_decoder_name<'_>> {
+                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_decoder_name { buf: self.buf, pos: offset })
+                        }
+                    });
+                } else {
+                    let target_decoder_name =
+                        syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #lazy_ident(&self) -> #target_decoder_name<'_> {
+                            let offset = self.pos + #offset_lit;
+                            #target_decoder_name { buf: self.buf, pos: offset }
+                        }
+                    });
+                }
             }
             FieldType::Enum {
                 name: enum_name,
@@ -3065,7 +3257,7 @@ fn generate_group_decoder(
     } else {
         ts.extend(quote::quote! {
             impl<'a> Iterator for #decoder_ident<'a> {
-                type Item = #entry_decoder_ident<'a>;
+                type Item = Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError>;
 
                 fn next(&mut self) -> Option<Self::Item> {
                     if self.count == 0 {
@@ -3074,14 +3266,14 @@ fn generate_group_decoder(
                     let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_version);
                     let size = match entry.encoded_length() {
                         Ok(s) => s,
-                        Err(_) => {
+                        Err(e) => {
                             self.count = 0;
-                            return Some(entry);
+                            return Some(Err(e));
                         }
                     };
                     self.pos += size;
                     self.count -= 1;
-                    Some(entry)
+                    Some(Ok(entry))
                 }
             }
 
@@ -3320,6 +3512,21 @@ fn generate_group_decoder(
                     pub const fn #raw_ident(&self) -> #target_ident {
                         #[allow(unused_unsafe)]
                         unsafe { self.#unchecked_ident() }
+                    }
+                });
+
+                // Lazy flyweight accessor (_lazy)
+                let entry_lazy_ident = syn::Ident::new(
+                    &format!("{}_lazy", f_name),
+                    proc_macro2::Span::call_site(),
+                );
+                let target_decoder_name =
+                    syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
+                entry_body.extend(quote::quote! {
+                    #[inline]
+                    pub fn #entry_lazy_ident(&self) -> #target_decoder_name<'_> {
+                        let offset = self.pos + #offset_lit;
+                        #target_decoder_name { buf: self.buf, pos: offset }
                     }
                 });
             }
