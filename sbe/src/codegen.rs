@@ -4449,15 +4449,17 @@ fn generate_message_encoder(
             /// Compute the exact SBE message length before encoding.
             /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
             #[inline]
+            /// Compute the exact SBE message body length (excluding header).
+            #[inline]
             pub const fn compute_encoded_length(
                 #(#params),*
             ) -> usize {
-                let mut len = #header_size_lit + #block_length_lit;
+                let mut len = #block_length_lit;
                 #(#sum_body)*
                 len
             }
 
-            /// Compute the exact SBE message length including the message header.
+            /// Compute the exact SBE message length including the 8-byte header.
             #[inline]
             pub const fn compute_encoded_length_with_message_header(
                 #(#params),*
