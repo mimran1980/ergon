@@ -2988,12 +2988,35 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
         let g_snake = to_snake_case(&g.name);
         let g_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
         let sep = if out_idx == 0 { "" } else { ", " };
-        let fmt_str = format!("{sep}{g_snake}: {{}} entries");
-        body.extend(quote::quote! {
-            if let Ok(g) = self.#g_ident() {
-                write!(f, #fmt_str, g.len())?;
-            }
-        });
+        let g_total_tail = g.groups.len() + g.var_data.len();
+        if g_total_tail == 0 {
+            let fmt_open = format!("{sep}{g_snake}: [");
+            body.extend(quote::quote! {
+                if let Ok(g) = self.#g_ident() {
+                    write!(f, #fmt_open)?;
+                    for (i, entry) in g.enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{}", entry)?;
+                    }
+                    write!(f, "]")?;
+                }
+            });
+        } else {
+            let fmt_open = format!("{sep}{g_snake}: [");
+            body.extend(quote::quote! {
+                if let Ok(g) = self.#g_ident() {
+                    write!(f, #fmt_open)?;
+                    for (i, result) in g.enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        match result {
+                            Ok(entry) => write!(f, "{}", entry)?,
+                            Err(_) => write!(f, "{{err}}")?,
+                        }
+                    }
+                    write!(f, "]")?;
+                }
+            });
+        }
         out_idx += 1;
     }
     for vd in &msg.var_data {
@@ -3122,7 +3145,7 @@ fn generate_group_decoder(
             impl<'a> #decoder_ident<'a> {
                 #[inline]
                 pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-                    if n > self.count {
+                    if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: n * Self::ENTRY_BLOCK_LENGTH,
@@ -3140,7 +3163,7 @@ fn generate_group_decoder(
             impl<'a> #decoder_ident<'a> {
                 #[inline]
                 pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-                    if n > self.count {
+                    if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: n * Self::ENTRY_BLOCK_LENGTH,
@@ -3149,7 +3172,11 @@ fn generate_group_decoder(
                     }
                     for _ in 0..n {
                         let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_version);
-                        self.pos += entry.encoded_length()?;
+                        if cfg!(not(feature = "bound-check-disabled")) {
+                            self.pos += entry.encoded_length()?;
+                        } else {
+                            self.pos += entry.encoded_length().unwrap();
+                        }
                         self.count -= 1;
                     }
                     Ok(())
@@ -3245,6 +3272,41 @@ fn generate_group_decoder(
         }
     }
 
+    // entries() - typed iterator yielding EntryDecoder for fixed-entry groups
+    if total_tail == 0 {
+        let entries_iter_ident = quote::format_ident!("{}EntriesIter", name);
+        ts.extend(quote::quote! {
+            impl<'a> #decoder_ident<'a> {
+                #[inline]
+                pub fn entries(&mut self) -> #entries_iter_ident<'a, '_> {
+                    #entries_iter_ident { decoder: self }
+                }
+            }
+
+            #[doc(hidden)]
+            pub struct #entries_iter_ident<'a, 'd> {
+                decoder: &'d mut #decoder_ident<'a>,
+            }
+            impl<'a, 'd> Iterator for #entries_iter_ident<'a, 'd> {
+                type Item = #entry_decoder_ident<'a>;
+                fn next(&mut self) -> Option<Self::Item> {
+                    if self.decoder.count == 0 { return None; }
+                    let entry = #entry_decoder_ident::wrap(
+                        self.decoder.buf, self.decoder.pos, self.decoder.acting_version);
+                    self.decoder.pos += #block_len_lit;
+                    self.decoder.count -= 1;
+                    Some(entry)
+                }
+                fn size_hint(&self) -> (usize, Option<usize>) {
+                    (self.decoder.count, Some(self.decoder.count))
+                }
+            }
+            impl<'a, 'd> ExactSizeIterator for #entries_iter_ident<'a, 'd> {
+                fn len(&self) -> usize { self.decoder.count }
+            }
+        });
+    }
+
     // FastIter struct for tail groups
     if total_tail > 0 {
         let fast_iter_ident =
@@ -3307,6 +3369,7 @@ fn generate_group_decoder(
                         return None;
                     }
                     let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_version);
+                    #[cfg(not(feature = "bound-check-disabled"))]
                     let size = match entry.encoded_length() {
                         Ok(s) => s,
                         Err(e) => {
@@ -3314,6 +3377,8 @@ fn generate_group_decoder(
                             return Some(Err(e));
                         }
                     };
+                    #[cfg(feature = "bound-check-disabled")]
+                    let size = entry.encoded_length().unwrap();
                     self.pos += size;
                     self.count -= 1;
                     Some(Ok(entry))
@@ -3397,7 +3462,7 @@ fn generate_group_decoder(
                         pub const fn #f_name_ident(&self) -> Result<[#r_type_ty; #len_lit], sbe_rt::DecodeError> {
                             let offset = self.pos + #offset_lit;
                             let size = #len_times_prim;
-                            if offset + size > self.buf.len() {
+                            if cfg!(not(feature = "bound-check-disabled")) && offset + size > self.buf.len() {
                                 return Err(sbe_rt::DecodeError::BufferTooShort { field: #f_name_lit, needed: size, available: self.buf.len() - offset });
                             }
                             let mut res = [0 as #r_type_ty; #len_lit];
@@ -3804,7 +3869,54 @@ fn generate_group_decoder(
         }
     });
 
-    // Emit the EntryDecoder struct + its impl block
+    // EntryDecoder Display impl body
+    let mut entry_display_body = proc_macro2::TokenStream::new();
+    let mut entry_display_out_idx = 0usize;
+    for f in &g.fields {
+        let f_name = to_snake_case(&f.name);
+        let f_ident = syn::Ident::new(&f_name, proc_macro2::Span::call_site());
+        let sep = if entry_display_out_idx == 0 { "" } else { ", " };
+        match &f.field_type {
+            FieldType::Primitive(prim, length) => {
+                if f.presence == Presence::Constant || length.is_some() {
+                    continue;
+                }
+                let fmt_str = format!("{sep}{}: {{}}", f.name);
+                if f.presence == Presence::Optional || f.since_version > 0 {
+                    entry_display_body.extend(quote::quote! {
+                        if let Some(v) = self.#f_ident() {
+                            write!(f, #fmt_str, v)?;
+                        }
+                    });
+                } else {
+                    entry_display_body.extend(quote::quote! {
+                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                    });
+                }
+                entry_display_out_idx += 1;
+            }
+            FieldType::Enum { name: enum_name, .. } => {
+                if f.presence == Presence::Constant { continue; }
+                let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
+                if f.since_version > 0 {
+                    entry_display_body.extend(quote::quote! {
+                        if let Some(e) = self.#f_ident() {
+                            write!(f, #fmt_str)?;
+                        }
+                    });
+                } else {
+                    entry_display_body.extend(quote::quote! {
+                        { let e = self.#f_ident(); write!(f, #fmt_str)?; }
+                    });
+                }
+                entry_display_out_idx += 1;
+            }
+            FieldType::Set { .. } => {}
+            FieldType::Composite { .. } => {}
+        }
+    }
+
+    // Emit the EntryDecoder struct + its impl block + Display impl
     ts.extend(quote::quote! {
         pub struct #entry_decoder_ident<'a> {
             buf: &'a [u8],
@@ -3814,6 +3926,14 @@ fn generate_group_decoder(
 
         impl<'a> #entry_decoder_ident<'a> {
             #entry_body
+        }
+
+        impl<'a> core::fmt::Display for #entry_decoder_ident<'a> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "{{ ")?;
+                #entry_display_body
+                write!(f, " }}")
+            }
         }
     });
 
@@ -4243,6 +4363,60 @@ fn generate_message_encoder(
             self.pos - self.message_start
         }
     });
+
+    // Pre-encoding length calculator for messages with tails
+    if total_tail > 0 {
+        let mut params = Vec::<proc_macro2::TokenStream>::new();
+        let mut sum_body = Vec::<proc_macro2::TokenStream>::new();
+
+        for g_e in &msg.groups {
+            let g_snake = to_snake_case(&g_e.name);
+            let param_ident: syn::Ident = syn::Ident::new(&format!("{}_count", g_snake), span);
+            let (_, dim_size, _, _) = get_dimension_info(elements, &g_e.dimension_type);
+            let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
+            let g_block_len_lit = syn::LitInt::new(&g_e.block_length.to_string(), span);
+
+            sum_body.push(quote::quote! {
+                len += #dim_size_lit + #param_ident * #g_block_len_lit;
+            });
+            params.push(quote::quote! { #param_ident: usize });
+        }
+
+        for vd in &msg.var_data {
+            let vd_snake = to_snake_case(&vd.name);
+            let param_ident: syn::Ident = syn::Ident::new(&format!("{}_len", vd_snake), span);
+            let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
+            let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+
+            sum_body.push(quote::quote! {
+                len += #prefix_size_lit + #param_ident;
+            });
+            params.push(quote::quote! { #param_ident: usize });
+        }
+
+        impl_contents.extend(quote::quote! {
+            /// Compute the exact SBE message length before encoding.
+            /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
+            #[inline]
+            pub const fn compute_encoded_length(
+                #(#params),*
+            ) -> usize {
+                let mut len = #header_size_lit + #block_length_lit;
+                #(#sum_body)*
+                len
+            }
+
+            /// Compute the exact SBE message length including the message header.
+            #[inline]
+            pub const fn compute_encoded_length_with_message_header(
+                #(#params),*
+            ) -> usize {
+                let mut len = #header_size_lit + #block_length_lit;
+                #(#sum_body)*
+                len
+            }
+        });
+    }
 
     // Close the impl block
     if total_tail > 0 {

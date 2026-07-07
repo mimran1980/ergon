@@ -1566,10 +1566,30 @@ impl<'a> core::fmt::Display for CarDecoder<'a> {
             write!(f, ", code: Model::{e:?}")?;
         }
         if let Ok(g) = self.fuel_figures() {
-            write!(f, ", fuel_figures: {} entries", g.len())?;
+            write!(f, ", fuel_figures: [")?;
+            for (i, result) in g.enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                match result {
+                    Ok(entry) => write!(f, "{}", entry)?,
+                    Err(_) => write!(f, "{{err}}")?,
+                }
+            }
+            write!(f, "]")?;
         }
         if let Ok(g) = self.performance_figures() {
-            write!(f, ", performance_figures: {} entries", g.len())?;
+            write!(f, ", performance_figures: [")?;
+            for (i, result) in g.enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                match result {
+                    Ok(entry) => write!(f, "{}", entry)?,
+                    Err(_) => write!(f, "{{err}}")?,
+                }
+            }
+            write!(f, "]")?;
         }
         if let Ok(d) = self.manufacturer() {
             write!(f, ", manufacturer: {} bytes", d.len())?;
@@ -1649,7 +1669,7 @@ impl<'a> FuelFiguresDecoder<'a> {
 impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-        if n > self.count {
+        if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
                 needed: n * Self::ENTRY_BLOCK_LENGTH,
@@ -1662,7 +1682,11 @@ impl<'a> FuelFiguresDecoder<'a> {
                 self.pos,
                 self.acting_version,
             );
-            self.pos += entry.encoded_length()?;
+            if cfg!(not(feature = "bound-check-disabled")) {
+                self.pos += entry.encoded_length()?;
+            } else {
+                self.pos += entry.encoded_length().unwrap();
+            }
             self.count -= 1;
         }
         Ok(())
@@ -1731,6 +1755,7 @@ impl<'a> Iterator for FuelFiguresDecoder<'a> {
             self.pos,
             self.acting_version,
         );
+        #[cfg(not(feature = "bound-check-disabled"))]
         let size = match entry.encoded_length() {
             Ok(s) => s,
             Err(e) => {
@@ -1738,6 +1763,8 @@ impl<'a> Iterator for FuelFiguresDecoder<'a> {
                 return Some(Err(e));
             }
         };
+        #[cfg(feature = "bound-check-disabled")]
+        let size = entry.encoded_length().unwrap();
         self.pos += size;
         self.count -= 1;
         Some(Ok(entry))
@@ -1853,6 +1880,20 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         entry.tail_offset_1()
     }
 }
+impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{{ ")?;
+        {
+            let v = self.speed();
+            write!(f, "speed: {}", v)?;
+        }
+        {
+            let v = self.mpg();
+            write!(f, ", mpg: {}", v)?;
+        }
+        write!(f, " }}")
+    }
+}
 pub struct PerformanceFiguresDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -1919,7 +1960,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
 impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-        if n > self.count {
+        if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
                 needed: n * Self::ENTRY_BLOCK_LENGTH,
@@ -1932,7 +1973,11 @@ impl<'a> PerformanceFiguresDecoder<'a> {
                 self.pos,
                 self.acting_version,
             );
-            self.pos += entry.encoded_length()?;
+            if cfg!(not(feature = "bound-check-disabled")) {
+                self.pos += entry.encoded_length()?;
+            } else {
+                self.pos += entry.encoded_length().unwrap();
+            }
             self.count -= 1;
         }
         Ok(())
@@ -2001,6 +2046,7 @@ impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
             self.pos,
             self.acting_version,
         );
+        #[cfg(not(feature = "bound-check-disabled"))]
         let size = match entry.encoded_length() {
             Ok(s) => s,
             Err(e) => {
@@ -2008,6 +2054,8 @@ impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
                 return Some(Err(e));
             }
         };
+        #[cfg(feature = "bound-check-disabled")]
+        let size = entry.encoded_length().unwrap();
         self.pos += size;
         self.count -= 1;
         Some(Ok(entry))
@@ -2102,6 +2150,16 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         entry.tail_offset_1()
     }
 }
+impl<'a> core::fmt::Display for PerformanceFiguresEntryDecoder<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{{ ")?;
+        {
+            let v = self.octane_rating();
+            write!(f, "octaneRating: {}", v)?;
+        }
+        write!(f, " }}")
+    }
+}
 pub struct AccelerationDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -2160,7 +2218,7 @@ impl<'a> AccelerationDecoder<'a> {
 impl<'a> AccelerationDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-        if n > self.count {
+        if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
                 needed: n * Self::ENTRY_BLOCK_LENGTH,
@@ -2210,6 +2268,42 @@ impl<'a> AccelerationDecoder<'a> {
         let bytes = &self.buf[self.pos..self.pos + len];
         let (chunks, _) = bytes.as_chunks::<6>();
         Ok(chunks)
+    }
+}
+impl<'a> AccelerationDecoder<'a> {
+    #[inline]
+    pub fn entries(&mut self) -> AccelerationEntriesIter<'a, '_> {
+        AccelerationEntriesIter {
+            decoder: self,
+        }
+    }
+}
+#[doc(hidden)]
+pub struct AccelerationEntriesIter<'a, 'd> {
+    decoder: &'d mut AccelerationDecoder<'a>,
+}
+impl<'a, 'd> Iterator for AccelerationEntriesIter<'a, 'd> {
+    type Item = AccelerationEntryDecoder<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.decoder.count == 0 {
+            return None;
+        }
+        let entry = AccelerationEntryDecoder::wrap(
+            self.decoder.buf,
+            self.decoder.pos,
+            self.decoder.acting_version,
+        );
+        self.decoder.pos += 6;
+        self.decoder.count -= 1;
+        Some(entry)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.decoder.count, Some(self.decoder.count))
+    }
+}
+impl<'a, 'd> ExactSizeIterator for AccelerationEntriesIter<'a, 'd> {
+    fn len(&self) -> usize {
+        self.decoder.count
     }
 }
 impl<'a> Iterator for AccelerationDecoder<'a> {
@@ -2305,6 +2399,20 @@ impl<'a> AccelerationEntryDecoder<'a> {
     ) -> Result<usize, sbe_rt::DecodeError> {
         let entry = Self::wrap(buf, pos, acting_version);
         entry.tail_offset_0()
+    }
+}
+impl<'a> core::fmt::Display for AccelerationEntryDecoder<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{{ ")?;
+        {
+            let v = self.mph();
+            write!(f, "mph: {}", v)?;
+        }
+        {
+            let v = self.seconds();
+            write!(f, ", seconds: {}", v)?;
+        }
+        write!(f, " }}")
     }
 }
 pub mod car_encoder_state {
@@ -2435,6 +2543,41 @@ impl<'a, State> CarEncoder<'a, State> {
     #[inline]
     pub fn encoded_length_with_header(&self) -> usize {
         self.pos - self.message_start
+    }
+    /// Compute the exact SBE message length before encoding.
+    /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
+    #[inline]
+    pub const fn compute_encoded_length(
+        fuel_figures_count: usize,
+        performance_figures_count: usize,
+        manufacturer_len: usize,
+        model_len: usize,
+        activation_code_len: usize,
+    ) -> usize {
+        let mut len = 8 + 41;
+        len += 4 + fuel_figures_count * 6;
+        len += 4 + performance_figures_count * 1;
+        len += 4 + manufacturer_len;
+        len += 4 + model_len;
+        len += 4 + activation_code_len;
+        len
+    }
+    /// Compute the exact SBE message length including the message header.
+    #[inline]
+    pub const fn compute_encoded_length_with_message_header(
+        fuel_figures_count: usize,
+        performance_figures_count: usize,
+        manufacturer_len: usize,
+        model_len: usize,
+        activation_code_len: usize,
+    ) -> usize {
+        let mut len = 8 + 41;
+        len += 4 + fuel_figures_count * 6;
+        len += 4 + performance_figures_count * 1;
+        len += 4 + manufacturer_len;
+        len += 4 + model_len;
+        len += 4 + activation_code_len;
+        len
     }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
@@ -3089,7 +3232,7 @@ pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes(bytes))
 }
 #[non_exhaustive]
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum AnyMessage<'a> {
     Car(CarDecoder<'a>),
     Unknown { header: MessageHeader, payload: &'a [u8] },

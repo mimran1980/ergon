@@ -215,8 +215,8 @@ fn decoder_display() {
         assert!(s.contains("model_year: 2013"), "display model_year");
         assert!(s.contains("available: BooleanType::T"), "display available");
         assert!(s.contains("code: Model::A"), "display code");
-        assert!(s.contains("fuel_figures: 3 entries"), "display fuel_figures count");
-        assert!(s.contains("performance_figures: 2 entries"), "display performance_figures count");
+        assert!(s.contains("fuel_figures: ["), "display fuel_figures entries");
+        assert!(s.contains("performance_figures: ["), "display performance_figures entries");
         assert!(s.contains("manufacturer: 5 bytes"), "display manufacturer bytes");
         assert!(s.contains("model: 9 bytes"), "display model bytes");
         assert!(s.contains("activation_code: 6 bytes"), "display activation_code bytes");
