@@ -16,9 +16,12 @@ Registers a table's column layout. Sent once (or on producer restart).
 ```
 schema_id: uint32
 table_name: varString
+metadata: group (repeating)
+  numEntries: uint8
+  entries: MetadataEntry   (composite: key varString, value varString)
 columns: group (repeating)
   numColumns: uint8
-  entries: ColumnDef   (composite: field_id uint8, name varString, type_tag uint8)
+  entries: ColumnDef       (composite: field_id uint8, name varString, type_tag uint8)
 ```
 
 ### DynamicRow
@@ -26,17 +29,22 @@ A single row of values. Sent for every record() call.
 
 ```
 schema_id: uint32
-int64Fields: group (repeating)    → entries: (field_id uint8, value int64)
-uint64Fields: group (repeating)   → entries: (field_id uint8, value uint64)
-float64Fields: group (repeating)  → entries: (field_id uint8, value double)
-boolFields: group (repeating)     → entries: (field_id uint8, value uint8)
-stringFields: group (repeating)   → entries: (field_id uint8, value varString)
-nullFields: group (repeating)     → entries: (field_id uint8)
-symbolTable: varData              → packed string data for string values
+metadata: group (repeating)        → entries: (key varString, value varString)
+int64Fields: group (repeating)     → entries: (field_id uint8, value int64)
+uint64Fields: group (repeating)    → entries: (field_id uint8, value uint64)
+float64Fields: group (repeating)   → entries: (field_id uint8, value double)
+boolFields: group (repeating)      → entries: (field_id uint8, value uint8)
+stringFields: group (repeating)    → entries: (field_id uint8, value varString)
+nullFields: group (repeating)      → entries: (field_id uint8)
+symbolTable: varData               → packed string data for string values
 ```
 
-One group per value type. Each group entry is just `(field_id, value)`.
-The "variant" is implicit in which group a field appears in.
+The metadata group sits at the front of the message — the consumer reads it
+first and creates/updates metadata columns before processing data groups.
+Metadata is the same group structure in both `DynamicSchema` and `DynamicRow`.
+In `DynamicSchema` it declares which metadata keys exist; in `DynamicRow` it
+provides their values. New metadata keys discovered in `DynamicRow` (not in
+the schema) trigger `ADD COLUMN` on the consumer.
 
 ### Type tag mapping
 ```
@@ -60,9 +68,13 @@ the user's crate — these are internal infrastructure types).
 - [ ] Schema compiles through ErgoSBE's generator
 - [ ] Generated Rust types compile with no warnings
 - [ ] `DynamicRow` can encode + decode roundtrip with known values
-- [ ] `DynamicSchema` encodes table_name and column list correctly
+- [ ] `DynamicSchema` encodes table_name, metadata, and column list correctly
+- [ ] Metadata group in `DynamicSchema` → consumer can read metadata keys
+- [ ] Metadata group in `DynamicRow` → consumer can read metadata values
+- [ ] Metadata roundtrip: encode with metadata → decode → metadata values match
 - [ ] All six field groups (int64, uint64, float64, bool, string, null) encode + decode correctly
 - [ ] Symbol table works: string values roundtrip through varData
-- [ ] Empty row (all groups have numInGroup=0) decodes correctly
-- [ ] Row with one field of each type decodes correctly
+- [ ] Empty row (all groups including metadata have numInGroup=0) decodes correctly
+- [ ] Row with metadata + one field of each type decodes correctly
 - [ ] Schema + row roundtrip: encode DynamicSchema, encode DynamicRow with that schema_id, decode both
+- [ ] Empty metadata (no metadata keys) → still produces valid roundtrip

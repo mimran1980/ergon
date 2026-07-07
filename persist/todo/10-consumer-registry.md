@@ -18,6 +18,7 @@ pub struct SchemaRegistry {
 struct RegisteredSchema {
     table_name: String,
     columns: Vec<(u8, String, ColumnType)>,  // (field_id, name, type) — ordered by field_id
+    metadata_keys: Vec<String>,               // metadata column names (all String type)
     table_schema: TableSchema,
 }
 
@@ -45,25 +46,32 @@ impl RowDecoder {
 
 ### Decoding logic
 
-For each field group in the `DynamicRow`:
-1. Iterate entries `(field_id, value)`
-2. Look up `field_id` in the cached schema → get column name + type
-3. Push value into `clickhouse::Row` at that column name
-4. Missing fields (not in this row) → encoded as null
-5. Fields in schema but not in any group → null
-
-For string fields: resolve string_id → string from the symbol table blob.
+1. **Metadata first:** Read the metadata group from DynamicRow. For each
+   `(key, value)` pair: push into `clickhouse::Row` at that column name.
+   If the key is new (not in the registered schema), trigger `ADD COLUMN`
+   and add it to the schema cache.
+2. **Data fields:** For each field group in the `DynamicRow`:
+   - Iterate entries `(field_id, value)`
+   - Look up `field_id` in the cached schema → get column name + type
+   - Push value into `clickhouse::Row` at that column name
+3. Missing fields (in schema but not in this row) → encoded as null.
+4. Extra fields in row (not in schema) → ignored (data fields only — new
+   metadata keys are always added).
+5. For string fields: resolve string_id → string from the symbol table blob.
 
 ## Acceptance criteria
 
-- [ ] `SchemaRegistry::register()` parses DynamicSchema → populates internal map
+- [ ] `SchemaRegistry::register()` parses DynamicSchema → populates internal map with columns + metadata_keys
 - [ ] `SchemaRegistry::register()` is idempotent (same schema_id twice → no-op)
 - [ ] `SchemaRegistry::table_name()` returns correct name for known schema_id
-- [ ] `RowDecoder::decode()` produces correct `clickhouse::Row` for a row with all types
+- [ ] `RowDecoder::decode()` produces correct `clickhouse::Row` with data + metadata columns
+- [ ] Metadata values from row decoded into correct `clickhouse::Row` columns
+- [ ] New metadata key in row (not in schema) → ADD COLUMN + added to cache
 - [ ] Row with string fields → correct string values via symbol table
 - [ ] Row with null fields → null values in output
-- [ ] Extra fields in row not in schema → ignored
-- [ ] Missing fields in row (present in schema, absent in row) → null
-- [ ] Unit test: register schema → decode row → verify Row contents
-- [ ] Unit test: roundtrip: DynamicRecorder.record() bytes → DynamicRow decode → RowDecoder.decode()
+- [ ] Extra data fields in row not in schema → ignored
+- [ ] Missing data fields in row (present in schema, absent in row) → null
+- [ ] Unit test: register schema with metadata → decode row → verify Row contents including metadata
+- [ ] Unit test: roundtrip: DynamicRecorder.record() bytes → DynamicRow decode → RowDecoder.decode() — metadata intact
 - [ ] Unit test: multiple rows decoded in sequence (no state leak between decodes)
+- [ ] Unit test: dynamic metadata discovery (new metadata key appears mid-stream)

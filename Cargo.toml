@@ -1,5 +1,5 @@
 [workspace]
-members = ["sbe"]
+members = ["sbe", "persist", "persist/derive"]
 exclude = ["samples"]
 resolver = "3"
 

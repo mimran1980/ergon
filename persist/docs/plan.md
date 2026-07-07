@@ -156,9 +156,10 @@ One repeating group per value type — no discriminated union needed:
 
 <message name="DynamicRow">
   <field name="schemaId" primitiveType="uint32"/>
-  <group name="int64Fields">     <!-- (field_id, value) where value is i64 -->
-  <group name="uint64Fields">    <!-- (field_id, value) where value is u64 -->
-  <group name="stringFields">    <!-- (field_id, value) where value is stringRef -->
+  <group name="metadata">          <!-- (key, value) pairs -->
+  <group name="int64Fields">       <!-- (field_id, value) where value is i64 -->
+  <group name="uint64Fields">      <!-- (field_id, value) where value is u64 -->
+  <group name="stringFields">      <!-- (field_id, value) where value is stringRef -->
   <!-- ... one group per primitive type ... -->
   <data name="symbolTable" type="varDataEncoding"/>  <!-- string interning -->
 </message>
@@ -179,6 +180,39 @@ changed struct shape:
 | Incompatible type change | Silently skip, keep old column |
 | Removed field | Ignore (columns never dropped) |
 | Type conflict | Keep existing, log warning |
+
+## Producer metadata
+
+A consumer may serve multiple producers on the same box. Metadata identifies
+which producer a row came from — set once per producer session, auto-stamped
+on every row. The DTO doesn't know about it.
+
+```rust
+// Compile-time path
+let sender = sink.sender("exchange_book")
+    .metadata("app", "risk-engine")
+    .metadata("host", &hostname)
+    .metadata("pid", std::process::id())
+    .build()?;
+
+sender.persist(&order_book)?;  // metadata auto-injected
+
+// Dynamic path
+let rec = DynamicRecorder::new("order_book_snap")
+    .metadata("app", "risk-engine")
+    .metadata("host", &hostname)
+    .field("price", UInt64)
+    .build()?;
+```
+
+Metadata travels with each message — a group of `(key, value)` pairs at the
+start of every `DynamicRow`. The consumer reads it and adds metadata as
+columns alongside the data columns. New metadata keys get `ADD COLUMN` on
+first sight (same migration rules as data columns).
+
+For the compile-time path, metadata is injected by the `PersistSender` wrapper,
+not by the `Persist` trait or the derive macro. The struct carries only its own
+data.
 
 ## Connection model
 

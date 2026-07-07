@@ -1,0 +1,35 @@
+[package]
+name = "ergo-clickhouse-persist"
+description = "Debugging persistence: auto-persist annotated structs to ClickHouse with dynamic schema management"
+keywords = ["clickhouse", "persistence", "debugging", "sbe", "trading"]
+categories = ["database", "development-tools", "debugging"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+rust_decimal = ["dep:rust_decimal"]
+chrono = ["dep:chrono"]
+duration = []
+serde = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+clickhouse = "0.15"
+chrono = { version = "0.4", optional = true, features = ["now"] }
+rust_decimal = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+chrono = { version = "0.4", features = ["now"] }
+rust_decimal = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true
