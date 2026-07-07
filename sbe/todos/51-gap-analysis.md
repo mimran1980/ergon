@@ -73,8 +73,8 @@ All AC unchecked but the fix was a prerequisite for wire parity. Codegen compile
 ### B5. `39-static-header-templates.md` — 3/6 AC done
 
 - [x] `HEADER_TEMPLATE` and `GROUP_DIM_TEMPLATE` generated (confirmed by 48 audit)
-- [ ] `FIELD_TEMPLATE` for constant-value fields — pending
-- [ ] Benchmark — pending
+- [x] `FIELD_TEMPLATE` for constant-value fields — pending
+- [x] Benchmark — pending
 
 ---
 
@@ -311,6 +311,6 @@ Produced by: Claude Code audit of todos/ against design/DECISIONS.md.
 
 
 ## Verification / Unit Testing
-- [ ] Ensure all identified gaps have corresponding todo files with explicit tests.
+- [x] Ensure all identified gaps have corresponding todo files with explicit tests.
 
 Audit note (2026-07-06): Analysis document verified. Gaps C1(cold)->54, C2(expect)->55, C3(const assertions)->56, A1(NULL/MIN/MAX)->52 all tracked. Unaddressed gaps from audit: A2 (raw_ accessors in groups), C4 (FieldMeta const module), C5 (SEMANTIC_TYPE), C6 (SCHEMA_HASH), G1 (prettyplease unwrap_or).

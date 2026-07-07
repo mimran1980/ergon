@@ -83,11 +83,11 @@ with `bound-check-disabled`, the `Err` path is never taken.
 
 ## Acceptance criteria
 
-- [ ] `nth()` bounds checks gated behind `bound-check-disabled`
-- [ ] `skip_n()` bounds checks gated behind `bound-check-disabled`
-- [ ] Entry field accessor bounds checks gated
-- [ ] Iterator `next()` bounds checks gated
-- [ ] `#[cfg(feature = "bound-check-disabled")]` fast paths use `unsafe` where needed
-- [ ] Golden file regenerated and stability test passes
-- [ ] Baseline tests pass with default features
-- [ ] `cargo test --features bound-check-disabled` passes
+- [x] `nth()` bounds checks gated behind `bound-check-disabled`
+- [x] `skip_n()` bounds checks gated behind `bound-check-disabled`
+- [x] Entry field accessor bounds checks gated
+- [x] Iterator `next()` bounds checks gated
+- [x] `#[cfg(feature = "bound-check-disabled")]` fast paths use `unsafe` where needed
+- [x] Golden file regenerated and stability test passes
+- [x] Baseline tests pass with default features
+- [x] `cargo test --features bound-check-disabled` passes

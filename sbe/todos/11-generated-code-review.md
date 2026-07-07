@@ -25,13 +25,13 @@ and ask: is this idiomatic, performant, and maintainable Rust?
 ## Acceptance criteria
 
 - [x] Generate the full Car example and read every line of output
-- [ ] Compare side-by-side with upstream Rust generator output
-- [ ] List every improvement opportunity, categorised as: quick win, medium
+- [x] Compare side-by-side with upstream Rust generator output
+- [x] List every improvement opportunity, categorised as: quick win, medium
       effort, deferred
-- [ ] File follow-up todos for any non-trivial improvements discovered
+- [x] File follow-up todos for any non-trivial improvements discovered
 
 Ref: `design/DECISIONS.md` §2–4, §8–10 for the intended API contract.
 
 
 ## Verification / Unit Testing
-- [ ] Verify that all generated code patterns conform to standard Rust formatting and clippy rules without errors.
+- [x] Verify that all generated code patterns conform to standard Rust formatting and clippy rules without errors.

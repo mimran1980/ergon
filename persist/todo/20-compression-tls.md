@@ -60,5 +60,5 @@ The builder options are for custom certificate configurations.
 - [x] TLS enabled automatically for `https://` ClickHouse URLs
 - [x] `tls_skip_verify()` for dev environments with self-signed certs
 - [x] `tls_ca_cert()` for custom CA bundles
-- [ ] Integration test with LZ4 verifies compression roundtrip (needs Docker ClickHouse, same pattern as existing `#[ignore]` integration tests)
+- [x] Integration test with LZ4 verifies compression roundtrip (needs Docker ClickHouse, same pattern as existing `#[ignore]` integration tests)
 - [x] No regression in existing tests

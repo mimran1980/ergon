@@ -1895,6 +1895,24 @@ fn generate_message_decoder(
         max_tail += prefix_size + vd.max_length.unwrap_or(0);
     }
     let max_encoded_length = header_size + block_length + max_tail;
+    let total_tail = msg.groups.len() + msg.var_data.len();
+
+    // Tail offset cache fields (Cell<Option<usize>> per section ≥1)
+    let mut tail_cache_fields = proc_macro2::TokenStream::new();
+    for ki in 1..=total_tail {
+        let field: proc_macro2::TokenStream = format!(
+            "tail_{ki}_cache: core::cell::Cell<Option<usize>>,"
+        ).parse().expect("valid token stream");
+        tail_cache_fields.extend(field);
+    }
+    // Wrap cache initializations (Cell::new(None) per section)
+    let mut wrap_cache_inits = proc_macro2::TokenStream::new();
+    for ki in 1..=total_tail {
+        let field: proc_macro2::TokenStream = format!(
+            "tail_{ki}_cache: core::cell::Cell::new(None),"
+        ).parse().expect("valid token stream");
+        wrap_cache_inits.extend(field);
+    }
 
     // Identifiers for codegen
     let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
@@ -1924,12 +1942,13 @@ fn generate_message_decoder(
         });
     }
     ts.extend(quote::quote! {
-        #[derive(Clone, Copy)]
+        #[derive(Clone)]
         pub struct #decoder_ident<'a> {
             buf: &'a [u8],
             pos: usize,
             acting_version: u16,
             acting_block_length: usize,
+            #tail_cache_fields
         }
     });
 
@@ -1981,6 +2000,7 @@ fn generate_message_decoder(
                 pos,
                 acting_block_length,
                 acting_version,
+                #wrap_cache_inits
             }
         }
     });
@@ -2509,7 +2529,6 @@ fn generate_message_decoder(
     }
 
     // 7. Tail offset helpers
-    let total_tail = msg.groups.len() + msg.var_data.len();
 
     // tail_offset_0
     impl_body.extend(quote::quote! {
@@ -2540,6 +2559,9 @@ fn generate_message_decoder(
         let tail = format!(
             "    #[inline]\n\
              fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                 if let Some(cached) = self.tail_{k1}_cache.get() {{\n\
+                     return Ok(cached);\n\
+                 }}\n\
                  let start = self.tail_offset_{k}()?;\n\
                  if start + {ds} > self.buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{gn}\", needed: {ds}, available: self.buf.len() - start }});\n\
@@ -2554,6 +2576,7 @@ fn generate_message_decoder(
                      pos = {ge}::skip(self.buf, pos, block_len, self.acting_version)?;\n\
                      idx += 1;\n\
                  }}\n\
+                 self.tail_{k1}_cache.set(Some(pos));\n\
                  Ok(pos)\n\
              }}",
             k1 = k1,
@@ -2580,6 +2603,9 @@ fn generate_message_decoder(
         let vd_tail = format!(
             "    #[inline]\n\
              fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
+                 if let Some(cached) = self.tail_{k1}_cache.get() {{\n\
+                     return Ok(cached);\n\
+                 }}\n\
                  let start = self.tail_offset_{k}()?;\n\
                  if start + {ps} > self.buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps}, available: self.buf.len() - start }});\n\
@@ -2590,6 +2616,7 @@ fn generate_message_decoder(
                  if start + {ps} + len > self.buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps} + len, available: self.buf.len() - start }});\n\
                  }}\n\
+                 self.tail_{k1}_cache.set(Some(start + {ps} + len));\n\
                  Ok(start + {ps} + len)\n\
              }}",
             k1 = k1,
@@ -4878,7 +4905,7 @@ fn generate_any_message(
         }
         out.extend(quote::quote! {
             #[non_exhaustive]
-            #[derive(Clone, Copy)]
+            #[derive(Clone)]
             pub enum AnyMessage<'a> {
                 #enum_variants
                 Unknown {

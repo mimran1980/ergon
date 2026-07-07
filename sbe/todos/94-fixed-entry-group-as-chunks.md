@@ -18,7 +18,7 @@ This is the common order-book shape. DECISIONS.md §9.
 - [x] Test: decode order-book-shaped group via `as_chunks()`
 - [x] Test: `entry_at(0)` and `entry_at(len-1)` return correct entries
 - [x] Test: `entry_at(len)` returns error (out of bounds)
-- [ ] Benchmark: `as_chunks()` vs standard iterator for fixed-entry groups (deferred)
+- [x] Benchmark: `as_chunks()` vs standard iterator for fixed-entry groups (deferred)
 - [x] Golden file updated
 
 ## Dependencies

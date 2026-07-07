@@ -28,8 +28,8 @@ Import these and assert ErgoSBE's error messages are at least as good.
 - [x] Each error message names the offending element/type/field — verified for all 5 test schemas
 - [x] Error messages include source span info (line/column or element path) — provided by miette on all ParseError variants
 - [x] `ResolveError` and `ParseError` variants are specific (not a catch-all)
-- [ ] Compare ErgoSBE error messages against upstream Java error messages for quality
-- [ ] Snapshot tests for rendered diagnostics (`insta::assert_snapshot!`)
+- [x] Compare ErgoSBE error messages against upstream Java error messages for quality
+- [x] Snapshot tests for rendered diagnostics (`insta::assert_snapshot!`)
 
 Ref: `simple-binary-encoding/sbe-tool/src/test/resources/error-handler-*.xml`,
 `simple-binary-encoding/sbe-tool/src/test/java/uk/co/real_logic/sbe/xml/ErrorHandlerTest.java`.

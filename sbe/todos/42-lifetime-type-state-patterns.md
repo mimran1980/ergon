@@ -43,10 +43,10 @@ impl<'a> Encoder<'a, 2> {
 Compile-time guarantee: `.complete()` only exists on the terminal state.
 `Encoder<1>::complete()` is a compile error. No phantom types to name.
 
-- [ ] Replace phantom state types with `const N: usize` pattern
-- [ ] Terminal state implements `AsRef<[u8]>`, `as_bytes()`, `len()`
-- [ ] Each transition is documented: "Returns Encoder<1>. Call add_asks() next."
-- [ ] No runtime cost — const generic is zero-sized
+- [x] Replace phantom state types with `const N: usize` pattern
+- [x] Terminal state implements `AsRef<[u8]>`, `as_bytes()`, `len()`
+- [x] Each transition is documented: "Returns Encoder<1>. Call add_asks() next."
+- [x] No runtime cost — const generic is zero-sized
 
 ### 2. Lifetime-proof encoder — buffer borrow released on complete
 
@@ -61,9 +61,9 @@ let bytes: &[u8] = {
 buf[0] = 0;
 ```
 
-- [ ] Encoder is consumed (by-value) at each step — no lingering borrows
-- [ ] `complete()` returns `&'a [u8]` borrowing the buffer for the written region
-- [ ] Doc: lifetime diagram showing borrow start/end
+- [x] Encoder is consumed (by-value) at each step — no lingering borrows
+- [x] `complete()` returns `&'a [u8]` borrowing the buffer for the written region
+- [x] Doc: lifetime diagram showing borrow start/end
 
 ### 3. `type Decoder<'a>` on SbeMessage for generic dispatch
 
@@ -81,10 +81,10 @@ fn handle_message<M: SbeMessage>(buf: &[u8]) -> Result<(), DecodeError> {
 }
 ```
 
-- [ ] `type Decoder<'a>` associated type on `SbeMessage`
-- [ ] `TryFrom<&'a [u8]>` impl on every decoder (already tracked in 01)
-- [ ] Generic code can name the decoder without knowing the concrete type
-- [ ] Works alongside `AnyMessage` enum — not a replacement, an addition
+- [x] `type Decoder<'a>` associated type on `SbeMessage`
+- [x] `TryFrom<&'a [u8]>` impl on every decoder (already tracked in 01)
+- [x] Generic code can name the decoder without knowing the concrete type
+- [x] Works alongside `AnyMessage` enum — not a replacement, an addition
 
 ### 4. `impl Iterator` return types (hide generated type names)
 
@@ -103,10 +103,10 @@ for entry in car.bids()? {   // returns impl Iterator
 }
 ```
 
-- [ ] All group accessors return `impl Iterator<Item = ...>` instead of named types
-- [ ] `ExactSizeIterator` + `DoubleEndedIterator` bounds on the `impl` return
-- [ ] Generated iterator structs are `#[doc(hidden)]` — internal detail
-- [ ] Same for var-data decoders if they produce iterators
+- [x] All group accessors return `impl Iterator<Item = ...>` instead of named types
+- [x] `ExactSizeIterator` + `DoubleEndedIterator` bounds on the `impl` return
+- [x] Generated iterator structs are `#[doc(hidden)]` — internal detail
+- [x] Same for var-data decoders if they produce iterators
 
 ### 5. HRTB for encode closures
 
@@ -120,8 +120,8 @@ The `for<'b>` (Higher-Ranked Trait Bound) means the closure works for ANY borrow
 lifetime, not just the one inferred at the call site. This prevents lifetime
 errors when the closure captures local variables.
 
-- [ ] `for<'a>` on all closure-based encode methods
-- [ ] Test: closure captures a local `String` → compiles (without HRTB it may not)
+- [x] `for<'a>` on all closure-based encode methods
+- [x] Test: closure captures a local `String` → compiles (without HRTB it may not)
 
 ## P1 — implement when basics are stable
 
@@ -141,9 +141,9 @@ encoder.add_bids(...)   // returns Encoder<1>, ONLY .add_asks() available
 // Encoder<0>.complete() → compile error (groups not written yet)
 ```
 
-- [ ] Each sequential element appears as a method only on the correct state
-- [ ] Rustdoc on each method: "Writes the bids group. Returns Encoder<1>."
-- [ ] Messages with no tail skip type-state entirely (fluent `&mut self` only)
+- [x] Each sequential element appears as a method only on the correct state
+- [x] Rustdoc on each method: "Writes the bids group. Returns Encoder<1>."
+- [x] Messages with no tail skip type-state entirely (fluent `&mut self` only)
 
 ### 7. GAT-based lending group iterator (deferred)
 
@@ -157,13 +157,13 @@ iterator, not the buffer, enabling `for entry in &mut iter` without consuming:
 
 ## Acceptance criteria
 
-- [ ] Const-generic type-state replaces phantom types on encoders
-- [ ] `.complete()` consumes the encoder; buffer borrow released
-- [ ] `type Decoder<'a>` on `SbeMessage` trait
-- [ ] Group accessors return `impl Iterator + ExactSizeIterator`
-- [ ] HRTB `for<'a>` on encode closures
-- [ ] Compile-time field ordering enforced by type-state
-- [ ] All existing tests pass, no wire format change
+- [x] Const-generic type-state replaces phantom types on encoders
+- [x] `.complete()` consumes the encoder; buffer borrow released
+- [x] `type Decoder<'a>` on `SbeMessage` trait
+- [x] Group accessors return `impl Iterator + ExactSizeIterator`
+- [x] HRTB `for<'a>` on encode closures
+- [x] Compile-time field ordering enforced by type-state
+- [x] All existing tests pass, no wire format change
 
 Ref: `design/DECISIONS.md` §2 (encoder), §5 (SbeMessage trait), §6 (dispatch).
 Rust features: const generics, GATs, HRTBs, `impl Trait` in return position.

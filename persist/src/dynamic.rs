@@ -701,8 +701,8 @@ mod tests {
             .field("qty", ColumnType::UInt64)
             .field("symbol", ColumnType::String)
             .field("is_active", ColumnType::Bool)
-            .build()
-            .unwrap()
+            .build().unwrap()
+            
     }
 
     fn simple_values() -> Vec<DynamicValue> {

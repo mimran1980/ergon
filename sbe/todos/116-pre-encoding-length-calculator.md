@@ -54,10 +54,11 @@ field gets a named parameter.
 
 ## Acceptance criteria
 
-- [ ] `encoded_length()` generated on message encoders with groups or var-data
-- [ ] Parameters: one `usize` per group (entry count) + one `usize` per var-data (byte length)
-- [ ] Returns exact total message length in bytes
-- [ ] `const fn` where possible
-- [ ] Separate from `MAX_ENCODED_LENGTH` (which stays as the worst-case bound)
-- [ ] Golden file regenerated and stability test passes
-- [ ] Baseline tests pass
+- [x] `encoded_length()` — body-only length (no header)
+- [x] `encoded_length_with_message_header()` — includes 8-byte SBE header
+- [x] Parameters: one `usize` per group (entry count) + one `usize` per var-data (byte length)
+- [x] Returns exact total message length in bytes
+- [x] `const fn` where possible
+- [x] Separate from `MAX_ENCODED_LENGTH` (which stays as the worst-case bound)
+- [x] Golden file regenerated and stability test passes
+- [x] Baseline tests pass

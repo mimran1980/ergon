@@ -33,7 +33,7 @@ answer: what failed, where in the buffer, and what to do about it.
 
 ## EncodeError improvements
 
-- [ ] `BufferTooShort` carries what was being encoded:
+- [x] `BufferTooShort` carries what was being encoded:
   ```rust
   EncodeError::BufferTooShort {
       what: &'static str,      // "message header", "field modelYear", "group fuelFigures"
@@ -53,29 +53,29 @@ answer: what failed, where in the buffer, and what to do about it.
 
 ## General quality rules
 
-- [ ] Every error variant produces a single-line Display message suitable for
+- [x] Every error variant produces a single-line Display message suitable for
   logging (no multi-line, no debug formatting)
-- [ ] Field names use schema-level names (`modelYear`) not Rust-level names
+- [x] Field names use schema-level names (`modelYear`) not Rust-level names
   (`model_year`) — ops teams read the schema, not the generated code
-- [ ] Composite field paths use dot notation: `engine.capacity`, `fuelFigures[2].speed`
+- [x] Composite field paths use dot notation: `engine.capacity`, `fuelFigures[2].speed`
 - [x] Error types implement `core::error::Error` (already done — verified)
-- [ ] `#[cold]` on all error constructors (verify, tracked in 08)
-- [ ] `#[track_caller]` on error constructors so panic-location points to caller
-- [ ] Snapshot tests for every error variant's Display output
+- [x] `#[cold]` on all error constructors (verify, tracked in 08)
+- [x] `#[track_caller]` on error constructors so panic-location points to caller
+- [x] Snapshot tests for every error variant's Display output
   (`insta::assert_snapshot!`)
 
 ## Acceptance criteria
 
-- [ ] Every `DecodeError` variant carries field/schema context
-- [ ] Every `EncodeError` variant carries field/schema context
-- [ ] Error Display messages are single-line and actionable
-- [ ] Snapshot tests for all error messages
-- [ ] Error messages use the schema-level field names
-- [ ] Composite field paths use dot notation for nested fields
+- [x] Every `DecodeError` variant carries field/schema context
+- [x] Every `EncodeError` variant carries field/schema context
+- [x] Error Display messages are single-line and actionable
+- [x] Snapshot tests for all error messages
+- [x] Error messages use the schema-level field names
+- [x] Composite field paths use dot notation for nested fields
 
 Ref: `design/DECISIONS.md` §8b. Upstream Java errors at
 `simple-binary-encoding/sbe-tool/src/main/java/uk/co/real_logic/sbe/`.
 
 
 ## Verification / Unit Testing
-- [ ] Create unit tests verifying that all DecodeError and EncodeError variants contain detailed error messages naming the specific fields and offsets.
+- [x] Create unit tests verifying that all DecodeError and EncodeError variants contain detailed error messages naming the specific fields and offsets.

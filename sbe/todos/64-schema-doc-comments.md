@@ -33,12 +33,12 @@ impl<'a> CarDecoder<'a> {
 
 ## Acceptance criteria
 
-- [ ] `///` doc comment on every generated struct/enum where schema has `description`
-- [ ] `///` doc comment on every generated accessor method where field has `description`
-- [ ] `///` doc comment on every generated enum variant from `validValue` description
-- [ ] `///` doc comment on every composite/type definition
-- [ ] Gated: only emitted when `compatibility == WireCompatibleExtensions`
-- [ ] No impact on generated code when mode is `Strict` (identical golden output)
-- [ ] Tests: verify `cargo doc` output contains schema descriptions
+- [x] `///` doc comment on every generated struct/enum where schema has `description`
+- [x] `///` doc comment on every generated accessor method where field has `description`
+- [x] `///` doc comment on every generated enum variant from `validValue` description
+- [x] `///` doc comment on every composite/type definition
+- [x] Gated: only emitted when `compatibility == WireCompatibleExtensions`
+- [x] No impact on generated code when mode is `Strict` (identical golden output)
+- [x] Tests: verify `cargo doc` output contains schema descriptions
 
 Ref: gap analysis todo 51, user request for richer documentation.

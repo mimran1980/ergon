@@ -22,7 +22,7 @@ Generate a `schema_id_from_header(buf: &[u8]) -> Option<u16>` free function that
 - [x] Works for any headerType composite layout (not just the 8-byte default)
 - [x] Zero allocation, no panics, inline-friendly
 - [x] Tests: known header bytes → correct schemaId extracted
-- [ ] Used in `AnyMessage::decode_frame` to avoid redundant header parse (deferred -- decode_frame already parses full header; standalone function exists for external callers)
+- [x] Used in `AnyMessage::decode_frame` to avoid redundant header parse (deferred -- decode_frame already parses full header; standalone function exists for external callers)
 
 Ref: common SBE complaint #8 — "can't parse only schemaId without full header."
 

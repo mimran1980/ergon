@@ -11,15 +11,15 @@ in DECISIONS.md §9 as a core helper.
 - [x] XML `description` attribute on messages → `///` doc on decoder struct
 - [x] XML `description` on messages → `///` doc on encoder struct
 - [x] XML `description` on fields → `///` doc on field accessor methods
-- [ ] XML `description` on enum `<validValue>` → `///` doc on enum variant constants
-- [ ] XML `description` on set `<choice>` → `///` doc on set accessor methods
-- [ ] XML `description` on composites → `///` doc on composite struct
-- [ ] XML `<!-- -->` comments associated to nearest element → combined into `///` doc
-- [ ] `semanticType` → `/// Semantic type: Price` line appended to field doc
-- [ ] Schema-level `description` → module-level doc comment
-- [ ] Multi-line descriptions handled correctly (wrapped at 80 chars)
-- [ ] Test: `cargo doc --no-deps` produces clean output with schema descriptions
-- [ ] Golden file updated
+- [x] XML `description` on enum `<validValue>` → `///` doc on enum variant constants
+- [x] XML `description` on set `<choice>` → `///` doc on set accessor methods
+- [x] XML `description` on composites → `///` doc on composite struct
+- [x] XML `<!-- -->` comments associated to nearest element → combined into `///` doc
+- [x] `semanticType` → `/// Semantic type: Price` line appended to field doc
+- [x] Schema-level `description` → module-level doc comment
+- [x] Multi-line descriptions handled correctly (wrapped at 80 chars)
+- [x] Test: `cargo doc --no-deps` produces clean output with schema descriptions
+- [x] Golden file updated
 
 ## Dependencies
 

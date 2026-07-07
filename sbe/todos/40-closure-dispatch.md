@@ -39,9 +39,9 @@ use `AnyMessage` for convenience.
 
 ## Acceptance criteria
 
-- [ ] Generate `dispatch()` function alongside `AnyMessage` on each schema
-- [ ] `MessageHandler` trait with `on_<MessageName>(&self, decoder)` methods
-- [ ] `on_unknown(header, payload)` default implementation
-- [ ] `Dispatch` enum for the closure match (one variant per message + Unknown)
-- [ ] Benchmark: `dispatch()` vs `AnyMessage::decode()` — raw ns and branch miss rate
-- [ ] Both APIs work, both tested, both documented
+- [x] Generate `dispatch()` function alongside `AnyMessage` on each schema
+- [x] `MessageHandler` trait with `on_<MessageName>(&self, decoder)` methods
+- [x] `on_unknown(header, payload)` default implementation
+- [x] `Dispatch` enum for the closure match (one variant per message + Unknown)
+- [x] Benchmark: `dispatch()` vs `AnyMessage::decode()` — raw ns and branch miss rate
+- [x] Both APIs work, both tested, both documented

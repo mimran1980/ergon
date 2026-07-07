@@ -17,7 +17,7 @@ return the typed value. DECISIONS.md §4.
 - [x] Codegen: Enum decoder arm emits `const fn` for constant fields
 - [x] Codegen: Set decoder arm emits `const fn` for constant fields
 - [x] Test: `constant-enum-fields.xml` schema
-- [ ] Test: `basic-schema-constant-header-field.xml` schema (codegen header_size bug — constant in messageHeader composite produces wrong offset)
+- [x] Test: `basic-schema-constant-header-field.xml` schema (codegen header_size bug — constant in messageHeader composite produces wrong offset)
 - [x] Test: `group-with-constant-fields.xml` schema (constant fields in groups)
 
 Ref: `design/DECISIONS.md` §4 constant-value fields.

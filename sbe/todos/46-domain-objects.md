@@ -104,29 +104,29 @@ Each composite and group entry also gets `encode(&self, encoder: &mut XxxEncoder
 
 ## Feature flag
 
-- [ ] `domain-objects` feature in generated code (off by default)
-- [ ] When enabled, generates `struct Car { .. }` alongside `CarDecoder`
-- [ ] Does NOT replace or affect flyweight types — both coexist
-- [ ] Zero cost when disabled (no code generated)
+- [x] `domain-objects` feature in generated code (off by default)
+- [x] When enabled, generates `struct Car { .. }` alongside `CarDecoder`
+- [x] Does NOT replace or affect flyweight types — both coexist
+- [x] Zero cost when disabled (no code generated)
 
 ## Serde support
 
-- [ ] `serde` feature (separate from `domain-objects`, both needed for serde on domain objects)
-- [ ] `#[derive(Serialize, Deserialize)]` on all domain structs
-- [ ] Enum/set types use `#[serde(transparent)]` — serialized as their underlying integer
-- [ ] `serde_json::to_string(&car)?` produces human-readable JSON
-- [ ] Round-trip: `Car` → JSON → `Car` preserves equality
+- [x] `serde` feature (separate from `domain-objects`, both needed for serde on domain objects)
+- [x] `#[derive(Serialize, Deserialize)]` on all domain structs
+- [x] Enum/set types use `#[serde(transparent)]` — serialized as their underlying integer
+- [x] `serde_json::to_string(&car)?` produces human-readable JSON
+- [x] Round-trip: `Car` → JSON → `Car` preserves equality
 
 ## Acceptance criteria
 
-- [ ] `domain-objects` feature flag generates owned structs
-- [ ] Every message has `decode()` and `encode()` methods on the domain struct
-- [ ] Domain structs use `Vec<T>` for arrays/groups, `String` for strings, `Vec<u8>` for binary
-- [ ] `serde` feature adds Serialize/Deserialize derives
-- [ ] Round-trip: flyweight decode → domain → domain encode → flyweight decode → same values
-- [ ] JSON round-trip: domain → serde_json → domain → equal
-- [ ] Domain structs are `Debug + Clone + PartialEq`
-- [ ] Zero cost: feature off → no domain code generated
-- [ ] Test: Car schema with both features → encode/decode round-trip, JSON round-trip
+- [x] `domain-objects` feature flag generates owned structs
+- [x] Every message has `decode()` and `encode()` methods on the domain struct
+- [x] Domain structs use `Vec<T>` for arrays/groups, `String` for strings, `Vec<u8>` for binary
+- [x] `serde` feature adds Serialize/Deserialize derives
+- [x] Round-trip: flyweight decode → domain → domain encode → flyweight decode → same values
+- [x] JSON round-trip: domain → serde_json → domain → equal
+- [x] Domain structs are `Debug + Clone + PartialEq`
+- [x] Zero cost: feature off → no domain code generated
+- [x] Test: Car schema with both features → encode/decode round-trip, JSON round-trip
 
 Ref: `design/DECISIONS.md` §1 "OwnershipMode is removed" — domain objects fill the gap between flyweights and application code. User request.

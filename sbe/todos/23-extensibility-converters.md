@@ -77,15 +77,15 @@ do their own conversion. Already spec'd in DECISIONS.md §4.
 
 ## Acceptance criteria
 
-- [ ] `with_extension(name, code)` API on `Generator` or `GenerationConfig` —
+- [x] `with_extension(name, code)` API on `Generator` or `GenerationConfig` —
       appends raw Rust source as an extra `impl` block
-- [ ] `with_trait_impl(type_name, trait_bound, code)` — generates a trait impl
-- [ ] Semantic-type mapping in config: `semantic_types.Price.convert_to = "rust_decimal::Decimal"`
-- [ ] Generated types always expose `raw()` and `From<T>`/`Into<T>` for the
+- [x] `with_trait_impl(type_name, trait_bound, code)` — generates a trait impl
+- [x] Semantic-type mapping in config: `semantic_types.Price.convert_to = "rust_decimal::Decimal"`
+- [x] Generated types always expose `raw()` and `From<T>`/`Into<T>` for the
       underlying primitive (zero-cost escape hatch)
-- [ ] Example: Car schema with `Price` field → user converts to `Decimal` in 3
+- [x] Example: Car schema with `Price` field → user converts to `Decimal` in 3
       lines of config
-- [ ] Works with both `build.rs` driver and the proc-macro frontend (v1.1)
-- [ ] Extension code is formatted (rustfmt pass) and appears in generated docs
+- [x] Works with both `build.rs` driver and the proc-macro frontend (v1.1)
+- [x] Extension code is formatted (rustfmt pass) and appears in generated docs
 
 Ref: `design/DECISIONS.md` §4 semantic newtypes, §10 orphan rule advantage.
