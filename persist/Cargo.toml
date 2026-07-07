@@ -29,7 +29,7 @@ tokio = { version = "1", features = ["rt", "macros"] }
 
 [dev-dependencies]
 chrono = { version = "0.4", features = ["now"] }
-clickhouse = { version = "0.15", default-features = false, features = ["derive"] }
+clickhouse = { version = "0.15", default-features = false }
 ergo-clickhouse-persist-derive = { path = "derive" }
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }

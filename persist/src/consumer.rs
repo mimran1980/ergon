@@ -66,7 +66,7 @@ fn type_tag_to_column_type(tag: u8) -> Option<ColumnType> {
 }
 
 /// Convert a [`ColumnType`] to its wire type tag (`None` for unsupported types).
-fn column_type_to_tag(ct: &ColumnType) -> Option<u8> {
+pub fn column_type_to_tag(ct: &ColumnType) -> Option<u8> {
     match ct {
         ColumnType::Int8 => Some(TAG_INT8),
         ColumnType::Int16 => Some(TAG_INT16),
