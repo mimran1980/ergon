@@ -28,9 +28,9 @@
 //! - Field values are written positionally: one pass over the values array with
 //!   O(1) dispatch per value.
 
+use crate::persist::TtlConfig;
 use crate::sbe::DynamicRowEncoder;
 use crate::sbe::dynamic_row_encoder_state;
-use crate::persist::TtlConfig;
 use crate::types::ColumnType;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;

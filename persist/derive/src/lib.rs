@@ -46,7 +46,9 @@ fn parse_struct_attrs(attrs: &[syn::Attribute]) -> syn::Result<StructAttrs> {
                 let value: LitStr = meta.value()?.parse()?;
                 result.ttl = Some(value.value());
             } else {
-                return Err(meta.error("unknown persist struct attribute; expected `order_by` or `ttl`"));
+                return Err(
+                    meta.error("unknown persist struct attribute; expected `order_by` or `ttl`")
+                );
             }
             Ok(())
         })?;

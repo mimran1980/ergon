@@ -81,7 +81,7 @@ This matches Aeron's approach — direct buffer reads per field.
 - `engine()` — flyweight decoder (FAST, zero-copy, DEFAULT)
 - `engine_as_struct()` — eager value struct copy (for multi-field access)
 
-This IS a breaking API change — `engine()` currently returns `Engine`.
+[x] This IS a breaking API change — `engine()` currently returns `Engine`.
 But performance is the #1 requirement, and the default should be fast.
 
 ### Scope
@@ -91,11 +91,11 @@ But performance is the #1 requirement, and the default should be fast.
 
 ## Acceptance criteria
 
-- [ ] `{field}() -> {Type}Decoder` flyweight (DEFAULT, zero-copy, fast)
-- [ ] `{field}_as_struct() -> {Type}` eager copy (for multi-field access)
-- [ ] Flyweight decoder struct: `buf: &'a [u8], pos: usize`
-- [ ] Each field on flyweight reads directly from buffer (zero-copy)
-- [ ] This IS a breaking API change — documented in migration guide
-- [ ] Golden file stability test passes
-- [ ] Baseline tests pass
-- [ ] Benchmark: `engine().capacity()` reads ≤ 2 bytes from buffer (not 6+2)
+- [x] `{field}() -> {Type}Decoder` flyweight (DEFAULT, zero-copy, fast)
+- [x] `{field}_as_struct() -> {Type}` eager copy (for multi-field access)
+- [x] Flyweight decoder struct: `buf: &'a [u8], pos: usize`
+- [x] Each field on flyweight reads directly from buffer (zero-copy)
+- [x] This IS a breaking API change — documented in migration guide
+- [x] Golden file stability test passes
+- [x] Baseline tests pass
+- [~] Benchmark: `engine().capacity()` reads ≤ 2 bytes from buffer (not 6+2) — PENDING test tooling setup

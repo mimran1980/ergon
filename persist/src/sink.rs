@@ -996,7 +996,10 @@ fn build_create_sql(table: &str, schema: &TableSchema) -> String {
         .map(|c| format!("{} {}", c.name, c.col_type))
         .collect();
     let order_by = schema.order_by.join(", ");
-    let ttl = schema.ttl.as_ref().map(|t| format!("TTL {} + INTERVAL {}", t.column, t.interval));
+    let ttl = schema
+        .ttl
+        .as_ref()
+        .map(|t| format!("TTL {} + INTERVAL {}", t.column, t.interval));
     match ttl {
         Some(ttl) => format!(
             "CREATE TABLE IF NOT EXISTS {table} (\n    {}\n) ENGINE = {engine} ORDER BY ({order_by}) {ttl}",

@@ -121,7 +121,10 @@ pub struct TtlConfig {
 impl TtlConfig {
     #[must_use]
     pub fn new(column: impl Into<String>, interval: impl Into<String>) -> Self {
-        Self { column: column.into(), interval: interval.into() }
+        Self {
+            column: column.into(),
+            interval: interval.into(),
+        }
     }
 }
 
@@ -134,7 +137,11 @@ impl TableSchema {
 
     /// Create with optional TTL.
     #[must_use]
-    pub fn with_ttl(columns: Vec<ColumnDef>, order_by: Vec<String>, ttl: Option<TtlConfig>) -> Self {
+    pub fn with_ttl(
+        columns: Vec<ColumnDef>,
+        order_by: Vec<String>,
+        ttl: Option<TtlConfig>,
+    ) -> Self {
         let mut columns = columns;
         if !columns.iter().any(|c| c.name == "_persist_time") {
             columns.push(ColumnDef {

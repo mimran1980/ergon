@@ -266,12 +266,7 @@ impl Generator {
         }
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
-        write!(
-            src,
-            "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n",
-            hex
-        )
-        .unwrap();
+        write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
         // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
@@ -2141,7 +2136,10 @@ fn generate_message_decoder(
                         let byte_indices: Vec<syn::Expr> = (0..prim_size)
                             .map(|b| {
                                 let bi = i * prim_size + b;
-                                let bi_lit = syn::LitInt::new(&bi.to_string(), proc_macro2::Span::call_site());
+                                let bi_lit = syn::LitInt::new(
+                                    &bi.to_string(),
+                                    proc_macro2::Span::call_site(),
+                                );
                                 syn::parse_quote! { all[#bi_lit] }
                             })
                             .collect();
@@ -2305,7 +2303,12 @@ fn generate_message_decoder(
                     syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
                 let comp_size_lit =
                     syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
+                let target_decoder_name = syn::Ident::new(
+                    &format!("{}Decoder", target_name),
+                    proc_macro2::Span::call_site(),
+                );
 
+                // Default: flyweight (zero-copy, reads directly from buffer)
                 if since > 0 {
                     let since_lit =
                         syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
@@ -2314,7 +2317,38 @@ fn generate_message_decoder(
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
                         #[inline]
-                        pub fn #fname_ident(&self) -> Option<#target_ident> {
+                        pub fn #fname_ident(&self) -> Option<#target_decoder_name<'_>> {
+                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_decoder_name { buf: self.buf, pos: offset })
+                        }
+                    });
+                } else {
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fname_ident(&self) -> #target_decoder_name<'_> {
+                            let offset = self.pos + #offset_lit;
+                            #target_decoder_name { buf: self.buf, pos: offset }
+                        }
+                    });
+                }
+
+                // Eager copy accessor (_as_struct)
+                let as_struct_ident = syn::Ident::new(
+                    &format!("{}_as_struct", fname_snake),
+                    proc_macro2::Span::call_site(),
+                );
+                if since > 0 {
+                    let since_lit =
+                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let offset_end = offset + comp_size;
+                    let offset_end_lit =
+                        syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #as_struct_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
@@ -2325,13 +2359,14 @@ fn generate_message_decoder(
                 } else {
                     impl_body.extend(quote::quote! {
                         #[inline]
-                        pub fn #fname_ident(&self) -> #target_ident {
+                        pub fn #as_struct_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
                             #target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap())
                         }
                     });
                 }
 
+                // Unsafe unchecked
                 impl_body.extend(quote::quote! {
                     #[inline]
                     pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
@@ -2342,37 +2377,29 @@ fn generate_message_decoder(
                     }
                 });
 
-                // Lazy flyweight accessor (_lazy)
+                // Deprecated _lazy alias
                 let lazy_ident = syn::Ident::new(
                     &format!("{}_lazy", fname_snake),
                     proc_macro2::Span::call_site(),
                 );
+                let dep_note_msg = format!(
+                    "renamed to `{}` -- the default is now flyweight",
+                    fname_snake,
+                );
                 if since > 0 {
-                    let since_lit =
-                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
-                    let offset_end = offset + comp_size;
-                    let offset_end_lit =
-                        syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
-                    let target_decoder_name =
-                        syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
                         #[inline]
+                        #[deprecated(since = "1.0.0", note = #dep_note_msg)]
                         pub fn #lazy_ident(&self) -> Option<#target_decoder_name<'_>> {
-                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
-                                return None;
-                            }
-                            let offset = self.pos + #offset_lit;
-                            Some(#target_decoder_name { buf: self.buf, pos: offset })
+                            self.#fname_ident()
                         }
                     });
                 } else {
-                    let target_decoder_name =
-                        syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
                         #[inline]
+                        #[deprecated(since = "1.0.0", note = #dep_note_msg)]
                         pub fn #lazy_ident(&self) -> #target_decoder_name<'_> {
-                            let offset = self.pos + #offset_lit;
-                            #target_decoder_name { buf: self.buf, pos: offset }
+                            self.#fname_ident()
                         }
                     });
                 }
@@ -3489,7 +3516,10 @@ fn generate_group_decoder(
                         let byte_indices: Vec<syn::Expr> = (0..prim_size)
                             .map(|b| {
                                 let bi = i * prim_size + b;
-                                let bi_lit = syn::LitInt::new(&bi.to_string(), proc_macro2::Span::call_site());
+                                let bi_lit = syn::LitInt::new(
+                                    &bi.to_string(),
+                                    proc_macro2::Span::call_site(),
+                                );
                                 syn::parse_quote! { all[#bi_lit] }
                             })
                             .collect();
@@ -3597,10 +3627,28 @@ fn generate_group_decoder(
                 let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
                 let comp_size_lit =
                     syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
+                let target_decoder_name = syn::Ident::new(
+                    &format!("{}Decoder", target_name),
+                    proc_macro2::Span::call_site(),
+                );
 
+                // Default: flyweight (zero-copy)
                 entry_body.extend(quote::quote! {
                     #[inline]
-                    pub fn #f_name_ident(&self) -> #target_ident {
+                    pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
+                        let offset = self.pos + #offset_lit;
+                        #target_decoder_name { buf: self.buf, pos: offset }
+                    }
+                });
+
+                // Eager copy accessor (_as_struct)
+                let as_struct_ident = syn::Ident::new(
+                    &format!("{}_as_struct", f_name),
+                    proc_macro2::Span::call_site(),
+                );
+                entry_body.extend(quote::quote! {
+                    #[inline]
+                    pub fn #as_struct_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
                         #target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap())
                     }
@@ -3624,18 +3672,16 @@ fn generate_group_decoder(
                     }
                 });
 
-                // Lazy flyweight accessor (_lazy)
-                let entry_lazy_ident = syn::Ident::new(
-                    &format!("{}_lazy", f_name),
-                    proc_macro2::Span::call_site(),
-                );
-                let target_decoder_name =
-                    syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
+                // Deprecated _lazy alias
+                let entry_lazy_ident =
+                    syn::Ident::new(&format!("{}_lazy", f_name), proc_macro2::Span::call_site());
+                let dep_note_group =
+                    format!("renamed to `{}` -- the default is now flyweight", f_name,);
                 entry_body.extend(quote::quote! {
                     #[inline]
+                    #[deprecated(since = "1.0.0", note = #dep_note_group)]
                     pub fn #entry_lazy_ident(&self) -> #target_decoder_name<'_> {
-                        let offset = self.pos + #offset_lit;
-                        #target_decoder_name { buf: self.buf, pos: offset }
+                        self.#f_name_ident()
                     }
                 });
             }
@@ -3896,8 +3942,12 @@ fn generate_group_decoder(
                 }
                 entry_display_out_idx += 1;
             }
-            FieldType::Enum { name: enum_name, .. } => {
-                if f.presence == Presence::Constant { continue; }
+            FieldType::Enum {
+                name: enum_name, ..
+            } => {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
                 let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
                 if f.since_version > 0 {
                     entry_display_body.extend(quote::quote! {

@@ -1123,7 +1123,15 @@ impl<'a> CarDecoder<'a> {
     }
     pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
     #[inline]
-    pub fn engine(&self) -> Engine {
+    pub fn engine(&self) -> EngineDecoder<'_> {
+        let offset = self.pos + 35;
+        EngineDecoder {
+            buf: self.buf,
+            pos: offset,
+        }
+    }
+    #[inline]
+    pub fn engine_as_struct(&self) -> Engine {
         let offset = self.pos + 35;
         Engine(self.buf[offset..][..6].try_into().unwrap())
     }
@@ -1138,12 +1146,12 @@ impl<'a> CarDecoder<'a> {
         Engine(bytes)
     }
     #[inline]
+    #[deprecated(
+        since = "1.0.0",
+        note = "renamed to `engine` -- the default is now flyweight"
+    )]
     pub fn engine_lazy(&self) -> EngineDecoder<'_> {
-        let offset = self.pos + 35;
-        EngineDecoder {
-            buf: self.buf,
-            pos: offset,
-        }
+        self.engine()
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
