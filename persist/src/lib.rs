@@ -8,6 +8,7 @@
 //! - [`sink`]   — [`ClickhouseSink`], [`PersistSender`]
 //! - [`dynamic`] — [`DynamicRecorder`], [`SchemaRegistry`], [`RowDecoder`]
 
+pub mod consumer;
 pub mod dynamic;
 pub mod feature_impls;
 pub mod persist;

@@ -16,15 +16,15 @@ default = []
 rust_decimal = ["dep:rust_decimal"]
 chrono = ["dep:chrono"]
 duration = []
-serde = ["dep:serde", "dep:serde_json"]
+serde = []
 
 [dependencies]
 clickhouse = { version = "0.15", default-features = false, features = [] }
 chrono = { version = "0.4", optional = true, features = ["now"] }
 log = "0.4"
 rust_decimal = { version = "1", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros"] }
 
 [dev-dependencies]
