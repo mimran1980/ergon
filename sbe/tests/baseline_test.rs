@@ -758,6 +758,74 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
     "#);
 }
 
+// ── bound-check-disabled gates (todo 115) ────────────────────────────
+
+#[test]
+fn bounds_checks_active_by_default_nth_always_checked() {
+    let (_schema, src) = generate(&Paths::example_schema(), "bounds_default");
+    compile_and_run("bounds_default", &src, r#"
+        // Encode a message with 0 fuel_figures so the decoder is valid
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1);
+        car.model_year(2000);
+        car.available(BooleanType::F);
+        car.code(Model::A);
+        car.some_numbers([0u32; 4]);
+        car.vehicle_code([0u8; 6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0, 0, [0, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let ff = car2.fuel_figures().unwrap();
+        // nth() bounds check is ALWAYS present (trust boundary — external idx input)
+        let result = ff.nth(999);
+        assert!(result.is_err(), "nth(999) on 0-entry group must return Err");
+    "#);
+}
+
+#[test]
+fn bounds_checks_disabled_with_feature_flag() {
+    let (_schema, src) = generate(&Paths::example_schema(), "bounds_disabled");
+    compile_and_run_with_feature("bounds_disabled", &src, r#"
+        // With bound-check-disabled, wrap_and_apply_header uses unsafe fast path
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(1, |g| {
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urb").unwrap(); }).unwrap();
+        }).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Hon").unwrap();
+        let car = car.model(b"Civ").unwrap();
+        let car = car.activation_code(b"abc").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        // Field accessors work (without bounds checks in fast path)
+        assert_eq!(car2.serial_number(), 1234);
+        assert_eq!(car2.model_year(), 2013);
+        // Group iteration works
+        let ff: Vec<_> = car2.fuel_figures().unwrap()
+            .collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(ff.len(), 1);
+        assert_eq!(ff[0].speed(), 30);
+    "#, "bound-check-disabled");
+}
+
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────
 
 #[test]
