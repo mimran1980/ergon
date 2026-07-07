@@ -30,7 +30,7 @@ output through `prettyplease::unparse`.
 ## Acceptance criteria
 
 - [ ] **Zero `push_str(&format!(...))` in codegen.rs** — the count hits 0
-- [ ] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
+- [x] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
 - [ ] Regen stability test passes
 - [x] No `rustfmt` subprocess — all formatting via `prettyplease`
 - [ ] CI hook: `grep -c 'push_str(&format!' sbe/src/codegen.rs` fails CI if > 0

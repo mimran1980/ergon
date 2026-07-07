@@ -98,13 +98,13 @@ error swallowing before, so this is a correctness improvement.
 
 ## Acceptance criteria
 
-- [ ] `Iterator::Item = Result<EntryDecoder, DecodeError>` for groups
+- [x] `Iterator::Item = Result.*for groups
   with `total_tail > 0`
-- [ ] `Iterator::Item = EntryDecoder` preserved for `total_tail == 0`
+- [x] `Iterator::Item = EntryDecoder` preserved for `total_tail == 0`
   (infallible fast path)
-- [ ] `iter_fast()` method with `Item = EntryDecoder` for all groups
+- [x] `iter_fast()` method with `Item = EntryDecoder` for all groups
   (trusts buffer, from todo 109)
-- [ ] Error path in `next()` returns `Some(Err(e))` instead of
+- [x] Error path in `next()` returns `Some(Err(e))` instead of
   swallowing the error
-- [ ] Golden file stability test passes
-- [ ] No regression in baseline test suite
+- [x] Golden file stability test passes
+- [x] No regression in baseline test suite

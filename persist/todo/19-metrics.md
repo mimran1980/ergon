@@ -56,9 +56,9 @@ points. Default is `NoopMetrics` — zero overhead when not configured.
 
 ## Acceptance criteria
 
-- [ ] `PersistMetrics` trait defined with the hooks above
-- [ ] `NoopMetrics` default implementation
-- [ ] `ClickhouseSinkBuilder::metrics()` accepts user implementation
-- [ ] Metrics called at: row persist, batch flush (with latency), error, retry, drop
-- [ ] Zero allocation on the hot path when using `NoopMetrics`
-- [ ] Integration test: custom metrics impl verifies hook calls
+- [x] `PersistMetrics` trait defined with the hooks above
+- [x] `NoopMetrics` default implementation
+- [x] `ClickhouseSinkBuilder::metrics()` accepts user implementation
+- [x] Metrics called at: row persist, batch flush (with latency), error, retry, drop
+- [x] Zero allocation on the hot path when using `NoopMetrics`
+- [x] Integration test: custom metrics impl verifies hook calls

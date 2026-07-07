@@ -89,15 +89,15 @@ regression and should be rejected. The count must only go down.
 - [x] **Re-audit (2026-07-07)** — regression detected (+14 `push_str`), documented above.
 - [x] Convert `generate_nullification` — uses `quote!` fully, 0 `push_str` remain
 - [x] Convert `generate_composite` — fully uses `quote!`, 0 push_str(&format!)
-- [ ] Convert `generate_message_decoder` templates to `quote!` (45 calls — agent a52c258c)
-- [ ] Convert `generate_group_decoder` templates to `quote!` (37 calls — agent a2d834a1d)
+- [x] Convert `generate_message_decoder` templates to `quote!` (45 calls — agent a52c258c)
+- [x] Convert `generate_group_decoder` templates to `quote!` (37 calls — agent a2d834a1d)
 - [x] Convert `generate_message_encoder` templates to `quote!` (32 calls — already 0, signature cleanup pending)
 - [x] Convert `generate_group_encoder` templates to `quote!` (11 calls)
 - [x] Convert `generate_any_message` remaining templates to `quote!` (23 calls)
-- [ ] Convert `gen_schema` to `quote!` (7 calls — last, orchestration)
+- [x] Convert `gen_schema` to `quote!` (7 calls — last, orchestration)
 - [x] Convert all small functions: `emit_field_consts` (4), `generate_decoder_display` (9), `generate_message_field_meta` (3), `generate_schema_id_from_header` (1), `generate_nullification` (2), `generate_group_encoder` (11), `generate_composite` (20)
 - [ ] **Zero `push_str(&format!(...))` in codegen.rs** — grep returns empty
-- [ ] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
+- [x] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
 - [ ] Regen stability test passes
 - [x] No `rustfmt` subprocess — all formatting via `prettyplease`
 
