@@ -668,6 +668,48 @@ fn array_accessor_all_paths_return_same_values() {
     "#);
 }
 
+// ── Display group entries (todo 113) ──────────────────────────────────
+
+#[test]
+fn display_shows_group_entry_fields_not_just_count() {
+    let (_schema, src) = generate(&Paths::example_schema(), "display_entries");
+    compile_and_run("display_entries", &src, r#"
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(2, |g| {
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban").unwrap(); }).unwrap();
+            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Comb").unwrap(); }).unwrap();
+        }).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"abcdef").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let display = format!("{}", car2);
+
+        // Display must include entry field values, not just "N entries"
+        assert!(display.contains("speed"), "Display missing 'speed': {display}");
+        assert!(display.contains("mpg"), "Display missing 'mpg': {display}");
+        assert!(display.contains("30"), "Display missing speed value 30: {display}");
+        assert!(display.contains("55"), "Display missing speed value 55: {display}");
+        // Must NOT show stale "N entries" count-only format
+        assert!(!display.contains("2 entries"), "Display should not show raw count: {display}");
+        // Also shows message-level scalars
+        assert!(display.contains("serial_number"), "Display missing serial_number: {display}");
+        assert!(display.contains("1234"), "Display missing serial_number value: {display}");
+    "#);
+}
+
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────
 
 #[test]

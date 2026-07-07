@@ -69,7 +69,7 @@ the message Display does.
 
 ## Acceptance criteria
 
-- [ ] Group decoder Display iterates entries, prints each with its scalar fields
+- [x] Group decoder Display iterates entries, prints each with its scalar fields
 - [ ] Nested groups within entries printed recursively (or noted as deferred)
 - [ ] Var-data fields within entries shown as `N bytes` (same as message-level)
 - [ ] Result-wrapped entries handle the error case (from todo 111)
