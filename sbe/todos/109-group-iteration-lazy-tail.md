@@ -135,6 +135,6 @@ the buffer or doesn't access var-data fields on entries.
 - [x] `iter_fast()` advances by `ENTRY_BLOCK_LENGTH` without tail
   scanning
 - [x] Existing `Iterator` impl preserved (safe, scans tails)
-- [x] Benchmark: `iter_fast()` within 10% of Aeron's `advance()` loop
+- [ ] Benchmark: `iter_fast()` within 10% of Aeron's `advance()` loop
 - [x] Golden file stability test passes
 - [x] No regression in baseline test suite

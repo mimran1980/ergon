@@ -13,7 +13,7 @@ DECISIONS.md §4 specifies this.
 - [x] Composites with at least one float field derive `Clone, Copy, Debug, PartialEq, PartialOrd` but NOT `Eq, Ord, Hash`
 - [x] Composites with only integer/enum/set fields still derive the full set including `Eq, Ord, Hash`
 - [x] Detection is based on the resolved primitive types in the composite's fields
-- [x] Test: composite with float → no Eq/Ord — no float composites in current test schemas; logic is unit-testable but no golden fixture exercises it yet
+- [ ] Test: composite with float → no Eq/Ord — no float composites in current test schemas; logic is unit-testable but no golden fixture exercises it yet
 - [x] Test: composite without float → full derives — verified in golden file (Booster, Engine, etc.)
 - [x] Golden file unchanged (no float composites in current schemas)
 

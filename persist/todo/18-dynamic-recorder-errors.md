@@ -51,8 +51,8 @@ panicking). Adding support for Decimal, DateTime, etc. is a separate todo.
 
 ## Acceptance criteria
 
-- [x] `DynamicRecorderBuilder::build()` returns `Result<DynamicRecorder, DynamicRecorderError>`
-- [x] All existing panics on unsupported types replaced with `Err(...)`
-- [x] `DynamicRecorderError` has `Display` + `std::error::Error` impls
-- [x] Call sites in `consumer.rs` updated to handle the `Result`
-- [x] Existing tests updated and pass
+- [ ] `DynamicRecorderBuilder::build()` returns `Result<DynamicRecorder, DynamicRecorderError>`
+- [ ] All existing panics on unsupported types replaced with `Err(...)`
+- [ ] `DynamicRecorderError` has `Display` + `std::error::Error` impls
+- [ ] Call sites in `consumer.rs` updated to handle the `Result`
+- [ ] Existing tests updated and pass

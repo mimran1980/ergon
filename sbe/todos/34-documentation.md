@@ -13,17 +13,17 @@ from schema annotations). They are documented at the API level in
 
 ### From schema annotations
 
-- [x] XML `description` attributes → `///` rustdoc on: composite types, enum
+- [ ] XML `description` attributes → `///` rustdoc on: composite types, enum
       types, set types, message types, field accessors, enum variants
-- [x] XML `semanticType` annotations → `/// Semantic type: Price` on field
+- [ ] XML `semanticType` annotations → `/// Semantic type: Price` on field
       accessors (so IDE hover shows "Price" not "int64")
-- [x] XML comments (`<!-- -->`) associated to the nearest element → `///` rustdoc
-- [x] Schema-level metadata (`package`, `id`, `version`) → module-level
+- [ ] XML comments (`<!-- -->`) associated to the nearest element → `///` rustdoc
+- [ ] Schema-level metadata (`package`, `id`, `version`) → module-level
       `//!` doc: `//! Messages for schema Car (id=1, version=0).`
 
 ### Usage examples in rustdoc
 
-- [x] Every message decoder has a `/// # Example` section:
+- [ ] Every message decoder has a `/// # Example` section:
       ```rust
       /// # Example
       /// ```
@@ -32,24 +32,24 @@ from schema annotations). They are documented at the API level in
       /// println!("{}", car);
       /// ```
       ```
-- [x] Every encoder has an encoding example showing the type-state flow
-- [x] Group accessors show iteration example
-- [x] Enum types show matching example
+- [ ] Every encoder has an encoding example showing the type-state flow
+- [ ] Group accessors show iteration example
+- [ ] Enum types show matching example
 
 ### Structural docs
 
-- [x] Per-field `FieldMeta` consts have rustdoc linking to the accessor
-- [x] `BLOCK_LENGTH`, `TEMPLATE_ID`, `SCHEMA_ID` constants have rustdoc
-- [x] `SbeMessage` trait impl block has doc explaining the trait
-- [x] `AnyMessage` enum variants have doc listing which messages they contain
-- [x] `_unchecked` methods have `# Safety` sections explaining preconditions
-- [x] `raw_` accessors have doc: `/// Returns the wire value without null-sentinel mapping.`
+- [ ] Per-field `FieldMeta` consts have rustdoc linking to the accessor
+- [ ] `BLOCK_LENGTH`, `TEMPLATE_ID`, `SCHEMA_ID` constants have rustdoc
+- [ ] `SbeMessage` trait impl block has doc explaining the trait
+- [ ] `AnyMessage` enum variants have doc listing which messages they contain
+- [ ] `_unchecked` methods have `# Safety` sections explaining preconditions
+- [ ] `raw_` accessors have doc: `/// Returns the wire value without null-sentinel mapping.`
 
 ### Doc tests
 
-- [x] Example code in rustdoc is compiled and run via `cargo test --doc`
-- [x] Doc tests use real fixture bytes where possible
-- [x] Doc tests assert specific field values (not just `is_ok()`)
+- [ ] Example code in rustdoc is compiled and run via `cargo test --doc`
+- [ ] Doc tests use real fixture bytes where possible
+- [ ] Doc tests assert specific field values (not just `is_ok()`)
 
 ## Generator library docs (developer-facing)
 
@@ -62,7 +62,7 @@ from schema annotations). They are documented at the API level in
 - [x] `resolve.rs`: module-level doc explaining the resolution passes
 - [x] `ir.rs`: doc on every Token variant and Encoding field
 - [x] All `pub` items have `#![warn(missing_docs)]` in the generator crate — **zero warnings**
-- [x] `#[doc(hidden)]` on internal-but-pub items
+- [ ] `#[doc(hidden)]` on internal-but-pub items
 
 ## Guide docs (docs/guide/)
 
@@ -78,19 +78,19 @@ from schema annotations). They are documented at the API level in
 ## Acceptance criteria
 
 - [x] `#![warn(missing_docs)]` on ergosbe crate — zero warnings
-- [x] Every generated type has a `///` doc from its schema description *(codegen work)*
-- [x] Every generated field accessor has `///` doc with semantic type *(codegen work)*
-- [x] Every message decoder has a runnable `/// # Example` *(codegen work)*
-- [x] Every `unsafe fn` has a `# Safety` section *(codegen work)*
+- [ ] Every generated type has a `///` doc from its schema description *(codegen work)*
+- [ ] Every generated field accessor has `///` doc with semantic type *(codegen work)*
+- [ ] Every message decoder has a runnable `/// # Example` *(codegen work)*
+- [ ] Every `unsafe fn` has a `# Safety` section *(codegen work)*
 - [x] `cargo doc --no-deps` produces a useful, navigable documentation site
 - [x] Doc tests pass: `cargo test --doc`
-- [x] IDE hover on `car.model_year()` shows "Model year of the car (semantic type: Year)" *(codegen work)*
+- [ ] IDE hover on `car.model_year()` shows "Model year of the car (semantic type: Year)" *(codegen work)*
 
 Ref: `design/DECISIONS.md` §9 "Schema docs → rustdoc." Rust RFC 1574 (doc comment conventions).
 
 
 ## Verification / Unit Testing
-- [x] Verify that documentation tests (`cargo test --doc`) compile and run successfully for all generated code modules.
+- [ ] Verify that documentation tests (`cargo test --doc`) compile and run successfully for all generated code modules.
 
 
 ## Audit round (todo 34 — July 2026)

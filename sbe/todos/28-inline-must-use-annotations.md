@@ -23,12 +23,12 @@ of propagating. Should return `Result<usize, DecodeError>`.
 - [x] `#[must_use]` on: encoder setters returning `&mut Self` (scalars, arrays, composites, enums, sets)
 - [x] `#[inline]` on: encoder `wrap`, `wrap_and_apply_header`, `encoded_length`
 - [x] `#[must_use]` on: `Result`-returning encoder methods (wrap_and_apply_header)
-- [x] `#[inline]` on: every encoder setter method (skipped — setters get `#[must_use]`; both would be noise)
+- [ ] `#[inline]` on: every encoder setter method (skipped — setters get `#[must_use]`; both would be noise)
 - [x] `#[must_use = "encoder must be consumed to write the message"]` on encoder type-state types
 - [x] `encoded_length()` on group decoders returns `Result` instead of `unwrap_or` fallback
-- [x] `#[cold]` on error-construction paths (already tracked in 08, verify)
-- [x] `#[inline(always)]` only on the hottest one-liners (raw accessors, unchecked variants)
-- [x] Benchmark: verify no regression from added attributes (should be zero-cost or improvement)
+- [ ] `#[cold]` on error-construction paths (already tracked in 08, verify)
+- [ ] `#[inline(always)]` only on the hottest one-liners (raw accessors, unchecked variants)
+- [ ] Benchmark: verify no regression from added attributes (should be zero-cost or improvement)
 
 Ref: `design/DECISIONS.md` §10 codegen rules. `simple-binary-encoding/sbe-tool/src/main/java/uk/co/real_logic/sbe/generation/rust/RustGenerator.java`.
 
@@ -36,4 +36,4 @@ Ref: `design/DECISIONS.md` §10 codegen rules. `simple-binary-encoding/sbe-tool/
 ## Verification / Unit Testing
 - [x] Verify `#[inline]` annotations exist on decoder field accessors, group decoder methods, and encoder entry points (`generated_code_has_inline_annotations`).
 - [x] Verify `#[must_use]` annotations exist on encoder structs, group encoder structs, setters, and `Result`-returning methods (`generated_code_has_must_use_annotations`).
-- [x] Verify that the compiler emits unused warnings if an encoder or its return is dropped without calling completion methods.
+- [ ] Verify that the compiler emits unused warnings if an encoder or its return is dropped without calling completion methods.

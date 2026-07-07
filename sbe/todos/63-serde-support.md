@@ -25,14 +25,14 @@ Gated behind `CompatibilityMode::WireCompatibleExtensions`.
 
 ## Acceptance criteria
 
-- [x] `serde` feature flag in `Cargo.toml` (opt-in, not forced on HFT users)
-- [x] `#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]` on
+- [ ] `serde` feature flag in `Cargo.toml` (opt-in, not forced on HFT users)
+- [ ] `#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]` on
   composites, enums, sets
-- [x] Custom `Serialize` impl on decoders (can't derive on borrowed types)
-- [x] `Serialize` on enums uses variant names (e.g. `"A"`), not raw discriminants
-- [x] `Deserialize` on enums accepts both names and raw values
-- [x] Gated: only emitted when `compatibility == WireCompatibleExtensions`
-- [x] Tests: JSON round-trip via `serde_json`
-- [x] Zero-cost when feature is off (no code bloat for HFT)
+- [ ] Custom `Serialize` impl on decoders (can't derive on borrowed types)
+- [ ] `Serialize` on enums uses variant names (e.g. `"A"`), not raw discriminants
+- [ ] `Deserialize` on enums accepts both names and raw values
+- [ ] Gated: only emitted when `compatibility == WireCompatibleExtensions`
+- [ ] Tests: JSON round-trip via `serde_json`
+- [ ] Zero-cost when feature is off (no code bloat for HFT)
 
 Ref: gap analysis todo 51, user request for serde support on domain objects.

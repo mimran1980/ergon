@@ -15,7 +15,7 @@ schema parses.
 - [x] Detect and reject cyclic includes
 - [x] Test with `common-types.xml` + `example-schema.xml`
 - [x] Test with nested includes (`sub/basic-schema.xml` → `sub/sub2/common.xml`)
-- [x] Test with `FixBinary.xml` (multi-schema FIX message set)
+- [ ] Test with `FixBinary.xml` (multi-schema FIX message set)
 
 Ref: upstream schemas at `simple-binary-encoding/sbe-tool/src/test/resources/sub/`.
 

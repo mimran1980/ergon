@@ -22,13 +22,13 @@ yet. It needs to:
 
 ## Acceptance criteria
 
-- [x] `samples/exchange-orderbook/build.rs` successfully generates code from
+- [ ] `samples/exchange-orderbook/build.rs` successfully generates code from
   both Bitget and Binance schemas
-- [x] Generated code compiles cleanly
-- [x] `cargo run` connects to at least one exchange and prints orderbook
-- [x] Binance uses SBE binary frames, NOT JSON
-- [x] Orderbook uses BidLevel/AskLevel newtypes with custom Ord (already done
+- [ ] Generated code compiles cleanly
+- [ ] `cargo run` connects to at least one exchange and prints orderbook
+- [ ] Binance uses SBE binary frames, NOT JSON
+- [ ] Orderbook uses BidLevel/AskLevel newtypes with custom Ord (already done
   in `orderbook.rs`)
-- [x] `just test` passes in the samples directory
+- [ ] `just test` passes in the samples directory
 
 Ref: user request to make the sample actually work end-to-end.

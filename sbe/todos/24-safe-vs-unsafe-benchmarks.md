@@ -24,11 +24,11 @@ For each of these, benchmark BOTH paths (safe and unsafe) on the same input:
 - [x] One Criterion benchmark file per axis (2 files: decode + encode)
 - [x] Each benchmark uses realistic market-data-shaped messages (car fixture)
 - [x] Hot-loop: benchmark 10M iterations of decode + access all fields (Criterion handles this)
-- [x] Cold-loop: benchmark single-shot decode (branch predictor cold) — omitted, Criterion warmup covers hot-path; cold-path needs a separate harness
+- [ ] Cold-loop: benchmark single-shot decode (branch predictor cold) — omitted, Criterion warmup covers hot-path; cold-path needs a separate harness
 - [x] Report: ns per operation, throughput in bytes/sec or elements/sec — Criterion provides this
-- [x] CI gate: safe path must be within 2× of unsafe for bounds-checked vs unchecked — current results show 10-13x difference (checked decode of all fields: 3.85 ns vs unchecked: 0.28 ns). Codegen may need inlining improvements to close this gap before gating.
-- [x] CI gate: unsafe path never more than 10% faster than safe for aligned-read — current results show unchecked decode is ~13x faster on field-read hot path. Encode shows near parity (±15%).
-- [x] Document each unsafe escape hatch with: benchmark result, when to use, when NOT to use
+- [ ] CI gate: safe path must be within 2× of unsafe for bounds-checked vs unchecked — current results show 10-13x difference (checked decode of all fields: 3.85 ns vs unchecked: 0.28 ns). Codegen may need inlining improvements to close this gap before gating.
+- [ ] CI gate: unsafe path never more than 10% faster than safe for aligned-read — current results show unchecked decode is ~13x faster on field-read hot path. Encode shows near parity (±15%).
+- [ ] Document each unsafe escape hatch with: benchmark result, when to use, when NOT to use
 
 ## Results (2026-07-06)
 
@@ -53,4 +53,4 @@ Ref: `design/DECISIONS.md` §8, §11. `simple-binary-encoding/rust/benches/`
 
 
 ## Verification / Unit Testing
-- [x] Add comparative tests and benchmarks verifying performance differences between safe and unsafe accessors.
+- [ ] Add comparative tests and benchmarks verifying performance differences between safe and unsafe accessors.

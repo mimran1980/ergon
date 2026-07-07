@@ -58,14 +58,14 @@ This test will fail when the gaps are fixed — update its assertions when imple
 
 - [x] Character/primitive arrays inside composites map to Rust array types `[T; N]` instead of single primitive scalars
 - [x] Constant fields inside composites generate correct `const fn` accessors returning their schema constant values
-- [x] Composite types resolve nested `<ref>` definitions recursively
-- [x] Nested `<enum>` and `<set>` types inside composites are generated correctly
-- [x] `baseline_test.rs` is fully updated to test all fields of the `Engine` composite
-- [x] Re-encoded output matches the Java baseline `.sbe` fixture exactly across all fields
-- [x] No compilation warnings or clippy errors in generated output
+- [ ] Composite types resolve nested `<ref>` definitions recursively
+- [ ] Nested `<enum>` and `<set>` types inside composites are generated correctly
+- [ ] `baseline_test.rs` is fully updated to test all fields of the `Engine` composite
+- [ ] Re-encoded output matches the Java baseline `.sbe` fixture exactly across all fields
+- [ ] No compilation warnings or clippy errors in generated output
 
 ## Verification / Unit Testing
 
-- [x] Verify that `sbe/tests/baseline_test.rs` passes with no skipped or commented-out fields for `Engine` or `Booster`.
-- [x] Assert that `CarDecoder::wrap_and_apply_header` successfully decodes the entire `car_example_baseline_data.sbe` fixture including the `engine` block.
-- [x] Assert that encoding the exact values of the baseline fixture results in a byte-exact match with `car_example_baseline_data.sbe`.
+- [ ] Verify that `sbe/tests/baseline_test.rs` passes with no skipped or commented-out fields for `Engine` or `Booster`.
+- [ ] Assert that `CarDecoder::wrap_and_apply_header` successfully decodes the entire `car_example_baseline_data.sbe` fixture including the `engine` block.
+- [ ] Assert that encoding the exact values of the baseline fixture results in a byte-exact match with `car_example_baseline_data.sbe`.

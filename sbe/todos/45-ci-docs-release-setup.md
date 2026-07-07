@@ -19,7 +19,7 @@ profile = "minimal"
 ```
 
 - [x] `rust-toolchain.toml` at workspace root
-- [x] Channel = current stable (1.88 at time of writing)
+- [ ] Channel = current stable (1.88 at time of writing)
 - [x] `rustfmt` + `clippy` + `rust-analyzer` components
 
 ## CI workflow (`.github/workflows/ci.yml`)
@@ -32,14 +32,14 @@ Three jobs, ubuntu + macos matrix, `[skip ci]` support:
 - [x] `cargo doc --no-deps --workspace` (verify docs compile)
 
 ### Job: Test (matrix)
-- [x] Matrix: `os: [ubuntu-latest, macos-latest]`
+- [ ] Matrix: `os: [ubuntu-latest, macos-latest]`
 - [x] `cargo test --workspace --all-targets`
 - [x] `cargo test --doc`
-- [x] `fail-fast: false`
+- [ ] `fail-fast: false`
 
 ### Job: Build (release)
 - [x] `cargo build --release --workspace`
-- [x] Upload release artifacts (1-day retention)
+- [ ] Upload release artifacts (1-day retention)
 
 ### Job: Bench (non-blocking, informational)
 - [x] `cargo bench --workspace` with `continue-on-error: true`
@@ -52,22 +52,22 @@ Three jobs, ubuntu + macos matrix, `[skip ci]` support:
 
 ## Release workflow (`.github/workflows/release.yml`)
 
-- [x] Trigger: `workflow_dispatch` with `release_type` input (major/minor/patch, default: patch)
-- [x] Pin Rust toolchain
-- [x] Run full test suite before releasing
-- [x] `cargo install cargo-release` + `cargo release $type --workspace --execute --no-confirm`
-- [x] Push to main
-- [x] Create GitHub release with version tag
-- [x] Upload build artifacts to release
-- [x] Permissions: `contents: write`
+- [ ] Trigger: `workflow_dispatch` with `release_type` input (major/minor/patch, default: patch)
+- [ ] Pin Rust toolchain
+- [ ] Run full test suite before releasing
+- [ ] `cargo install cargo-release` + `cargo release $type --workspace --execute --no-confirm`
+- [ ] Push to main
+- [ ] Create GitHub release with version tag
+- [ ] Upload build artifacts to release
+- [ ] Permissions: `contents: write`
 
 ## Documentation
 
-- [x] `docs.rs` auto-publishes on crates.io push (no config needed — just `#![doc]` attributes)
-- [x] Module-level docs in `lib.rs` with quick-start example
-- [x] `#![warn(missing_docs)]` on the generator crate
-- [x] `cargo doc --open` produces a useful, navigable site
-- [x] CONTRIBUTING.md already exists — verify it's up to date
+- [ ] `docs.rs` auto-publishes on crates.io push (no config needed — just `#![doc]` attributes)
+- [ ] Module-level docs in `lib.rs` with quick-start example
+- [ ] `#![warn(missing_docs)]` on the generator crate
+- [ ] `cargo doc --open` produces a useful, navigable site
+- [ ] CONTRIBUTING.md already exists — verify it's up to date
 
 ## justfile
 
@@ -85,20 +85,20 @@ A `just` command runner with common tasks (like rusteron's but Rust-only):
 
 ## bors.toml
 
-- [x] `bors.toml` with CI status checks
-- [x] `delete_merged_branches = true`
+- [ ] `bors.toml` with CI status checks
+- [ ] `delete_merged_branches = true`
 
 ## Acceptance criteria
 
 - [x] `rust-toolchain.toml` sets compiler version
-- [x] CI runs on push/PR: lint passes, test matrix passes (ubuntu + macos), release build passes
+- [ ] CI runs on push/PR: lint passes, test matrix passes (ubuntu + macos), release build passes
 - [x] `[skip ci]` in commit message skips CI
-- [x] Release workflow accepts major/minor/patch, runs tests, publishes to crates.io, creates GitHub release
+- [ ] Release workflow accepts major/minor/patch, runs tests, publishes to crates.io, creates GitHub release
 - [x] `just check` / `just test` / `just fix` work locally
-- [x] `cargo doc` produces docs with no warnings
-- [x] docs.rs shows API docs after first crates.io publish
+- [ ] `cargo doc` produces docs with no warnings
+- [ ] docs.rs shows API docs after first crates.io publish
 
 
 ## Verification / Unit Testing
-- [x] Verify that the build pipeline triggers and completes successfully on pull requests and branch merges.
-- [x] MSRV CI Gate: Add a job in the CI workflow that installs the minimum supported Rust version (e.g. 1.81.0) and validates that the library, generated tests, and baseline modules compile without errors.
+- [ ] Verify that the build pipeline triggers and completes successfully on pull requests and branch merges.
+- [ ] MSRV CI Gate: Add a job in the CI workflow that installs the minimum supported Rust version (e.g. 1.81.0) and validates that the library, generated tests, and baseline modules compile without errors.

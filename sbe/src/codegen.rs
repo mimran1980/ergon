@@ -266,7 +266,12 @@ impl Generator {
         }
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
-        write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
+        write!(
+            src,
+            "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n",
+            hex
+        )
+        .unwrap();
         // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
@@ -1890,7 +1895,6 @@ fn generate_message_decoder(
         max_tail += prefix_size + vd.max_length.unwrap_or(0);
     }
     let max_encoded_length = header_size + block_length + max_tail;
-    let total_tail = msg.groups.len() + msg.var_data.len();
 
     // Identifiers for codegen
     let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
@@ -2136,10 +2140,7 @@ fn generate_message_decoder(
                         let byte_indices: Vec<syn::Expr> = (0..prim_size)
                             .map(|b| {
                                 let bi = i * prim_size + b;
-                                let bi_lit = syn::LitInt::new(
-                                    &bi.to_string(),
-                                    proc_macro2::Span::call_site(),
-                                );
+                                let bi_lit = syn::LitInt::new(&bi.to_string(), proc_macro2::Span::call_site());
                                 syn::parse_quote! { all[#bi_lit] }
                             })
                             .collect();
@@ -2351,10 +2352,8 @@ fn generate_message_decoder(
                     let offset_end = offset + comp_size;
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
-                    let target_decoder_name = syn::Ident::new(
-                        &format!("{}Decoder", target_name),
-                        proc_macro2::Span::call_site(),
-                    );
+                    let target_decoder_name =
+                        syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #lazy_ident(&self) -> Option<#target_decoder_name<'_>> {
@@ -2366,10 +2365,8 @@ fn generate_message_decoder(
                         }
                     });
                 } else {
-                    let target_decoder_name = syn::Ident::new(
-                        &format!("{}Decoder", target_name),
-                        proc_macro2::Span::call_site(),
-                    );
+                    let target_decoder_name =
+                        syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #lazy_ident(&self) -> #target_decoder_name<'_> {
@@ -2512,6 +2509,7 @@ fn generate_message_decoder(
     }
 
     // 7. Tail offset helpers
+    let total_tail = msg.groups.len() + msg.var_data.len();
 
     // tail_offset_0
     impl_body.extend(quote::quote! {
@@ -3425,10 +3423,7 @@ fn generate_group_decoder(
                         let byte_indices: Vec<syn::Expr> = (0..prim_size)
                             .map(|b| {
                                 let bi = i * prim_size + b;
-                                let bi_lit = syn::LitInt::new(
-                                    &bi.to_string(),
-                                    proc_macro2::Span::call_site(),
-                                );
+                                let bi_lit = syn::LitInt::new(&bi.to_string(), proc_macro2::Span::call_site());
                                 syn::parse_quote! { all[#bi_lit] }
                             })
                             .collect();
@@ -3564,12 +3559,12 @@ fn generate_group_decoder(
                 });
 
                 // Lazy flyweight accessor (_lazy)
-                let entry_lazy_ident =
-                    syn::Ident::new(&format!("{}_lazy", f_name), proc_macro2::Span::call_site());
-                let target_decoder_name = syn::Ident::new(
-                    &format!("{}Decoder", target_name),
+                let entry_lazy_ident = syn::Ident::new(
+                    &format!("{}_lazy", f_name),
                     proc_macro2::Span::call_site(),
                 );
+                let target_decoder_name =
+                    syn::Ident::new(&format!("{}Decoder", target_name), proc_macro2::Span::call_site());
                 entry_body.extend(quote::quote! {
                     #[inline]
                     pub fn #entry_lazy_ident(&self) -> #target_decoder_name<'_> {
@@ -4883,7 +4878,7 @@ fn generate_any_message(
         }
         out.extend(quote::quote! {
             #[non_exhaustive]
-            #[derive(Clone)]
+            #[derive(Clone, Copy)]
             pub enum AnyMessage<'a> {
                 #enum_variants
                 Unknown {

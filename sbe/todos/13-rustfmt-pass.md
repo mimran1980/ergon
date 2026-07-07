@@ -12,9 +12,9 @@ should be consistently formatted and match what a human would write. DECISIONS.m
 
 ## Acceptance criteria
 
-- [x] Run `rustfmt` on generated `.rs` file after codegen completes
-- [x] Verify formatted output is valid Rust (compiles)
-- [x] Test: formatted output is identical to prettyplease output for well-formed input
-- [x] Handle case where `rustfmt` is not installed (fall back to prettyplease output, warn)
+- [ ] Run `rustfmt` on generated `.rs` file after codegen completes
+- [ ] Verify formatted output is valid Rust (compiles)
+- [ ] Test: formatted output is identical to prettyplease output for well-formed input
+- [ ] Handle case where `rustfmt` is not installed (fall back to prettyplease output, warn)
 
 Ref: `design/DECISIONS.md` §10 "run through rustfmt."

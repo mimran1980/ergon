@@ -36,8 +36,8 @@ two levels:
 
 ## Acceptance criteria
 
-- [x] `PersistAs` for `std::time::Duration` is always available (no feature gate)
-- [x] `PersistAs` for `chrono::Duration` is available behind `chrono` feature
-- [x] Feature flag `duration` removed from `Cargo.toml` (or repurposed as alias for chrono)
-- [x] `feature_impls.rs` updated: tests run without `duration` feature
-- [x] No regression in existing tests
+- [ ] `PersistAs` for `std::time::Duration` is always available (no feature gate)
+- [ ] `PersistAs` for `chrono::Duration` is available behind `chrono` feature
+- [ ] Feature flag `duration` removed from `Cargo.toml` (or repurposed as alias for chrono)
+- [ ] `feature_impls.rs` updated: tests run without `duration` feature
+- [ ] No regression in existing tests

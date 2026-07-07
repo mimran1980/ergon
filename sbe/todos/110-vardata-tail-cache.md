@@ -99,13 +99,13 @@ increase is negligible (0-5 words = 0-40 bytes).
 
 ## Acceptance criteria
 
-- [x] Var-data tail offsets cached via `Cell<Option<usize>>` on
+- [ ] Var-data tail offsets cached via `Cell<Option<usize>>` on
   message decoders
-- [x] First access computes and stores; subsequent accesses return
+- [ ] First access computes and stores; subsequent accesses return
   cached value
-- [x] `Copy` trait preserved on decoder structs
-- [x] No `&mut self` on accessor methods
-- [x] Benchmark: var-data accessor latency O(1) regardless of
+- [ ] `Copy` trait preserved on decoder structs
+- [ ] No `&mut self` on accessor methods
+- [ ] Benchmark: var-data accessor latency O(1) regardless of
   position in the tail sequence
-- [x] Golden file stability test passes
-- [x] No regression in baseline test suite
+- [ ] Golden file stability test passes
+- [ ] No regression in baseline test suite

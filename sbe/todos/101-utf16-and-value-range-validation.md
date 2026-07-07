@@ -58,18 +58,18 @@
 
 ## Acceptance criteria
 
-- [x] Var-data accessors correctly decode UTF-16 byte sequences to Rust strings (handling endianness variants)
-- [x] Checked encoder setters return `Err(EncodeError::ValueOutOfRange)` when inputs violate `minValue` or `maxValue`
-- [x] The `unit` XML attribute is parsed and emitted into `FieldMeta` constants
-- [x] Group entry iteration advances using the wire `blockLength` from the group's dimension header (asserted with extension fixtures)
-- [x] No compilation warnings or clippy errors in generated output
+- [ ] Var-data accessors correctly decode UTF-16 byte sequences to Rust strings (handling endianness variants)
+- [ ] Checked encoder setters return `Err(EncodeError::ValueOutOfRange)` when inputs violate `minValue` or `maxValue`
+- [ ] The `unit` XML attribute is parsed and emitted into `FieldMeta` constants
+- [ ] Group entry iteration advances using the wire `blockLength` from the group's dimension header (asserted with extension fixtures)
+- [ ] No compilation warnings or clippy errors in generated output
 
 ## Verification / Unit Testing
 
-- [x] Create a unit test `test_utf16_decoding` with a custom schema declaring `characterEncoding="UTF-16"` on var-data, verifying correct decoding of UTF-16 bytes.
-- [x] Create a unit test `test_value_range_validation` asserting that setting a value below `minValue` or above `maxValue` returns `Err(ValueOutOfRange)`.
-- [x] Create a unit test `test_field_meta_unit` checking that the `unit` constant in `FieldMeta` matches the XML schema.
-- [x] Create a version extension test verifying group entry iteration correctly uses the wire entry block length.
+- [ ] Create a unit test `test_utf16_decoding` with a custom schema declaring `characterEncoding="UTF-16"` on var-data, verifying correct decoding of UTF-16 bytes.
+- [ ] Create a unit test `test_value_range_validation` asserting that setting a value below `minValue` or above `maxValue` returns `Err(ValueOutOfRange)`.
+- [ ] Create a unit test `test_field_meta_unit` checking that the `unit` constant in `FieldMeta` matches the XML schema.
+- [ ] Create a version extension test verifying group entry iteration correctly uses the wire entry block length.
 
 ## Detailed Code Locations
 

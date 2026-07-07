@@ -91,14 +91,14 @@ multiplies and sums. No runtime work beyond addition.
 
 ## Acceptance criteria
 
-- [x] `LengthBuilder<State>` generated per message with groups or var-data
-- [x] One method per group: `foo_count(N)`, `foo_count_with(N, |e| e)`, `skip_foo()`
-- [x] One method per var-data field: `foo(data)`, `foo_len(N)` (just length, no data)
-- [x] Type-state enforces wire order — cannot skip ahead
-- [x] `.build()` returns exact `usize` — no Result, computation is infallible
-- [x] Fixed messages (no groups or var-data): no builder generated, just `ENCODED_LENGTH`
-- [x] Optional groups can be skipped explicitly via `.skip_foo()`
-- [x] Nested groups: per-entry var-data lengths via closure on `_with` methods
-- [x] Generated doc: example showing a complete builder invocation
-- [x] Test: builder output matches actual encoded message length
-- [x] Test: builder output matches `encoded_length()` runtime method
+- [ ] `LengthBuilder<State>` generated per message with groups or var-data
+- [ ] One method per group: `foo_count(N)`, `foo_count_with(N, |e| e)`, `skip_foo()`
+- [ ] One method per var-data field: `foo(data)`, `foo_len(N)` (just length, no data)
+- [ ] Type-state enforces wire order — cannot skip ahead
+- [ ] `.build()` returns exact `usize` — no Result, computation is infallible
+- [ ] Fixed messages (no groups or var-data): no builder generated, just `ENCODED_LENGTH`
+- [ ] Optional groups can be skipped explicitly via `.skip_foo()`
+- [ ] Nested groups: per-entry var-data lengths via closure on `_with` methods
+- [ ] Generated doc: example showing a complete builder invocation
+- [ ] Test: builder output matches actual encoded message length
+- [ ] Test: builder output matches `encoded_length()` runtime method

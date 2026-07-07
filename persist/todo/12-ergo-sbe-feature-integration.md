@@ -35,8 +35,8 @@ use ergo_sbe::persist_derive::Persist;  // if we re-export the derive too
 
 ## Acceptance criteria
 
-- [x] `ergo_sbe` with `features = ["persist"]` compiles
-- [x] `ergo_sbe` without the feature does not pull in `clickhouse` or `ergo_clickhouse_persist`
-- [x] User can `use ergo_sbe::persist::Persist` when feature is on
-- [x] Example in `samples/` showing a DTO with `#[derive(SbeMessage)]` + `#[derive(Persist)]`
-- [x] `cargo test --workspace` passes with and without the persist feature
+- [ ] `ergo_sbe` with `features = ["persist"]` compiles
+- [ ] `ergo_sbe` without the feature does not pull in `clickhouse` or `ergo_clickhouse_persist`
+- [ ] User can `use ergo_sbe::persist::Persist` when feature is on
+- [ ] Example in `samples/` showing a DTO with `#[derive(SbeMessage)]` + `#[derive(Persist)]`
+- [ ] `cargo test --workspace` passes with and without the persist feature

@@ -23,8 +23,8 @@ schema and benchmark head-to-head:
 - [x] Generate Aeron Rust SBE code from example-schema and commit to
   `sbe/benches/generated/aeron_car.rs`
 - [x] Generate ErgoSBE code from same schema (already exists as golden)
-- [x] Write comparison benchmarks in `sbe/benches/perf_parity_bench.rs`
-- [x] Run `cargo bench` -- ErgoSBE <= Aeron in all scenarios
+- [ ] Write comparison benchmarks in `sbe/benches/perf_parity_bench.rs`
+- [ ] Run `cargo bench` -- ErgoSBE <= Aeron in all scenarios
 - [x] Any scenario where Aeron is faster --> create a blocking bug todo
   describing the gap and the fix needed
 

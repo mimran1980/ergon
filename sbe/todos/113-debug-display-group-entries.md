@@ -69,12 +69,12 @@ the message Display does.
 
 ## Acceptance criteria
 
-- [x] Group decoder Display iterates entries, prints each with its scalar fields
-- [x] Nested groups within entries printed recursively (or noted as deferred)
-- [x] Var-data fields within entries shown as `N bytes` (same as message-level)
-- [x] Result-wrapped entries handle the error case (from todo 111)
-- [x] Golden file regenerated and stability test passes
-- [x] Baseline tests pass
+- [ ] Group decoder Display iterates entries, prints each with its scalar fields
+- [ ] Nested groups within entries printed recursively (or noted as deferred)
+- [ ] Var-data fields within entries shown as `N bytes` (same as message-level)
+- [ ] Result-wrapped entries handle the error case (from todo 111)
+- [ ] Golden file regenerated and stability test passes
+- [ ] Baseline tests pass
 
 ## Files
 

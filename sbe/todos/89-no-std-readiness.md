@@ -9,13 +9,13 @@ makes that promise concrete.
 
 ## Acceptance Criteria
 
-- [x] Generated runtime (`sbe_rt`) compiles with `#![no_std]`
+- [ ] Generated runtime (`sbe_rt`) compiles with `#![no_std]`
 - [x] `DecodeError` and `EncodeError` use `core::error::Error` (stable since 1.81) — already done
 - [x] No `std::` paths in generated decode/encode paths
-- [x] `alloc-convenience` feature (todo 83) gates all `String`/`Vec` usage
-- [x] `no_std` feature flag added: when enabled, generated code uses `core` only
-- [x] Test: compile generated code in a `#![no_std]` crate
-- [x] Document which features require `std` vs `core` vs `alloc`
+- [ ] `alloc-convenience` feature (todo 83) gates all `String`/`Vec` usage
+- [ ] `no_std` feature flag added: when enabled, generated code uses `core` only
+- [ ] Test: compile generated code in a `#![no_std]` crate
+- [ ] Document which features require `std` vs `core` vs `alloc`
 
 ## Dependencies
 

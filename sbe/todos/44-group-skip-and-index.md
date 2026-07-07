@@ -20,7 +20,7 @@ let entry = ff.next().unwrap();  // reads entry 1 (second entry)
 - [x] `skip_n()` generated for every repeating group (generic, not per-group named)
 - [x] Uses entry `encoded_length()` for groups with var-data tails; O(1) stride for fixed-size groups
 - [x] Returns `Result<(), DecodeError>` (validates n <= remaining count)
-- [x] `unsafe fn skip_n_unchecked()` — skips without extent validation
+- [ ] `unsafe fn skip_n_unchecked()` — skips without extent validation
 - [x] Updates internal position so subsequent entries/navigation read from the right offset
 
 ## skip_all() — skip to end of message
@@ -32,8 +32,8 @@ car.skip_all()?;
 assert_eq!(car.pos, car.buf.len()); // at end of message
 ```
 
-- [x] `skip_all()` skips every remaining group and var-data field
-- [x] Returns post-tail offset
+- [ ] `skip_all()` skips every remaining group and var-data field
+- [ ] Returns post-tail offset
 
 ## Indexed group access (random entry by index)
 
@@ -48,7 +48,7 @@ This is already spec'd in `33-rust-idiomatic-api.md` — verify it's efficient
 stride math, not actual iteration.
 
 - [x] `nth()` on group decoders is O(1) stride math, not O(N) iteration
-- [x] Verified by benchmark: `nth(1000)` takes same time as `nth(1)`
+- [ ] Verified by benchmark: `nth(1000)` takes same time as `nth(1)`
 
 ## rewind() — reset group iteration
 
@@ -83,19 +83,19 @@ asks.rewind();  // re-read if needed
 ## Acceptance criteria
 
 - [x] `skip_n()` on every repeating group (generic skip, not per-group named)
-- [x] `skip_all()` on every message with tail elements
+- [ ] `skip_all()` on every message with tail elements
 - [x] `nth()` on group iterators uses O(1) stride math
 - [x] `rewind()` on group iterators resets to first entry
 - [x] Dimension headers read once, cached for rewind
-- [x] All `skip` methods have `_unchecked` variants
-- [x] Test: skip bids, read asks, assert correct ask entry values
-- [x] Test: skip_all() → pos == buf.len()
-- [x] Test: nth(5) on 100-entry group → correct entry, no iteration overhead
-- [x] Test: rewind → re-iterate → same values
+- [ ] All `skip` methods have `_unchecked` variants
+- [ ] Test: skip bids, read asks, assert correct ask entry values
+- [ ] Test: skip_all() → pos == buf.len()
+- [ ] Test: nth(5) on 100-entry group → correct entry, no iteration overhead
+- [ ] Test: rewind → re-iterate → same values
 
 
 ## Verification / Unit Testing
-- [x] Create unit tests `test_group_skip_and_index` verifying `skip_n()`, `nth()`, `rewind()`, and `as_chunks()` navigate groups correctly and return errors for out of bounds access.
+- [ ] Create unit tests `test_group_skip_and_index` verifying `skip_n()`, `nth()`, `rewind()`, and `as_chunks()` navigate groups correctly and return errors for out of bounds access.
 
 Audit note (2026-07-07): Verified. `skip_n()`, `nth()` (O(1) stride), `rewind()`, `remaining()`, and `is_empty()` confirmed in:
 - codegen.rs lines 2546-2648 (group decoder impl)

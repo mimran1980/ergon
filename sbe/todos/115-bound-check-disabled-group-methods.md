@@ -73,23 +73,21 @@ with `bound-check-disabled`, the `Err` path is never taken.
 
 ## Scope
 
-| Method | Location | Gate? | Reason |
-|--------|----------|-------|--------|
-| `wrap_and_apply_header` | message decoder (~2011) | ✅ Already | Initial buffer validation — gate ok |
-| `wrap()` | message decoder (~1997) | **KEEP** | `const fn`, no bounds check — but takes 4 params from trusted caller |
-| `wrap()` | group decoder (~3065) | **KEEP** | Takes external `buf, pos` — trust boundary. Must validate dimension header fits |
-| `nth()` | group decoder (~3194) | **KEEP** | Takes external `idx: usize` — trust boundary. Bad index must return `Err`, never UB |
-| `skip_n()` | group decoder (~3110, ~3128) | Gate ok | Internal counter, validated by dimension header |
-| entry field accessor bounds | group decoder (~3250+) | Gate ok | Buffer validated by `wrap_and_apply_header` |
-| `next()` in Iterator | group decoder (~3240, ~3260) | Gate ok | Advances by `ENTRY_BLOCK_LENGTH` within verified extent |
+| Method | Location | Has gate? |
+|--------|----------|-----------|
+| `wrap_and_apply_header` | message decoder (~2011) | ✅ Already |
+| `nth()` | group decoder (~3194) | ❌ |
+| `skip_n()` | group decoder (~3110, ~3128) | ❌ |
+| entry field accessor bounds | group decoder (~3250+) | ❌ |
+| `next()` in Iterator | group decoder (~3240, ~3260) | ❌ |
 
 ## Acceptance criteria
 
-- [x] `nth()` bounds checks ALWAYS present (protects against bad user input)
-- [x] `skip_n()` bounds checks gated behind `bound-check-disabled`
-- [x] Entry field accessor bounds checks gated
-- [x] Iterator `next()` bounds checks gated
-- [x] `#[cfg(feature = "bound-check-disabled")]` fast paths use `unsafe` where needed
-- [x] Golden file regenerated and stability test passes
-- [x] Baseline tests pass with default features
-- [x] `cargo test --features bound-check-disabled` passes
+- [ ] `nth()` bounds checks gated behind `bound-check-disabled`
+- [ ] `skip_n()` bounds checks gated behind `bound-check-disabled`
+- [ ] Entry field accessor bounds checks gated
+- [ ] Iterator `next()` bounds checks gated
+- [ ] `#[cfg(feature = "bound-check-disabled")]` fast paths use `unsafe` where needed
+- [ ] Golden file regenerated and stability test passes
+- [ ] Baseline tests pass with default features
+- [ ] `cargo test --features bound-check-disabled` passes

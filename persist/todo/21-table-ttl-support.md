@@ -49,10 +49,10 @@ TTL timestamp + INTERVAL 24 HOURS
 
 ## Acceptance criteria
 
-- [x] `TtlConfig` struct with `column` + `interval` fields
-- [x] `TableSchema::ttl: Option<TtlConfig>`
-- [x] `create_table_ddl()` emits `TTL` clause when configured
-- [x] `SchemaDiff` ignores TTL (no migration needed)
-- [x] `DynamicRecorderBuilder` gains `ttl()` method
-- [x] `#[derive(Persist)]` gets `#[persist(ttl = "...")]` container attribute
-- [x] Integration test: table created with TTL, verify via `SHOW CREATE TABLE`
+- [ ] `TtlConfig` struct with `column` + `interval` fields
+- [ ] `TableSchema::ttl: Option<TtlConfig>`
+- [ ] `create_table_ddl()` emits `TTL` clause when configured
+- [ ] `SchemaDiff` ignores TTL (no migration needed)
+- [ ] `DynamicRecorderBuilder` gains `ttl()` method
+- [ ] `#[derive(Persist)]` gets `#[persist(ttl = "...")]` container attribute
+- [ ] Integration test: table created with TTL, verify via `SHOW CREATE TABLE`

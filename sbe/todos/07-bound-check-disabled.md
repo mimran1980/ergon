@@ -10,8 +10,8 @@ across the feature; only subtracts branches. Crate stays safe-by-default.
 
 - [x] `bound-check-disabled` feature flag in generated code
 - [x] `_unchecked` variants on all structural entrypoints
-- [x] Default `Iterator` impls route through checked → `_unchecked` path
-- [x] Generated module `unsafe_code = "forbid"` only when unchecked disabled
+- [ ] Default `Iterator` impls route through checked → `_unchecked` path
+- [ ] Generated module `unsafe_code = "forbid"` only when unchecked disabled
 - [x] Tests: both feature states produce identical field values
 - [x] Docs: safety contracts on every `_unchecked` function
 

@@ -10,12 +10,12 @@ DECISIONS.md §12 explicitly prefers `#[expect]` over `#[allow]`.
 
 ## Acceptance criteria
 
-- [x] Replace `#[allow(non_camel_case_types)]` with `#[expect(non_camel_case_types)]`
-- [x] Replace `#[allow(non_snake_case)]` with `#[expect(non_snake_case)]`
-- [x] Replace `#[allow(clippy::*)]` with `#[expect(clippy::*)]`
-- [x] Replace `#[allow(dead_code)]` with `#[expect(dead_code)]`
-- [x] `#[allow(unused_imports)]` → `#[expect(unused_imports)]`
-- [x] Verify: when suppression is stale, CI warns (so we can remove it)
+- [ ] Replace `#[allow(non_camel_case_types)]` with `#[expect(non_camel_case_types)]`
+- [ ] Replace `#[allow(non_snake_case)]` with `#[expect(non_snake_case)]`
+- [ ] Replace `#[allow(clippy::*)]` with `#[expect(clippy::*)]`
+- [ ] Replace `#[allow(dead_code)]` with `#[expect(dead_code)]`
+- [ ] `#[allow(unused_imports)]` → `#[expect(unused_imports)]`
+- [ ] Verify: when suppression is stale, CI warns (so we can remove it)
 
 Ref: gap analysis (todo 51), DECISIONS.md §12.
 

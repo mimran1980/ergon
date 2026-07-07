@@ -41,11 +41,11 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 
 ## Acceptance criteria
 
-- [x] `just samples-orderbook` starts ClickHouse, compiles, connects to
+- [ ] `just samples-orderbook` starts ClickHouse, compiles, connects to
   exchange, builds orderbook, persists to ClickHouse
-- [x] Orderbook table has `exchange`, `instrument` (e.g. "BTCUSDT") columns
-- [x] Table has 24h TTL
-- [x] `cargo test -p exchange-orderbook` passes
-- [x] Works from a single `just` command
+- [ ] Orderbook table has `exchange`, `instrument` (e.g. "BTCUSDT") columns
+- [ ] Table has 24h TTL
+- [ ] `cargo test -p exchange-orderbook` passes
+- [ ] Works from a single `just` command
 
 Ref: user request for end-to-end integration demo using both crates.

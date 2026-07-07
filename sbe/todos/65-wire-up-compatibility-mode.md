@@ -25,12 +25,12 @@ but no code path reads them. Wire them into the codegen so:
 
 ## Acceptance criteria
 
-- [x] `Generator::new()` stores `compatibility` from config
-- [x] `compatibility` passed to all `generate_*` functions (or stored in a
+- [ ] `Generator::new()` stores `compatibility` from config
+- [ ] `compatibility` passed to all `generate_*` functions (or stored in a
   shared context struct)
-- [x] Each extension todo gates its output on `WireCompatibleExtensions`
-- [x] Strict mode golden output unchanged from current
-- [x] Config test: `Strict` + extension schema = no extension code emitted
-- [x] Config test: `WireCompatibleExtensions` + extension schema = extensions emitted
+- [ ] Each extension todo gates its output on `WireCompatibleExtensions`
+- [ ] Strict mode golden output unchanged from current
+- [ ] Config test: `Strict` + extension schema = no extension code emitted
+- [ ] Config test: `WireCompatibleExtensions` + extension schema = extensions emitted
 
 Ref: user request. The enum exists but isn't wired up — fix that.

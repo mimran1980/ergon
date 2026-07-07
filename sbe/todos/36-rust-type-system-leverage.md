@@ -29,9 +29,9 @@ Generate `MAX_ENCODED_LENGTH: usize` as a `const` on every message. For fixed
 messages (no groups, no var-data), it's exact. For variable messages, it's the
 worst-case: `header + block + max_groups * entry_size + max_var_data`.
 
-- [x] `const MAX_ENCODED_LENGTH: usize` on every message
-- [x] `const ENCODED_LENGTH: usize` — exact for fixed messages, compile error for variable
-- [x] Generated doc: "Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`"
+- [ ] `const MAX_ENCODED_LENGTH: usize` on every message
+- [ ] `const ENCODED_LENGTH: usize` — exact for fixed messages, compile error for variable
+- [ ] Generated doc: "Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`"
 
 ### 2. `let-else` for idiomatic bounds checks
 
@@ -50,9 +50,9 @@ let rest = self.buf.get(self.pos + offset..).ok_or_else(|| {
 let bytes = rest[..2].try_into().unwrap();
 ```
 
-- [x] Replace all `if buf.len() < ...` patterns with `let-else` or `.ok_or_else()?`
-- [x] Generated code uses `?` operator throughout (more idiomatic)
-- [x] No performance regression (same machine code, better readability)
+- [ ] Replace all `if buf.len() < ...` patterns with `let-else` or `.ok_or_else()?`
+- [ ] Generated code uses `?` operator throughout (more idiomatic)
+- [ ] No performance regression (same machine code, better readability)
 
 ### 3. `&'static` header templates
 
@@ -67,11 +67,11 @@ const CAR_HEADER_TEMPLATE: [u8; 8] = [42, 0, 1, 0, 1, 0, 0, 0]; // blockLength=4
 buf[..8].copy_from_slice(&CAR_HEADER_TEMPLATE);
 ```
 
-- [x] Generate `const HEADER_TEMPLATE: [u8; 8]` for message headers
-- [x] Generate `const GROUP_TEMPLATE: [u8; 4]` for group dimension blocks
-- [x] `wrap_and_apply_header` uses `copy_from_slice` from template, not per-field encode
-- [x] Constant-value fields get `const FIELD_TEMPLATE: [u8; N]` backed into the binary
-- [x] Benchmark: encode speedup from skipping field-by-field header writes
+- [ ] Generate `const HEADER_TEMPLATE: [u8; 8]` for message headers
+- [ ] Generate `const GROUP_TEMPLATE: [u8; 4]` for group dimension blocks
+- [ ] `wrap_and_apply_header` uses `copy_from_slice` from template, not per-field encode
+- [ ] Constant-value fields get `const FIELD_TEMPLATE: [u8; N]` backed into the binary
+- [ ] Benchmark: encode speedup from skipping field-by-field header writes
 
 ### 4. Trait-based message dispatch (no enum, no branch miss)
 
@@ -103,10 +103,10 @@ dispatch(&buf, |msg| match msg {
 The closure-based approach lets the compiler monomorphise if the handler is
 statically known. The enum approach always pays the branch.
 
-- [x] Generate `dispatch()` as an alternative to `AnyMessage::decode()`
-- [x] `MessageHandler` trait with `on_<MessageName>` methods + `on_unknown`
-- [x] Benchmark: enum dispatch vs closure dispatch vs raw match — pick the fastest
-- [x] Both `AnyMessage` enum AND `dispatch()` are generated (user picks)
+- [ ] Generate `dispatch()` as an alternative to `AnyMessage::decode()`
+- [ ] `MessageHandler` trait with `on_<MessageName>` methods + `on_unknown`
+- [ ] Benchmark: enum dispatch vs closure dispatch vs raw match — pick the fastest
+- [ ] Both `AnyMessage` enum AND `dispatch()` are generated (user picks)
 
 ## P1 — high impact, behind feature or conditional
 
@@ -125,9 +125,9 @@ enum ModelKind {
 }
 ```
 
-- [x] When nullValue maps to an unused discriminant, use it as the niche
-- [x] `const _: () = assert!(size_of::<Option<ModelKind>>() == 1);`
-- [x] Document: why certain enum discriminants are arranged as they are
+- [ ] When nullValue maps to an unused discriminant, use it as the niche
+- [ ] `const _: () = assert!(size_of::<Option<ModelKind>>() == 1);`
+- [ ] Document: why certain enum discriminants are arranged as they are
 
 ### 6. Borrow-splitting for parallel group decode
 
@@ -146,10 +146,10 @@ let (bids, asks) = rayon::join(
 );
 ```
 
-- [x] `group_name_raw_slice()` accessor returns `&[u8]` for the group's wire region
-- [x] `decode_group(buf)` — standalone function that decodes a group from a raw slice
-- [x] Thread safety: regions are guaranteed non-overlapping by SBE wire layout
-- [x] Benchmark: parallel vs sequential group decode on 4-group message
+- [ ] `group_name_raw_slice()` accessor returns `&[u8]` for the group's wire region
+- [ ] `decode_group(buf)` — standalone function that decodes a group from a raw slice
+- [ ] Thread safety: regions are guaranteed non-overlapping by SBE wire layout
+- [ ] Benchmark: parallel vs sequential group decode on 4-group message
 
 ### 7. Compile-time message layout
 
@@ -169,22 +169,22 @@ The decoder can iterate the layout instead of hard-coding branchy field reads.
 Not necessarily faster (LLVM already constant-folds the hard-coded offsets) but
 enables generic tooling: `display_wire()`, `validate_layout()`, `diff_layout()`.
 
-- [x] Generate `const FIELD_LAYOUT: &[FieldLayout]` on every message
-- [x] `FieldLayout { name, offset, size, since_version, semantic_type, presence }`
-- [x] `display_wire()` uses FIELD_LAYOUT for annotated hex dump
-- [x] `validate_layout()` checks buffer boundaries using FIELD_LAYOUT
-- [x] Tool: `ergosbe diff-layout schema_v1.xml schema_v2.xml` using layout tables
+- [ ] Generate `const FIELD_LAYOUT: &[FieldLayout]` on every message
+- [ ] `FieldLayout { name, offset, size, since_version, semantic_type, presence }`
+- [ ] `display_wire()` uses FIELD_LAYOUT for annotated hex dump
+- [ ] `validate_layout()` checks buffer boundaries using FIELD_LAYOUT
+- [ ] Tool: `ergosbe diff-layout schema_v1.xml schema_v2.xml` using layout tables
 
 ## Acceptance criteria
 
-- [x] `MAX_ENCODED_LENGTH` const on every message
-- [x] Generated code uses `let-else` / `?` for bounds checks
-- [x] Header encode uses `&'static` template + `copy_from_slice`
-- [x] `dispatch()` function generated alongside `AnyMessage`
-- [x] `Option<EnumKind>` is niche-optimised where possible
-- [x] `raw_slice()` accessors on groups for parallel decode
-- [x] `FIELD_LAYOUT` const table generated on every message
-- [x] All existing tests pass, no wire format change
+- [ ] `MAX_ENCODED_LENGTH` const on every message
+- [ ] Generated code uses `let-else` / `?` for bounds checks
+- [ ] Header encode uses `&'static` template + `copy_from_slice`
+- [ ] `dispatch()` function generated alongside `AnyMessage`
+- [ ] `Option<EnumKind>` is niche-optimised where possible
+- [ ] `raw_slice()` accessors on groups for parallel decode
+- [ ] `FIELD_LAYOUT` const table generated on every message
+- [ ] All existing tests pass, no wire format change
 
 Ref: `design/DECISIONS.md` §2–6, §10. Rust type system features: const generics,
 let-else, niche optimisation, borrow-splitting, impl Trait in closure position.
