@@ -10,6 +10,9 @@ not translated from Java.
 
 - **XML schema parsing** — parse SBE schemas with XInclude support, miette diagnostics
 - **Encoder/Decoder generation** — zero-allocation `Copy` decoders, fluent encoder API
+- **Infallible field accessors** — scalar, enum, set, and composite accessors are plain `fn(&self) -> T`, no unwrapping
+- **Flat enum generation** — enums are true Rust `enum`s with a `NullVal` variant for unknown wire values (no separate `Kind` type)
+- **Buffer verification** — `Decoder::verify(&[u8])` validates an entire message buffer before decoding, reporting group/vardata bounds
 - **Version-aware decoding** — all accessors respect the wire message version
 - **Repeating groups** — `ExactSizeIterator`-based group access with entry decoders
 - **Variable-length data** — var-data with length-prefixed byte slices and optional UTF-8 accessors
@@ -18,7 +21,8 @@ not translated from Java.
 - **Multi-schema** — `generate_multi` for projects with shared type definitions across schemas
 - **Type-state tail encoding** — encoder enforces tail element ordering at compile time
 - **Optional/null handling** — `Option<T>` return types for optional and version-gated fields
-- **Raw accessors** — `raw_foo()` for HFT hot loops (no null-sentinel mapping)
+- **Unchecked accessors** — `unsafe fn foo_unchecked()` for HFT hot loops (no bounds check)
+- **Compile-time constants** — `FIELD_NULL`, `FIELD_MIN`, `FIELD_MAX` on every decoded field
 
 ## Quick start
 
@@ -59,6 +63,8 @@ fn main() {
 
 ### 3. Use generated code
 
+Scalar, enum, set, and composite field accessors are **infallible** -- no `?`, no `unwrap`:
+
 ```rust
 // Include the generated module
 include!(concat!(env!("OUT_DIR"), "/my_messages.rs"));
@@ -67,7 +73,16 @@ fn decode_message(buf: &[u8]) -> Result<(), sbe_rt::DecodeError> {
     let car = CarDecoder::wrap_and_apply_header(buf, 0)?;
     let serial = car.serial_number();           // u64 -- infallible
     let year = car.model_year();                // u16 -- infallible
+    let model = car.code();                     // Model (flat enum) -- infallible
+    let extras = car.extras();                  // OptionalExtras (set) -- infallible
+    let engine = car.engine();                  // Engine (composite) -- infallible
     println!("Car #{} ({})", serial, year);
+
+    // Groups and var-data still return Result:
+    for entry in car.fuel_figures()? {
+        let speed = entry.speed();              // u16 -- infallible
+        println!("Speed: {}", speed);
+    }
     Ok(())
 }
 ```

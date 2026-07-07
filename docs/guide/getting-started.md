@@ -107,30 +107,46 @@ fn main() -> Result<(), sbe_rt::DecodeError> {
         // ... raw SBE message bytes ...
     ];
 
-    // Decode a message — wrap_and_apply_header reads the SBE header
+    // Decode a message -- wrap_and_apply_header reads the SBE header
     let quote = QuoteDecoder::wrap_and_apply_header(buf, 0)?;
 
-    // Read fixed fields
-    let price = quote.price()?;        // Result<u64>
-    let qty = quote.quantity()?;      // Result<u32>
-    let symbol = quote.symbol()?;     // Result<SymbolEnum> (enum)
+    // Read fixed fields -- scalar, enum, set, and composite accessors
+    // are ALL infallible (no Result wrapper):
+    let price = quote.price();        // u64 -- no ?, no unwrap
+    let qty = quote.quantity();       // u32 -- infallible
+    let side = quote.side();          // Side (flat enum) -- infallible
 
     println!("Price: {}, Qty: {}", price, qty);
 
-    // Read optional/version-gated fields
-    if let Some(pegged_price) = quote.pegged_price()? {
+    // Read optional/version-gated fields -- return Option<T> directly
+    if let Some(pegged_price) = quote.pegged_price() {
         println!("Pegged: {}", pegged_price);
+    }
+
+    // Groups and var-data still return Result:
+    for entry in quote.orders()? {
+        let id = entry.order_id();    // u64 -- infallible
+        println!("Order: {}", id);
     }
 
     Ok(())
 }
 ```
 
+### Buffer verification
+
+Before decoding, you can verify an entire message buffer. This validates the
+header, block length, group dimensions, and var-data bounds in a single pass:
+
+```rust
+// Verify all group/vardata bounds before decoding
+QuoteDecoder::verify(&buf)?;
+let quote = QuoteDecoder::wrap_and_apply_header(buf, 0)?;
+```
+
 ### Encoding messages
 
 ```rust
-use ergosbe::GenerationConfig;
-
 fn encode_example() -> Result<(), sbe_rt::EncodeError> {
     // Allocate a buffer (fixed-size messages have ENCODED_LENGTH)
     let mut buf = [0u8; QuoteEncoder::ENCODED_LENGTH];
@@ -138,11 +154,11 @@ fn encode_example() -> Result<(), sbe_rt::EncodeError> {
     // Wrap and write the SBE header
     let mut encoder = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?;
 
-    // Set scalar fields — returns &mut Self for chaining
+    // Set scalar fields -- returns &mut Self for chaining
     encoder
         .price(1234500)
         .quantity(100)
-        .symbol(SymbolEnum(1));
+        .side(Side::from_raw(1));
 
     // Get the encoded bytes
     let encoded = encoder.as_ref();

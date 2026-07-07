@@ -33,6 +33,14 @@ pub mod sbe_rt {
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
     }
 
+    pub enum VerifyError {
+        HeaderTooShort,
+        InvalidBlockLength { expected_min: usize, actual: usize },
+        GroupDimOutOfBounds { field: &'static str, offset: usize },
+        VarDataOutOfBounds { field: &'static str, offset: usize, length: u32 },
+        MessageTooShort { needed: usize, available: usize },
+    }
+
     pub trait SbeMessage {
         const TEMPLATE_ID: u16;
         const BLOCK_LENGTH: usize;
@@ -42,7 +50,11 @@ pub mod sbe_rt {
 }
 ```
 
-Both error types implement `core::error::Error` and `core::fmt::Display`.
+All error types implement `core::error::Error` and `core::fmt::Display`.
+
+`VerifyError` is returned by `Decoder::verify()` for pre-decode buffer
+validation. It reports the specific structural issue (bad block length, group
+dimension out of bounds, var-data out of bounds).
 
 ## Composite types
 
@@ -62,39 +74,34 @@ impl MessageHeader {
 }
 ```
 
-Each member gets a `const fn` accessor. The struct exposes its raw bytes via
-`.0`.
+Each member gets a `const fn` accessor -- **infallible**, no `Result`. The
+struct exposes its raw bytes via `.0`.
 
 ## Enum types
 
-Enums use the E3 pattern — a newtype struct for the wire value plus a proper
-Rust enum for known variants:
+Enums are generated as flat Rust `enum`s with a `NullVal` variant for unknown
+wire values. There is no separate `Kind` type -- the enum **is** the wire type:
 
 ```rust
-#[repr(transparent)]
-pub struct Side(pub u8);
-
-pub enum SideKind {
+#[repr(u8)]
+pub enum Side {
     Buy = 1,
     Sell = 2,
+    NullVal,
 }
 
 impl Side {
-    pub const Buy: Self = Self(1);
-    pub const Sell: Self = Self(2);
-
-    pub const fn kind(self) -> Option<SideKind> { /* ... */ }
-    pub const fn into_kind(self) -> Option<SideKind> { /* ... */ }
-    pub const fn raw(self) -> u8 { self.0 }
+    pub fn raw(self) -> u8 { self as u8 }
+    pub const fn from_raw(val: u8) -> Self { /* ... */ }
 }
 
 impl From<u8> for Side { /* ... */ }
 impl From<Side> for u8 { /* ... */ }
-impl TryFrom<Side> for SideKind { /* ... */ }
 ```
 
-The `.kind()` method returns `None` for unknown wire values — an ordinary Rust
-enum cannot hold unknown discriminants.
+The `NullVal` variant holds any unknown wire discriminant, ensuring the
+decoder never panics on unexpected wire values. Use `from_raw()` to construct
+from a raw byte, and `raw()` to extract the byte back.
 
 ## Set (bitset) types
 
@@ -113,7 +120,21 @@ impl Flags {
 }
 ```
 
+All bit accessors are **infallible**.
+
 ## Message decoder
+
+### Buffer verification
+
+Before constructing a decoder, you can validate the entire message buffer:
+
+```rust
+// Static method on the decoder type
+QuoteDecoder::verify(&buf)?;   // Returns Result<(), VerifyError>
+```
+
+This checks the header, block length, group dimension headers, and var-data
+bounds in a single pass. Guards against truncated messages at the feed level.
 
 ### Struct constants
 
@@ -142,29 +163,37 @@ let decoder = QuoteDecoder::wrap(buf, 32, acting_block_length, acting_version);
 
 ### Field accessors
 
-For a `price` field (`int64`, `sinceVersion=0`, required):
+For a `price` field (`int64`, `sinceVersion=0`, required) -- **infallible**:
 
 ```rust
-pub fn price(&self) -> Result<i64, sbe_rt::DecodeError>;
+pub fn price(&self) -> i64;
 pub const unsafe fn price_unchecked(&self) -> i64;  // no bounds check
-pub fn raw_price(&self) -> i64;                      // no null mapping
 ```
+
+For a required field with `sinceVersion=0` -- the accessor is always a plain
+return type with no `Result` wrapper.
 
 For a `sinceVersion > 0` field (`uint32`, `sinceVersion=1`, required):
 
 ```rust
-pub fn new_field(&self) -> Result<Option<u32>, sbe_rt::DecodeError>;
-pub const unsafe fn new_field_unchecked(&self) -> u32;
-pub fn raw_new_field(&self) -> Option<u32>;
+pub fn new_field(&self) -> Option<u32>;               // None if version below sinceVersion
+pub const unsafe fn new_field_unchecked(&self) -> u32; // raw wire value
+pub fn raw_new_field(&self) -> Option<u32>;            // no checked fallback
 ```
+
+Version-gated fields return `Option<T>` directly -- `None` when the wire
+`actingVersion` is below the field's introduction version.
 
 For an optional field (`int64`, `presence="optional"`):
 
 ```rust
-pub fn pegged_price(&self) -> Result<Option<i64>, sbe_rt::DecodeError>;
-pub unsafe fn pegged_price_unchecked(&self) -> i64;  // raw wire value
-pub fn raw_pegged_price(&self) -> Option<i64>;       // None if absent by version
+pub fn pegged_price(&self) -> Option<i64>;             // None if null sentinel or absent by version
+pub unsafe fn pegged_price_unchecked(&self) -> i64;    // raw wire value, no null mapping
+pub fn raw_pegged_price(&self) -> Option<i64>;         // None if absent by version, not null-sentinel
 ```
+
+Optional fields also return `Option<T>` directly -- no `Result` wrapper. The
+`raw_` variant distinguishes null-sentinel from version-absence.
 
 For a constant field:
 
@@ -172,12 +201,23 @@ For a constant field:
 pub fn message_type(&self) -> &'static str;  // or typed value
 ```
 
-For a fixed-size array (`int32[3]`):
+For a fixed-size array (`int32[3]`) -- may be version-gated:
 
 ```rust
-pub fn coordinates(&self) -> Result<[i32; 3], sbe_rt::DecodeError>;
-pub unsafe fn coordinates_unchecked(&self) -> [i32; 3];
-pub fn raw_coordinates(&self) -> [i32; 3];
+pub fn some_numbers(&self) -> Result<[i32; 3], sbe_rt::DecodeError>;
+pub const unsafe fn some_numbers_unchecked(&self) -> [i32; 3];
+pub const fn raw_some_numbers(&self) -> [i32; 3];
+```
+
+Fixed arrays return `Result` when version-gated (they can be conditionally
+absent), or can be plain const fn when always present.
+
+Every field also exposes compile-time constants:
+
+```rust
+pub const PRICE_NULL: i64 = i64::MAX;
+pub const PRICE_MIN: i64 = i64::MIN + 1;
+pub const PRICE_MAX: i64 = i64::MAX - 1;
 ```
 
 ### Group access
@@ -191,12 +231,14 @@ The group decoder implements `Iterator` and `ExactSizeIterator`:
 ```rust
 let orders = quote.orders()?;
 for order in orders {
-    let id = order.order_id()?;
+    let id = order.order_id();    // infallible
+    let qty = order.order_qty();  // infallible
 }
 ```
 
-Group entries have the same accessor patterns as messages: checked `Result`
-accessors, `_unchecked` methods, and `raw_` accessors.
+Group entry accessors follow the same patterns as messages: scalar/enum/set
+accessors are infallible, groups and var-data return `Result`, unchecked
+methods exist as `unsafe fn`.
 
 ### Var-data access
 
@@ -216,7 +258,7 @@ let mut encoder = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?;
 encoder
     .price(12345)
     .quantity(100)
-    .side(Side::Buy);
+    .side(Side::from_raw(1));
 
 let bytes = encoder.as_ref();  // &[u8]
 ```
@@ -297,6 +339,6 @@ for result in cursor {
 ```
 
 Framing policies:
-- `FramingPolicy::LengthPrefixU32` — 4-byte LE length prefix
-- `FramingPolicy::LengthPrefixU16` — 2-byte LE length prefix
-- `FramingPolicy::Fixed(len)` — every frame is exactly `len` bytes
+- `FramingPolicy::LengthPrefixU32` -- 4-byte LE length prefix
+- `FramingPolicy::LengthPrefixU16` -- 2-byte LE length prefix
+- `FramingPolicy::Fixed(len)` -- every frame is exactly `len` bytes

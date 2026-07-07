@@ -31,7 +31,7 @@ An SBE schema is an XML document with a `<messageSchema>` root:
 | Attribute | Required | Description |
 |-----------|----------|-------------|
 | `package` | Yes | Reverse-domain package name (e.g. `"myapp.sbe"`) |
-| `id` | Yes | Schema identifier — must match the wire header |
+| `id` | Yes | Schema identifier -- must match the wire header |
 | `version` | No | Schema version; defaults to `0` |
 | `byteOrder` | No | `"littleEndian"` (default) or `"bigEndian"` |
 | `headerType` | No | Composite name for the message header; defaults to `"messageHeader"` |
@@ -62,13 +62,12 @@ Composite types group multiple fields into a reusable structure. They become
 </composite>
 ```
 
-Composite members with `description` attributes produce rustdoc on the
-generated accessor.
+Composite accessors are `const fn` and **infallible** -- no `Result`, no `?`.
 
 ### Enums
 
-Enums become a `#[repr(transparent)]` newtype struct (to hold unknown
-discriminants) plus a proper Rust enum for known values:
+Enums become a flat Rust `enum` with a `NullVal` variant for unknown wire
+values. No separate `Kind` type is generated:
 
 ```xml
 <enum name="Side" encodingType="uint8" description="Order side">
@@ -79,10 +78,17 @@ discriminants) plus a proper Rust enum for known values:
 
 Generated access:
 ```rust
-let side = order.side()?;        // Result<Side>
-let kind = side.kind();           // Option<SideKind>
-// side.0 preserves the raw wire byte, even for unknown values
+let side = order.side();             // Side (infallible)
+match side {
+    Side::Buy => println!("Buy"),
+    Side::Sell => println!("Sell"),
+    Side::NullVal => println!("Unknown side: {}", side.raw()),
+}
+// side.raw() returns the raw wire byte
 ```
+
+The `NullVal` variant safely holds any unknown wire discriminant without
+panicking.
 
 ### Sets (choices)
 
@@ -97,8 +103,8 @@ Sets become a `#[repr(transparent)]` newtype struct with bit-test accessors:
 
 Generated access:
 ```rust
-let flags = order.flags()?;       // Result<Flags>
-let is_snapshot = flags.snapshot(); // bool
+let flags = order.flags();            // Flags (infallible)
+let is_snapshot = flags.snapshot();   // bool (infallible)
 ```
 
 ## Message definition
@@ -120,6 +126,14 @@ Fixed-offset fields in the message's fixed block:
 
 The `semanticType` attribute appears in rustdoc (e.g. `Semantic type: Price`).
 
+Required scalar, enum, set, and composite field accessors are **infallible**:
+
+```rust
+let price = quote.price();    // i64 -- no ?, no unwrap
+let qty = quote.quantity();   // u32
+let side = quote.side();      // Side
+```
+
 ### Optional fields
 
 Fields with `presence="optional"` use the type's null value sentinel:
@@ -130,8 +144,22 @@ Fields with `presence="optional"` use the type's null value sentinel:
        description="Pegged price (null when not pegged)"/>
 ```
 
-Accessors return `Result<Option<i64>>` — `None` when the wire value equals the
-null sentinel.
+Accessors return `Option<i64>` -- `None` when the wire value equals the null
+sentinel. No `Result` wrapper -- just `Option`.
+
+### Version-gated fields
+
+Fields with `sinceVersion > 0` return `Option<T>` -- `None` when the wire
+`actingVersion` is below the field's introduction version:
+
+```xml
+<field name="newField" id="8" type="uint32" offset="24"
+       sinceVersion="1" description="Added in version 1"/>
+```
+
+```rust
+let new_field = quote.new_field();   // Option<u32> -- None if wire version < 1
+```
 
 ### Constant fields
 
@@ -158,11 +186,14 @@ and var-data:
 
 Generated access:
 ```rust
-for entry in quote.orders()? {
-    let id = entry.order_id()?;
-    let qty = entry.order_qty()?;
+for entry in quote.orders()? {          // Result<GroupDecoder> -- group access checks bounds
+    let id = entry.order_id();          // u64 -- infallible
+    let qty = entry.order_qty();        // u32 -- infallible
 }
 ```
+
+Groups themselves return `Result` (the group header may be out of bounds),
+but entry field accessors are infallible.
 
 ### Variable-length data
 
@@ -173,10 +204,10 @@ Var-data fields carry a length prefix followed by raw bytes:
       description="Free-text description"/>
 ```
 
-Access returns `&[u8]`; use `_as_str()` for UTF-8:
+Access returns `Result<&[u8]>`; use `_as_str()` for UTF-8:
 
 ```rust
-let desc = quote.description()?;     // &[u8]
+let desc = quote.description()?;         // &[u8]
 let desc_str = quote.description_as_str()?;  // &str
 ```
 
@@ -189,8 +220,8 @@ Fields, groups, and var-data can be versioned with `sinceVersion`:
        sinceVersion="1" description="Added in version 1"/>
 ```
 
-Accessors for `sinceVersion > 0` fields return `Result<Option<T>>` — `None`
-when the wire `actingVersion` is below the field's introduction version.
+Accessors for `sinceVersion > 0` fields return `Option<T>` -- `None` when the
+wire `actingVersion` is below the field's introduction version.
 
 ## Schema includes
 
@@ -212,15 +243,15 @@ current working directory, and well-known paths in the
 
 ## Best practices
 
-1. **Always set `offset` explicitly** on message fields — this documents wire
+1. **Always set `offset` explicitly** on message fields -- this documents wire
    layout and avoids ambiguity.
-2. **Use `description`** on types and fields — these become rustdoc comments
+2. **Use `description`** on types and fields -- these become rustdoc comments
    in the generated code.
 3. **Use `semanticType`** for domain concepts (`Price`, `Qty`, `UTCTimestamp`)
-   — these appear in IDE hover docs.
-4. **Prefer `uint8`-based enums** for small finite sets — they produce compact
+   -- these appear in IDE hover docs.
+4. **Prefer `uint8`-based enums** for small finite sets -- they produce compact
    wire encoding.
-5. **Use `sinceVersion` for schema evolution** — it produces version-aware
+5. **Use `sinceVersion` for schema evolution** -- it produces version-aware
    accessors without breaking existing messages.
 6. **Keep the `messageHeader` composite standard** (four `uint16` fields) unless
-   you have a specific reason to customise it — `headerType` is configurable.
+   you have a specific reason to customise it -- `headerType` is configurable.

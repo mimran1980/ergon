@@ -65,15 +65,15 @@ Cyclic includes are detected and produce a `ParseError::IncludeError`.
 
 ## Unsafe code
 
-ErgoSBE is **safe by default**. All generated accessors are safe `fn`s that
-return `Result`. Unsafe is opt-in.
+ErgoSBE is **safe by default**. All generated accessors are safe `fn`s.
+Unsafe is opt-in.
 
 ### `_unchecked` methods
 
 Every scalar field, composite, enum, set, and fixed array accessor has an
-accompanying `unsafe fn foo_unchecked()` variant. These skip bounds checks
-and panic on invalid data. Use them only when you have verified the buffer
-is large enough and the offset is valid.
+accompanying `unsafe fn foo_unchecked()` variant. These skip bounds checks.
+Use them only when you have verified the buffer is large enough and the offset
+is valid.
 
 **Safety precondition**: The caller must ensure the buffer region starting at
 `self.pos + offset` contains at least `N` readable bytes (where `N` is the
@@ -81,25 +81,29 @@ field size). Calling `_unchecked` with an undersized buffer is UB.
 
 ```rust
 // Safe, checked:
-let price = quote.price()?;                  // Result<i64>
+let price = quote.price();              // i64 (infallible)
 
-// Unsafe, unchecked — caller must verify buffer:
+// Unsafe, unchecked -- caller must verify buffer:
 let price = unsafe { quote.price_unchecked() };  // i64
 ```
 
 ### `raw_` accessors
 
-`raw_` accessors return the wire value **without null-sentinel mapping**. They
-are safe functions that still bounds-check (in checked mode). Use them in HFT
-hot loops where you handle null sentinels yourself.
+`raw_` accessors are generated for optional fields, version-gated fields, and
+fixed-size arrays. They return the wire value **without null-sentinel
+mapping** but are safe functions that still bounds-check (in checked mode).
 
 ```rust
-// Safe, but returns None if the field contains the null sentinel:
-let price: Option<i64> = quote.optional_price()?;
+// Returns None if the field contains the null sentinel:
+let price: Option<i64> = quote.pegged_price();
 
-// Safe, returns the raw wire value regardless:
-let price_raw: i64 = quote.raw_optional_price();
+// Returns the raw wire value regardless, None only if absent by version:
+let price_raw: Option<i64> = quote.raw_pegged_price();
 ```
+
+For version-gated fields, `raw_` distinguishes between "field absent
+by version" (returns `None`) and "field present but null sentinel" (returns
+`Some(sentinel_value)`).
 
 ### `as_str_unchecked`
 
@@ -110,9 +114,25 @@ that skips UTF-8 validation:
 // Safe, validates UTF-8:
 let s: &str = quote.description_as_str()?;
 
-// Unsafe, no UTF-8 validation — caller must ensure valid UTF-8:
+// Unsafe, no UTF-8 validation -- caller must ensure valid UTF-8:
 let s: &str = unsafe { quote.description_as_str_unchecked() };
 ```
+
+## Buffer verification
+
+Every message decoder provides a static `verify()` method that validates the
+entire buffer structure before decoding:
+
+```rust
+// Single-pass validation: header, block length, group dims, var-data bounds
+QuoteDecoder::verify(&buf)?;
+
+// Now safe to decode -- structural issues already ruled out
+let quote = QuoteDecoder::wrap_and_apply_header(buf, 0)?;
+```
+
+`verify()` returns `Result<(), sbe_rt::VerifyError>` with specific variants
+for each structural issue.
 
 ## HFT patterns
 
@@ -128,12 +148,12 @@ let mut buf = [0u8; QuoteEncoder::ENCODED_LENGTH];
 let mut buf = [0u8; QuoteEncoder::MAX_ENCODED_LENGTH];
 ```
 
-### Use `raw_` accessors in hot loops
+### Use unchecked accessors in hot loops
 
-Avoid null-sentinel branches in tight loops:
+Avoid bounds-check branches in tight loops:
 
 ```rust
-// HFT hot loop — skip the Option branch
+// HFT hot loop -- skip bounds checks
 for entry in orders {
     let id = unsafe { entry.order_id_unchecked() };
     let qty = unsafe { entry.order_qty_unchecked() };
@@ -164,7 +184,7 @@ for result in cursor {
     if let Ok(frame) = result {
         match frame.message {
             AnyMessage::Quote(quote) => {
-                // Process quote — zero allocation
+                // Process quote -- zero allocation
             }
             AnyMessage::Unknown { payload, .. } => {
                 // Forward unknown templates unchanged
@@ -178,8 +198,9 @@ for result in cursor {
 
 ### Avoid allocation in error paths
 
-The error types (`DecodeError`, `EncodeError`) are `const`-constructible with
-`&'static str` messages — no heap allocation on failure.
+The error types (`DecodeError`, `EncodeError`, `VerifyError`) are
+`const`-constructible with `&'static str` messages -- no heap allocation on
+failure.
 
 ## Compile-time constants
 
@@ -201,6 +222,14 @@ These are used internally by `wrap_and_apply_header` to avoid runtime encoding
 of the header. They are also available for advanced use cases where you need
 to pre-populate header bytes without a full encoder.
 
+Every scalar field also exposes compile-time null, min, and max constants:
+
+```rust
+pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
+pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
+pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
+```
+
 ## version-aware vs compiled decoding
 
 ErgoSBE **always** uses the wire `actingBlockLength` for tail offset
@@ -213,7 +242,7 @@ calculation. This is the correct behaviour for forward/backward compatibility.
 // NOT at body_offset + QuoteDecoder::BLOCK_LENGTH
 //
 // This matters when a newer schema has a larger block length than the
-// compiled value — using the compiled value would read tail data from
+// compiled value -- using the compiled value would read tail data from
 // the wrong offset.
 ```
 
@@ -221,11 +250,12 @@ calculation. This is the correct behaviour for forward/backward compatibility.
 
 | Feature | Safe? | Notes |
 |---------|-------|-------|
-| `foo()` | Yes | Bounds-checked, null-mapped |
-| `raw_foo()` | Yes | Bounds-checked, no null mapping |
+| `foo()` | Yes | Bounds-checked, null-mapped, infallible for scalars/enums/sets/composites |
+| `raw_foo()` | Yes | Bounds-checked, no null mapping (optional/versioned/array fields) |
 | `foo_unchecked()` | **No** | No bounds check, no null mapping |
 | `foo_as_str()` | Yes | UTF-8 validated |
 | `foo_as_str_unchecked()` | **No** | No UTF-8 validation |
 | `Iterator` on groups | Yes | Extent validated at accessor call |
 | `as_chunks()` | Yes | Bounds-checked |
+| `verify()` | Yes | Pre-decode buffer structural validation |
 | Encoder setters | Yes | Bounds-checked on write |
