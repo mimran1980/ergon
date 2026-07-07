@@ -103,7 +103,7 @@ pub struct ColumnDef {
 }
 
 /// Describes a table schema with columns, ordering, and engine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableSchema {
     pub columns: Vec<ColumnDef>,
     pub order_by: Vec<String>,
