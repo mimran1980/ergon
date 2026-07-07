@@ -24,7 +24,7 @@ of propagating. Should return `Result<usize, DecodeError>`.
 - [x] `#[inline]` on: encoder `wrap`, `wrap_and_apply_header`, `encoded_length`
 - [x] `#[must_use]` on: `Result`-returning encoder methods (wrap_and_apply_header)
 - [ ] `#[inline]` on: every encoder setter method (skipped — setters get `#[must_use]`; both would be noise)
-- [ ] `#[must_use = "encoder must be consumed to write the message"]` on encoder type-state types
+- [x] `#[must_use = "encoder must be consumed to write the message"]` on encoder type-state types
 - [x] `encoded_length()` on group decoders returns `Result` instead of `unwrap_or` fallback
 - [ ] `#[cold]` on error-construction paths (already tracked in 08, verify)
 - [ ] `#[inline(always)]` only on the hottest one-liners (raw accessors, unchecked variants)

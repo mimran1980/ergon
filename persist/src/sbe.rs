@@ -42,6 +42,15 @@
     clippy::comparison_to_empty,
     clippy::unnecessary_literal_unwrap,
     unexpected_cfgs,
+    clippy::approx_constant,
+    clippy::let_unit_value,
+    clippy::redundant_clone,
+    clippy::useless_vec,
+    clippy::absurd_extreme_comparisons,
+    clippy::question_mark,
+    unused_braces,
+    unused_assignments,
+    unused_comparisons,
 )]
 
 include!("gen/persist_sbe.rs");

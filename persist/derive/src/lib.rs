@@ -19,6 +19,7 @@ struct StructAttrs {
 }
 
 #[derive(Default)]
+#[allow(clippy::struct_excessive_bools)]
 struct FieldAttrs {
     skip: bool,
     json: bool,
@@ -94,14 +95,12 @@ fn type_ident(ty: &Type) -> Option<&Ident> {
 
 /// Extract the first generic argument from a type like `Option<u64>`.
 fn first_generic_arg(ty: &Type) -> Option<&Type> {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                if let Some(GenericArgument::Type(inner)) = args.args.first() {
-                    return Some(inner);
-                }
-            }
-        }
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+        && let PathArguments::AngleBracketed(args) = &segment.arguments
+        && let Some(GenericArgument::Type(inner)) = args.args.first()
+    {
+        return Some(inner);
     }
     None
 }
@@ -152,10 +151,10 @@ fn type_uses_generics(ty: &Type, generics: &syn::Generics) -> bool {
                 }
                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
                     for arg in &args.args {
-                        if let GenericArgument::Type(inner_ty) = arg {
-                            if type_uses_generics(inner_ty, generics) {
-                                return true;
-                            }
+                        if let GenericArgument::Type(inner_ty) = arg
+                            && type_uses_generics(inner_ty, generics)
+                        {
+                            return true;
                         }
                     }
                 }
@@ -168,9 +167,15 @@ fn type_uses_generics(ty: &Type, generics: &syn::Generics) -> bool {
 
 // ── ColumnType expression generation ────────────────────────────────────────
 
-/// Parse a ClickHouse type string (from `#[persist(type = "...")]`) into a
+/// Parse a `ClickHouse` type string (from `#[persist(type = "...")]`) into a
 /// `ColumnType` expression.
 fn parse_column_type_string(s: &str) -> TokenStream2 {
+    let map_err = |s: &str| -> TokenStream2 {
+        quote! {
+            compile_error!(concat!("invalid ClickHouse type in #[persist(type = "...")]: ", #s))
+        }
+    };
+
     match s {
         "Int8" => return quote! { ergo_clickhouse_persist::ColumnType::Int8 },
         "Int16" => return quote! { ergo_clickhouse_persist::ColumnType::Int16 },
@@ -188,12 +193,6 @@ fn parse_column_type_string(s: &str) -> TokenStream2 {
         "Date" => return quote! { ergo_clickhouse_persist::ColumnType::Date },
         "Interval" => return quote! { ergo_clickhouse_persist::ColumnType::Interval },
         _ => {}
-    }
-
-    fn map_err(s: &str) -> TokenStream2 {
-        quote! {
-            compile_error!(concat!("invalid ClickHouse type in #[persist(type = \"...\")]: ", #s))
-        }
     }
 
     if let Some(inner) = s
@@ -235,30 +234,24 @@ fn parse_column_type_string(s: &str) -> TokenStream2 {
         .strip_prefix("DateTime(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return match rest.trim().parse::<u8>() {
-            Ok(p) => quote! { ergo_clickhouse_persist::ColumnType::DateTime(#p) },
-            Err(_) => map_err(s),
-        };
+        return rest.trim().parse::<u8>()
+            .map_or_else(|_| map_err(s), |p| quote! { ergo_clickhouse_persist::ColumnType::DateTime(#p) });
     }
 
     if let Some(rest) = s
         .strip_prefix("DateTime64(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return match rest.trim().parse::<u8>() {
-            Ok(p) => quote! { ergo_clickhouse_persist::ColumnType::DateTime64(#p) },
-            Err(_) => map_err(s),
-        };
+        return rest.trim().parse::<u8>()
+            .map_or_else(|_| map_err(s), |p| quote! { ergo_clickhouse_persist::ColumnType::DateTime64(#p) });
     }
 
     if let Some(rest) = s
         .strip_prefix("FixedString(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return match rest.trim().parse::<usize>() {
-            Ok(n) => quote! { ergo_clickhouse_persist::ColumnType::FixedString(#n) },
-            Err(_) => map_err(s),
-        };
+        return rest.trim().parse::<usize>()
+            .map_or_else(|_| map_err(s), |n| quote! { ergo_clickhouse_persist::ColumnType::FixedString(#n) });
     }
 
     map_err(s)
@@ -274,10 +267,11 @@ fn parse_column_type_string(s: &str) -> TokenStream2 {
 /// 5. `Vec<u8>` → String
 /// 6. Generic type parameters → `default_column_type::<T>()` (resolvable for any 'static T)
 /// 7. Concrete non-primitive types → `<T as PersistAs>::column_type()`
+#[allow(clippy::only_used_in_recursion)]
 fn column_type_expr(
     ty: &Type,
     attrs: &FieldAttrs,
-    _field_name: &str,
+    field_name: &str,
     generics: &syn::Generics,
 ) -> TokenStream2 {
     // 1. #[persist(type = "...")]
@@ -290,7 +284,7 @@ fn column_type_expr(
     }
     // 3. Option<T> → Nullable(...)
     if let Some(inner) = option_inner(ty) {
-        let inner_ct = column_type_expr(inner, &FieldAttrs::default(), _field_name, generics);
+        let inner_ct = column_type_expr(inner, &FieldAttrs::default(), field_name, generics);
         return quote! {
             ergo_clickhouse_persist::ColumnType::Nullable(Box::new(#inner_ct))
         };
@@ -330,6 +324,7 @@ fn column_type_expr(
 }
 
 /// Generate the column type for the inner element of a `#[persist(array)]` field.
+#[allow(clippy::only_used_in_recursion)]
 fn array_inner_column_type_expr(
     inner: &Type,
     inner_attrs: &FieldAttrs,
@@ -407,8 +402,9 @@ fn generate_schema_body(
         .flat_map(|f| field_to_schema_columns(f, generics))
         .collect();
 
-    let order_by = match &struct_attrs.order_by {
-        Some(ob) => {
+    let order_by = struct_attrs.order_by.as_ref().map_or_else(
+        || quote! { vec![] },
+        |ob| {
             let parts: Vec<TokenStream2> = ob
                 .split(',')
                 .map(|s| {
@@ -417,9 +413,8 @@ fn generate_schema_body(
                 })
                 .collect();
             quote! { vec![#(#parts),*] }
-        }
-        None => quote! { vec![] },
-    };
+        },
+    );
 
     quote! {{
         let mut columns: Vec<ergo_clickhouse_persist::ColumnDef> = Vec::new();
@@ -428,7 +423,7 @@ fn generate_schema_body(
     }}
 }
 
-/// Convert one field into one or more ColumnDef push statements.
+/// Convert one field into one or more `ColumnDef` push statements.
 fn field_to_schema_columns(field: &FieldInfo, generics: &syn::Generics) -> Vec<TokenStream2> {
     // ── skip ──
     if field.attrs.skip {
@@ -536,11 +531,7 @@ fn generate_encode_body(fields: &[FieldInfo]) -> TokenStream2 {
         .filter(|f| !f.attrs.skip)
         .map(|f| {
             let ident = &f.ident;
-            if f.attrs.flatten {
-                quote! { row.#ident = self.#ident.clone(); }
-            } else {
-                quote! { row.#ident = self.#ident.clone(); }
-            }
+            quote! { row.#ident = self.#ident.clone(); }
         })
         .collect();
 
@@ -563,7 +554,7 @@ fn generate_encode_body(fields: &[FieldInfo]) -> TokenStream2 {
 /// - `#[persist(json)]` — JSON column type
 /// - `#[persist(flatten)]` — inline nested struct fields
 /// - `#[persist(array)]` — Vec<T> → Array columns
-/// - `#[persist(type = "Decimal(18,2)")]` — override ClickHouse type
+/// - `#[persist(type = "Decimal(18,2)")]` — override `ClickHouse` type
 #[proc_macro_derive(Persist, attributes(persist))]
 pub fn derive_persist(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
