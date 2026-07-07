@@ -45,6 +45,22 @@ ci-status limit='3':
 deps:
     cargo +nightly udeps --workspace 2>/dev/null || echo "install nightly and cargo-udeps"
 
+# —— Samples ——
+
+# run exchange orderbook sample (starts ClickHouse, subscribes to exchange, persists)
+samples-orderbook:
+    @echo "=== Starting ClickHouse ==="
+    @docker start ergo-clickhouse 2>/dev/null || docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 clickhouse/clickhouse-server
+    @echo "=== Waiting for ClickHouse ==="
+    @until curl -s http://localhost:8123/ping >/dev/null 2>&1; do sleep 1; done
+    @echo "=== Running exchange orderbook ==="
+    CLICKHOUSE_URL=http://localhost:8123 cargo run -p exchange-orderbook
+
+# stop the ClickHouse container used by samples
+samples-clickhouse-stop:
+    docker stop ergo-clickhouse 2>/dev/null || true
+    docker rm ergo-clickhouse 2>/dev/null || true
+
 # clean build artifacts
 clean:
     cargo clean
