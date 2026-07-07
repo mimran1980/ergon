@@ -386,6 +386,46 @@ fn encoder_roundtrip_with_groups_and_vardata() {
     "#);
 }
 
+// ── todo 67 + 94: as_chunks + SoA for fixed-entry groups ─────────────
+
+#[test]
+fn fixed_entry_group_as_chunks_and_entries() {
+    let (_schema, src) = generate(&Paths::example_schema(), "as_chunks");
+    compile_and_run("as_chunks", &src, r#"
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1); car.model_year(2000);
+        car.available(BooleanType::F); car.code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0,0,[0,0,0]));
+        let car = car.fuel_figures(0, |_|{}).unwrap();
+        let car = car.performance_figures(1, |g| {
+            g.add(|e| {
+                e.octane_rating(95);
+                e.acceleration(3, |ag| {
+                    ag.add(|ae| { ae.mph(10).seconds(1.0); }).unwrap();
+                    ag.add(|ae| { ae.mph(20).seconds(2.0); }).unwrap();
+                    ag.add(|ae| { ae.mph(30).seconds(3.0); }).unwrap();
+                }).unwrap();
+            }).unwrap();
+        }).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
+        let encoded = car.as_bytes();
+
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let pf: Vec<_> = car2.performance_figures().unwrap()
+            .collect::<Result<Vec<_>,_>>().unwrap();
+        // Acceleration is a fixed-entry group (total_tail == 0)
+        let acc = pf[0].acceleration().unwrap();
+        // as_chunks() raw byte access for fixed-entry groups
+        let chunks = acc.as_chunks().unwrap();
+        assert_eq!(chunks.len(), 3);
+    "#);
+}
+
 // ── todo 69: buffer verify function ───────────────────────────────────
 
 #[test]
