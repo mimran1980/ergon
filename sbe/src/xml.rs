@@ -588,6 +588,13 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
     let null_value = node
         .attribute("nullValue")
         .and_then(|s| parse_u64_val(s, primitive_type));
+    if null_value.is_some() && presence != Presence::Optional {
+        let type_name = node.attribute("name").unwrap_or("<unnamed>");
+        eprintln!(
+            "warning: nullValue specified on non-optional type '{type_name}' \
+             \u{2014} nullValue is only meaningful for optional types"
+        );
+    }
     let min_value = node
         .attribute("minValue")
         .and_then(|s| parse_u64_val(s, primitive_type));
@@ -600,6 +607,23 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
     } else {
         None
     };
+
+    // Validate char constant value length matches the declared length.
+    if primitive_type == Some(PrimitiveType::Char) && presence == Presence::Constant {
+        if let Some(len) = length {
+            if len > 1 {
+                if let Some(ref cv) = constant_value {
+                    if cv.len() != len {
+                        return Err(Fault::invalid(
+                            node,
+                            "char constant value length",
+                            format!("expected {len} characters, got {}", cv.len()),
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     Ok(Encoding {
         primitive_type,
@@ -749,11 +773,24 @@ fn parse_enum(
         },
     });
 
+    let mut seen_names = HashSet::new();
+    let mut seen_values = HashSet::new();
+
     for child in element_children(node) {
         if child.tag_name().name() == "validValue" {
             let val_name = string_attr(child, "name", "validValue @name")?;
+            if !seen_names.insert(val_name.clone()) {
+                return Err(Fault::invalid(child, "duplicate validValue name", &val_name));
+            }
             let val_since = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             let val_text = child.text().unwrap_or("").trim();
+            if !val_text.is_empty() && !seen_values.insert(val_text.to_string()) {
+                return Err(Fault::invalid(
+                    child,
+                    "duplicate validValue encoded value",
+                    val_text,
+                ));
+            }
 
             enum_tokens.push(Token {
                 id: None,
@@ -880,7 +917,29 @@ fn parse_message_child(
                 .map(|s| parse_presence(node, s))
                 .transpose()?
                 .unwrap_or(Presence::Required);
+            if node.attribute("nullValue").is_some() && presence != Presence::Optional {
+                eprintln!(
+                    "warning: nullValue specified on non-optional field '{field_name}' \
+                     \u{2014} nullValue is only meaningful for optional fields"
+                );
+            }
             let constant_value = if presence == Presence::Constant {
+                if node.attribute("constantValue").is_none()
+                    && node.attribute("valueRef").is_none()
+                {
+                    // The field may inherit constant value from the referenced type.
+                    let type_is_constant = registry
+                        .encodings
+                        .get(&type_name)
+                        .map(|e| e.presence == Presence::Constant)
+                        .unwrap_or(false);
+                    if !type_is_constant {
+                        return Err(Fault::missing(
+                            node,
+                            "constantValue or valueRef attribute for constant field",
+                        ));
+                    }
+                }
                 node.attribute("valueRef").map(|s| {
                     // valueRef format: "TypeName.VariantName" — keep only the variant
                     s.rsplit('.').next().unwrap_or(s).to_string()
@@ -900,7 +959,9 @@ fn parse_message_child(
                         first.encoding.offset = Some(offset);
                     }
                     first.encoding.presence = presence;
-                    first.encoding.constant_value = constant_value;
+                    if let Some(cv) = constant_value {
+                        first.encoding.constant_value = Some(cv);
+                    }
                 }
                 tokens.extend(inlined);
             } else {
@@ -1304,5 +1365,104 @@ mod tests {
             msg.contains("cyclic include"),
             "expected cyclic include error, got: {msg}"
         );
+    }
+
+    // ── Validation tests ─────────────────────────────────────────────
+
+    #[test]
+    fn null_value_on_non_optional_type_parses_with_warning() {
+        // nullValue on a required type should generate a warning but still parse.
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <type name="MyType" primitiveType="uint32" presence="required" nullValue="999"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="MyType"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        assert!(ir.tokens.iter().any(|t| t.name == "M"));
+    }
+
+    #[test]
+    fn constant_field_without_value_errors() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <type name="MT" primitiveType="uint32"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="MT" presence="constant"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Missing { .. }));
+    }
+
+    #[test]
+    fn duplicate_enum_valid_value_names_error() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <enum name="Color" encodingType="uint8">
+      <validValue name="Red">1</validValue>
+      <validValue name="Red">2</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="Color"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn duplicate_enum_encoded_values_error() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <enum name="Color" encodingType="uint8">
+      <validValue name="Red">1</validValue>
+      <validValue name="Blue">1</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="Color"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn char_constant_length_too_short_errors() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <type name="CC" primitiveType="char" length="3" presence="constant">AB</type>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="CC"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn char_constant_exact_length_parses() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <type name="CC" primitiveType="char" length="3" presence="constant">ABC</type>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="CC"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        assert!(ir.tokens.iter().any(|t| t.name == "M"));
     }
 }

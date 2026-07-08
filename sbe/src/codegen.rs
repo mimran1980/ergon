@@ -2187,7 +2187,7 @@ fn generate_message_decoder(
                         } else if *prim == PrimitiveType::Double {
                             format!("val.to_bits() == {null_val}")
                         } else {
-                            format!("val == {null_val} as {r_type}")
+                            format!("val == {null_val}_u64 as {r_type}")
                         };
                         let _since_lit =
                             syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
@@ -3516,7 +3516,7 @@ fn generate_group_decoder(
                     } else if *prim == PrimitiveType::Double {
                         format!("val.to_bits() == {}", null_val)
                     } else {
-                        format!("val == {} as {}", null_val, r_type)
+                        format!("val == {}_u64 as {}", null_val, r_type)
                     };
                     let null_check_expr: syn::Expr = syn::parse_str(&null_check).unwrap();
 

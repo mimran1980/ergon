@@ -1545,4 +1545,207 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         let _sender_builder = sink.sender("test_table");
         // sender builder created — registration tested at integration level
     }
+
+    // ── RetryConfig ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_retry_config_default() {
+        let cfg = RetryConfig::default();
+        assert_eq!(cfg.initial_backoff, Duration::from_millis(100));
+        assert_eq!(cfg.max_backoff, Duration::from_secs(10));
+        assert_eq!(cfg.max_retries, 5);
+    }
+
+    #[test]
+    fn test_retry_config_custom() {
+        let cfg = RetryConfig {
+            initial_backoff: Duration::from_millis(500),
+            max_backoff: Duration::from_secs(30),
+            max_retries: 10,
+        };
+        assert_eq!(cfg.initial_backoff, Duration::from_millis(500));
+        assert_eq!(cfg.max_backoff, Duration::from_secs(30));
+        assert_eq!(cfg.max_retries, 10);
+    }
+
+    #[test]
+    fn test_retry_config_max_retries_boundary() {
+        let cfg_zero = RetryConfig {
+            max_retries: 0,
+            ..Default::default()
+        };
+        assert_eq!(cfg_zero.max_retries, 0);
+
+        let cfg_one = RetryConfig {
+            max_retries: 1,
+            ..Default::default()
+        };
+        assert_eq!(cfg_one.max_retries, 1);
+    }
+
+    // ── SinkError Display ─────────────────────────────────────────────
+
+    #[test]
+    fn test_sink_error_connection_display() {
+        let err = SinkError::Connection("refused".into());
+        assert_eq!(err.to_string(), "clickhouse connection: refused");
+    }
+
+    #[test]
+    fn test_sink_error_ddl_display() {
+        let err = SinkError::Ddl("syntax error".into());
+        assert_eq!(err.to_string(), "clickhouse DDL: syntax error");
+    }
+
+    #[test]
+    fn test_sink_error_insert_display() {
+        let err = SinkError::Insert("timeout".into());
+        assert_eq!(err.to_string(), "clickhouse INSERT: timeout");
+    }
+
+    #[test]
+    fn test_sink_error_runtime_display() {
+        let err = SinkError::Runtime("channel closed".into());
+        assert_eq!(err.to_string(), "internal runtime: channel closed");
+    }
+
+    #[test]
+    fn test_sink_error_serde_display() {
+        let err = SinkError::Serde("invalid utf-8".into());
+        assert_eq!(err.to_string(), "serialization: invalid utf-8");
+    }
+
+    #[test]
+    fn test_sink_error_impl_error() {
+        fn assert_error<E: std::error::Error>() {}
+        assert_error::<SinkError>();
+    }
+
+    // ── PersistSenderBuilder ──────────────────────────────────────────
+
+    #[test]
+    fn test_sender_builder_metadata_injection() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .build()
+            .unwrap();
+        let builder = sink
+            .sender("test_table")
+            .metadata("app", "my_app")
+            .metadata("host", "localhost")
+            .metadata("pid", "12345");
+        assert_eq!(builder.table_name, "test_table");
+        assert_eq!(builder.metadata.len(), 3);
+        assert_eq!(builder.metadata[0], ("app".into(), "my_app".into()));
+        assert_eq!(builder.metadata[1], ("host".into(), "localhost".into()));
+        assert_eq!(builder.metadata[2], ("pid".into(), "12345".into()));
+    }
+
+    #[test]
+    fn test_sender_builder_metadata_empty() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .build()
+            .unwrap();
+        let builder = sink.sender("no_meta");
+        assert!(builder.metadata.is_empty());
+    }
+
+    #[test]
+    fn test_sender_builder_metadata_carries_to_sender() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .build()
+            .unwrap();
+        let sender: PersistSender<Trade> = sink
+            .sender("trades")
+            .metadata("app", "my_app")
+            .build();
+        assert_eq!(sender.table_name, "trades");
+        assert_eq!(sender.metadata.len(), 1);
+        assert_eq!(sender.metadata[0], ("app".into(), "my_app".into()));
+    }
+
+    #[test]
+    fn test_sender_builder_table_name() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .build()
+            .unwrap();
+        let builder = sink.sender("custom_name");
+        assert_eq!(builder.table_name, "custom_name");
+    }
+
+    #[test]
+    fn test_sender_builder_default_batch_size() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .build()
+            .unwrap();
+        let builder = sink.sender("t");
+        assert_eq!(builder.batch_size, 1000);
+    }
+
+    // ── Edge cases ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_sender_builder_empty_table_name() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .build()
+            .unwrap();
+        let builder = sink.sender("");
+        assert!(builder.table_name.is_empty());
+    }
+
+    #[test]
+    fn test_sender_builder_very_long_table_name() {
+        let sink = ClickhouseSinkBuilder::new()
+            .url("http://localhost:9999")
+            .build()
+            .unwrap();
+        let long_name = "t".repeat(255);
+        let builder = sink.sender(&long_name);
+        assert_eq!(builder.table_name.len(), 255);
+    }
+
+    #[test]
+    fn test_builder_zero_batch_size() {
+        let builder = ClickhouseSinkBuilder::new().batch_size(0);
+        assert_eq!(builder.batch_size, 0);
+    }
+
+    // ── ClickhouseSinkBuilder ─────────────────────────────────────────
+
+    #[test]
+    fn test_builder_large_batch_size() {
+        let builder = ClickhouseSinkBuilder::new().batch_size(100_000);
+        assert_eq!(builder.batch_size, 100_000);
+    }
+
+    #[test]
+    fn test_builder_url_valid_http() {
+        let builder = ClickhouseSinkBuilder::new().url("http://clickhouse:8123");
+        assert_eq!(builder.url.as_deref(), Some("http://clickhouse:8123"));
+    }
+
+    #[test]
+    fn test_builder_url_valid_https() {
+        let builder = ClickhouseSinkBuilder::new().url("https://ch.example.com:8443");
+        assert_eq!(builder.url.as_deref(), Some("https://ch.example.com:8443"));
+    }
+
+    #[test]
+    fn test_builder_url_with_path() {
+        let builder = ClickhouseSinkBuilder::new().url("http://localhost:8123/");
+        assert_eq!(builder.url.as_deref(), Some("http://localhost:8123/"));
+    }
+
+    #[test]
+    fn test_builder_builders_isolated() {
+        let a = ClickhouseSinkBuilder::new().url("http://a:8123");
+        let b = ClickhouseSinkBuilder::new().url("http://b:8123");
+        assert_eq!(a.url.as_deref(), Some("http://a:8123"));
+        assert_eq!(b.url.as_deref(), Some("http://b:8123"));
+    }
 }

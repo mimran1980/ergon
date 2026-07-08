@@ -1373,11 +1373,11 @@ impl<'a> core::fmt::Display for CarDecoder<'a> {
         write!(f, "Car {{ ")?;
         {
             let v = self.serial_number();
-            write!(f, "serial_number: {}", v)?;
+            write!(f, "serial_number: {:?}", v)?;
         }
         {
             let v = self.model_year();
-            write!(f, ", model_year: {}", v)?;
+            write!(f, ", model_year: {:?}", v)?;
         }
         {
             let e = self.available();
@@ -1671,11 +1671,11 @@ impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
         write!(f, "{{ ")?;
         {
             let v = self.speed();
-            write!(f, "speed: {}", v)?;
+            write!(f, "speed: {:?}", v)?;
         }
         {
             let v = self.mpg();
-            write!(f, ", mpg: {}", v)?;
+            write!(f, ", mpg: {:?}", v)?;
         }
         if let Ok(d) = self.usage_description() {
             write!(f, ", usageDescription: {} bytes", d.len())?;
@@ -1914,7 +1914,7 @@ impl<'a> core::fmt::Display for PerformanceFiguresEntryDecoder<'a> {
         write!(f, "{{ ")?;
         {
             let v = self.octane_rating();
-            write!(f, "octaneRating: {}", v)?;
+            write!(f, "octaneRating: {:?}", v)?;
         }
         write!(f, ", acceleration: [")?;
         if let Ok(ng_decoder) = self.acceleration() {
@@ -2181,11 +2181,11 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
         write!(f, "{{ ")?;
         {
             let v = self.mph();
-            write!(f, "mph: {}", v)?;
+            write!(f, "mph: {:?}", v)?;
         }
         {
             let v = self.seconds();
-            write!(f, ", seconds: {}", v)?;
+            write!(f, ", seconds: {:?}", v)?;
         }
         write!(f, " }}")
     }
