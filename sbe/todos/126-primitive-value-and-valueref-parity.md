@@ -62,8 +62,8 @@ correctness, not adding runtime overhead.
 - [ ] Constant enum fields require `valueRef`
 - [ ] Enum encoding types, duplicates, null-sentinel use, and custom min/max
       range violations match Aeron
-- [ ] Set encoding types, duplicate choices, and out-of-bounds bit indexes match
-      Aeron
+- [x] Set encoding types, duplicate choices, and out-of-bounds bit indexes match
+      Aeron (encoding type validated as unsigned; duplicate choices and bit index bounds pending)
 - [ ] miette-rendered diagnostics include source snippets, labels, the expected
       primitive/value constraints, and help text
 - [ ] Tests port the relevant cases from `EncodedDataTypeTest`, `EnumTypeTest`,

@@ -909,11 +909,51 @@ fn parse_set(
         },
     });
 
+    let mut seen_choice_names = HashSet::new();
+    let mut seen_bit_indices = HashSet::new();
+
     for child in element_children(node) {
         if child.tag_name().name() == "choice" {
             let choice_name = string_attr(child, "name", "choice @name")?;
+            if !seen_choice_names.insert(choice_name.clone()) {
+                return Err(Fault::invalid(
+                    child,
+                    "duplicate set choice name",
+                    &choice_name,
+                ));
+            }
             let choice_since = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let bit_index = child.text().unwrap_or("").trim();
+            let bit_index_str = child.text().unwrap_or("").trim();
+
+            // Validate bit index is a valid number within the encoding width.
+            let bit_index: u8 = bit_index_str.parse().map_err(|_| {
+                Fault::invalid(
+                    child,
+                    "set choice value",
+                    format!("invalid bit index: {bit_index_str}"),
+                )
+            })?;
+            let max_bit = match encoding_type {
+                PrimitiveType::UInt8 => 7,
+                PrimitiveType::UInt16 => 15,
+                PrimitiveType::UInt32 => 31,
+                PrimitiveType::UInt64 => 63,
+                _ => 63,
+            };
+            if bit_index > max_bit {
+                return Err(Fault::invalid(
+                    child,
+                    "set choice bit index",
+                    format!("bit index {bit_index} exceeds max {max_bit} for {encoding_type:?}"),
+                ));
+            }
+            if !seen_bit_indices.insert(bit_index) {
+                return Err(Fault::invalid(
+                    child,
+                    "duplicate set choice bit index",
+                    format!("{bit_index}"),
+                ));
+            }
 
             set_tokens.push(Token {
                 id: None,
@@ -921,7 +961,7 @@ fn parse_set(
                 signal: Signal::Encoding,
                 encoding: Encoding {
                     presence: Presence::Constant,
-                    constant_value: Some(bit_index.to_string()),
+                    constant_value: Some(bit_index_str.to_string()),
                     since_version: choice_since,
                     description: child.attribute("description").map(str::to_string),
                     ..Encoding::default()
