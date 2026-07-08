@@ -897,8 +897,52 @@ fn parse_message(
         },
     });
 
+    let mut seen_ids: HashSet<u16> = HashSet::new();
+    let mut seen_names: HashSet<String> = HashSet::new();
+    let mut prev_offset: Option<usize> = None;
+
     for child in element_children(node) {
         parse_message_child(child, registry, tokens)?;
+        // Collect field IDs, names, and offsets for validation
+        if child.tag_name().name() == "field" || child.tag_name().name() == "group"
+            || child.tag_name().name() == "data"
+        {
+            if let Some(name_attr) = child.attribute("name") {
+                let child_name = name_attr.to_string();
+                if !seen_names.insert(child_name.clone()) {
+                    return Err(Fault::invalid(
+                        child,
+                        "duplicate field/group/data name in message",
+                        child_name,
+                    ));
+                }
+            }
+            if let Some(id_str) = child.attribute("id") {
+                if let Ok(child_id) = id_str.parse::<u16>() {
+                    if !seen_ids.insert(child_id) {
+                        return Err(Fault::invalid(
+                            child,
+                            "duplicate field/group/data id in message",
+                            id_str.to_string(),
+                        ));
+                    }
+                }
+            }
+            if let Some(offset_str) = child.attribute("offset") {
+                if let Ok(offset) = offset_str.parse::<usize>() {
+                    if let Some(prev) = prev_offset {
+                        if offset < prev {
+                            return Err(Fault::invalid(
+                                child,
+                                "field offset out of order",
+                                format!("offset {offset} after {prev}"),
+                            ));
+                        }
+                    }
+                    prev_offset = Some(offset);
+                }
+            }
+        }
     }
 
     tokens.push(structural(&name, Signal::EndMessage));
