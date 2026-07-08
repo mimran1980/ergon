@@ -1194,8 +1194,8 @@ fn parse_message_child(
                 .map(str::to_string)
                 .or_else(|| type_encoding.and_then(|e| e.time_unit.clone()));
             let explicit_deprecated = node.attribute("deprecated");
-            let deprecated = explicit_deprecated.is_some()
-                || type_encoding.is_some_and(|e| e.deprecated);
+            let deprecated =
+                explicit_deprecated.is_some() || type_encoding.is_some_and(|e| e.deprecated);
             // Gap 1: presence inheritance from referenced types
             let explicit_presence = node.attribute("presence");
             let presence = if let Some(p) = explicit_presence {
@@ -2314,10 +2314,7 @@ mod tests {
             .filter(|t| t.name == "ts" && t.signal == Signal::BeginField)
             .collect();
         assert_eq!(ts_tokens.len(), 1);
-        assert_eq!(
-            ts_tokens[0].encoding.epoch.as_deref(),
-            Some("unix")
-        );
+        assert_eq!(ts_tokens[0].encoding.epoch.as_deref(), Some("unix"));
         assert_eq!(
             ts_tokens[0].encoding.time_unit.as_deref(),
             Some("nanoseconds")

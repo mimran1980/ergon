@@ -1296,10 +1296,10 @@ mod tests {
 
         let buf = rec
             .record(&[
-                DynamicValue::Int64(10),          // not null (field 0)
-                DynamicValue::Null,               // null (field 1)
-                DynamicValue::Bool(true),         // not null (field 2)
-                DynamicValue::Null,               // null (field 3)
+                DynamicValue::Int64(10),  // not null (field 0)
+                DynamicValue::Null,       // null (field 1)
+                DynamicValue::Bool(true), // not null (field 2)
+                DynamicValue::Null,       // null (field 3)
             ])
             .unwrap();
 
@@ -1385,8 +1385,9 @@ mod tests {
         }
         let mut rec = builder.build().unwrap();
 
-        let values: Vec<DynamicValue> =
-            (0..=255u16).map(|i| DynamicValue::Int64(i as i64)).collect();
+        let values: Vec<DynamicValue> = (0..=255u16)
+            .map(|i| DynamicValue::Int64(i as i64))
+            .collect();
 
         let buf = rec.record(&values).unwrap();
 

@@ -586,23 +586,16 @@ CREATE TABLE IF NOT EXISTS trades (
 
     #[test]
     fn test_array_nested() {
-        let ct = ColumnType::Array(Box::new(ColumnType::Array(Box::new(
-            ColumnType::UInt64,
-        ))));
+        let ct = ColumnType::Array(Box::new(ColumnType::Array(Box::new(ColumnType::UInt64))));
         assert_eq!(ct.to_string(), "Array(Array(UInt64))");
     }
 
     #[test]
     fn test_array_nullable_deep() {
-        let ct = ColumnType::Array(Box::new(ColumnType::Nullable(Box::new(
-            ColumnType::Array(Box::new(ColumnType::Nullable(Box::new(
-                ColumnType::Int32,
-            )))),
-        ))));
-        assert_eq!(
-            ct.to_string(),
-            "Array(Nullable(Array(Nullable(Int32))))"
-        );
+        let ct = ColumnType::Array(Box::new(ColumnType::Nullable(Box::new(ColumnType::Array(
+            Box::new(ColumnType::Nullable(Box::new(ColumnType::Int32))),
+        )))));
+        assert_eq!(ct.to_string(), "Array(Nullable(Array(Nullable(Int32))))");
     }
 
     #[test]

@@ -664,10 +664,7 @@ mod table_schema_tests {
 
     #[test]
     fn alter_table_ddl_widen_and_add() {
-        let old = TableSchema::new(
-            vec![col("qty", ColumnType::UInt32)],
-            vec![],
-        );
+        let old = TableSchema::new(vec![col("qty", ColumnType::UInt32)], vec![]);
         let new = TableSchema::new(
             vec![
                 col("qty", ColumnType::UInt64),
