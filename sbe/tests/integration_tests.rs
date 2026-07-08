@@ -1,6 +1,10 @@
 //! Integration tests for `ErgoSBE` code generation.
 
 #![allow(missing_docs)]
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
 
 mod common;
 use common::{Paths, compile_and_run, generate};

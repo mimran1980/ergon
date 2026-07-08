@@ -8,6 +8,10 @@
 //! and should be removed once the codegen is fixed.
 
 #![allow(missing_docs)]
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
 
 use std::fs;
 use std::path::{Path, PathBuf};

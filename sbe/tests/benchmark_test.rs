@@ -15,6 +15,11 @@
 //! ensures the encode/decode paths are functional and not pathologically
 //! slow.
 
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
+
 mod common;
 use common::{Paths, compile_and_run, generate};
 

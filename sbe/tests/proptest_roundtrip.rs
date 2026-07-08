@@ -9,6 +9,11 @@
 //! happens inside a temporary crate that depends on `proptest`.  This file
 //! orchestrates the whole process: generate, patch, compile, run, clean up.
 
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
+
 mod common;
 use common::{Paths, generate, patch_source};
 use std::fs;

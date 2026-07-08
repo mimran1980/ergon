@@ -14,6 +14,11 @@
 //! These gaps mean byte-exact wire match against the Java-generated fixture
 //! is impossible today.  We test what does work and document the gaps.
 
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
+
 mod common;
 use common::{
     Paths, assert_source_ok, compile_and_run, compile_and_run_with_feature, generate,

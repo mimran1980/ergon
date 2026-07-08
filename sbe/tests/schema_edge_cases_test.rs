@@ -10,6 +10,11 @@
 //! are fixed.  For now, structural verification ensures the parser + codegen
 //! produce valid Rust from each edge-case input.
 
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
+
 mod common;
 use common::{Paths, assert_source_ok, generate};
 

@@ -2,6 +2,11 @@
 //!
 //! For each schema we parse via `parse_file()` and count structural elements.
 
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
+
 use std::fs;
 use std::path::Path;
 

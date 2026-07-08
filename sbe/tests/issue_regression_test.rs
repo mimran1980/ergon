@@ -9,6 +9,10 @@
 //! verify semantic parse, full codegen, and compile-and-run.
 
 #![allow(missing_docs)]
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
 
 use std::fs;
 use std::path::PathBuf;

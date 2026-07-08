@@ -4,6 +4,11 @@
 //!
 //! Also validates that errors render with miette source context.
 
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
+
 use std::path::PathBuf;
 
 /// Walk up to find the workspace root (where the top-level Cargo.toml lives).

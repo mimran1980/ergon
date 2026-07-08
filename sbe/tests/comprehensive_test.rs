@@ -2,6 +2,11 @@
 //! Each test encodes, decodes, and verifies every accessor path.
 //! Tests A+B: correctness + edge cases for every todo item.
 
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
+
 mod common;
 use common::{Paths, compile_and_run, generate, run_fixture_test};
 

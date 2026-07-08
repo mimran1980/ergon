@@ -1,6 +1,10 @@
 //! Regression tests ensuring generated output is deterministic.
 
 #![allow(clippy::panic)]
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
 
 use std::fs;
 
