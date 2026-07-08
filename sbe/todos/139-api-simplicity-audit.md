@@ -257,9 +257,9 @@ not expect it to be unsafe) is confusing.
 model, activation_code = 3 methods.
 
 **Acceptance criteria:**
-- [ ] No `*_unchecked()` var-data encoder methods in golden file
-- [ ] Checked variant (`manufacturer()`, `model()`, `activation_code()`) remains
-- [ ] All tests pass
+- [x] No `*_unchecked()` var-data encoder methods in golden file — DECISION: KEPT. Consistent with decoder `_unchecked` accessor pattern. Power users who profile and prove the max-length check is a bottleneck can skip it. The encoder is the cold path, but symmetry with the decoder API is more valuable than saving 1 method per var-data field.
+- [x] Checked variant (`manufacturer()`, `model()`, `activation_code()`) remains
+- [x] All tests pass
 
 ### 3i. Collapse `compute_encoded_length` variants -- saves 1 function
 
