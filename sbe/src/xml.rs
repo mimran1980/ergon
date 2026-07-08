@@ -694,8 +694,9 @@ fn parse_composite(
                 // A `ref` attribute always counts as indirect; a bare `type` attribute
                 // counts as indirect only when the name isn't a known primitive encoding.
                 let has_ref_attr = child.attribute("ref").is_some();
-                let is_indirect_ref =
-                    has_ref_attr || (child.attribute("type").is_some() && !registry.encodings.contains_key(t_name));
+                let is_indirect_ref = has_ref_attr
+                    || (child.attribute("type").is_some()
+                        && !registry.encodings.contains_key(t_name));
                 if !is_indirect_ref {
                     let encoding = parse_type_element(child, registry)?;
                     composite_tokens.push(Token {
@@ -943,7 +944,8 @@ fn parse_message(
     for child in element_children(node) {
         parse_message_child(child, registry, tokens)?;
         // Collect field IDs, names, and offsets for validation
-        if child.tag_name().name() == "field" || child.tag_name().name() == "group"
+        if child.tag_name().name() == "field"
+            || child.tag_name().name() == "group"
             || child.tag_name().name() == "data"
         {
             if let Some(name_attr) = child.attribute("name") {
@@ -1131,9 +1133,7 @@ fn parse_message_child(
                     return Err(Fault::invalid(
                         node,
                         "group dimensionType",
-                        format!(
-                            "{dimension_type}: expected 'blockLength' and 'numInGroup' fields"
-                        ),
+                        format!("{dimension_type}: expected 'blockLength' and 'numInGroup' fields"),
                     ));
                 }
                 tokens.extend(dim_tokens.clone());
@@ -1311,9 +1311,7 @@ fn validate_header_type(header_type: &str, registry: &TypeRegistry) -> Result<()
             return Err(Fault {
                 kind: FaultKind::Invalid {
                     what: "headerType".to_string(),
-                    value: format!(
-                        "{header_type}: missing required field '{required_name}'"
-                    ),
+                    value: format!("{header_type}: missing required field '{required_name}'"),
                 },
                 span: None,
             });
@@ -1347,8 +1345,8 @@ fn compute_type_size(type_name: &str, registry: &TypeRegistry) -> Option<usize> 
                 if token.signal == Signal::BeginField
                     && token.encoding.presence != Presence::Constant
                 {
-                    total += token.encoding.primitive_type?.size()
-                        * token.encoding.length.unwrap_or(1);
+                    total +=
+                        token.encoding.primitive_type?.size() * token.encoding.length.unwrap_or(1);
                 }
             }
             Some(total)
@@ -2060,6 +2058,9 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("schemaId"), "expected error about missing schemaId, got: {msg}");
+        assert!(
+            msg.contains("schemaId"),
+            "expected error about missing schemaId, got: {msg}"
+        );
     }
 }
