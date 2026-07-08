@@ -1035,6 +1035,22 @@ fn parse_message_child(
             });
 
             if let Some(dim_tokens) = registry.registry.get(dimension_type) {
+                // Validate the dimension composite has blockLength and numInGroup fields.
+                let has_block_length = dim_tokens
+                    .iter()
+                    .any(|t| t.signal == Signal::BeginField && t.name == "blockLength");
+                let has_num_in_group = dim_tokens
+                    .iter()
+                    .any(|t| t.signal == Signal::BeginField && t.name == "numInGroup");
+                if !has_block_length || !has_num_in_group {
+                    return Err(Fault::invalid(
+                        node,
+                        "group dimensionType",
+                        format!(
+                            "{dimension_type}: expected 'blockLength' and 'numInGroup' fields"
+                        ),
+                    ));
+                }
                 tokens.extend(dim_tokens.clone());
             } else {
                 return Err(Fault::invalid(node, "group dimensionType", dimension_type));
@@ -1064,7 +1080,30 @@ fn parse_message_child(
             });
 
             if let Some(type_tokens) = registry.registry.get(type_name) {
+                // Validate the var-data composite has length and varData fields.
+                let has_length = type_tokens
+                    .iter()
+                    .any(|t| t.signal == Signal::BeginField && t.name == "length");
+                let has_var_data = type_tokens
+                    .iter()
+                    .any(|t| t.signal == Signal::BeginField && t.name == "varData");
+                if !has_length || !has_var_data {
+                    return Err(Fault::invalid(
+                        node,
+                        "data type",
+                        format!("{type_name}: expected 'length' and 'varData' fields"),
+                    ));
+                }
                 tokens.extend(type_tokens.clone());
+            } else if registry.encodings.contains_key(type_name) {
+                return Err(Fault::invalid(
+                    node,
+                    "data type",
+                    format!(
+                        "{type_name}: simple encoding cannot be used as varData; \
+                         expected a var-data composite"
+                    ),
+                ));
             } else {
                 return Err(Fault::invalid(node, "data type", type_name));
             }
@@ -1511,5 +1550,139 @@ mod tests {
 </messageSchema>"#;
         let ir = parse(schema).unwrap();
         assert!(ir.tokens.iter().any(|t| t.name == "M"));
+    }
+
+    #[test]
+    fn duplicate_field_id_is_rejected() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="test" id="1" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <sbe:message name="M" id="1">
+    <field name="a" id="1" type="uint8"/>
+    <field name="b" id="1" type="uint8"/>
+  </sbe:message>
+</sbe:messageSchema>"#;
+        assert!(parse(schema).is_err());
+    }
+
+    #[test]
+    fn duplicate_field_name_is_rejected() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="test" id="1" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <sbe:message name="M" id="1">
+    <field name="dup" id="1" type="uint8"/>
+    <field name="dup" id="2" type="uint8"/>
+  </sbe:message>
+</sbe:messageSchema>"#;
+        assert!(parse(schema).is_err());
+    }
+
+    #[test]
+    fn group_with_unknown_dimension_type_fails() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <group name="g" id="2" dimensionType="NonExistentDim">
+      <field name="f" id="3" type="uint32"/>
+    </group>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn group_with_wrong_dimension_type_structure_fails() {
+        // A composite that exists but lacks blockLength/numInGroup fields.
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="BadDim">
+      <type name="foo" primitiveType="uint32"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <group name="g" id="2" dimensionType="BadDim">
+      <field name="f" id="3" type="uint32"/>
+    </group>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn var_data_with_unknown_type_fails() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <data name="d" id="2" type="NonExistentVarType"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn var_data_with_wrong_type_structure_fails() {
+        // A composite that exists but lacks length/varData fields.
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="BadVar">
+      <type name="foo" primitiveType="uint32"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <data name="d" id="2" type="BadVar"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
     }
 }
