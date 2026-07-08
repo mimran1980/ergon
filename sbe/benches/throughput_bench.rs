@@ -13,7 +13,8 @@
     unused_mut,
     unused_must_use,
     unused_assignments,
-    unused_comparisons
+    unused_comparisons,
+    unused_attributes
 )]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
@@ -64,7 +65,7 @@ fn bench_throughput_checked(c: &mut Criterion) {
                         CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()])).unwrap();
                     total_serial += car.serial_number();
                     total_year += car.model_year() as u64;
-                    let engine = car.engine().unwrap();
+                    let engine = car.engine();
                     total_capacity += engine.capacity() as u64;
                     off += BASELINE.len();
                 }
@@ -203,7 +204,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
                 let car = CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()])).unwrap();
                 total_serial += car.serial_number();
                 total_year += car.model_year() as u64;
-                let engine = car.engine().unwrap();
+                let engine = car.engine();
                 total_capacity += engine.capacity() as u64;
                 off += BASELINE.len();
             }

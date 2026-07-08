@@ -13,7 +13,8 @@
     unused_mut,
     unused_must_use,
     unused_assignments,
-    unused_comparisons
+    unused_comparisons,
+    unused_attributes
 )]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 

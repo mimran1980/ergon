@@ -13,7 +13,8 @@
     unused_mut,
     unused_must_use,
     unused_assignments,
-    unused_comparisons
+    unused_comparisons,
+    unused_attributes
 )]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
@@ -66,7 +67,7 @@ fn bench_field_access_checked(c: &mut Criterion) {
         b.iter(|| black_box(car.model_year()));
     });
     group.bench_function("engine", |b| {
-        b.iter(|| black_box(car.engine().unwrap()));
+        b.iter(|| black_box(car.engine()));
     });
     group.finish();
 }
@@ -102,8 +103,9 @@ fn bench_group_iteration(c: &mut Criterion) {
             let mut sum_speed: u64 = 0;
             let mut sum_mpg: f64 = 0.0;
             for entry in ff {
-                sum_speed += entry.speed().unwrap() as u64;
-                sum_mpg += entry.mpg().unwrap() as f64;
+                let entry = entry.unwrap();
+                sum_speed += entry.speed() as u64;
+                sum_mpg += entry.mpg() as f64;
             }
             black_box((n, sum_speed, sum_mpg));
         });
@@ -145,12 +147,12 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
         b.iter(|| {
             let _ = car.serial_number();
             let _ = car.model_year();
-            let _ = car.available().unwrap();
-            let _ = car.code().unwrap();
+            let _ = car.available();
+            let _ = car.code();
             let _ = car.some_numbers().unwrap();
             let _ = car.vehicle_code().unwrap();
-            let _ = car.extras().unwrap();
-            let _ = car.engine().unwrap();
+            let _ = car.extras();
+            let _ = car.engine();
             black_box(());
         });
     });
@@ -214,7 +216,7 @@ fn bench_hft_field_stride(c: &mut Criterion) {
     let engine = unsafe { car.engine_unchecked() };
     let ff = car.fuel_figures().unwrap();
     let first_entry = if ff.len() > 0 {
-        Some(ff.into_iter().next().unwrap())
+        Some(ff.into_iter().next().unwrap().unwrap())
     } else {
         None
     };
