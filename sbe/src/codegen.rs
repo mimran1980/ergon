@@ -2990,18 +2990,11 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                 if f.presence == Presence::Constant || length.is_some() {
                     continue;
                 }
-                let fmt_str = format!("{sep}{snake}: {{}}");
-                if f.presence == Presence::Optional || f.since_version > 0 {
-                    body.extend(quote::quote! {
-                        if let Some(v) = self.#f_ident() {
-                            write!(f, #fmt_str, v)?;
-                        }
-                    });
-                } else {
-                    body.extend(quote::quote! {
-                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
-                    });
-                }
+                let fmt_str = format!("{sep}{snake}: {{:?}}");
+                // ponytail: use {:?} so Option<T> always renders regardless of T: Display
+                body.extend(quote::quote! {
+                    { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                });
                 out_idx += 1;
             }
             FieldType::Enum {
@@ -3011,7 +3004,9 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                     continue;
                 }
                 let fmt_str = format!("{sep}{snake}: {enum_name}::{{e:?}}");
-                if f.presence == Presence::Optional || f.since_version > 0 {
+                // enum accessors: presence="optional" still returns the enum directly
+                // (NullVal sentinel), only since_version > 0 produces Option<T>
+                if f.since_version > 0 {
                     body.extend(quote::quote! {
                         if let Some(e) = self.#f_ident() {
                             write!(f, #fmt_str)?;
@@ -3897,8 +3892,9 @@ fn generate_group_decoder(
                 if f.presence == Presence::Constant || length.is_some() {
                     continue;
                 }
-                let fmt_str = format!("{sep}{}: {{}}", f.name);
-                if f.presence == Presence::Optional || f.since_version > 0 {
+                let fmt_str = format!("{sep}{}: {{:?}}", f.name);
+                // only since-versioned scalars return Option<T> in entry decoders
+                if f.since_version > 0 {
                     entry_display_body.extend(quote::quote! {
                         if let Some(v) = self.#f_ident() {
                             write!(f, #fmt_str, v)?;
@@ -3918,7 +3914,9 @@ fn generate_group_decoder(
                     continue;
                 }
                 let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
-                if f.presence == Presence::Optional || f.since_version > 0 {
+                // enum accessors return the enum directly (NullVal sentinel),
+                // only since-versioned enums are Option-wrapped
+                if f.since_version > 0 {
                     entry_display_body.extend(quote::quote! {
                         if let Some(e) = self.#f_ident() {
                             write!(f, #fmt_str)?;
