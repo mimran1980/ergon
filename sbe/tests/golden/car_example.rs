@@ -291,22 +291,22 @@ impl From<OptionalExtras> for u8 {
 pub struct MessageHeader(pub [u8; 8]);
 impl MessageHeader {
     #[inline]
-    pub const fn block_length(&self) -> u16 {
+    pub fn block_length(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
     #[inline]
-    pub const fn template_id(&self) -> u16 {
+    pub fn template_id(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
     #[inline]
-    pub const fn schema_id(&self) -> u16 {
+    pub fn schema_id(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 4))
     }
     #[inline]
-    pub const fn version(&self) -> u16 {
+    pub fn version(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 6))
     }
-    pub const fn new(
+    pub fn new(
         block_length: u16,
         template_id: u16,
         schema_id: u16,
@@ -356,14 +356,14 @@ impl<'a> MessageHeaderDecoder<'a> {
 pub struct GroupSizeEncoding(pub [u8; 4]);
 impl GroupSizeEncoding {
     #[inline]
-    pub const fn block_length(&self) -> u16 {
+    pub fn block_length(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
     #[inline]
-    pub const fn num_in_group(&self) -> u16 {
+    pub fn num_in_group(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
-    pub const fn new(block_length: u16, num_in_group: u16) -> Self {
+    pub fn new(block_length: u16, num_in_group: u16) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = block_length.to_le_bytes();
         write_bytes::<2>(&mut bytes, 0, &val_bytes);
@@ -394,11 +394,11 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
 pub struct VarStringEncoding(pub [u8; 4]);
 impl VarStringEncoding {
     #[inline]
-    pub const fn length(&self) -> u32 {
+    pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
     #[inline]
-    pub const fn var_data(&self) -> [u8; 0] {
+    pub fn var_data(&self) -> [u8; 0] {
         let mut res = [0 as u8; 0];
         let mut idx = 0;
         while idx < 0 {
@@ -408,7 +408,7 @@ impl VarStringEncoding {
         }
         res
     }
-    pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
+    pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         write_bytes::<4>(&mut bytes, 0, &val_bytes);
@@ -449,11 +449,11 @@ impl<'a> VarStringEncodingDecoder<'a> {
 pub struct VarAsciiEncoding(pub [u8; 4]);
 impl VarAsciiEncoding {
     #[inline]
-    pub const fn length(&self) -> u32 {
+    pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
     #[inline]
-    pub const fn var_data(&self) -> [u8; 0] {
+    pub fn var_data(&self) -> [u8; 0] {
         let mut res = [0 as u8; 0];
         let mut idx = 0;
         while idx < 0 {
@@ -463,7 +463,7 @@ impl VarAsciiEncoding {
         }
         res
     }
-    pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
+    pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         write_bytes::<4>(&mut bytes, 0, &val_bytes);
@@ -504,11 +504,11 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
 pub struct VarDataEncoding(pub [u8; 4]);
 impl VarDataEncoding {
     #[inline]
-    pub const fn length(&self) -> u32 {
+    pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
     #[inline]
-    pub const fn var_data(&self) -> [u8; 0] {
+    pub fn var_data(&self) -> [u8; 0] {
         let mut res = [0 as u8; 0];
         let mut idx = 0;
         while idx < 0 {
@@ -518,7 +518,7 @@ impl VarDataEncoding {
         }
         res
     }
-    pub const fn new(length: u32, var_data: [u8; 0]) -> Self {
+    pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         write_bytes::<4>(&mut bytes, 0, &val_bytes);
@@ -559,10 +559,10 @@ impl<'a> VarDataEncodingDecoder<'a> {
 pub struct Booster(pub [u8; 1]);
 impl Booster {
     #[inline]
-    pub const fn horse_power(&self) -> u8 {
+    pub fn horse_power(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 0))
     }
-    pub const fn new(horse_power: u8) -> Self {
+    pub fn new(horse_power: u8) -> Self {
         let mut bytes = [0u8; 1];
         let val_bytes = horse_power.to_le_bytes();
         write_bytes::<1>(&mut bytes, 0, &val_bytes);
@@ -586,11 +586,11 @@ impl<'a> BoosterDecoder<'a> {
 pub struct Engine(pub [u8; 6]);
 impl Engine {
     #[inline]
-    pub const fn capacity(&self) -> u16 {
+    pub fn capacity(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
     #[inline]
-    pub const fn num_cylinders(&self) -> u8 {
+    pub fn num_cylinders(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 2))
     }
     #[inline]
@@ -598,7 +598,7 @@ impl Engine {
         9000
     }
     #[inline]
-    pub const fn manufacturer_code(&self) -> [u8; 3] {
+    pub fn manufacturer_code(&self) -> [u8; 3] {
         let mut res = [0 as u8; 3];
         let mut idx = 0;
         while idx < 3 {
@@ -612,11 +612,7 @@ impl Engine {
     pub const fn fuel(&self) -> &'static str {
         "Petrol"
     }
-    pub const fn new(
-        capacity: u16,
-        num_cylinders: u8,
-        manufacturer_code: [u8; 3],
-    ) -> Self {
+    pub fn new(capacity: u16, num_cylinders: u8, manufacturer_code: [u8; 3]) -> Self {
         let mut bytes = [0u8; 6];
         let val_bytes = capacity.to_le_bytes();
         write_bytes::<2>(&mut bytes, 0, &val_bytes);
@@ -685,7 +681,7 @@ impl<'a> CarDecoder<'a> {
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     #[inline]
-    pub const fn wrap(
+    pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_block_length: usize,
@@ -1573,7 +1569,7 @@ pub struct FuelFiguresEntryDecoder<'a> {
 impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
-    pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
+    pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
     #[inline]
@@ -1831,7 +1827,7 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     #[inline]
-    pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
+    pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
     #[inline]
@@ -2114,7 +2110,7 @@ pub struct PerformanceFiguresAccelerationEntryDecoder<'a> {
 impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
-    pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
+    pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
         Self { buf, pos, acting_version }
     }
     #[inline]
@@ -3027,29 +3023,30 @@ pub const SCHEMA_SHA256: [u8; 32] = [
 ];
 pub const SCHEMA_SHA256_HEX: &str = "adf638ad8497f83b2b0b28502eb2d24fea41d7fa6d21552ecdbac24b35707480";
 /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
-/// Const-compatible — the compiler unrolls the loop for small N.
-#[inline]
-pub const fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
-    let mut bytes = [0u8; N];
-    let mut i = 0;
-    while i < N {
-        bytes[i] = buf[offset + i];
-        i += 1;
-    }
-    bytes
+///
+/// Safe path uses slice indexing (bounds-checked, equivalent to Aeron's
+/// `slice[index..index+N].try_into()`). With `bound-check-disabled`,
+/// uses `core::ptr::read_unaligned` for zero-overhead access.
+#[inline(always)]
+pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
+    #[cfg(not(feature = "bound-check-disabled"))]
+    { buf[offset..][..N].try_into().expect("read_bytes: buffer too short") }
+    #[cfg(feature = "bound-check-disabled")]
+    unsafe { core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N]) }
 }
 /// Write `N` bytes from `bytes` into `buf` at `offset`.
-/// Const-compatible — the compiler unrolls the loop for small N.
-#[inline]
-pub const fn write_bytes<const N: usize>(
-    buf: &mut [u8],
-    offset: usize,
-    bytes: &[u8; N],
-) {
-    let mut i = 0;
-    while i < N {
-        buf[offset + i] = bytes[i];
-        i += 1;
+///
+/// Safe path uses `copy_from_slice`. With `bound-check-disabled`,
+/// uses `core::ptr::write_unaligned` for zero-overhead write.
+#[inline(always)]
+pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
+    #[cfg(not(feature = "bound-check-disabled"))]
+    {
+        buf[offset..][..N].copy_from_slice(bytes);
+    }
+    #[cfg(feature = "bound-check-disabled")]
+    unsafe {
+        core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes);
     }
 }
 #[inline]
@@ -3159,7 +3156,7 @@ impl<'a> Iterator for FrameCursor<'a> {
 }
 impl<'a> AnyMessage<'a> {
     #[inline]
-    pub const fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+    pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         if pos + 8 > buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "message header",

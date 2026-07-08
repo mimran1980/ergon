@@ -275,26 +275,39 @@ impl Generator {
         // 7.5. Generate const-compatible byte-read helper (avoids per-accessor loop bloat)
         let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
             /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
-            /// Const-compatible — the compiler unrolls the loop for small N.
-            #[inline]
-            pub const fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
-                let mut bytes = [0u8; N];
-                let mut i = 0;
-                while i < N {
-                    bytes[i] = buf[offset + i];
-                    i += 1;
+            ///
+            /// Safe path uses slice indexing (bounds-checked, equivalent to Aeron's
+            /// `slice[index..index+N].try_into()`). With `bound-check-disabled`,
+            /// uses `core::ptr::read_unaligned` for zero-overhead access.
+            #[inline(always)]
+            pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
+                #[cfg(not(feature = "bound-check-disabled"))]
+                {
+                    buf[offset..][..N].try_into().expect("read_bytes: buffer too short")
                 }
-                bytes
+                #[cfg(feature = "bound-check-disabled")]
+                // SAFETY: caller guarantees offset + N <= buf.len().
+                // read_unaligned is safe for [u8; N] regardless of alignment.
+                unsafe {
+                    core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N])
+                }
             }
 
             /// Write `N` bytes from `bytes` into `buf` at `offset`.
-            /// Const-compatible — the compiler unrolls the loop for small N.
-            #[inline]
-            pub const fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
-                let mut i = 0;
-                while i < N {
-                    buf[offset + i] = bytes[i];
-                    i += 1;
+            ///
+            /// Safe path uses `copy_from_slice`. With `bound-check-disabled`,
+            /// uses `core::ptr::write_unaligned` for zero-overhead write.
+            #[inline(always)]
+            pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
+                #[cfg(not(feature = "bound-check-disabled"))]
+                {
+                    buf[offset..][..N].copy_from_slice(bytes);
+                }
+                #[cfg(feature = "bound-check-disabled")]
+                // SAFETY: caller guarantees offset + N <= buf.len().
+                // write_unaligned is safe for [u8; N] regardless of alignment.
+                unsafe {
+                    core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes);
                 }
             }
         };
@@ -1417,7 +1430,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
 
                     getters.extend(quote::quote! {
                         #[inline]
-                        pub const fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
+                        pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
                             let mut res = [0 as #r_type_ty; #len_lit];
                             let mut idx = 0;
                             while idx < #len_lit {
@@ -1444,7 +1457,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
 
                     getters.extend(quote::quote! {
                         #[inline]
-                        pub const fn #field_ident(&self) -> #r_type_ty {
+                        pub fn #field_ident(&self) -> #r_type_ty {
                             #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(&self.0, #offset_lit))
                         }
                     });
@@ -1468,7 +1481,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
 
                 getters.extend(quote::quote! {
                     #[inline]
-                    pub const fn #field_ident(&self) -> #target_ident {
+                    pub fn #field_ident(&self) -> #target_ident {
                         #target_ident(read_bytes::<#comp_size_lit>(&self.0, #offset_lit))
                     }
                 });
@@ -1493,7 +1506,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
 
                 getters.extend(quote::quote! {
                     #[inline]
-                    pub const fn #field_ident(&self) -> #target_ident {
+                    pub fn #field_ident(&self) -> #target_ident {
                         #target_ident::from_raw(#r_type_ty::#from_method(
                             read_bytes::<#prim_size_lit>(&self.0, #offset_lit)
                         ))
@@ -1521,7 +1534,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
 
                 getters.extend(quote::quote! {
                     #[inline]
-                    pub const fn #field_ident(&self) -> #target_ident {
+                    pub fn #field_ident(&self) -> #target_ident {
                         #target_ident(#r_type_ty::#from_method(
                             read_bytes::<#prim_size_lit>(&self.0, #offset_lit)
                         ))
@@ -1545,7 +1558,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
         impl #name_ident {
             #getters
 
-            pub const fn new(#(#ctor_params),*) -> Self {
+            pub fn new(#(#ctor_params),*) -> Self {
                 let mut bytes = [0u8; #size_lit];
                 #ctor_body
                 Self(bytes)
@@ -1951,7 +1964,7 @@ fn generate_message_decoder(
     // 3. wrap() function
     impl_body.extend(quote::quote! {
         #[inline]
-        pub const fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
+        pub fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
             Self {
                 buf,
                 pos,
@@ -2225,7 +2238,7 @@ fn generate_message_decoder(
                         );
                         impl_body
                             .extend(syn::parse_str::<proc_macro2::TokenStream>(&accessor).unwrap());
-                    } else if f.presence == Presence::Optional || since > 0 {
+                    } else if since > 0 {
                         let since_lit =
                             syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                         let offset_end = offset + prim_size;
@@ -2411,7 +2424,7 @@ fn generate_message_decoder(
                             }
                         });
                     }
-                } else if f.presence == Presence::Optional || since > 0 {
+                } else if since > 0 {
                     let since_lit =
                         syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + prim_size;
@@ -2474,7 +2487,7 @@ fn generate_message_decoder(
                             }
                         });
                     }
-                } else if f.presence == Presence::Optional || since > 0 {
+                } else if since > 0 {
                     let since_lit =
                         syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + prim_size;
@@ -3385,7 +3398,7 @@ fn generate_group_decoder(
         pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
         #[inline]
-        pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
+        pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
             Self { buf, pos, acting_version }
         }
     });
@@ -3439,11 +3452,10 @@ fn generate_group_decoder(
                         proc_macro2::Span::call_site(),
                     );
 
-                    // ponytail: while-loop due to const fn — slice indexing not const-stable
                     // _unchecked variant below does bulk copy_from_slice + unrolled elements
                     entry_body.extend(quote::quote! {
                         #[inline]
-                        pub const fn #f_name_ident(&self) -> Result<[#r_type_ty; #len_lit], sbe_rt::DecodeError> {
+                        pub fn #f_name_ident(&self) -> Result<[#r_type_ty; #len_lit], sbe_rt::DecodeError> {
                             let offset = self.pos + #offset_lit;
                             let size = #len_times_prim;
                             if cfg!(not(feature = "bound-check-disabled")) && offset + size > self.buf.len() {
@@ -5269,7 +5281,7 @@ fn generate_any_message(
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
                 #[inline]
-                pub const fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                     if pos + #header_size_lit > buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
