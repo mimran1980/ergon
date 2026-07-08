@@ -2574,7 +2574,6 @@ impl<'a> FuelFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        let mut entry = FuelFiguresEntryEncoder::wrap(self.buf, self.pos);
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
@@ -2673,7 +2672,6 @@ impl<'a> PerformanceFiguresEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        let mut entry = PerformanceFiguresEntryEncoder::wrap(self.buf, self.pos);
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
@@ -2778,10 +2776,6 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        let mut entry = PerformanceFiguresAccelerationEntryEncoder::wrap(
-            self.buf,
-            self.pos,
-        );
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = PerformanceFiguresAccelerationEntryEncoder::wrap(

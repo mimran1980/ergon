@@ -4826,7 +4826,6 @@ fn generate_group_encoder(
         if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort { needed: block_len, available: self.buf.len() - self.pos });
         }
-        let mut entry = #entry_enc_ident::wrap(self.buf, self.pos);
     };
     if !null_stmts.is_empty() {
         add_body.extend(null_stmts);
