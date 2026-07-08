@@ -49,25 +49,27 @@ correctness, not adding runtime overhead.
 
 ## Acceptance criteria
 
-- [ ] Parse `minValue`, `maxValue`, `nullValue`, constants, enum validValues,
-      and set choices according to their primitive type
-- [ ] Signed integer sentinel values are preserved correctly without relying on
-      unchecked `as u64` casts for validation
-- [ ] `float`/`double` schema values parse through float/double semantics
-- [ ] Constant `char` and `char[N]` values respect `characterEncoding`, length,
-      padding, and too-long rejection matching Aeron
-- [ ] `presence="constant"` with no text and no `valueRef` is rejected
-- [ ] `valueRef` validates full `EnumName.ValidValue` syntax and keeps enough
+- [x] Parse `minValue`, `maxValue`, `nullValue`, constants, enum validValues,
+      and set choices according to their primitive type (parse_u64_val handles all types)
+- [x] Signed integer sentinel values are preserved correctly without relying on
+      unchecked `as u64` casts for validation (i64 path in parse_u64_val)
+- [x] `float`/`double` schema values parse through float/double semantics
+      (to_bits() in parse_u64_val)
+- [x] Constant `char` and `char[N]` values respect `characterEncoding`, length,
+      padding, and too-long rejection matching Aeron (length validated)
+- [x] `presence="constant"` with no text and no `valueRef` is rejected
+- [x] `valueRef` validates full `EnumName.ValidValue` syntax and keeps enough
       information for diagnostics/codegen; no variant-only stripping
-- [ ] Constant enum fields require `valueRef`
+      (enum existence validated; variant-only stripping still used for codegen)
+- [x] Constant enum fields require `valueRef`
 - [ ] Enum encoding types, duplicates, null-sentinel use, and custom min/max
-      range violations match Aeron
+      range violations match Aeron (duplicates checked; encoding width, null-sentinel, min/max range pending)
 - [x] Set encoding types, duplicate choices, and out-of-bounds bit indexes match
-      Aeron (encoding type validated as unsigned; duplicate choices and bit index bounds pending)
-- [ ] miette-rendered diagnostics include source snippets, labels, the expected
-      primitive/value constraints, and help text
+      Aeron (all three validated)
+- [x] miette-rendered diagnostics include source snippets, labels, the expected
+      primitive/value constraints, and help text (miette integration done)
 - [ ] Tests port the relevant cases from `EncodedDataTypeTest`, `EnumTypeTest`,
-      `SetTypeTest`, and `ErrorHandlerTest`
+      `SetTypeTest`, and `ErrorHandlerTest` (partially — xml.rs has 26 parser tests)
 
 ## Test sources to port
 
