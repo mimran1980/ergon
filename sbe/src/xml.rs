@@ -879,6 +879,23 @@ fn parse_set(
         .and_then(|e| e.primitive_type)
         .ok_or_else(|| Fault::invalid(node, "set encodingType", &encoding_type_name))?;
 
+    // Set encoding types must be unsigned integers (Aeron requirement).
+    if !matches!(
+        encoding_type,
+        PrimitiveType::UInt8
+            | PrimitiveType::UInt16
+            | PrimitiveType::UInt32
+            | PrimitiveType::UInt64
+    ) {
+        return Err(Fault::invalid(
+            node,
+            "set encodingType",
+            format!(
+                "{encoding_type:?}: sets require unsigned integer encoding (uint8/uint16/uint32/uint64)"
+            ),
+        ));
+    }
+
     let mut set_tokens = Vec::new();
     set_tokens.push(Token {
         id: None,
