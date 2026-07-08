@@ -2556,40 +2556,42 @@ fn generate_message_decoder(
             proc_macro2::Span::call_site(),
         );
         let k1 = k + 1;
-        let _dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let _tail_k = format_ident!("tail_offset_{k}");
-        let tail_k1 = format_ident!("tail_offset_{k1}");
-        let g_name_str = g.name.as_str();
-
-        let tail = format!(
-            "    #[inline]\n\
-             fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 let start = self.tail_offset_{k}()?;\n\
-                 if start + {ds} > self.buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{gn}\", needed: {ds}, available: self.buf.len() - start }});\n\
-                 }}\n\
-                 let bytes: [u8; {ds}] = self.buf[start..start + {ds}].try_into().unwrap();\n\
-                 let header = {dn}(bytes);\n\
-                 let count = header.{cf}() as usize;\n\
-                 let block_len = header.{bf}() as usize;\n\
-                 let mut pos = start + {ds};\n\
-                 let mut idx = 0;\n\
-                 while idx < count {{\n\
-                     pos = {ge}::skip(self.buf, pos, block_len, self.acting_version)?;\n\
-                     idx += 1;\n\
-                 }}\n\
-                 Ok(pos)\n\
-             }}",
-            k1 = k1,
-            k = k,
-            ds = dim_size,
-            gn = g_name_str,
-            dn = dim_name,
-            cf = count_field,
-            bf = bl_field,
-            ge = format!("{}EntryDecoder", g_pascal),
+        let tail_k_ident = format_ident!("tail_offset_{k}");
+        let tail_k1_ident = format_ident!("tail_offset_{k1}");
+        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
+        let dn_ident: syn::Ident = syn::parse_str(&dim_name).unwrap();
+        let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
+        let bf_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
+        let gn_lit = g.name.as_str();
+        let entry_decoder_ident = syn::Ident::new(
+            &format!("{}EntryDecoder", g_pascal),
+            proc_macro2::Span::call_site(),
         );
-        impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&tail).unwrap());
+
+        impl_body.extend(quote::quote! {
+            #[inline]
+            fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                let start = self.#tail_k_ident()?;
+                if start + #dim_size_lit > self.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: #gn_lit,
+                        needed: #dim_size_lit,
+                        available: self.buf.len() - start,
+                    });
+                }
+                let bytes: [u8; #dim_size_lit] = self.buf[start..start + #dim_size_lit].try_into().unwrap();
+                let header = #dn_ident(bytes);
+                let count = header.#cf_ident() as usize;
+                let block_len = header.#bf_ident() as usize;
+                let mut pos = start + #dim_size_lit;
+                let mut idx = 0;
+                while idx < count {
+                    pos = #entry_decoder_ident::skip(self.buf, pos, block_len, self.acting_version)?;
+                    idx += 1;
+                }
+                Ok(pos)
+            }
+        });
         k += 1;
     }
 
@@ -3803,10 +3805,10 @@ fn generate_group_decoder(
         k += 1;
     }
 
-    // Nested group accessors
+    // Nested group accessors — scope under parent group name
     let mut ng_idx = 0usize;
     for ng in &g.groups {
-        let ng_pascal = to_pascal_case(&ng.name);
+        let ng_pascal = format!("{}{}", name, to_pascal_case(&ng.name));
         let ng_decoder_ident = quote::format_ident!("{}Decoder", ng_pascal);
         let ng_snake = to_snake_case(&ng.name);
         let ng_snake_ident = syn::Ident::new(&ng_snake, proc_macro2::Span::call_site());
@@ -3988,9 +3990,10 @@ fn generate_group_decoder(
         }
     });
 
-    // Recursively generate nested group decoders (raw names — already scoped under parent entry)
+    // Recursively generate nested group decoders — scope under parent group name
+    // to avoid collisions when different parent groups have same-named children
     for ng in &g.groups {
-        let nested_name = to_pascal_case(&ng.name);
+        let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
         ts.extend(generate_group_decoder(ng, elements, byte_order, &nested_name));
     }
 
@@ -4703,7 +4706,7 @@ fn generate_message_encoder(
         let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         msg.groups.iter().map(|g| {
             let raw = to_pascal_case(&g.name);
-            let scoped = if multi_message { format!("{}{}", &name, raw) } else { raw };
+            let scoped = if multi_message { format!("{}{}", &name, raw) } else { raw.clone() };
             if let Some(n) = m.get(&scoped) {
                 let dedup = format!("{}_{}", scoped, n + 1);
                 *m.get_mut(&scoped).unwrap() += 1;
@@ -4949,10 +4952,11 @@ fn generate_group_encoder(
         }
     }
 
-    // Nested group setters
+    // Nested group setters — scope under parent group name
     for ng in &g.groups {
+        let ng_pascal_scoped = format!("{}{}", name, to_pascal_case(&ng.name));
         let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
-        let ng_enc = syn::Ident::new(&format!("{}Encoder", to_pascal_case(&ng.name)), span);
+        let ng_enc = syn::Ident::new(&format!("{ng_pascal_scoped}Encoder"), span);
         let (_dim_name, ng_dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
         let (num_off, num_sz) = get_dim_num_layout(elements, &ng.dimension_type);
         let ng_dim = syn::LitInt::new(&ng_dim_size.to_string(), span);
@@ -5033,7 +5037,7 @@ fn generate_group_encoder(
 
     // Recursively generate nested Repeating Groups encoders
     for ng in &g.groups {
-        let nested_name = to_pascal_case(&ng.name);
+        let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
         generate_group_encoder(src, ng, elements, byte_order, &nested_name);
     }
 }
