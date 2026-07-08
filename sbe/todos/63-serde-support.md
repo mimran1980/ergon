@@ -11,6 +11,8 @@ message decoders, composites, enums, and sets. This is a pure Rust-side
 enrichment — the wire layout is unchanged.
 
 Gated behind `CompatibilityMode::WireCompatibleExtensions`.
+**Status: DESIGN / ROADMAP**
+
 
 ## What gets serde
 

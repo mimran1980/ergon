@@ -5,6 +5,8 @@
 Groups in the SBE tail are sequential. To reach the third group you must step
 past the first two. Currently this requires manually reading dimension headers
 and computing strides. The decoder should do this for you.
+**Status: DESIGN / ROADMAP**
+
 
 ## skip_n() — generic group skip
 

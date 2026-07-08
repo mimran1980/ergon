@@ -5,6 +5,8 @@
 Measure the real performance difference between safe and unsafe code paths.
 HFT teams need numbers, not assumptions. Every unsafe escape hatch must earn
 its keep with a benchmark showing the delta.
+**Status: DESIGN / ROADMAP**
+
 
 ## Matrix to benchmark
 

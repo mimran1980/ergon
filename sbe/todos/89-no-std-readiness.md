@@ -4,6 +4,8 @@ Audit generated code for `no_std` compatibility and add a `no_std` feature flag.
 The design (DECISIONS.md §1, §4, §10) specifies that decode/encode is already
 `no_std`-clean by construction — only allocating helpers need `alloc`. This todo
 makes that promise concrete.
+**Status: DEFERRED**
+
 
 ## Status: Not Started
 

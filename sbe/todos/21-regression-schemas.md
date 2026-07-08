@@ -17,6 +17,8 @@ all 26 and wrote `crates/ergosbe/tests/issue_regression_test.rs` with:
 - Full codegen output validation (Generator::generate is a stub)
 - Porting the 6 upstream Rust integration tests to compile-and-run assertions
 - `assert_source_ok` / `compile_and_run` helpers (need `syn` dep + real codegen)
+**Status: DEFERRED**
+
 
 ## Source schemas (26 files)
 

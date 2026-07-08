@@ -2,6 +2,9 @@
 
 **Ref:** user request during block-length validation work (2026-07-08).
 
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 ## Problem
 
 The exchange-orderbook sample uses a Car example for comparison with Aeron

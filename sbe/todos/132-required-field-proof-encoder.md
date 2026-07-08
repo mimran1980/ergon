@@ -2,6 +2,9 @@
 
 **Blocked by:** `03-group-vardata-wire-parity`, `129-generated-prelude-and-public-api-contract`
 **Severity:** MEDIUM
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 
 ## Problem
 

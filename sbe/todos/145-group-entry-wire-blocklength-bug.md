@@ -2,6 +2,9 @@
 
 **Blocked by:** 03-group-vardata-wire-parity
 **Severity:** CRITICAL
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 
 ## Problem
 

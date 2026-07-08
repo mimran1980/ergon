@@ -4,6 +4,8 @@
 
 Every field in generated code should expose `FOO_NULL`, `FOO_MIN`, `FOO_MAX`
 consts alongside the accessor. These are compile-time values from the schema.
+**Status: IN PROGRESS**
+
 
 ## Acceptance criteria
 

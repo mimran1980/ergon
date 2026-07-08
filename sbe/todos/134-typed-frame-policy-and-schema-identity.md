@@ -2,6 +2,9 @@
 
 **Blocked by:** `05-anymessage-framecursor`, `80-schema-hash-sha256`, `129-generated-prelude-and-public-api-contract`
 **Severity:** MEDIUM
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 
 ## Problem
 

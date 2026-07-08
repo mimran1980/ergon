@@ -2,6 +2,9 @@
 
 **Ref:** user request. The since-version/optional presence logic must match Aeron's
 behaviour — only the generated code style should differ.
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 
 ## Problem
 

@@ -2,6 +2,9 @@
 
 **Blocked by:** none (pure codegen)
 **Ref:** Aeron perf audit (todo 105, gap #2)
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 
 ## Problem
 

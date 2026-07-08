@@ -5,6 +5,8 @@
 The upstream SBE tool ships 8 error-handler test schemas that verify parser
 error messages are clear, actionable, and correctly span the offending element.
 Import these and assert ErgoSBE's error messages are at least as good.
+**Status: DEFERRED**
+
 
 ## Source schemas
 

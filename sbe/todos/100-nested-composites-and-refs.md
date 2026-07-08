@@ -2,6 +2,9 @@
 
 **Blocked by:** `02-composite-enum-set-wire-parity`
 
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 ## Problem
 
 The current composite code generator has significant gaps compared to the official Aeron `simple-binary-encoding` specification. In `sbe/tests/baseline_test.rs`, several fields in the `Engine` composite and `Booster` composite are skipped because the code generator does not support them:

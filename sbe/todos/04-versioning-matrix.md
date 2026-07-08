@@ -10,6 +10,8 @@ Baseline/extension schema cross-version tests. Forward compat (new decoder, old
 message → new fields `None`, tail correct), backward compat (old decoder, new
 message → known fields ok, extra bytes skipped, groups at right offset).
 Wrong-`schemaId` → `DecodeError::WrongSchema`. Big-endian fixture.
+**Status: DESIGN / ROADMAP**
+
 
 ## Acceptance criteria
 

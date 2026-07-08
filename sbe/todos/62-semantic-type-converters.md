@@ -13,6 +13,8 @@ the raw SBE wire type and the semantic Rust type.
 
 This is gated behind `CompatibilityMode::WireCompatibleExtensions` — the wire
 bytes are unchanged, only the Rust API surface grows.
+**Status: DESIGN / ROADMAP**
+
 
 ## Examples
 

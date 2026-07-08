@@ -10,6 +10,8 @@ Pre-generate the Car example, check the generated `.rs` file into git, and add
 a test that regenerates and asserts byte-identical output. Catches
 non-deterministic codegen, accidental template changes, and generator drift.
 DECISIONS.md §11 requires this.
+**Status: DEFERRED**
+
 
 ## Acceptance criteria
 

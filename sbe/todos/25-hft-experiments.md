@@ -9,6 +9,8 @@
 Try every performance idea, measure it, keep what works. This is the
 experimentation playground — benchmark-driven, not speculation-driven. If an
 experiment shows <5% improvement, kill it. If >10%, promote it to a real todo.
+**Status: DESIGN / ROADMAP**
+
 
 ## Experiments to run
 

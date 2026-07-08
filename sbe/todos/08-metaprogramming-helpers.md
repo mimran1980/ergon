@@ -9,6 +9,8 @@
 FieldMeta module, schema hash (SHA-256), `MessageVisitor` trait,
 `Display`/`Debug` walkers, `skip()`, `as_bytes()`, wire-annotated debug format,
 pure `const fn` helpers, `#[cold]` error paths, `const` assertions.
+**Status: DESIGN / ROADMAP**
+
 
 ## Acceptance criteria
 

@@ -6,6 +6,8 @@ Every real SBE schema uses `<xi:include href="common-types.xml"/>` to pull in
 the message header, group dimension encoding, and shared type definitions.
 Our parser currently reads a single file. Without XInclude, no real-world
 schema parses.
+**Status: DEFERRED**
+
 
 ## Acceptance criteria
 

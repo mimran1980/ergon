@@ -5,6 +5,8 @@
 When `bound-check-disabled` feature is active, generate code that uses unsafe
 primitives for maximum throughput. The feature is opt-in and explicitly for
 HFT users who accept the safety trade-off.
+**Status: DESIGN / ROADMAP**
+
 
 ## Current verification status (2026-07-08)
 

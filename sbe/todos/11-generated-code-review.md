@@ -5,6 +5,8 @@
 Critically review the Rust source that ErgoSBE emits. Read the generated
 output (e.g. `cargo test` artifacts or `examples/dump_gen.rs`) with fresh eyes
 and ask: is this idiomatic, performant, and maintainable Rust?
+**Status: DEFERRED**
+
 
 ## Areas to inspect
 

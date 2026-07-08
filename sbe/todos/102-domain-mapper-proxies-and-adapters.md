@@ -2,6 +2,9 @@
 
 **Blocked by:** `05-anymessage-framecursor`, `77-message-visitor-trait`
 
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 ## Problem & Gaps
 
 In low-latency and HFT systems, writing raw flyweight encoder/decoder boilerplate directly inside business logic causes several issues:

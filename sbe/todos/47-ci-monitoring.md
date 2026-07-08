@@ -5,6 +5,8 @@
 After every push to any branch, verify the CI workflow completes green. Check
 the GitHub Actions tab for failures, investigate any red builds, and fix them
 before proceeding to the next wave of work.
+**Status: DEFERRED**
+
 
 ## Setup
 

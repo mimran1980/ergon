@@ -2,6 +2,9 @@
 
 **Blocked by:** Multi-schema codegen maturity, wire parity completion
 
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 ## Current verification status (2026-07-08)
 
 The sample now compiles, but generated warning volume is still high. Current command:

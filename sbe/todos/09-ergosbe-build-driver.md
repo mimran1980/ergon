@@ -8,6 +8,8 @@
 
 Developer-facing `build.rs` integration. Single call generates a module into
 `OUT_DIR`. No CLI — the generator library is the single source of truth.
+**Status: DESIGN / ROADMAP**
+
 
 ## Acceptance criteria
 

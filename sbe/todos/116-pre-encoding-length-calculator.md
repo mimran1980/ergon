@@ -2,6 +2,9 @@
 
 **Blocked by:** none
 **Ref:** user request, todo 43 (full LengthBuilder deferred to post-v1)
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 
 ## Problem
 

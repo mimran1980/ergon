@@ -3,6 +3,8 @@
 Emit `///` rustdoc comments on generated types and accessors from XML `description`
 attributes, `<!-- -->` comments, and `description` child elements. This is specified
 in DECISIONS.md §9 as a core helper.
+**Status: DEFERRED**
+
 
 ## Status: Message-level + field-level decoder scalar accessors
 

@@ -12,6 +12,8 @@ until it has a focused todo with runtime, compile-fail, and benchmark gates.
 Rust's type system offers patterns that make generated code safer at compile
 time, faster at runtime, and more natural to use. This todo captures the
 non-obvious ones.
+**Status: DESIGN / ROADMAP**
+
 
 ## P0 — high impact, implement now
 

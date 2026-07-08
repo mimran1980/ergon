@@ -27,6 +27,8 @@ const _: () = assert!(size_of::<Option<ModelKind>>() == 1);
 Rust does this automatically when it detects an unused discriminant. The
 generator just needs to ensure discriminants don't span the full range of the
 underlying type.
+**Status: DESIGN / ROADMAP**
+
 
 ## Acceptance criteria
 

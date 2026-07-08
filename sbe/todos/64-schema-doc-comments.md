@@ -12,6 +12,8 @@ carries a `description` attribute produces a `///` doc comment on the
 corresponding generated Rust item.
 
 Gated behind `CompatibilityMode::WireCompatibleExtensions`.
+**Status: DESIGN / ROADMAP**
+
 
 ## Example
 

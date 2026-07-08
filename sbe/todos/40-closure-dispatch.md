@@ -36,6 +36,8 @@ dispatch(&buf, |msg| match msg {
 Both `AnyMessage` enum AND `dispatch()` are generated — user picks the right
 tool for the job. Feed handlers use `dispatch()` for speed; one-shot decodes
 use `AnyMessage` for convenience.
+**Status: DESIGN / ROADMAP**
+
 
 ## Acceptance criteria
 

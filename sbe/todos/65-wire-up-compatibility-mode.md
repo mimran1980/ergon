@@ -13,6 +13,8 @@ but no code path reads them. Wire them into the codegen so:
   don't affect wire format are silently omitted.
 - `WireCompatibleExtensions`: enable all Rust-side enrichments (semantic
   converters, serde, doc comments, Display impls, field consts).
+**Status: DESIGN / ROADMAP**
+
 
 ## What to change
 

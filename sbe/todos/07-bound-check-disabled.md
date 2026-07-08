@@ -5,6 +5,8 @@
 Feature gate `bound-check-disabled` flips default paths to `_unchecked`
 internally. Per-call `unsafe fn …_unchecked` entrypoints. API surface identical
 across the feature; only subtracts branches. Crate stays safe-by-default.
+**Status: DESIGN / ROADMAP**
+
 
 ## Current verification status (2026-07-08)
 

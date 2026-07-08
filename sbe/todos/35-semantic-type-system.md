@@ -20,6 +20,8 @@ The official Java generator stores this in a constant and ignores it. Rust can
 do much more. The key insight: **semanticType tells the generator what the int
 really is**, enabling type-safe APIs that prevent entire classes of bugs at
 compile time.
+**Status: DESIGN / ROADMAP**
+
 
 ## What semanticType unlocks
 

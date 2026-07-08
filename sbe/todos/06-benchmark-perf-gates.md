@@ -5,6 +5,8 @@
 Criterion benchmarks for encode, decode, round-trip, `Display`, `debug_wire`,
 and `skip` on realistic market-data-shaped messages. Allocation-count tests
 asserting zero heap allocation per operation.
+**Status: DEFERRED**
+
 
 ## Acceptance criteria
 

@@ -2,6 +2,9 @@
 
 **Blocked by:** perf baseline, public API stability
 **Severity:** LOW
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 
 ## Problem
 

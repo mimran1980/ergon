@@ -4,6 +4,8 @@
 
 Good documentation means the user never opens the generated `.rs` file. IDE
 hover, rustdoc, and `cargo doc` should answer every question.
+**Status: DEFERRED**
+
 
 ## Generated code docs (user-facing)
 

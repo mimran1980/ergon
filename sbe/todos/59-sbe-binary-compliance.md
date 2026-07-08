@@ -9,6 +9,8 @@
 Once all implementation is complete, run a comprehensive binary compliance
 verification against the official SBE reference implementation. This is the
 final gate before v1.
+**Status: DESIGN / ROADMAP**
+
 
 ## Strategy
 

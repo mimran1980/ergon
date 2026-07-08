@@ -9,6 +9,8 @@
 Make generated APIs feel like native Rust, not translated Java. Every Rust
 language feature that fits should be used. Good APIs compose with the
 ecosystem, fail at compile time, and read like the stdlib.
+**Status: DESIGN / ROADMAP**
+
 
 ## Iterator completeness
 

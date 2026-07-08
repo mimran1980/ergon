@@ -2,6 +2,9 @@
 
 **Ref:** user request. Aeron Rust SBE comparison.
 
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 ## Current verification status (2026-07-08)
 
 The need for this abstraction is now visible in sample builds. Generated modules

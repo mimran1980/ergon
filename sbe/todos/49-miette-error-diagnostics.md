@@ -7,6 +7,8 @@ and `#[label]` fields. Tests verify miette rendering for `DuplicateTemplateId` a
 `miette` is already a dependency. Currently only `ParseError` uses it for XML
 parse failures. Expand miette coverage so every error — schema validation,
 resolution, and generated-code compile errors — shows annotated source spans.
+**Status: IN PROGRESS**
+
 
 ## Parser errors (improve existing)
 

@@ -9,6 +9,8 @@
 Run `rustfmt` as the final pass after `prettyplease::unparse`. Generated code
 should be consistently formatted and match what a human would write. DECISIONS.md
 §10 specifies "run through rustfmt."
+**Status: DEFERRED**
+
 
 ## Acceptance criteria
 

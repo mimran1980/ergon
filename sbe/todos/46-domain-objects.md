@@ -24,6 +24,8 @@ car.model;  // String, not &str
 let mut buf = vec![0u8; car.encoded_length()];
 car.encode(&mut buf)?;
 ```
+**Status: DESIGN / ROADMAP**
+
 
 ## Generated domain struct
 

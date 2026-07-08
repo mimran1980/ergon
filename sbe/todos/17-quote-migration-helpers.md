@@ -4,6 +4,8 @@
 
 `syn`/`quote`/`prettyplease` deps are already in `Cargo.toml`. `generate()` wraps
 output through `prettyplease::unparse`.
+**Status: IN PROGRESS**
+
 
 ## Progress (2026-07-07)
 

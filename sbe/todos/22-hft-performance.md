@@ -8,6 +8,8 @@
 
 Performance is value #3 for ErgoSBE. The design already bakes in zero-alloc and
 flyweight decoders. These are the next-level optimisations for the hot path.
+**Status: DESIGN / ROADMAP**
+
 
 ## P0 — measurable impact, implement now
 

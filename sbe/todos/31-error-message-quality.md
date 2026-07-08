@@ -4,6 +4,8 @@
 
 HFT ops teams need error messages they can act on at 3am. Every error should
 answer: what failed, where in the buffer, and what to do about it.
+**Status: IN PROGRESS**
+
 
 ## DecodeError improvements
 

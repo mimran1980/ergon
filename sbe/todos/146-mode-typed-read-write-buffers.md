@@ -2,6 +2,9 @@
 
 **Blocked by:** 119-readbuf-writebuf-abstraction, 136-typed-readbuf-writebuf-and-endian-policy
 **Severity:** HIGH
+**Status: DESIGN / ROADMAP**
+**Status: DESIGN / ROADMAP**
+
 
 ## Problem
 

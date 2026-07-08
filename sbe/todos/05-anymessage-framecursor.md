@@ -14,6 +14,8 @@ The strict API should make external framing and schema identity typed, not only
 runtime options. Todo 134 tracks `FrameCursor<'a, Policy, Schema>` and
 `DecodedFrame<'a, Schema>` so a length-prefixed feed cursor, fixed-packet feed
 cursor, and caller-supplied frame cursor cannot be accidentally mixed.
+**Status: DESIGN / ROADMAP**
+
 
 ## Acceptance criteria
 
