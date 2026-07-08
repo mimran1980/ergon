@@ -1,7 +1,14 @@
 # Native protocol inserts (replace SQL-string VALUES)
 
 **Blocked by:** none
-**Severity:** HIGH
+**Severity:** PARKED — ponytail
+
+**Status: PARKED (2026-07-08)**
+
+SQL-string VALUES works correctly. Native protocol would be 3-5x faster but
+this crate is debugging persistence — never the hot path. The `clickhouse`
+crate dep is already in Cargo.toml, so users who need native inserts can call
+`client.insert()` directly. Add when SQL VALUES is measurably the bottleneck.
 
 ## Problem
 
