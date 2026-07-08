@@ -5102,16 +5102,11 @@ fn generate_schema_id_from_header(
     );
     let ts = quote::quote! {
         #[inline]
-        pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
+        pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
             if buf.len() < #sid + 2 {
                 return None;
             }
-            let mut bytes = [0u8; 2];
-            let mut j = 0;
-            while j < 2 {
-                bytes[j] = buf[#sid + j];
-                j += 1;
-            }
+            let bytes = read_bytes::<2>(buf, #sid);
             Some(u16::#order_fn(bytes))
         }
     };
@@ -5307,12 +5302,7 @@ fn generate_any_message(
                             available: buf.len() - pos,
                         });
                     }
-                    let mut header_bytes = [0u8; #header_size_lit];
-                    let mut j = 0;
-                    while j < #header_size_lit {
-                        header_bytes[j] = buf[pos + j];
-                        j += 1;
-                    }
+                    let header_bytes = read_bytes::<#header_size_lit>(buf, pos);
                     let header = #header_type_ident(header_bytes);
                     let template_id = header.#ti_ident();
                     let schema_id = header.#si_ident();

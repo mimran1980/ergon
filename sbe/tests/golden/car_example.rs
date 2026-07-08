@@ -2976,16 +2976,11 @@ pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N
     }
 }
 #[inline]
-pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
+pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     if buf.len() < 4 + 2 {
         return None;
     }
-    let mut bytes = [0u8; 2];
-    let mut j = 0;
-    while j < 2 {
-        bytes[j] = buf[4 + j];
-        j += 1;
-    }
+    let bytes = read_bytes::<2>(buf, 4);
     Some(u16::from_le_bytes(bytes))
 }
 #[non_exhaustive]
@@ -3090,12 +3085,7 @@ impl<'a> AnyMessage<'a> {
                 available: buf.len() - pos,
             });
         }
-        let mut header_bytes = [0u8; 8];
-        let mut j = 0;
-        while j < 8 {
-            header_bytes[j] = buf[pos + j];
-            j += 1;
-        }
+        let header_bytes = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
         let template_id = header.template_id();
         let schema_id = header.schema_id();

@@ -912,7 +912,7 @@ fn generated_api_has_expected_public_items() {
 
     // Free functions
     assert!(
-        src.contains("pub const fn schema_id_from_header"),
+        src.contains("pub fn schema_id_from_header"),
         "missing free fn"
     );
 
