@@ -1,4 +1,5 @@
 //! Integration tests: encode/decode roundtrips of DynamicSchema and DynamicRow.
+#![allow(unused_must_use)] // ponytail: encoder builder calls return &mut Self, not used in tests
 //!
 //! These tests verify that the ErgoSBE-generated codecs produce wire-compatible
 //! binary representations that decode back to the same values.
@@ -38,12 +39,12 @@ fn test_dynamic_schema_metadata_only() {
         .metadata(2, |group| {
             group
                 .add(|entry| {
-                    entry.key_len(4).val_len(8);
+        let _ =             entry.key_len(4).val_len(8);
                 })
                 .unwrap();
             group
                 .add(|entry| {
-                    entry.key_len(3).val_len(3);
+        let _ =             entry.key_len(3).val_len(3);
                 })
                 .unwrap();
         })
@@ -100,19 +101,19 @@ fn test_dynamic_schema_with_columns() {
             // field_id=1, name_len=5, type_tag=1 (UInt64)
             group
                 .add(|entry| {
-                    entry.field_id(1).name_len(5).type_tag(1);
+        let _ =             entry.field_id(1).name_len(5).type_tag(1);
                 })
                 .unwrap();
             // field_id=2, name_len=6, type_tag=4 (String)
             group
                 .add(|entry| {
-                    entry.field_id(2).name_len(6).type_tag(4);
+        let _ =             entry.field_id(2).name_len(6).type_tag(4);
                 })
                 .unwrap();
             // field_id=3, name_len=8, type_tag=0 (Int64)
             group
                 .add(|entry| {
-                    entry.field_id(3).name_len(8).type_tag(0);
+        let _ =             entry.field_id(3).name_len(8).type_tag(0);
                 })
                 .unwrap();
         })
@@ -220,7 +221,7 @@ fn test_dynamic_row_all_field_types() {
         .row_metadata(1, |group| {
             group
                 .add(|entry| {
-                    entry.key_len(4).val_len(5);
+        let _ =             entry.key_len(4).val_len(5);
                 })
                 .unwrap();
         })
@@ -231,7 +232,7 @@ fn test_dynamic_row_all_field_types() {
         .int64_fields(1, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(1).value(-42i64);
+        let _ =             entry.field_id(1).value(-42i64);
                 })
                 .unwrap();
         })
@@ -242,7 +243,7 @@ fn test_dynamic_row_all_field_types() {
         .uint64_fields(1, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(2).value(1234567890u64);
+        let _ =             entry.field_id(2).value(1234567890u64);
                 })
                 .unwrap();
         })
@@ -253,7 +254,7 @@ fn test_dynamic_row_all_field_types() {
         .float64_fields(1, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(3).value(3.14159f64);
+        let _ =             entry.field_id(3).value(std::f64::consts::PI);
                 })
                 .unwrap();
         })
@@ -264,7 +265,7 @@ fn test_dynamic_row_all_field_types() {
         .bool_fields(1, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(4).value(1u8);
+        let _ =             entry.field_id(4).value(1u8);
                 })
                 .unwrap();
         })
@@ -275,7 +276,7 @@ fn test_dynamic_row_all_field_types() {
         .string_fields(1, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(5).str_len(5);
+        let _ =             entry.field_id(5).str_len(5);
                 })
                 .unwrap();
         })
@@ -286,7 +287,7 @@ fn test_dynamic_row_all_field_types() {
         .null_fields(1, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(6);
+        let _ =             entry.field_id(6);
                 })
                 .unwrap();
         })
@@ -323,7 +324,7 @@ fn test_dynamic_row_all_field_types() {
     assert_eq!(f64g.len(), 1);
     let e = f64g.next().unwrap();
     assert_eq!(e.field_id(), 3);
-    assert!((e.value() - 3.14159f64).abs() < 1e-10);
+    assert!((e.value() - std::f64::consts::PI).abs() < 1e-10);
 
     let mut bg = decoder.bool_fields().unwrap();
     assert_eq!(bg.len(), 1);
@@ -362,17 +363,17 @@ fn test_dynamic_row_multiple_entries() {
         .int64_fields(3, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(10).value(100i64);
+        let _ =             entry.field_id(10).value(100i64);
                 })
                 .unwrap();
             group
                 .add(|entry| {
-                    entry.field_id(20).value(200i64);
+        let _ =             entry.field_id(20).value(200i64);
                 })
                 .unwrap();
             group
                 .add(|entry| {
-                    entry.field_id(30).value(300i64);
+        let _ =             entry.field_id(30).value(300i64);
                 })
                 .unwrap();
         })
@@ -383,12 +384,12 @@ fn test_dynamic_row_multiple_entries() {
         .uint64_fields(2, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(40).value(400u64);
+        let _ =             entry.field_id(40).value(400u64);
                 })
                 .unwrap();
             group
                 .add(|entry| {
-                    entry.field_id(50).value(500u64);
+        let _ =             entry.field_id(50).value(500u64);
                 })
                 .unwrap();
         })
@@ -448,17 +449,17 @@ fn test_dynamic_row_string_roundtrip() {
         .string_fields(3, |group| {
             group
                 .add(|entry| {
-                    entry.field_id(1).str_len(3);
+        let _ =             entry.field_id(1).str_len(3);
                 })
                 .unwrap();
             group
                 .add(|entry| {
-                    entry.field_id(2).str_len(11);
+        let _ =             entry.field_id(2).str_len(11);
                 })
                 .unwrap();
             group
                 .add(|entry| {
-                    entry.field_id(3).str_len(3);
+        let _ =             entry.field_id(3).str_len(3);
                 })
                 .unwrap();
         })

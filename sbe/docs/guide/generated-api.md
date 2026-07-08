@@ -65,17 +65,18 @@ Composites become `#[repr(transparent)]` structs wrapping `[u8; N]`:
 pub struct MessageHeader(pub [u8; 8]);
 
 impl MessageHeader {
-    pub const fn block_length(&self) -> u16 { /* ... */ }
-    pub const fn template_id(&self) -> u16 { /* ... */ }
-    pub const fn schema_id(&self) -> u16 { /* ... */ }
-    pub const fn version(&self) -> u16 { /* ... */ }
+    pub fn block_length(&self) -> u16 { /* ... */ }
+    pub fn template_id(&self) -> u16 { /* ... */ }
+    pub fn schema_id(&self) -> u16 { /* ... */ }
+    pub fn version(&self) -> u16 { /* ... */ }
     pub const fn new(block_length: u16, template_id: u16,
                      schema_id: u16, version: u16) -> Self { /* ... */ }
 }
 ```
 
-Each member gets a `const fn` accessor -- **infallible**, no `Result`. The
-struct exposes its raw bytes via `.0`.
+Each member gets an **infallible** accessor with no `Result`. Accessors that
+read bytes from a runtime buffer are not required to be `const fn`; they use the
+fast runtime path. Pure constructors and constants may still be `const fn`.
 
 ## Enum types
 
@@ -205,12 +206,13 @@ For a fixed-size array (`int32[3]`) -- may be version-gated:
 
 ```rust
 pub fn some_numbers(&self) -> Result<[i32; 3], sbe_rt::DecodeError>;
-pub const unsafe fn some_numbers_unchecked(&self) -> [i32; 3];
-pub const fn raw_some_numbers(&self) -> [i32; 3];
+pub unsafe fn some_numbers_unchecked(&self) -> [i32; 3];
+pub fn raw_some_numbers(&self) -> [i32; 3];
 ```
 
 Fixed arrays return `Result` when version-gated (they can be conditionally
-absent), or can be plain const fn when always present.
+absent), or can be plain values when always present. Runtime array reads should
+prefer slice/byte-copy fast paths over const-only byte loops.
 
 Every field also exposes compile-time constants:
 

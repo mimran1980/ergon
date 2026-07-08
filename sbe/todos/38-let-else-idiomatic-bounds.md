@@ -30,7 +30,8 @@ Rust. Stable since Rust 1.65.
 ## Acceptance criteria
 
 - [x] Replace all `if buf.len() < ... { return Err(...) }` patterns in non-`const fn` decode methods with `.ok_or_else()?`
-- [x] `const fn` methods left unchanged (`?` and `.get()` not const-stable in Rust 1.95)
+- [x] Pure `const fn` methods left unchanged; runtime buffer-reading methods
+      can drop constness to use `.get()`/`?`/slice fast paths
 - [x] Templates updated:
   - `wrap_and_apply_header` (decoder)
   - `decode_frame`

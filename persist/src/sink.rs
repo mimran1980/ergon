@@ -66,17 +66,13 @@ impl From<serde_json::Error> for SinkError {
 
 /// Compression mode for ClickHouse HTTP transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum PersistCompression {
     /// No compression.
     None,
     /// LZ4 compression (default).
+    #[default]
     Lz4,
-}
-
-impl Default for PersistCompression {
-    fn default() -> Self {
-        Self::Lz4
-    }
 }
 
 // ── RetryConfig ────────────────────────────────────────────────────────────
@@ -467,7 +463,7 @@ impl SinkInner {
             .map_err(|_| SinkError::Runtime("worker channel closed".into()))?;
         rx.recv()
             .map_err(|_| SinkError::Runtime("worker thread died".into()))?
-            .map_err(|e| SinkError::Connection(e))
+            .map_err(SinkError::Connection)
     }
 
     /// Execute a DDL statement (CREATE TABLE, ALTER TABLE, DROP TABLE).
@@ -1191,8 +1187,8 @@ mod tests {
 
     #[test]
     fn test_json_to_sql_literal_float64() {
-        let v = JsonValue::Number(serde_json::Number::from_f64(3.14).unwrap());
-        assert_eq!(json_to_sql_literal(&v, &ColumnType::Float64), "3.14");
+        let v = JsonValue::Number(serde_json::Number::from_f64(2.5).unwrap());
+        assert_eq!(json_to_sql_literal(&v, &ColumnType::Float64), "2.5");
     }
 
     #[test]
@@ -1357,7 +1353,7 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
     #[test]
     fn test_schema_caching_widen() {
         let old = Trade::table_schema();
-        let mut new = old.clone();
+        let new = old.clone();
         // Widen qty from UInt64 to... well it's already UInt64, can't widen.
         // Create a separate test.
         drop((old, new));
@@ -1405,15 +1401,7 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         let json = serde_json::to_value(&trade).unwrap();
         let obj = json.as_object().unwrap();
 
-        // Test value_for_column for each column.
-        let assert_val = |name: &str, ct: ColumnType, expected: &str| {
-            let cd = ColumnDef {
-                name: name.into(),
-                col_type: ct,
-            };
-            // For value_for_column we need a PersistSender context.
-            // We'll test the underlying json_to_sql_literal directly instead.
-        };
+        // Test value_for_column via json_to_sql_literal directly.
 
         assert_eq!(
             json_to_sql_literal(obj.get("price").unwrap(), &ColumnType::Float64),
@@ -1544,7 +1532,7 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
             .url("http://localhost:9999")
             .build()
             .unwrap();
-        sink.flush(); // no-op, not an error
+        let _ = sink.flush(); // no-op, not an error
     }
 
     #[test]

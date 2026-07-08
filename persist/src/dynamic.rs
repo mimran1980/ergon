@@ -1149,7 +1149,7 @@ mod tests {
             .record(&[
                 DynamicValue::Int64(-42),
                 DynamicValue::UInt64(99),
-                DynamicValue::Float64(3.14),
+                DynamicValue::Float64(std::f64::consts::PI),
                 DynamicValue::Bool(false),
                 DynamicValue::String("hello".into()),
                 DynamicValue::Null,
@@ -1182,7 +1182,7 @@ mod tests {
             let mut fields = decoder.float64_fields().unwrap();
             assert_eq!(fields.len(), 1);
             let entry = fields.next().unwrap();
-            assert!((entry.value() - 3.14).abs() < 1e-10);
+            assert!((entry.value() - std::f64::consts::PI).abs() < 1e-10);
         }
 
         // Bool field.

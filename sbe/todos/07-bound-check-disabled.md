@@ -15,10 +15,10 @@ and the feature-enabled test command also fails:
 RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
 ```
 
-Root cause observed in generated test crates: non-const `read_bytes` /
-`write_bytes` helpers are still called from generated `const fn` paths. Treat
-previous feature-pass checkboxes as stale until todo 122 is fixed and this
-command passes again.
+Historical root cause observed in generated test crates: non-const
+`read_bytes` / `write_bytes` helpers were called from generated `const fn`
+paths. The policy is now to remove constness from runtime buffer accessors
+rather than constrain the fast read/write helpers.
 
 ## Acceptance criteria
 

@@ -4,21 +4,21 @@
 use `while i < N` loops internally. Aeron does NOT — it uses direct slice
 indexing: `slice[index..index+N].try_into().expect("...")`.
 
-## Current verification status (2026-07-08)
+## Verification note (2026-07-08)
 
-This work is partially applied in the current working tree, but it is **not
-complete**. The helper change made `read_bytes`/`write_bytes` non-const while
-generated code still calls them from generated `const fn` paths.
+This todo captured the read/write helper change and the const-callsite conflict
+it exposed. The design decision is now explicit: `read_bytes`/`write_bytes` are
+runtime hot-path helpers, and generated methods that call them should not be
+`const fn`.
 
-Observed failures:
+Historical observed failures:
 - `RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
-  fails with generated `E0015` errors.
+  failed with generated `E0015` errors.
 - `samples/exchange-orderbook` `cargo check` fails with the same generated
   `E0015` class.
 
-Implementation must resolve the const/non-const split before any acceptance
-criteria below are marked complete. Performance wins are not acceptable if the
-generated code no longer compiles.
+If similar failures recur, remove constness from the generated buffer-reading
+callsite. Do not make the byte helpers slower to satisfy const evaluation.
 
 ## Current state
 
@@ -101,20 +101,21 @@ helper itself doesn't need endian awareness.
 - `try_into().expect()` is NOT const fn → accessors drop `const fn`
 - Aeron doesn't use const fn for accessors either — `#[inline]` instead
 - Performance > const fn for a low-latency codec
+- Type-state does not change this: it proves API order, not that a runtime
+  buffer read/write can or should be const-evaluated
 - `bound-check-disabled` unsafe path: `ptr::read_unaligned` reads raw bytes,
   caller applies `from_{le,be}_bytes` — correct for both endiannesses
 
-## Const-callsite decision required
+## Const-callsite policy
 
-Use one of these approaches consistently:
-- Remove `const fn` from every generated method that calls `read_bytes` or
-  `write_bytes`, including `MessageHeader::new`, composite field accessors, and
-  fast header extraction helpers.
-- Or keep separate const-compatible byte helpers for true const paths and use
-  Aeron-style non-const helpers only on runtime hot paths.
+Remove `const fn` from every generated method that calls runtime byte helpers.
+Keep `const fn` only for pure/no-buffer helpers: enum/set `raw()` and
+`from_raw()`, constant-value fields, metadata/layout constants, static templates,
+pure length helpers, and semantic newtype wrappers.
 
-Do not leave a mixed state where generated const functions call non-const
-helpers.
+Do not add a separate const-compatible buffer-read API unless a real user
+workflow needs it and benchmarks prove it does not leak slower code into the
+runtime path.
 
 ## Acceptance criteria
 

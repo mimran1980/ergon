@@ -252,8 +252,8 @@ endian-correct, no transmute.
 pub struct Engine(pub [u8; 6]);
 
 impl Engine {
-    pub const fn capacity(&self) -> u16 { /* from_le_bytes */ }
-    pub const fn num_cylinders(&self) -> u8 { /* from_le_bytes */ }
+    pub fn capacity(&self) -> u16 { /* from_le_bytes */ }
+    pub fn num_cylinders(&self) -> u8 { /* from_le_bytes */ }
 }
 ```
 
@@ -357,8 +357,9 @@ methods (unsafe).
 
 - **Zero allocation:** decoders borrow the input buffer. No `Vec`, no
   `String`, no heap allocation on the decode path.
-- **`const fn` accessors:** scalar and fixed-array accessors are `const fn`
-  -- usable in const contexts (no other SBE generator does this).
+- **Fast runtime accessors:** scalar and fixed-array accessors use inline
+  Aeron-style reads/copies. `const fn` is reserved for pure metadata,
+  constants, enum/set raw helpers, and no-buffer wrappers.
 - **`#[cold]` on error paths:** error formatting is cold, kept out of
   inline hot code.
 - **`as_chunks()` for fixed group entries:** groups without nested groups

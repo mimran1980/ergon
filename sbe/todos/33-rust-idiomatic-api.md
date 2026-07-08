@@ -66,10 +66,11 @@ Groups already implement `Iterator`. Make them feel like native collections:
 
 ## Const evaluation
 
-- [ ] Every field accessor that reads a fixed-size slice is `const fn`
-- [ ] `const fn BLOCK_LENGTH: usize` — already on SbeMessage
-- [ ] `const fn ENCODED_LENGTH: usize` — header + block length
-- [ ] `const fn entry_size() -> usize` on groups
+- [ ] Runtime field accessors that read buffers are not required to be `const fn`
+      and should use the fastest clear runtime read/write path
+- [ ] `const BLOCK_LENGTH: usize` — already on SbeMessage
+- [ ] `const ENCODED_LENGTH: usize` — header + block length
+- [ ] `const fn entry_size() -> usize` on groups when it is a pure calculation
 - [ ] `const` assertions for structural invariants: `assert!(size_of::<Msg>() == N)`
 
 ## std::fmt completeness
@@ -86,7 +87,8 @@ Groups already implement `Iterator`. Make them feel like native collections:
 - [ ] Error types compose with `?` in IO code
 - [ ] Type-state types have clear rustdoc guiding the user
 - [ ] Feature flags are documented and combinable
-- [ ] `const fn` on every eligible method
+- [ ] `const fn` on every eligible pure/no-buffer method, not on hot-path buffer
+      reads/writes when constness would force slower code
 - [ ] `Display`/`Debug` on every generated type
 - [ ] Snapshot test for Display output of a full Car message
 

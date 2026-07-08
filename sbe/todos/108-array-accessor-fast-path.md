@@ -23,9 +23,9 @@ pub const fn some_numbers(&self) -> Result<[u32; 4], DecodeError> {
 }
 ```
 
-This is because `const fn` cannot use slice indexing or `try_into()`. But
-this `const fn` pattern leaks into the **hot path** — every array field read
-does 4 × 4 = 16 iterations of byte-by-byte copying.
+This is because `const fn` cannot use the same slice/`try_into()` patterns as
+the runtime fast path. That `const fn` pattern leaks into the **hot path** —
+every array field read does 4 × 4 = 16 iterations of byte-by-byte copying.
 
 Aeron Rust SBE generates 4 unrolled `get_u32_at()` calls with zero bounds
 checks:
@@ -42,52 +42,11 @@ Aeron's. For a hot decode loop reading arrays, this is a measurable perf hit.
 
 ## Design
 
-Generate TWO accessors per array field:
+Generate the hot-path accessor as a normal `fn`, not a `const fn`. Do not keep
+separate const buffer-read variants unless a real user need appears; the codec's
+primary job is runtime feed decode.
 
-1. **Safe `fn foo() -> [T; N]`** — no `Result`, no bounds check on individual
-   elements (the message was already verified, or the user accepts the risk).
-   Uses `copy_from_slice` + `from_le_bytes` (const-stable since Rust 1.88)
-   for the copy, but is NOT `const fn`. This is the hot-path variant.
-
-2. **`const fn raw_foo() -> [T; N]`** — the existing while-loop pattern,
-   `const fn` only. Used in const contexts, `build.rs` const assertions, etc.
-
-Actually, `copy_from_slice` + `from_le_bytes` became const-stable in Rust 1.88,
-so the safe path CAN be `const fn` now. If the MSRV permits, we can just
-replace the while-loop with `copy_from_slice` universally.
-
-Check: `const fn` with `copy_from_slice`:
-```rust
-pub const fn some_numbers(&self) -> Result<[u32; 4], DecodeError> {
-    let offset = self.pos + 12;
-    if offset + 16 > self.buf.len() {
-        return Err(DecodeError::BufferTooShort { ... });
-    }
-    let bytes: [u8; 16] = /* copy_from_slice at offset */;
-    Ok([
-        u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-        u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
-        u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
-        u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
-    ])
-}
-```
-
-Wait — `try_into()` on slices is NOT const-stable. The subslice pattern is
-the blocker. The while-loop is the only `const fn`-compatible approach for
-subslicing.
-
-**Revised design**: Generate THREE variants:
-1. **`fn foo() -> [T; N]`** — non-const, uses `copy_from_slice` + subslicing.
-   Bounds check before the copy. HOT PATH.
-2. **`const fn raw_foo() -> [T; N]`** — const fn, while-loop pattern. No
-   bounds check (trust the buffer). CONST contexts only.
-3. **`const unsafe fn foo_unchecked() -> [T; N]`** — const fn, direct
-   `copy_from_slice` without bounds check. UNSAFE.
-
-Actually, ponytail: the simplest thing that works. Just generate the
-non-const fast path alongside the existing const raw_. The const raw_
-already exists. Just add:
+Use:
 
 ```rust
 #[inline]
@@ -111,7 +70,9 @@ message body) get infallible array reads.
 
 - [x] `_unchecked` array accessors use bulk `copy_from_slice` + unrolled element
   parsing instead of per-element while-loop (both group entry and message decoder)
-- [x] The existing `const fn raw_` accessors are preserved for const contexts
+- [ ] Safe/runtime array accessors do not use const-only byte loops
+- [ ] `raw_` array accessors are normal fast runtime methods unless a const-only
+      use case is explicitly justified
 - [ ] Benchmarks show array accessor latency within 10% of Aeron's
   unrolled reads
 - [x] Golden file stability test passes
@@ -119,8 +80,7 @@ message body) get infallible array reads.
 
 ## Status
 
-The `_unchecked` variant now does one bulk `copy_from_slice` of the full
-array, then unrolled element-by-element `from_{le,ne,be}_bytes` calls on the
-copied buffer. This removes the inner while-loop per element. The safe
-`const fn` remains byte-by-byte (const fn limitation — slice indexing not
-const-stable).
+The `_unchecked` variant now does one bulk `copy_from_slice` of the full array,
+then unrolled element-by-element `from_{le,ne,be}_bytes` calls on the copied
+buffer. The remaining policy is to remove const-only byte loops from safe
+runtime array accessors rather than preserve `const fn`.

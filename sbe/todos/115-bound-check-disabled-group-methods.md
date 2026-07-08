@@ -5,16 +5,17 @@
 
 ## Current verification status (2026-07-08)
 
-Default-feature baseline tests pass, but the full default workspace command now
-fails at the golden stability test. The feature-enabled command also fails with
-generated `E0015` const/non-const helper errors:
+Default-feature baseline tests pass, but the full default workspace command and
+the feature-enabled command must both be rerun after helper changes. If
+generated `E0015` const/non-const helper errors recur, remove constness from
+runtime buffer accessors rather than weakening the fast helpers:
 
 ```sh
 RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
 ```
 
-Keep the feature-enabled acceptance criterion unchecked until todo 122 is fixed
-and this command passes.
+Keep the feature-enabled acceptance criterion unchecked until todo 122's runtime
+read/write helper policy is implemented and this command passes.
 
 ## Problem
 

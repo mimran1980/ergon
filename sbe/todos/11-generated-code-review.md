@@ -19,7 +19,8 @@ and ask: is this idiomatic, performant, and maintainable Rust?
 - **Error messages:** Are compile errors and decode errors actionable?
 - **Unsafe usage:** Is every `unsafe` justified and documented with a safety
   contract?
-- **Const-correctness:** Could more accessors be `const fn`?
+- **Const policy:** Are only pure/no-buffer helpers `const fn`, and are runtime
+  buffer reads/writes using the fastest clear path?
 - **Inline hints:** Are `#[inline]` annotations placed correctly?
 
 ## Acceptance criteria

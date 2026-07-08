@@ -27,7 +27,7 @@ pub struct CarDecoder<'a> { ... }
 
 impl<'a> CarDecoder<'a> {
     /// Year of manufacture, e.g. 2013.
-    pub const fn model_year(&self) -> u16 { ... }
+    pub fn model_year(&self) -> u16 { ... }
 }
 ```
 

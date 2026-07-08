@@ -517,7 +517,7 @@ mod tests {
             >::MAX_ENCODED_LENGTH
         ];
         let mut enc = DynamicSchemaEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
-        enc.schema_id(schema_id);
+        let _ = enc.schema_id(schema_id);
 
         // Symbol table: metadata key+val bytes, then column name bytes.
         let mut sym = Vec::new();
@@ -533,7 +533,7 @@ mod tests {
             .metadata(metadata.len() as u16, |g| {
                 for (k, v) in metadata {
                     g.add(|e| {
-                        e.key_len(k.len() as u16).val_len(v.len() as u16);
+        let _ =                 e.key_len(k.len() as u16).val_len(v.len() as u16);
                     })
                     .unwrap();
                 }
@@ -545,7 +545,7 @@ mod tests {
                 for (fid, name, ct) in fields {
                     let tag = column_type_to_tag(ct).unwrap();
                     g.add(|e| {
-                        e.field_id(*fid).name_len(name.len() as u16).type_tag(tag);
+        let _ =                 e.field_id(*fid).name_len(name.len() as u16).type_tag(tag);
                     })
                     .unwrap();
                 }
@@ -796,7 +796,7 @@ mod tests {
             &[
                 DynamicValue::Int64(-42),
                 DynamicValue::UInt64(99),
-                DynamicValue::Float64(3.14),
+                DynamicValue::Float64(std::f64::consts::PI),
                 DynamicValue::Bool(false),
                 DynamicValue::String("hello".into()),
                 DynamicValue::Null,
@@ -812,7 +812,7 @@ mod tests {
         // Float may format as "3.14" or "3.1400000000000001"
         let f_val = decoded.get("f").unwrap();
         let f_parsed: f64 = f_val.as_deref().unwrap().parse().unwrap();
-        assert!((f_parsed - 3.14).abs() < 1e-10);
+        assert!((f_parsed - std::f64::consts::PI).abs() < 1e-10);
         assert_eq!(decoded.get("b").unwrap(), &Some("0".to_string()));
         assert_eq!(decoded.get("s").unwrap(), &Some("'hello'".to_string()));
         assert_eq!(decoded.get("n").unwrap(), &None); // null field

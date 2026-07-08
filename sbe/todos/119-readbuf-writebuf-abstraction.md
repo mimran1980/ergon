@@ -7,11 +7,16 @@
 The need for this abstraction is now visible in sample builds. Generated modules
 emit many `unexpected cfg condition value: bound-check-disabled` warnings when
 included from crates that do not define the same feature. The core
-`bound-check-disabled` feature path also currently fails because byte helpers
-are non-const while generated const callsites remain.
+`bound-check-disabled` feature path previously exposed a design conflict:
+runtime byte helpers should not be constrained by generated `const fn`
+callsites.
 
 This todo should not be treated as cosmetic. It is the route to making bounds
 check gating auditable, DRY, and less noisy in generated user crates.
+
+Const policy: `ReadBuf`/`WriteBuf` are runtime hot-path helpers and should not
+be `const fn` unless Rust supports the same fast implementation in const
+contexts. Constness belongs on pure metadata/constants/no-buffer helpers.
 
 ## Problem
 

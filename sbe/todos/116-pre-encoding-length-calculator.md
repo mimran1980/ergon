@@ -57,7 +57,8 @@ field gets a named parameter.
 - [x] `encoded_length()` generated on message encoders with groups or var-data
 - [ ] Parameters: one `usize` per group (entry count) + one `usize` per var-data (byte length)
 - [ ] Returns exact total message length in bytes
-- [ ] `const fn` where possible
+- [ ] `const fn` where this is a pure length calculation and does not constrain
+      runtime buffer writes
 - [ ] Separate from `MAX_ENCODED_LENGTH` (which stays as the worst-case bound)
 - [x] Golden file regenerated and stability test passes
 - [x] Baseline tests pass

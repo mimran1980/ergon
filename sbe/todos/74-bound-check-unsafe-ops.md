@@ -8,9 +8,11 @@ HFT users who accept the safety trade-off.
 
 ## Current verification status (2026-07-08)
 
-The full default workspace command currently fails at the golden stability test,
-and feature-enabled tests fail with generated `E0015` const-helper errors. Do
-not claim the unsafe feature path is verified until:
+The full default workspace command must pass, and feature-enabled tests must be
+rerun after helper changes. If generated `E0015` const-helper errors recur,
+remove constness from runtime buffer accessors; do not slow the unsafe helper
+path to preserve const evaluation. Do not claim the unsafe feature path is
+verified until:
 
 ```sh
 RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1

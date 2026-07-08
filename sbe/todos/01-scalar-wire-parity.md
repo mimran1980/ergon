@@ -20,7 +20,8 @@ VarStringEncoding size mismatch bug as a prerequisite. Finalise the
 - [x] `TryFrom<&'a [u8]>` impl on decoders (idiomatic entrypoint)
 - [x] `acting_version()` and `acting_block_length()` exposed on decoders
 - [x] `#[must_use]` on encoder types (dropped encoder = lost message)
-- [x] `const fn` on all primitive scalar accessors
+- [x] Primitive scalar accessors are infallible and inline-friendly; constness is
+      not required for runtime buffer reads
 - [x] Nullify-on-wrap: `wrap_and_apply_header` writes null sentinels at optional field offsets (codegen calls `generate_nullification`)
 - [x] `wrap_and_apply_header` returns `Result` (buffer-too-short, not panic)
 

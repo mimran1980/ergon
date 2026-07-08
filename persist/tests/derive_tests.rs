@@ -73,6 +73,7 @@ fn test_custom_name() {
 // ── Skip ─────────────────────────────────────────────────────────────────────
 
 #[derive(Persist, Clone)]
+#[allow(dead_code)]
 struct WithSkip {
     included: u64,
     #[persist(skip)]

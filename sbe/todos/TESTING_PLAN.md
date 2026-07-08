@@ -88,7 +88,7 @@ from existing baseline_test.rs.
 ### 1.4 array accessor fast path (todo 108)
 - Encode Car with some_numbers = [1, 2, 3, 4]
 - Decode, verify `some_numbers()` returns correct values
-- Verify `raw_some_numbers()` (const fn path) matches
+- Verify `raw_some_numbers()` matches without relying on const-only byte loops
 - Verify `some_numbers_unchecked()` matches
 - Edge: buffer too short → safe path returns Err
 
@@ -223,7 +223,8 @@ from existing baseline_test.rs.
 - Run `just samples-orderbook` — single command works
 - Gate: `cargo check` for `samples/exchange-orderbook` must pass before any
   live exchange or ClickHouse E2E verification is meaningful.
-- Current focused compile blockers are todo 122 (`E0015`) and todo 124 (`E0308`).
+- Current focused compile blockers are todo 122 (runtime read/write helper
+  policy and any `E0015` regressions) and todo 124 (`E0308`).
 
 ## Implementation order
 

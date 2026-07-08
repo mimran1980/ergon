@@ -98,19 +98,16 @@ The `try_into().unwrap()` pattern on a known-size slice compiles to the same
 - Aeron reads directly with 4 unrolled `get_u32_at()` calls, no bounds check.
 - `vehicle_code()` has the same pattern: Result return, bounds check,
   byte-by-byte while loop.
-- The safe method IS the const version; there is no split like scalars have
-  (safe=try_into, unchecked=while-loop).
+- The safe method was treated as the const version, so the hot path inherited
+  the while-loop implementation.
 
-**Root cause**: Array accessors are `const fn` only (no non-const fast path),
-and `const fn` cannot use `try_into()` / slice indexing. The while-loop byte
-copy is a `const fn` necessity that leaks into the hot path.
+**Root cause**: Array accessors were optimised for const evaluation instead of
+runtime decode. The while-loop byte copy leaked into the hot path.
 
-**Fix suggestion**: Generate two variants for array accessors:
-- Safe `fn foo()` returning the value directly using `try_into()` (fast copy,
-  with bounds check before)
-- `const fn` version using while-loops (for const contexts)
-- Or use `copy_from_slice` + `from_le_bytes` (const-stable since Rust 1.88)
-  instead of byte-by-byte while loop
+**Fix decision**: runtime accessors should use the fastest clear read path and
+drop `const fn` if needed. Do not keep while-loop byte copies just to preserve
+const evaluation; real feed buffers are runtime data and Aeron optimises for
+runtime reads.
 
 ---
 
@@ -310,9 +307,8 @@ should not scan var-data per entry. Options:
 
 1. **Array accessors using while-loop byte copy** -- `some_numbers()` and
    `vehicle_code()` compile to 2x-4x more instructions than Aeron's unrolled
-   direct reads. Fix: use `copy_from_slice` + `from_le_bytes` (const-stable
-   since Rust 1.88) instead of byte-by-byte while loops, or generate separate
-   non-const fast paths.
+   direct reads. Fix: use slice/copy fast paths and remove `const fn` from
+   runtime buffer accessors where constness would force slower code.
 
 2. **Per-entry `encoded_length()` in group iteration** -- Fixed for groups
    whose entries have no tails (no var-data, no nested groups). For groups
@@ -321,9 +317,9 @@ should not scan var-data per entry. Options:
    matching Aeron's approach).
 
 Note: Issue #1 (while-loop byte copies) is the `const fn` pattern. The codegen
-needs to distinguish between const and non-const paths, using `try_into()` /
-`copy_from_slice` for the runtime-safe path and while-loops only for the
-`const fn` variants.
+should not carry a separate const buffer-read API unless there is a real user
+need. Keep `const fn` for pure metadata/constants/no-buffer helpers; runtime
+buffer reads use `try_into()` / `copy_from_slice` / unchecked fast paths.
 
 Issue #2 (per-entry encoded_length) is rooted in the decision to make group
 entries correctly report their encoded position even without reading var-data.

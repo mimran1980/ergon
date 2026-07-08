@@ -8,7 +8,7 @@
 
 FieldMeta module, schema hash (SHA-256), `MessageVisitor` trait,
 `Display`/`Debug` walkers, `skip()`, `as_bytes()`, wire-annotated debug format,
-`const fn` accessors, `#[cold]` error paths, `const` assertions.
+pure `const fn` helpers, `#[cold]` error paths, `const` assertions.
 
 ## Acceptance criteria
 
@@ -21,7 +21,9 @@ FieldMeta module, schema hash (SHA-256), `MessageVisitor` trait,
 - [ ] `encoded_length()` and `encoded_length_with_header()` helpers
 - [ ] `as_bytes()` on decoders and encoder `Complete` state (`AsRef<[u8]>`)
 - [ ] `debug_wire()` — hex dump with field-boundary annotations, zero-alloc until formatted
-- [ ] `const fn` on all primitive field accessors
+- [ ] `const fn` only on pure/no-buffer helpers: enum/set `raw()` and
+      `from_raw()`, constant-value fields, metadata/layout constants, static
+      templates, and pure length helpers
 - [ ] `#[cold]` on error-construction helpers and panic paths
 - [ ] `#[expect(lint)]` instead of `#[allow(lint)]` in generated code (stale suppression catches)
 - [ ] `const` assertions in generated code (e.g. `assert!(size_of::<MessageHeader>() == 8)`)

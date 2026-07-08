@@ -100,9 +100,11 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
   repeated structural scans/bounds checks where the proof covers the extents.
   This is the safe Rust version of "validate once, read many times" for feed
   loops.
-- **`const fn` on primitive field accessors** — edition 2024 / Rust 1.88 makes most
-  fixed-slice + `from_{le,be}_bytes` accessors `const`-eligible. No other SBE
-  generator does this; it lets users use decoded fields in const contexts.
+- **Runtime accessors optimise for the hot path, not `const fn`.** Field
+  accessors that read `&[u8]` use the fastest clear runtime path
+  (`try_into`/slice copies or the verified/unchecked fast path). Do not keep
+  byte-by-byte loops just to preserve `const fn`; real feed buffers are runtime
+  data, and Aeron does not pay for const-evaluable accessors either.
 - **Raw scalar accessors for HFT.** Every scalar field also gets a `raw_foo()`
   accessor that returns the wire value without optional-null mapping. For
   `sinceVersion > acting_version`, raw accessors still return `None` rather than
@@ -427,8 +429,10 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
   `ParseError` carries `NamedSource` + `SourceSpan` so failures highlight the offending
   XML element). `miette`'s large error is `#[allow]`ed — build-time only, not hot path.
 - Standard derives + nullify-on-wrap + `#[must_use]` per §§2/4.
-- **`const fn`** on all primitive scalar accessors (read a fixed slice,
-  `from_{le,be}_bytes`) — edition 2024 makes these const-eligible. Differentiator.
+- **`const fn` only for pure/no-buffer helpers.** Keep it for enum/set `raw()` and
+  `from_raw()`, constant-value fields, metadata/layout constants, static header
+  templates, pure length helpers, and semantic newtype wrappers. Do not make
+  runtime decoder accessors or encoder setters slower to preserve constness.
 - **`slice::as_chunks` / `as_chunks_mut`** for fixed arrays and tail-free fixed-entry
   groups. This is stable in the MSRV and gives fixed-size backing windows without
   unsafe casting or custom pointer arithmetic.
@@ -539,6 +543,10 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
     by offset. Prove required-field completeness at the boundary, but keep scalar
     setters order-free and avoid generating hundreds of state types for wide
     market-data messages.
+16. **`const fn` is not a hot-path optimisation.** If const-evaluable buffer
+    reads require slower byte loops or block Aeron-style read/write helpers,
+    remove `const fn` from those accessors. Preserve constness only for pure
+    metadata, constants, and no-buffer wrappers.
 
 ---
 

@@ -18,7 +18,8 @@ Generate a `schema_id_from_header(buf: &[u8]) -> Option<u16>` free function that
 
 ## Acceptance criteria
 
-- [x] `pub const fn schema_id_from_header(buf: &[u8]) -> Option<u16>` generated per schema
+- [x] `pub fn schema_id_from_header(buf: &[u8]) -> Option<u16>` generated per
+      schema; it should be inline-friendly, not forced to be `const fn`
 - [x] Works for any headerType composite layout (not just the 8-byte default)
 - [x] Zero allocation, no panics, inline-friendly
 - [x] Tests: known header bytes → correct schemaId extracted

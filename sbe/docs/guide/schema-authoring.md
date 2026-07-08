@@ -62,7 +62,9 @@ Composite types group multiple fields into a reusable structure. They become
 </composite>
 ```
 
-Composite accessors are `const fn` and **infallible** -- no `Result`, no `?`.
+Composite accessors are **infallible** -- no `Result`, no `?`. Accessors that
+read runtime buffers optimise for fast inline reads instead of preserving
+`const fn`.
 
 ### Enums
 

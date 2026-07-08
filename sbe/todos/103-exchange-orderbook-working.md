@@ -14,15 +14,16 @@ RUSTC_WRAPPER="" cargo check
 Normal compiler summary: 88 errors / 960 warnings.
 
 JSON diagnostics grouped the main errors as:
-- 57 x `E0015`: generated const functions call non-const `read_bytes` /
-  `write_bytes` or non-const `MessageHeader` methods.
+- 57 x historical `E0015`: generated const functions called non-const
+  `read_bytes` / `write_bytes` or non-const `MessageHeader` methods. The fix is
+  to drop constness from runtime buffer accessors, not to slow the helpers down.
 - 15 x `E0308`: generated `Display` code uses `if let Some(...)` around
   accessors that return plain values, mainly Binance enum/integer fields.
 
 Earlier notes about 123 remaining errors and `E0034` ambiguity are stale.
 Finish generated-code correctness before doing live exchange or ClickHouse work.
-Track the current focused blockers in todo 122 (`E0015` const-helper failures)
-and todo 124 (`E0308` Display/accessor return-shape mismatches).
+Track the current focused blockers in todo 122 (runtime read/write helper
+policy) and todo 124 (`E0308` Display/accessor return-shape mismatches).
 
 The `samples/exchange-orderbook/` crate exists but doesn't compile or run
 yet. It needs to:
