@@ -581,9 +581,18 @@ fn parse_schema(
     // Gap 3: validate header type structure (must have the required fields).
     validate_header_type(&header_type, &registry)?;
 
-    // Second pass: Parse all messages
+    // Second pass: Parse all messages — also check for duplicate message names.
+    let mut seen_message_names: HashSet<String> = HashSet::new();
     for child in element_children(root) {
         if child.tag_name().name() == "message" {
+            let msg_name = string_attr(child, "name", "message @name")?;
+            if !seen_message_names.insert(msg_name) {
+                return Err(Fault::invalid(
+                    child,
+                    "duplicate message name",
+                    string_attr(child, "name", "message @name")?,
+                ));
+            }
             parse_message(child, &header_type, &registry, &mut tokens)?;
         }
     }
@@ -619,6 +628,9 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
     let semantic_type = node.attribute("semanticType").map(str::to_string);
     let description = node.attribute("description").map(str::to_string);
     let length = opt_usize_attr(node, "length", "length")?;
+    let epoch = node.attribute("epoch").map(str::to_string);
+    let time_unit = node.attribute("timeUnit").map(str::to_string);
+    let deprecated = node.attribute("deprecated").is_some();
 
     let null_value = node
         .attribute("nullValue")
@@ -673,6 +685,10 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
         description,
         constant_value,
         length,
+        epoch,
+        time_unit,
+        deprecated,
+        is_variable_length: false,
     })
 }
 
@@ -684,6 +700,7 @@ fn parse_composite(
 ) -> Result<(), Fault> {
     let name = string_attr(node, "name", "composite @name")?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+    let composite_deprecated = node.attribute("deprecated").is_some();
 
     let mut composite_tokens = Vec::new();
     composite_tokens.push(Token {
@@ -692,6 +709,7 @@ fn parse_composite(
         signal: Signal::BeginComposite,
         encoding: Encoding {
             since_version,
+            deprecated: composite_deprecated,
             description: node.attribute("description").map(str::to_string),
             semantic_type: node.attribute("semanticType").map(str::to_string),
             ..Encoding::default()
@@ -823,6 +841,7 @@ fn parse_enum(
         encoding: Encoding {
             primitive_type: Some(encoding_type),
             since_version,
+            deprecated: node.attribute("deprecated").is_some(),
             description: node.attribute("description").map(str::to_string),
             ..Encoding::default()
         },
@@ -935,6 +954,7 @@ fn parse_set(
         encoding: Encoding {
             primitive_type: Some(encoding_type),
             since_version,
+            deprecated: node.attribute("deprecated").is_some(),
             description: node.attribute("description").map(str::to_string),
             ..Encoding::default()
         },
@@ -1023,6 +1043,7 @@ fn parse_message(
     let id = u16_attr(node, "id", "message @id")?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
     let block_length = opt_u16_attr(node, "blockLength", "blockLength")?;
+    let message_deprecated = node.attribute("deprecated").is_some();
 
     tokens.push(Token {
         id: Some(id),
@@ -1030,6 +1051,7 @@ fn parse_message(
         signal: Signal::BeginMessage,
         encoding: Encoding {
             since_version,
+            deprecated: message_deprecated,
             description: node.attribute("description").map(str::to_string),
             semantic_type: node.attribute("semanticType").map(str::to_string),
             ..Encoding::default()
@@ -1160,15 +1182,27 @@ fn parse_message_child(
             let type_name = string_attr(node, "type", "field @type")?;
             let id = u16_attr(node, "id", "field @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+            let type_encoding = registry.encodings.get(&type_name);
+            // Inherit epoch/timeUnit/deprecated from the referenced type when not
+            // explicitly set on the field (Gaps 11, 12).
+            let explicit_epoch = node.attribute("epoch");
+            let epoch = explicit_epoch
+                .map(str::to_string)
+                .or_else(|| type_encoding.and_then(|e| e.epoch.clone()));
+            let explicit_time_unit = node.attribute("timeUnit");
+            let time_unit = explicit_time_unit
+                .map(str::to_string)
+                .or_else(|| type_encoding.and_then(|e| e.time_unit.clone()));
+            let explicit_deprecated = node.attribute("deprecated");
+            let deprecated = explicit_deprecated.is_some()
+                || type_encoding.map_or(false, |e| e.deprecated);
             // Gap 1: presence inheritance from referenced types
             let explicit_presence = node.attribute("presence");
             let presence = if let Some(p) = explicit_presence {
                 parse_presence(node, p)?
             } else {
                 // Inherit presence from the referenced type, if it has one.
-                registry
-                    .encodings
-                    .get(&type_name)
+                type_encoding
                     .map(|e| e.presence)
                     .unwrap_or(Presence::Required)
             };
@@ -1227,6 +1261,9 @@ fn parse_message_child(
                         first.encoding.offset = Some(offset);
                     }
                     first.encoding.presence = presence;
+                    first.encoding.epoch = epoch;
+                    first.encoding.time_unit = time_unit;
+                    first.encoding.deprecated = deprecated;
                     if let Some(cv) = constant_value {
                         first.encoding.constant_value = Some(cv);
                     }
@@ -1240,6 +1277,7 @@ fn parse_message_child(
             let group_name = string_attr(node, "name", "group @name")?;
             let id = u16_attr(node, "id", "group @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+            let group_deprecated = node.attribute("deprecated").is_some();
             let dimension_type = node
                 .attribute("dimensionType")
                 .unwrap_or("groupSizeEncoding");
@@ -1250,6 +1288,7 @@ fn parse_message_child(
                 signal: Signal::BeginGroup,
                 encoding: Encoding {
                     since_version,
+                    deprecated: group_deprecated,
                     description: node.attribute("description").map(str::to_string),
                     ..Encoding::default()
                 },
@@ -1285,6 +1324,7 @@ fn parse_message_child(
             let data_name = string_attr(node, "name", "data @name")?;
             let id = u16_attr(node, "id", "data @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+            let data_deprecated = node.attribute("deprecated").is_some();
             let type_name = node.attribute("type").unwrap_or("varDataEncoding");
 
             tokens.push(Token {
@@ -1293,6 +1333,7 @@ fn parse_message_child(
                 signal: Signal::BeginVarData,
                 encoding: Encoding {
                     since_version,
+                    deprecated: data_deprecated,
                     description: node.attribute("description").map(str::to_string),
                     ..Encoding::default()
                 },
@@ -1313,7 +1354,15 @@ fn parse_message_child(
                         format!("{type_name}: expected 'length' and 'varData' fields"),
                     ));
                 }
-                tokens.extend(type_tokens.clone());
+                // Clone and mark the varData member as variable-length
+                // (Aeron's makeDataFieldCompositeType equivalent — gap 10).
+                let mut data_tokens = type_tokens.clone();
+                for token in data_tokens.iter_mut() {
+                    if token.signal == Signal::BeginField && token.name == "varData" {
+                        token.encoding.is_variable_length = true;
+                    }
+                }
+                tokens.extend(data_tokens);
             } else if registry.encodings.contains_key(type_name) {
                 return Err(Fault::invalid(
                     node,
@@ -2201,6 +2250,376 @@ mod tests {
         assert!(
             msg.contains("schemaId"),
             "expected error about missing schemaId, got: {msg}"
+        );
+    }
+
+    // ── Gap 10/11: epoch and timeUnit on types and fields ──────────────
+
+    #[test]
+    fn parses_epoch_and_time_unit_on_type() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="Timestamp" primitiveType="uint64" epoch="unix" timeUnit="nanoseconds"/>
+  </types>
+  <message name="M" id="1">
+    <field name="ts" id="1" type="Timestamp"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let ts_tokens: Vec<&Token> = ir
+            .tokens
+            .iter()
+            .filter(|t| t.name == "ts" && t.signal == Signal::BeginField)
+            .collect();
+        assert_eq!(ts_tokens.len(), 1);
+        assert_eq!(
+            ts_tokens[0].encoding.epoch.as_deref(),
+            Some("unix"),
+            "epoch should be inherited from type"
+        );
+        assert_eq!(
+            ts_tokens[0].encoding.time_unit.as_deref(),
+            Some("nanoseconds"),
+            "timeUnit should be inherited from type"
+        );
+    }
+
+    #[test]
+    fn parses_epoch_and_time_unit_on_field() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="ts" id="1" type="uint64" epoch="unix" timeUnit="nanoseconds"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let ts_tokens: Vec<&Token> = ir
+            .tokens
+            .iter()
+            .filter(|t| t.name == "ts" && t.signal == Signal::BeginField)
+            .collect();
+        assert_eq!(ts_tokens.len(), 1);
+        assert_eq!(
+            ts_tokens[0].encoding.epoch.as_deref(),
+            Some("unix")
+        );
+        assert_eq!(
+            ts_tokens[0].encoding.time_unit.as_deref(),
+            Some("nanoseconds")
+        );
+    }
+
+    // ── Gap 12: deprecated attribute on all elements ────────────────────
+
+    #[test]
+    fn deprecated_on_type() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="OldType" primitiveType="uint32" deprecated="true"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="OldType"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let old_tokens: Vec<&Token> = ir
+            .tokens
+            .iter()
+            .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
+            .collect();
+        assert_eq!(old_tokens.len(), 1);
+        assert!(old_tokens[0].encoding.deprecated);
+    }
+
+    #[test]
+    fn deprecated_on_message() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1" deprecated="true">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let msg_token = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage && t.name == "M");
+        assert!(msg_token.is_some());
+        assert!(msg_token.unwrap().encoding.deprecated);
+    }
+
+    #[test]
+    fn deprecated_on_field() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8" deprecated="true"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let f_tokens: Vec<&Token> = ir
+            .tokens
+            .iter()
+            .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
+            .collect();
+        assert_eq!(f_tokens.len(), 1);
+        assert!(f_tokens[0].encoding.deprecated);
+    }
+
+    #[test]
+    fn deprecated_on_group() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <group name="g" id="2" dimensionType="groupSizeEncoding" deprecated="true">
+      <field name="f" id="3" type="uint32"/>
+    </group>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let g_token = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginGroup && t.name == "g");
+        assert!(g_token.is_some());
+        assert!(g_token.unwrap().encoding.deprecated);
+    }
+
+    #[test]
+    fn deprecated_on_data() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length" primitiveType="uint32"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <data name="d" id="2" type="varDataEncoding" deprecated="true"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let d_token = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginVarData && t.name == "d");
+        assert!(d_token.is_some());
+        assert!(d_token.unwrap().encoding.deprecated);
+    }
+
+    #[test]
+    fn deprecated_on_composite() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="OldComposite" deprecated="true">
+      <type name="val" primitiveType="uint32"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="OldComposite"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let c_token = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginComposite && t.name == "OldComposite");
+        assert!(c_token.is_some());
+        assert!(c_token.unwrap().encoding.deprecated);
+    }
+
+    #[test]
+    fn deprecated_on_enum() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <enum name="OldEnum" encodingType="uint8" deprecated="true">
+      <validValue name="A">1</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="OldEnum"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let e_token = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginEnum && t.name == "OldEnum");
+        assert!(e_token.is_some());
+        assert!(e_token.unwrap().encoding.deprecated);
+    }
+
+    #[test]
+    fn deprecated_on_set() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <set name="OldSet" encodingType="uint8" deprecated="true">
+      <choice name="X">0</choice>
+    </set>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="OldSet"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let s_token = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginSet && t.name == "OldSet");
+        assert!(s_token.is_some());
+        assert!(s_token.unwrap().encoding.deprecated);
+    }
+
+    // ── Gap 13: duplicate message name ─────────────────────────────────
+
+    #[test]
+    fn duplicate_message_name_is_rejected() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="a" id="1" type="uint8"/>
+  </message>
+  <message name="M" id="2">
+    <field name="b" id="2" type="uint8"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("duplicate message name"),
+            "expected error about duplicate message name, got: {msg}"
+        );
+    }
+
+    // ── Gap 10: varData variable-length member does not contribute to block length ──
+
+    #[test]
+    fn vardata_member_excluded_from_block_length() {
+        // The varData member inside varDataEncoding has length="0", which marks it
+        // as variable-length. The block length should only include the length field (4 bytes).
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length" primitiveType="uint32"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="a" id="1" type="uint32"/>
+    <data name="d" id="2" type="varDataEncoding"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        // The resolver will compute blockLength from fixed-width fields only.
+        // uint32 = 4 bytes; varData's length field is uint32 = 4 bytes but lives in the tail.
+        // So block length should be 4 (just field 'a').
+        // Data fields are tail-encoded, so they don't contribute to message blockLength.
+        // Find the BeginMessage token for M and verify its offset (block length).
+        let msg_token = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage && t.name == "M");
+        assert!(msg_token.is_some(), "expected BeginMessage for M");
+        // The block length is the computed offset stored on the BeginMessage token.
+        // With one uint32 field (4 bytes) and no other fixed fields, it should be 4.
+        assert_eq!(
+            msg_token.unwrap().encoding.offset,
+            Some(4),
+            "expected block length 4 for message with one uint32 field"
         );
     }
 }

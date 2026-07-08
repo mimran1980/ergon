@@ -129,6 +129,14 @@ pub struct Encoding {
     pub constant_value: Option<String>,
     /// Array length for fixed-size primitive arrays.
     pub length: Option<usize>,
+    /// Epoch for timestamp encoding (e.g. "unix"); `None` when not declared.
+    pub epoch: Option<String>,
+    /// Time unit for timestamp encoding (e.g. "nanoseconds"); `None` when not declared.
+    pub time_unit: Option<String>,
+    /// Whether this token's wire size is variable; used for var-data composites.
+    pub is_variable_length: bool,
+    /// Whether this element is deprecated.
+    pub deprecated: bool,
 }
 
 /// One token in the flat IR stream.

@@ -162,10 +162,10 @@ documented here drive issues for alignment or deliberate-deviation decisions.
 | 7 | Validation | **high** | No group dimension type well-formedness check (`blockLength`/`numInGroup`). |
 | 8 | Validation | **high** | No varData composite well-formedness check (`length`/`varData`). |
 | 9 | Validation | **high** | No null-value collision check against enum validValues. |
-| 10 | Composites | **medium** | No `makeDataFieldCompositeType()` equivalent (varData field not flagged variable-length). |
-| 11 | Metadata | **medium** | `@epoch` and `@timeUnit` on fields not parsed. |
-| 12 | Metadata | **medium** | `@deprecated` attribute not parsed on any element. |
-| 13 | Validation | **medium** | No duplicate message name check. |
+| 10 | Composites | **medium** | No `makeDataFieldCompositeType()` equivalent (varData field not flagged variable-length). | [x] Fixed: `parse_message_child` sets `is_variable_length = true` on varData member; `get_token_block_size` skips variable-length fields. |
+| 11 | Metadata | **medium** | `@epoch` and `@timeUnit` on fields not parsed. | [x] Fixed: parsed on `<type>` and `<field>` elements, inherited from type when not set on field. |
+| 12 | Metadata | **medium** | `@deprecated` attribute not parsed on any element. | [x] Fixed: parsed on types, fields, messages, groups, data, composites, enums, and sets. |
+| 13 | Validation | **medium** | No duplicate message name check. | [x] Fixed: `seen_message_names: HashSet<String>` in `parse_schema` rejects duplicates. |
 | 14 | Validation | **medium** | No XSD validation step (deliberate: replaced by programmatic checks). |
 | 15 | Presence | **low** | Field `@presence` not cascaded from type `@presence`. |
 | 16 | Package | **low** | Per-`<types>` package namespace not supported. |
@@ -186,10 +186,10 @@ are missing warnings, cascading, or cross-target checks.
 - [x] 2. Primitive types: equivalent (same 11 types, same built-in null/min/max values)
 - [x] 3. Presence semantics: equivalent (ErgoSBE uses same three states, handles nullValue warning)
 - [x] 4. Null/min/max defaults: equivalent (same IEEE float NaN patterns, same integer sentinels)
-- [ ] 5. Composites and ref handling: **gap** (no ref, no nested subtypes, no offset validation in composites)
-- [ ] 6. Message validation: **gap** (field ordering, duplicate IDs, blockLength, header/group/varData well-formedness)
+- [~] 5. Composites and ref handling: **gap narrowed** (no ref, no nested subtypes still open. varData variable-length flagging is now done — gap 10 closed.)
+- [~] 6. Message validation: **gap narrowed** (field ordering, duplicate IDs, blockLength, header/group/varData well-formedness still open. Duplicate message name check now done — gap 13 closed.)
 - [x] 7. IR token stream pattern: equivalent (same BEGIN/END bracketing structure, same token hierarchy). Signal encoding differs (ErgoSBE collapses VALID_VALUE/CHOICE into Encoding) but information is preserved.
-- [ ] 8. Error handling: **gap** (Aeron batches errors; ErgoSBE fails fast. ErgoSBE has richer source spans. Missing epoch/timeUnit/deprecated.)
+- [~] 8. Error handling: **gap narrowed** (Aeron batches errors; ErgoSBE fails fast. epoch/timeUnit/deprecated now parsed — gaps 11, 12 closed.)
 
 ## Out of scope (addressed elsewhere or intentionally deferred)
 

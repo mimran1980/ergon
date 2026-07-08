@@ -236,6 +236,10 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
     match tokens[start].signal {
         Signal::BeginField => {
             let end_idx = find_matching_end(tokens, start, Signal::BeginField, Signal::EndField);
+            // Variable-length fields (varData composite members) don't occupy fixed block space.
+            if tokens[start].encoding.is_variable_length {
+                return (0, end_idx + 1);
+            }
             // Size is the size of the contents
             // ponytail: constant fields don't occupy wire space, always return 0
             if tokens[start].encoding.presence == crate::ir::Presence::Constant {
