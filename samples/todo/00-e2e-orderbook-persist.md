@@ -50,10 +50,9 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 
 ## Acceptance criteria
 
-- [ ] `cargo check` in `samples/exchange-orderbook` passes
-- [ ] `cargo test` in `samples/exchange-orderbook` passes
-- [ ] `just samples-orderbook` starts ClickHouse, compiles, connects to
-  exchange, builds orderbook, persists to ClickHouse
+- [x] `cargo check` in `samples/exchange-orderbook` passes (0 errors, 2026-07-08)
+- [ ] `cargo test` in `samples/exchange-orderbook` passes (no tests yet)
+- [ ] `just samples-orderbook` starts ClickHouse, compiles, connects to exchange, builds orderbook, persists to ClickHouse
 - [ ] Orderbook table has `exchange`, `instrument` (e.g. "BTCUSDT") columns
 - [ ] Table has 24h TTL
 - [ ] Works from a single `just` command
