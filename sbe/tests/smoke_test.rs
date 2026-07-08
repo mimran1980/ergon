@@ -17,6 +17,7 @@ use ergosbe::parse_file;
 const EXPECTED_PARSE_ERRORS: &[&str] = &[
     "cyclic-self-include.xml",
     "duplicate-message-id.xml",
+    "fix_examples_v2rc3.xml", // missing xi:include targets (types-include.xml, messages-include.xml)
     "invalid-enum-value.xml",
     "invalid-type-ref.xml",
     "missing-required-attr.xml",

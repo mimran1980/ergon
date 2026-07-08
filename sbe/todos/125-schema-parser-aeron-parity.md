@@ -53,9 +53,9 @@ parse/generation time, not in hot-path encoders/decoders.
 
 ## Acceptance criteria
 
-- [ ] Missing includes fail with a `ParseError` that names the `href` and parent
+- [x] Missing includes fail with a `ParseError` that names the `href` and parent
       schema context
-- [ ] Malformed included XML fails with a `ParseError`; no include parse failure
+- [x] Malformed included XML fails with a `ParseError`; no include parse failure
       is swallowed
 - [ ] Unknown elements under `types`, `message`, `group`, `data`, and
       `composite` are rejected unless they are valid SBE/XInclude elements

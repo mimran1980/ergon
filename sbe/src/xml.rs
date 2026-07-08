@@ -411,9 +411,10 @@ fn read_include_file(
     href: &str,
     base_dir: Option<&Path>,
     seen: &mut HashSet<PathBuf>,
-) -> Result<Option<String>, Fault> {
+) -> Result<String, Fault> {
     // Helper: try reading a path, record canonical form in `seen`.
-    fn try_path(href: &str, seen: &mut HashSet<PathBuf>) -> Result<Option<String>, Fault> {
+    // Returns Ok(content) on success, Err on failure (file not found, read error, or cycle).
+    fn try_read(href: &str, seen: &mut HashSet<PathBuf>) -> Result<String, Fault> {
         let p = Path::new(href);
         if let Ok(canon) = p.canonicalize() {
             if !seen.insert(canon.clone()) {
@@ -422,27 +423,42 @@ fn read_include_file(
                     canon.display()
                 )));
             }
-            if let Ok(content) = std::fs::read_to_string(&canon) {
-                return Ok(Some(content));
-            }
-        } else if let Ok(content) = std::fs::read_to_string(p) {
-            return Ok(Some(content));
+            std::fs::read_to_string(&canon)
+                .map_err(|e| Fault::include_error(format!("cannot read {}: {e}", canon.display())))
+        } else {
+            std::fs::read_to_string(p)
+                .map_err(|e| Fault::include_error(format!("cannot read {href}: {e}")))
         }
-        Ok(None)
+    }
+
+    // Helper: propagate cycle errors immediately, retry on other errors.
+    // Ponytail: checks the message field; a dedicated error variant would be cleaner
+    // but this is a single-use helper in a 200-line function.
+    fn is_cycle(f: &Fault) -> bool {
+        match &f.kind {
+            FaultKind::IncludeError { message } => message.contains("cyclic"),
+            _ => false,
+        }
+    }
+
+    macro_rules! try_include {
+        ($expr:expr) => {
+            match $expr {
+                Ok(content) => return Ok(content),
+                Err(f) if is_cycle(&f) => return Err(f),
+                Err(_) => {} // file not found or read error → try next path
+            }
+        };
     }
 
     // 1. Relative to the parent schema's directory.
     if let Some(dir) = base_dir {
         let candidate = dir.join(href).to_string_lossy().to_string();
-        if let Some(content) = try_path(&candidate, seen)? {
-            return Ok(Some(content));
-        }
+        try_include!(try_read(&candidate, seen));
     }
 
     // 2. Direct (CWD-relative) probe.
-    if let Some(content) = try_path(href, seen)? {
-        return Ok(Some(content));
-    }
+    try_include!(try_read(href, seen));
 
     // 3. Local fixtures directory.
     let paths = [
@@ -450,12 +466,12 @@ fn read_include_file(
         format!("../sbe/tests/fixtures/schemas/{}", href),
     ];
     for p in &paths {
-        if let Some(content) = try_path(p, seen)? {
-            return Ok(Some(content));
-        }
+        try_include!(try_read(p, seen));
     }
 
-    Ok(None)
+    Err(Fault::include_error(format!(
+        "include file not found: {href}"
+    )))
 }
 
 fn parse_types_node(
@@ -516,28 +532,25 @@ fn parse_schema(
         if child.tag_name().name() == "include" {
             if let Some(href) = child.attribute("href") {
                 match read_include_file(href, base_dir, seen) {
-                    Ok(Some(included_content)) => {
-                        if let Ok(included_doc) = Document::parse(&included_content) {
-                            let included_root =
-                                included_doc.root().children().find(Node::is_element);
-                            if let Some(inc_node) = included_root {
-                                if inc_node.tag_name().name() == "types" {
-                                    parse_types_node(inc_node, &mut registry, &mut tokens)?;
-                                } else {
-                                    for sub_child in element_children(inc_node) {
-                                        if sub_child.tag_name().name() == "types" {
-                                            parse_types_node(
-                                                sub_child,
-                                                &mut registry,
-                                                &mut tokens,
-                                            )?;
-                                        }
+                    Ok(included_content) => {
+                        let included_doc = Document::parse(&included_content).map_err(|e| {
+                            Fault::include_error(format!(
+                                "failed to parse included file {href}: {e}"
+                            ))
+                        })?;
+                        let included_root = included_doc.root().children().find(Node::is_element);
+                        if let Some(inc_node) = included_root {
+                            if inc_node.tag_name().name() == "types" {
+                                parse_types_node(inc_node, &mut registry, &mut tokens)?;
+                            } else {
+                                for sub_child in element_children(inc_node) {
+                                    if sub_child.tag_name().name() == "types" {
+                                        parse_types_node(sub_child, &mut registry, &mut tokens)?;
                                     }
                                 }
                             }
                         }
                     }
-                    Ok(None) => {} // Missing include: skip silently (matching existing behaviour).
                     Err(fault) => return Err(fault),
                 }
             }
