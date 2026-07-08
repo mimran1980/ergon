@@ -546,4 +546,82 @@ CREATE TABLE IF NOT EXISTS trades (
     fn test_default_unknown_type_falls_back_to_json() {
         assert_maps_to::<Vec<i32>>(ColumnType::Json);
     }
+
+    #[test]
+    fn test_default_char_maps_to_json() {
+        assert_maps_to::<char>(ColumnType::Json);
+    }
+
+    #[test]
+    fn test_default_unit_maps_to_json() {
+        assert_maps_to::<()>(ColumnType::Json);
+    }
+
+    // -- Display edge cases ------------------------------------------------
+
+    #[test]
+    fn test_fixed_string_zero() {
+        assert_eq!(ColumnType::FixedString(0).to_string(), "FixedString(0)");
+    }
+
+    #[test]
+    fn test_datetime_zero() {
+        assert_eq!(ColumnType::DateTime(0).to_string(), "DateTime(0)");
+    }
+
+    #[test]
+    fn test_datetime64_zero() {
+        assert_eq!(ColumnType::DateTime64(0).to_string(), "DateTime64(0)");
+    }
+
+    #[test]
+    fn test_nullable_triple_nesting_collapsed() {
+        // Nullable(Nullable(Nullable(Int32))) -> Nullable(Int32)
+        // after two collapses.
+        let ct = ColumnType::Nullable(Box::new(ColumnType::Nullable(Box::new(
+            ColumnType::Nullable(Box::new(ColumnType::Int32)),
+        ))));
+        assert_eq!(ct.to_string(), "Nullable(Int32)");
+    }
+
+    #[test]
+    fn test_array_nested() {
+        let ct = ColumnType::Array(Box::new(ColumnType::Array(Box::new(
+            ColumnType::UInt64,
+        ))));
+        assert_eq!(ct.to_string(), "Array(Array(UInt64))");
+    }
+
+    #[test]
+    fn test_array_nullable_deep() {
+        let ct = ColumnType::Array(Box::new(ColumnType::Nullable(Box::new(
+            ColumnType::Array(Box::new(ColumnType::Nullable(Box::new(
+                ColumnType::Int32,
+            )))),
+        ))));
+        assert_eq!(
+            ct.to_string(),
+            "Array(Nullable(Array(Nullable(Int32))))"
+        );
+    }
+
+    #[test]
+    fn test_decimal_odd_bounds() {
+        assert_eq!(
+            ColumnType::Decimal {
+                precision: 1,
+                scale: 1,
+            }
+            .to_string(),
+            "Decimal(1, 1)"
+        );
+        assert_eq!(
+            ColumnType::Decimal {
+                precision: 76,
+                scale: 0,
+            }
+            .to_string(),
+            "Decimal(76, 0)"
+        );
+    }
 }

@@ -603,6 +603,120 @@ mod table_schema_tests {
         assert_eq!(diff.compatible_widens.len(), 1); // qty
         assert_eq!(diff.type_conflicts.len(), 1); // bad
     }
+
+    // ── Schema with many columns ────────────────────────────────
+
+    #[test]
+    fn schema_with_many_columns() {
+        let mut columns = Vec::new();
+        for i in 0..1000 {
+            columns.push(ColumnDef {
+                name: format!("col_{i}"),
+                col_type: ColumnType::UInt64,
+            });
+        }
+        let schema = TableSchema::new(columns, vec![]);
+        // 1000 custom columns + auto-added _persist_time = 1001
+        assert_eq!(schema.columns.len(), 1001);
+        assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
+        assert_eq!(schema.order_by, vec!["_persist_time"]);
+    }
+
+    // ── Column with very long name ──────────────────────────────
+
+    #[test]
+    fn schema_with_long_column_name() {
+        let long_name = "a".repeat(1000);
+        let schema = TableSchema::new(
+            vec![ColumnDef {
+                name: long_name.clone(),
+                col_type: ColumnType::String,
+            }],
+            vec![],
+        );
+        let ddl = schema
+            .diff(&TableSchema::new(vec![], vec![]))
+            .alter_table_ddl("test_table");
+        assert_eq!(ddl.len(), 1);
+        assert!(ddl[0].contains(&long_name));
+    }
+
+    // ── Identical schemas via with_ttl ──────────────────────────
+
+    #[test]
+    fn identical_schemas_with_ttl_empty_diff() {
+        let ttl = TtlConfig::new("ts", "24 HOURS");
+        let a = TableSchema::with_ttl(
+            vec![col("price", ColumnType::UInt64)],
+            vec!["_persist_time".into()],
+            Some(ttl.clone()),
+        );
+        let b = TableSchema::with_ttl(
+            vec![col("price", ColumnType::UInt64)],
+            vec!["_persist_time".into()],
+            Some(ttl),
+        );
+        assert!(a.diff(&b).is_empty());
+        assert!(b.diff(&a).is_empty());
+    }
+
+    // ── SchemaDiff DDL for compatible widen + new column ────────
+
+    #[test]
+    fn alter_table_ddl_widen_and_add() {
+        let old = TableSchema::new(
+            vec![col("qty", ColumnType::UInt32)],
+            vec![],
+        );
+        let new = TableSchema::new(
+            vec![
+                col("qty", ColumnType::UInt64),
+                col("side", ColumnType::String),
+            ],
+            vec![],
+        );
+        let ddl = new.diff(&old).alter_table_ddl("orders");
+        assert_eq!(ddl.len(), 2);
+        assert!(ddl[0].contains("ADD COLUMN IF NOT EXISTS side String"));
+        assert!(ddl[1].contains("MODIFY COLUMN qty UInt64"));
+    }
+
+    // ── Empty diff DDL produces no statements ───────────────────
+
+    #[test]
+    fn empty_diff_produces_no_ddl() {
+        let schema = TableSchema::new(vec![col("x", ColumnType::Int32)], vec![]);
+        let ddl = schema.diff(&schema).alter_table_ddl("t");
+        assert!(ddl.is_empty());
+    }
+
+    // ── Schema with only _persist_time ──────────────────────────
+
+    #[test]
+    fn schema_only_persist_time() {
+        let a = TableSchema::new(vec![], vec![]);
+        let b = TableSchema::new(vec![], vec![]);
+        assert!(a.diff(&b).is_empty());
+
+        // DDL should be empty since both schemas are identical
+        // (both have only _persist_time).
+        let ddl = a.diff(&b).alter_table_ddl("t");
+        assert!(ddl.is_empty());
+    }
+
+    // ── Schema with TTL but no custom columns ───────────────────
+
+    #[test]
+    fn schema_with_ttl_default_column() {
+        let schema = TableSchema::with_ttl(
+            vec![],
+            vec!["_persist_time".into()],
+            Some(TtlConfig::new("_persist_time", "7 DAY")),
+        );
+        assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
+        assert_eq!(schema.ttl.as_ref().unwrap().column, "_persist_time");
+        assert_eq!(schema.ttl.as_ref().unwrap().interval, "7 DAY");
+    }
 }
 
 #[cfg(test)]

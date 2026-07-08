@@ -1238,4 +1238,193 @@ mod tests {
         let int64_fields = decoder2.int64_fields().unwrap();
         assert_eq!(int64_fields.len(), 1);
     }
+
+    // ── All-null values ─────────────────────────────────────────
+
+    #[test]
+    fn test_all_null_values() {
+        let mut rec = DynamicRecorderBuilder::new("t")
+            .field("i", ColumnType::Int64)
+            .field("u", ColumnType::UInt64)
+            .field("f", ColumnType::Float64)
+            .field("b", ColumnType::Bool)
+            .field("s", ColumnType::String)
+            .build()
+            .unwrap();
+        let schema_id = rec.schema_id;
+
+        let buf = rec
+            .record(&[
+                DynamicValue::Null,
+                DynamicValue::Null,
+                DynamicValue::Null,
+                DynamicValue::Null,
+                DynamicValue::Null,
+            ])
+            .unwrap();
+
+        use crate::sbe::DynamicRowDecoder;
+        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
+        assert_eq!(decoder.schema_id(), schema_id);
+
+        // All typed groups should be empty.
+        assert!(decoder.int64_fields().unwrap().is_empty());
+        assert!(decoder.uint64_fields().unwrap().is_empty());
+        assert!(decoder.float64_fields().unwrap().is_empty());
+        assert!(decoder.bool_fields().unwrap().is_empty());
+        assert!(decoder.string_fields().unwrap().is_empty());
+
+        // null group should have all 5 entries.
+        let null_fields = decoder.null_fields().unwrap();
+        assert_eq!(null_fields.len(), 5);
+        let ids: Vec<u8> = null_fields.map(|e| e.field_id()).collect();
+        assert_eq!(ids, vec![0, 1, 2, 3, 4]);
+    }
+
+    // ── Mixed null/non-null interleaved ─────────────────────────
+
+    #[test]
+    fn test_mixed_null_and_non_null() {
+        let mut rec = DynamicRecorderBuilder::new("t")
+            .field("a", ColumnType::Int64)
+            .field("b", ColumnType::String)
+            .field("c", ColumnType::Bool)
+            .field("d", ColumnType::UInt64)
+            .build()
+            .unwrap();
+        let schema_id = rec.schema_id;
+
+        let buf = rec
+            .record(&[
+                DynamicValue::Int64(10),          // not null (field 0)
+                DynamicValue::Null,               // null (field 1)
+                DynamicValue::Bool(true),         // not null (field 2)
+                DynamicValue::Null,               // null (field 3)
+            ])
+            .unwrap();
+
+        use crate::sbe::DynamicRowDecoder;
+        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
+        assert_eq!(decoder.schema_id(), schema_id);
+
+        // int64: 1 entry (field 0 = 10).
+        let mut i64g = decoder.int64_fields().unwrap();
+        assert_eq!(i64g.len(), 1);
+        let e = i64g.next().unwrap();
+        assert_eq!(e.field_id(), 0);
+        assert_eq!(e.value(), 10i64);
+
+        // bool: 1 entry (field 2 = true).
+        let mut bg = decoder.bool_fields().unwrap();
+        assert_eq!(bg.len(), 1);
+        let e = bg.next().unwrap();
+        assert_eq!(e.field_id(), 2);
+        assert_eq!(e.value(), 1u8);
+
+        // null: 2 entries (fields 1, 3).
+        let mut ng = decoder.null_fields().unwrap();
+        assert_eq!(ng.len(), 2);
+        let e0 = ng.next().unwrap();
+        assert_eq!(e0.field_id(), 1);
+        let e1 = ng.next().unwrap();
+        assert_eq!(e1.field_id(), 3);
+
+        // string group should be empty (field 1 was null).
+        assert!(decoder.string_fields().unwrap().is_empty());
+        // uint64 group should be empty (field 3 was null).
+        assert!(decoder.uint64_fields().unwrap().is_empty());
+    }
+
+    // ── Build with empty fields ─────────────────────────────────
+
+    #[test]
+    fn test_build_with_empty_fields_errors() {
+        match DynamicRecorderBuilder::new("t").build() {
+            Err(e) => {
+                assert!(matches!(e, DynamicRecorderError::NoFields));
+                assert_eq!(e.to_string(), "at least one field must be registered");
+            }
+            Ok(_) => panic!("expected NoFields error"),
+        }
+    }
+
+    // ── Build with duplicate column names ───────────────────────
+
+    #[test]
+    fn test_build_with_duplicate_column_names() {
+        // Current behaviour: the builder does not validate uniqueness, so
+        // duplicate column names are accepted.
+        let mut rec = DynamicRecorderBuilder::new("t")
+            .field("x", ColumnType::Int64)
+            .field("x", ColumnType::Int64)
+            .build()
+            .unwrap();
+
+        let buf = rec
+            .record(&[DynamicValue::Int64(1), DynamicValue::Int64(2)])
+            .unwrap();
+        assert!(!buf.is_empty());
+
+        use crate::sbe::DynamicRowDecoder;
+        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
+        let mut i64g = decoder.int64_fields().unwrap();
+        assert_eq!(i64g.len(), 2);
+        let e0 = i64g.next().unwrap();
+        assert_eq!(e0.value(), 1i64);
+        let e1 = i64g.next().unwrap();
+        assert_eq!(e1.value(), 2i64);
+    }
+
+    // ── Maximum columns (u8 field_id range 0..=255) ─────────────
+
+    #[test]
+    fn test_maximum_columns() {
+        let mut builder = DynamicRecorderBuilder::new("max_cols");
+        for i in 0..=255u16 {
+            builder = builder.field(format!("col_{i}"), ColumnType::Int64);
+        }
+        let mut rec = builder.build().unwrap();
+
+        let values: Vec<DynamicValue> =
+            (0..=255u16).map(|i| DynamicValue::Int64(i as i64)).collect();
+
+        let buf = rec.record(&values).unwrap();
+
+        use crate::sbe::DynamicRowDecoder;
+        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
+
+        let mut i64g = decoder.int64_fields().unwrap();
+        assert_eq!(i64g.len(), 256);
+
+        // Verify every entry decodes and carries the expected value.
+        for expected in 0u16..256u16 {
+            let entry = i64g.next().unwrap();
+            assert_eq!(entry.field_id(), expected as u8);
+            assert_eq!(entry.value(), expected as i64);
+        }
+
+        assert!(decoder.null_fields().unwrap().is_empty());
+    }
+
+    // ── Empty metadata + all-null values ────────────────────────
+
+    #[test]
+    fn test_all_null_no_metadata() {
+        let mut rec = DynamicRecorderBuilder::new("t")
+            .field("a", ColumnType::Int64)
+            .build()
+            .unwrap();
+
+        let buf = rec.record(&[DynamicValue::Null]).unwrap();
+
+        use crate::sbe::DynamicRowDecoder;
+        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
+
+        assert!(decoder.row_metadata().unwrap().is_empty());
+        assert!(decoder.int64_fields().unwrap().is_empty());
+
+        let mut null_fields = decoder.null_fields().unwrap();
+        assert_eq!(null_fields.len(), 1);
+        assert_eq!(null_fields.next().unwrap().field_id(), 0);
+    }
 }
