@@ -811,3 +811,100 @@ fn all_types_big_endian_roundtrip() {
     "#,
     );
 }
+
+// ── API contract: verify generated public surface is stable ────────────
+
+#[test]
+fn generated_api_has_expected_public_items() {
+    // Verify the car example generates a consistent public API surface.
+    // Catches accidental codegen changes that break user code.
+    let (_schema, src) = generate(&Paths::example_schema(), "api_contract");
+
+    // Core types
+    let required_types = &[
+        "pub struct CarDecoder",
+        "pub struct CarEncoder",
+        "pub struct MessageHeaderDecoder",
+        "pub enum Model",
+        "pub enum BooleanType",
+        "pub struct OptionalExtras",
+        "pub struct Engine",
+        "pub struct Booster",
+        "pub struct GroupSizeEncodingDecoder",
+        "pub struct VarStringEncodingDecoder",
+        "pub struct VarAsciiEncodingDecoder",
+        "pub struct VarDataEncodingDecoder",
+        "pub enum DecodeError",
+        "pub enum EncodeError",
+        "pub enum VerifyError",
+        "pub enum AnyMessage",
+        "pub struct DecodedFrame",
+        "pub struct FrameCursor",
+        "pub struct FieldInfo",
+    ];
+    for t in required_types {
+        assert!(src.contains(t), "missing public type: {t}");
+    }
+
+    // Public constants
+    let required_consts = &[
+        "pub const SCHEMA_HASH",
+        "pub const SCHEMA_SHA256",
+        "pub const SEMANTIC_VERSION",
+        "pub const SCHEMA_ID",
+        "pub const SCHEMA_VERSION",
+    ];
+    for c in required_consts {
+        assert!(src.contains(c), "missing constant: {c}");
+    }
+
+    // Decoder methods (CarDecoder should have these)
+    let decoder_methods = &[
+        "pub fn serial_number",
+        "pub fn model_year",
+        "pub fn available",
+        "pub fn code",
+        "pub fn some_numbers",
+        "pub fn vehicle_code",
+        "pub fn extras",
+        "pub fn engine",
+        "pub fn engine_as_struct",
+        "pub fn fuel_figures",
+        "pub fn performance_figures",
+        "pub fn manufacturer",
+        "pub fn model",
+        "pub fn activation_code",
+        // discounted_model is const fn (constant field) — tested separately
+    ];
+    for m in decoder_methods {
+        assert!(src.contains(m), "missing decoder method: {m}");
+    }
+
+    // Group decoder methods
+    assert!(src.contains("fn len"), "missing group len()");
+    assert!(src.contains("fn is_empty"), "missing group is_empty()");
+    assert!(src.contains("fn nth"), "missing group nth()");
+    assert!(src.contains("fn skip_n"), "missing group skip_n()");
+    assert!(src.contains("fn rewind"), "missing group rewind()");
+    assert!(src.contains("fn remaining"), "missing group remaining()");
+
+    // Composite value type methods (engine_as_struct returns Engine with fields)
+    // Note: most Engine accessors are now pub fn (non-const) after read_bytes change
+    // discounted_model is a constant field — generated as const fn
+    assert!(src.contains("const fn discounted_model"), "missing discounted_model()");
+    assert!(src.contains("fn capacity"), "missing Engine::capacity()");
+    assert!(src.contains("fn num_cylinders"), "missing Engine::num_cylinders()");
+    assert!(src.contains("fn manufacturer_code"), "missing Engine::manufacturer_code()");
+
+    // Free functions
+    assert!(src.contains("pub const fn schema_id_from_header"), "missing free fn");
+
+    // Null/min/max consts
+    assert!(src.contains("SERIAL_NUMBER_NULL"), "missing NULL const");
+    assert!(src.contains("SERIAL_NUMBER_MIN"), "missing MIN const");
+    assert!(src.contains("SERIAL_NUMBER_MAX"), "missing MAX const");
+
+    // read_bytes / write_bytes helpers
+    assert!(src.contains("pub fn read_bytes"), "missing read_bytes helper");
+    assert!(src.contains("pub fn write_bytes"), "missing write_bytes helper");
+}
