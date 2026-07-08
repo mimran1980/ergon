@@ -495,7 +495,15 @@ fn parse_types_node(
             "set" => {
                 parse_set(type_child, registry, tokens)?;
             }
-            _ => {}
+            other => {
+                return Err(Fault::invalid(
+                    type_child,
+                    "types container child",
+                    format!(
+                        "unexpected element <{other}> (expected <type>, <composite>, <enum>, or <set>)"
+                    ),
+                ));
+            }
         }
     }
     Ok(())
@@ -556,6 +564,17 @@ fn parse_schema(
             }
         } else if child.tag_name().name() == "types" {
             parse_types_node(child, &mut registry, &mut tokens)?;
+        } else if child.tag_name().name() == "message" {
+            // messages are parsed in second pass
+        } else {
+            return Err(Fault::invalid(
+                child,
+                "messageSchema child",
+                format!(
+                    "unexpected element <{}> (expected <include>, <types>, or <message>)",
+                    child.tag_name().name()
+                ),
+            ));
         }
     }
 
@@ -1208,7 +1227,13 @@ fn parse_message_child(
 
             tokens.push(structural(&data_name, Signal::EndVarData));
         }
-        _ => {}
+        other => {
+            return Err(Fault::invalid(
+                node,
+                "message child",
+                format!("unexpected element <{other}> (expected <field>, <group>, or <data>)"),
+            ));
+        }
     }
     Ok(())
 }

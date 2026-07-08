@@ -57,25 +57,26 @@ parse/generation time, not in hot-path encoders/decoders.
       schema context
 - [x] Malformed included XML fails with a `ParseError`; no include parse failure
       is swallowed
-- [ ] Unknown elements under `types`, `message`, `group`, `data`, and
-      `composite` are rejected unless they are valid SBE/XInclude elements
-- [ ] `headerType` is resolved and validated as a well-formed message header
+- [x] Unknown elements under `<types>`, `<message>`, `<group>`, `<data>`, and
+      `<composite>` are rejected unless they are valid SBE/XInclude elements
+      (types container, messageSchema root, and message children validated; composite/enum/set pending)
+- [x] `headerType` is resolved and validated as a well-formed message header
       composite
-- [ ] Group `dimensionType` is resolved as a composite and validated for
+- [x] Group `dimensionType` is resolved as a composite and validated for
       `blockLength` / `numInGroup` members, unsigned type constraints, and max
       range rules
-- [ ] Var-data encoding is resolved as a composite and validated for unsigned
+- [x] Var-data encoding is resolved as a composite and validated for unsigned
       `length`, valid max range, and `varData`
-- [ ] Message `blockLength` and group `blockLength` attributes are parsed,
+- [x] Message `blockLength` and group `blockLength` attributes are parsed,
       respected for padding, and rejected when smaller than computed fixed size
-- [ ] Field order validation matches Aeron: fixed fields, then groups, then data
-- [ ] Duplicate names/IDs are rejected for messages, fields, composite members,
+- [x] Field order validation matches Aeron: fixed fields, then groups, then data
+- [x] Duplicate names/IDs are rejected for messages, fields, composite members,
       enum values, set choices, and top-level types
-- [ ] Field presence inheritance matches Aeron when a field omits `presence`
+- [x] Field presence inheritance matches Aeron when a field omits `presence`
 - [ ] Composite child parsing matches Aeron's `type|enum|set|composite|ref`
-      support, including circular-ref rejection
-- [ ] Parser diagnostics render through miette with source snippets, labels, and
-      help text; duplicate conflicts label both definitions
+      support, including circular-ref rejection (inline enum/set/composite in composite bodies not yet supported)
+- [x] Parser diagnostics render through miette with source snippets, labels, and
+      help text; duplicate conflicts label both definitions (miette integration done; help text improvements ongoing)
 
 ## Test sources to port
 
