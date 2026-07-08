@@ -1,6 +1,6 @@
 # 139 — API Simplicity Audit: ErgoSBE vs Aeron (Car Example)
 
-**Status:** Draft -- codegen simplification candidates
+**Status:** Verified — user-facing API IS simpler than Aeron's despite larger golden file
 **Scope:** Golden file `car_example.rs` (3311 lines) vs Aeron `aeron_car.rs` (2627 lines)
 **Schema:** `baseline` id=1 version=0, Car template
 **Goal:** Make ErgoSBE's API simpler than Aeron's -- fewer types, shallower nesting, more obvious names.
