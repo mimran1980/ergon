@@ -2527,16 +2527,27 @@ fn generate_message_decoder(
         }
     });
 
+    // Pre-compute deduplicated group names (used by tail offsets, accessors, and struct gen)
+    let group_unique_names = {
+        let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        msg.groups.iter().map(|g| {
+            let raw = to_pascal_case(&g.name);
+            let scoped = if multi_message { format!("{}{}", &name, raw) } else { raw };
+            if let Some(n) = m.get(&scoped) {
+                let dedup = format!("{}_{}", scoped, n + 1);
+                *m.get_mut(&scoped).unwrap() += 1;
+                dedup
+            } else {
+                m.insert(scoped.clone(), 1);
+                scoped
+            }
+        }).collect::<Vec<_>>()
+    };
     let mut k = 0usize;
-    for g in &msg.groups {
+    for (gi, g) in msg.groups.iter().enumerate() {
         let (dim_name, dim_size, bl_field, count_field) =
             get_dimension_info(elements, &g.dimension_type);
-        let raw_g_pascal = to_pascal_case(&g.name);
-        let g_pascal = if multi_message {
-            format!("{}{}", &name, raw_g_pascal)
-        } else {
-            raw_g_pascal
-        };
+        let g_pascal = &group_unique_names[gi];
         let _dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
         let _count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
         let _bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
@@ -2616,22 +2627,7 @@ fn generate_message_decoder(
         k += 1;
     }
 
-    // 8. Group accessors — use pre-computed dedup names
-    let group_unique_names = {
-        let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        msg.groups.iter().map(|g| {
-            let raw = to_pascal_case(&g.name);
-            let scoped = if multi_message { format!("{}{}", &name, raw) } else { raw };
-            if let Some(n) = m.get(&scoped) {
-                let dedup = format!("{}_{}", scoped, n + 1);
-                *m.get_mut(&scoped).unwrap() += 1;
-                dedup
-            } else {
-                m.insert(scoped.clone(), 1);
-                scoped
-            }
-        }).collect::<Vec<_>>()
-    };
+    // 8. Group accessors — uses pre-computed dedup names from section 7
     let mut g_idx = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
         let scoped = &group_unique_names[gi];
