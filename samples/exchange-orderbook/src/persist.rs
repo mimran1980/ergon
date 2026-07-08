@@ -28,9 +28,11 @@ use serde::Serialize;
 ///     _persist_time DateTime64(9)
 /// ) ENGINE = MergeTree
 /// ORDER BY (exchange, instrument, timestamp)
+/// TTL timestamp + INTERVAL 24 HOURS
 /// ```
 #[derive(Persist, Serialize, Clone, Debug)]
 #[persist(order_by = "exchange, instrument, timestamp")]
+#[persist(ttl = "timestamp, 24 HOURS")]
 pub struct OrderbookSnapshot {
     /// Exchange name (e.g. "bitget", "binance").
     pub exchange: String,

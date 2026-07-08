@@ -35,7 +35,7 @@ with 0 errors and high generated warning volume.
 
 ## Acceptance criteria
 
-- [ ] Display generation branches on the resolved accessor return shape:
+- [x] Display generation branches on the resolved accessor return shape:
   required v0 fields format directly, optional/versioned fields use `Option`,
   and `Result`-returning var-data/group paths use `if let Ok(...)`.
 - [x] `samples/exchange-orderbook` no longer has generated `E0308` errors.
