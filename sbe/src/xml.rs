@@ -546,10 +546,13 @@ fn parse_schema(
         }
     }
 
+    // Gap 3: validate header type structure (must have the required fields).
+    validate_header_type(&header_type, &registry)?;
+
     // Second pass: Parse all messages
     for child in element_children(root) {
         if child.tag_name().name() == "message" {
-            parse_message(child, &registry, &mut tokens)?;
+            parse_message(child, &header_type, &registry, &mut tokens)?;
         }
     }
 
@@ -668,22 +671,31 @@ fn parse_composite(
             let member_name = string_attr(child, "name", "composite member @name")?;
             let type_name = child
                 .attribute("type")
-                .or_else(|| child.attribute("primitiveType"));
+                .or_else(|| child.attribute("primitiveType"))
+                .or_else(|| child.attribute("ref"));
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
 
+            // Gap 2: validate that a ref attribute points to an existing type.
+            if let Some(ref_name) = child.attribute("ref") {
+                if !registry.encodings.contains_key(ref_name)
+                    && !registry.registry.contains_key(ref_name)
+                {
+                    return Err(Fault::invalid(
+                        child,
+                        "composite member ref",
+                        format!("{ref_name}: type not found"),
+                    ));
+                }
+            }
+
             if let Some(t_name) = type_name {
-                // When a <type> directly specifies primitiveType="uint32" (or any
-                // primitive), parse_type_element retains per-use XML attributes (maxValue,
-                // minValue, nullValue, length, characterEncoding).  Going through
-                // resolve_type_to_tokens would look up the encoding from
-                // registry.encodings, which only holds a bare encoding with no per-use
-                // attributes — losing maxValue (e.g. maxValue="1073741824" on a
-                // varDataEncoding.length field) and producing wrong MAX_ENCODED_LENGTH.
-                //
-                // Only use resolve_type_to_tokens for true indirect references:
-                // <type name="..." type="CustomType"/>.
+                // Whether this <type> element is an indirect ref (resolved by name
+                // through the registry) vs a direct encoding with inline attributes.
+                // A `ref` attribute always counts as indirect; a bare `type` attribute
+                // counts as indirect only when the name isn't a known primitive encoding.
+                let has_ref_attr = child.attribute("ref").is_some();
                 let is_indirect_ref =
-                    child.attribute("type").is_some() && !registry.encodings.contains_key(t_name);
+                    has_ref_attr || (child.attribute("type").is_some() && !registry.encodings.contains_key(t_name));
                 if !is_indirect_ref {
                     let encoding = parse_type_element(child, registry)?;
                     composite_tokens.push(Token {
@@ -876,8 +888,13 @@ fn parse_set(
 }
 
 /// Parse a `<message>` into bracketed `BeginMessage`/`EndMessage` tokens.
+///
+/// `header_type` is the name of the schema's header composite (e.g.
+/// `"messageHeader"`). Gap 3: message field IDs are validated against
+/// header-type field IDs to prevent conflicts.
 fn parse_message(
     node: Node<'_, '_>,
+    header_type: &str,
     registry: &TypeRegistry,
     tokens: &mut Vec<Token>,
 ) -> Result<(), Fault> {
@@ -898,7 +915,23 @@ fn parse_message(
         },
     });
 
-    let mut seen_ids: HashSet<u16> = HashSet::new();
+    // Gap 3: pre-populate seen_ids with the header type's field IDs so that
+    // message fields using the same ID are flagged as conflicts.
+    let mut seen_ids: HashSet<u16> = if let Some(header_tokens) = registry.registry.get(header_type)
+    {
+        header_tokens
+            .iter()
+            .filter_map(|t| {
+                if t.signal == Signal::BeginField {
+                    t.id
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        HashSet::new()
+    };
     let mut seen_names: HashSet<String> = HashSet::new();
     let mut prev_offset: Option<usize> = None;
 
@@ -1005,11 +1038,18 @@ fn parse_message_child(
             let type_name = string_attr(node, "type", "field @type")?;
             let id = u16_attr(node, "id", "field @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let presence = node
-                .attribute("presence")
-                .map(|s| parse_presence(node, s))
-                .transpose()?
-                .unwrap_or(Presence::Required);
+            // Gap 1: presence inheritance from referenced types
+            let explicit_presence = node.attribute("presence");
+            let presence = if let Some(p) = explicit_presence {
+                parse_presence(node, p)?
+            } else {
+                // Inherit presence from the referenced type, if it has one.
+                registry
+                    .encodings
+                    .get(&type_name)
+                    .map(|e| e.presence)
+                    .unwrap_or(Presence::Required)
+            };
             if node.attribute("nullValue").is_some() && presence != Presence::Optional {
                 eprintln!(
                     "warning: nullValue specified on non-optional field '{field_name}' \
@@ -1239,6 +1279,47 @@ fn parse_primitive_type(node: Node<'_, '_>, s: &str) -> Result<PrimitiveType, Fa
         "double" => PrimitiveType::Double,
         _ => return Err(Fault::invalid(node, "primitive type", s)),
     })
+}
+
+/// Validate that the header type composite has the required SBE fields.
+///
+/// The header type must be a composite with at least `blockLength`, `templateId`,
+/// `schemaId`, and `version` fields (all typically `uint16`). Returns `Ok(())`
+/// on success or a `Fault` referencing the last-checked element.
+///
+/// # Gap 3 — well-formedness constraints
+///
+/// Aeron validates that the header type carries these four mandatory fields.
+/// If the header type is not found in the registry it isn't flagged here
+/// (the missing type error will surface elsewhere, e.g. in resolution).
+fn validate_header_type(header_type: &str, registry: &TypeRegistry) -> Result<(), Fault> {
+    let tokens = match registry.registry.get(header_type) {
+        Some(t) if !t.is_empty() && t[0].signal == Signal::BeginComposite => t,
+        _ => return Ok(()), // Not in the registry or not a composite — skip
+    };
+
+    // Collect the field names present in the composite.
+    let field_names: HashSet<&str> = tokens
+        .iter()
+        .filter(|t| t.signal == Signal::BeginField)
+        .map(|t| t.name.as_str())
+        .collect();
+
+    for required_name in &["blockLength", "templateId", "schemaId", "version"] {
+        if !field_names.contains(required_name) {
+            // Build a fault; we have no single node to point at, so no span.
+            return Err(Fault {
+                kind: FaultKind::Invalid {
+                    what: "headerType".to_string(),
+                    value: format!(
+                        "{header_type}: missing required field '{required_name}'"
+                    ),
+                },
+                span: None,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Compute the on-wire byte size of a type referenced by a `<field>` element.
@@ -1810,5 +1891,175 @@ mod tests {
 </messageSchema>"#;
         // Must parse successfully despite mismatched blockLength.
         parse(schema).unwrap();
+    }
+
+    // ── Gap 1: presence inheritance from referenced types ─────────────
+
+    #[test]
+    fn field_inherits_optional_presence_from_type() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="OptU32" primitiveType="uint32" presence="optional"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="OptU32"/>
+    <field name="g" id="2" type="OptU32" presence="required"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        // f should have inherited optional presence from OptU32.
+        let f_begins: Vec<&Token> = ir
+            .tokens
+            .iter()
+            .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
+            .collect();
+        assert_eq!(f_begins.len(), 1, "expected exactly one BeginField for 'f'");
+        assert_eq!(
+            f_begins[0].encoding.presence,
+            Presence::Optional,
+            "f should inherit Optional from OptU32"
+        );
+        // g has explicit presence="required" and should stay required.
+        let g_begins: Vec<&Token> = ir
+            .tokens
+            .iter()
+            .filter(|t| t.name == "g" && t.signal == Signal::BeginField)
+            .collect();
+        assert_eq!(g_begins.len(), 1, "expected exactly one BeginField for 'g'");
+        assert_eq!(
+            g_begins[0].encoding.presence,
+            Presence::Required,
+            "g should stay Required (explicit)"
+        );
+    }
+
+    #[test]
+    fn field_inherits_constant_presence_from_type() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="ConstU32" primitiveType="uint32" presence="constant">42</type>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="ConstU32"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        let f_begins: Vec<&Token> = ir
+            .tokens
+            .iter()
+            .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
+            .collect();
+        assert_eq!(f_begins.len(), 1, "expected exactly one BeginField for 'f'");
+        assert_eq!(
+            f_begins[0].encoding.presence,
+            Presence::Constant,
+            "f should inherit Constant from ConstU32"
+        );
+    }
+
+    // ── Gap 2: composite child ref attributes ─────────────────────────
+
+    #[test]
+    fn composite_member_with_valid_ref_parses() {
+        // <ref> on a composite member should resolve through the registry.
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="innerType" primitiveType="uint32"/>
+    <composite name="outer">
+      <type name="inner" ref="innerType"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="outer"/>
+  </message>
+</messageSchema>"#;
+        let ir = parse(schema).unwrap();
+        assert!(ir.tokens.iter().any(|t| t.name == "M"));
+    }
+
+    #[test]
+    fn composite_member_with_invalid_ref_fails() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="outer">
+      <type name="inner" ref="BogusType"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="outer"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    // ── Gap 3: header type well-formedness ─────────────────────────────
+
+    #[test]
+    fn custom_header_type_with_required_fields_parses() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" headerType="MyHeader" byteOrder="littleEndian">
+  <types>
+    <composite name="MyHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="x" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#;
+        parse(schema).unwrap();
+    }
+
+    #[test]
+    fn custom_header_type_missing_fields_fails() {
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" headerType="MyHeader" byteOrder="littleEndian">
+  <types>
+    <composite name="MyHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+      <!-- missing schemaId -->
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="x" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#;
+        let err = parse(schema).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("schemaId"), "expected error about missing schemaId, got: {msg}");
     }
 }
