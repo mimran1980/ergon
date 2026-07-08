@@ -80,8 +80,8 @@ If no dead-letter is configured, rows are dropped (current behavior) but a
 
 - [x] Exponential backoff retry on ClickHouse connection/insert failures
 - [x] Configurable `RetryConfig` on `ClickhouseSinkBuilder`
-- [ ] `dead_letter()` callback on `PersistSenderBuilder`
-- [ ] Default: no dead-letter → drop + increment counter
-- [ ] `persist_retries_total` and `persist_dropped_rows_total` counters
+- [x] `dead_letter()` callback on `PersistSenderBuilder`
+- [x] Default: no dead-letter → drop + increment counter
+- [x] `persist_retries_total` and `persist_dropped_rows_total` counters
 - [ ] Integration test: kill CH, persist rows, restart CH, verify recovery via dead-letter replay
 - [ ] No data loss when dead-letter is configured and CH recovers
