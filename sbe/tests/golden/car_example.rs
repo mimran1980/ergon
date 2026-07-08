@@ -399,25 +399,12 @@ impl VarStringEncoding {
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
-        let mut res = [0 as u8; 0];
-        let mut idx = 0;
-        while idx < 0 {
-            let offset = 4 + idx * 1;
-            res[idx] = u8::from_le_bytes(read_bytes::<1>(&self.0, offset));
-            idx += 1;
-        }
-        res
+        []
     }
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         write_bytes::<4>(&mut bytes, 0, &val_bytes);
-        let mut idx = 0;
-        while idx < 0 {
-            let val_bytes = var_data[idx].to_le_bytes();
-            write_bytes::<1>(&mut bytes, 4 + idx * 1, &val_bytes);
-            idx += 1;
-        }
         Self(bytes)
     }
 }
@@ -434,14 +421,7 @@ impl<'a> VarStringEncodingDecoder<'a> {
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
-        let mut res = [0 as u8; 0];
-        let mut idx = 0;
-        while idx < 0 {
-            let offset = self.pos + 4 + idx * 1;
-            res[idx] = u8::from_le_bytes(read_bytes::<1>(self.buf, offset));
-            idx += 1;
-        }
-        res
+        []
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -454,25 +434,12 @@ impl VarAsciiEncoding {
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
-        let mut res = [0 as u8; 0];
-        let mut idx = 0;
-        while idx < 0 {
-            let offset = 4 + idx * 1;
-            res[idx] = u8::from_le_bytes(read_bytes::<1>(&self.0, offset));
-            idx += 1;
-        }
-        res
+        []
     }
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         write_bytes::<4>(&mut bytes, 0, &val_bytes);
-        let mut idx = 0;
-        while idx < 0 {
-            let val_bytes = var_data[idx].to_le_bytes();
-            write_bytes::<1>(&mut bytes, 4 + idx * 1, &val_bytes);
-            idx += 1;
-        }
         Self(bytes)
     }
 }
@@ -489,14 +456,7 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
-        let mut res = [0 as u8; 0];
-        let mut idx = 0;
-        while idx < 0 {
-            let offset = self.pos + 4 + idx * 1;
-            res[idx] = u8::from_le_bytes(read_bytes::<1>(self.buf, offset));
-            idx += 1;
-        }
-        res
+        []
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -509,25 +469,12 @@ impl VarDataEncoding {
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
-        let mut res = [0 as u8; 0];
-        let mut idx = 0;
-        while idx < 0 {
-            let offset = 4 + idx * 1;
-            res[idx] = u8::from_le_bytes(read_bytes::<1>(&self.0, offset));
-            idx += 1;
-        }
-        res
+        []
     }
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
         write_bytes::<4>(&mut bytes, 0, &val_bytes);
-        let mut idx = 0;
-        while idx < 0 {
-            let val_bytes = var_data[idx].to_le_bytes();
-            write_bytes::<1>(&mut bytes, 4 + idx * 1, &val_bytes);
-            idx += 1;
-        }
         Self(bytes)
     }
 }
@@ -544,14 +491,7 @@ impl<'a> VarDataEncodingDecoder<'a> {
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
-        let mut res = [0 as u8; 0];
-        let mut idx = 0;
-        while idx < 0 {
-            let offset = self.pos + 4 + idx * 1;
-            res[idx] = u8::from_le_bytes(read_bytes::<1>(self.buf, offset));
-            idx += 1;
-        }
-        res
+        []
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -817,17 +757,19 @@ impl<'a> CarDecoder<'a> {
             });
         }
         let mut res = [0 as u32; 4];
-        let mut idx = 0;
-        while idx < 4 {
-            let offset = self.pos + 12 + idx * 4;
-            let mut bytes = [0u8; 4];
-            let mut j = 0;
-            while j < 4 {
-                bytes[j] = self.buf[offset + j];
-                j += 1;
+        if 4 > 0 {
+            let mut idx = 0;
+            while idx < 4 {
+                let offset = self.pos + 12 + idx * 4;
+                let mut bytes = [0u8; 4];
+                let mut j = 0;
+                while j < 4 {
+                    bytes[j] = self.buf[offset + j];
+                    j += 1;
+                }
+                res[idx] = u32::from_le_bytes(bytes);
+                idx += 1;
             }
-            res[idx] = u32::from_le_bytes(bytes);
-            idx += 1;
         }
         Ok(res)
     }
@@ -867,17 +809,19 @@ impl<'a> CarDecoder<'a> {
             });
         }
         let mut res = [0 as u8; 6];
-        let mut idx = 0;
-        while idx < 6 {
-            let offset = self.pos + 28 + idx * 1;
-            let mut bytes = [0u8; 1];
-            let mut j = 0;
-            while j < 1 {
-                bytes[j] = self.buf[offset + j];
-                j += 1;
+        if 6 > 0 {
+            let mut idx = 0;
+            while idx < 6 {
+                let offset = self.pos + 28 + idx * 1;
+                let mut bytes = [0u8; 1];
+                let mut j = 0;
+                while j < 1 {
+                    bytes[j] = self.buf[offset + j];
+                    j += 1;
+                }
+                res[idx] = u8::from_le_bytes(bytes);
+                idx += 1;
             }
-            res[idx] = u8::from_le_bytes(bytes);
-            idx += 1;
         }
         Ok(res)
     }

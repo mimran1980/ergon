@@ -1428,30 +1428,42 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                         syn::parse_str(&format!("[{}; {}]", r_type_str, len)).unwrap();
                     ctor_params.push(quote::quote! { #field_ident: #array_ty });
 
-                    getters.extend(quote::quote! {
-                        #[inline]
-                        pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
-                            let mut res = [0 as #r_type_ty; #len_lit];
+                    if *len > 0 {
+                        getters.extend(quote::quote! {
+                            #[inline]
+                            pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
+                                let mut res = [0 as #r_type_ty; #len_lit];
+                                let mut idx = 0;
+                                while idx < #len_lit {
+                                    let offset = #offset_lit + idx * #prim_size_lit;
+                                    res[idx] = #r_type_ty::#from_method(
+                                        read_bytes::<#prim_size_lit>(&self.0, offset)
+                                    );
+                                    idx += 1;
+                                }
+                                res
+                            }
+                        });
+
+                        ctor_body.extend(quote::quote! {
                             let mut idx = 0;
                             while idx < #len_lit {
-                                let offset = #offset_lit + idx * #prim_size_lit;
-                                res[idx] = #r_type_ty::#from_method(
-                                    read_bytes::<#prim_size_lit>(&self.0, offset)
-                                );
+                                let val_bytes = #field_ident[idx].#to_method();
+                                write_bytes::<#prim_size_lit>(&mut bytes, #offset_lit + idx * #prim_size_lit, &val_bytes);
                                 idx += 1;
                             }
-                            res
-                        }
-                    });
-
-                    ctor_body.extend(quote::quote! {
-                        let mut idx = 0;
-                        while idx < #len_lit {
-                            let val_bytes = #field_ident[idx].#to_method();
-                            write_bytes::<#prim_size_lit>(&mut bytes, #offset_lit + idx * #prim_size_lit, &val_bytes);
-                            idx += 1;
-                        }
-                    });
+                        });
+                    } else {
+                        // zero-length array: return empty array immediately
+                        let zero_ty: syn::Type =
+                            syn::parse_str(&format!("[{}; 0]", r_type_str)).unwrap();
+                        getters.extend(quote::quote! {
+                            #[inline]
+                            pub fn #field_ident(&self) -> #zero_ty {
+                                []
+                            }
+                        });
+                    }
                 } else {
                     ctor_params.push(quote::quote! { #field_ident: #r_type_ty });
 
@@ -1615,21 +1627,32 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 if let Some(len) = length {
                     let len_lit =
                         syn::LitInt::new(&len.to_string(), proc_macro2::Span::call_site());
-                    decoder_getters.extend(quote::quote! {
-                        #[inline]
-                        pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
-                            let mut res = [0 as #r_type_ty; #len_lit];
-                            let mut idx = 0;
-                            while idx < #len_lit {
-                                let offset = self.pos + #offset_lit + idx * #prim_size_lit;
-                                res[idx] = #r_type_ty::#from_method(
-                                    read_bytes::<#prim_size_lit>(self.buf, offset)
-                                );
-                                idx += 1;
+                    if *len > 0 {
+                        decoder_getters.extend(quote::quote! {
+                            #[inline]
+                            pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
+                                let mut res = [0 as #r_type_ty; #len_lit];
+                                let mut idx = 0;
+                                while idx < #len_lit {
+                                    let offset = self.pos + #offset_lit + idx * #prim_size_lit;
+                                    res[idx] = #r_type_ty::#from_method(
+                                        read_bytes::<#prim_size_lit>(self.buf, offset)
+                                    );
+                                    idx += 1;
+                                }
+                                res
                             }
-                            res
-                        }
-                    });
+                        });
+                    } else {
+                        let zero_ty: syn::Type =
+                            syn::parse_str(&format!("[{}; 0]", r_type_str)).unwrap();
+                        decoder_getters.extend(quote::quote! {
+                            #[inline]
+                            pub fn #field_ident(&self) -> #zero_ty {
+                                []
+                            }
+                        });
+                    }
                 } else {
                     decoder_getters.extend(quote::quote! {
                         #[inline]
@@ -2087,17 +2110,19 @@ fn generate_message_decoder(
                                  return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{fn_name}\", needed: size, available: self.buf.len() - offset }});\n\
                              }}\n\
                              let mut res = [0 as {rt}; {len}];\n\
-                             let mut idx = 0;\n\
-                             while idx < {len} {{\n\
-                                 let offset = self.pos + {offset} + idx * {ps};\n\
-                                 let mut bytes = [0u8; {ps}];\n\
-                                 let mut j = 0;\n\
-                                 while j < {ps} {{\n\
-                                     bytes[j] = self.buf[offset + j];\n\
-                                     j += 1;\n\
+                             if {len} > 0 {{\n\
+                                 let mut idx = 0;\n\
+                                 while idx < {len} {{\n\
+                                     let offset = self.pos + {offset} + idx * {ps};\n\
+                                     let mut bytes = [0u8; {ps}];\n\
+                                     let mut j = 0;\n\
+                                     while j < {ps} {{\n\
+                                         bytes[j] = self.buf[offset + j];\n\
+                                         j += 1;\n\
+                                     }}\n\
+                                     res[idx] = {rt}::from_{order}_bytes(bytes);\n\
+                                     idx += 1;\n\
                                  }}\n\
-                                 res[idx] = {rt}::from_{order}_bytes(bytes);\n\
-                                 idx += 1;\n\
                              }}\n\
                              Ok(res)\n\
                          }}\n",
