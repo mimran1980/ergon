@@ -15,5 +15,8 @@ rust_decimal_macros = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[features]
+bound-check-disabled = []
+
 [build-dependencies]
 ergosbe = { path = "../../sbe" }

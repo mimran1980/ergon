@@ -3893,18 +3893,9 @@ fn generate_group_decoder(
                     continue;
                 }
                 let fmt_str = format!("{sep}{}: {{:?}}", f.name);
-                // only since-versioned scalars return Option<T> in entry decoders
-                if f.since_version > 0 {
-                    entry_display_body.extend(quote::quote! {
-                        if let Some(v) = self.#f_ident() {
-                            write!(f, #fmt_str, v)?;
-                        }
-                    });
-                } else {
-                    entry_display_body.extend(quote::quote! {
-                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
-                    });
-                }
+                entry_display_body.extend(quote::quote! {
+                    { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                });
                 entry_display_out_idx += 1;
             }
             FieldType::Enum {
@@ -3914,19 +3905,9 @@ fn generate_group_decoder(
                     continue;
                 }
                 let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
-                // enum accessors return the enum directly (NullVal sentinel),
-                // only since-versioned enums are Option-wrapped
-                if f.since_version > 0 {
-                    entry_display_body.extend(quote::quote! {
-                        if let Some(e) = self.#f_ident() {
-                            write!(f, #fmt_str)?;
-                        }
-                    });
-                } else {
-                    entry_display_body.extend(quote::quote! {
-                        { let e = self.#f_ident(); write!(f, #fmt_str)?; }
-                    });
-                }
+                entry_display_body.extend(quote::quote! {
+                    { let e = self.#f_ident(); write!(f, #fmt_str)?; }
+                });
                 entry_display_out_idx += 1;
             }
             FieldType::Set { .. } => {}
