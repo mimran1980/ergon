@@ -2225,7 +2225,7 @@ fn generate_message_decoder(
                         );
                         impl_body
                             .extend(syn::parse_str::<proc_macro2::TokenStream>(&accessor).unwrap());
-                    } else if since > 0 {
+                    } else if f.presence == Presence::Optional || since > 0 {
                         let since_lit =
                             syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                         let offset_end = offset + prim_size;
@@ -2411,7 +2411,7 @@ fn generate_message_decoder(
                             }
                         });
                     }
-                } else if since > 0 {
+                } else if f.presence == Presence::Optional || since > 0 {
                     let since_lit =
                         syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + prim_size;
@@ -2474,7 +2474,7 @@ fn generate_message_decoder(
                             }
                         });
                     }
-                } else if since > 0 {
+                } else if f.presence == Presence::Optional || since > 0 {
                     let since_lit =
                         syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                     let offset_end = offset + prim_size;
@@ -2993,7 +2993,7 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                     continue;
                 }
                 let fmt_str = format!("{sep}{snake}: {enum_name}::{{e:?}}");
-                if f.since_version > 0 {
+                if f.presence == Presence::Optional || f.since_version > 0 {
                     body.extend(quote::quote! {
                         if let Some(e) = self.#f_ident() {
                             write!(f, #fmt_str)?;
@@ -3901,7 +3901,7 @@ fn generate_group_decoder(
                     continue;
                 }
                 let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
-                if f.since_version > 0 {
+                if f.presence == Presence::Optional || f.since_version > 0 {
                     entry_display_body.extend(quote::quote! {
                         if let Some(e) = self.#f_ident() {
                             write!(f, #fmt_str)?;
