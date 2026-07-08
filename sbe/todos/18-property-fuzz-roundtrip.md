@@ -6,6 +6,8 @@ Randomised encode->decode->semantic-equal round-trip tests. DECISIONS.md SS11
 test #11. Catches edge cases that hand-written tests miss: uninitialised
 buffer regions, integer overflow, string encoding, enum discriminants.
 
+**Status: DONE**
+
 ## Acceptance criteria
 
 - [x] Property test: for each message type, randomise all fields, encode, decode, assert equal

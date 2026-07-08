@@ -6,6 +6,8 @@ Extend wire parity to messages using composites (Engine, Booster), enums
 (Model, BooleanType), and sets (OptionalExtras). Includes optional/null matrix
 and `raw_` accessor tests.
 
+**Status: DONE**
+
 ## Acceptance criteria
 
 - [x] Composite field encode/decode matches upstream bytes (`composite_byte_exact_engine` test passes)

@@ -3,6 +3,8 @@
 **Blocked by:** none
 **Ref:** user request, existing `#[cfg(not(feature = "bound-check-disabled"))]` pattern in `wrap_and_apply_header`
 
+**Status: DONE**
+
 ## Current verification status (2026-07-08)
 
 Default-feature baseline tests pass, but the full default workspace command and

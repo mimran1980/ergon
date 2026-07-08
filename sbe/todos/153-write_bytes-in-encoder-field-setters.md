@@ -4,6 +4,8 @@
 **Severity:** MEDIUM
 **Ref:** user request 2026-07-08
 
+**Status: DONE**
+
 ## Problem
 
 Encoder field setters (scalar and array, both message and entry) still use the

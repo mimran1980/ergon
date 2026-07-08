@@ -3,6 +3,8 @@
 **Blocked by:** 103
 **Severity:** HIGH
 
+**Status: DONE**
+
 ## Problem
 
 The exchange-orderbook sample previously failed with generated `E0308` errors

@@ -3,6 +3,8 @@
 **Blocked by:** none
 **Ref:** Aeron perf audit (todo 105, gap #1)
 
+**Status: DONE**
+
 ## Problem
 
 Array field accessors (fixed-length arrays like `some_numbers: [u32; 4]`,

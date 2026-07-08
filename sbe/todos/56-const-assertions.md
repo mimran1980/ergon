@@ -12,6 +12,8 @@ critical size invariants from the schema:
 
 Catches codegen bugs at compile time rather than at runtime.
 
+**Status: DONE**
+
 ## Acceptance criteria
 
 - [x] `const.*HEADER_TEMPLATE.len() == N);` in generated output

@@ -22,6 +22,8 @@ buf[0..8].copy_from_slice(&CAR_HEADER);
 Also applies to group dimensions, constant-value fields, and any fixed-content
 byte region.
 
+**Status: DONE**
+
 ## Acceptance criteria
 
 - [x] Generate `const HEADER_TEMPLATE: [u8; 8]` for each message
