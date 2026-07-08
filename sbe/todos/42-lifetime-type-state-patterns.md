@@ -1,4 +1,7 @@
-⚠️ **DEFERRED — post-v1.** Lifetime and type-state patterns is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+⚠️ **ROADMAP — stable Rust only.** Lifetime and type-state ideas are valuable
+only when they simplify the public interface or prove safety without widening
+generated code unnecessarily. Use `144-stable-rust-advantage-roadmap.md` as the
+priority list and `137-compile-fail-api-proof-suite.md` as the proof gate.
 
 ---
 

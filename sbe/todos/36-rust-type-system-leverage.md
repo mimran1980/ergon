@@ -1,4 +1,7 @@
-⚠️ **DEFERRED — post-v1.** Rust type system leverage is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
+⚠️ **ROADMAP — stable Rust only.** This file captures design ideas, not a
+release claim. The current decision record for which ideas are P0/P1/P2 is
+`144-stable-rust-advantage-roadmap.md`. Do not implement or claim any item here
+until it has a focused todo with runtime, compile-fail, and benchmark gates.
 
 ---
 

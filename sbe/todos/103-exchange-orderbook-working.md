@@ -4,29 +4,20 @@
 
 ## Current verification status (2026-07-08)
 
-The sample still does not compile. Current command:
+The sample now compiles, but generated warning volume is still high. Current command:
 
 ```sh
 cd /Users/imran/RustroverProjects/ErgoSBE/samples/exchange-orderbook
 RUSTC_WRAPPER="" cargo check
 ```
 
-Normal compiler summary: 88 errors / 960 warnings.
+Observed result: 0 errors, about 1886 warnings.
 
-JSON diagnostics grouped the main errors as:
-- 57 x historical `E0015`: generated const functions called non-const
-  `read_bytes` / `write_bytes` or non-const `MessageHeader` methods. The fix is
-  to drop constness from runtime buffer accessors, not to slow the helpers down.
-- 15 x `E0308`: generated `Display` code uses `if let Some(...)` around
-  accessors that return plain values, mainly Binance enum/integer fields.
+Earlier notes about 123 errors, 88 errors, `E0015`, `E0034`, and `E0308` are
+historical. The current blocker is not compilation; it is warning cleanup,
+generated-code polish, and real E2E runtime proof.
 
-Earlier notes about 123 remaining errors and `E0034` ambiguity are stale.
-Finish generated-code correctness before doing live exchange or ClickHouse work.
-Track the current focused blockers in todo 122 (runtime read/write helper
-policy) and todo 124 (`E0308` Display/accessor return-shape mismatches).
-
-The `samples/exchange-orderbook/` crate exists but doesn't compile or run
-yet. It needs to:
+The `samples/exchange-orderbook/` crate exists and compiles. It still needs to:
 
 ## What needs to happen
 
@@ -39,17 +30,18 @@ yet. It needs to:
    WebSocket parameters to get SBE responses:
    `wss://ws-api.binance.com:443/ws-api/v3?responseFormat=sbe&sbeSchemaId=1&sbeSchemaVersion=0`
    
-3. **Schema generation**: The `build.rs` must generate working Rust code from
-   both exchange schemas. Currently generates code with 4161+ compile errors
-   because the codegen can't handle 140KB+ production schemas yet.
+3. **Schema generation polish**: The `build.rs` generates Rust code from both
+   exchange schemas, but the generated output is noisy. Track warning cleanup
+   before calling the sample release-polished.
 
 ## Acceptance criteria
 
-- [ ] `samples/exchange-orderbook/build.rs` successfully generates code from
+- [x] `samples/exchange-orderbook/build.rs` successfully generates code from
   both Bitget and Binance schemas
-- [ ] Generated code compiles cleanly
-- [ ] Generated code compiles without `E0015` const-helper regressions
-- [ ] Generated Display impls match accessor return shapes
+- [x] Generated code compiles without current hard errors
+- [x] Generated code compiles without `E0015` const-helper regressions
+- [x] Generated Display impls match accessor return shapes well enough to compile
+- [ ] Generated warning volume is reduced or justified
 - [ ] `cargo run` connects to at least one exchange and prints orderbook
 - [ ] Binance uses SBE binary frames, NOT JSON
 - [ ] Orderbook uses BidLevel/AskLevel newtypes with custom Ord (already done

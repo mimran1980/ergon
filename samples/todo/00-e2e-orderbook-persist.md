@@ -5,8 +5,8 @@ schemas compile cleanly (todo 103), persist feature completeness
 
 ## Current verification status (2026-07-08)
 
-Sample now compiles cleanly (0 errors, ~1885 warnings — warnings are in generated
-code). `#[derive(Persist)]` with `OrderbookSnapshot` works: `Decimal(18,8)` type
+Sample now compiles with 0 errors and high generated warning volume. It is not
+release-clean yet. `#[derive(Persist)]` with `OrderbookSnapshot` works: `Decimal(18,8)` type
 override, `chrono::DateTime<Utc>` → `DateTime64(9)`, custom ORDER BY.
 
 Live exchange feed + ClickHouse runtime verification deferred — needs a running
@@ -51,6 +51,7 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 ## Acceptance criteria
 
 - [x] `cargo check` in `samples/exchange-orderbook` passes (0 errors, 2026-07-08)
+- [ ] Generated warning volume is reduced or explicitly accepted for the sample
 - [ ] `cargo test` in `samples/exchange-orderbook` passes (no tests yet)
 - [ ] `just samples-orderbook` starts ClickHouse, compiles, connects to exchange, builds orderbook, persists to ClickHouse
 - [ ] Orderbook table has `exchange`, `instrument` (e.g. "BTCUSDT") columns

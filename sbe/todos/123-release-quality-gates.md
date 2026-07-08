@@ -22,6 +22,9 @@ release goal requires all of them to be true at the same time:
 - The Rust-type-system proof ideas must be either implemented and tested or
   explicitly scoped post-v1: verified frames, required-field proofs, scoped
   callbacks, and typed frame/schema policy.
+- Stable Rust advantage work must be gated by evidence, not optimism: simpler
+  interface claims need public API compile tests, and faster-than-Aeron claims
+  need head-to-head benchmarks.
 - The real-world sample must compile before live exchange/ClickHouse work.
 
 Without a single gate todo, it is too easy to move from SBE to persist or
@@ -54,6 +57,8 @@ samples while one of the hard blockers is still red.
 - [ ] If todo 136 is scoped into v1, typed `ReadBuf`/`WriteBuf` mode/endian
       tests and benchmarks pass for checked, verified, and unchecked paths.
 - [ ] If todo 137 is scoped into v1, the compile-fail proof suite passes in CI.
+- [ ] Stable Rust roadmap todos 144-152 are either implemented with runtime,
+      compile-fail, and benchmark evidence, or explicitly scoped post-v1.
 - [x] `cd samples/exchange-orderbook && cargo check` — compiles
 
 ## Acceptance criteria
@@ -66,3 +71,5 @@ samples while one of the hard blockers is still red.
 - [ ] Claims such as "safe by parse", "simpler than Aeron", and "HFT-ready" are
       backed by the parser, API proof, performance, and sample gates above, not
       only by passing unit tests.
+- [ ] The README and guide docs distinguish implemented features from
+      roadmap-only stable Rust advantages.

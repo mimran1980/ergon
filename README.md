@@ -3,10 +3,14 @@
 Opinionated, idiomatic Rust code generation for [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/) (SBE).
 
 ErgoSBE reads SBE XML schemas and produces safe, fast, version-aware Rust codecs.
-Wire-compatible with the official SBE reference implementation; API-shaped for Rust,
-not translated from Java.
+The project goal is byte-for-byte compatibility with the official SBE reference
+implementation, with an API shaped for Rust rather than translated from Java.
 
 ## Features
+
+These are the implemented/generated capabilities. Release-quality claims such as
+"full Aeron parity", "HFT-ready", and "safe by parse" are gated by
+[`sbe/todos/123-release-quality-gates.md`](sbe/todos/123-release-quality-gates.md).
 
 - **XML schema parsing** — parse SBE schemas with XInclude support, miette diagnostics
 - **Encoder/Decoder generation** — zero-allocation `Copy` decoders, fluent encoder API
@@ -23,6 +27,36 @@ not translated from Java.
 - **Optional/null handling** — `Option<T>` return types for optional and version-gated fields
 - **Unchecked accessors** — `unsafe fn foo_unchecked()` for HFT hot loops (no bounds check)
 - **Compile-time constants** — `FIELD_NULL`, `FIELD_MIN`, `FIELD_MAX` on every decoded field
+
+## Current Status
+
+- Local `ergosbe` tests, formatting, clippy, and generated-code stability checks
+  are tracked in [`sbe/todos/TESTING_PLAN.md`](sbe/todos/TESTING_PLAN.md).
+- Head-to-head Aeron performance parity is not claimed until todo 105 and the
+  release gates have benchmark evidence for every hot-path scenario.
+- Advanced Rust proof APIs such as verified frames, typed frame policies,
+  scoped callbacks, and required-field proofs are roadmap items until their
+  runtime, compile-fail, and benchmark gates pass.
+- The exchange-orderbook sample currently compiles, but generated warning volume
+  and live exchange/ClickHouse E2E verification remain tracked work.
+
+## Stable Rust Advantage Roadmap
+
+ErgoSBE should beat standard Aeron Rust bindings by leaning into stable Rust
+features that reduce the public interface while keeping the generated
+implementation zero-cost:
+
+- **Sealed proof tokens and marker types** for checked/verified/unchecked
+  decoder modes, schema identity, and frame policy.
+- **Associated codec types** on `SbeMessage` for monomorphised generic helpers.
+- **HRTB-scoped callbacks** so borrowed decoder views cannot escape a feed frame.
+- **Return-position `impl Trait`** to hide generated iterator/helper type names.
+- **Const/static templates** for header and group dimension setup.
+- **Optional `#[repr(transparent)]` semantic newtypes** for domain safety without
+  changing the wire representation.
+
+The stable-Rust roadmap is tracked in
+[`sbe/todos/144-stable-rust-advantage-roadmap.md`](sbe/todos/144-stable-rust-advantage-roadmap.md).
 
 ## Quick start
 

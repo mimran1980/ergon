@@ -303,9 +303,9 @@ rename was the original plan, but `engine_lazy` is still present.)
 **Saves:** 1-2 methods per composite field. Car example: 1-2.
 
 **Acceptance criteria:**
-- [ ] `engine_lazy()` removed
-- [ ] Either `engine_as_struct()` removed or pattern rationalized
-- [ ] All tests pass
+- [x] `engine_lazy()` removed
+- [x] Either `engine_as_struct()` removed or pattern rationalized — KEPT: dual composite access (flyweight + value struct) is intentional per DECISIONS.md. `engine()` returns flyweight decoder, `engine_as_struct()` returns copyable value struct. Both serve distinct use cases.
+- [x] All tests pass
 
 ### 3k. Remove `SbeMessage` sealed trait + `Sealed` trait -- saves 2 traits
 

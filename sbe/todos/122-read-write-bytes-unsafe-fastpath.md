@@ -14,8 +14,9 @@ runtime hot-path helpers, and generated methods that call them should not be
 Historical observed failures:
 - `RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
   failed with generated `E0015` errors.
-- `samples/exchange-orderbook` `cargo check` fails with the same generated
-  `E0015` class.
+- `samples/exchange-orderbook` previously failed with the same generated
+  `E0015` class; the current sample compile gate passes, so this is a
+  regression guard rather than the current sample state.
 
 If similar failures recur, remove constness from the generated buffer-reading
 callsite. Do not make the byte helpers slower to satisfy const evaluation.

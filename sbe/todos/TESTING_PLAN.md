@@ -5,7 +5,7 @@
 
 ## Current gate status (2026-07-08)
 
-All core quality gates are green:
+Core local quality gates are green, but release gates are still open:
 
 - ✅ PASS: `cargo test --workspace -- --test-threads=1` — 0 failures
 - ✅ PASS: `cargo bench -p ergosbe --no-run` — 3 benches compile
@@ -17,6 +17,9 @@ All core quality gates are green:
 - OPEN: Rust type-system API proof work is tracked by todos 130-134. Do not
   claim "safe by parse" beyond the implemented encoder tail path until the
   compile-fail and runtime proof tests exist.
+- OPEN: Stable Rust advantage work is tracked by todos 144-152. Do not claim
+  simpler-than-Aeron or faster-than-Aeron public APIs until the relevant
+  compile-fail tests and head-to-head benchmarks exist.
 
 Use `sbe/todos/123-release-quality-gates.md` as the move-to-next-task checklist.
 Do not claim Aeron parity until todo 105/120/125/126 produce head-to-head evidence.
@@ -177,6 +180,13 @@ from existing baseline_test.rs.
 - Use existing compile helper first; add `trybuild` only if needed
 - CI/test command includes the compile-fail suite
 
+### 1.17 stable Rust advantage roadmap (todos 144-152)
+- Confirm each stable Rust feature is classified as P0/P1/P2 before implementation.
+- Add compile-fail tests before claiming type-level safety improvements.
+- Add Aeron head-to-head benchmarks before claiming performance improvements.
+- Keep generated public surface snapshots or compile tests for simplification work.
+- Keep all advanced features stable-Rust-only for the current roadmap.
+
 ## Phase 2: persist unit tests
 
 ### 2.1 retry with backoff (todo 17)
@@ -240,8 +250,8 @@ from existing baseline_test.rs.
 - Run `just samples-orderbook` — single command works
 - Gate: `cargo check` for `samples/exchange-orderbook` must pass before any
   live exchange or ClickHouse E2E verification is meaningful.
-- Current focused compile blockers are todo 122 (runtime read/write helper
-  policy and any `E0015` regressions) and todo 124 (`E0308`).
+- Current compile gate passes. Remaining sample work is warning cleanup, test
+  WebSocket fixtures, live SBE feed verification, and ClickHouse persistence.
 
 ## Implementation order
 
@@ -264,12 +274,13 @@ from existing baseline_test.rs.
 | 15 | 1.14 associated codec types | After 1.8 + 1.13 | Public trait shape |
 | 16 | 1.15 typed buffer policies | After 122 + 121 | Read/write helpers + endian fixtures |
 | 17 | 1.16 compile-fail suite | After 1.9-1.15 | Strict API boundaries |
-| 18 | 2.1 retry test | Can run with 1.x | Docker |
-| 19 | 2.2 global flush test | Can run with 2.1 | Docker |
-| 20 | 2.3 metrics test | Can run with 2.1 | None |
-| 21 | 2.4 compression test | Can run with 2.1 | None |
-| 22 | 3.x benchmarks | After 1.x | Aeron code |
-| 23 | 4.1 sample E2E | After 1.x + 2.x | Docker + exchange data |
+| 18 | 1.17 stable Rust roadmap gates | After 1.8 | Public API contract |
+| 19 | 2.1 retry test | Can run with 1.x | Docker |
+| 20 | 2.2 global flush test | Can run with 2.1 | Docker |
+| 21 | 2.3 metrics test | Can run with 2.1 | None |
+| 22 | 2.4 compression test | Can run with 2.1 | None |
+| 23 | 3.x benchmarks | After 1.x | Aeron code |
+| 24 | 4.1 sample E2E | After 1.x + 2.x | Docker + exchange data |
 
 ## Move-to-next-task rule
 
