@@ -141,48 +141,10 @@ pub fn assert_source_ok(src: &str, expected: &[&str]) {
 
 /// Apply surgical patches for known codegen bugs.
 pub fn patch_source(src: &str) -> String {
-    let mut s = src.to_string();
-
-    // Bug 6 (E0499): use unsafe pointer cast to decouple the encoder's buffer
-    // lifetime from self.buf, so self.buf is available after the closure.
-    // The safety-critical `'a` lifetime parameter makes a normal reborrow
-    // persist beyond the closure.  We cannot change codegen.rs; instead we
-    // create an independent &'a mut [u8] from the raw pointer so the type
-    // system sees two separate borrows.  Safety: the two refs never alias
-    // during the encoder operation (self.buf is unused inside the block).
-    //
-    // CarEncoder::fuel_figures
-    s = s.replace(
-        "        let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);\n        f(&mut group);\n        Ok(CarEncoder {\n            buf: self.buf,\n            message_start: self.message_start,\n            pos: group.pos,",
-        "        let __pos;\n        {\n            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };\n            let mut group = FuelFiguresEncoder::wrap(__buf, self.pos + 4, count);\n            f(&mut group);\n            __pos = group.pos;\n        }\n        Ok(CarEncoder {\n            buf: self.buf,\n            message_start: self.message_start,\n            pos: __pos,",
-    );
-    // CarEncoder::performance_figures
-    s = s.replace(
-        "        let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);\n        f(&mut group);\n        Ok(CarEncoder {\n            buf: self.buf,\n            message_start: self.message_start,\n            pos: group.pos,",
-        "        let __pos;\n        {\n            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };\n            let mut group = PerformanceFiguresEncoder::wrap(__buf, self.pos + 4, count);\n            f(&mut group);\n            __pos = group.pos;\n        }\n        Ok(CarEncoder {\n            buf: self.buf,\n            message_start: self.message_start,\n            pos: __pos,",
-    );
-    // FuelFiguresEncoder::add
-    s = s.replace(
-        "        let mut entry = FuelFiguresEntryEncoder::wrap(self.buf, self.pos);\n        f(&mut entry);\n        self.pos = entry.pos;\n        self.written += 1;\n        Ok(())",
-        "        {\n            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };\n            let mut entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);\n            f(&mut entry);\n            self.pos = entry.pos;\n            self.written += 1;\n        }\n        Ok(())",
-    );
-    // PerformanceFiguresEncoder::add
-    s = s.replace(
-        "        let mut entry = PerformanceFiguresEntryEncoder::wrap(self.buf, self.pos);\n        f(&mut entry);\n        self.pos = entry.pos;\n        self.written += 1;\n        Ok(())",
-        "        {\n            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };\n            let mut entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);\n            f(&mut entry);\n            self.pos = entry.pos;\n            self.written += 1;\n        }\n        Ok(())",
-    );
-    // PerformanceFiguresEntryEncoder::acceleration
-    s = s.replace(
-        "        let mut group = AccelerationEncoder::wrap(self.buf, self.pos + 4, count);\n        f(&mut group);\n        self.pos = group.pos;\n        Ok(self)",
-        "        {\n            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };\n            let mut group = AccelerationEncoder::wrap(__buf, self.pos + 4, count);\n            f(&mut group);\n            self.pos = group.pos;\n        }\n        Ok(self)",
-    );
-    // AccelerationEncoder::add
-    s = s.replace(
-        "        let mut entry = AccelerationEntryEncoder::wrap(self.buf, self.pos);\n        f(&mut entry);\n        self.pos = entry.pos;\n        self.written += 1;\n        Ok(())",
-        "        {\n            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };\n            let mut entry = AccelerationEntryEncoder::wrap(__buf, self.pos);\n            f(&mut entry);\n            self.pos = entry.pos;\n            self.written += 1;\n        }\n        Ok(())",
-    );
-
-    s
+    // ponytail: all patches are dead — codegen now produces correct code.
+    // Entry encoders use the unsafe borrow split directly.
+    // Message encoders take `mut self` by value so no borrow conflict.
+    src.to_string()
 }
 
 // ── Compile and run generated code ───────────────────────────────────
