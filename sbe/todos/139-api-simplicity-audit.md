@@ -351,9 +351,9 @@ off (zero generated impls). This is already hinted in DECISIONS.md as an opt-in.
 **Saves:** ~50-150 lines per schema. Car example: ~100 lines.
 
 **Acceptance criteria:**
-- [ ] `Display` impls generated only with `"display"` feature
-- [ ] Default: no `Display` impls
-- [ ] All tests pass with default and with `"display"` feature
+- [x] `Display` impls generated only with `"display"` feature — WONT DO (ponytail). Display impls are dead-code-eliminable by LTO when unused. Adding a Cargo feature or config flag for ~100 lines of generated debug output adds complexity with no runtime benefit. The `Display` impls are useful for debugging and cost zero when not called.
+- [x] Default: no `Display` impls — N/A (see above)
+- [x] All tests pass with default and with `"display"` feature — N/A (see above)
 
 ### 3n. Map no-enum-drain / no-dead-loop for zero-length arrays in composites
 
