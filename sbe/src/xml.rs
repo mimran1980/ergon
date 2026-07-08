@@ -805,6 +805,16 @@ fn parse_enum(
         .and_then(|e| e.primitive_type)
         .ok_or_else(|| Fault::invalid(node, "enum encodingType", &encoding_type_name))?;
 
+    // Enum encoding types must be integer or char (Aeron requirement).
+    // Float/Double enums are not valid SBE.
+    if matches!(encoding_type, PrimitiveType::Float | PrimitiveType::Double) {
+        return Err(Fault::invalid(
+            node,
+            "enum encodingType",
+            format!("{encoding_type:?}: enum encoding must be integer or char, not float/double"),
+        ));
+    }
+
     let mut enum_tokens = Vec::new();
     enum_tokens.push(Token {
         id: None,
