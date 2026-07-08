@@ -884,6 +884,7 @@ fn parse_message(
     let name = string_attr(node, "name", "message @name")?;
     let id = u16_attr(node, "id", "message @id")?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+    let block_length = opt_u16_attr(node, "blockLength", "blockLength")?;
 
     tokens.push(Token {
         id: Some(id),
@@ -900,6 +901,11 @@ fn parse_message(
     let mut seen_ids: HashSet<u16> = HashSet::new();
     let mut seen_names: HashSet<String> = HashSet::new();
     let mut prev_offset: Option<usize> = None;
+
+    // Block-length tracking
+    let mut expected_block_len: usize = 0;
+    let mut all_fields_have_offsets = true;
+    let mut any_field_counted = false;
 
     for child in element_children(node) {
         parse_message_child(child, registry, tokens)?;
@@ -942,6 +948,45 @@ fn parse_message(
                     prev_offset = Some(offset);
                 }
             }
+        }
+
+        // Track expected block length from fixed-size fields
+        if child.tag_name().name() == "field"
+            && child.attribute("presence").unwrap_or("required") != "constant"
+        {
+            any_field_counted = true;
+            if let Some(offset_str) = child.attribute("offset") {
+                if let Ok(offset) = offset_str.parse::<usize>() {
+                    if let Some(type_name) = child.attribute("type") {
+                        if let Some(size) = compute_type_size(type_name, registry) {
+                            let end = offset + size;
+                            if end > expected_block_len {
+                                expected_block_len = end;
+                            }
+                        }
+                    }
+                }
+            } else {
+                all_fields_have_offsets = false;
+            }
+        }
+    }
+
+    // Validate blockLength when declared and all fields carry explicit offsets.
+    // Uses a warning (not an error) to match Aeron sbe-tool behavior — the
+    // upstream tool accepts whatever blockLength the schema declares without
+    // validation, and several official test schemas have intentionally differing
+    // values.
+    if let Some(declared_bl) = block_length {
+        if all_fields_have_offsets
+            && any_field_counted
+            && declared_bl as usize != expected_block_len
+        {
+            eprintln!(
+                "warning: message '{}' blockLength mismatch: declared {declared_bl}, \
+                 expected {expected_block_len} (sum of fixed-field offset + sizes)",
+                name,
+            );
         }
     }
 
@@ -1196,6 +1241,41 @@ fn parse_primitive_type(node: Node<'_, '_>, s: &str) -> Result<PrimitiveType, Fa
     })
 }
 
+/// Compute the on-wire byte size of a type referenced by a `<field>` element.
+///
+/// Returns `None` when the type is unknown or cannot be sized (e.g., a composite
+/// whose members include a ref that hasn't been fully resolved).
+fn compute_type_size(type_name: &str, registry: &TypeRegistry) -> Option<usize> {
+    // Simple (primitive) encoding
+    if let Some(enc) = registry.encodings.get(type_name) {
+        return Some(enc.primitive_type?.size() * enc.length.unwrap_or(1));
+    }
+
+    // Composite, enum, or set stored in the registry
+    let tokens = registry.registry.get(type_name)?;
+    let first = tokens.first()?;
+
+    match first.signal {
+        Signal::BeginEnum | Signal::BeginSet => {
+            // Wire size is just the encoding type
+            Some(first.encoding.primitive_type?.size())
+        }
+        Signal::BeginComposite => {
+            let mut total = 0;
+            for token in tokens.iter() {
+                if token.signal == Signal::BeginField
+                    && token.encoding.presence != Presence::Constant
+                {
+                    total += token.encoding.primitive_type?.size()
+                        * token.encoding.length.unwrap_or(1);
+                }
+            }
+            Some(total)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -1214,7 +1294,7 @@ mod tests {
       <type name="version"      primitiveType="uint16"/>
     </composite>
   </types>
-  <message name="Car" id="1" blockLength="17" semanticType="">
+  <message name="Car" id="1" blockLength="11" semanticType="">
     <field name="serialNumber" id="1" type="uint64" offset="0" presence="required"/>
     <field name="modelYear"    id="2" type="uint16" offset="8" presence="required"/>
     <field name="available"    id="3" type="uint8"  offset="10" presence="required"/>
@@ -1684,5 +1764,51 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn block_length_validation_passes_for_correct_value() {
+        // Computed: uint64@0=8, uint16@8=2, uint8@10=1 → 11
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1" blockLength="11">
+    <field name="a" id="1" type="uint64" offset="0"/>
+    <field name="b" id="2" type="uint16" offset="8"/>
+    <field name="c" id="3" type="uint8"  offset="10"/>
+  </message>
+</messageSchema>"#;
+        parse(schema).unwrap();
+    }
+
+    #[test]
+    fn block_length_mismatch_warns_but_does_not_error() {
+        // Mismatched blockLength is a warning (matching Aeron sbe-tool),
+        // not a parse error.
+        let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1" blockLength="99">
+    <field name="a" id="1" type="uint64" offset="0"/>
+    <field name="b" id="2" type="uint16" offset="8"/>
+    <field name="c" id="3" type="uint8"  offset="10"/>
+  </message>
+</messageSchema>"#;
+        // Must parse successfully despite mismatched blockLength.
+        parse(schema).unwrap();
     }
 }
