@@ -1877,7 +1877,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         let mut pos = start + 4;
         let mut idx = 0;
         while idx < count {
-            pos = AccelerationEntryDecoder::skip(
+            pos = PerformanceFiguresAccelerationEntryDecoder::skip(
                 self.buf,
                 pos,
                 block_len,
@@ -1888,9 +1888,15 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         Ok(pos)
     }
     #[inline]
-    pub fn acceleration(&self) -> Result<AccelerationDecoder<'a>, sbe_rt::DecodeError> {
+    pub fn acceleration(
+        &self,
+    ) -> Result<PerformanceFiguresAccelerationDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
-        AccelerationDecoder::wrap(self.buf, offset, self.acting_version)
+        PerformanceFiguresAccelerationDecoder::wrap(
+            self.buf,
+            offset,
+            self.acting_version,
+        )
     }
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1927,7 +1933,7 @@ impl<'a> core::fmt::Display for PerformanceFiguresEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
-pub struct AccelerationDecoder<'a> {
+pub struct PerformanceFiguresAccelerationDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
     count: usize,
@@ -1935,7 +1941,7 @@ pub struct AccelerationDecoder<'a> {
     total: usize,
     acting_version: u16,
 }
-impl<'a> AccelerationDecoder<'a> {
+impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
     pub fn wrap(
@@ -1970,7 +1976,7 @@ impl<'a> AccelerationDecoder<'a> {
         self.count == 0
     }
 }
-impl<'a> AccelerationDecoder<'a> {
+impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     #[inline]
     pub const fn remaining(&self) -> usize {
         self.count
@@ -1982,7 +1988,7 @@ impl<'a> AccelerationDecoder<'a> {
         self
     }
 }
-impl<'a> AccelerationDecoder<'a> {
+impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
@@ -1997,12 +2003,12 @@ impl<'a> AccelerationDecoder<'a> {
         Ok(())
     }
 }
-impl<'a> AccelerationDecoder<'a> {
+impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     #[inline]
     pub fn nth(
         &self,
         idx: usize,
-    ) -> Result<AccelerationEntryDecoder<'a>, sbe_rt::DecodeError> {
+    ) -> Result<PerformanceFiguresAccelerationEntryDecoder<'a>, sbe_rt::DecodeError> {
         if idx >= self.total {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
@@ -2018,10 +2024,16 @@ impl<'a> AccelerationDecoder<'a> {
                 available: self.buf.len() - offset,
             });
         }
-        Ok(AccelerationEntryDecoder::wrap(self.buf, offset, self.acting_version))
+        Ok(
+            PerformanceFiguresAccelerationEntryDecoder::wrap(
+                self.buf,
+                offset,
+                self.acting_version,
+            ),
+        )
     }
 }
-impl<'a> AccelerationDecoder<'a> {
+impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     #[inline]
     pub fn as_chunks(&self) -> Result<&'a [[u8; 6]], sbe_rt::DecodeError> {
         let len = self.count * 6;
@@ -2037,25 +2049,25 @@ impl<'a> AccelerationDecoder<'a> {
         Ok(chunks)
     }
 }
-impl<'a> AccelerationDecoder<'a> {
+impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     #[inline]
-    pub fn entries(&mut self) -> AccelerationEntriesIter<'a, '_> {
-        AccelerationEntriesIter {
+    pub fn entries(&mut self) -> PerformanceFiguresAccelerationEntriesIter<'a, '_> {
+        PerformanceFiguresAccelerationEntriesIter {
             decoder: self,
         }
     }
 }
 #[doc(hidden)]
-pub struct AccelerationEntriesIter<'a, 'd> {
-    decoder: &'d mut AccelerationDecoder<'a>,
+pub struct PerformanceFiguresAccelerationEntriesIter<'a, 'd> {
+    decoder: &'d mut PerformanceFiguresAccelerationDecoder<'a>,
 }
-impl<'a, 'd> Iterator for AccelerationEntriesIter<'a, 'd> {
-    type Item = AccelerationEntryDecoder<'a>;
+impl<'a, 'd> Iterator for PerformanceFiguresAccelerationEntriesIter<'a, 'd> {
+    type Item = PerformanceFiguresAccelerationEntryDecoder<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.decoder.count == 0 {
             return None;
         }
-        let entry = AccelerationEntryDecoder::wrap(
+        let entry = PerformanceFiguresAccelerationEntryDecoder::wrap(
             self.decoder.buf,
             self.decoder.pos,
             self.decoder.acting_version,
@@ -2068,18 +2080,18 @@ impl<'a, 'd> Iterator for AccelerationEntriesIter<'a, 'd> {
         (self.decoder.count, Some(self.decoder.count))
     }
 }
-impl<'a, 'd> ExactSizeIterator for AccelerationEntriesIter<'a, 'd> {
+impl<'a, 'd> ExactSizeIterator for PerformanceFiguresAccelerationEntriesIter<'a, 'd> {
     fn len(&self) -> usize {
         self.decoder.count
     }
 }
-impl<'a> Iterator for AccelerationDecoder<'a> {
-    type Item = AccelerationEntryDecoder<'a>;
+impl<'a> Iterator for PerformanceFiguresAccelerationDecoder<'a> {
+    type Item = PerformanceFiguresAccelerationEntryDecoder<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.count == 0 {
             return None;
         }
-        let entry = AccelerationEntryDecoder::wrap(
+        let entry = PerformanceFiguresAccelerationEntryDecoder::wrap(
             self.buf,
             self.pos,
             self.acting_version,
@@ -2089,17 +2101,17 @@ impl<'a> Iterator for AccelerationDecoder<'a> {
         Some(entry)
     }
 }
-impl<'a> ExactSizeIterator for AccelerationDecoder<'a> {
+impl<'a> ExactSizeIterator for PerformanceFiguresAccelerationDecoder<'a> {
     fn len(&self) -> usize {
         self.count
     }
 }
-pub struct AccelerationEntryDecoder<'a> {
+pub struct PerformanceFiguresAccelerationEntryDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
     acting_version: u16,
 }
-impl<'a> AccelerationEntryDecoder<'a> {
+impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
     pub const fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
@@ -2168,7 +2180,7 @@ impl<'a> AccelerationEntryDecoder<'a> {
         entry.tail_offset_0()
     }
 }
-impl<'a> core::fmt::Display for AccelerationEntryDecoder<'a> {
+impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{{ ")?;
         {
@@ -2780,7 +2792,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         f: F,
     ) -> Result<&mut Self, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut AccelerationEncoder<'a>),
+        F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>),
     {
         if self.pos + 4 > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -2789,12 +2801,16 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             });
         }
         self.buf[self.pos..self.pos + 4]
-            .copy_from_slice(&AccelerationEncoder::GROUP_DIM_TEMPLATE);
+            .copy_from_slice(&PerformanceFiguresAccelerationEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let __pos;
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = AccelerationEncoder::wrap(__buf, self.pos + 4, count);
+            let mut group = PerformanceFiguresAccelerationEncoder::wrap(
+                __buf,
+                self.pos + 4,
+                count,
+            );
             f(&mut group);
             __pos = group.pos;
         }
@@ -2803,13 +2819,13 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     }
 }
 #[must_use = "group encoder must call add() to write entries"]
-pub struct AccelerationEncoder<'a> {
+pub struct PerformanceFiguresAccelerationEncoder<'a> {
     buf: &'a mut [u8],
     pos: usize,
     count: u16,
     written: u16,
 }
-impl<'a> AccelerationEncoder<'a> {
+impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
@@ -2825,7 +2841,7 @@ impl<'a> AccelerationEncoder<'a> {
     #[must_use]
     pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut AccelerationEntryEncoder<'b>),
+        F: FnOnce(&mut PerformanceFiguresAccelerationEntryEncoder<'b>),
     {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
@@ -2840,10 +2856,16 @@ impl<'a> AccelerationEncoder<'a> {
                 available: self.buf.len() - self.pos,
             });
         }
-        let mut entry = AccelerationEntryEncoder::wrap(self.buf, self.pos);
+        let mut entry = PerformanceFiguresAccelerationEntryEncoder::wrap(
+            self.buf,
+            self.pos,
+        );
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = AccelerationEntryEncoder::wrap(__buf, self.pos);
+            let mut __entry = PerformanceFiguresAccelerationEntryEncoder::wrap(
+                __buf,
+                self.pos,
+            );
             f(&mut __entry);
             self.pos = __entry.pos;
         }
@@ -2852,12 +2874,12 @@ impl<'a> AccelerationEncoder<'a> {
     }
 }
 #[must_use = "entry encoder fields must be set before the next entry"]
-pub struct AccelerationEntryEncoder<'a> {
+pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
     buf: &'a mut [u8],
     entry_start: usize,
     pos: usize,
 }
-impl<'a> AccelerationEntryEncoder<'a> {
+impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {

@@ -3739,7 +3739,7 @@ fn generate_group_decoder(
     for ng in &g.groups {
         let (dim_name, dim_size, bl_field, count_field) =
             get_dimension_info(elements, &ng.dimension_type);
-        let ng_pascal = to_pascal_case(&ng.name);
+        let ng_pascal = format!("{}{}", name, to_pascal_case(&ng.name));
         let ng_decoder_entry_ident = quote::format_ident!("{}EntryDecoder", ng_pascal);
         let dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
         let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());

@@ -14,7 +14,7 @@
 mod orderbook;
 
 use futures_util::{SinkExt, StreamExt};
-use orderbook::LocalBook;
+use orderbook::{AskLevel, BidLevel, LocalBook};
 use rust_decimal::Decimal;
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -181,17 +181,11 @@ fn handle_bitget_sbe(data: &[u8], book: &mut LocalBook) -> Result<Option<()>, St
                 e => e as i8,
             };
             let bids: Vec<(i64, i64)> = match decoder.bids() {
-                Ok(g) => g.entries()
-                    .filter_map(|r| r.ok())
-                    .map(|e| (e.price(), e.size()))
-                    .collect(),
+                Ok(g) => g.map(|e| (e.price(), e.size())).collect(),
                 Err(_) => vec![],
             };
             let asks: Vec<(i64, i64)> = match decoder.asks() {
-                Ok(g) => g.entries()
-                    .filter_map(|r| r.ok())
-                    .map(|e| (e.price(), e.size()))
-                    .collect(),
+                Ok(g) => g.map(|e| (e.price(), e.size())).collect(),
                 Err(_) => vec![],
             };
             book.apply_snapshot(bids, asks);
