@@ -2,6 +2,7 @@
 
 **Blocked by:** `samples/todo/00-e2e-orderbook-persist.md`, persist
 feature completeness (all outstanding persist todos)
+**Status: DEFERRED**
 
 Provide the DTO and table schema for persisting exchange orderbook snapshots
 to ClickHouse via `ergo-clickhouse-persist`.

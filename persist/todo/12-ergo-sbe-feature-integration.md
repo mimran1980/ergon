@@ -2,6 +2,7 @@
 
 **Blocked by:** 11
 
+**Status: DONE**
 Wire `ergo-clickhouse-persist` into ErgoSBE so users can optionally depend on it
 via a feature flag.
 

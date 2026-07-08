@@ -2,6 +2,7 @@
 
 **Blocked by:** none
 **Severity:** MEDIUM
+**Status: DONE**
 
 ## Problem
 

@@ -2,6 +2,7 @@
 
 **Blocked by:** None (docs only)
 
+**Status: DONE**
 The `persist/` crate has no `README.md`. The only user-facing doc is
 `persist/docs/plan.md`, which is a grilled design plan — not a proper README.
 

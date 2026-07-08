@@ -2,6 +2,7 @@
 
 **Blocked by:** 04, 05, 08, 10
 
+**Status: DONE**
 End-to-end integration tests against a real ClickHouse instance. Validates every
 path works together: derive + persist, dynamic record + decode + persist, schema
 migration, type conflicts, error handling, cleanup.
