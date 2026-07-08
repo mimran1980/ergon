@@ -218,8 +218,8 @@ access patterns.
 **Saves:** 1 method per group that has fixed-size entries.
 
 **Acceptance criteria:**
-- [ ] No `as_chunks()` emitted in golden file
-- [ ] All tests pass
+- [x] No `as_chunks()` emitted in golden file
+- [x] All tests pass
 
 ### 3g. Group `entries()` method and `EntriesIter` type -- saves 1 type + 1 method
 
@@ -237,9 +237,9 @@ is the canonical path.
 `PerformanceFiguresAcceleration` in this schema.
 
 **Acceptance criteria:**
-- [ ] No `entries()` method or `*EntriesIter` type in golden file
-- [ ] Group's own `Iterator` impl covers all iteration patterns
-- [ ] All tests pass
+- [x] No `entries()` method or `*EntriesIter` type in golden file
+- [x] Group's own `Iterator` impl covers all iteration patterns
+- [x] All tests pass
 
 ### 3h. Remove `*_unchecked()` on var-data encoder -- saves ~1 method per var-data field
 

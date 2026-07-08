@@ -593,23 +593,15 @@ fn fixed_entry_group_entries_iterator() {
         let perf: Vec<_> = car2.performance_figures().unwrap()
             .collect::<Result<Vec<_>, _>>().unwrap();
         let mut accel = perf[0].acceleration().unwrap();
-        let mut entries = accel.entries();
-        assert_eq!(entries.len(), 3);
-        let a0 = entries.next().unwrap();
+        assert_eq!(accel.len(), 3);
+        let a0 = accel.next().unwrap();
         assert_eq!(a0.mph(), 30);
         assert!((a0.seconds() - 4.0).abs() < 0.01);
-        let a1 = entries.next().unwrap();
+        let a1 = accel.next().unwrap();
         assert_eq!(a1.mph(), 60);
-        let a2 = entries.next().unwrap();
+        let a2 = accel.next().unwrap();
         assert_eq!(a2.mph(), 100);
-        assert!(entries.next().is_none());
-
-        // ponytail: entries() takes &mut self (same as Iterator impl).
-        // To call multiple times, get fresh decoder each time.
-        let len1 = perf[0].acceleration().unwrap().entries().len();
-        let len2 = perf[0].acceleration().unwrap().entries().len();
-        assert_eq!(len1, 3);
-        assert_eq!(len2, 3);
+        assert!(accel.next().is_none());
     "#,
     );
 }
@@ -1245,12 +1237,6 @@ fn generated_code_has_inline_annotations() {
             .iter()
             .any(|s| s.contains("fn is_empty(")),
         "group decoder `is_empty` missing #[inline]"
-    );
-    assert!(
-        inline_followed_by
-            .iter()
-            .any(|s| s.contains("fn as_chunks(")),
-        "group decoder `as_chunks` missing #[inline]"
     );
     // Group decoder wrap (function signature is `pub fn wrap(buf: ...)` inside
     // `impl<...> FuelFiguresDecoder<...>` -- no "Decoder" in the fn line itself)

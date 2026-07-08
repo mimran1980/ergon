@@ -505,9 +505,9 @@ fn fixed_entry_group_as_chunks_and_entries() {
             .collect::<Result<Vec<_>,_>>().unwrap();
         // Acceleration is a fixed-entry group (total_tail == 0)
         let acc = pf[0].acceleration().unwrap();
-        // as_chunks() raw byte access for fixed-entry groups
-        let chunks = acc.as_chunks().unwrap();
-        assert_eq!(chunks.len(), 3);
+        // Use group decoder's Iterator impl (replaces as_chunks)
+        let entries: Vec<_> = acc.collect();
+        assert_eq!(entries.len(), 3);
     "#,
     );
 }

@@ -1767,58 +1767,6 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         )
     }
 }
-impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
-    #[inline]
-    pub fn as_chunks(&self) -> Result<&'a [[u8; 6]], sbe_rt::DecodeError> {
-        let len = self.count * 6;
-        if self.pos + len > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: len,
-                available: self.buf.len() - self.pos,
-            });
-        }
-        let bytes = &self.buf[self.pos..self.pos + len];
-        let (chunks, _) = bytes.as_chunks::<6>();
-        Ok(chunks)
-    }
-}
-impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
-    #[inline]
-    pub fn entries(&mut self) -> PerformanceFiguresAccelerationEntriesIter<'a, '_> {
-        PerformanceFiguresAccelerationEntriesIter {
-            decoder: self,
-        }
-    }
-}
-#[doc(hidden)]
-pub struct PerformanceFiguresAccelerationEntriesIter<'a, 'd> {
-    decoder: &'d mut PerformanceFiguresAccelerationDecoder<'a>,
-}
-impl<'a, 'd> Iterator for PerformanceFiguresAccelerationEntriesIter<'a, 'd> {
-    type Item = PerformanceFiguresAccelerationEntryDecoder<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.decoder.count == 0 {
-            return None;
-        }
-        let entry = PerformanceFiguresAccelerationEntryDecoder::wrap(
-            self.decoder.buf,
-            self.decoder.pos,
-            self.decoder.acting_version,
-        );
-        self.decoder.pos += 6;
-        self.decoder.count -= 1;
-        Some(entry)
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.decoder.count, Some(self.decoder.count))
-    }
-}
-impl<'a, 'd> ExactSizeIterator for PerformanceFiguresAccelerationEntriesIter<'a, 'd> {
-    fn len(&self) -> usize {
-        self.decoder.count
-    }
-}
 impl<'a> Iterator for PerformanceFiguresAccelerationDecoder<'a> {
     type Item = PerformanceFiguresAccelerationEntryDecoder<'a>;
     fn next(&mut self) -> Option<Self::Item> {

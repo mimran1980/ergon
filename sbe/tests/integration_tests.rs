@@ -88,15 +88,18 @@ fn test_fixed_entry_group_access() {
         let pf = perf.next().unwrap().unwrap();
         let mut accel = pf.acceleration().unwrap();
 
-        // Test as_chunks()
-        let chunks = accel.as_chunks().unwrap();
-        assert_eq!(chunks.len(), 3, "as_chunks should have 3 entries");
-        // Entry 0: mph=30 => 0x1e00 LE
-        assert_eq!(chunks[0][0..2], [0x1e, 0x00], "mph of entry 0");
-        // Entry 1: mph=60 => 0x3c00 LE
-        assert_eq!(chunks[1][0..2], [0x3c, 0x00], "mph of entry 1");
-        // Entry 2: mph=100 => 0x6400 LE
-        assert_eq!(chunks[2][0..2], [0x64, 0x00], "mph of entry 2");
+        // Use group decoder's Iterator impl (replaces as_chunks)
+        {
+            let mut acc_iter = pf.acceleration().unwrap();
+            assert_eq!(acc_iter.len(), 3, "iterator should have 3 entries");
+            let e0 = acc_iter.next().unwrap();
+            assert_eq!(e0.mph(), 30, "mph of entry 0");
+            let e1 = acc_iter.next().unwrap();
+            assert_eq!(e1.mph(), 60, "mph of entry 1");
+            let e2 = acc_iter.next().unwrap();
+            assert_eq!(e2.mph(), 100, "mph of entry 2");
+            assert!(acc_iter.next().is_none(), "should be no more entries");
+        }
 
         // Test nth() random access (same as entry_at)
         let entry0 = accel.nth(0).unwrap();
