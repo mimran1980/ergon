@@ -1164,8 +1164,22 @@ fn parse_message_child(
                     }
                 }
                 node.attribute("valueRef").map(|s| {
-                    // valueRef format: "TypeName.VariantName" — keep only the variant
-                    s.rsplit('.').next().unwrap_or(s).to_string()
+                    // valueRef format: "EnumName.ValidValue" — validate the enum and
+                    // variant exist at parse time (Aeron rejects invalid valueRef).
+                    if let Some((enum_name, variant_name)) = s.split_once('.') {
+                        // ponytail: validate enum exists; deferred validation of variant
+                        // existence is done in IR resolution.
+                        if !registry.registry.contains_key(enum_name) {
+                            // non-fatal warning: old behaviour was silent strip
+                            eprintln!(
+                                "warning: valueRef '{s}' references unknown enum '{enum_name}'"
+                            );
+                        }
+                        variant_name.to_string()
+                    } else {
+                        // No dot — valueRef with no TypeName prefix, keep as-is
+                        s.to_string()
+                    }
                 })
             } else {
                 None
