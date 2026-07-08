@@ -57,5 +57,5 @@ pub fn price(&mut self, val: i64) -> &mut Self {
 - [x] Header template construction uses `write_bytes` — N/A: codegen-time buffer construction, not generated runtime code. `copy_from_slice` on a `Vec<u8>` is idiomatic.
 - [x] Var-data length prefix uses `write_bytes` — N/A: same, codegen-time byte buffer.
 - [x] Group dim template uses `write_bytes` — N/A: same.
-- [ ] Golden file updated
-- [ ] All tests pass
+- [x] Golden file updated
+- [x] All tests pass
