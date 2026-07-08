@@ -26,6 +26,13 @@ impl CarDecoder<'_> {
 
 Returns a structured `VerifyError` with the exact field/offset that failed.
 
+## Follow-up: carry the verification proof
+
+The basic verifier is complete, but production feed code should not have to
+throw away the proof. Todo 131 extends this into a typed `VerifiedFrame` /
+mode-typed decoder path so users can validate once and decode through a safe
+trusted mode without repeating structural scans.
+
 ## Acceptance criteria
 
 - [x] `pub fn verify(buf: &[u8]) -> Result<(), VerifyError>` per message
@@ -38,6 +45,7 @@ Returns a structured `VerifyError` with the exact field/offset that failed.
   expected error field
 
 Ref: FlatBuffers `Verify*Buffer()` pattern, production feed validation.
+Follow-up: `131-verified-frame-and-mode-typed-decoders.md`.
 
 ## Verification / Unit Testing
 - [x] Write a test `test_buffer_verify_function` in `sbe/tests/integration_tests.rs` that:

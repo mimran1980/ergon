@@ -196,6 +196,11 @@ for result in cursor {
 }
 ```
 
+For stricter feed handlers, the planned typed policy shape is
+`FrameCursor<LengthPrefixedU32, MySchema>`. That makes external framing and
+schema identity part of the type, which is the safer HFT-facing API when a
+process handles multiple venues or schema generations.
+
 ### Avoid allocation in error paths
 
 The error types (`DecodeError`, `EncodeError`, `VerifyError`) are

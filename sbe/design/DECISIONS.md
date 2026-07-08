@@ -56,13 +56,24 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
 - **`AsRef<[u8]>` on the `Complete` terminal state** — after type-state tail
   completes, the encoder exposes the written region via `as_bytes()` /
   `AsRef<[u8]>`, matching the decoder's shape.
+- **Required-field proof without scalar-order state explosion.** Fixed-block
+  fields remain order-free because their offsets are schema-known, but generated
+  strict builders/proxies can prove all required fixed fields were set before
+  the final `finish()`/`as_bytes()` capability is exposed. Use a compact generated
+  proof/bitset or grouped proxy state, not one type-state transition per scalar.
+  Optional fields are already nullified on wrap, so omission stays explicit and
+  cheap.
 
 ## 3. Decoder
 
 - **`Copy` decoders**, all accessors return borrows tied to `'a` (the buffer), not
   `&self`. Plain `Iterator` over groups — no GATs / lending iterators — because
   every item borrows the buffer, not the iterator.
-- No type-state (asymmetry with encoder): reading is random-access, order is free.
+- **Fixed block reads are random-access; tail reads can be ordered.** Scalar,
+  enum, set, and composite fields in the fixed block stay direct/infallible where
+  the acting version permits. Groups and var-data form the SBE tail and are
+  ordered on the wire, so the generator also emits an optional type-state
+  `TailCursor` for schema-order traversal.
 - **`acting_version() -> u16` and `acting_block_length() -> usize`** expose the wire
   header fields the decoder already carries internally (lets users branch on version).
 - **Group decoders implement `ExactSizeIterator`** (count from the group dimension)
@@ -82,6 +93,13 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
 - **`impl TryFrom<&'a [u8]> for XxxDecoder<'a>`** — idiomatic Rust conversion;
   delegates to `wrap_and_apply_header(buf, 0)`. Discoverable in docs and lets
   users write `let car = CarDecoder::try_from(buf)?;`.
+- **Verified-frame proof mode.** Structural verification should be able to return
+  a proof token, not only `Result<()>`: e.g. `VerifiedFrame<'a, Car>` or
+  `XxxDecoder<'a, Verified>`. Normal decoders stay `Checked`; the `Verified`
+  fast path is constructible only by generated verification code and can avoid
+  repeated structural scans/bounds checks where the proof covers the extents.
+  This is the safe Rust version of "validate once, read many times" for feed
+  loops.
 - **`const fn` on primitive field accessors** — edition 2024 / Rust 1.88 makes most
   fixed-slice + `from_{le,be}_bytes` accessors `const`-eligible. No other SBE
   generator does this; it lets users use decoded fields in const contexts.
@@ -90,6 +108,23 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
   `sinceVersion > acting_version`, raw accessors still return `None` rather than
   reading bytes that are not present. This gives latency-sensitive users direct
   sentinel handling while preserving safe version behavior.
+- **Ordered tail cursor.** For messages or group entries with groups/var-data,
+  generate a by-value cursor whose state type is derived from the parsed schema
+  order:
+  ```rust
+  let tail = car.tail_cursor()?;                 // TailCursor<NeedsFuelFigures>
+  let (fuel, tail) = tail.fuel_figures()?;       // TailCursor<NeedsPerformanceFigures>
+  let (perf, tail) = tail.performance_figures()?;
+  let (manufacturer, tail) = tail.manufacturer()?;
+  let (model, tail) = tail.model()?;
+  let (_activation, done) = tail.activation_code()?;
+  let end = done.end_offset();
+  ```
+  Out-of-order tail reads are compile errors because the method is not present on
+  the current state. This is "safe by parse": XML validation proves the SBE tail
+  order once, and codegen exposes only the legal next transition. The existing
+  convenience accessors remain for ad hoc reads; the cursor is the strict/fast
+  path for feed handlers that naturally process fields in wire order.
 
 ## 4. Data types
 
@@ -144,6 +179,12 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
   `SecurityID`, etc.) emit `#[repr(transparent)]` wrappers with `raw()` and
   `From` conversions. Keep decimal/time formatting out of the hot path; rich
   conversions remain optional features.
+- **Type-level scale/unit markers for semantic newtypes.** When the schema gives
+  enough information, prefer zero-sized type parameters or const generics over
+  runtime metadata: `Price<const SCALE: i32, Ccy>`, `Qty<Unit>`,
+  `Timestamp<TimeUnit>`. The raw representation stays the SBE primitive, but the
+  compiler can reject mixing ticks, lots, shares, millis, nanos, USD, and JPY.
+  Generated aliases keep the public API readable, e.g. `type BidPx = Price<4, Usd>`.
 
 ## 5. Metadata & the `SbeMessage` trait
 
@@ -178,6 +219,11 @@ Generated code is self-describing — for audit, tooling, generic code, and disp
 - **Sealed trait.** `SbeMessage` uses the sealed-trait pattern
   (`mod private { pub trait Sealed {} }`) so only generated types implement it —
   the dispatch `match` depends on exhaustiveness.
+- **Schema identity as a type.** Each generated schema emits a sealed marker type
+  that carries `SCHEMA_ID`, `SCHEMA_VERSION`, and `SCHEMA_HASH`. Frames,
+  dispatchers, proxies, and adapters can be parameterised by that marker so two
+  exchanges or two schema generations cannot be accidentally mixed in generic
+  code just because their wire primitives look similar.
 - **`#[diagnostic::on_unimplemented]`** (stable since 1.78) on `SbeMessage`:
   ```rust
   #[diagnostic::on_unimplemented(
@@ -200,10 +246,18 @@ Generated code is self-describing — for audit, tooling, generic code, and disp
 - `AnyMessage::decode_frame(buf, off, frame_len) -> Result<DecodedFrame<'a>, DecodeError>`
   is the HFT/feed-facing entrypoint. It can return `Unknown { payload }` over the
   whole externally framed message and can forward unknown templates unchanged.
-- `FrameCursor<'a>` iterates through a buffer of externally framed messages and
-  yields `DecodedFrame { message, range, len }`. The framing policy is explicit:
-  length-prefix, fixed packet boundary, or caller-supplied frame lengths. SBE
-  itself is not treated as a transport frame.
+- `FrameCursor<'a, P>` iterates through a buffer of externally framed messages
+  and yields `DecodedFrame<'a, Schema> { message, range, len }`. The framing
+  policy is explicit and typed: length-prefix, fixed packet boundary, or
+  caller-supplied frame lengths. SBE itself is not treated as a transport frame.
+- **Typed frame policy.** Framing is part of the API contract, not a runtime enum
+  users can accidentally mismatch. A cursor over `LengthPrefixed` frames should
+  not expose constructors or unknown-forwarding behaviour that only make sense
+  for `FixedPacket<N>` or caller-supplied frame lengths.
+- **Scoped callback dispatch.** Generated adapters use higher-ranked callback
+  lifetimes (`for<'a>`) so decoded views borrow exactly the input frame and
+  cannot escape into long-lived handler state. This preserves the flyweight
+  zero-copy API while making the safe path natural for feed handlers.
 - `as_message()` on a var-data field is
   `AnyMessage::decode_frame(field_bytes, 0, field_bytes.len())` — same enum, with
   the var-data length acting as the external frame length for unknown templates.
@@ -216,6 +270,9 @@ Generated code is self-describing — for audit, tooling, generic code, and disp
   Result<usize, DecodeError>` returns total known-template size (header + block +
   groups + var-data computed by scanning structural extents). For unknown
   templates, length is unavailable unless the caller supplies a frame length.
+- **Ordered decode helpers:** `AnyMessage` and generated adapters can choose the
+  ordered `TailCursor` path when they want schema-order processing and exact
+  final offsets without repeatedly rescanning previous groups/var-data.
 - **Configurable header and group dimensions.** Do not hard-code `messageHeader` or
   `groupSizeEncoding`: resolve the root `headerType` and each group's
   `dimensionType`. v1 supports custom names and primitive widths when they resolve
@@ -465,6 +522,23 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
 10. **Optional null is not version absence.** `Option<T>` is ergonomic; `raw_`
     accessors are required for hot loops that distinguish null sentinels from old
     acting versions.
+11. **Tail order matters on decode too.** Fixed fields are position-addressed, but
+    groups/var-data are a sequential tail. Keep random-access convenience, but
+    provide a type-state cursor for users who want compile-time ordering and
+    single-pass traversal.
+12. **A verified buffer is a proof token, not a bool.** `verify(buf)?; decode(buf)?`
+    throws away information. A generated verified frame/decoder state lets safe
+    Rust carry the structural proof into the hot path.
+13. **External framing policy belongs in the type.** Unknown-template forwarding,
+    cursor stepping, and frame-length trust all depend on the transport wrapper,
+    not SBE itself.
+14. **Semantic scale/unit must not be a comment when it can be a type.** A raw
+    `i64` price is wire-correct but domain-unsafe; optional semantic newtypes can
+    encode scale, currency, and units with zero runtime cost.
+15. **Do not type-state every fixed scalar.** SBE fixed fields are random-access
+    by offset. Prove required-field completeness at the boundary, but keep scalar
+    setters order-free and avoid generating hundreds of state types for wide
+    market-data messages.
 
 ---
 
@@ -501,7 +575,10 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
 6. Groups (Iterator decode, type-state encode, tail-free fixed-entry fast path).
 7. Var-data (`as_slice`/`as_str`/`as_string` behind feature/`as_decoder`/`as_message`).
 8. Versioning (baseline/extension cross-version tests + official fixtures).
-9. `AnyMessage` dispatch enum + `SbeMessage` trait + `FrameCursor`.
+8b. Verified-frame proof token and checked-vs-verified decoder mode.
+9. `AnyMessage` dispatch enum + `SbeMessage` trait + typed `FrameCursor`.
+9b. Scoped adapters/proxies, required-field proof builders, and schema-typed
+    frame dispatch once the core public API is stable.
 10. `bound-check-disabled` + `_unchecked` variants.
 11. `Display`/`Debug`, `skip`, length accessors, `as_bytes`, metadata + `meta` module.
 12. `build.rs` driver + `ergosbe-build` crate.

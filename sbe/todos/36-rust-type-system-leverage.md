@@ -110,6 +110,23 @@ statically known. The enum approach always pays the branch.
 
 ## P1 — high impact, behind feature or conditional
 
+### 4b. Verification proof tokens and mode-typed decoders
+
+`verify(buf) -> Result<()>` proves the buffer is structurally valid and then
+throws the proof away. Generate a proof-carrying API so code can validate once
+and decode through a trusted mode:
+
+```rust
+let frame = CarDecoder::verify_frame(buf, 0, frame_len)?;
+let car = frame.decoder(); // CarDecoder<'_, Verified>
+```
+
+- [ ] Verified proof token can only be constructed by generated verification
+- [ ] Checked mode remains the default safe API
+- [ ] Verified mode can skip repeated structural scans where proof covers extents
+
+Tracked in detail by todo 131.
+
 ### 5. Niche optimisation for `Option<Enum>`
 
 Arrange enum discriminants so `Option<EnumKind>` is the same size as the
@@ -175,6 +192,26 @@ enables generic tooling: `display_wire()`, `validate_layout()`, `diff_layout()`.
 - [ ] `validate_layout()` checks buffer boundaries using FIELD_LAYOUT
 - [ ] Tool: `ergosbe diff-layout schema_v1.xml schema_v2.xml` using layout tables
 
+### 8. Typed schema identity and frame policy
+
+Treat the schema and external frame policy as types in strict feed APIs:
+
+```rust
+FrameCursor<'a, LengthPrefixedU32, BinanceSpotSchema>
+DecodedFrame<'a, BinanceSpotSchema>
+```
+
+This prevents accidentally dispatching Bitget frames through Binance handlers
+or forwarding unknown templates without a policy that supplies a full frame
+length.
+
+- [ ] Schema marker type per generated schema
+- [ ] Frame policy marker types for length-prefixed, fixed-packet, and
+      caller-supplied framing
+- [ ] Compile-fail test for schema mismatch
+
+Tracked in detail by todo 134.
+
 ## Acceptance criteria
 
 - [ ] `MAX_ENCODED_LENGTH` const on every message
@@ -184,7 +221,10 @@ enables generic tooling: `display_wire()`, `validate_layout()`, `diff_layout()`.
 - [ ] `Option<EnumKind>` is niche-optimised where possible
 - [ ] `raw_slice()` accessors on groups for parallel decode
 - [ ] `FIELD_LAYOUT` const table generated on every message
+- [ ] Verified-frame proof token and checked/verified decoder mode designed
+- [ ] Strict frame APIs carry schema identity and frame policy in the type
 - [ ] All existing tests pass, no wire format change
 
 Ref: `design/DECISIONS.md` §2–6, §10. Rust type system features: const generics,
-let-else, niche optimisation, borrow-splitting, impl Trait in closure position.
+let-else, niche optimisation, borrow-splitting, impl Trait in closure position,
+proof tokens, and marker types.

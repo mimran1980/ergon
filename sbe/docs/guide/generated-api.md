@@ -342,3 +342,14 @@ Framing policies:
 - `FramingPolicy::LengthPrefixU32` -- 4-byte LE length prefix
 - `FramingPolicy::LengthPrefixU16` -- 2-byte LE length prefix
 - `FramingPolicy::Fixed(len)` -- every frame is exactly `len` bytes
+
+Strict feed APIs should move the policy and schema identity into the type once
+todo 134 lands:
+
+```rust
+let cursor = FrameCursor::<LengthPrefixedU32, MySchema>::new(buf);
+```
+
+That lets generic feed code reject schema/policy mismatches at compile time and
+keeps unknown-template forwarding tied to a policy that actually supplies a
+full frame length.

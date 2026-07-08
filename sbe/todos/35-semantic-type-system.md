@@ -39,6 +39,28 @@ pub fn price(&self) -> Price { ... }     pub fn qty(&self) -> Qty { ... }
 Compiler now rejects `order.set_price(qty)` — unit confusion caught at compile
 time. Zero runtime cost (repr(transparent)).
 
+### 1b. Type-level scale, currency, and units (P0.5)
+
+For trading systems, `Price(i64)` is useful but still incomplete. The same raw
+integer may represent USD with 4 decimals, JPY with 0 decimals, ticks, basis
+points, lots, shares, millis, or nanos. When schema metadata or generator config
+provides the information, encode it in the type:
+
+```rust
+#[repr(transparent)]
+pub struct Price<const SCALE: i32, Ccy>(i64);
+
+pub enum Usd {}
+pub enum Jpy {}
+
+pub type BidPx = Price<4, Usd>;
+pub type YenPx = Price<0, Jpy>;
+```
+
+The generated aliases keep the public API readable, while the compiler rejects
+mixing incompatible units. Formatting/conversion remains optional; raw access is
+still a single integer load.
+
 ### 2. Built-in type registry (P0)
 
 Known semantic types mapped to Rust types and behaviours:
@@ -98,13 +120,20 @@ consistency and emits the newtype + conversions + Display.
       StringEnum, BooleanFlag, Percentage
 - [ ] `semantic-newtypes` feature flag: off → raw primitives (current behaviour);
       on → newtype wrappers on field accessors
+- [ ] Optional type-level scale/currency/unit markers for Price, Qty,
+      Percentage, and timestamp-like semantic types
+- [ ] Generator emits readable aliases for concrete schema fields, not only
+      generic wrapper names
 - [ ] Newtypes are `#[repr(transparent)]` with `raw()`, `From`/`Into`, `Debug`, `Clone`, `Copy`
 - [ ] Display impl per semantic type (Price → `$123.45`, UTCTimestamp → ISO 8601)
 - [ ] Validation constructor (`new() -> Result`) for types with business rules
 - [ ] User-extensible registry via `with_semantic_type()` in config
 - [ ] Cross-schema consistency: mismatched wire types for same semantic type → warning
+- [ ] Cross-schema consistency: same semantic type with incompatible scale,
+      currency, or unit emits a warning or error according to configured policy
 - [ ] Field accessor rustdoc includes semantic type: `/// Price (semantic type: Price)`
 - [ ] Test: Car schema with `semanticType` annotations → Price/Qty/StringEnum newtypes generated
 - [ ] Test: passing a Qty to a Price parameter → compile error (type safety proven)
+- [ ] Test: passing `Price<4, Usd>` where `Price<0, Jpy>` is expected fails to compile
 
 Ref: `design/DECISIONS.md` §4 semantic newtypes. SBE XML spec `semanticType` attribute.

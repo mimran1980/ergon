@@ -125,7 +125,32 @@ errors when the closure captures local variables.
 
 ## P1 — implement when basics are stable
 
-### 6. Session-type encode: compile-time field ordering
+### 6. Type-state decode tail cursor
+
+Fixed fields are random-access, but groups and var-data are ordered on the wire.
+Generate a by-value `TailCursor<State>` for decoders so only the next legal
+group/var-data method exists in each state:
+
+```rust
+let tail = car.tail_cursor()?;            // TailCursor<NeedsBids>
+let (bids, tail) = tail.bids()?;          // TailCursor<NeedsAsks>
+let (asks, done) = tail.asks()?;          // TailCursor<Complete>
+let end = done.end_offset();
+```
+
+This is the decoder-side version of the encoder tail type-state. It is safe by
+the parser: the XML order is validated once, and the generated API exposes only
+the valid next transition.
+
+- [ ] Type-state tail cursor generated for messages with groups/var-data
+- [ ] Entry-level tail cursor generated for group entries with nested groups or
+      var-data
+- [ ] Out-of-order tail reads fail to compile
+- [ ] Ordered cursor provides final offset without rescanning earlier tail
+      elements
+- [ ] Existing random-access convenience accessors remain available
+
+### 7. Session-type encode: compile-time field ordering
 
 For messages where field write ORDER matters (not SBE scalars — those are
 position-addressed — but groups written sequentially in the tail), the
@@ -145,7 +170,7 @@ encoder.add_bids(...)   // returns Encoder<1>, ONLY .add_asks() available
 - [ ] Rustdoc on each method: "Writes the bids group. Returns Encoder<1>."
 - [ ] Messages with no tail skip type-state entirely (fluent `&mut self` only)
 
-### 7. GAT-based lending group iterator (deferred)
+### 8. GAT-based lending group iterator (deferred)
 
 GATs are stable since 1.65. A lending iterator yields entries borrowing the
 iterator, not the buffer, enabling `for entry in &mut iter` without consuming:
@@ -155,6 +180,35 @@ iterator, not the buffer, enabling `for entry in &mut iter` without consuming:
 // Revisit if users report ergonomic issues with the current pattern.
 ```
 
+### 9. Required-field proof without scalar type-state explosion
+
+Do not type-state every fixed scalar field. Fixed fields are offset-addressed,
+so setter order does not matter. Instead, strict builders/proxies should prove
+required fixed-field completeness at the publish boundary while leaving scalar
+setters order-free.
+
+- [ ] Strict publish capability exists only after required fixed fields are proven
+- [ ] Optional fields remain nullable-by-default through nullify-on-wrap
+- [ ] Wide messages do not generate one state type per fixed scalar
+
+Tracked in detail by todo 132.
+
+### 10. Scoped callback lifetimes
+
+Adapters should use HRTB/scoped callback lifetimes so decoded flyweight views
+cannot escape the input frame:
+
+```rust
+pub fn dispatch_scoped<F>(buf: &[u8], f: F) -> Result<(), DecodeError>
+where
+    F: for<'a> FnMut(DecodedFrame<'a, MySchema>) -> Result<(), DecodeError>;
+```
+
+- [ ] Callback can read and copy values from the frame
+- [ ] Callback cannot store borrowed decoder views in long-lived state
+
+Tracked in detail by todo 133.
+
 ## Acceptance criteria
 
 - [ ] Const-generic type-state replaces phantom types on encoders
@@ -163,7 +217,12 @@ iterator, not the buffer, enabling `for entry in &mut iter` without consuming:
 - [ ] Group accessors return `impl Iterator + ExactSizeIterator`
 - [ ] HRTB `for<'a>` on encode closures
 - [ ] Compile-time field ordering enforced by type-state
+- [ ] Compile-time tail read ordering enforced by decoder `TailCursor`
+- [ ] Required fixed-field completeness has a proof path without per-scalar
+      state explosion
+- [ ] Scoped callback APIs prevent borrowed decoded views from escaping a frame
 - [ ] All existing tests pass, no wire format change
 
 Ref: `design/DECISIONS.md` §2 (encoder), §5 (SbeMessage trait), §6 (dispatch).
-Rust features: const generics, GATs, HRTBs, `impl Trait` in return position.
+Rust features: const generics, GATs, HRTBs, `impl Trait` in return position,
+sealed proof tokens, and marker types.

@@ -128,6 +128,13 @@ impl, but ALSO generate `iter_fast()` that skips tail scanning.
 Document that `iter_fast()` is correct when the user has verified
 the buffer or doesn't access var-data fields on entries.
 
+### Stronger follow-up: ordered tail cursor
+
+Todo 130 adds a type-state cursor for ordered tail traversal. That can be the
+safe, schema-order path for users who need entry-level var-data or nested groups
+without repeated rescans. `iter_fast()` remains the minimal trusted-buffer path;
+`TailCursor` is the safer API for production code that wants compile-time order.
+
 ## Acceptance criteria
 
 - [ ] `iter_fast()` method generated on group decoders where
@@ -136,5 +143,7 @@ the buffer or doesn't access var-data fields on entries.
   scanning
 - [ ] Existing `Iterator` impl preserved (safe, scans tails)
 - [ ] Benchmark: `iter_fast()` within 10% of Aeron's `advance()` loop
+- [ ] Compare with todo 130 ordered tail cursor; document which API should be
+      preferred for trusted fixed-entry scans versus schema-order tail reads
 - [x] Golden file stability test passes
 - [x] No regression in baseline test suite

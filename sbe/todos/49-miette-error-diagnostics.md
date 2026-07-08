@@ -36,6 +36,8 @@ resolution, and generated-code compile errors — shows annotated source spans.
 - [ ] `ergosbe check schema.xml` — parse + validate + report all errors with snippets
 - [ ] `ergosbe generate schema.xml` — generate + compile-check + report with snippets
 - [ ] Coloured terminal output via miette's `GraphicalReportHandler`
+- [ ] Aggregated check mode reports multiple independent diagnostics in one run
+      (tracked in todo 128)
 
 ## Acceptance criteria
 
@@ -46,6 +48,10 @@ resolution, and generated-code compile errors — shows annotated source spans.
 - [x] `miette::Report` is the standard way to render all ErgoSBE errors
 
 Ref: miette crate docs. Already in Cargo.toml with `derive` feature.
+
+Related: todo 128 turns the single-diagnostic rendering work into an explicit
+schema-checking report with warnings, warning-as-error policy, and deterministic
+multi-diagnostic output.
 
 ## Notes
 

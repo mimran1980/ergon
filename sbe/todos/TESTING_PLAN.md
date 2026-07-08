@@ -17,6 +17,9 @@ The full quality gate is not green:
 - FAIL: `cd samples/exchange-orderbook && RUSTC_WRAPPER="" cargo check`
 - OPEN: Aeron `sbe-tool` schema parser parity is incomplete; see todos 125
   and 126 for strict parser validation and typed primitive/value handling.
+- OPEN: Rust type-system API proof work is tracked by todos 130-134. Do not
+  claim "safe by parse" beyond the implemented encoder tail path until the
+  compile-fail and runtime proof tests exist.
 
 Use `sbe/todos/123-release-quality-gates.md` as the move-to-next-task checklist.
 Do not advance from SBE to persist/sample completion work until the SBE golden,
@@ -46,6 +49,12 @@ accepted a schema Aeron would reject or computed a different fixed block layout.
   and full `EnumName.ValidValue` `valueRef` validation
 - Confirm type-level `presence` is inherited by fields when the field omits
   `presence`, matching Aeron
+
+### 0.3 Schema rollout safety
+- Diff baseline and extension schemas and classify compatible vs breaking
+- Verify miette output labels both old and new schema elements for a breaking
+  offset/type/presence change
+- Check mode reports multiple independent schema diagnostics in one run
 
 ## Phase 1: sbe codegen unit tests (no Docker needed)
 
@@ -101,6 +110,55 @@ from existing baseline_test.rs.
 - Test with `--features bound-check-disabled`: OOB may panic/UB (fast path)
 - Verify `nth()` bounds check ALWAYS present (trust boundary)
 - Verify `skip_n()` gated correctly
+
+### 1.8 public API contract (todo 129)
+- Import generated code through `prelude`
+- Decode, encode, dispatch, iterate groups, and access every important field
+  shape from the public API only
+- Add one compile-fail check for a deliberate boundary if existing helpers can
+  express it cleanly
+
+### 1.9 ordered tail cursor (todo 130)
+- Decode a message with multiple tail elements through `tail_cursor()`
+- Verify each transition returns the next state and final `end_offset()`
+- Compile-fail: trying to read var-data before the preceding group does not
+  compile
+- Repeat inside a group entry with entry-level var-data or nested groups
+
+### 1.10 verified frame proof and mode-typed decoders (todo 131)
+- Verify a valid externally framed message into `VerifiedFrame<'_, Car>`
+- Decode the verified frame through a `Verified` mode decoder
+- Assert checked and verified decoders return identical values
+- Invalid group count, truncated var-data, and short fixed block reject before
+  a verified decoder can be constructed
+- Compile-fail: user code cannot construct `VerifiedFrame` or `Verified` mode
+  directly
+- Benchmark checked decode vs `verify + checked decode` vs
+  `verify_frame + verified decode`
+
+### 1.11 required-field proof encoder path (todo 132)
+- Encode a message through the strict builder/proxy path
+- Verify the emitted bytes match the existing byte-exact fixture
+- Compile-fail: strict publish fails when a required fixed field proof is absent
+- Verify optional fields can be omitted and still decode as null/`None`
+- Benchmark strict proof path against the existing low-level encoder
+
+### 1.12 scoped feed callbacks (todo 133)
+- Dispatch multiple frames through a scoped/HRTB callback API
+- Verify callback order, decoded values, unknown-template handling, and zero
+  allocation
+- Compile-fail: handler cannot store a borrowed decoder/decoded frame beyond
+  callback scope
+- Benchmark scoped callback dispatch against manual `match template_id`
+
+### 1.13 typed frame policy and schema identity (todo 134)
+- Use typed frame policies for length-prefixed, fixed-packet, and
+  caller-supplied frame buffers
+- Verify unknown-template forwarding is available only when frame length is
+  known
+- Compile-fail: frame/adapter/proxy from one schema marker cannot be used with
+  another schema's strict API
+- Public prelude exposes the schema marker and frame policy types
 
 ## Phase 2: persist unit tests
 
@@ -179,12 +237,18 @@ from existing baseline_test.rs.
 | 6 | 1.5 Display test | After 1.4 | Parser value semantics |
 | 7 | 1.6 composite test | After 1.5 | Parser composite parity |
 | 8 | 1.7 bounds check test | After 1.6 | None |
-| 9 | 2.1 retry test | Can run with 1.x | Docker |
-| 10 | 2.2 global flush test | Can run with 2.1 | Docker |
-| 11 | 2.3 metrics test | Can run with 2.1 | None |
-| 12 | 2.4 compression test | Can run with 2.1 | None |
-| 13 | 3.x benchmarks | After 1.x | Aeron code |
-| 14 | 4.1 sample E2E | After 1.x + 2.x | Docker + exchange data |
+| 9 | 1.8 public API contract | After 1.4 | Generated API stable enough |
+| 10 | 1.9 ordered tail cursor | After parser order validation | Tail API design |
+| 11 | 1.10 verified frame proof | After 69 + 1.9 | Verifier + tail extents |
+| 12 | 1.11 required-field proof | After 1.8 | Encoder API stable enough |
+| 13 | 1.12 scoped callbacks | After 1.10 | Dispatch API + lifetimes |
+| 14 | 1.13 typed frame/schema | After 1.8 + 1.12 | Public prelude + dispatch |
+| 15 | 2.1 retry test | Can run with 1.x | Docker |
+| 16 | 2.2 global flush test | Can run with 2.1 | Docker |
+| 17 | 2.3 metrics test | Can run with 2.1 | None |
+| 18 | 2.4 compression test | Can run with 2.1 | None |
+| 19 | 3.x benchmarks | After 1.x | Aeron code |
+| 20 | 4.1 sample E2E | After 1.x + 2.x | Docker + exchange data |
 
 ## Move-to-next-task rule
 
@@ -194,12 +258,18 @@ or explicitly scoped out. The final sample is the real-world proof: it must
 compile, run, decode real SBE frames, build the orderbook, and persist rows to
 ClickHouse.
 
+If todos 130-134 are scoped into the release, their compile-fail, runtime, and
+benchmark gates are part of the same SBE move-to-next-task rule. If they are
+post-v1, the docs must say that clearly before claiming the API is fully
+type-safe by parse.
+
 ## Estimated effort
 
 | Phase | Tests | Est. time |
 |-------|-------|-----------|
 | 1.1-1.7 | ~15 test functions | 2-3 hours |
+| 1.8-1.13 | ~10 runtime/compile-fail tests + 3 benchmarks | 3-5 hours |
 | 2.1-2.4 | ~10 test functions | 2-3 hours |
 | 3.x | ~8 benchmarks | 2-3 hours |
 | 4.1 | 1 E2E test | 1-2 hours |
-| **Total** | **~34 tests/benchmarks** | **7-11 hours** |
+| **Total** | **~44 tests/benchmarks** | **10-16 hours** |
