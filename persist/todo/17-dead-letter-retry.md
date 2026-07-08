@@ -32,11 +32,16 @@ forever. Production systems need at minimum:
 2. A dead-letter callback for rows that exhaust retries
 3. A counter so operators know data is being dropped
 
-## Current verification status (2026-07-08)
+## Status: PARKED (2026-07-08)
 
-Retry plumbing exists, but the dead-letter callback and drop/retry counters are
-not complete. Because `dead_letter()` is still unchecked below, the replay/no
-data-loss integration criteria cannot be considered verified.
+Retry with exponential backoff + jitter is implemented (`exec_insert_with_retry`).
+Counters (`retries_total`, `dropped_rows_total`) are in place and exposed on
+`ClickhouseSink`. The `dead_letter()` builder method exists on `PersistSenderBuilder`.
+
+**Dead-letter callback parked** — over-engineering for a debugging persistence
+crate. CH outage → data drops (design invariant), with a counter so operators
+can detect it. Add a back-pressure callback instead of a dead-letter queue if
+needed, but that's also likely over-engineering for this domain.
 
 ## Design
 
@@ -83,5 +88,5 @@ If no dead-letter is configured, rows are dropped (current behavior) but a
 - [x] `dead_letter()` callback on `PersistSenderBuilder`
 - [x] Default: no dead-letter → drop + increment counter
 - [x] `persist_retries_total` and `persist_dropped_rows_total` counters
-- [ ] Integration test: kill CH, persist rows, restart CH, verify recovery via dead-letter replay
-- [ ] No data loss when dead-letter is configured and CH recovers
+- [ ] Integration test: kill CH, persist rows, restart CH, verify recovery via dead-letter replay (PARKED — dead-letter is over-engineering)
+- [ ] No data loss when dead-letter is configured and CH recovers (PARKED — dead-letter is over-engineering)

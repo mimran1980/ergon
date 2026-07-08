@@ -1058,19 +1058,6 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
-    pub unsafe fn manufacturer_as_str_unchecked(&self) -> &'a str {
-        let data = self.manufacturer().unwrap_or(&[]);
-        unsafe { core::str::from_utf8_unchecked(data) }
-    }
-    #[inline]
-    pub fn manufacturer_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
-        Ok(self.manufacturer_as_str()?.to_string())
-    }
-    #[inline]
-    pub fn manufacturer_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.manufacturer()
-    }
-    #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
@@ -1092,19 +1079,6 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
-    pub unsafe fn model_as_str_unchecked(&self) -> &'a str {
-        let data = self.model().unwrap_or(&[]);
-        unsafe { core::str::from_utf8_unchecked(data) }
-    }
-    #[inline]
-    pub fn model_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
-        Ok(self.model_as_str()?.to_string())
-    }
-    #[inline]
-    pub fn model_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.model()
-    }
-    #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
         let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
@@ -1124,19 +1098,6 @@ impl<'a> CarDecoder<'a> {
     pub fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
-    }
-    #[inline]
-    pub unsafe fn activation_code_as_str_unchecked(&self) -> &'a str {
-        let data = self.activation_code().unwrap_or(&[]);
-        unsafe { core::str::from_utf8_unchecked(data) }
-    }
-    #[inline]
-    pub fn activation_code_as_string(&self) -> Result<String, sbe_rt::DecodeError> {
-        Ok(self.activation_code_as_str()?.to_string())
-    }
-    #[inline]
-    pub fn activation_code_as_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.activation_code()
     }
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {

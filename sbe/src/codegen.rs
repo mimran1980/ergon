@@ -2753,43 +2753,6 @@ fn generate_message_decoder(
             }
         });
 
-        // zero-cost UTF-8 unchecked
-        let str_unchecked_ident = syn::Ident::new(
-            &format!("{vd_snake}_as_str_unchecked"),
-            proc_macro2::Span::call_site(),
-        );
-        impl_body.extend(quote::quote! {
-            #[inline]
-            pub unsafe fn #str_unchecked_ident(&self) -> &'a str {
-                let data = self.#vd_snake_ident().unwrap_or(&[]);
-                unsafe { core::str::from_utf8_unchecked(data) }
-            }
-        });
-
-        // String convenience
-        let string_ident = syn::Ident::new(
-            &format!("{vd_snake}_as_string"),
-            proc_macro2::Span::call_site(),
-        );
-        impl_body.extend(quote::quote! {
-            #[inline]
-            pub fn #string_ident(&self) -> Result<String, sbe_rt::DecodeError> {
-                Ok(self.#str_ident()?.to_string())
-            }
-        });
-
-        // Raw slice
-        let slice_ident = syn::Ident::new(
-            &format!("{vd_snake}_as_slice"),
-            proc_macro2::Span::call_site(),
-        );
-        impl_body.extend(quote::quote! {
-            #[inline]
-            pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                self.#vd_snake_ident()
-            }
-        });
-
         vd_idx += 1;
     }
 

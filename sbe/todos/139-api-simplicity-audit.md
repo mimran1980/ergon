@@ -127,9 +127,9 @@ when they want a `String`.
 gate is already implemented, this item is moot (just confirm the gate works).
 
 **Acceptance criteria:**
-- [ ] No `*_as_string()` methods emitted in golden file
-- [ ] Feature-gated variant (if any) compiles when enabled
-- [ ] All tests pass (replace `_as_string()` calls with `_as_str()?.to_string()`)
+- [x] No `*_as_string()` methods emitted in golden file
+- [x] Feature-gated variant (if any) compiles when enabled — ponytail: removed outright, no gate needed
+- [x] All tests pass (replace `_as_string()` calls with `_as_str()?.to_string()`)
 
 ### 3c. Remove `*_as_slice()` methods -- saves 1 method per var-data field
 
@@ -143,8 +143,8 @@ the same `&[u8]`.
 **Saves:** 1 method per var-data field. Car example: 3 methods.
 
 **Acceptance criteria:**
-- [ ] No `*_as_slice()` methods emitted in golden file
-- [ ] All tests pass
+- [x] No `*_as_slice()` methods emitted in golden file
+- [x] All tests pass
 
 ### 3d. Remove `*_as_str_unchecked()` methods -- saves 1 method per var-data field
 
@@ -165,9 +165,9 @@ a `(offset, length)` tuple and uses a separate `_slice()` call). So ErgoSBE's sa
 is already better. Keeping the unchecked variant is a power-user option.
 
 **Acceptance criteria:**
-- [ ] No `*_as_str_unchecked()` methods emitted in golden file
-- [ ] Safe `_as_str()` remains on all var-data fields
-- [ ] All tests pass
+- [x] No `*_as_str_unchecked()` methods emitted in golden file
+- [x] Safe `_as_str()` remains on all var-data fields
+- [x] All tests pass
 
 ### 3e. Remove composite value structs -- saves ~7 types
 
@@ -201,10 +201,8 @@ ergonomic loss for users who want to cache composite values. DECISIONS.md alread
 Remove only the dead-code `while idx < 0` loops inside value structs for zero-length fields.
 
 **Acceptance criteria:**
-- [ ] Remove `while idx < 0` dead loops from value struct var_data methods (trivial dead
-  code, no semantic change)
-- [ ] Decision recorded on whether to pursue full value-struct removal
-- [ ] If removed: all tests pass, `Engine::new()` callers migrated to closure pattern
+- [x] Remove `while idx < 0` dead loops from value struct var_data methods (already done — no dead loops remain in golden file)
+- [x] Decision recorded on whether to pursue full value-struct removal — **KEPT**: `Copy` + `Hash` value structs are useful for caching composite values without holding a buffer reference. See trade-off below.
 
 ### 3f. Remove `as_chunks()` method on group decoders -- saves 1 method
 
@@ -325,9 +323,8 @@ it, remove. Re-add when a user implements a generic handler.
 **Saves:** 2 traits. But they're small (~10 lines each).
 
 **Acceptance criteria:**
-- [ ] Audit whether `SbeMessage` is used by any existing test or downstream crate
-- [ ] If unused: remove, add note about re-adding when needed
-- [ ] If used: no change
+- [x] Audit whether `SbeMessage` is used by any existing test or downstream crate — USED by every decoder/encoder, `AnyMessage` dispatch depends on it.
+- [x] No change — keep.
 
 ### 3l. Frame forwarding types -- extract to runtime crate, NOT removed
 
