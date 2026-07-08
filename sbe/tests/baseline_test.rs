@@ -1494,3 +1494,24 @@ fn u8_dimension_type_generates_correctly() {
     // Verify the generated code compiles
     syn::parse_file(&src).expect("generated code for u8 schema is not valid Rust");
 }
+
+#[test]
+fn constant_field_in_message_header_does_not_affect_offsets() {
+    let schema_path = Paths::sbe_tool_test_resource("constant-header-field.xml");
+    let (_schema, src) = generate(&schema_path, "consthdr");
+
+    // The messageHeader with a constant field should still be 8 bytes
+    // (4 × uint16 required fields). The constant field occupies no wire space.
+    assert!(
+        src.contains("pub const HEADER_TEMPLATE: [u8; 8] ="),
+        "HEADER_TEMPLATE must be 8 bytes even with constant header field, got:\n...{}",
+        &src[src.find("HEADER_TEMPLATE").unwrap_or(0)..]
+            .lines()
+            .take(5)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    // Verify the generated code is valid Rust
+    syn::parse_file(&src).expect("generated code is not valid Rust");
+}
