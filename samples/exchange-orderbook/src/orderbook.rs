@@ -64,8 +64,8 @@ pub struct LocalBook {
     pub symbol: String,
     pub bids: BTreeSet<BidLevel>,
     pub asks: BTreeSet<AskLevel>,
-    price_exponent: i8,
-    size_exponent: i8,
+    pub price_exponent: i8,
+    pub size_exponent: i8,
 }
 
 impl LocalBook {

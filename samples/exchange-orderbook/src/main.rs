@@ -13,7 +13,7 @@
 
 mod orderbook;
 
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use orderbook::LocalBook;
 use rust_decimal::Decimal;
 use tokio::time::{sleep, Duration};
@@ -181,15 +181,15 @@ fn handle_bitget_sbe(data: &[u8], book: &mut LocalBook) -> Result<Option<()>, St
                 e => e as i8,
             };
             let bids: Vec<(i64, i64)> = match decoder.bids() {
-                Ok(g) => (0..g.len())
-                    .filter_map(|i| g.get(i).ok())
+                Ok(g) => g.entries()
+                    .filter_map(|r| r.ok())
                     .map(|e| (e.price(), e.size()))
                     .collect(),
                 Err(_) => vec![],
             };
             let asks: Vec<(i64, i64)> = match decoder.asks() {
-                Ok(g) => (0..g.len())
-                    .filter_map(|i| g.get(i).ok())
+                Ok(g) => g.entries()
+                    .filter_map(|r| r.ok())
                     .map(|e| (e.price(), e.size()))
                     .collect(),
                 Err(_) => vec![],
@@ -231,13 +231,13 @@ impl LocalBook {
         self.bids.clear();
         for (p, s) in bids {
             if s > Decimal::ZERO {
-                self.bids.insert(p, s);
+                self.bids.insert(BidLevel { price: p, size: s });
             }
         }
         self.asks.clear();
         for (p, s) in asks {
             if s > Decimal::ZERO {
-                self.asks.insert(p, s);
+                self.asks.insert(AskLevel { price: p, size: s });
             }
         }
     }
