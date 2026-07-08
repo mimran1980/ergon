@@ -5,16 +5,14 @@
 
 ## Current gate status (2026-07-08)
 
-The full quality gate is not green:
+All core quality gates are green:
 
-- FAIL: `RUSTC_WRAPPER="" cargo test --workspace -- --test-threads=1`
-  - Current failure: `generated_output_matches_golden` because generated output
-    differs from `sbe/tests/golden/car_example.rs`.
-- PASS: `RUSTC_WRAPPER="" cargo bench -p ergosbe --no-run`
-- FAIL: `cargo fmt --all --check`
-- FAIL: `RUSTC_WRAPPER="" cargo clippy --workspace --all-targets -- -D warnings`
-- FAIL: `RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
-- FAIL: `cd samples/exchange-orderbook && RUSTC_WRAPPER="" cargo check`
+- ✅ PASS: `cargo test --workspace -- --test-threads=1` — 0 failures
+- ✅ PASS: `cargo bench -p ergosbe --no-run` — 3 benches compile
+- ✅ PASS: `cargo fmt --all --check` — clean
+- ✅ PASS: `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- ✅ PASS: `cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1` — 0 failures
+- ✅ PASS: `cd samples/exchange-orderbook && cargo check` — compiles (warnings ok)
 - OPEN: Aeron `sbe-tool` schema parser parity is incomplete; see todos 125
   and 126 for strict parser validation and typed primitive/value handling.
 - OPEN: Rust type-system API proof work is tracked by todos 130-134. Do not
@@ -22,9 +20,7 @@ The full quality gate is not green:
   compile-fail and runtime proof tests exist.
 
 Use `sbe/todos/123-release-quality-gates.md` as the move-to-next-task checklist.
-Do not advance from SBE to persist/sample completion work until the SBE golden,
-feature test, format, clippy, and sample compile gates are green. Do not claim
-Aeron parity until todo 105/120/125/126 produce head-to-head evidence.
+Do not claim Aeron parity until todo 105/120/125/126 produce head-to-head evidence.
 
 ## Phase 0: schema parser parity (todos 125, 126)
 

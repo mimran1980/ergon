@@ -743,35 +743,25 @@ impl<'a> CarDecoder<'a> {
     }
     pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
-    pub const fn some_numbers(&self) -> Result<[u32; 4], sbe_rt::DecodeError> {
+    pub fn some_numbers(&self) -> Result<[u32; 4], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 28 > self.acting_block_length {
             return Ok([0 as u32; 4]);
         }
         let offset = self.pos + 12;
-        let size = 16;
-        if offset + size > self.buf.len() {
+        if offset + 16 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "someNumbers",
-                needed: size,
+                field: stringify!(someNumbers),
+                needed: 16,
                 available: self.buf.len() - offset,
             });
         }
-        let mut res = [0 as u32; 4];
-        if 4 > 0 {
-            let mut idx = 0;
-            while idx < 4 {
-                let offset = self.pos + 12 + idx * 4;
-                let mut bytes = [0u8; 4];
-                let mut j = 0;
-                while j < 4 {
-                    bytes[j] = self.buf[offset + j];
-                    j += 1;
-                }
-                res[idx] = u32::from_le_bytes(bytes);
-                idx += 1;
-            }
-        }
-        Ok(res)
+        let all: [u8; 16] = self.buf[offset..offset + 16].try_into().unwrap();
+        Ok([
+            u32::from_le_bytes(all[0usize..4usize].try_into().unwrap()),
+            u32::from_le_bytes(all[4usize..8usize].try_into().unwrap()),
+            u32::from_le_bytes(all[8usize..12usize].try_into().unwrap()),
+            u32::from_le_bytes(all[12usize..16usize].try_into().unwrap()),
+        ])
     }
     #[inline]
     pub const unsafe fn some_numbers_unchecked(&self) -> [u32; 4] {
@@ -795,35 +785,27 @@ impl<'a> CarDecoder<'a> {
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
     pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
     #[inline]
-    pub const fn vehicle_code(&self) -> Result<[u8; 6], sbe_rt::DecodeError> {
+    pub fn vehicle_code(&self) -> Result<[u8; 6], sbe_rt::DecodeError> {
         if self.acting_version < 0 || 34 > self.acting_block_length {
             return Ok([0 as u8; 6]);
         }
         let offset = self.pos + 28;
-        let size = 6;
-        if offset + size > self.buf.len() {
+        if offset + 6 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "vehicleCode",
-                needed: size,
+                field: stringify!(vehicleCode),
+                needed: 6,
                 available: self.buf.len() - offset,
             });
         }
-        let mut res = [0 as u8; 6];
-        if 6 > 0 {
-            let mut idx = 0;
-            while idx < 6 {
-                let offset = self.pos + 28 + idx * 1;
-                let mut bytes = [0u8; 1];
-                let mut j = 0;
-                while j < 1 {
-                    bytes[j] = self.buf[offset + j];
-                    j += 1;
-                }
-                res[idx] = u8::from_le_bytes(bytes);
-                idx += 1;
-            }
-        }
-        Ok(res)
+        let all: [u8; 6] = self.buf[offset..offset + 6].try_into().unwrap();
+        Ok([
+            u8::from_le_bytes(all[0usize..1usize].try_into().unwrap()),
+            u8::from_le_bytes(all[1usize..2usize].try_into().unwrap()),
+            u8::from_le_bytes(all[2usize..3usize].try_into().unwrap()),
+            u8::from_le_bytes(all[3usize..4usize].try_into().unwrap()),
+            u8::from_le_bytes(all[4usize..5usize].try_into().unwrap()),
+            u8::from_le_bytes(all[5usize..6usize].try_into().unwrap()),
+        ])
     }
     #[inline]
     pub const unsafe fn vehicle_code_unchecked(&self) -> [u8; 6] {

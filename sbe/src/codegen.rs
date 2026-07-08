@@ -2097,56 +2097,48 @@ fn generate_message_decoder(
                     let total_size = prim_size * len_val;
                     let total_size_lit =
                         syn::LitInt::new(&total_size.to_string(), proc_macro2::Span::call_site());
-                    // Build using format strings for the array copy loop (const fn: while-loop needed)
-                    let field_accessor = format!(
-                        "#[inline]\n\
-                         pub const fn {fn_snake}(&self) -> Result<[{rt}; {len}], sbe_rt::DecodeError> {{\n\
-                             if self.acting_version < {since} || {offset_end} > self.acting_block_length {{\n\
-                                 return Ok([0 as {rt}; {len}]);\n\
-                             }}\n\
-                             let offset = self.pos + {offset};\n\
-                             let size = {total_size};\n\
-                             if offset + size > self.buf.len() {{\n\
-                                 return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{fn_name}\", needed: size, available: self.buf.len() - offset }});\n\
-                             }}\n\
-                             let mut res = [0 as {rt}; {len}];\n\
-                             if {len} > 0 {{\n\
-                                 let mut idx = 0;\n\
-                                 while idx < {len} {{\n\
-                                     let offset = self.pos + {offset} + idx * {ps};\n\
-                                     let mut bytes = [0u8; {ps}];\n\
-                                     let mut j = 0;\n\
-                                     while j < {ps} {{\n\
-                                         bytes[j] = self.buf[offset + j];\n\
-                                         j += 1;\n\
-                                     }}\n\
-                                     res[idx] = {rt}::from_{order}_bytes(bytes);\n\
-                                     idx += 1;\n\
-                                 }}\n\
-                             }}\n\
-                             Ok(res)\n\
-                         }}\n",
-                        fn_snake = fname_snake,
-                        rt = r_type,
-                        len = len_val,
-                        since = since,
-                        offset_end = offset_end,
-                        offset = offset,
-                        total_size = total_size,
-                        ps = prim_size,
-                        order = order_suffix,
-                        fn_name = f.name,
-                    );
-                    impl_body.extend(
-                        syn::parse_str::<proc_macro2::TokenStream>(&field_accessor).unwrap_or_else(
-                            |e| {
-                                panic!(
-                                    "Failed to parse array accessor for {}:: {} at pos: {}",
-                                    name, f.name, e
-                                )
-                            },
-                        ),
-                    );
+                    // Runtime array accessor: non-const fn, bulk try_into + unrolled parsing
+                    let offset_lit =
+                        syn::LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
+                    let since_lit =
+                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                    let ps_lit =
+                        syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                    let fn_name_ident = syn::Ident::new(&f.name, proc_macro2::Span::call_site());
+
+                    // Build unrolled element parses: for each element i, extract the
+                    // prim_size byte slice and call r_type::from_X_bytes.
+                    let mut safe_elements: Vec<proc_macro2::TokenStream> = Vec::new();
+                    for i in 0..len_val {
+                        let start = i * prim_size;
+                        let end = start + prim_size;
+                        safe_elements.push(quote::quote! {
+                            #r_type_ty::#order_fn(
+                                all[#start..#end].try_into().unwrap()
+                            )
+                        });
+                    }
+
+                    let fn_snake_ident =
+                        syn::Ident::new(&fname_snake, proc_macro2::Span::call_site());
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fn_snake_ident(&self) -> Result<[#r_type_ty; #len_lit], sbe_rt::DecodeError> {
+                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                return Ok([0 as #r_type_ty; #len_lit]);
+                            }
+                            let offset = self.pos + #offset_lit;
+                            if offset + #total_size_lit > self.buf.len() {
+                                return Err(sbe_rt::DecodeError::BufferTooShort {
+                                    field: stringify!(#fn_name_ident),
+                                    needed: #total_size_lit,
+                                    available: self.buf.len() - offset,
+                                });
+                            }
+                            let all: [u8; #total_size_lit] = self.buf[offset..offset + #total_size_lit].try_into().unwrap();
+                            Ok([#(#safe_elements),*])
+                        }
+                    });
 
                     // ponytail: bulk copy + unrolled element parsing for _unchecked
                     let mut unchecked_elements: Vec<proc_macro2::TokenStream> = Vec::new();

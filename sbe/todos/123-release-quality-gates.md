@@ -29,13 +29,11 @@ samples while one of the hard blockers is still red.
 
 ## Current verification status (2026-07-08)
 
-- [ ] `RUSTC_WRAPPER="" cargo test --workspace -- --test-threads=1`
-  - Current failure: `generated_output_matches_golden` because generated output
-    differs from `sbe/tests/golden/car_example.rs`.
-- [ ] `cargo fmt --all --check`
-- [ ] `RUSTC_WRAPPER="" cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
-- [x] `RUSTC_WRAPPER="" cargo bench -p ergosbe --no-run`
+- [x] `cargo test --workspace -- --test-threads=1` — 0 failures
+- [x] `cargo fmt --all --check` — clean
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- [x] `cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1` — 0 failures
+- [x] `cargo bench -p ergosbe --no-run` — 3 benches compile
 - [ ] Head-to-head Aeron parity benchmarks pass with no Aeron-faster scenario.
 - [ ] Parser parity todos 125 and 126 pass or all remaining divergences are
       explicitly documented and tested.
@@ -56,7 +54,7 @@ samples while one of the hard blockers is still red.
 - [ ] If todo 136 is scoped into v1, typed `ReadBuf`/`WriteBuf` mode/endian
       tests and benchmarks pass for checked, verified, and unchecked paths.
 - [ ] If todo 137 is scoped into v1, the compile-fail proof suite passes in CI.
-- [ ] `cd samples/exchange-orderbook && RUSTC_WRAPPER="" cargo check`
+- [x] `cd samples/exchange-orderbook && cargo check` — compiles
 
 ## Acceptance criteria
 
