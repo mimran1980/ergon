@@ -2616,15 +2616,25 @@ fn generate_message_decoder(
         k += 1;
     }
 
-    // 8. Group accessors
+    // 8. Group accessors — use pre-computed dedup names
+    let group_unique_names = {
+        let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        msg.groups.iter().map(|g| {
+            let raw = to_pascal_case(&g.name);
+            let scoped = if multi_message { format!("{}{}", &name, raw) } else { raw };
+            if let Some(n) = m.get(&scoped) {
+                let dedup = format!("{}_{}", scoped, n + 1);
+                *m.get_mut(&scoped).unwrap() += 1;
+                dedup
+            } else {
+                m.insert(scoped.clone(), 1);
+                scoped
+            }
+        }).collect::<Vec<_>>()
+    };
     let mut g_idx = 0usize;
-    for g in &msg.groups {
-        let raw_name = to_pascal_case(&g.name);
-        let scoped = if multi_message {
-            format!("{}{}", &name, raw_name)
-        } else {
-            raw_name
-        };
+    for (gi, g) in msg.groups.iter().enumerate() {
+        let scoped = &group_unique_names[gi];
         let g_snake = to_snake_case(&g.name);
         let g_snake_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
         let g_decoder_ident = syn::Ident::new(
@@ -2924,11 +2934,10 @@ fn generate_message_decoder(
     let display_ts = generate_decoder_display(msg);
     ts.extend(display_ts);
 
-    // 14. Repeating Group decoders
-    // 14. Repeating Group decoders
-    let parent = if multi_message { Some(msg.name.as_str()) } else { None };
-    for g in &msg.groups {
-        ts.extend(generate_group_decoder(g, elements, byte_order, parent));
+    // 14. Repeating Group decoders — use pre-computed dedup names from section 8
+    for (gi, g) in msg.groups.iter().enumerate() {
+        let unique = &group_unique_names[gi];
+        ts.extend(generate_group_decoder(g, elements, byte_order, unique));
     }
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)
@@ -3067,16 +3076,10 @@ fn generate_group_decoder(
     g: &MessageGroup,
     elements: &SchemaElements,
     byte_order: ByteOrder,
-    parent_message_name: Option<&str>,
+    scoped_name: &str,
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
-    let raw_name = to_pascal_case(&g.name);
-    // Scope group types under parent message to avoid collisions in multi-message schemas
-    let name = if let Some(parent) = parent_message_name {
-        format!("{}{}", to_pascal_case(parent), raw_name)
-    } else {
-        raw_name
-    };
+    let name = scoped_name.to_string();
     let decoder_ident = quote::format_ident!("{}Decoder", name);
     let entry_decoder_ident = quote::format_ident!("{}EntryDecoder", name);
     let (dim_name, dim_size, bl_field, count_field) =
@@ -3989,9 +3992,10 @@ fn generate_group_decoder(
         }
     });
 
-    // Recursively generate nested group decoders (no parent prefix — already scoped)
+    // Recursively generate nested group decoders (raw names — already scoped under parent entry)
     for ng in &g.groups {
-        ts.extend(generate_group_decoder(ng, elements, byte_order, None));
+        let nested_name = to_pascal_case(&ng.name);
+        ts.extend(generate_group_decoder(ng, elements, byte_order, &nested_name));
     }
 
     ts
@@ -4699,9 +4703,23 @@ fn generate_message_encoder(
 
     // ── Generate Repeating Groups encoders ──
     let mut group_buf = String::new();
-    let parent = if multi_message { Some(msg.name.as_str()) } else { None };
-    for g in &msg.groups {
-        generate_group_encoder(&mut group_buf, g, elements, byte_order, parent);
+    let enc_group_names = {
+        let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        msg.groups.iter().map(|g| {
+            let raw = to_pascal_case(&g.name);
+            let scoped = if multi_message { format!("{}{}", &name, raw) } else { raw };
+            if let Some(n) = m.get(&scoped) {
+                let dedup = format!("{}_{}", scoped, n + 1);
+                *m.get_mut(&scoped).unwrap() += 1;
+                dedup
+            } else {
+                m.insert(scoped.clone(), 1);
+                scoped
+            }
+        }).collect::<Vec<_>>()
+    };
+    for (gi, g) in msg.groups.iter().enumerate() {
+        generate_group_encoder(&mut group_buf, g, elements, byte_order, &enc_group_names[gi]);
     }
     if !group_buf.is_empty() {
         let group_ts: proc_macro2::TokenStream = group_buf
@@ -4718,14 +4736,9 @@ fn generate_group_encoder(
     g: &MessageGroup,
     elements: &SchemaElements,
     byte_order: ByteOrder,
-    parent_message_name: Option<&str>,
+    scoped_name: &str,
 ) {
-    let raw_name = to_pascal_case(&g.name);
-    let name = if let Some(parent) = parent_message_name {
-        format!("{}{}", to_pascal_case(parent), raw_name)
-    } else {
-        raw_name
-    };
+    let name = scoped_name.to_string();
     let order_suffix = match byte_order {
         ByteOrder::LittleEndian => "le",
         ByteOrder::BigEndian => "be",
@@ -5024,7 +5037,8 @@ fn generate_group_encoder(
 
     // Recursively generate nested Repeating Groups encoders
     for ng in &g.groups {
-        generate_group_encoder(src, ng, elements, byte_order, None);
+        let nested_name = to_pascal_case(&ng.name);
+        generate_group_encoder(src, ng, elements, byte_order, &nested_name);
     }
 }
 
