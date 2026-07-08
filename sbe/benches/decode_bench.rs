@@ -9,7 +9,6 @@
 #![allow(clippy::useless_comparison)]
 
 include!("generated/car_patched.rs");
-
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[path = "_common.rs"]
