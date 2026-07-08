@@ -3,7 +3,6 @@
 **Blocked by:** `129-generated-prelude-and-public-api-contract`, `134-typed-frame-policy-and-schema-identity`
 **Severity:** MEDIUM
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Problem

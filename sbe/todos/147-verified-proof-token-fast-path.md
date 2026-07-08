@@ -3,7 +3,6 @@
 **Blocked by:** 69-buffer-verify-function, 145-group-entry-wire-blocklength-bug
 **Severity:** HIGH
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Problem

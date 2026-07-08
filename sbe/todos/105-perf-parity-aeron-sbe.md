@@ -3,7 +3,6 @@
 **Hard requirement**: There cannot be a single benchmark where Aeron Rust SBE
 is faster than ErgoSBE. If such a scenario exists, it must be fixed before v1.
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Current verification status (2026-07-08)

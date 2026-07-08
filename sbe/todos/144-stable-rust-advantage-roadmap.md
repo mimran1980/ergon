@@ -3,7 +3,6 @@
 **Blocked by:** 123-release-quality-gates, 129-generated-prelude-and-public-api-contract
 **Severity:** HIGH
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Goal

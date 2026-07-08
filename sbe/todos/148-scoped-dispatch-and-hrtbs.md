@@ -3,7 +3,6 @@
 **Blocked by:** 133-scoped-feed-callbacks-hrtbs, 134-typed-frame-policy-and-schema-identity
 **Severity:** MEDIUM
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Problem

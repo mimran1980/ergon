@@ -3,7 +3,6 @@
 **Ref:** user request. Aeron Rust SBE is the reference implementation.
 
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 ## Current verification status (2026-07-08)
 

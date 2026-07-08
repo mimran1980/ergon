@@ -3,7 +3,6 @@
 **Blocked by:** `02-composite-enum-set-wire-parity`
 
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 ## Problem
 

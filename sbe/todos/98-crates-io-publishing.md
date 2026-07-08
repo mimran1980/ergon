@@ -4,7 +4,6 @@ Set up the release pipeline for publishing ErgoSBE to crates.io. This is part of
 the CI/release automation tracked in todo 45, but deserves its own checklist.
 
 **Status:** Preparation complete
-**Status: DONE**
 
 
 ## Acceptance criteria

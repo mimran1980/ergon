@@ -3,7 +3,6 @@
 **Ref:** user request during block-length validation work (2026-07-08).
 
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 ## Problem
 

@@ -3,7 +3,6 @@
 **Blocked by:** `119-readbuf-writebuf-abstraction`, `121-endianness-full-type-matrix`, `122-read-write-bytes-unsafe-fastpath`
 **Severity:** HIGH
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Problem

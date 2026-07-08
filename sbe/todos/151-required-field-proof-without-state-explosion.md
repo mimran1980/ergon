@@ -3,7 +3,6 @@
 **Blocked by:** 132-required-field-proof-encoder, 129-generated-prelude-and-public-api-contract
 **Severity:** MEDIUM
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Problem

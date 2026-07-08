@@ -5,7 +5,6 @@ Java-generated Rust, sbe-tool, etc.). This was identified as missing in the
 documentation todo (34).
 
 **Status:** Done
-**Status: DONE**
 
 
 ## Acceptance criteria

@@ -3,7 +3,6 @@
 **Blocked by:** release-quality gates
 **Severity:** MEDIUM
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Problem

@@ -3,7 +3,6 @@
 **Blocked by:** `05-anymessage-framecursor`, `77-message-visitor-trait`, `102-domain-mapper-proxies-and-adapters`
 **Severity:** MEDIUM
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Problem

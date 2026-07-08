@@ -3,7 +3,6 @@
 **Blocked by:** 129-generated-prelude-and-public-api-contract, 139-api-simplicity-audit
 **Severity:** MEDIUM
 **Status: DESIGN / ROADMAP**
-**Status: DESIGN / ROADMAP**
 
 
 ## Problem
