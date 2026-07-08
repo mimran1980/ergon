@@ -275,9 +275,9 @@ the body-length version and let callers add 8 when they need the header.
 **Saves:** 1 function per message. Car example: 1.
 
 **Acceptance criteria:**
-- [ ] No `compute_encoded_length_with_message_header` emitted
-- [ ] `compute_encoded_length` returns body length only
-- [ ] All tests pass
+- [x] No `compute_encoded_length_with_message_header` emitted
+- [x] `compute_encoded_length` returns body length only
+- [x] All tests pass
 
 ### 3j. Remove `engine_as_struct()` + `engine_lazy()` deprecated aliases -- saves 2 methods
 

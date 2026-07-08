@@ -4092,15 +4092,8 @@ fn generate_message_encoder(
                 len
             }
 
-            /// Compute the exact SBE message length including the 8-byte header.
-            #[inline]
-            pub const fn compute_encoded_length_with_message_header(
-                #(#params),*
-            ) -> usize {
-                let mut len = #header_size_lit + #block_length_lit;
-                #(#sum_body)*
-                len
-            }
+            // ponytail: compute_encoded_length_with_message_header removed —
+            // callers use compute_encoded_length() + 8
         });
     }
 

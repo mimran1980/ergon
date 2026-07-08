@@ -1995,23 +1995,6 @@ impl<'a, State> CarEncoder<'a, State> {
         len += 4 + activation_code_len;
         len
     }
-    /// Compute the exact SBE message length including the 8-byte header.
-    #[inline]
-    pub const fn compute_encoded_length_with_message_header(
-        fuel_figures_count: usize,
-        performance_figures_count: usize,
-        manufacturer_len: usize,
-        model_len: usize,
-        activation_code_len: usize,
-    ) -> usize {
-        let mut len = 8 + 41;
-        len += 4 + fuel_figures_count * 6;
-        len += 4 + performance_figures_count * 1;
-        len += 4 + manufacturer_len;
-        len += 4 + model_len;
-        len += 4 + activation_code_len;
-        len
-    }
 }
 impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
     #[must_use]
