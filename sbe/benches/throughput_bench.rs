@@ -98,7 +98,7 @@ fn bench_throughput_unchecked(c: &mut Criterion) {
                         CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()])).unwrap();
                     total_serial += car.serial_number();
                     total_year += car.model_year() as u64;
-                    let engine = unsafe { car.engine_unchecked() };
+                    let engine = car.engine_as_struct();
                     total_capacity += engine.capacity() as u64;
                     off += BASELINE.len();
                 }
@@ -222,7 +222,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
                 let car = CarDecoder::try_from(black_box(&buf[off..off + BASELINE.len()])).unwrap();
                 total_serial += car.serial_number();
                 total_year += car.model_year() as u64;
-                let engine = unsafe { car.engine_unchecked() };
+                let engine = car.engine_as_struct();
                 total_capacity += engine.capacity() as u64;
                 off += BASELINE.len();
             }

@@ -48,9 +48,9 @@ semantics — returns the underlying integer type).
   Actually, arrays: if feature-gated, the safe path also returns `[T;N]`. Remove.
 
 ## Acceptance criteria
-- [ ] `_unchecked` methods removed from scalars, composites, enums, sets
-- [ ] Feature flag gates internal bounds check, API stays identical
-- [ ] Golden file stability test passes
-- [ ] Baseline tests pass
-- [ ] `cargo test --features bound-check-disabled` passes
-- [ ] No `.unwrap()` in safe path body — signatures already return `T` not `Result<T>`
+- [x] `_unchecked` methods removed from scalars, composites, enums, sets
+- [x] Feature flag gates internal bounds check, API stays identical
+- [x] Golden file stability test passes
+- [x] Baseline tests pass
+- [x] `cargo test --features bound-check-disabled` passes
+- [x] No `.unwrap()` in safe path body — signatures already return `T` not `Result<T>`

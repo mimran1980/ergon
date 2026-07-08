@@ -72,20 +72,20 @@ fn bench_field_access_checked(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Scalar field access (raw/unchecked) ────────────────────────────
+// ── Scalar field access (safe) ────────────────────────────────────
 
-fn bench_field_access_raw(c: &mut Criterion) {
+fn bench_field_access_safe(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
 
-    let mut group = c.benchmark_group("decode/field/raw");
-    group.bench_function("raw_serial_number", |b| {
+    let mut group = c.benchmark_group("decode/field/safe");
+    group.bench_function("serial_number", |b| {
         b.iter(|| black_box(car.serial_number()));
     });
-    group.bench_function("raw_model_year", |b| {
+    group.bench_function("model_year", |b| {
         b.iter(|| black_box(car.model_year()));
     });
-    group.bench_function("raw_engine", |b| {
-        b.iter(|| black_box(unsafe { car.engine_unchecked() }));
+    group.bench_function("engine_as_struct", |b| {
+        b.iter(|| black_box(car.engine_as_struct()));
     });
     group.finish();
 }
@@ -113,22 +113,22 @@ fn bench_group_iteration(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Full decode with unchecked scalar access ───────────────────────
+// ── Full decode with safe scalar access ───────────────────────────
 
-fn bench_full_decode_unchecked(c: &mut Criterion) {
-    let mut group = c.benchmark_group("decode/unchecked");
+fn bench_full_decode_safe(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decode/safe");
     group.throughput(Throughput::Bytes(BASELINE.len() as u64));
     group.bench_function("car_full", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
             let _ = car.serial_number();
             let _ = car.model_year();
-            let _ = unsafe { car.available_unchecked() };
-            let _ = unsafe { car.code_unchecked() };
-            let _ = car.raw_some_numbers();
-            let _ = car.raw_vehicle_code();
-            let _ = unsafe { car.extras_unchecked() };
-            let _ = unsafe { car.engine_unchecked() };
+            let _ = car.available();
+            let _ = car.code();
+            let _ = car.some_numbers().unwrap();
+            let _ = car.vehicle_code().unwrap();
+            let _ = car.extras();
+            let _ = car.engine_as_struct();
             black_box(());
         });
     });
@@ -161,12 +161,12 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
         b.iter(|| {
             let _ = car.serial_number();
             let _ = car.model_year();
-            let _ = unsafe { car.available_unchecked() };
-            let _ = unsafe { car.code_unchecked() };
-            let _ = car.raw_some_numbers();
-            let _ = car.raw_vehicle_code();
-            let _ = unsafe { car.extras_unchecked() };
-            let _ = unsafe { car.engine_unchecked() };
+            let _ = car.available();
+            let _ = car.code();
+            let _ = car.some_numbers().unwrap();
+            let _ = car.vehicle_code().unwrap();
+            let _ = car.extras();
+            let _ = car.engine_as_struct();
             black_box(());
         });
     });
@@ -213,7 +213,7 @@ fn bench_hft_tight_loop(c: &mut Criterion) {
 
 fn bench_hft_field_stride(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
-    let engine = unsafe { car.engine_unchecked() };
+    let engine = car.engine_as_struct();
     let ff = car.fuel_figures().unwrap();
     let first_entry = if ff.len() > 0 {
         Some(ff.into_iter().next().unwrap().unwrap())
@@ -284,9 +284,9 @@ criterion_group!(
     benches,
     bench_try_from,
     bench_field_access_checked,
-    bench_field_access_raw,
+    bench_field_access_safe,
     bench_group_iteration,
-    bench_full_decode_unchecked,
+    bench_full_decode_safe,
     bench_decode_checked_vs_unchecked,
     bench_hft_tight_loop,
     bench_hft_field_stride,

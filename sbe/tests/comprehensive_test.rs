@@ -212,10 +212,8 @@ fn all_scalar_accessor_paths() {
         // Safe path: scalars return T directly (infallible)
         assert_eq!(car2.serial_number(), 1234u64);
         assert_eq!(car2.model_year(), 2013u16);
-        // _unchecked path for scalars
-        unsafe {
-            assert_eq!(car2.serial_number_unchecked(), 1234u64);
-        }
+        // Safe path for scalars
+        assert_eq!(car2.serial_number(), 1234u64);
     "#,
     );
 }

@@ -686,16 +686,6 @@ impl<'a> CarDecoder<'a> {
         let offset = self.pos + 0;
         u64::from_le_bytes(self.buf[offset..][..8].try_into().unwrap())
     }
-    #[inline]
-    pub const unsafe fn serial_number_unchecked(&self) -> u64 {
-        let offset = self.pos + 0;
-        let mut bytes = [0u8; 8];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 8)
-            });
-        u64::from_le_bytes(bytes)
-    }
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
@@ -703,16 +693,6 @@ impl<'a> CarDecoder<'a> {
     pub fn model_year(&self) -> u16 {
         let offset = self.pos + 8;
         u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
-    }
-    #[inline]
-    pub const unsafe fn model_year_unchecked(&self) -> u16 {
-        let offset = self.pos + 8;
-        let mut bytes = [0u8; 2];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 2)
-            });
-        u16::from_le_bytes(bytes)
     }
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
@@ -724,31 +704,11 @@ impl<'a> CarDecoder<'a> {
             u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()),
         )
     }
-    #[inline]
-    pub const unsafe fn available_unchecked(&self) -> BooleanType {
-        let offset = self.pos + 10;
-        let mut bytes = [0u8; 1];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
-            });
-        BooleanType::from_raw(u8::from_le_bytes(bytes))
-    }
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     #[inline]
     pub fn code(&self) -> Model {
         let offset = self.pos + 11;
         Model::from_raw(u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()))
-    }
-    #[inline]
-    pub const unsafe fn code_unchecked(&self) -> Model {
-        let offset = self.pos + 11;
-        let mut bytes = [0u8; 1];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
-            });
-        Model::from_raw(u8::from_le_bytes(bytes))
     }
     pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
@@ -771,24 +731,6 @@ impl<'a> CarDecoder<'a> {
             u32::from_le_bytes(all[8usize..12usize].try_into().unwrap()),
             u32::from_le_bytes(all[12usize..16usize].try_into().unwrap()),
         ])
-    }
-    #[inline]
-    pub const unsafe fn some_numbers_unchecked(&self) -> [u32; 4] {
-        let offset = self.pos + 12;
-        let mut all = [0u8; 16];
-        all.copy_from_slice(unsafe {
-            core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 16)
-        });
-        [
-            u32::from_le_bytes([all[0], all[1], all[2], all[3]]),
-            u32::from_le_bytes([all[4], all[5], all[6], all[7]]),
-            u32::from_le_bytes([all[8], all[9], all[10], all[11]]),
-            u32::from_le_bytes([all[12], all[13], all[14], all[15]]),
-        ]
-    }
-    #[inline]
-    pub const fn raw_some_numbers(&self) -> [u32; 4] {
-        #[allow(unused_unsafe)] unsafe { self.some_numbers_unchecked() }
     }
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
@@ -816,26 +758,6 @@ impl<'a> CarDecoder<'a> {
             u8::from_le_bytes(all[5usize..6usize].try_into().unwrap()),
         ])
     }
-    #[inline]
-    pub const unsafe fn vehicle_code_unchecked(&self) -> [u8; 6] {
-        let offset = self.pos + 28;
-        let mut all = [0u8; 6];
-        all.copy_from_slice(unsafe {
-            core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 6)
-        });
-        [
-            u8::from_le_bytes([all[0]]),
-            u8::from_le_bytes([all[1]]),
-            u8::from_le_bytes([all[2]]),
-            u8::from_le_bytes([all[3]]),
-            u8::from_le_bytes([all[4]]),
-            u8::from_le_bytes([all[5]]),
-        ]
-    }
-    #[inline]
-    pub const fn raw_vehicle_code(&self) -> [u8; 6] {
-        #[allow(unused_unsafe)] unsafe { self.vehicle_code_unchecked() }
-    }
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
@@ -845,28 +767,8 @@ impl<'a> CarDecoder<'a> {
         OptionalExtras(u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()))
     }
     #[inline]
-    pub const unsafe fn extras_unchecked(&self) -> OptionalExtras {
-        let offset = self.pos + 34;
-        let mut bytes = [0u8; 1];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
-            });
-        OptionalExtras(u8::from_le_bytes(bytes))
-    }
-    #[inline]
     pub const fn discounted_model(&self) -> Model {
         Model::C
-    }
-    #[inline]
-    pub const unsafe fn discounted_model_unchecked(&self) -> Model {
-        let offset = self.pos + 35;
-        let mut bytes = [0u8; 1];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
-            });
-        Model::from_raw(u8::from_le_bytes(bytes))
     }
     pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
     #[inline]
@@ -881,16 +783,6 @@ impl<'a> CarDecoder<'a> {
     pub fn engine_as_struct(&self) -> Engine {
         let offset = self.pos + 35;
         Engine(self.buf[offset..][..6].try_into().unwrap())
-    }
-    #[inline]
-    pub const unsafe fn engine_unchecked(&self) -> Engine {
-        let offset = self.pos + 35;
-        let mut bytes = [0u8; 6];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 6)
-            });
-        Engine(bytes)
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1465,20 +1357,6 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let offset = self.pos + 0;
         u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
     }
-    #[inline]
-    pub const unsafe fn speed_unchecked(&self) -> u16 {
-        let offset = self.pos + 0;
-        let mut bytes = [0u8; 2];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 2)
-            });
-        u16::from_le_bytes(bytes)
-    }
-    #[inline]
-    pub const fn raw_speed(&self) -> u16 {
-        #[allow(unused_unsafe)] unsafe { self.speed_unchecked() }
-    }
     pub const SPEED_NULL: u16 = 65535_u16;
     pub const SPEED_MIN: u16 = 0_u16;
     pub const SPEED_MAX: u16 = 65534_u16;
@@ -1486,20 +1364,6 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub fn mpg(&self) -> f32 {
         let offset = self.pos + 2;
         f32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
-    }
-    #[inline]
-    pub const unsafe fn mpg_unchecked(&self) -> f32 {
-        let offset = self.pos + 2;
-        let mut bytes = [0u8; 4];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 4)
-            });
-        f32::from_le_bytes(bytes)
-    }
-    #[inline]
-    pub const fn raw_mpg(&self) -> f32 {
-        #[allow(unused_unsafe)] unsafe { self.mpg_unchecked() }
     }
     pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
     pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
@@ -1722,20 +1586,6 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub fn octane_rating(&self) -> u8 {
         let offset = self.pos + 0;
         u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap())
-    }
-    #[inline]
-    pub const unsafe fn octane_rating_unchecked(&self) -> u8 {
-        let offset = self.pos + 0;
-        let mut bytes = [0u8; 1];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 1)
-            });
-        u8::from_le_bytes(bytes)
-    }
-    #[inline]
-    pub const fn raw_octane_rating(&self) -> u8 {
-        #[allow(unused_unsafe)] unsafe { self.octane_rating_unchecked() }
     }
     pub const OCTANE_RATING_NULL: u8 = 255_u8;
     pub const OCTANE_RATING_MIN: u8 = 90_u8;
@@ -2006,20 +1856,6 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         let offset = self.pos + 0;
         u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
     }
-    #[inline]
-    pub const unsafe fn mph_unchecked(&self) -> u16 {
-        let offset = self.pos + 0;
-        let mut bytes = [0u8; 2];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 2)
-            });
-        u16::from_le_bytes(bytes)
-    }
-    #[inline]
-    pub const fn raw_mph(&self) -> u16 {
-        #[allow(unused_unsafe)] unsafe { self.mph_unchecked() }
-    }
     pub const MPH_NULL: u16 = 65535_u16;
     pub const MPH_MIN: u16 = 0_u16;
     pub const MPH_MAX: u16 = 65534_u16;
@@ -2027,20 +1863,6 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub fn seconds(&self) -> f32 {
         let offset = self.pos + 2;
         f32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
-    }
-    #[inline]
-    pub const unsafe fn seconds_unchecked(&self) -> f32 {
-        let offset = self.pos + 2;
-        let mut bytes = [0u8; 4];
-        bytes
-            .copy_from_slice(unsafe {
-                core::slice::from_raw_parts(self.buf.as_ptr().add(offset), 4)
-            });
-        f32::from_le_bytes(bytes)
-    }
-    #[inline]
-    pub const fn raw_seconds(&self) -> f32 {
-        #[allow(unused_unsafe)] unsafe { self.seconds_unchecked() }
     }
     pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
     pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);

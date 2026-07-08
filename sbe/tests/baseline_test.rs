@@ -76,11 +76,8 @@ fn generated_code_has_lint_suppressions() {
         src.contains("#[allow(dead_code)]"),
         "generated code must suppress dead_code"
     );
-    // Item-level suppressions: raw_* accessors wrap unsafe with #[allow(unused_unsafe)]
-    assert!(
-        src.contains("#[allow(unused_unsafe)]"),
-        "raw_* accessors must suppress unused_unsafe"
-    );
+    // ponytail: #[allow(unused_unsafe)] removed along with scalar raw_* methods —
+    // enum/set/composite raw_* return the underlying repr directly without wrapping unsafe
 }
 
 #[test]
@@ -645,29 +642,13 @@ fn array_accessor_all_paths_return_same_values() {
 
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
-        // Safe path (const fn, while-loop copy) — some_numbers returns Result
+        // Safe path — some_numbers returns Result
         let safe: [u32; 4] = car2.some_numbers().unwrap();
         assert_eq!(safe, [1u32, 2, 3, 4]);
 
-        // raw_ path (const fn, while-loop, no Result wrapping)
-        let raw: [u32; 4] = car2.raw_some_numbers();
-        assert_eq!(raw, [1u32, 2, 3, 4]);
-
-        // _unchecked path (bulk copy_from_slice, const unsafe fn)
-        let unchecked: [u32; 4] = unsafe { car2.some_numbers_unchecked() };
-        assert_eq!(unchecked, [1u32, 2, 3, 4]);
-
-        // All three paths produce identical values
-        assert_eq!(safe, raw);
-        assert_eq!(raw, unchecked);
-
-        // vehicle_code (byte array) — same three paths
+        // vehicle_code (byte array)
         let vs: [u8; 6] = car2.vehicle_code().unwrap();
         assert_eq!(vs, [97, 98, 99, 100, 101, 102]);
-        let vr: [u8; 6] = car2.raw_vehicle_code();
-        assert_eq!(vr, vs);
-        let vu: [u8; 6] = unsafe { car2.vehicle_code_unchecked() };
-        assert_eq!(vu, vs);
 
         // Edge: safe path returns Err on short buffer (simulate by passing empty buf)
         let empty_buf: &[u8] = &[0u8; 8];
@@ -1047,59 +1028,8 @@ fn vardata_maxlength_runtime() {
         let car = car.model(b"Civic").unwrap();
         assert!(car.activation_code(b"12345").is_ok(), "activationCode within maxLength via checked");
 
-        // Encode same data via _unchecked → OK
-        let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1234);
-        car.model_year(2013);
-        car.available(BooleanType::T);
-        car.code(Model::A);
-        car.some_numbers([1u32, 2, 3, 4]);
-        car.vehicle_code([97, 98, 99, 100, 101, 102]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
-        let car = car.fuel_figures(0, |_| {}).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
-        let car = car.manufacturer_unchecked(b"Honda").unwrap();
-        let car = car.model_unchecked(b"Civic").unwrap();
-        assert!(car.activation_code_unchecked(b"12345").is_ok(), "activationCode within maxLength via unchecked");
-
-        // Both paths produce identical encoded output
-        let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1234);
-        car.model_year(2013);
-        car.available(BooleanType::T);
-        car.code(Model::A);
-        car.some_numbers([1u32, 2, 3, 4]);
-        car.vehicle_code([97, 98, 99, 100, 101, 102]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
-        let car = car.fuel_figures(0, |_| {}).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
-        let car = car.manufacturer(b"Honda").unwrap();
-        let car = car.model(b"Civic").unwrap();
-        let car = car.activation_code(b"12345").unwrap();
-        let checked_bytes = car.as_bytes().to_vec();
-
-        let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1234);
-        car.model_year(2013);
-        car.available(BooleanType::T);
-        car.code(Model::A);
-        car.some_numbers([1u32, 2, 3, 4]);
-        car.vehicle_code([97, 98, 99, 100, 101, 102]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
-        let car = car.fuel_figures(0, |_| {}).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
-        let car = car.manufacturer_unchecked(b"Honda").unwrap();
-        let car = car.model_unchecked(b"Civic").unwrap();
-        let car = car.activation_code_unchecked(b"12345").unwrap();
-        let unchecked_bytes = car.as_bytes().to_vec();
-
-        assert_eq!(checked_bytes, unchecked_bytes, "checked and unchecked encodings must match");
+        // All var-data fields encode successfully via the checked path
+        // (unchecked paths removed — checked path is canonical)
         "#,
     );
 }
@@ -1303,14 +1233,6 @@ fn generated_code_has_inline_annotations() {
             .any(|s| s.starts_with("pub fn serial_number(")),
         "decoder checked accessor `serial_number` missing #[inline]"
     );
-    // Decoder unchecked accessor
-    assert!(
-        inline_followed_by
-            .iter()
-            .any(|s| s.starts_with("pub const unsafe fn serial_number_unchecked(")),
-        "decoder unchecked accessor `serial_number_unchecked` missing #[inline]"
-    );
-
     // Group decoder methods
     assert!(
         inline_followed_by

@@ -50,7 +50,11 @@ impl PersistAs for chrono::NaiveDateTime {
     }
 
     fn encode_value(&self) -> Vec<u8> {
-        self.and_utc().timestamp_nanos().to_le_bytes().to_vec()
+        self.and_utc()
+            .timestamp_nanos_opt()
+            .unwrap_or_default()
+            .to_le_bytes()
+            .to_vec()
     }
 }
 
@@ -62,7 +66,10 @@ impl PersistAs for chrono::DateTime<chrono::Utc> {
     }
 
     fn encode_value(&self) -> Vec<u8> {
-        self.timestamp_nanos().to_le_bytes().to_vec()
+        self.timestamp_nanos_opt()
+            .unwrap_or_default()
+            .to_le_bytes()
+            .to_vec()
     }
 }
 
@@ -74,7 +81,10 @@ impl PersistAs for chrono::DateTime<chrono::FixedOffset> {
     }
 
     fn encode_value(&self) -> Vec<u8> {
-        self.timestamp_nanos().to_le_bytes().to_vec()
+        self.timestamp_nanos_opt()
+            .unwrap_or_default()
+            .to_le_bytes()
+            .to_vec()
     }
 }
 

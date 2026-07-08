@@ -2042,12 +2042,6 @@ fn generate_message_decoder(
         let since = f.since_version;
         let fname_ident = syn::Ident::new(&fname_snake, proc_macro2::Span::call_site());
 
-        // Create unsafe unchecked fn ident
-        let unchecked_ident = syn::Ident::new(
-            &format!("{fname_snake}_unchecked"),
-            proc_macro2::Span::call_site(),
-        );
-
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
                 let r_type = rust_type(*prim);
@@ -2141,62 +2135,6 @@ fn generate_message_decoder(
                             Ok([#(#safe_elements),*])
                         }
                     });
-
-                    // ponytail: bulk copy + unrolled element parsing for _unchecked
-                    let mut unchecked_elements: Vec<proc_macro2::TokenStream> = Vec::new();
-                    for i in 0..len_val {
-                        let byte_indices: Vec<syn::Expr> = (0..prim_size)
-                            .map(|b| {
-                                let bi = i * prim_size + b;
-                                let bi_lit = syn::LitInt::new(
-                                    &bi.to_string(),
-                                    proc_macro2::Span::call_site(),
-                                );
-                                syn::parse_quote! { all[#bi_lit] }
-                            })
-                            .collect();
-                        unchecked_elements.push(quote::quote! {
-                            #r_type_ty::#order_fn([#(#byte_indices),*])
-                        });
-                    }
-
-                    impl_body.extend(quote::quote! {
-                        #[inline]
-                        pub const unsafe fn #unchecked_ident(&self) -> [#r_type_ty; #len_lit] {
-                            let offset = self.pos + #offset_lit;
-                            let mut all = [0u8; #total_size_lit];
-                            all.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #total_size_lit) });
-                            [#(#unchecked_elements),*]
-                        }
-                    });
-
-                    // raw_ accessor for arrays
-                    let raw_ident = syn::Ident::new(
-                        &format!("raw_{fname_snake}"),
-                        proc_macro2::Span::call_site(),
-                    );
-                    if since == 0 {
-                        impl_body.extend(quote::quote! {
-                            #[inline]
-                            pub const fn #raw_ident(&self) -> [#r_type_ty; #len_lit] {
-                                #[allow(unused_unsafe)]
-                                unsafe { self.#unchecked_ident() }
-                            }
-                        });
-                    } else {
-                        let since_lit =
-                            syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
-                        impl_body.extend(quote::quote! {
-                            #[inline]
-                            pub const fn #raw_ident(&self) -> Option<[#r_type_ty; #len_lit]> {
-                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
-                                    return None;
-                                }
-                                #[allow(unused_unsafe)]
-                                Some(unsafe { self.#unchecked_ident() })
-                            }
-                        });
-                    }
                 } else {
                     // Non-array primitive
                     if f.presence == Presence::Optional {
@@ -2214,19 +2152,6 @@ fn generate_message_decoder(
                         let _offset_end_lit = syn::LitInt::new(
                             &offset_end.to_string(),
                             proc_macro2::Span::call_site(),
-                        );
-                        let _unchecked_val = format!(
-                            "unsafe fn {snake}_unchecked(&self) -> {rt} {{\
-                             let offset = self.pos + {off};\
-                             let mut bytes = [0u8; {ps}];\
-                             bytes.copy_from_slice(unsafe {{ core::slice::from_raw_parts(self.buf.as_ptr().add(offset), {ps}) }});\
-                             {rt}::{order}(bytes)\
-                             }}",
-                            snake = fname_snake,
-                            rt = r_type,
-                            off = offset,
-                            ps = prim_size,
-                            order = order_fn,
                         );
                         if let Some(ref desc) = f.description {
                             let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
@@ -2292,17 +2217,6 @@ fn generate_message_decoder(
                             }
                         });
                     }
-
-                    // _unchecked for non-array primitives
-                    impl_body.extend(quote::quote! {
-                        #[inline]
-                        pub const unsafe fn #unchecked_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
-                            let mut bytes = [0u8; #prim_size_lit];
-                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                            #r_type_ty::#order_fn(bytes)
-                        }
-                    });
                 }
             }
             FieldType::Composite {
@@ -2378,17 +2292,6 @@ fn generate_message_decoder(
                     });
                 }
 
-                // Unsafe unchecked
-                impl_body.extend(quote::quote! {
-                    #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #comp_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #comp_size_lit) });
-                        #target_ident(bytes)
-                    }
-                });
-
                 // ponytail: _lazy alias removed — the base accessor is the canonical path
             }
             FieldType::Enum {
@@ -2443,16 +2346,6 @@ fn generate_message_decoder(
                         }
                     });
                 }
-
-                impl_body.extend(quote::quote! {
-                    #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #prim_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                        #target_ident::from_raw(#r_type_ty::#order_fn(bytes))
-                    }
-                });
             }
             FieldType::Set {
                 name: set_name,
@@ -2506,16 +2399,6 @@ fn generate_message_decoder(
                         }
                     });
                 }
-
-                impl_body.extend(quote::quote! {
-                    #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #prim_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                        #target_ident(#r_type_ty::#order_fn(bytes))
-                    }
-                });
             }
         }
         // Emit field constants
@@ -3364,10 +3247,6 @@ fn generate_group_decoder(
     for f in &g.fields {
         let f_name = to_snake_case(&f.name);
         let f_name_ident = syn::Ident::new(&f_name, proc_macro2::Span::call_site());
-        let unchecked_ident = syn::Ident::new(
-            &format!("{}_unchecked", f_name),
-            proc_macro2::Span::call_site(),
-        );
         let raw_ident = syn::Ident::new(&format!("raw_{}", f_name), proc_macro2::Span::call_site());
         let offset_lit = syn::LitInt::new(&f.offset.to_string(), proc_macro2::Span::call_site());
         let f_name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
@@ -3430,42 +3309,6 @@ fn generate_group_decoder(
                             Ok(res)
                         }
                     });
-
-                    // ponytail: bulk copy + unrolled element parsing for _unchecked
-                    let mut unchecked_elements: Vec<proc_macro2::TokenStream> = Vec::new();
-                    for i in 0..*len {
-                        let byte_indices: Vec<syn::Expr> = (0..prim_size)
-                            .map(|b| {
-                                let bi = i * prim_size + b;
-                                let bi_lit = syn::LitInt::new(
-                                    &bi.to_string(),
-                                    proc_macro2::Span::call_site(),
-                                );
-                                syn::parse_quote! { all[#bi_lit] }
-                            })
-                            .collect();
-                        unchecked_elements.push(quote::quote! {
-                            #r_type_ty::#order_fn([#(#byte_indices),*])
-                        });
-                    }
-
-                    entry_body.extend(quote::quote! {
-                        #[inline]
-                        pub const unsafe fn #unchecked_ident(&self) -> [#r_type_ty; #len_lit] {
-                            let offset = self.pos + #offset_lit;
-                            let mut all = [0u8; #len_times_prim];
-                            all.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #len_times_prim) });
-                            [#(#unchecked_elements),*]
-                        }
-                    });
-
-                    entry_body.extend(quote::quote! {
-                        #[inline]
-                        pub const fn #raw_ident(&self) -> [#r_type_ty; #len_lit] {
-                            #[allow(unused_unsafe)]
-                            unsafe { self.#unchecked_ident() }
-                        }
-                    });
                 } else if f.presence == Presence::Optional {
                     let null_val = f.null_value.unwrap_or(0);
                     let null_check = if *prim == PrimitiveType::Float {
@@ -3489,53 +3332,12 @@ fn generate_group_decoder(
                             }
                         }
                     });
-
-                    entry_body.extend(quote::quote! {
-                        #[inline]
-                        pub const unsafe fn #unchecked_ident(&self) -> Option<#r_type_ty> {
-                            let offset = self.pos + #offset_lit;
-                            let mut bytes = [0u8; #prim_size_lit];
-                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                            let val = #r_type_ty::#order_fn(bytes);
-                            if #null_check_expr {
-                                None
-                            } else {
-                                Some(val)
-                            }
-                        }
-                    });
-
-                    entry_body.extend(quote::quote! {
-                        #[inline]
-                        pub const fn #raw_ident(&self) -> Option<#r_type_ty> {
-                            #[allow(unused_unsafe)]
-                            unsafe { self.#unchecked_ident() }
-                        }
-                    });
                 } else {
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_ident(&self) -> #r_type_ty {
                             let offset = self.pos + #offset_lit;
                             #r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap())
-                        }
-                    });
-
-                    entry_body.extend(quote::quote! {
-                        #[inline]
-                        pub const unsafe fn #unchecked_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
-                            let mut bytes = [0u8; #prim_size_lit];
-                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                            #r_type_ty::#order_fn(bytes)
-                        }
-                    });
-
-                    entry_body.extend(quote::quote! {
-                        #[inline]
-                        pub const fn #raw_ident(&self) -> #r_type_ty {
-                            #[allow(unused_unsafe)]
-                            unsafe { self.#unchecked_ident() }
                         }
                     });
                 }
@@ -3577,19 +3379,11 @@ fn generate_group_decoder(
 
                 entry_body.extend(quote::quote! {
                     #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                    pub const fn #raw_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
                         let mut bytes = [0u8; #comp_size_lit];
                         bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #comp_size_lit) });
                         #target_ident(bytes)
-                    }
-                });
-
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #target_ident {
-                        #[allow(unused_unsafe)]
-                        unsafe { self.#unchecked_ident() }
                     }
                 });
 
@@ -3617,18 +3411,11 @@ fn generate_group_decoder(
 
                 entry_body.extend(quote::quote! {
                     #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                    pub const fn #raw_ident(&self) -> #r_type_ty {
                         let offset = self.pos + #offset_lit;
                         let mut bytes = [0u8; #prim_size_lit];
                         bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                        #target_ident::from_raw(#r_type_ty::#order_fn(bytes))
-                    }
-                });
-
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #r_type_ty {
-                        unsafe { self.#unchecked_ident() as #r_type_ty }
+                        #r_type_ty::#order_fn(bytes)
                     }
                 });
 
@@ -3664,19 +3451,11 @@ fn generate_group_decoder(
 
                 entry_body.extend(quote::quote! {
                     #[inline]
-                    pub const unsafe fn #unchecked_ident(&self) -> #target_ident {
+                    pub const fn #raw_ident(&self) -> #r_type_ty {
                         let offset = self.pos + #offset_lit;
                         let mut bytes = [0u8; #prim_size_lit];
                         bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                        #target_ident(#r_type_ty::#order_fn(bytes))
-                    }
-                });
-
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #r_type_ty {
-                        #[allow(unused_unsafe)]
-                        unsafe { self.#unchecked_ident().0 }
+                        #target_ident(#r_type_ty::#order_fn(bytes)).0
                     }
                 });
             }

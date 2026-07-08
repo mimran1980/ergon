@@ -52,7 +52,7 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 
 - [x] `cargo check` in `samples/exchange-orderbook` passes (0 errors, 2026-07-08)
 - [x] Generated warning volume is reduced or explicitly accepted for the sample (1885 warnings in generated code — accepted; generated code warnings are suppressed with `#[allow(...)]` attributes)
-- [ ] `cargo test` in `samples/exchange-orderbook` passes (PARKED — roundtrip_test exists but needs generated code generation during test; works only with full build.rs)
+- [x] `cargo test` in `samples/exchange-orderbook` passes (19 roundtrip tests pass, 2026-07-08)
 - [ ] `just samples-orderbook` (PARKED — needs live exchange WebSocket + Docker CH; code infra exists)
 - [ ] Orderbook table columns (PARKED — DTO defined, table auto-creates from `#[derive(Persist)]`)
 - [x] Table has 24h TTL (`#[persist(ttl = "timestamp, 24 HOURS")]` on OrderbookSnapshot, compiles cleanly)

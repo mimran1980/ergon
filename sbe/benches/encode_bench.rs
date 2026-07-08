@@ -93,9 +93,9 @@ fn encode_checked(buf: &mut [u8]) -> usize {
     encoded.encoded_length_with_header()
 }
 
-/// Encode the full Car message using the **unchecked** API (`wrap` +
-/// `_unchecked` var-data setters, no max-length validation).
-fn encode_unchecked(buf: &mut [u8]) -> usize {
+/// Encode the full Car message using the safe API (`wrap` +
+/// checked var-data setters with max-length validation).
+fn encode_full(buf: &mut [u8]) -> usize {
     // Write header manually (wrap does not write it)
     buf[0..8]
         .copy_from_slice(&CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::HEADER_TEMPLATE);
@@ -156,9 +156,9 @@ fn encode_unchecked(buf: &mut [u8]) -> usize {
         })
         .unwrap();
 
-    let car = car.manufacturer_unchecked(b"Honda").unwrap();
-    let car = car.model_unchecked(b"Civic VTi").unwrap();
-    let encoded = car.activation_code_unchecked(b"abcdef").unwrap();
+    let car = car.manufacturer(b"Honda").unwrap();
+    let car = car.model(b"Civic VTi").unwrap();
+    let encoded = car.activation_code(b"abcdef").unwrap();
     encoded.encoded_length_with_header()
 }
 
@@ -177,13 +177,13 @@ fn bench_encode_checked(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_encode_unchecked(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode/unchecked");
+fn bench_encode_safe(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode/safe");
     group.throughput(Throughput::Elements(1));
     group.bench_function("car_full", |b| {
         let mut buf = vec![0u8; 1024];
         b.iter(|| {
-            let n = encode_unchecked(black_box(&mut buf));
+            let n = encode_full(black_box(&mut buf));
             black_box(n);
         });
     });
@@ -232,7 +232,7 @@ fn bench_encode_checked_vs_unchecked(c: &mut Criterion) {
     group.bench_function("unchecked_full", |b| {
         let mut buf = vec![0u8; 1024];
         b.iter(|| {
-            let n = encode_unchecked(black_box(&mut buf));
+            let n = encode_full(black_box(&mut buf));
             black_box(n);
         });
     });
@@ -243,7 +243,7 @@ fn bench_encode_checked_vs_unchecked(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_encode_checked,
-    bench_encode_unchecked,
+    bench_encode_safe,
     bench_encode_scalar_only,
     bench_encode_checked_vs_unchecked,
 );
