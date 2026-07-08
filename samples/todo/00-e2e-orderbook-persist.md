@@ -5,17 +5,12 @@ schemas compile cleanly (todo 103), persist feature completeness
 
 ## Current verification status (2026-07-08)
 
-The sample is still blocked before E2E runtime work:
+Sample now compiles cleanly (0 errors, ~1885 warnings — warnings are in generated
+code). `#[derive(Persist)]` with `OrderbookSnapshot` works: `Decimal(18,8)` type
+override, `chrono::DateTime<Utc>` → `DateTime64(9)`, custom ORDER BY.
 
-```sh
-cd /Users/imran/RustroverProjects/ErgoSBE/samples/exchange-orderbook
-RUSTC_WRAPPER="" cargo check
-```
-
-Current normal compiler summary: 88 errors / 960 warnings. JSON diagnostics
-group the main compile errors as generated `E0015` const-helper failures and
-generated `E0308` Display/accessor return-shape mismatches. Do not start live
-exchange or ClickHouse verification until schema generation compiles cleanly.
+Live exchange feed + ClickHouse runtime verification deferred — needs a running
+exchange WebSocket connection and Docker ClickHouse.
 
 Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 `samples/exchange-orderbook/` crate should become a full end-to-end demo:

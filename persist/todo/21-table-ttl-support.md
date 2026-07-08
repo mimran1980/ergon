@@ -60,4 +60,4 @@ still open and requires Docker.
 - [x] `SchemaDiff` ignores TTL (no migration needed)
 - [x] `DynamicRecorderBuilder` gains `ttl()` method
 - [x] `#[derive(Persist)]` gets `#[persist(ttl = "...")]` container attribute
-- [ ] Integration test: table created with TTL, verify via `SHOW CREATE TABLE` (needs Docker)
+- [ ] Integration test: table created with TTL, verify via `SHOW CREATE TABLE` (PARKED — unit test covers DDL generation)

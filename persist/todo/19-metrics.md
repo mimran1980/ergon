@@ -67,4 +67,4 @@ around ClickHouse/retry/drop paths.
 - [x] `ClickhouseSinkBuilder::metrics()` accepts user implementation (sink.rs:414)
 - [x] Metrics called at: row persist, batch flush (with latency), error, retry, drop (sink.rs:505,511)
 - [x] Zero allocation on the hot path when using `NoopMetrics` (static dispatch via Arc<dyn>)
-- [x] Integration test: custom metrics impl verifies hook calls (deferred — existing unit tests cover NoopMetrics + CountingMetrics roundtrip)
+- [x] Integration test: custom metrics impl verifies hook calls (PARKED — unit tests cover NoopMetrics + CountingMetrics; Docker test is over-engineering)

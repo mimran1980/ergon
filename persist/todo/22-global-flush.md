@@ -60,7 +60,7 @@ are not part of the default workspace pass.
 - [x] Senders auto-register on `build()` (`register_sender` at sink.rs:483, Weak refs)
 - [x] Calling `flush()` on a sink with no senders is a no-op (test at sink.rs:1539)
 - [x] Thread-safe: multiple senders built concurrently via `Mutex<Vec<Weak<...>>>` pattern
-- [ ] Integration test: two senders, both with buffered rows, global flush clears both (needs Docker)
+- [ ] Integration test: two senders, both with buffered rows, global flush clears both (PARKED — unit test covers register/flush/retain)
 
 ## Implementation notes
 

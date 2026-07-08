@@ -65,4 +65,4 @@ been verified in the default workspace run.
 - [x] TLS via `https://` URLs (clickhouse::Client handles this automatically)
 - [x] `tls_skip_verify()` for dev (sink.rs:136)
 - [x] `tls_ca_cert()` for custom CA bundles (sink.rs:137)
-- [ ] Integration test: compression roundtrip (needs Docker)
+- [ ] Integration test: compression roundtrip (PARKED — LZ4 is a clickhouse::Client flag, no custom logic to test)

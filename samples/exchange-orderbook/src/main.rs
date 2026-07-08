@@ -12,6 +12,7 @@
 //! - Generated code from build.rs via `ergosbe::Generator`
 
 mod orderbook;
+mod persist;
 
 use futures_util::{SinkExt, StreamExt};
 use orderbook::{AskLevel, BidLevel, LocalBook};

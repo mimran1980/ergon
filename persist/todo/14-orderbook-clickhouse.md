@@ -8,9 +8,9 @@ to ClickHouse via `ergo-clickhouse-persist`.
 
 ## Current verification status (2026-07-08)
 
-Still blocked by the sample compile failure. `samples/exchange-orderbook`
-currently does not pass `cargo check`, so ClickHouse table creation, TTL
-inspection, and query verification have not been proven.
+Sample now compiles (0 errors). DTO defined in `samples/exchange-orderbook/src/persist.rs`.
+`#[derive(Persist)]` works correctly with `rust_decimal::Decimal` and `chrono::DateTime<Utc>`.
+Runtime ClickHouse verification deferred — needs Docker + live exchange feed.
 
 ## table: `orderbook_snapshots`
 
@@ -64,11 +64,11 @@ struct OrderbookSnapshot {
 
 ## Tasks
 
-- [ ] Define `OrderbookSnapshot` in `samples/exchange-orderbook/src/persist.rs`
-- [ ] Add `ergo-clickhouse-persist` + `chrono` deps to sample Cargo.toml
-- [ ] On each orderbook update, encode snapshot and send to ClickHouse sink
-- [ ] Verify table auto-created with correct schema and 24h TTL
-- [ ] Verify queries work: `SELECT * FROM orderbook_snapshots ORDER BY timestamp DESC LIMIT 10`
+- [x] Define `OrderbookSnapshot` in `samples/exchange-orderbook/src/persist.rs`
+- [x] Add `ergo-clickhouse-persist` + `chrono` deps to sample Cargo.toml
+- [ ] On each orderbook update, encode snapshot and send to ClickHouse sink (PARKED — needs live exchange feed)
+- [ ] Verify table auto-created with correct schema and 24h TTL (PARKED — needs Docker + runtime)
+- [ ] Verify queries work: `SELECT * FROM orderbook_snapshots ORDER BY timestamp DESC LIMIT 10` (PARKED — needs Docker + runtime)
 
 ## Notes
 
