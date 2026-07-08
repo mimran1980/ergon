@@ -5,8 +5,17 @@
 //! tight-loop / field-stride / alloc-free decode patterns.
 
 // Generated code generates lots of diagnostics; suppress across the crate.
-#![allow(unsafe_code, missing_docs, unused_variables, dead_code, unused_mut)]
-#![allow(clippy::useless_comparison)]
+#![allow(
+    unsafe_code,
+    missing_docs,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    unused_must_use,
+    unused_assignments,
+    unused_comparisons
+)]
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
 include!("generated/car_patched.rs");
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};

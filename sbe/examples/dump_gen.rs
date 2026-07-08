@@ -1,3 +1,4 @@
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, missing_docs)]
 use ergosbe::{GenerationConfig, Generator, Schema, parse_file};
 use std::path::PathBuf;
 
