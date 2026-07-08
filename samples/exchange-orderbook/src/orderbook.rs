@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, Copy)]
 pub struct BidLevel {
     pub price: Decimal,
+    #[allow(dead_code)]
     pub size: Decimal,
 }
 
@@ -37,6 +38,7 @@ impl Ord for BidLevel {
 #[derive(Debug, Clone, Copy)]
 pub struct AskLevel {
     pub price: Decimal,
+    #[allow(dead_code)]
     pub size: Decimal,
 }
 
@@ -110,10 +112,12 @@ impl LocalBook {
         }
     }
 
+    #[allow(dead_code)]
     pub fn top_bids(&self, n: usize) -> Vec<BidLevel> {
         self.bids.iter().take(n).copied().collect()
     }
 
+    #[allow(dead_code)]
     pub fn top_asks(&self, n: usize) -> Vec<AskLevel> {
         self.asks.iter().take(n).copied().collect()
     }

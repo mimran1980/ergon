@@ -1,4 +1,13 @@
-/// Generated from SBE schema package `baseline` id 1 version 0.
+//! Generated from SBE schema package `baseline` id 1 version 0.
+#![allow(
+    clippy::absurd_extreme_comparisons,
+    clippy::double_must_use,
+    clippy::erasing_op,
+    clippy::identity_op,
+    clippy::unnecessary_cast,
+    unused_assignments,
+    unused_comparisons
+)]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
 #[allow(clippy::identity_op)]
@@ -1046,7 +1055,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn manufacturer_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.manufacturer()?;
-        core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
+        core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
     pub unsafe fn manufacturer_as_str_unchecked(&self) -> &'a str {
@@ -1080,7 +1089,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn model_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.model()?;
-        core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
+        core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
     pub unsafe fn model_as_str_unchecked(&self) -> &'a str {
@@ -1114,7 +1123,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
-        core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
+        core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
     pub unsafe fn activation_code_as_str_unchecked(&self) -> &'a str {
@@ -1585,7 +1594,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
-        block_len: usize,
+        _block_len: usize,
         acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
         let entry = Self::wrap(buf, pos, acting_version);
@@ -1828,7 +1837,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
-        block_len: usize,
+        _block_len: usize,
         acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
         let entry = Self::wrap(buf, pos, acting_version);
@@ -2095,7 +2104,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
-        block_len: usize,
+        _block_len: usize,
         acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
         let entry = Self::wrap(buf, pos, acting_version);
@@ -2247,8 +2256,6 @@ impl<'a, State> CarEncoder<'a, State> {
     }
     /// Compute the exact SBE message length before encoding.
     /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
-    #[inline]
-    /// Compute the exact SBE message body length (excluding header).
     #[inline]
     pub const fn compute_encoded_length(
         fuel_figures_count: usize,
@@ -3137,10 +3144,7 @@ impl<'a> AnyMessage<'a> {
         match template_id {
             1 => {
                 let decoder = CarDecoder::wrap(buf, body_pos, block_length, version);
-                let total_len = match decoder.encoded_length_with_header() {
-                    Ok(len) => len,
-                    Err(e) => return Err(e),
-                };
+                let total_len = decoder.encoded_length_with_header()?;
                 if total_len > frame_len {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "Car",

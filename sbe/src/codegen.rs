@@ -147,10 +147,21 @@ impl Generator {
         // When including this code via include!() in edition 2024, the caller
         // must suppress these lints at the module level themselves, OR the
         // codegen must be updated to emit a separate module file (not include!).
+        // Inner doc comment: '//!' is an inner attribute, not an outer one,
+        // so it can appear alongside '#![allow(...)]' at module start without
+        // causing syn parse errors (outer '///' followed by '#![]' is invalid).
         write!(
             src,
-            "/// Generated from SBE schema package `{}` id {} version {}.\n\n",
+            "//! Generated from SBE schema package `{}` id {} version {}.\n\n",
             schema.package, schema.id, schema.version
+        )
+        .unwrap();
+        // Inner attribute covering the entire including module.
+        write!(
+            src,
+            "#![allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
+                   clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast, \
+                   unused_assignments, unused_comparisons)]\n\n"
         )
         .unwrap();
         // Emit outer attributes (not inner `#![]`) so the generated code compiles
@@ -2747,7 +2758,7 @@ fn generate_message_decoder(
             #[inline]
             pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
                 let bytes = self.#vd_snake_ident()?;
-                core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::Utf8(e))
+                core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
             }
         });
 
@@ -3891,7 +3902,7 @@ fn generate_group_decoder(
         }
 
         #[inline]
-        pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+        pub fn skip(buf: &'a [u8], pos: usize, _block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
             let entry = Self::wrap(buf, pos, acting_version);
             entry.#tail_total_fn()
         }
@@ -4471,8 +4482,6 @@ fn generate_message_encoder(
         impl_contents.extend(quote::quote! {
             /// Compute the exact SBE message length before encoding.
             /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
-            #[inline]
-            /// Compute the exact SBE message body length (excluding header).
             #[inline]
             pub const fn compute_encoded_length(
                 #(#params),*
@@ -5337,10 +5346,7 @@ fn generate_any_message(
             decode_frame_arms.extend(quote::quote! {
                 #id => {
                     let decoder = #decoder::wrap(buf, body_pos, block_length, version);
-                    let total_len = match decoder.encoded_length_with_header() {
-                        Ok(len) => len,
-                        Err(e) => return Err(e),
-                    };
+                    let total_len = decoder.encoded_length_with_header()?;
                     if total_len > frame_len {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,

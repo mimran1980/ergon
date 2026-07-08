@@ -124,27 +124,26 @@ async fn run_binance() {
             Ok(Message::Text(text)) => {
                 // Binance depth endpoint sends JSON, not SBE.
                 // SBE requires special subscription. Parse JSON for now.
-                if let Ok(update) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let (Some(bids), Some(asks)) =
+                if let Ok(update) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let (Some(bids), Some(asks)) =
                         (update["b"].as_array(), update["a"].as_array())
-                    {
-                        let bid_iter = bids.iter().filter_map(|b| {
-                            let p_str = b[0].as_str()?;
-                            let s_str = b[1].as_str()?;
-                            let p: Decimal = p_str.parse().ok()?;
-                            let s: Decimal = s_str.parse().ok()?;
-                            Some((p, s))
-                        });
-                        let ask_iter = asks.iter().filter_map(|a| {
-                            let p_str = a[0].as_str()?;
-                            let s_str = a[1].as_str()?;
-                            let p: Decimal = p_str.parse().ok()?;
-                            let s: Decimal = s_str.parse().ok()?;
-                            Some((p, s))
-                        });
-                        book.apply_snapshot_dec(bid_iter, ask_iter);
-                        print_book("Binance", &book);
-                    }
+                {
+                    let bid_iter = bids.iter().filter_map(|b| {
+                        let p_str = b[0].as_str()?;
+                        let s_str = b[1].as_str()?;
+                        let p: Decimal = p_str.parse().ok()?;
+                        let s: Decimal = s_str.parse().ok()?;
+                        Some((p, s))
+                    });
+                    let ask_iter = asks.iter().filter_map(|a| {
+                        let p_str = a[0].as_str()?;
+                        let s_str = a[1].as_str()?;
+                        let p: Decimal = p_str.parse().ok()?;
+                        let s: Decimal = s_str.parse().ok()?;
+                        Some((p, s))
+                    });
+                    book.apply_snapshot_dec(bid_iter, ask_iter);
+                    print_book("Binance", &book);
                 }
             }
             Ok(_) => {}
@@ -174,8 +173,8 @@ fn handle_bitget_sbe(data: &[u8], book: &mut LocalBook) -> Result<Option<()>, St
         1001 => {
             // Depth50 snapshot
             book.price_exponent = match decoder.price_exponent() {
-                val if val > 0 => -(val as i8),
-                e => e as i8,
+                val if val > 0 => -val,
+                e => e,
             };
             let bids: Vec<(i64, i64)> = match decoder.bids() {
                 Ok(g) => g.map(|e| (e.price(), e.size())).collect(),
