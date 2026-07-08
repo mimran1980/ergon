@@ -97,7 +97,7 @@ with `bound-check-disabled`, the `Err` path is never taken.
 
 ## Acceptance criteria
 
-- [ ] `nth()` bounds checks — WONT DO (per user: nth takes user input, trust boundary)
+- [x] `nth()` bounds checks — WONT DO (per user: nth takes user input, trust boundary)
 - [x] `skip_n()` bounds checks gated behind `bound-check-disabled`
 - [x] Entry field accessor bounds checks gated
 - [x] Iterator `next()` bounds checks gated

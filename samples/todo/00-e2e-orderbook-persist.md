@@ -55,7 +55,7 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 - [ ] `cargo test` in `samples/exchange-orderbook` passes (PARKED — roundtrip_test exists but needs generated code generation during test; works only with full build.rs)
 - [ ] `just samples-orderbook` (PARKED — needs live exchange WebSocket + Docker CH; code infra exists)
 - [ ] Orderbook table columns (PARKED — DTO defined, table auto-creates from `#[derive(Persist)]`)
-- [ ] Table has 24h TTL (PARKED — `TtlConfig` supported in `TableSchema`, not wired into sample DTO)
+- [x] Table has 24h TTL (`#[persist(ttl = "timestamp, 24 HOURS")]` on OrderbookSnapshot, compiles cleanly)
 - [ ] Single `just` command (PARKED — recipe not written; infra exists)
 
 Ref: user request for end-to-end integration demo using both crates.
