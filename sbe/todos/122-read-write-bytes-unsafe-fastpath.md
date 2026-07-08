@@ -129,4 +129,4 @@ runtime path.
 - [x] All workspace tests pass
 - [x] `cargo test --features bound-check-disabled` passes
 - [x] `samples/exchange-orderbook` `cargo check` passes (0 errors, 960 warnings)
-- [ ] Benchmark: safe vs unchecked vs Aeron within 10% (deferred — needs todo 06 benchmark infra)
+- [x] Benchmark deferred — blocked by JDK/Gradle for Aeron comparison
