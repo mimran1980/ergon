@@ -248,10 +248,23 @@ fn parse_u64_val(s: &str, prim_type: Option<PrimitiveType>) -> Option<u64> {
     if s.is_empty() {
         return None;
     }
-    if let Some(PrimitiveType::Char) = prim_type {
-        if s.len() == 1 {
+    match prim_type {
+        Some(PrimitiveType::Char) if s.len() == 1 => {
             return Some(s.chars().next().unwrap() as u64);
         }
+        Some(PrimitiveType::Float) | Some(PrimitiveType::Double) => {
+            // Parse as float/double, then reinterpret bits as u64.
+            // This preserves NaN, infinity, and negative zero bit patterns.
+            if let Some(PrimitiveType::Float) = prim_type {
+                if let Ok(v) = s.parse::<f32>() {
+                    return Some(v.to_bits() as u64);
+                }
+            } else if let Ok(v) = s.parse::<f64>() {
+                return Some(v.to_bits() as u64);
+            }
+            return None;
+        }
+        _ => {}
     }
     if let Ok(v) = s.parse::<u64>() {
         Some(v)
