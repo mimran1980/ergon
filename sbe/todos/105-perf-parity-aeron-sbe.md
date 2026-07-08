@@ -3,6 +3,19 @@
 **Hard requirement**: There cannot be a single benchmark where Aeron Rust SBE
 is faster than ErgoSBE. If such a scenario exists, it must be fixed before v1.
 
+## Current verification status (2026-07-08)
+
+Do **not** claim Aeron parity yet. The current benchmark harness compiles with:
+
+```sh
+RUSTC_WRAPPER="" cargo bench -p ergosbe --no-run
+```
+
+That only proves the benches build. The current checked-in benches compare
+ErgoSBE paths and a raw unsafe loop; they do not yet run a complete
+Aeron-vs-ErgoSBE head-to-head matrix. Existing audit notes below still identify
+critical gaps in array access and tailed group iteration.
+
 ## What to compare
 
 Generate Rust code from BOTH ErgoSBE and upstream Aeron SBE for the same
@@ -25,8 +38,9 @@ schema and benchmark head-to-head:
 - [x] Generate ErgoSBE code from same schema (already exists as golden)
 - [ ] Write comparison benchmarks in `sbe/benches/perf_parity_bench.rs`
 - [ ] Run `cargo bench` -- ErgoSBE <= Aeron in all scenarios
-- [x] Any scenario where Aeron is faster --> create a blocking bug todo
+- [ ] Any scenario where Aeron is faster --> create a blocking bug todo
   describing the gap and the fix needed
+- [ ] Document benchmark evidence before marking this parity requirement done
 
 ## Key concern: per-field bounds checks
 

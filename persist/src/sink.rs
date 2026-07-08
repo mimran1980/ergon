@@ -1528,7 +1528,10 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
     #[test]
     fn test_builder_retry_config_defaults() {
         let builder = ClickhouseSinkBuilder::new();
-        assert_eq!(builder.retry_config.initial_backoff, Duration::from_millis(100));
+        assert_eq!(
+            builder.retry_config.initial_backoff,
+            Duration::from_millis(100)
+        );
         assert_eq!(builder.retry_config.max_backoff, Duration::from_secs(10));
         assert_eq!(builder.retry_config.max_retries, 5);
     }

@@ -47,6 +47,11 @@ TTL timestamp + INTERVAL 24 HOURS
 
 `SchemaDiff` ignores TTL changes (TTL is set once, not migrated on ALTER TABLE).
 
+## Current verification status (2026-07-08)
+
+DDL/unit coverage exists, but ClickHouse `SHOW CREATE TABLE` verification is
+still open and requires Docker.
+
 ## Acceptance criteria
 
 - [x] `TtlConfig` struct with `column` + `interval` fields

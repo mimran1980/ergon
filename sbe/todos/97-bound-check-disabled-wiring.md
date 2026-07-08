@@ -4,7 +4,17 @@ The `bound-check-disabled` feature flag exists in Cargo.toml but is not wired to
 any `#[cfg]` checks in generated code. Complete the wiring so the feature actually
 switches ergonomic paths to use `_unchecked` primitives internally.
 
-**Status:** Round 1 complete — decoder `wrap_and_apply_header` wired. Remaining items deferred.
+**Status:** Round 1 was implemented, but current feature-enabled verification is
+red. Remaining items are deferred until the generated const-helper regression is
+fixed.
+
+## Current verification status (2026-07-08)
+
+`RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
+currently fails with generated `E0015` errors. Generated const functions call
+non-const `read_bytes` / `write_bytes` helpers after the Aeron-style helper
+change. The default feature-off workspace currently fails later at the golden
+stability test because generated output differs from `sbe/tests/golden/car_example.rs`.
 
 ## Acceptance criteria
 
@@ -13,7 +23,7 @@ switches ergonomic paths to use `_unchecked` primitives internally.
 - [ ] When feature enabled: default decode paths call `_unchecked` internally
 - [x] API shape is IDENTICAL regardless of feature state
 - [x] When feature disabled: all checked paths active (current behavior)
-- [x] Test: compile and run tests with feature enabled
+- [ ] Test: compile and run tests with feature enabled
 - [x] Test: compile and run tests with feature disabled
 - [ ] Benchmark: measure speedup with feature enabled vs disabled
 - [x] Golden file shows the cfg-gated code paths
@@ -38,6 +48,6 @@ switches ergonomic paths to use `_unchecked` primitives internally.
 
 ## Notes
 
-Source code analysis confirmed: the feature is declared in Cargo.toml as
-`bound-check-disabled = []` but no `#[cfg(feature = "bound-check-disabled")]`
-usage exists in codegen. The feature is currently a no-op.
+Historical source-code analysis originally found the feature was a no-op. That
+is stale: generated `#[cfg(feature = "bound-check-disabled")]` paths now exist,
+but the feature-enabled build is currently broken by todo 122.

@@ -6,6 +6,23 @@ End-to-end integration tests against a real ClickHouse instance. Validates every
 path works together: derive + persist, dynamic record + decode + persist, schema
 migration, type conflicts, error handling, cleanup.
 
+## Current verification status (2026-07-08)
+
+Persist unit tests pass during the workspace run, but this integration suite is
+ignored in the default run. The full workspace currently fails later at the SBE
+golden stability test:
+
+```sh
+RUSTC_WRAPPER="" cargo test --workspace -- --test-threads=1
+```
+
+Run the Docker-backed ignored tests before marking the remaining acceptance
+criterion complete:
+
+```sh
+DOCKER_TEST=1 cargo test -p ergo-clickhouse-persist --test integration -- --ignored
+```
+
 ## Test infrastructure
 
 Shell script `persist/tests/run-clickhouse.sh`:

@@ -2543,18 +2543,25 @@ fn generate_message_decoder(
     // Pre-compute deduplicated group names (used by tail offsets, accessors, and struct gen)
     let group_unique_names = {
         let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        msg.groups.iter().map(|g| {
-            let raw = to_pascal_case(&g.name);
-            let scoped = if multi_message { format!("{}{}", &name, raw) } else { raw };
-            if let Some(n) = m.get(&scoped) {
-                let dedup = format!("{}_{}", scoped, n + 1);
-                *m.get_mut(&scoped).unwrap() += 1;
-                dedup
-            } else {
-                m.insert(scoped.clone(), 1);
-                scoped
-            }
-        }).collect::<Vec<_>>()
+        msg.groups
+            .iter()
+            .map(|g| {
+                let raw = to_pascal_case(&g.name);
+                let scoped = if multi_message {
+                    format!("{}{}", &name, raw)
+                } else {
+                    raw
+                };
+                if let Some(n) = m.get(&scoped) {
+                    let dedup = format!("{}_{}", scoped, n + 1);
+                    *m.get_mut(&scoped).unwrap() += 1;
+                    dedup
+                } else {
+                    m.insert(scoped.clone(), 1);
+                    scoped
+                }
+            })
+            .collect::<Vec<_>>()
     };
     let mut k = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
@@ -2648,10 +2655,8 @@ fn generate_message_decoder(
         let scoped = &group_unique_names[gi];
         let g_snake = to_snake_case(&g.name);
         let g_snake_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
-        let g_decoder_ident = syn::Ident::new(
-            &format!("{scoped}Decoder"),
-            proc_macro2::Span::call_site(),
-        );
+        let g_decoder_ident =
+            syn::Ident::new(&format!("{scoped}Decoder"), proc_macro2::Span::call_site());
         let m_idx_lit = syn::LitInt::new(&g_idx.to_string(), proc_macro2::Span::call_site());
         let tail_offset_ident: syn::Ident = syn::Ident::new(
             &format!("tail_offset_{}", g_idx),
@@ -4006,7 +4011,12 @@ fn generate_group_decoder(
     // to avoid collisions when different parent groups have same-named children
     for ng in &g.groups {
         let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
-        ts.extend(generate_group_decoder(ng, elements, byte_order, &nested_name));
+        ts.extend(generate_group_decoder(
+            ng,
+            elements,
+            byte_order,
+            &nested_name,
+        ));
     }
 
     ts
@@ -4534,8 +4544,7 @@ fn generate_message_encoder(
             } else {
                 raw_enc_name
             };
-            let g_pascal_enc =
-                syn::Ident::new(&format!("{scoped_enc}Encoder"), span);
+            let g_pascal_enc = syn::Ident::new(&format!("{scoped_enc}Encoder"), span);
             let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
             let (num_offset, num_size) = get_dim_num_layout(elements, &g.dimension_type);
             let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
@@ -4716,21 +4725,34 @@ fn generate_message_encoder(
     let mut group_buf = String::new();
     let enc_group_names = {
         let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        msg.groups.iter().map(|g| {
-            let raw = to_pascal_case(&g.name);
-            let scoped = if multi_message { format!("{}{}", &name, raw) } else { raw.clone() };
-            if let Some(n) = m.get(&scoped) {
-                let dedup = format!("{}_{}", scoped, n + 1);
-                *m.get_mut(&scoped).unwrap() += 1;
-                dedup
-            } else {
-                m.insert(scoped.clone(), 1);
-                scoped
-            }
-        }).collect::<Vec<_>>()
+        msg.groups
+            .iter()
+            .map(|g| {
+                let raw = to_pascal_case(&g.name);
+                let scoped = if multi_message {
+                    format!("{}{}", &name, raw)
+                } else {
+                    raw.clone()
+                };
+                if let Some(n) = m.get(&scoped) {
+                    let dedup = format!("{}_{}", scoped, n + 1);
+                    *m.get_mut(&scoped).unwrap() += 1;
+                    dedup
+                } else {
+                    m.insert(scoped.clone(), 1);
+                    scoped
+                }
+            })
+            .collect::<Vec<_>>()
     };
     for (gi, g) in msg.groups.iter().enumerate() {
-        generate_group_encoder(&mut group_buf, g, elements, byte_order, &enc_group_names[gi]);
+        generate_group_encoder(
+            &mut group_buf,
+            g,
+            elements,
+            byte_order,
+            &enc_group_names[gi],
+        );
     }
     if !group_buf.is_empty() {
         let group_ts: proc_macro2::TokenStream = group_buf

@@ -6,7 +6,21 @@ The `simple-binary-encoding` submodule contains the official Java reference
 implementation, the existing Rust generator, binary `.sbe` fixtures, and a
 comprehensive test suite. Pull their tests into ErgoSBE's suite so we validate
 against the same expectations.
-**Status: DONE**
+**Status: DONE for broad inventory; REOPENED for parser-behaviour parity.**
+
+## Parser parity correction (2026-07-08)
+
+The original harvest captured schemas and broad regression coverage, but a
+fresh comparison against Aeron's `sbe-tool` XML parser shows the Java XML parser
+tests were not fully ported as semantic acceptance tests. ErgoSBE still accepts
+or under-validates schema shapes that Aeron rejects or warns on before IR
+generation.
+
+Track the focused parser work in:
+
+- `125-schema-parser-aeron-parity.md` — strict parser and layout validation
+- `126-primitive-value-and-valueref-parity.md` — typed primitive values,
+  constants, enum/set values, and `valueRef`
 
 
 ## Source inventory
@@ -48,6 +62,15 @@ against the same expectations.
 - [x] Review upstream IR design (`Ir.java`, `Token.java`, `Signal.java`) for
       gaps against ErgoSBE's IR
 - [x] Document any upstream behaviours we deliberately diverge from
+- [ ] Port Aeron's XML parser behaviour tests from `sbe-tool/src/test/java/uk/co/real_logic/sbe/xml/`
+      as ErgoSBE semantic parser tests, especially `EncodedDataTypeTest`,
+      `EnumTypeTest`, `SetTypeTest`, `CompositeTypeTest`, `OffsetFileTest`,
+      `ErrorHandlerTest`, `RelativeXIncludeTest`, and `GroupWithDataTest`
+- [ ] Every semantic parser divergence from Aeron is either fixed or documented
+      as a deliberate departure with a passing test
+- [ ] Error text does not need to copy Aeron; miette diagnostics should be
+      better than Aeron's plain Java error strings while preserving the same
+      semantic pass/fail decisions
 
 Ref: `design/DECISIONS.md` §11 test matrix. Upstream at
 `simple-binary-encoding/rust/tests/`, `simple-binary-encoding/sbe-tool/src/test/`.

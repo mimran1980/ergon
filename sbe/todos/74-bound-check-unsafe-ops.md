@@ -6,6 +6,18 @@ When `bound-check-disabled` feature is active, generate code that uses unsafe
 primitives for maximum throughput. The feature is opt-in and explicitly for
 HFT users who accept the safety trade-off.
 
+## Current verification status (2026-07-08)
+
+The full default workspace command currently fails at the golden stability test,
+and feature-enabled tests fail with generated `E0015` const-helper errors. Do
+not claim the unsafe feature path is verified until:
+
+```sh
+RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
+```
+
+passes again.
+
 ## What changes when `bound-check-disabled` is active
 
 Currently the feature only skips `if offset > buf.len()` checks. It should
@@ -51,9 +63,13 @@ Use a helper macro or function to keep the templates DRY.
 - [ ] All unsafe gated behind `#[cfg(feature = "bound-check-disabled")]`
 - [x] Safe defaults unchanged when feature off
 - [ ] Benchmarks: measure speed difference for both paths
-- [x] Tests pass with and without feature
+- [ ] Tests pass with and without feature
 - [ ] Undefined Behavior & Memory Safety Audit: Run the test suite under Miri (`cargo miri test`) with the `bound-check-disabled` feature enabled to verify that no pointer arithmetic, slicing, or raw pointer casts violate Rust's memory alignment, dereferenceability, or aliasing rules.
 
 Ref: user request — bound-check-disabled should go all-in on unsafe for HFT.
 
-Audit note (2026-07-06): Items 4 and 6 corrected from [ ] to [x] — safe defaults confirmed unchanged (codegen.rs:1820-1844 for header decode), tests pass both with and without feature (baseline_test.rs:867-868). Items 1-2 (copy_nonoverlapping, get_unchecked) NOT implemented. Pre-existing header decode uses ptr::read_unaligned behind #[cfg(feature = "bound-check-disabled")] (codegen.rs:1828-1835, golden:733-748).
+Audit note (2026-07-06): safe defaults were confirmed unchanged at that time.
+The statement that tests pass both with and without the feature is now stale as
+of 2026-07-08 because todo 122 introduced non-const helpers that generated
+const callsites still use. Items 1-2 (`copy_nonoverlapping`, `get_unchecked`)
+remain NOT implemented.

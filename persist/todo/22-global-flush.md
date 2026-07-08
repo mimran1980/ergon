@@ -48,6 +48,12 @@ Even simpler (ponytail): store senders in a `Mutex<Vec<Arc<dyn Fn() + Send + Syn
 where each closure calls the sender's flush. Register on build, deregister
 on drop via Weak reference.
 
+## Current verification status (2026-07-08)
+
+Unit coverage verifies no-sender behavior and sender registration shape. The
+multi-sender ClickHouse roundtrip remains open because Docker integration tests
+are not part of the default workspace pass.
+
 ## Acceptance criteria
 
 - [x] `ClickhouseSink::flush()` flushes all active senders

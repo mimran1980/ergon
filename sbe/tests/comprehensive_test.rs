@@ -12,7 +12,10 @@ const MODULE: &str = "car_example";
 #[test]
 fn enum_all_variants_roundtrip() {
     let (_schema, src) = generate(&Paths::example_schema(), "enum_rt");
-    compile_and_run("enum_rt", &src, r#"
+    compile_and_run(
+        "enum_rt",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -41,13 +44,17 @@ fn enum_all_variants_roundtrip() {
         assert!(matches!(BooleanType::from_raw(99), BooleanType::NullVal));
         // Constant enum
         assert_eq!(car2.discounted_model(), Model::C);
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn set_fields_roundtrip() {
     let (_schema, src) = generate(&Paths::example_schema(), "set_rt");
-    compile_and_run("set_rt", &src, r#"
+    compile_and_run(
+        "set_rt",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -73,7 +80,8 @@ fn set_fields_roundtrip() {
         assert!(extras.sports_pack());
         assert!(!extras.sun_roof());
         assert_eq!(extras.raw(), 6u8);
-    "#);
+    "#,
+    );
 }
 
 // ── todo 03: group/var-data wire parity ───────────────────────────────
@@ -81,7 +89,10 @@ fn set_fields_roundtrip() {
 #[test]
 fn group_with_vardata_entries_roundtrip() {
     let (_schema, src) = generate(&Paths::example_schema(), "group_vd_rt");
-    compile_and_run("group_vd_rt", &src, r#"
+    compile_and_run(
+        "group_vd_rt",
+        &src,
+        r#"
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -130,13 +141,17 @@ fn group_with_vardata_entries_roundtrip() {
         // skip_n
         ff_dec.skip_n(1).unwrap();
         assert_eq!(ff_dec.remaining(), 1);
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn vardata_empty_and_max_roundtrip() {
     let (_schema, src) = generate(&Paths::example_schema(), "vd_edge");
-    compile_and_run("vd_edge", &src, r#"
+    compile_and_run(
+        "vd_edge",
+        &src,
+        r#"
         // Encode with empty var-data
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
@@ -161,7 +176,8 @@ fn vardata_empty_and_max_roundtrip() {
         assert_eq!(car2.activation_code().unwrap(), b"XYZ0123456789");
         // is_empty on empty group
         assert!(car2.fuel_figures().unwrap().is_empty());
-    "#);
+    "#,
+    );
 }
 
 // ── todo 01: scalar wire parity ───────────────────────────────────────
@@ -169,7 +185,10 @@ fn vardata_empty_and_max_roundtrip() {
 #[test]
 fn all_scalar_accessor_paths() {
     let (_schema, src) = generate(&Paths::example_schema(), "scalar_paths");
-    compile_and_run("scalar_paths", &src, r#"
+    compile_and_run(
+        "scalar_paths",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234); car.model_year(2013);
@@ -192,7 +211,8 @@ fn all_scalar_accessor_paths() {
         unsafe {
             assert_eq!(car2.serial_number_unchecked(), 1234u64);
         }
-    "#);
+    "#,
+    );
 }
 
 // ── todo 58: boolean support ──────────────────────────────────────────
@@ -200,7 +220,10 @@ fn all_scalar_accessor_paths() {
 #[test]
 fn boolean_field_from_bool_impl() {
     let (_schema, src) = generate(&Paths::example_schema(), "bool_impl");
-    compile_and_run("bool_impl", &src, r#"
+    compile_and_run(
+        "bool_impl",
+        &src,
+        r#"
         // BooleanType has From<bool> and From<BooleanType> for bool
         let t: BooleanType = true.into();
         assert_eq!(t, BooleanType::T);
@@ -210,7 +233,8 @@ fn boolean_field_from_bool_impl() {
         assert!(b);
         let b2: bool = BooleanType::F.into();
         assert!(!b2);
-    "#);
+    "#,
+    );
 }
 
 // ── todo 52: NULL/MIN/MAX constants ───────────────────────────────────
@@ -223,7 +247,10 @@ fn null_min_max_constants_match_schema_values() {
     assert!(src.contains("SERIAL_NUMBER_MIN"), "missing MIN constant");
     assert!(src.contains("SERIAL_NUMBER_MAX"), "missing MAX constant");
     // Compile-and-run: verify constant values match schema definitions
-    compile_and_run("consts_val", &src, r#"
+    compile_and_run(
+        "consts_val",
+        &src,
+        r#"
         // serialNumber: uint64, null=2^64-1, min=0, max=2^64-2
         assert_eq!(CarDecoder::SERIAL_NUMBER_NULL, 18446744073709551615u64);
         assert_eq!(CarDecoder::SERIAL_NUMBER_MIN, 0u64);
@@ -249,7 +276,8 @@ fn null_min_max_constants_match_schema_values() {
         assert_eq!(PerformanceFiguresEntryDecoder::OCTANE_RATING_NULL, 255u8);
         assert_eq!(PerformanceFiguresEntryDecoder::OCTANE_RATING_MIN, 90u8);
         assert_eq!(PerformanceFiguresEntryDecoder::OCTANE_RATING_MAX, 110u8);
-    "#);
+    "#,
+    );
 }
 
 // ── todo 60: schema_id fast extract ───────────────────────────────────
@@ -257,8 +285,14 @@ fn null_min_max_constants_match_schema_values() {
 #[test]
 fn schema_id_from_header_extracts_correctly() {
     let (_schema, src) = generate(&Paths::example_schema(), "schema_id");
-    assert!(src.contains("fn schema_id_from_header"), "missing schema_id fast extract");
-    compile_and_run("schema_id", &src, r#"
+    assert!(
+        src.contains("fn schema_id_from_header"),
+        "missing schema_id fast extract"
+    );
+    compile_and_run(
+        "schema_id",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -275,7 +309,8 @@ fn schema_id_from_header_extracts_correctly() {
         // schema_id_from_header is a free function at the module root
         let id = schema_id_from_header(encoded).unwrap();
         assert_eq!(id, 1u16); // Car schema id is 1
-    "#);
+    "#,
+    );
 }
 
 // ── todo 61: Display/Debug impls ──────────────────────────────────────
@@ -283,7 +318,10 @@ fn schema_id_from_header_extracts_correctly() {
 #[test]
 fn display_includes_scalar_fields() {
     let (_schema, src) = generate(&Paths::example_schema(), "display_full");
-    compile_and_run("display_full", &src, r#"
+    compile_and_run(
+        "display_full",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(9999); car.model_year(2025);
@@ -307,7 +345,8 @@ fn display_includes_scalar_fields() {
         // var-data fields show byte count, not content
         assert!(d.contains("manufacturer"), "manufacturer field: {d}");
         assert!(d.contains("bytes"), "var-data shows byte count: {d}");
-    "#);
+    "#,
+    );
 }
 
 // ── todo 66: constant field values ────────────────────────────────────
@@ -315,7 +354,10 @@ fn display_includes_scalar_fields() {
 #[test]
 fn constant_fields_return_correct_values() {
     let (_schema, src) = generate(&Paths::example_schema(), "const_fields");
-    compile_and_run("const_fields", &src, r#"
+    compile_and_run(
+        "const_fields",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -334,7 +376,8 @@ fn constant_fields_return_correct_values() {
         // discountedModel is presence="constant" valueRef="Model.C"
         assert_eq!(car2.discounted_model(), Model::C);
         assert_eq!(car2.discounted_model().raw(), 67u8); // 'C'
-    "#);
+    "#,
+    );
 }
 
 // ── todo 80: schema hash / SHA256 ─────────────────────────────────────
@@ -345,11 +388,15 @@ fn schema_constants_present_and_nonzero() {
     assert!(src.contains("SCHEMA_HASH"), "SCHEMA_HASH missing");
     assert!(src.contains("SCHEMA_SHA256"), "SCHEMA_SHA256 missing");
     assert!(src.contains("SEMANTIC_VERSION"), "SEMANTIC_VERSION missing");
-    compile_and_run("schema_consts", &src, r#"
+    compile_and_run(
+        "schema_consts",
+        &src,
+        r#"
         assert!(SCHEMA_HASH != 0, "SCHEMA_HASH should be non-zero");
         assert_eq!(SCHEMA_SHA256.len(), 32, "SHA256 is 32 bytes");
         assert!(!SCHEMA_SHA256_HEX.is_empty(), "SCHEMA_SHA256_HEX non-empty");
-    "#);
+    "#,
+    );
 }
 
 // ── todo 03 + 84: encoder roundtrip with groups ───────────────────────
@@ -357,7 +404,10 @@ fn schema_constants_present_and_nonzero() {
 #[test]
 fn encoder_roundtrip_with_groups_and_vardata() {
     let (_schema, src) = generate(&Paths::example_schema(), "enc_rt");
-    compile_and_run("enc_rt", &src, r#"
+    compile_and_run(
+        "enc_rt",
+        &src,
+        r#"
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(7777); car.model_year(2022);
@@ -411,7 +461,8 @@ fn encoder_roundtrip_with_groups_and_vardata() {
         assert_eq!(car2.manufacturer().unwrap(), b"Porsche");
         assert_eq!(car2.model().unwrap(), b"911 GT3");
         assert_eq!(car2.activation_code().unwrap(), b"RACE");
-    "#);
+    "#,
+    );
 }
 
 // ── todo 67 + 94: as_chunks + SoA for fixed-entry groups ─────────────
@@ -419,7 +470,10 @@ fn encoder_roundtrip_with_groups_and_vardata() {
 #[test]
 fn fixed_entry_group_as_chunks_and_entries() {
     let (_schema, src) = generate(&Paths::example_schema(), "as_chunks");
-    compile_and_run("as_chunks", &src, r#"
+    compile_and_run(
+        "as_chunks",
+        &src,
+        r#"
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -451,7 +505,8 @@ fn fixed_entry_group_as_chunks_and_entries() {
         // as_chunks() raw byte access for fixed-entry groups
         let chunks = acc.as_chunks().unwrap();
         assert_eq!(chunks.len(), 3);
-    "#);
+    "#,
+    );
 }
 
 // ── todo 69: buffer verify function ───────────────────────────────────
@@ -459,7 +514,10 @@ fn fixed_entry_group_as_chunks_and_entries() {
 #[test]
 fn verify_function_detects_invalid_messages() {
     let (_schema, src) = generate(&Paths::example_schema(), "verify_fn");
-    compile_and_run("verify_fn", &src, r#"
+    compile_and_run(
+        "verify_fn",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -477,7 +535,8 @@ fn verify_function_detects_invalid_messages() {
         assert!(CarDecoder::verify(encoded).is_ok());
         // verify() should fail on truncated buffer
         assert!(CarDecoder::verify(&encoded[..5]).is_err());
-    "#);
+    "#,
+    );
 }
 
 // ── todo 93: float composite skips Eq/Ord/Hash ──────────────────────────
@@ -492,8 +551,10 @@ fn float_composite_skips_eq_ord_hash() {
     let fp_has_eq = fp_pre.contains(" Eq,");
     let fp_has_ord = fp_pre.contains(" Ord,");
     let fp_has_hash = fp_pre.contains("Hash");
-    assert!(!fp_has_eq && !fp_has_ord && !fp_has_hash,
-        "FloatPair must NOT derive Eq/Ord/Hash, but got Eq={fp_has_eq} Ord={fp_has_ord} Hash={fp_has_hash}");
+    assert!(
+        !fp_has_eq && !fp_has_ord && !fp_has_hash,
+        "FloatPair must NOT derive Eq/Ord/Hash, but got Eq={fp_has_eq} Ord={fp_has_ord} Hash={fp_has_hash}"
+    );
     // Integer composite (IntPair) SHOULD derive Eq/Ord/Hash
     let ip_idx = src.find("pub struct IntPair").unwrap();
     let ip_pre = &src[ip_idx.saturating_sub(200)..ip_idx + 50];
@@ -507,7 +568,10 @@ fn float_composite_skips_eq_ord_hash() {
 #[test]
 fn buffer_too_short_truncated_field() {
     let (_schema, src) = generate(&Paths::example_schema(), "buf_err");
-    compile_and_run("buf_err", &src, r#"
+    compile_and_run(
+        "buf_err",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -528,13 +592,17 @@ fn buffer_too_short_truncated_field() {
         assert!(CarDecoder::verify(&encoded[..8]).is_err());
         // Empty buffer
         assert!(CarDecoder::verify(&[]).is_err());
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn wrong_schema_id_detected() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "wrong_sid");
-    compile_and_run("wrong_sid", &src, r#"
+    compile_and_run(
+        "wrong_sid",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -552,14 +620,18 @@ fn wrong_schema_id_detected() -> Result<(), Box<dyn std::error::Error>> {
         encoded[4] = 99u8;
         // wrap_and_apply_header should detect wrong schema and fail
         assert!(CarDecoder::wrap_and_apply_header(&encoded, 0).is_err());
-    "#);
+    "#,
+    );
     Ok(())
 }
 
 #[test]
 fn vardata_truncated_length_detected() {
     let (_schema, src) = generate(&Paths::example_schema(), "vd_trunc");
-    compile_and_run("vd_trunc", &src, r#"
+    compile_and_run(
+        "vd_trunc",
+        &src,
+        r#"
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -587,7 +659,8 @@ fn vardata_truncated_length_detected() {
         // VarData with explicit length prefix — cutting mid-way fails
         let trunc_at_block_end = &encoded[..45]; // just past header + block, before varData
         assert!(CarDecoder::verify(trunc_at_block_end).is_err());
-    "#);
+    "#,
+    );
 }
 
 // ── Raw accessor tests (HFT hot-path opts) ─────────────────────────────
@@ -595,7 +668,10 @@ fn vardata_truncated_length_detected() {
 #[test]
 fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "raw_enum");
-    compile_and_run("raw_enum", &src, r#"
+    compile_and_run(
+        "raw_enum",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -615,14 +691,18 @@ fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::er
         assert_eq!(car2.code().raw(), 65u8);       // A = 65 (char 'A')
         // raw_ prefix methods for scalar fields exist and match
         // (raw_ accessors skip the enum decoding and return the primitive)
-    "#);
+    "#,
+    );
     Ok(())
 }
 
 #[test]
 fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "raw_set");
-    compile_and_run("raw_set", &src, r#"
+    compile_and_run(
+        "raw_set",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2000);
@@ -647,7 +727,8 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         assert!(car2.extras().sports_pack());
         assert!(!car2.extras().sun_roof());
         assert_eq!(raw, 6u8); // 0b110 = bits 1 and 2 set
-    "#);
+    "#,
+    );
     Ok(())
 }
 
@@ -675,7 +756,10 @@ fn all_types_little_endian_roundtrip() {
     assert!(!fp_pre.contains(" Ord,"), "FloatPair should NOT derive Ord");
     assert!(!fp_pre.contains("Hash"), "FloatPair should NOT derive Hash");
     // Compile check: types exist and are callable
-    compile_and_run("all_types_le", &src, r#"
+    compile_and_run(
+        "all_types_le",
+        &src,
+        r#"
         // Verify enum constants
         assert_eq!(TestEnum::A as u8, 0u8);
         assert_eq!(TestEnum::B as u8, 1u8);
@@ -702,14 +786,18 @@ fn all_types_little_endian_roundtrip() {
         assert_eq!(b.raw(), 1u8);
         let c = TestEnum::from_raw(2);
         assert_eq!(c.raw(), 2u8);
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn all_types_big_endian_roundtrip() {
     let (_schema, src) = generate(&Paths::all_types_be_schema(), "all_types_be");
     assert!(src.contains("from_be_bytes"), "BE byte order missing");
-    compile_and_run("all_types_be", &src, r#"
+    compile_and_run(
+        "all_types_be",
+        &src,
+        r#"
         let s = AllScalars::new(42i8, 128u8, 1000i16, 50000u16,
             100000i32, 3000000000u32, 99999i64, 77777u64,
             1.0f32, 2.0f64);
@@ -720,5 +808,6 @@ fn all_types_big_endian_roundtrip() {
         let mut set = TestSet::default();
         set.set_bit2(true);
         assert!(set.bit2());
-    "#);
+    "#,
+    );
 }

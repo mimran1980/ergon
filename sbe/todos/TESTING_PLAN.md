@@ -3,6 +3,50 @@
 **Date:** 2026-07-07
 **Goal:** Every feature has tests proving it works, is fast, and is easy to use.
 
+## Current gate status (2026-07-08)
+
+The full quality gate is not green:
+
+- FAIL: `RUSTC_WRAPPER="" cargo test --workspace -- --test-threads=1`
+  - Current failure: `generated_output_matches_golden` because generated output
+    differs from `sbe/tests/golden/car_example.rs`.
+- PASS: `RUSTC_WRAPPER="" cargo bench -p ergosbe --no-run`
+- FAIL: `cargo fmt --all --check`
+- FAIL: `RUSTC_WRAPPER="" cargo clippy --workspace --all-targets -- -D warnings`
+- FAIL: `RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
+- FAIL: `cd samples/exchange-orderbook && RUSTC_WRAPPER="" cargo check`
+- OPEN: Aeron `sbe-tool` schema parser parity is incomplete; see todos 125
+  and 126 for strict parser validation and typed primitive/value handling.
+
+Use `sbe/todos/123-release-quality-gates.md` as the move-to-next-task checklist.
+Do not advance from SBE to persist/sample completion work until the SBE golden,
+feature test, format, clippy, and sample compile gates are green. Do not claim
+Aeron parity until todo 105/120/125/126 produce head-to-head evidence.
+
+## Phase 0: schema parser parity (todos 125, 126)
+
+These run before codegen proof. A fast generated API is irrelevant if the parser
+accepted a schema Aeron would reject or computed a different fixed block layout.
+
+### 0.1 Aeron XML parser behaviour
+- Port parser tests from Aeron `sbe-tool/src/test/java/uk/co/real_logic/sbe/xml/`
+- Cover duplicate names/IDs, field/group/data order, blockLength padding,
+  headerType/dimensionType/varData well-formedness, bad includes, and invalid
+  composite refs/offsets
+- Assert failures are `ParseError`/`ResolveError` with element names and source
+  spans, not silent success
+- Require miette diagnostics to be better than Aeron's plain Java strings:
+  filename, source snippet, labels on the offending XML, labels on both sides of
+  duplicate conflicts, and help text
+
+### 0.2 Typed primitive values and valueRef
+- Port `EncodedDataTypeTest`, `EnumTypeTest`, and `SetTypeTest` behaviours
+- Cover signed/unsigned min/max/null parsing, float/double values, char arrays,
+  constant-without-value, enum validValue range/null checks, set bit bounds,
+  and full `EnumName.ValidValue` `valueRef` validation
+- Confirm type-level `presence` is inherited by fields when the field omits
+  `presence`, matching Aeron
+
 ## Phase 1: sbe codegen unit tests (no Docker needed)
 
 These verify that generated code is correct. Each test encodes a message,
@@ -99,6 +143,8 @@ from existing baseline_test.rs.
 - Benchmark: array field access (some_numbers — verify bulk copy beats while-loop)
 - Benchmark: composite single-field access (engine().capacity())
 - Output: ErgoSBE ≤ Aeron in every scenario (or file bug todo if not)
+- Gate: this must compare against actual Aeron-generated Rust code, not only
+  ErgoSBE checked vs unchecked or raw unsafe loops.
 
 ### 3.2 iter_fast benchmark
 - Benchmark: standard Iterator vs iter_fast() on fuel_figures (50 entries)
@@ -117,24 +163,36 @@ from existing baseline_test.rs.
 - Verify: persisted to ClickHouse with correct schema
 - Verify: TTL configured on table
 - Run `just samples-orderbook` — single command works
+- Gate: `cargo check` for `samples/exchange-orderbook` must pass before any
+  live exchange or ClickHouse E2E verification is meaningful.
+- Current focused compile blockers are todo 122 (`E0015`) and todo 124 (`E0308`).
 
 ## Implementation order
 
 | Order | Phase | Parallel? | Depends on |
 |-------|-------|-----------|------------|
-| 1 | 1.1 iter_fast test | Can run with 1.2, 1.3 | None |
-| 2 | 1.2 compute_encoded_length test | Can run with 1.1, 1.3 | None |
-| 3 | 1.3 entries() test | Can run with 1.1, 1.2 | None |
-| 4 | 1.4 array fast path test | After 1.1-1.3 (same file) | None |
-| 5 | 1.5 Display test | After 1.4 | None |
-| 6 | 1.6 composite test | After 1.5 | None |
-| 7 | 1.7 bounds check test | After 1.6 | None |
-| 8 | 2.1 retry test | Can run with 1.x | Docker |
-| 9 | 2.2 global flush test | Can run with 2.1 | Docker |
-| 10 | 2.3 metrics test | Can run with 2.1 | None |
-| 11 | 2.4 compression test | Can run with 2.1 | None |
-| 12 | 3.x benchmarks | After 1.x | Aeron code |
-| 13 | 4.1 sample E2E | After 1.x + 2.x | Docker + exchange data |
+| 1 | 0.x parser parity | Can run with docs/test planning | None |
+| 2 | 1.1 iter_fast test | Can run with 1.2, 1.3 | Parser layout sanity |
+| 3 | 1.2 compute_encoded_length test | Can run with 1.1, 1.3 | Parser layout sanity |
+| 4 | 1.3 entries() test | Can run with 1.1, 1.2 | Parser layout sanity |
+| 5 | 1.4 array fast path test | After 1.1-1.3 (same file) | Parser layout sanity |
+| 6 | 1.5 Display test | After 1.4 | Parser value semantics |
+| 7 | 1.6 composite test | After 1.5 | Parser composite parity |
+| 8 | 1.7 bounds check test | After 1.6 | None |
+| 9 | 2.1 retry test | Can run with 1.x | Docker |
+| 10 | 2.2 global flush test | Can run with 2.1 | Docker |
+| 11 | 2.3 metrics test | Can run with 2.1 | None |
+| 12 | 2.4 compression test | Can run with 2.1 | None |
+| 13 | 3.x benchmarks | After 1.x | Aeron code |
+| 14 | 4.1 sample E2E | After 1.x + 2.x | Docker + exchange data |
+
+## Move-to-next-task rule
+
+Before moving to persist completion, all SBE gates above must pass. Before
+moving to samples completion, persist Docker-backed gaps must be either passing
+or explicitly scoped out. The final sample is the real-world proof: it must
+compile, run, decode real SBE frames, build the orderbook, and persist rows to
+ClickHouse.
 
 ## Estimated effort
 

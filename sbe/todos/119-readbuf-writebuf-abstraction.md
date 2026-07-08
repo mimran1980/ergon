@@ -2,6 +2,17 @@
 
 **Ref:** user request. Aeron Rust SBE comparison.
 
+## Current verification status (2026-07-08)
+
+The need for this abstraction is now visible in sample builds. Generated modules
+emit many `unexpected cfg condition value: bound-check-disabled` warnings when
+included from crates that do not define the same feature. The core
+`bound-check-disabled` feature path also currently fails because byte helpers
+are non-const while generated const callsites remain.
+
+This todo should not be treated as cosmetic. It is the route to making bounds
+check gating auditable, DRY, and less noisy in generated user crates.
+
 ## Problem
 
 Currently `bound-check-disabled` is wired via `#[cfg]` inside every generated
@@ -71,4 +82,6 @@ impl<'a> WriteBuf<'a> {
 - [ ] Generated code is DRY — one `self.buf.get_u16(offset)` not two `#[cfg]` arms
 - [ ] Golden file regen passes
 - [ ] All existing tests pass with both features
+- [ ] Generated modules do not produce `unexpected cfg` warning noise in crates that include them
+- [ ] `samples/exchange-orderbook` compiles with generated modules included
 - [ ] Performance benchmark shows no regression vs current (should be faster due to no byte-by-byte loops)

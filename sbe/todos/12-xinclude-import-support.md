@@ -16,9 +16,27 @@ schema parses.
 - [x] Test with `common-types.xml` + `example-schema.xml`
 - [x] Test with nested includes (`sub/basic-schema.xml` → `sub/sub2/common.xml`)
 - [ ] Test with `FixBinary.xml` (multi-schema FIX message set)
+- [ ] Missing include files return a parse error; they must not be skipped
+      silently
+- [ ] Malformed included XML returns a parse error; it must not be ignored
+- [ ] Include diagnostics name the parent schema and `href` that failed, with
+      miette labels on the offending include element
 
 Ref: upstream schemas at `simple-binary-encoding/sbe-tool/src/test/resources/sub/`.
 
 
 ## Verification / Unit Testing
 - [x] Create a unit test `test_xinclude_detects_cycle` that verifies cyclic includes return an Error (self-include). Existing tests (`parses_schema_with_xinclude_relative_path`, `parses_example_schema_with_xinclude`) already verify fields are merged correctly.
+
+## Aeron comparison note (2026-07-08)
+
+Aeron parses with an XInclude-aware DOM and an `InputSource` `systemId`, so a
+bad include path or malformed include fails schema parsing. ErgoSBE's current
+`read_include_file` contract documents missing includes as `Ok(None)` and
+`parse_schema` skips `Document::parse` failures for included content. That is
+not acceptable for HFT schema generation: a shared header or dimension file can
+be absent and the generator may still produce plausible but wrong IR.
+
+Diagnostic target: preserve Aeron's semantic strictness, but beat Aeron's error
+messages with miette source snippets, exact include-element labels, the failed
+resolved path candidates, and a short help hint.

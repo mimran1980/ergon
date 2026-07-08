@@ -175,6 +175,13 @@ with a changed struct:
 
 ## Running tests
 
+Current repo snapshot note (2026-07-08): persist unit/doc tests pass during the
+workspace run, but the full workspace currently fails later at the SBE golden
+stability test. Docker-backed ClickHouse integration tests are ignored unless
+explicitly run. Unit-test success alone does not prove native ClickHouse
+roundtrips, TTL inspection, compression roundtrips, or global multi-sender flush
+behavior.
+
 Unit tests need no external services:
 
 ```sh

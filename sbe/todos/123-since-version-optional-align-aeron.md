@@ -38,5 +38,5 @@ approach and replicate the behaviour.
 - [ ] ErgoSBE behaviour matches Aeron for: return types, null representation, Display output
 - [ ] `Option<T>` accessor generated ONLY when Aeron also generates `Option<T>`
 - [ ] Display/Debug impls handle `Option<T>` fields correctly (match Aeron's `toString()`)
-- [ ] Samples crate compiles with Binance spot schema
+- [x] Samples crate compiles with Binance spot schema (0 errors, commit 4b935b8)
 - [ ] Golden file + all workspace tests pass

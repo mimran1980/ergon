@@ -53,6 +53,11 @@ For the URL-based configuration, simply using `https://` in the URL should
 enable TLS automatically (which `clickhouse::Client` already supports).
 The builder options are for custom certificate configurations.
 
+## Current verification status (2026-07-08)
+
+Builder/unit coverage exists, but Docker-backed compression roundtrip has not
+been verified in the default workspace run.
+
 ## Acceptance criteria
 
 - [x] `ClickhouseSinkBuilder::compression()` accepts `None` / `Lz4` (sink.rs:135)

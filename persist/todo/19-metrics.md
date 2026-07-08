@@ -54,6 +54,12 @@ pub fn metrics(mut self, m: impl PersistMetrics) -> Self { ... }
 Internally, store `Arc<dyn PersistMetrics>` and call it at the relevant
 points. Default is `NoopMetrics` — zero overhead when not configured.
 
+## Current verification status (2026-07-08)
+
+Unit-level metrics tests pass in the default workspace run, including custom
+metrics hook counting. The remaining open item is an integration-level assertion
+around ClickHouse/retry/drop paths.
+
 ## Acceptance criteria
 
 - [x] `PersistMetrics` trait defined with the hooks above (metrics.rs:14)

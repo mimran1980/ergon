@@ -22,8 +22,17 @@ The function `parse_composite` at `sbe/src/xml.rs:602` iterates over child eleme
 | `<ref>` | `<ref name="efficiency" type="Percentage"/>` | silently skipped |
 | `<enum>` | `<enum name="BoostType" encodingType="char">` inside Booster | silently skipped |
 | `<set>` | *(not present in example-schema but valid per SBE spec)* | silently skipped |
+| nested `<composite>` | inline composite child inside another composite | silently skipped |
 
 The codegen layer (`parse_composite_members` in `codegen.rs:970`) only sees `BeginField` tokens from the parser — since the parser never emits tokens for `<ref>`/`<enum>`/`<set>` children, the codegen never generates members for them. No codegen changes are needed for this gap; it is entirely a parser issue.
+
+### Aeron comparison (2026-07-08)
+
+Aeron's `CompositeType` accepts `type|enum|set|composite|ref` children,
+resolves `<ref>` recursively, detects circular composite refs, rejects
+`data`/`group` inside composites, detects duplicate member names, and validates
+explicit composite offsets. ErgoSBE should match those parser semantics before
+claiming composite parity.
 
 ### Generated output (golden file, `car_example.rs`)
 
@@ -60,6 +69,13 @@ This test will fail when the gaps are fixed — update its assertions when imple
 - [x] Constant fields inside composites generate correct `const fn` accessors returning their schema constant values
 - [ ] Composite types resolve nested `<ref>` definitions recursively
 - [ ] Nested `<enum>` and `<set>` types inside composites are generated correctly
+- [ ] Nested `<composite>` definitions inside composites are parsed and emitted
+- [ ] Circular composite refs are rejected with a miette diagnostic pointing at
+      the ref chain
+- [ ] Duplicate composite member names are rejected with labels on the original
+      and duplicate member
+- [ ] Explicit composite offsets are validated against overlap/insufficient
+      space rules matching Aeron
 - [ ] `baseline_test.rs` is fully updated to test all fields of the `Engine` composite
 - [ ] Re-encoded output matches the Java baseline `.sbe` fixture exactly across all fields
 - [ ] No compilation warnings or clippy errors in generated output

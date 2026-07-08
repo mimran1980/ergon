@@ -32,6 +32,12 @@ forever. Production systems need at minimum:
 2. A dead-letter callback for rows that exhaust retries
 3. A counter so operators know data is being dropped
 
+## Current verification status (2026-07-08)
+
+Retry plumbing exists, but the dead-letter callback and drop/retry counters are
+not complete. Because `dead_letter()` is still unchecked below, the replay/no
+data-loss integration criteria cannot be considered verified.
+
 ## Design
 
 ### Retry policy
@@ -77,5 +83,5 @@ If no dead-letter is configured, rows are dropped (current behavior) but a
 - [ ] `dead_letter()` callback on `PersistSenderBuilder`
 - [ ] Default: no dead-letter → drop + increment counter
 - [ ] `persist_retries_total` and `persist_dropped_rows_total` counters
-- [x] Integration test: kill CH, persist rows, restart CH, verify recovery via dead-letter replay
-- [x] No data loss when dead-letter is configured and CH recovers
+- [ ] Integration test: kill CH, persist rows, restart CH, verify recovery via dead-letter replay
+- [ ] No data loss when dead-letter is configured and CH recovers

@@ -6,6 +6,12 @@ feature completeness (all outstanding persist todos)
 Provide the DTO and table schema for persisting exchange orderbook snapshots
 to ClickHouse via `ergo-clickhouse-persist`.
 
+## Current verification status (2026-07-08)
+
+Still blocked by the sample compile failure. `samples/exchange-orderbook`
+currently does not pass `cargo check`, so ClickHouse table creation, TTL
+inspection, and query verification have not been proven.
+
 ## table: `orderbook_snapshots`
 
 ```sql

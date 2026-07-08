@@ -3,6 +3,19 @@
 **Blocked by:** none
 **Ref:** user request, existing `#[cfg(not(feature = "bound-check-disabled"))]` pattern in `wrap_and_apply_header`
 
+## Current verification status (2026-07-08)
+
+Default-feature baseline tests pass, but the full default workspace command now
+fails at the golden stability test. The feature-enabled command also fails with
+generated `E0015` const/non-const helper errors:
+
+```sh
+RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
+```
+
+Keep the feature-enabled acceptance criterion unchecked until todo 122 is fixed
+and this command passes.
+
 ## Problem
 
 `wrap_and_apply_header` already gates its bounds check behind the feature flag:
@@ -90,4 +103,4 @@ with `bound-check-disabled`, the `Err` path is never taken.
 - [x] `#[cfg(feature = "bound-check-disabled")]` fast paths use `unsafe` where needed
 - [x] Golden file regenerated and stability test passes
 - [x] Baseline tests pass with default features
-- [x] `cargo test --features bound-check-disabled` passes
+- [ ] `cargo test --features bound-check-disabled` passes

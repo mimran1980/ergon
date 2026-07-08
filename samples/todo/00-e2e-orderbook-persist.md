@@ -3,6 +3,20 @@
 **Blocked by:** Wire parity completion (todos 0-3), multi-schema codegen (todo 32),
 schemas compile cleanly (todo 103), persist feature completeness
 
+## Current verification status (2026-07-08)
+
+The sample is still blocked before E2E runtime work:
+
+```sh
+cd /Users/imran/RustroverProjects/ErgoSBE/samples/exchange-orderbook
+RUSTC_WRAPPER="" cargo check
+```
+
+Current normal compiler summary: 88 errors / 960 warnings. JSON diagnostics
+group the main compile errors as generated `E0015` const-helper failures and
+generated `E0308` Display/accessor return-shape mismatches. Do not start live
+exchange or ClickHouse verification until schema generation compiles cleanly.
+
 Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 `samples/exchange-orderbook/` crate should become a full end-to-end demo:
 
@@ -41,11 +55,12 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 
 ## Acceptance criteria
 
+- [ ] `cargo check` in `samples/exchange-orderbook` passes
+- [ ] `cargo test` in `samples/exchange-orderbook` passes
 - [ ] `just samples-orderbook` starts ClickHouse, compiles, connects to
   exchange, builds orderbook, persists to ClickHouse
 - [ ] Orderbook table has `exchange`, `instrument` (e.g. "BTCUSDT") columns
 - [ ] Table has 24h TTL
-- [ ] `cargo test -p exchange-orderbook` passes
 - [ ] Works from a single `just` command
 
 Ref: user request for end-to-end integration demo using both crates.

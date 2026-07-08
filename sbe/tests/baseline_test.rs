@@ -617,7 +617,10 @@ fn fixed_entry_group_entries_iterator() {
 #[test]
 fn array_accessor_all_paths_return_same_values() {
     let (_schema, src) = generate(&Paths::example_schema(), "array_paths");
-    compile_and_run("array_paths", &src, r#"
+    compile_and_run(
+        "array_paths",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234);
@@ -665,7 +668,8 @@ fn array_accessor_all_paths_return_same_values() {
         let empty_buf: &[u8] = &[0u8; 8];
         let bad = CarDecoder::wrap_and_apply_header(empty_buf, 0);
         assert!(bad.is_err(), "wrap_and_apply_header on 8-byte buffer should fail");
-    "#);
+    "#,
+    );
 }
 
 // ── Display group entries (todo 113) ──────────────────────────────────
@@ -673,7 +677,10 @@ fn array_accessor_all_paths_return_same_values() {
 #[test]
 fn display_shows_group_entry_fields_not_just_count() {
     let (_schema, src) = generate(&Paths::example_schema(), "display_entries");
-    compile_and_run("display_entries", &src, r#"
+    compile_and_run(
+        "display_entries",
+        &src,
+        r#"
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234);
@@ -707,7 +714,8 @@ fn display_shows_group_entry_fields_not_just_count() {
         // Also shows message-level scalars
         assert!(display.contains("serial_number"), "Display missing serial_number: {display}");
         assert!(display.contains("1234"), "Display missing serial_number value: {display}");
-    "#);
+    "#,
+    );
 }
 
 // ── composite flyweight default (todo 112) ───────────────────────────
@@ -715,7 +723,10 @@ fn display_shows_group_entry_fields_not_just_count() {
 #[test]
 fn composite_default_is_flyweight_as_struct_is_eager_copy() {
     let (_schema, src) = generate(&Paths::example_schema(), "composite_api");
-    compile_and_run("composite_api", &src, r#"
+    compile_and_run(
+        "composite_api",
+        &src,
+        r#"
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234);
@@ -755,7 +766,8 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
             let old: EngineDecoder = car2.engine_lazy();
             assert_eq!(old.capacity(), 2000);
         }
-    "#);
+    "#,
+    );
 }
 
 // ── bound-check-disabled gates (todo 115) ────────────────────────────
@@ -763,7 +775,10 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
 #[test]
 fn bounds_checks_active_by_default_nth_always_checked() {
     let (_schema, src) = generate(&Paths::example_schema(), "bounds_default");
-    compile_and_run("bounds_default", &src, r#"
+    compile_and_run(
+        "bounds_default",
+        &src,
+        r#"
         // Encode a message with 0 fuel_figures so the decoder is valid
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
@@ -787,13 +802,17 @@ fn bounds_checks_active_by_default_nth_always_checked() {
         // nth() bounds check is ALWAYS present (trust boundary — external idx input)
         let result = ff.nth(999);
         assert!(result.is_err(), "nth(999) on 0-entry group must return Err");
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn bounds_checks_disabled_with_feature_flag() {
     let (_schema, src) = generate(&Paths::example_schema(), "bounds_disabled");
-    compile_and_run_with_feature("bounds_disabled", &src, r#"
+    compile_and_run_with_feature(
+        "bounds_disabled",
+        &src,
+        r#"
         // With bound-check-disabled, wrap_and_apply_header uses unsafe fast path
         let mut buf = vec![0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
@@ -823,7 +842,9 @@ fn bounds_checks_disabled_with_feature_flag() {
             .collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(ff.len(), 1);
         assert_eq!(ff[0].speed(), 30);
-    "#, "bound-check-disabled");
+    "#,
+        "bound-check-disabled",
+    );
 }
 
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────

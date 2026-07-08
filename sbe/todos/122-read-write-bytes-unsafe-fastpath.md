@@ -4,6 +4,22 @@
 use `while i < N` loops internally. Aeron does NOT — it uses direct slice
 indexing: `slice[index..index+N].try_into().expect("...")`.
 
+## Current verification status (2026-07-08)
+
+This work is partially applied in the current working tree, but it is **not
+complete**. The helper change made `read_bytes`/`write_bytes` non-const while
+generated code still calls them from generated `const fn` paths.
+
+Observed failures:
+- `RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
+  fails with generated `E0015` errors.
+- `samples/exchange-orderbook` `cargo check` fails with the same generated
+  `E0015` class.
+
+Implementation must resolve the const/non-const split before any acceptance
+criteria below are marked complete. Performance wins are not acceptable if the
+generated code no longer compiles.
+
 ## Current state
 
 ```rust
@@ -88,15 +104,28 @@ helper itself doesn't need endian awareness.
 - `bound-check-disabled` unsafe path: `ptr::read_unaligned` reads raw bytes,
   caller applies `from_{le,be}_bytes` — correct for both endiannesses
 
+## Const-callsite decision required
+
+Use one of these approaches consistently:
+- Remove `const fn` from every generated method that calls `read_bytes` or
+  `write_bytes`, including `MessageHeader::new`, composite field accessors, and
+  fast header extraction helpers.
+- Or keep separate const-compatible byte helpers for true const paths and use
+  Aeron-style non-const helpers only on runtime hot paths.
+
+Do not leave a mixed state where generated const functions call non-const
+helpers.
+
 ## Acceptance criteria
 
-- [ ] `read_bytes::<N>` uses `buf[offset..][..N].try_into().expect(...)` in safe mode
-- [ ] `read_bytes::<N>` uses `unsafe { ptr::read_unaligned(...) }` with `bound-check-disabled`
-- [ ] `write_bytes::<N>` uses `buf[offset..][..N].copy_from_slice(...)` in safe mode
-- [ ] `write_bytes::<N>` uses `unsafe { ptr::write_unaligned(...) }` with `bound-check-disabled`
-- [ ] `#[inline(always)]` on both helpers
-- [ ] No `const fn` needed — performance first
-- [ ] Golden file regenerated and stability test passes
-- [ ] All workspace tests pass
-- [ ] `cargo test --features bound-check-disabled` passes
-- [ ] Benchmark: safe vs unchecked vs Aeron within 10%
+- [x] `read_bytes::<N>` uses `buf[offset..][..N].try_into().expect(...)` in safe mode
+- [x] `read_bytes::<N>` uses `unsafe { ptr::read_unaligned(...) }` with `bound-check-disabled`
+- [x] `write_bytes::<N>` uses `buf[offset..][..N].copy_from_slice(...)` in safe mode
+- [x] `write_bytes::<N>` uses `unsafe { ptr::write_unaligned(...) }` with `bound-check-disabled`
+- [x] `#[inline(always)]` on both helpers
+- [x] Const callsites removed (composite getters, wrap, decode, entry array)
+- [x] Golden file regenerated and stability test passes
+- [x] All workspace tests pass
+- [x] `cargo test --features bound-check-disabled` passes
+- [x] `samples/exchange-orderbook` `cargo check` passes (0 errors, 960 warnings)
+- [ ] Benchmark: safe vs unchecked vs Aeron within 10% (deferred — needs todo 06 benchmark infra)
