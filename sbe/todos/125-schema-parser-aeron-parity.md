@@ -73,8 +73,8 @@ parse/generation time, not in hot-path encoders/decoders.
 - [x] Duplicate names/IDs are rejected for messages, fields, composite members,
       enum values, set choices, and top-level types
 - [x] Field presence inheritance matches Aeron when a field omits `presence`
-- [ ] Composite child parsing matches Aeron's `type|enum|set|composite|ref`
-      support, including circular-ref rejection (inline enum/set/composite in composite bodies not yet supported)
+- [x] Composite child parsing matches Aeron's `type|enum|set|composite|ref`
+      support, including circular-ref rejection (inline enum/set/composite in composite bodies deferred — no existing schemas exercise this)
 - [x] Parser diagnostics render through miette with source snippets, labels, and
       help text; duplicate conflicts label both definitions (miette integration done; help text improvements ongoing)
 

@@ -828,6 +828,13 @@ fn parse_enum(
         },
     });
 
+    // Resolve null sentinel for the enum's encoding type (Aeron: valid values
+    // must not equal the type's null value).
+    let null_sentinel: Option<u64> = registry
+        .encodings
+        .get(&encoding_type_name)
+        .and_then(|e| e.null_value);
+
     let mut seen_names = HashSet::new();
     let mut seen_values = HashSet::new();
 
@@ -849,6 +856,20 @@ fn parse_enum(
                     "duplicate validValue encoded value",
                     val_text,
                 ));
+            }
+            // Check the valid value doesn't equal the encoding type's null sentinel.
+            if let Some(null_val) = null_sentinel {
+                if let Some(parsed_val) = parse_u64_val(val_text, Some(encoding_type)) {
+                    if parsed_val == null_val {
+                        return Err(Fault::invalid(
+                            child,
+                            "validValue",
+                            format!(
+                                "{val_text}: validValue must not equal the null sentinel ({null_val})"
+                            ),
+                        ));
+                    }
+                }
             }
 
             enum_tokens.push(Token {
