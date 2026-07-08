@@ -48,10 +48,12 @@ pub fn price(&mut self, val: i64) -> &mut Self {
 
 ## Acceptance criteria
 
-- [ ] Message encoder scalar setters use `write_bytes::<N>`
-- [ ] Message encoder array setters use `write_bytes::<N>` per element
-- [ ] Entry encoder scalar setters use `write_bytes::<N>`
-- [ ] Entry encoder array setters use `write_bytes::<N>` per element
+- [x] Message encoder scalar setters use `write_bytes::<N>`
+- [x] Message encoder array setters use `write_bytes::<N>` per element
+- [x] Entry encoder scalar setters use `write_bytes::<N>`
+- [x] Entry encoder array setters use `write_bytes::<N>` per element
+- [x] Message encoder enum/set/boolean setters use `write_bytes::<N>`
+- [x] Entry encoder enum/set setters use `write_bytes::<N>`
 - [ ] Header template construction uses `write_bytes`
 - [ ] Var-data length prefix uses `write_bytes`
 - [ ] Group dim template uses `write_bytes`
