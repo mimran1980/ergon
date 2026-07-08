@@ -2389,32 +2389,7 @@ fn generate_message_decoder(
                     }
                 });
 
-                // Deprecated _lazy alias
-                let lazy_ident = syn::Ident::new(
-                    &format!("{}_lazy", fname_snake),
-                    proc_macro2::Span::call_site(),
-                );
-                let dep_note_msg = format!(
-                    "renamed to `{}` -- the default is now flyweight",
-                    fname_snake,
-                );
-                if since > 0 {
-                    impl_body.extend(quote::quote! {
-                        #[inline]
-                        #[deprecated(since = "1.0.0", note = #dep_note_msg)]
-                        pub fn #lazy_ident(&self) -> Option<#target_decoder_name<'_>> {
-                            self.#fname_ident()
-                        }
-                    });
-                } else {
-                    impl_body.extend(quote::quote! {
-                        #[inline]
-                        #[deprecated(since = "1.0.0", note = #dep_note_msg)]
-                        pub fn #lazy_ident(&self) -> #target_decoder_name<'_> {
-                            self.#fname_ident()
-                        }
-                    });
-                }
+                // ponytail: _lazy alias removed — the base accessor is the canonical path
             }
             FieldType::Enum {
                 name: enum_name,
@@ -3618,18 +3593,7 @@ fn generate_group_decoder(
                     }
                 });
 
-                // Deprecated _lazy alias
-                let entry_lazy_ident =
-                    syn::Ident::new(&format!("{}_lazy", f_name), proc_macro2::Span::call_site());
-                let dep_note_group =
-                    format!("renamed to `{}` -- the default is now flyweight", f_name,);
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    #[deprecated(since = "1.0.0", note = #dep_note_group)]
-                    pub fn #entry_lazy_ident(&self) -> #target_decoder_name<'_> {
-                        self.#f_name_ident()
-                    }
-                });
+                // ponytail: _lazy alias removed — the base accessor is the canonical path
             }
             FieldType::Enum {
                 name: enum_name,

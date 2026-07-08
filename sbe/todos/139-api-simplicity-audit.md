@@ -373,8 +373,8 @@ VarDataEncoding). Not type-level savings, but code clarity.
 
 **Acceptance criteria:**
 - [x] Identified as dead code
-- [ ] No `while idx < 0` loops in golden file
-- [ ] No `new(length, var_data: [u8; 0])` constructors for zero-length var-data
+- [x] No `while idx < 0` loops in golden file
+- [x] No `new(length, var_data: [u8; 0])` constructors for zero-length var-data
 
 ---
 

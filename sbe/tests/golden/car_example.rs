@@ -893,14 +893,6 @@ impl<'a> CarDecoder<'a> {
         Engine(bytes)
     }
     #[inline]
-    #[deprecated(
-        since = "1.0.0",
-        note = "renamed to `engine` -- the default is now flyweight"
-    )]
-    pub fn engine_lazy(&self) -> EngineDecoder<'_> {
-        self.engine()
-    }
-    #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.pos + self.acting_block_length)
     }

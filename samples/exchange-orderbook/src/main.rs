@@ -36,34 +36,14 @@ mod binance_spot {
 async fn main() {
     println!("=== ErgoSBE Multi-Exchange Orderbook Demo ===\n");
 
-    // Optional ClickHouse persistence — if no CH instance is available,
-    // the demo runs without persistence (prints to console only).
-    let persist = setup_persistence();
-
     // Spawn both exchange connections concurrently
-    let bitget = tokio::spawn(run_bitget(persist.clone()));
-    let binance = tokio::spawn(run_binance(persist));
+    let bitget = tokio::spawn(run_bitget());
+    let binance = tokio::spawn(run_binance());
 
     let _ = tokio::join!(bitget, binance);
 }
 
-/// Try to set up ClickHouse persistence. Returns `None` if ClickHouse is
-/// unavailable (the demo continues without persistence).
-fn setup_persistence() -> Option<PersistSender<OrderbookSnapshot>> {
-    match ClickhouseSinkBuilder::new().build() {
-        Ok(sink) => {
-            let sender: PersistSender<OrderbookSnapshot> = sink.sender("orderbook_snapshots").build();
-            println!("[Persist] ClickHouse connected — persisting to orderbook_snapshots\n");
-            Some(sender)
-        }
-        Err(e) => {
-            eprintln!("[Persist] ClickHouse unavailable ({e}) — skipping persistence\n");
-            None
-        }
-    }
-}
-
-async fn run_bitget(persist: Option<PersistSender<OrderbookSnapshot>>) {
+async fn run_bitget() {
     println!("[Bitget] Connecting to wss://ws.bitget.com/v2/ws/public ...");
 
     let (ws_stream, _) = match connect_async("wss://ws.bitget.com/v2/ws/public").await {
@@ -98,7 +78,6 @@ async fn run_bitget(persist: Option<PersistSender<OrderbookSnapshot>>) {
                 match handle_bitget_sbe(&data, &mut book) {
                     Ok(Some(_)) => {
                         print_book("Bitget", &book);
-                        try_persist(&persist, "bitget", &book);
                     }
                     Ok(None) => {} // Not a depth message
                     Err(e) => eprintln!("[Bitget] Decode error: {e}"),
@@ -120,7 +99,7 @@ async fn run_bitget(persist: Option<PersistSender<OrderbookSnapshot>>) {
     }
 }
 
-async fn run_binance(persist: Option<PersistSender<OrderbookSnapshot>>) {
+async fn run_binance() {
     println!("[Binance] Connecting to wss://stream.binance.com:9443/ws ...");
 
     let url = "wss://stream.binance.com:9443/ws/btcusdt@depth@100ms";
@@ -141,7 +120,6 @@ async fn run_binance(persist: Option<PersistSender<OrderbookSnapshot>>) {
             Ok(Message::Binary(data)) => match handle_binance_sbe(&data, &mut book) {
                 Ok(Some(_)) => {
                     print_book("Binance", &book);
-                    try_persist(&persist, "binance", &book);
                 }
                 Ok(None) => {}
                 Err(e) => eprintln!("[Binance] Decode error: {e}"),
@@ -169,7 +147,6 @@ async fn run_binance(persist: Option<PersistSender<OrderbookSnapshot>>) {
                     });
                     book.apply_snapshot_dec(bid_iter, ask_iter);
                     print_book("Binance", &book);
-                    try_persist(&persist, "binance", &book);
                 }
             }
             Ok(_) => {}
@@ -235,27 +212,6 @@ fn print_book(exchange: &str, book: &LocalBook) {
         bids = book.bids.len(),
         asks = book.asks.len()
     );
-}
-
-/// Persist a snapshot to ClickHouse if the sink is available.
-fn try_persist(
-    sender: &Option<PersistSender<OrderbookSnapshot>>,
-    exchange: &str,
-    book: &LocalBook,
-) {
-    let Some(sender) = sender else { return };
-    let Some(best_bid) = book.best_bid() else { return };
-    let Some(best_ask) = book.best_ask() else { return };
-    let snap = snapshot_book(
-        exchange,
-        &book.symbol,
-        chrono::Utc::now(),
-        best_bid,
-        best_ask,
-    );
-    if let Err(e) = sender.persist(&snap) {
-        eprintln!("[{exchange}] persist error: {e}");
-    }
 }
 
 impl LocalBook {

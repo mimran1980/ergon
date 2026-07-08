@@ -768,7 +768,7 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
         // Deprecated alias still works
         #[allow(deprecated)]
         {
-            let old: EngineDecoder = car2.engine_lazy();
+            let old: EngineDecoder = car2.engine();
             assert_eq!(old.capacity(), 2000);
         }
     "#,
