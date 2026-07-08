@@ -27,3 +27,6 @@ makes that promise concrete.
 - DECISIONS.md §1 parks `no_std` for post-v1 but says the generated code is already
   `no_std`-clean by construction. This todo verifies that claim and makes it testable.
 - The `core::error::Error` stabilization (1.81) means this is now feasible.
+- Keep this as a post-v1 readiness gate unless a user explicitly needs `no_std`.
+  Do not delay wire parity, parser parity, or Aeron performance work for this.
+- See todo 138 for the broader advanced-Rust experiment parking lot.

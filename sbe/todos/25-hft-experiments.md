@@ -47,12 +47,19 @@ experiment shows <5% improvement, kill it. If >10%, promote it to a real todo.
 
 - [ ] **SIMD composite reads.** For 16/32-byte composites, use SSE2 `_mm_loadu_si128`
   or `_mm256_loadu_si256`. Measure on x86_64 only (not portable, feature-gated).
+- [ ] **`MaybeUninit` owned buffers.** Only for owned stack/bulk encoder helpers
+  where zero-initialisation cost is measured as material. Never default for
+  borrowed decoder views.
 
 ### Round 3 — wild ideas (probably don't work, but measure anyway)
 
 - [ ] **Struct-of-arrays decode.** For hot groups, decode into columnar layout
   (all prices in one Vec, all qtys in another) instead of row-by-row. Only
   useful if the user processes columns independently.
+
+Guardrail: experiments in this file do not become design commitments until they
+beat the current generated code and Aeron comparison on representative feeds.
+See todo 138 for the advanced-Rust parking lot.
 
 - [ ] **Zero-copy decode for fixed messages.** If a message has no var-data
   and no groups, the entire message is fixed-size. The decoder could just be

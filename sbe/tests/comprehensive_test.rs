@@ -891,13 +891,25 @@ fn generated_api_has_expected_public_items() {
     // Composite value type methods (engine_as_struct returns Engine with fields)
     // Note: most Engine accessors are now pub fn (non-const) after read_bytes change
     // discounted_model is a constant field — generated as const fn
-    assert!(src.contains("const fn discounted_model"), "missing discounted_model()");
+    assert!(
+        src.contains("const fn discounted_model"),
+        "missing discounted_model()"
+    );
     assert!(src.contains("fn capacity"), "missing Engine::capacity()");
-    assert!(src.contains("fn num_cylinders"), "missing Engine::num_cylinders()");
-    assert!(src.contains("fn manufacturer_code"), "missing Engine::manufacturer_code()");
+    assert!(
+        src.contains("fn num_cylinders"),
+        "missing Engine::num_cylinders()"
+    );
+    assert!(
+        src.contains("fn manufacturer_code"),
+        "missing Engine::manufacturer_code()"
+    );
 
     // Free functions
-    assert!(src.contains("pub const fn schema_id_from_header"), "missing free fn");
+    assert!(
+        src.contains("pub const fn schema_id_from_header"),
+        "missing free fn"
+    );
 
     // Null/min/max consts
     assert!(src.contains("SERIAL_NUMBER_NULL"), "missing NULL const");
@@ -905,6 +917,12 @@ fn generated_api_has_expected_public_items() {
     assert!(src.contains("SERIAL_NUMBER_MAX"), "missing MAX const");
 
     // read_bytes / write_bytes helpers
-    assert!(src.contains("pub fn read_bytes"), "missing read_bytes helper");
-    assert!(src.contains("pub fn write_bytes"), "missing write_bytes helper");
+    assert!(
+        src.contains("pub fn read_bytes"),
+        "missing read_bytes helper"
+    );
+    assert!(
+        src.contains("pub fn write_bytes"),
+        "missing write_bytes helper"
+    );
 }

@@ -86,6 +86,8 @@ fn handle_message<M: SbeMessage>(buf: &[u8]) -> Result<(), DecodeError> {
 - [ ] Generic code can name the decoder without knowing the concrete type
 - [ ] Works alongside `AnyMessage` enum — not a replacement, an addition
 
+Tracked in detail by todo 135.
+
 ### 4. `impl Iterator` return types (hide generated type names)
 
 ```rust
@@ -209,6 +211,18 @@ where
 
 Tracked in detail by todo 133.
 
+### 11. Compile-fail tests are mandatory for type-state claims
+
+Every compile-time guarantee above needs a negative test. Do not claim "safe by
+parse" or "safe by type-state" based only on runtime unit tests.
+
+- [ ] Out-of-order tail read fails to compile
+- [ ] Missing required-field proof fails to publish
+- [ ] Scoped callback cannot leak a decoder view
+- [ ] Forged verified mode fails to compile
+
+Tracked in detail by todo 137.
+
 ## Acceptance criteria
 
 - [ ] Const-generic type-state replaces phantom types on encoders
@@ -221,8 +235,9 @@ Tracked in detail by todo 133.
 - [ ] Required fixed-field completeness has a proof path without per-scalar
       state explosion
 - [ ] Scoped callback APIs prevent borrowed decoded views from escaping a frame
+- [ ] Compile-fail proof suite covers the type-state/lifetime boundaries
 - [ ] All existing tests pass, no wire format change
 
 Ref: `design/DECISIONS.md` §2 (encoder), §5 (SbeMessage trait), §6 (dispatch).
 Rust features: const generics, GATs, HRTBs, `impl Trait` in return position,
-sealed proof tokens, and marker types.
+associated types, sealed proof tokens, and marker types.

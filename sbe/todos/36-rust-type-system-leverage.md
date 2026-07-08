@@ -212,6 +212,67 @@ length.
 
 Tracked in detail by todo 134.
 
+### 9. Associated codec types on `SbeMessage`
+
+Generated message identity should carry its concrete codec types:
+
+```rust
+pub trait SbeMessage {
+    type Decoder<'a>;
+    type Encoder<'a>;
+    type Schema;
+}
+```
+
+This lets generic helpers monomorphise over concrete generated codecs while
+`AnyMessage` remains available for dynamic dispatch.
+
+- [ ] `SbeMessage` exposes decoder, encoder, and schema marker associated types
+- [ ] Trait stays sealed so identity cannot be forged
+- [ ] Generic helper examples compile through the public prelude
+
+Tracked in detail by todo 135.
+
+### 10. Typed buffer and endian policies
+
+Centralise read/write policy in marker-typed buffers:
+
+```rust
+ReadBuf<'a, Checked, LittleEndian>
+ReadBuf<'a, Verified, BigEndian>
+WriteBuf<'a, Unchecked, LittleEndian>
+```
+
+This removes repeated `#[cfg]` blocks from accessors and gives LLVM concrete
+types for checked/verified/unchecked plus little/big-endian paths.
+
+- [ ] Buffer mode markers cover checked, verified, and unchecked paths
+- [ ] Endian markers remove runtime byte-order branches
+- [ ] Accessors delegate to monomorphised buffer helpers
+
+Tracked in detail by todo 136.
+
+### 11. Compile-fail proof suite
+
+Advanced type APIs are only real when invalid code fails to compile. Runtime
+tests cannot prove that.
+
+- [ ] Negative tests for forged proof tokens, wrong schema markers, and
+      out-of-order tail cursor access
+- [ ] Negative tests for scoped callback lifetime escape and missing required
+      encoder proof
+- [ ] Use `trybuild` only if the existing compile helper is not enough
+
+Tracked in detail by todo 137.
+
+### 12. Deferred experiments with guardrails
+
+Keep these out of the v1 critical path unless benchmarks or user feedback prove
+they matter: GAT lending iterators, `MaybeUninit` owned buffers, SIMD/prefetch,
+`no_std`/`alloc` split, and a shared runtime crate.
+
+Tracked in detail by todo 138.
+
 ## Acceptance criteria
 
 - [ ] `MAX_ENCODED_LENGTH` const on every message
@@ -223,8 +284,12 @@ Tracked in detail by todo 134.
 - [ ] `FIELD_LAYOUT` const table generated on every message
 - [ ] Verified-frame proof token and checked/verified decoder mode designed
 - [ ] Strict frame APIs carry schema identity and frame policy in the type
+- [ ] `SbeMessage` exposes associated codec/schema types
+- [ ] `ReadBuf`/`WriteBuf` policy markers cover mode and endian without runtime
+      branch overhead
+- [ ] Compile-fail suite proves the strict API boundaries
 - [ ] All existing tests pass, no wire format change
 
 Ref: `design/DECISIONS.md` §2–6, §10. Rust type system features: const generics,
 let-else, niche optimisation, borrow-splitting, impl Trait in closure position,
-proof tokens, and marker types.
+associated types, proof tokens, and marker types.

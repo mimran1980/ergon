@@ -65,8 +65,7 @@ impl From<serde_json::Error> for SinkError {
 // ── Compression ──────────────────────────────────────────────────────────────
 
 /// Compression mode for ClickHouse HTTP transport.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PersistCompression {
     /// No compression.
     None,

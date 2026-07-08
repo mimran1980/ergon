@@ -160,6 +160,28 @@ from existing baseline_test.rs.
   another schema's strict API
 - Public prelude exposes the schema marker and frame policy types
 
+### 1.14 associated codec types (todo 135)
+- Generic helper decodes `M::Decoder<'_>` for `M: SbeMessage`
+- Generic helper can name `M::Encoder<'_>` without concrete message names
+- `AnyMessage` dynamic dispatch still works unchanged
+- Compile-fail: non-generated type cannot satisfy sealed `SbeMessage`
+- Benchmark generic monomorphised decode against concrete decoder use
+
+### 1.15 typed ReadBuf/WriteBuf policies (todo 136)
+- Checked, verified, and unchecked read modes compile through the same generated
+  accessors
+- LE and BE schemas produce the correct values through endian marker types
+- `bound-check-disabled` feature test passes without duplicated accessor cfgs
+- Benchmark policy-buffer reads against direct hand-written reads and Aeron
+  `ReadBuf`
+
+### 1.16 compile-fail proof suite (todo 137)
+- Negative tests cover forged verified frame, out-of-order tail read, missing
+  required-field proof, callback lifetime escape, schema marker mismatch, and
+  non-generated `SbeMessage`
+- Use existing compile helper first; add `trybuild` only if needed
+- CI/test command includes the compile-fail suite
+
 ## Phase 2: persist unit tests
 
 ### 2.1 retry with backoff (todo 17)
@@ -244,12 +266,15 @@ from existing baseline_test.rs.
 | 12 | 1.11 required-field proof | After 1.8 | Encoder API stable enough |
 | 13 | 1.12 scoped callbacks | After 1.10 | Dispatch API + lifetimes |
 | 14 | 1.13 typed frame/schema | After 1.8 + 1.12 | Public prelude + dispatch |
-| 15 | 2.1 retry test | Can run with 1.x | Docker |
-| 16 | 2.2 global flush test | Can run with 2.1 | Docker |
-| 17 | 2.3 metrics test | Can run with 2.1 | None |
-| 18 | 2.4 compression test | Can run with 2.1 | None |
-| 19 | 3.x benchmarks | After 1.x | Aeron code |
-| 20 | 4.1 sample E2E | After 1.x + 2.x | Docker + exchange data |
+| 15 | 1.14 associated codec types | After 1.8 + 1.13 | Public trait shape |
+| 16 | 1.15 typed buffer policies | After 122 + 121 | Read/write helpers + endian fixtures |
+| 17 | 1.16 compile-fail suite | After 1.9-1.15 | Strict API boundaries |
+| 18 | 2.1 retry test | Can run with 1.x | Docker |
+| 19 | 2.2 global flush test | Can run with 2.1 | Docker |
+| 20 | 2.3 metrics test | Can run with 2.1 | None |
+| 21 | 2.4 compression test | Can run with 2.1 | None |
+| 22 | 3.x benchmarks | After 1.x | Aeron code |
+| 23 | 4.1 sample E2E | After 1.x + 2.x | Docker + exchange data |
 
 ## Move-to-next-task rule
 
@@ -259,7 +284,7 @@ or explicitly scoped out. The final sample is the real-world proof: it must
 compile, run, decode real SBE frames, build the orderbook, and persist rows to
 ClickHouse.
 
-If todos 130-134 are scoped into the release, their compile-fail, runtime, and
+If todos 130-137 are scoped into the release, their compile-fail, runtime, and
 benchmark gates are part of the same SBE move-to-next-task rule. If they are
 post-v1, the docs must say that clearly before claiming the API is fully
 type-safe by parse.
@@ -270,7 +295,8 @@ type-safe by parse.
 |-------|-------|-----------|
 | 1.1-1.7 | ~15 test functions | 2-3 hours |
 | 1.8-1.13 | ~10 runtime/compile-fail tests + 3 benchmarks | 3-5 hours |
+| 1.14-1.16 | ~8 compile/runtime tests + 2 benchmarks | 2-4 hours |
 | 2.1-2.4 | ~10 test functions | 2-3 hours |
 | 3.x | ~8 benchmarks | 2-3 hours |
 | 4.1 | 1 E2E test | 1-2 hours |
-| **Total** | **~44 tests/benchmarks** | **10-16 hours** |
+| **Total** | **~52 tests/benchmarks** | **12-20 hours** |

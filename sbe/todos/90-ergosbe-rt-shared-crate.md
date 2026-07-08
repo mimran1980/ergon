@@ -17,7 +17,8 @@ containing:
 - `DecodeError` enum (5 variants) + Display + Error impls
 - `EncodeError` enum (4 variants, includes `Decode(DecodeError)`) + Display + Error + `From<DecodeError>`
 - `VerifyError` enum (5 variants) + Display + Error impls
-- `SbeMessage` trait (4 associated constants)
+- `SbeMessage` trait (associated constants today; associated codec/schema types
+  are tracked in todo 135)
 - `private::Sealed` marker trait
 - `EncodeGroupEntry<E>` trait + blanket impl for `FnOnce(&mut E)`
 

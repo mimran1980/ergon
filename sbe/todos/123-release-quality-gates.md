@@ -51,6 +51,11 @@ samples while one of the hard blockers is still red.
       runtime dispatch, and benchmark checks pass.
 - [ ] If todo 134 is scoped into v1, typed frame policy/schema identity runtime
       and compile-fail checks pass.
+- [ ] If todo 135 is scoped into v1, `SbeMessage` associated codec type runtime,
+      compile-fail, and benchmark checks pass.
+- [ ] If todo 136 is scoped into v1, typed `ReadBuf`/`WriteBuf` mode/endian
+      tests and benchmarks pass for checked, verified, and unchecked paths.
+- [ ] If todo 137 is scoped into v1, the compile-fail proof suite passes in CI.
 - [ ] `cd samples/exchange-orderbook && RUSTC_WRAPPER="" cargo check`
 
 ## Acceptance criteria

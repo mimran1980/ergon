@@ -533,7 +533,7 @@ mod tests {
             .metadata(metadata.len() as u16, |g| {
                 for (k, v) in metadata {
                     g.add(|e| {
-        let _ =                 e.key_len(k.len() as u16).val_len(v.len() as u16);
+                        let _ = e.key_len(k.len() as u16).val_len(v.len() as u16);
                     })
                     .unwrap();
                 }
@@ -545,7 +545,7 @@ mod tests {
                 for (fid, name, ct) in fields {
                     let tag = column_type_to_tag(ct).unwrap();
                     g.add(|e| {
-        let _ =                 e.field_id(*fid).name_len(name.len() as u16).type_tag(tag);
+                        let _ = e.field_id(*fid).name_len(name.len() as u16).type_tag(tag);
                     })
                     .unwrap();
                 }

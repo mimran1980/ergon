@@ -50,10 +50,15 @@ flyweight decoders. These are the next-level optimisations for the hot path.
   predictable branch. Profile whether `Option::filter` or a lookup table wins.
 
 - [ ] **SIMD composite reads.** For 8/16/32-byte composites, read with SSE/AVX.
-  Only if benchmarks show the unaligned scalar path is bottleneck.
+  Only if benchmarks show the unaligned scalar path is bottleneck. This is not
+  a v1 default and must remain feature-gated or experimental.
 
 - [ ] **Prefetch hints.** `_mm_prefetch` on the next message while decoding
   current. Only useful for batch-decode loops over large buffers.
+
+Guardrail: default SBE scalar reads should stay simple inline loads/copies. Do
+not add SIMD, prefetch, or `MaybeUninit` work without a benchmark hypothesis and
+a before/after measurement. See todo 138.
 
 ## Verification
 

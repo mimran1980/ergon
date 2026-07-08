@@ -213,11 +213,17 @@ Generated code is self-describing — for audit, tooling, generic code, and disp
   dispatch is built on and enables user generics:
   ```rust
   pub trait SbeMessage {
+      type Decoder<'a>: Copy + TryFrom<&'a [u8], Error = DecodeError>;
+      type Encoder<'a>;
+      type Schema: SchemaIdentity;
       const TEMPLATE_ID: u16; const BLOCK_LENGTH: usize;
       const SCHEMA_ID: u16;   const SCHEMA_VERSION: u16;
   }
   // → fn send<M: SbeMessage>(msg: &M, buf: &mut [u8]) { … }
   ```
+  Associated codec types let generic code name the generated decoder/encoder
+  without falling back to dynamic `AnyMessage` dispatch. Keep the trait sealed so
+  user code cannot forge message identity.
 - **Sealed trait.** `SbeMessage` uses the sealed-trait pattern
   (`mod private { pub trait Sealed {} }`) so only generated types implement it —
   the dispatch `match` depends on exhaustiveness.
@@ -413,6 +419,11 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
   emitted into each generated module. **Opt-in `ergosbe-rt` shared crate** (config flag
   `shared_runtime`) deduplicates `MessageHeader` + primitives when multiple schemas
   are generated into one crate.
+- **Typed buffer policies.** `ReadBuf<'a, Mode, Endian>` and
+  `WriteBuf<'a, Mode, Endian>` centralise checked/verified/unchecked bounds
+  policy plus little/big-endian reads. These are marker-typed and monomorphised;
+  generated field accessors should read like `self.buf.get_u64(offset)` while
+  LLVM sees the same constants and branches as hand-written code.
 - The generator crate can keep `unsafe_code = "forbid"`. Generated modules may
   contain `unsafe fn …_unchecked` declarations by design; generated fixture crates
   and user crates must not inherit a blanket `unsafe_code = "forbid"` lint unless
@@ -459,6 +470,10 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
 | Per-version decoder types (`V1Decoder`/`V2Decoder`) | `Option<T>` + `acting_version()` is the right granularity. |
 | `<const N: usize>` generic field accessors | `N` is known at gen time → concrete `[T; N]`. |
 | `sbe-tool` Java IR at build time | JVM in the build graph breaks the pure-Rust story. Reuse the IR *design*, not the runtime. |
+| Nightly-only generated API | HFT users need boring, stable toolchains. |
+| Specialization | Not stable, and the same behaviour can be generated concretely. |
+| Type-state for every fixed scalar | Fixed fields are offset-addressed; prove completeness at publish boundary instead. |
+| `MaybeUninit` by default | Only worth it for owned/bulk buffers after a benchmark proves zero-fill cost matters. |
 
 ## 11. Test strategy (tests are the source of truth)
 
@@ -491,6 +506,10 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
   raw scalar access, group iteration, frame cursor decode, and encode into caller
   buffers. Optional instruction/cache-oriented benches can be run locally for
   release decisions, but CI always keeps the no-allocation hot path honest.
+- **Compile-fail proof suite:** type-state/proof-token guarantees need negative
+  tests, not only runtime tests. Cover out-of-order tail cursor calls, forged
+  verified frames, schema-marker mismatches, scoped callback lifetime escape,
+  missing required-field proof, and non-generated `SbeMessage` implementations.
 
 ---
 
@@ -556,6 +575,12 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
   the natural shape when it returns.
 - **`no_std`** — not v1. Core decode/encode is already `no_std`-clean; only the
   allocating helpers would need an `alloc` feature.
+- **GAT/lending iterators** — current `Copy` decoder + plain `Iterator` model is
+  simpler; revisit only if user ergonomics prove it necessary.
+- **`MaybeUninit` owned-buffer helpers** — benchmark-only experiment for owned
+  stack/bulk encoder utilities, never default generated decode.
+- **SIMD/prefetch experiments** — only for measured bulk/scanning bottlenecks, not
+  scalar field reads.
 - **Proc-macro annotation driver** — v1.1 (same generator library, thin front-end).
 - **`ergosbe-rt` shared runtime crate** — opt-in, for multi-schema-in-one-crate dedup.
 - **sbe-tool binary-IR interop** — optional later path (decoding sbe-tool's SBE-encoded
@@ -587,6 +612,8 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
 9. `AnyMessage` dispatch enum + `SbeMessage` trait + typed `FrameCursor`.
 9b. Scoped adapters/proxies, required-field proof builders, and schema-typed
     frame dispatch once the core public API is stable.
+9c. `SbeMessage` associated codec types, typed `ReadBuf`/`WriteBuf` policies,
+    and compile-fail proof suite for the strict API.
 10. `bound-check-disabled` + `_unchecked` variants.
 11. `Display`/`Debug`, `skip`, length accessors, `as_bytes`, metadata + `meta` module.
 12. `build.rs` driver + `ergosbe-build` crate.

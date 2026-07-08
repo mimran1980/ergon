@@ -63,6 +63,8 @@ existing helper cannot express compile-fail checks without too much machinery.
       generated value types
 - [ ] Prelude exports strict feed types when enabled: schema marker,
       frame-policy marker types, and verification proof types
+- [ ] Prelude exports `SbeMessage` associated-type users need for generic
+      codecs, plus typed buffer policy markers when public
 - [ ] Multi-schema generation has a documented prelude strategy with no name
       collisions
 - [ ] Public API contract tests compile and run against generated Car code
@@ -71,6 +73,7 @@ existing helper cannot express compile-fail checks without too much machinery.
 - [ ] Compile-fail checks cover at least one proof boundary when implemented:
       direct `VerifiedFrame` construction, wrong schema marker, or out-of-order
       tail cursor call
+- [ ] Full compile-fail coverage is delegated to todo 137 once strict APIs land
 - [ ] Migration guide and generated API docs use the prelude in first examples
 - [ ] Golden source output remains stable after adding the prelude
 

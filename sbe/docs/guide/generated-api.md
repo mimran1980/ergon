@@ -320,6 +320,20 @@ pub trait SbeMessage {
 }
 ```
 
+The strict generic API planned in todo 135 extends this with associated codec
+types:
+
+```rust
+pub trait SbeMessage {
+    type Decoder<'a>;
+    type Encoder<'a>;
+    type Schema;
+}
+```
+
+That lets generic feed/proxy helpers use concrete generated codecs without
+falling back to dynamic `AnyMessage` dispatch.
+
 ## FrameCursor
 
 Iterates externally-framed SBE feed buffers:

@@ -46,11 +46,13 @@ A `ReadBuf`/`WriteBuf` wrapper (like Aeron's `ReadBuf`/`WriteBuf` in
 
 ```rust
 // In ergosbe-rt or the generated module:
-pub struct ReadBuf<'a> {
+pub struct ReadBuf<'a, Mode = Checked, Endian = LittleEndian> {
     buf: &'a [u8],
+    _mode: core::marker::PhantomData<Mode>,
+    _endian: core::marker::PhantomData<Endian>,
 }
 
-impl<'a> ReadBuf<'a> {
+impl<'a> ReadBuf<'a, Checked, LittleEndian> {
     #[inline(always)]
     pub fn get_u16(&self, offset: usize) -> u16 {
         #[cfg(not(feature = "bound-check-disabled"))]
@@ -61,11 +63,13 @@ impl<'a> ReadBuf<'a> {
     // ... get_u8, get_i16, get_u32, get_i32, get_u64, get_i64, get_f32, get_f64
 }
 
-pub struct WriteBuf<'a> {
+pub struct WriteBuf<'a, Mode = Checked, Endian = LittleEndian> {
     buf: &'a mut [u8],
+    _mode: core::marker::PhantomData<Mode>,
+    _endian: core::marker::PhantomData<Endian>,
 }
 
-impl<'a> WriteBuf<'a> {
+impl<'a> WriteBuf<'a, Checked, LittleEndian> {
     #[inline(always)]
     pub fn put_u16(&mut self, offset: usize, val: u16) {
         #[cfg(not(feature = "bound-check-disabled"))]
@@ -76,10 +80,14 @@ impl<'a> WriteBuf<'a> {
 }
 ```
 
+Todo 136 expands this into the full typed policy design: checked vs verified vs
+unchecked modes and little- vs big-endian marker types.
+
 ## Acceptance criteria
 
 - [ ] `ReadBuf` struct generated in the output module (or ergosbe-rt)
 - [ ] `WriteBuf` struct generated in the output module
+- [ ] Buffer mode and endian policy are type parameters, not runtime booleans
 - [ ] `#[cfg]` gating removed from all generated field accessors — delegated to ReadBuf methods
 - [ ] Byte-by-byte copy loops replaced with slice-based reads (`self.buf[offset..][..N].try_into().unwrap()`)
 - [ ] `bound-check-disabled` feature: `ReadBuf`/`WriteBuf` use `unsafe` pointer read/write (zero bounds check)
@@ -90,3 +98,5 @@ impl<'a> WriteBuf<'a> {
 - [ ] Generated modules do not produce `unexpected cfg` warning noise in crates that include them
 - [ ] `samples/exchange-orderbook` compiles with generated modules included
 - [ ] Performance benchmark shows no regression vs current (should be faster due to no byte-by-byte loops)
+
+Ref: todo 136 for the full typed mode/endian policy.
