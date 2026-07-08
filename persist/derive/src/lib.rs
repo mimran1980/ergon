@@ -443,7 +443,7 @@ fn generate_schema_body(
                 compile_error!("#[persist(ttl = \"...\")] requires format \"column, interval\"");
             }
         }
-    }).unwrap_or(TokenStream2::new());
+    }).unwrap_or_default();
 
     quote! {{
         let mut columns: Vec<ergo_clickhouse_persist::ColumnDef> = Vec::new();
