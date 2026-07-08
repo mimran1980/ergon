@@ -1195,7 +1195,7 @@ fn parse_message_child(
                 .or_else(|| type_encoding.and_then(|e| e.time_unit.clone()));
             let explicit_deprecated = node.attribute("deprecated");
             let deprecated = explicit_deprecated.is_some()
-                || type_encoding.map_or(false, |e| e.deprecated);
+                || type_encoding.is_some_and(|e| e.deprecated);
             // Gap 1: presence inheritance from referenced types
             let explicit_presence = node.attribute("presence");
             let presence = if let Some(p) = explicit_presence {
