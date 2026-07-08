@@ -2,6 +2,7 @@
 
 **Blocked by:** Wire parity completion (todos 0-3), multi-schema codegen (todo 32),
 schemas compile cleanly (todo 103), persist feature completeness
+**Status: DEFERRED** (Docker + live WebSocket needed for verification)
 
 ## Current verification status (2026-07-08)
 
