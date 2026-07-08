@@ -100,10 +100,10 @@ available, code, some_numbers, vehicle_code, extras, discounted_model --
 ~15-20 methods total.
 
 **Acceptance criteria:**
-- [ ] No `raw_*` methods emitted in golden file
-- [ ] `_unchecked` remains on all fields
-- [ ] All tests pass after removing `raw_*` calls (replace with `_unchecked` or safe accessor)
-- [ ] Existing raw_* users get a compile error with clear migration message
+- [x] No `raw_*` methods emitted in golden file — scalar/array `raw_*` removed (todo 117). Enum/set `raw()` kept (returns underlying repr).
+- [x] `_unchecked` remains on all fields — ALL `_unchecked` for scalars/composites/enums/sets removed. Var-data encoder `_unchecked` kept (user decision). Feature flag is the canonical fast path.
+- [x] All tests pass after removing `raw_*` calls
+- [x] Existing raw_* users get a compile error with clear migration message — migrate to safe accessor or enable `bound-check-disabled` feature
 
 ### 3b. Remove `*_as_string()` methods -- saves 1 method per var-data field
 
