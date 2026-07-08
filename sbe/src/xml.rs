@@ -780,7 +780,11 @@ fn parse_enum(
         if child.tag_name().name() == "validValue" {
             let val_name = string_attr(child, "name", "validValue @name")?;
             if !seen_names.insert(val_name.clone()) {
-                return Err(Fault::invalid(child, "duplicate validValue name", &val_name));
+                return Err(Fault::invalid(
+                    child,
+                    "duplicate validValue name",
+                    &val_name,
+                ));
             }
             let val_since = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             let val_text = child.text().unwrap_or("").trim();
@@ -924,8 +928,7 @@ fn parse_message_child(
                 );
             }
             let constant_value = if presence == Presence::Constant {
-                if node.attribute("constantValue").is_none()
-                    && node.attribute("valueRef").is_none()
+                if node.attribute("constantValue").is_none() && node.attribute("valueRef").is_none()
                 {
                     // The field may inherit constant value from the referenced type.
                     let type_is_constant = registry

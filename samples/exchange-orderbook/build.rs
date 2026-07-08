@@ -13,8 +13,8 @@ fn main() {
     let schema_dir = PathBuf::from("schemas");
 
     // Load schemas
-    let bitget_xml = fs::read_to_string(schema_dir.join("bitget-spot.xml"))
-        .expect("bitget-spot.xml not found");
+    let bitget_xml =
+        fs::read_to_string(schema_dir.join("bitget-spot.xml")).expect("bitget-spot.xml not found");
     let binance_xml = fs::read_to_string(schema_dir.join("binance-spot.xml"))
         .expect("binance-spot.xml not found");
 

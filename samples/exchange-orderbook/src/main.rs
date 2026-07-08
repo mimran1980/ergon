@@ -16,7 +16,7 @@ mod orderbook;
 use futures_util::{SinkExt, StreamExt};
 use orderbook::{AskLevel, BidLevel, LocalBook};
 use rust_decimal::Decimal;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 // Include generated code from build.rs output — each schema in its own module
@@ -116,21 +116,18 @@ async fn run_binance() {
 
     while let Some(msg) = read.next().await {
         match msg {
-            Ok(Message::Binary(data)) => {
-                match handle_binance_sbe(&data, &mut book) {
-                    Ok(Some(_)) => print_book("Binance", &book),
-                    Ok(None) => {}
-                    Err(e) => eprintln!("[Binance] Decode error: {e}"),
-                }
-            }
+            Ok(Message::Binary(data)) => match handle_binance_sbe(&data, &mut book) {
+                Ok(Some(_)) => print_book("Binance", &book),
+                Ok(None) => {}
+                Err(e) => eprintln!("[Binance] Decode error: {e}"),
+            },
             Ok(Message::Text(text)) => {
                 // Binance depth endpoint sends JSON, not SBE.
                 // SBE requires special subscription. Parse JSON for now.
                 if let Ok(update) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let (Some(bids), Some(asks)) = (
-                        update["b"].as_array(),
-                        update["a"].as_array(),
-                    ) {
+                    if let (Some(bids), Some(asks)) =
+                        (update["b"].as_array(), update["a"].as_array())
+                    {
                         let bid_iter = bids.iter().filter_map(|b| {
                             let p_str = b[0].as_str()?;
                             let s_str = b[1].as_str()?;

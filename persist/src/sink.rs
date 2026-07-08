@@ -1657,10 +1657,7 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
             .url("http://localhost:9999")
             .build()
             .unwrap();
-        let sender: PersistSender<Trade> = sink
-            .sender("trades")
-            .metadata("app", "my_app")
-            .build();
+        let sender: PersistSender<Trade> = sink.sender("trades").metadata("app", "my_app").build();
         assert_eq!(sender.table_name, "trades");
         assert_eq!(sender.metadata.len(), 1);
         assert_eq!(sender.metadata[0], ("app".into(), "my_app".into()));
