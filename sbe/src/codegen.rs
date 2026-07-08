@@ -141,31 +141,22 @@ impl Generator {
         let ir = &schema.ir;
 
         let mut src = String::new();
-        // NOTE: #![allow(...)] inner attributes are emitted inline so the
-        // generated code compiles in Rust editions < 2024.  In edition 2024
-        // inner attributes are NOT permitted after outer items (E0753).
-        // When including this code via include!() in edition 2024, the caller
-        // must suppress these lints at the module level themselves, OR the
-        // codegen must be updated to emit a separate module file (not include!).
-        // Inner doc comment: '//!' is an inner attribute, not an outer one,
-        // so it can appear alongside '#![allow(...)]' at module start without
-        // causing syn parse errors (outer '///' followed by '#![]' is invalid).
-        write!(
+        // NOTE: In Rust edition 2024, inner attributes (`#![allow(...)])`) are
+        // not permitted inside `include!()` files.  All suppression lints are
+        // therefore emitted as outer `#[allow(..)]` on `pub mod sbe_rt`.
+        // Outer doc comment (`///`) — syn/prettyplease preserves it; `//` would
+        // be silently dropped.
+        writeln!(
             src,
-            "//! Generated from SBE schema package `{}` id {} version {}.\n\n",
+            "/// Generated from SBE schema package `{}` id {} version {}.",
             schema.package, schema.id, schema.version
         )
         .unwrap();
-        // Inner attribute covering the entire including module.
-        write!(
-            src,
-            "#![allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
-                   clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast, \
-                   unused_assignments, unused_comparisons)]\n\n"
-        )
-        .unwrap();
-        // Emit outer attributes (not inner `#![]`) so the generated code compiles
-        // when included via `mod { include!(...) }` in Rust edition 2024.
+        src.push_str(
+            "#[allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
+                       clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast, \
+                       unused_assignments, unused_comparisons)]\n",
+        );
         src.push_str("#[allow(non_camel_case_types)]\n");
         src.push_str("#[allow(non_snake_case)]\n");
         src.push_str("#[allow(clippy::identity_op)]\n");

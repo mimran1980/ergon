@@ -6,7 +6,7 @@ This is the common order-book shape. DECISIONS.md §9.
 
 ## Status
 
-🔲 Not started
+**Status: DONE**
 
 ## Acceptance criteria
 

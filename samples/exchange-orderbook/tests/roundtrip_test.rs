@@ -18,7 +18,7 @@ mod binance_spot {
 #[test]
 fn bitget_best_bid_ask_roundtrip() {
     use bitget_spot::{
-        best_bid_ask_encoder_state, BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5,
+        BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5, best_bid_ask_encoder_state,
     };
 
     let symbol = b"BTCUSDT";
@@ -26,7 +26,10 @@ fn bitget_best_bid_ask_roundtrip() {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(&mut buf, 0)
+    let mut encoder =
+        BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(
+            &mut buf, 0,
+        )
         .expect("wrap_and_apply_header should succeed");
     encoder
         .ts(1712345678000u64)
@@ -68,15 +71,17 @@ fn bitget_best_bid_ask_roundtrip() {
 
 #[test]
 fn bitget_best_bid_ask_verify_passes() {
-    use bitget_spot::{
-        best_bid_ask_encoder_state, BestBidAskDecoder, BestBidAskEncoder,
-    };
+    use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, best_bid_ask_encoder_state};
 
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder =
+        BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(
+            &mut buf, 0,
+        )
+        .unwrap();
     encoder
         .ts(1)
         .bid1_price(2)
@@ -89,9 +94,7 @@ fn bitget_best_bid_ask_verify_passes() {
         .sts(20)
         .category(bitget_spot::InstCategory::Spot)
         .padding(bitget_spot::Padding5([0u8; 5]));
-    let complete = encoder
-        .symbol(symbol)
-        .unwrap();
+    let complete = encoder.symbol(symbol).unwrap();
     let encoded = complete.as_bytes();
 
     assert!(BestBidAskDecoder::verify(encoded).is_ok());
@@ -102,7 +105,7 @@ fn bitget_best_bid_ask_verify_passes() {
 #[test]
 fn bitget_depth50_group_roundtrip() {
     use bitget_spot::{
-        depth50_encoder_state, Depth50Decoder, Depth50Encoder, InstCategory, Padding5,
+        Depth50Decoder, Depth50Encoder, InstCategory, Padding5, depth50_encoder_state,
     };
 
     let asks_count = 3u16;
@@ -116,8 +119,9 @@ fn bitget_depth50_group_roundtrip() {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = Depth50Encoder::<depth50_encoder_state::NeedsAsks>::wrap_and_apply_header(&mut buf, 0)
-        .expect("wrap_and_apply_header should succeed");
+    let mut encoder =
+        Depth50Encoder::<depth50_encoder_state::NeedsAsks>::wrap_and_apply_header(&mut buf, 0)
+            .expect("wrap_and_apply_header should succeed");
     encoder
         .ts(1000u64)
         .seq(1u64)
@@ -199,10 +203,7 @@ fn bitget_buffer_too_short_for_header() {
 
     let too_short = [0u8; 4];
     let result = BestBidAskDecoder::try_from(&too_short[..]);
-    assert!(
-        result.is_err(),
-        "decoding from a 4-byte buffer should fail"
-    );
+    assert!(result.is_err(), "decoding from a 4-byte buffer should fail");
 }
 
 #[test]
@@ -211,19 +212,20 @@ fn bitget_verify_too_short() {
 
     let too_short = [0u8; 4];
     let result = BestBidAskDecoder::verify(&too_short[..]);
-    assert!(
-        result.is_err(),
-        "verify on a 4-byte buffer should fail"
-    );
+    assert!(result.is_err(), "verify on a 4-byte buffer should fail");
 }
 
 #[test]
 fn bitget_encoder_buffer_too_short() {
-    use bitget_spot::{best_bid_ask_encoder_state, BestBidAskEncoder};
+    use bitget_spot::{BestBidAskEncoder, best_bid_ask_encoder_state};
 
     // Buffer too small even for header + block length
     let mut small_buf = [0u8; 4];
-    let result = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(&mut small_buf[..], 0);
+    let result =
+        BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(
+            &mut small_buf[..],
+            0,
+        );
     assert!(
         result.is_err(),
         "wrap_and_apply_header on a 4-byte buffer should fail"
@@ -270,10 +272,7 @@ fn binance_server_time_buffer_too_short() {
     use binance_spot::ServerTimeResponseDecoder;
 
     let result = ServerTimeResponseDecoder::try_from(&[0u8; 4][..]);
-    assert!(
-        result.is_err(),
-        "decoding from a 4-byte buffer should fail"
-    );
+    assert!(result.is_err(), "decoding from a 4-byte buffer should fail");
 }
 
 // ── Bitget: Trade (template 1003) — group + var-data message ──────────────
@@ -281,7 +280,8 @@ fn binance_server_time_buffer_too_short() {
 #[test]
 fn bitget_trade_roundtrip() {
     use bitget_spot::{
-        trade_encoder_state, InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        trade_encoder_state,
     };
 
     let trades_count = 2u16;
@@ -307,12 +307,24 @@ fn bitget_trade_roundtrip() {
         .trades(trades_count, |group| {
             group
                 .add(|entry| {
-                    entry.ts(1000u64).exec_id(1u64).price(10000i64).size(10i64).side(TradeSide::Buy).padding(Padding7([0u8; 7]));
+                    entry
+                        .ts(1000u64)
+                        .exec_id(1u64)
+                        .price(10000i64)
+                        .size(10i64)
+                        .side(TradeSide::Buy)
+                        .padding(Padding7([0u8; 7]));
                 })
                 .expect("trade entry 0 should succeed");
             group
                 .add(|entry| {
-                    entry.ts(2000u64).exec_id(2u64).price(20000i64).size(20i64).side(TradeSide::Sell).padding(Padding7([0u8; 7]));
+                    entry
+                        .ts(2000u64)
+                        .exec_id(2u64)
+                        .price(20000i64)
+                        .size(20i64)
+                        .side(TradeSide::Sell)
+                        .padding(Padding7([0u8; 7]));
                 })
                 .expect("trade entry 1 should succeed");
         })
@@ -323,8 +335,7 @@ fn bitget_trade_roundtrip() {
     let encoded = complete.as_bytes();
 
     // Decode
-    let decoder = TradeDecoder::try_from(encoded)
-        .expect("TradeDecoder::try_from should succeed");
+    let decoder = TradeDecoder::try_from(encoded).expect("TradeDecoder::try_from should succeed");
 
     // Verify scalar fields
     assert_eq!(decoder.price_exponent(), -5, "price_exponent");
@@ -360,7 +371,8 @@ fn bitget_trade_roundtrip() {
 #[test]
 fn bitget_trade_max_uint64() {
     use bitget_spot::{
-        trade_encoder_state, InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        trade_encoder_state,
     };
 
     let sts_max = u64::MAX;
@@ -386,7 +398,13 @@ fn bitget_trade_max_uint64() {
         .trades(trades_count, |group| {
             group
                 .add(|entry| {
-                    entry.ts(1u64).exec_id(1u64).price(1i64).size(1i64).side(TradeSide::Buy).padding(Padding7([0u8; 7]));
+                    entry
+                        .ts(1u64)
+                        .exec_id(1u64)
+                        .price(1i64)
+                        .size(1i64)
+                        .side(TradeSide::Buy)
+                        .padding(Padding7([0u8; 7]));
                 })
                 .expect("trade entry should succeed");
         })
@@ -396,8 +414,7 @@ fn bitget_trade_max_uint64() {
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes();
 
-    let decoder = TradeDecoder::try_from(encoded)
-        .expect("TradeDecoder::try_from should succeed");
+    let decoder = TradeDecoder::try_from(encoded).expect("TradeDecoder::try_from should succeed");
 
     assert_eq!(decoder.sts(), sts_max, "sts should be u64::MAX");
 }
@@ -405,7 +422,8 @@ fn bitget_trade_max_uint64() {
 #[test]
 fn bitget_trade_zero_values() {
     use bitget_spot::{
-        trade_encoder_state, InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        trade_encoder_state,
     };
 
     let trades_count = 1u16;
@@ -430,7 +448,13 @@ fn bitget_trade_zero_values() {
         .trades(trades_count, |group| {
             group
                 .add(|entry| {
-                    entry.ts(0u64).exec_id(0u64).price(0i64).size(0i64).side(TradeSide::Buy).padding(Padding7([0u8; 7]));
+                    entry
+                        .ts(0u64)
+                        .exec_id(0u64)
+                        .price(0i64)
+                        .size(0i64)
+                        .side(TradeSide::Buy)
+                        .padding(Padding7([0u8; 7]));
                 })
                 .expect("trade entry should succeed");
         })
@@ -440,18 +464,13 @@ fn bitget_trade_zero_values() {
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes();
 
-    let decoder = TradeDecoder::try_from(encoded)
-        .expect("TradeDecoder::try_from should succeed");
+    let decoder = TradeDecoder::try_from(encoded).expect("TradeDecoder::try_from should succeed");
 
     assert_eq!(decoder.price_exponent(), 0, "price_exponent");
     assert_eq!(decoder.size_exponent(), 0, "size_exponent");
     assert_eq!(decoder.sts(), 0, "sts");
     assert_eq!(decoder.category(), InstCategory::Spot, "category");
-    assert_eq!(
-        decoder.symbol().expect("symbol"),
-        b"",
-        "empty symbol"
-    );
+    assert_eq!(decoder.symbol().expect("symbol"), b"", "empty symbol");
 
     let trades = decoder.trades().expect("trades group decode");
     let entry = trades.nth(0).expect("first trade entry");
@@ -467,21 +486,21 @@ fn bitget_trade_zero_values() {
 #[test]
 fn binance_logon_response_roundtrip() {
     use binance_spot::{
-        web_socket_session_logon_response_encoder_state, BoolEnum,
-        WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder,
+        BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder,
+        web_socket_session_logon_response_encoder_state,
     };
 
     let api_key = b"my-test-api-key";
-    let buf_len =
-        WebSocketSessionLogonResponseEncoder::<web_socket_session_logon_response_encoder_state::NeedsLoggedOnApiKey>::compute_encoded_length_with_message_header(api_key.len());
+    let buf_len = WebSocketSessionLogonResponseEncoder::<
+        web_socket_session_logon_response_encoder_state::NeedsLoggedOnApiKey,
+    >::compute_encoded_length_with_message_header(api_key.len());
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder =
-        WebSocketSessionLogonResponseEncoder::<web_socket_session_logon_response_encoder_state::NeedsLoggedOnApiKey>::wrap_and_apply_header(
-            &mut buf, 0,
-        )
-        .expect("wrap_and_apply_header should succeed");
+    let mut encoder = WebSocketSessionLogonResponseEncoder::<
+        web_socket_session_logon_response_encoder_state::NeedsLoggedOnApiKey,
+    >::wrap_and_apply_header(&mut buf, 0)
+    .expect("wrap_and_apply_header should succeed");
     encoder
         .authorized_since(1712345678000000i64)
         .connected_since(1712345679000000i64)
@@ -497,13 +516,31 @@ fn binance_logon_response_roundtrip() {
     let decoder = WebSocketSessionLogonResponseDecoder::try_from(encoded)
         .expect("WebSocketSessionLogonResponseDecoder::try_from should succeed");
 
-    assert_eq!(decoder.authorized_since(), 1712345678000000_i64, "authorized_since");
-    assert_eq!(decoder.connected_since(), 1712345679000000_i64, "connected_since");
-    assert_eq!(decoder.return_rate_limits(), BoolEnum::True, "return_rate_limits");
-    assert_eq!(decoder.server_time(), 1712345680000000_i64, "server_time");
-    assert_eq!(decoder.user_data_stream(), BoolEnum::False, "user_data_stream");
     assert_eq!(
-        decoder.logged_on_api_key_as_str().expect("logged_on_api_key_as_str"),
+        decoder.authorized_since(),
+        1712345678000000_i64,
+        "authorized_since"
+    );
+    assert_eq!(
+        decoder.connected_since(),
+        1712345679000000_i64,
+        "connected_since"
+    );
+    assert_eq!(
+        decoder.return_rate_limits(),
+        BoolEnum::True,
+        "return_rate_limits"
+    );
+    assert_eq!(decoder.server_time(), 1712345680000000_i64, "server_time");
+    assert_eq!(
+        decoder.user_data_stream(),
+        BoolEnum::False,
+        "user_data_stream"
+    );
+    assert_eq!(
+        decoder
+            .logged_on_api_key_as_str()
+            .expect("logged_on_api_key_as_str"),
         "my-test-api-key",
         "logged_on_api_key"
     );
@@ -514,8 +551,8 @@ fn binance_logon_response_roundtrip() {
 #[test]
 fn binance_websocket_response_group_roundtrip() {
     use binance_spot::{
-        web_socket_response_encoder_state, BoolEnum, RateLimitInterval, RateLimitType,
-        WebSocketResponseDecoder, WebSocketResponseEncoder,
+        BoolEnum, RateLimitInterval, RateLimitType, WebSocketResponseDecoder,
+        WebSocketResponseEncoder, web_socket_response_encoder_state,
     };
 
     let rate_limits_count = 2u16;
@@ -586,24 +623,36 @@ fn binance_websocket_response_group_roundtrip() {
     let entries: Vec<_> = rate_limits.collect();
     assert_eq!(entries.len(), 2, "should have 2 rate limit entries");
 
-    assert_eq!(entries[0].rate_limit_type(), RateLimitType::RequestWeight, "entry 0 type");
-    assert_eq!(entries[0].interval(), RateLimitInterval::Minute, "entry 0 interval");
+    assert_eq!(
+        entries[0].rate_limit_type(),
+        RateLimitType::RequestWeight,
+        "entry 0 type"
+    );
+    assert_eq!(
+        entries[0].interval(),
+        RateLimitInterval::Minute,
+        "entry 0 interval"
+    );
     assert_eq!(entries[0].interval_num(), 1, "entry 0 interval_num");
     assert_eq!(entries[0].rate_limit(), 1200, "entry 0 rate_limit");
     assert_eq!(entries[0].current(), 50, "entry 0 current");
 
-    assert_eq!(entries[1].rate_limit_type(), RateLimitType::Orders, "entry 1 type");
-    assert_eq!(entries[1].interval(), RateLimitInterval::Second, "entry 1 interval");
+    assert_eq!(
+        entries[1].rate_limit_type(),
+        RateLimitType::Orders,
+        "entry 1 type"
+    );
+    assert_eq!(
+        entries[1].interval(),
+        RateLimitInterval::Second,
+        "entry 1 interval"
+    );
     assert_eq!(entries[1].interval_num(), 10, "entry 1 interval_num");
     assert_eq!(entries[1].rate_limit(), 100, "entry 1 rate_limit");
     assert_eq!(entries[1].current(), 0, "entry 1 current");
 
     // Verify var-data fields
-    assert_eq!(
-        decoder.id_as_str().expect("id_as_str"),
-        "test-id-1",
-        "id"
-    );
+    assert_eq!(decoder.id_as_str().expect("id_as_str"), "test-id-1", "id");
     assert_eq!(
         decoder.result_as_str().expect("result_as_str"),
         "{\"data\":\"ok\"}",
@@ -638,16 +687,17 @@ fn binance_websocket_response_group_buffer_too_short() {
 #[test]
 fn wrong_schema_bitget_encoded_rejected_by_binance() {
     use binance_spot::WebSocketResponseDecoder;
-    use bitget_spot::{
-        best_bid_ask_encoder_state, BestBidAskEncoder, InstCategory, Padding5,
-    };
+    use bitget_spot::{BestBidAskEncoder, InstCategory, Padding5, best_bid_ask_encoder_state};
 
     // Encode a valid bitget BestBidAsk message
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(&mut buf, 0)
+    let mut encoder =
+        BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(
+            &mut buf, 0,
+        )
         .expect("wrap_and_apply_header should succeed");
     encoder
         .ts(1u64)
@@ -671,6 +721,136 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() {
     assert!(
         result.is_err(),
         "bitget-encoded data rejected by binance decoder: schema_id differs"
+    );
+}
+
+// ── Type-inventory tests: catch codegen regressions that silently drop message types ──
+
+#[test]
+fn bitget_type_inventory() {
+    // BestBidAskDecoder (template 1002) — verify SCHEMA_ID, SCHEMA_VERSION, TEMPLATE_ID
+    assert_eq!(
+        bitget_spot::BestBidAskDecoder::SCHEMA_ID,
+        1,
+        "BestBidAskDecoder::SCHEMA_ID"
+    );
+    assert_eq!(
+        bitget_spot::BestBidAskDecoder::SCHEMA_VERSION,
+        3,
+        "BestBidAskDecoder::SCHEMA_VERSION"
+    );
+    assert_eq!(
+        bitget_spot::BestBidAskDecoder::TEMPLATE_ID,
+        1002,
+        "BestBidAskDecoder::TEMPLATE_ID"
+    );
+
+    // Depth50Decoder (template 1001)
+    assert_eq!(
+        bitget_spot::Depth50Decoder::SCHEMA_ID,
+        1,
+        "Depth50Decoder::SCHEMA_ID"
+    );
+    assert_eq!(
+        bitget_spot::Depth50Decoder::TEMPLATE_ID,
+        1001,
+        "Depth50Decoder::TEMPLATE_ID"
+    );
+
+    // TradeDecoder (template 1003)
+    assert_eq!(
+        bitget_spot::TradeDecoder::SCHEMA_ID,
+        1,
+        "TradeDecoder::SCHEMA_ID"
+    );
+    assert_eq!(
+        bitget_spot::TradeDecoder::TEMPLATE_ID,
+        1003,
+        "TradeDecoder::TEMPLATE_ID"
+    );
+
+    // Free function schema_id_from_header
+    let header = bitget_spot::MessageHeader([32, 0, 233, 3, 1, 0, 3, 0]); // Depth50 header
+    assert_eq!(
+        bitget_spot::schema_id_from_header(&header.0),
+        Some(1),
+        "schema_id_from_header should return SCHEMA_ID for valid header"
+    );
+    assert_eq!(
+        bitget_spot::schema_id_from_header(&[0u8; 8]),
+        Some(0),
+        "schema_id_from_header on all-zeros header"
+    );
+    assert_eq!(
+        bitget_spot::schema_id_from_header(&[0u8; 4]),
+        None,
+        "schema_id_from_header on too-short buffer"
+    );
+
+    // Module-level constants
+    assert_eq!(
+        bitget_spot::SEMANTIC_VERSION,
+        "1.0.0",
+        "bitget SCHEMA_SEMANTIC_VERSION"
+    );
+}
+
+#[test]
+fn binance_type_inventory() {
+    // WebSocketSessionLogonResponseDecoder
+    assert_eq!(
+        binance_spot::WebSocketSessionLogonResponseDecoder::SCHEMA_ID,
+        3,
+        "WebSocketSessionLogonResponseDecoder::SCHEMA_ID"
+    );
+    assert_eq!(
+        binance_spot::WebSocketSessionLogonResponseDecoder::TEMPLATE_ID,
+        51,
+        "WebSocketSessionLogonResponseDecoder::TEMPLATE_ID"
+    );
+
+    // WebSocketResponseDecoder (template 50)
+    assert_eq!(
+        binance_spot::WebSocketResponseDecoder::SCHEMA_ID,
+        3,
+        "WebSocketResponseDecoder::SCHEMA_ID"
+    );
+    assert_eq!(
+        binance_spot::WebSocketResponseDecoder::TEMPLATE_ID,
+        50,
+        "WebSocketResponseDecoder::TEMPLATE_ID"
+    );
+
+    // ServerTimeResponseDecoder (template 102)
+    assert_eq!(
+        binance_spot::ServerTimeResponseDecoder::SCHEMA_ID,
+        3,
+        "ServerTimeResponseDecoder::SCHEMA_ID"
+    );
+    assert_eq!(
+        binance_spot::ServerTimeResponseDecoder::TEMPLATE_ID,
+        102,
+        "ServerTimeResponseDecoder::TEMPLATE_ID"
+    );
+
+    // Free function schema_id_from_header
+    let header = binance_spot::MessageHeader([0, 0, 102, 0, 3, 0, 5, 0]); // ServerTimeResponse header
+    assert_eq!(
+        binance_spot::schema_id_from_header(&header.0),
+        Some(3),
+        "schema_id_from_header should return SCHEMA_ID for valid header"
+    );
+    assert_eq!(
+        binance_spot::schema_id_from_header(&[0u8; 4]),
+        None,
+        "schema_id_from_header on too-short buffer"
+    );
+
+    // Module-level constants
+    assert_eq!(
+        binance_spot::SEMANTIC_VERSION,
+        "5.2",
+        "binance SEMANTIC_VERSION"
     );
 }
 

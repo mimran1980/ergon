@@ -5,7 +5,6 @@ dispatches on `templateId` without requiring an external frame length. Returns
 `DecodeError::UnknownTemplateLength` for unknown templates (since SBE headers
 don't carry total message length). Currently only `decode_frame()` exists.
 
-**Status:** Not started
 **Status: DONE**
 
 

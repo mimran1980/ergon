@@ -4,7 +4,6 @@ Generate `fn debug_wire(&self) -> WireDebug<'_>` on decoders that implements
 `Display` with a hex dump annotated with field boundaries. This is specified in
 DECISIONS.md §9 but completely missing from the implementation.
 
-**Status:** Not started
 **Status: DONE**
 
 

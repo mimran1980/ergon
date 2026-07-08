@@ -1,5 +1,5 @@
-//! Generated from SBE schema package `baseline` id 1 version 0.
-#![allow(
+/// Generated from SBE schema package `baseline` id 1 version 0.
+#[allow(
     clippy::absurd_extreme_comparisons,
     clippy::double_must_use,
     clippy::erasing_op,
