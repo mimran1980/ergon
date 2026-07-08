@@ -1901,37 +1901,32 @@ impl<'a, State> CarEncoder<'a, State> {
     #[must_use]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = self.message_start + 8;
-        let val_bytes = val.to_le_bytes();
-        self.buf[offset..offset + 8].copy_from_slice(&val_bytes);
+        write_bytes::<8>(self.buf, offset, &val.to_le_bytes());
         self
     }
     #[must_use]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = self.message_start + 16;
-        let val_bytes = val.to_le_bytes();
-        self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
+        write_bytes::<2>(self.buf, offset, &val.to_le_bytes());
         self
     }
     #[must_use]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.message_start + 18;
-        let val_bytes = (val as u8).to_le_bytes();
-        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
+        write_bytes::<1>(self.buf, offset, &(val as u8).to_le_bytes());
         self
     }
     #[must_use]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
         let offset = self.message_start + 18;
         let enum_val: BooleanType = val.into();
-        let val_bytes = (enum_val as u8).to_le_bytes();
-        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
+        write_bytes::<1>(self.buf, offset, &(enum_val as u8).to_le_bytes());
         self
     }
     #[must_use]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.message_start + 19;
-        let val_bytes = (val as u8).to_le_bytes();
-        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
+        write_bytes::<1>(self.buf, offset, &(val as u8).to_le_bytes());
         self
     }
     #[must_use]
@@ -1939,8 +1934,7 @@ impl<'a, State> CarEncoder<'a, State> {
         let offset = self.message_start + 20;
         let mut idx = 0usize;
         while idx < 4 {
-            let val_bytes = val[idx].to_le_bytes();
-            self.buf[offset + idx * 4..offset + idx * 4 + 4].copy_from_slice(&val_bytes);
+            write_bytes::<4>(self.buf, offset + idx * 4, &val[idx].to_le_bytes());
             idx += 1;
         }
         self
@@ -1950,8 +1944,7 @@ impl<'a, State> CarEncoder<'a, State> {
         let offset = self.message_start + 36;
         let mut idx = 0usize;
         while idx < 6 {
-            let val_bytes = val[idx].to_le_bytes();
-            self.buf[offset + idx * 1..offset + idx * 1 + 1].copy_from_slice(&val_bytes);
+            write_bytes::<1>(self.buf, offset + idx * 1, &val[idx].to_le_bytes());
             idx += 1;
         }
         self
@@ -1959,8 +1952,7 @@ impl<'a, State> CarEncoder<'a, State> {
     #[must_use]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.message_start + 42;
-        let val_bytes = val.0.to_le_bytes();
-        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
+        write_bytes::<1>(self.buf, offset, &val.0.to_le_bytes());
         self
     }
     #[must_use]
@@ -2316,15 +2308,13 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
     #[must_use]
     pub fn speed(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
-        let val_bytes = val.to_le_bytes();
-        self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
+        write_bytes::<2>(self.buf, offset, &val.to_le_bytes());
         self
     }
     #[must_use]
     pub fn mpg(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
-        let val_bytes = val.to_le_bytes();
-        self.buf[offset..offset + 4].copy_from_slice(&val_bytes);
+        write_bytes::<4>(self.buf, offset, &val.to_le_bytes());
         self
     }
     #[must_use]
@@ -2414,8 +2404,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     #[must_use]
     pub fn octane_rating(&mut self, val: u8) -> &mut Self {
         let offset = self.entry_start + 0;
-        let val_bytes = val.to_le_bytes();
-        self.buf[offset..offset + 1].copy_from_slice(&val_bytes);
+        write_bytes::<1>(self.buf, offset, &val.to_le_bytes());
         self
     }
     #[must_use]
@@ -2521,15 +2510,13 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
     #[must_use]
     pub fn mph(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
-        let val_bytes = val.to_le_bytes();
-        self.buf[offset..offset + 2].copy_from_slice(&val_bytes);
+        write_bytes::<2>(self.buf, offset, &val.to_le_bytes());
         self
     }
     #[must_use]
     pub fn seconds(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
-        let val_bytes = val.to_le_bytes();
-        self.buf[offset..offset + 4].copy_from_slice(&val_bytes);
+        write_bytes::<4>(self.buf, offset, &val.to_le_bytes());
         self
     }
 }
