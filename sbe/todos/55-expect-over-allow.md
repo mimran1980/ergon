@@ -10,12 +10,12 @@ DECISIONS.md §12 explicitly prefers `#[expect]` over `#[allow]`.
 
 ## Acceptance criteria
 
-- [ ] Replace `#[allow(non_camel_case_types)]` with `#[expect(non_camel_case_types)]`
-- [ ] Replace `#[allow(non_snake_case)]` with `#[expect(non_snake_case)]`
-- [ ] Replace `#[allow(clippy::*)]` with `#[expect(clippy::*)]`
-- [ ] Replace `#[allow(dead_code)]` with `#[expect(dead_code)]`
-- [ ] `#[allow(unused_imports)]` → `#[expect(unused_imports)]`
-- [ ] Verify: when suppression is stale, CI warns (so we can remove it)
+- [x] Replace `#[allow(non_camel_case_types)]` with `#[expect(non_camel_case_types)]` — WONT DO (design decision 2026-07-06). `#[allow]` is intentional because `#[expect]` produces false-positive stale-suppression warnings when schemas don't trigger the suppressed lint.
+- [x] Replace `#[allow(non_snake_case)]` with `#[expect(non_snake_case)]` — WONT DO (same)
+- [x] Replace `#[allow(clippy::*)]` with `#[expect(clippy::*)]` — WONT DO (same)
+- [x] Replace `#[allow(dead_code)]` with `#[expect(dead_code)]` — WONT DO (same)
+- [x] `#[allow(unused_imports)]` → `#[expect(unused_imports)]` — WONT DO (same)
+- [x] Verify: when suppression is stale, CI warns (so we can remove it) — N/A
 
 Ref: gap analysis (todo 51), DECISIONS.md §12.
 
