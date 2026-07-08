@@ -6,7 +6,7 @@ DECISIONS.md §5. Add `presence: Presence`, `null_value: Option<u64>`, and
 **Status: DONE**
 
 
-## Status
+**Status: DONE**
 
 &#x2705; Complete — `presence`, `null_value`, `semantic_type`, `description` added to `FieldInfo`.
 

@@ -3,6 +3,8 @@
 **Blocked by:** none
 **Severity:** HIGH
 
+**Status: DONE**
+
 ## Problem
 
 ErgoSBE's XML parser is simpler than Aeron's `sbe-tool`, but the current gap is

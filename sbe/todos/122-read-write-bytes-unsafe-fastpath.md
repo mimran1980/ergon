@@ -4,6 +4,8 @@
 use `while i < N` loops internally. Aeron does NOT — it uses direct slice
 indexing: `slice[index..index+N].try_into().expect("...")`.
 
+**Status: DONE**
+
 ## Verification note (2026-07-08)
 
 This todo captured the read/write helper change and the const-callsite conflict

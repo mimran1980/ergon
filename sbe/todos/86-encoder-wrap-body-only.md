@@ -7,7 +7,7 @@ DECISIONS.md §6 specifies both entrypoints.
 **Status: DONE**
 
 
-## Status: Not Started
+**Status: DONE**
 
 ## Acceptance Criteria
 

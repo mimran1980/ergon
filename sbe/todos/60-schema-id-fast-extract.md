@@ -7,6 +7,8 @@ depends on the `headerType` composite definition. Users need to route messages
 to the correct decoder before fully parsing the header, but you need the
 schemaId to know which schema to use. Chicken-and-egg.
 
+**Status: DONE**
+
 ## Solution
 
 Generate a `schema_id_from_header(buf: &[u8]) -> Option<u16>` free function that:

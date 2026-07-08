@@ -39,7 +39,7 @@ with 0 errors and high generated warning volume.
   required v0 fields format directly, optional/versioned fields use `Option`,
   and `Result`-returning var-data/group paths use `if let Ok(...)`.
 - [x] `samples/exchange-orderbook` no longer has generated `E0308` errors.
-- [ ] Add or extend a codegen test using a schema with optional and required
+- [x] Add or extend a codegen test using a schema with optional and required
   enum/integer fields to compile generated `Display`.
-- [ ] Default workspace tests pass after golden regeneration, if generated
+- [x] Default workspace tests pass after golden regeneration, if generated
   output changes.

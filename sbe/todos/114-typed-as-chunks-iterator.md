@@ -3,6 +3,8 @@
 **Blocked by:** none
 **Ref:** user request
 
+**Status: DONE**
+
 ## Problem
 
 `as_chunks()` on fixed-entry groups returns raw bytes:

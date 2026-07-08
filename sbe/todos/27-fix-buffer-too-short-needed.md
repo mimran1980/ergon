@@ -3,7 +3,9 @@
 **Blocked by:** none
 
 Every decoder field template that computes `needed` for `DecodeError::BufferTooShort`
-has a systematic off-by-offset bug. The `needed` value is `offset + prim_size`
+has a systematic off-by-offset bug.
+
+**Status: DONE** The `needed` value is `offset + prim_size`
 (field *position* + field size) instead of just `prim_size` (field size).
 
 For field `model_year` at offset 8 with size 2, the error reports

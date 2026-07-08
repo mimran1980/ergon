@@ -7,6 +7,8 @@ keeps the happy path in L1i. This matters for HFT where every instruction counts
 
 DECISIONS.md §12 explicitly requires this. The codegen doesn't emit it anywhere.
 
+**Status: DONE**
+
 ## Acceptance criteria
 
 - [x] `#[cold]` on all error-return functions (decode methods, encode check methods)

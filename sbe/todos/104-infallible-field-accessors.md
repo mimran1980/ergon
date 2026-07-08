@@ -8,6 +8,8 @@ is sufficient — per-field `Result` is hypothetical error handling that wastes
 cycles. The upstream Aeron Rust SBE returns `T` directly from field accessors,
 not `Result<T, Error>`.
 
+**Status: DONE**
+
 ## Code comparison with Aeron Rust SBE
 
 A detailed line-by-line comparison is required. For EVERY generated method,

@@ -3,6 +3,8 @@
 **Blocked by:** none
 **Severity:** HIGH
 
+**Status: DONE**
+
 ## Problem
 
 Aeron parses schema constants, min/max/null values, enum valid values, and set

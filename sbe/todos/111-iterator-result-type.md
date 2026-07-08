@@ -3,6 +3,8 @@
 **Blocked by:** 109 (group iteration fast path)
 **Ref:** Aeron perf audit (todo 105, gap #5)
 
+**Status: DONE**
+
 ## Problem
 
 ErgoSBE's `Iterator::next()` for group decoders swallows errors:

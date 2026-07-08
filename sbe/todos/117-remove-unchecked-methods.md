@@ -2,6 +2,8 @@
 
 **Ref:** user request. Bound-check-disabled feature gates the internal path.
 
+**Status: DONE**
+
 ## Problem
 
 Every field accessor generates three methods:

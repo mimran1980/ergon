@@ -7,6 +7,8 @@ baked from the schema. The accessor should return a `const fn` with the
 compile-time value. String constants return `&'static str`; numeric constants
 return the typed value. DECISIONS.md §4.
 
+**Status: DONE**
+
 ## Acceptance criteria
 
 - [x] Parse `presence="constant"` and `constantValue` from XML (needed for enum/set constant fields via `valueRef`)

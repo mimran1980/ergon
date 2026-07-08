@@ -4,9 +4,7 @@ Composites and newtypes containing float fields (`f32`/`f64`) should not derive
 `Eq`, `Ord`, or `Hash` because IEEE floating-point is not totally ordered.
 DECISIONS.md §4 specifies this.
 
-## Status
-
-✅ Done — `generate_composite()` checks member types and conditionally derives.
+**Status: DONE**
 
 ## Acceptance criteria
 

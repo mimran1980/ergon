@@ -6,6 +6,8 @@ Switch from the current E3 split-enum pattern to the Aeron-style flat enum
 with a `NullVal` catch-all variant. The user prefers the simplicity of a
 single match statement over preserving unknown wire values.
 
+**Status: DONE**
+
 ## Current (E3 pattern)
 
 ```rust

@@ -7,6 +7,8 @@ test: full Car example against upstream fixture. Verifies tail offset computed
 from **wire** `blockLength` (trap 1), group dimension encoding, and var-data
 length handling.
 
+**Status: DONE**
+
 ## Acceptance criteria
 
 - [x] Group decode: correct count, correct entry fields, correct tail offset from **wire** `blockLength`

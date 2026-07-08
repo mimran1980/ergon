@@ -1,5 +1,7 @@
 # Diagnostic Quality Audit: ErgoSBE vs Aeron sbe-tool
 
+**Status: DONE**
+
 ## Summary
 
 ErgoSBE's parser diagnostics are **strictly better** than Aeron's in every

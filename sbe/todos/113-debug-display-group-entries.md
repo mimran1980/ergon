@@ -3,6 +3,8 @@
 **Blocked by:** 111 (Result-bearing Iterator — groups with tails return `Result<EntryDecoder>`)
 **Ref:** user request
 
+**Status: DONE**
+
 ## Problem
 
 `generate_decoder_display()` in `sbe/src/codegen.rs` line ~3019 prints only the

@@ -3,6 +3,8 @@
 **Blocked by:** none (codegen only)
 **Ref:** Aeron perf audit (todo 105, gap #7)
 
+**Status: DONE**
+
 ## Problem
 
 ErgoSBE copies composite fields eagerly — all bytes at once into a value struct:
