@@ -54,20 +54,26 @@ for whatever unsigned type the schema declares.
    and varData lengths based on the schema's dimension type. `u8` framing
    means groups limited to 255 entries, varData to 255 bytes.
 
-## Acceptance criteria
+## Current status (2026-07-08)
 
-- [ ] Schema with `uint8` dimensionType generates group decoder using `u8` count
-- [ ] Schema with `uint8` varData length generates correct length prefix read/write
-- [ ] Schema with `uint32` dimensionType generates `u32` framing (for completeness)
-- [ ] Default `uint16` framing unchanged for schemas without explicit dimensionType
-- [ ] Roundtrip test: encode → decode with u8 framing produces correct values
+- [x] Schema with `uint8` dimensionType parses correctly (test: `u8-dimension-schema.xml`)
+- [x] `GROUP_DIM_TEMPLATE` uses correct byte size from schema (`[u8; 2]` for u8, `[u8; 4]` for u16 default)
+- [x] Verify codegen handles variable-size dimension type (group dim template adapts)
+- [x] Unit test: schema with `groupSize8` dimensionType parses and generates valid Rust
+- [ ] Schema with `uint8` dimensionType generates group decoder/encoder using `u8` count
+      (currently `count: u16` is hard-coded — the dimension size adapts but the count type doesn't)
+- [ ] Schema with `uint8` varData length generates correct length prefix read/write (same issue)
+- [ ] Schema with `uint32` dimensionType generates `u32` framing
+- [ ] Roundtrip test: encode → decode with u8 framing
 - [ ] `encoded_length()` correctly accounts for non-u16 framing sizes
-- [ ] Boundary values: group of 255 entries with u8 framing, group of 1 entry,
-      0-entry group, varData of 0 bytes, varData of 255 bytes
-- [ ] Golden file updated with u8-framed example schema
-- [ ] Unit test: schema with `groupSize8` dimensionType parses correctly
-- [ ] Unit test: encode/decode roundtrip with u8-framed group and varData
-- [ ] Unit test: `encoded_length()` matches actual encoded length for u8 framing
+- [ ] `count: u16` → parameterised on dimension's numInGroup primitive type
+
+## Acceptance criteria (remaining)
+
+- [ ] Group encoder/decoder `count` type parameterised on dimension's numInGroup field type
+- [ ] VarData length prefix type parameterised on its encoding type's length field
+- [ ] Roundtrip test with u8-framed group and varData
+- [ ] `encoded_length()` accounts for non-u16 framing
 
 ## Existing schemas to verify
 
