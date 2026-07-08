@@ -78,6 +78,14 @@ impl Paths {
         Self::fixtures_dir().join("float-composite-schema.xml")
     }
 
+    pub fn all_types_le_schema() -> PathBuf {
+        Self::fixtures_dir().join("all-types-le-schema.xml")
+    }
+
+    pub fn all_types_be_schema() -> PathBuf {
+        Self::fixtures_dir().join("all-types-be-schema.xml")
+    }
+
     pub fn issue_schema(num: &str) -> PathBuf {
         Self::fixtures_dir().join(format!("issue{num}.xml"))
     }

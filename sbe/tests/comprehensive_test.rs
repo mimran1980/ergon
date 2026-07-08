@@ -650,3 +650,75 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
     "#);
     Ok(())
 }
+
+// ── todo 121: endianness test matrix ──────────────────────────────────
+
+#[test]
+fn all_types_little_endian_roundtrip() {
+    let (_schema, src) = generate(&Paths::all_types_le_schema(), "all_types_le");
+    // Verify source compiles and contains expected types
+    assert!(src.contains("AllScalars"), "AllScalars composite missing");
+    assert!(src.contains("FloatPair"), "FloatPair composite missing");
+    assert!(src.contains("TestEnum"), "TestEnum missing");
+    assert!(src.contains("TestSet"), "TestSet missing");
+    assert!(src.contains("AllTypesDecoder"), "message decoder missing");
+    // AllScalars contains f32/f64 → should NOT derive Eq/Ord/Hash
+    let asc_idx = src.find("pub struct AllScalars").unwrap();
+    let asc_pre = &src[asc_idx.saturating_sub(200)..asc_idx + 50];
+    assert!(!asc_pre.contains(" Eq,"), "AllScalars with floats: no Eq");
+    assert!(!asc_pre.contains(" Ord,"), "AllScalars with floats: no Ord");
+    assert!(!asc_pre.contains("Hash"), "AllScalars with floats: no Hash");
+    // Float composite should NOT derive Eq/Ord/Hash
+    let fp_idx = src.find("pub struct FloatPair").unwrap();
+    let fp_pre = &src[fp_idx.saturating_sub(200)..fp_idx + 50];
+    assert!(!fp_pre.contains(" Eq,"), "FloatPair should NOT derive Eq");
+    assert!(!fp_pre.contains(" Ord,"), "FloatPair should NOT derive Ord");
+    assert!(!fp_pre.contains("Hash"), "FloatPair should NOT derive Hash");
+    // Compile check: types exist and are callable
+    compile_and_run("all_types_le", &src, r#"
+        // Verify enum constants
+        assert_eq!(TestEnum::A as u8, 0u8);
+        assert_eq!(TestEnum::B as u8, 1u8);
+        assert_eq!(TestEnum::C as u8, 2u8);
+        // Verify composite constructors exist
+        let s = AllScalars::new(-1i8, 255u8, -2i16, 65535u16,
+            -3i32, 4294967295u32, -4i64, 18446744073709551615u64,
+            3.14f32, 2.718f64);
+        assert_eq!(s.i8_val(), -1i8);
+        assert_eq!(s.u16_val(), 65535u16);
+        assert!((s.f32_val() - 3.14f32).abs() < 0.001);
+        let f = FloatPair::new(1.5, 2.5);
+        assert_eq!(f.x(), 1.5);
+        assert_eq!(f.y(), 2.5);
+        // Verify set
+        let mut set = TestSet::default();
+        set.set_bit1(true);
+        assert!(set.bit1());
+        assert!(!set.bit0());
+        // Verify enum from_raw + raw roundtrip
+        let a = TestEnum::from_raw(0);
+        assert_eq!(a.raw(), 0u8);
+        let b = TestEnum::from_raw(1);
+        assert_eq!(b.raw(), 1u8);
+        let c = TestEnum::from_raw(2);
+        assert_eq!(c.raw(), 2u8);
+    "#);
+}
+
+#[test]
+fn all_types_big_endian_roundtrip() {
+    let (_schema, src) = generate(&Paths::all_types_be_schema(), "all_types_be");
+    assert!(src.contains("from_be_bytes"), "BE byte order missing");
+    compile_and_run("all_types_be", &src, r#"
+        let s = AllScalars::new(42i8, 128u8, 1000i16, 50000u16,
+            100000i32, 3000000000u32, 99999i64, 77777u64,
+            1.0f32, 2.0f64);
+        assert_eq!(s.i8_val(), 42i8);
+        assert_eq!(s.u16_val(), 50000u16);
+        assert_eq!(s.f32_val(), 1.0f32);
+        assert_eq!(TestEnum::from_raw(2), TestEnum::C);
+        let mut set = TestSet::default();
+        set.set_bit2(true);
+        assert!(set.bit2());
+    "#);
+}
