@@ -1479,3 +1479,18 @@ fn static_header_templates_exist() {
     "#,
     );
 }
+
+#[test]
+fn u8_dimension_type_generates_correctly() {
+    let schema_path = Paths::sbe_tool_test_resource("u8-dimension-schema.xml");
+    let (_schema, src) = generate(&schema_path, "u8dim");
+
+    // u8 group dimension template = 2 bytes (blockLength + numInGroup, both uint8)
+    assert!(
+        src.contains("pub const GROUP_DIM_TEMPLATE: [u8; 2] ="),
+        "u8 dimension type must produce 2-byte GROUP_DIM_TEMPLATE, got:\n{src}"
+    );
+
+    // Verify the generated code compiles
+    syn::parse_file(&src).expect("generated code for u8 schema is not valid Rust");
+}
