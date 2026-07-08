@@ -19,9 +19,14 @@ use rust_decimal::Decimal;
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-// Include generated code from build.rs output
-include!(concat!(env!("OUT_DIR"), "/bitget_spot.rs"));
-include!(concat!(env!("OUT_DIR"), "/binance_spot.rs"));
+// Include generated code from build.rs output — each schema in its own module
+// to avoid type name collisions between the two formats.
+mod bitget_spot {
+    include!(concat!(env!("OUT_DIR"), "/bitget_spot.rs"));
+}
+mod binance_spot {
+    include!(concat!(env!("OUT_DIR"), "/binance_spot.rs"));
+}
 
 #[tokio::main]
 async fn main() {

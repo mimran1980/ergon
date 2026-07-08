@@ -2529,7 +2529,12 @@ fn generate_message_decoder(
     for g in &msg.groups {
         let (dim_name, dim_size, bl_field, count_field) =
             get_dimension_info(elements, &g.dimension_type);
-        let g_pascal = to_pascal_case(&g.name);
+        let raw_g_pascal = to_pascal_case(&g.name);
+        let g_pascal = if multi_message {
+            format!("{}{}", &name, raw_g_pascal)
+        } else {
+            raw_g_pascal
+        };
         let _dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
         let _count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
         let _bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
@@ -2612,11 +2617,16 @@ fn generate_message_decoder(
     // 8. Group accessors
     let mut g_idx = 0usize;
     for g in &msg.groups {
-        let g_pascal = to_pascal_case(&g.name);
+        let raw_name = to_pascal_case(&g.name);
+        let scoped = if multi_message {
+            format!("{}{}", &name, raw_name)
+        } else {
+            raw_name
+        };
         let g_snake = to_snake_case(&g.name);
         let g_snake_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
         let g_decoder_ident = syn::Ident::new(
-            &format!("{g_pascal}Decoder"),
+            &format!("{scoped}Decoder"),
             proc_macro2::Span::call_site(),
         );
         let m_idx_lit = syn::LitInt::new(&g_idx.to_string(), proc_macro2::Span::call_site());
@@ -4501,8 +4511,14 @@ fn generate_message_encoder(
             };
 
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
+            let raw_enc_name = to_pascal_case(&g.name);
+            let scoped_enc = if multi_message {
+                format!("{}{}", &name, raw_enc_name)
+            } else {
+                raw_enc_name
+            };
             let g_pascal_enc =
-                syn::Ident::new(&format!("{}Encoder", to_pascal_case(&g.name)), span);
+                syn::Ident::new(&format!("{scoped_enc}Encoder"), span);
             let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
             let (num_offset, num_size) = get_dim_num_layout(elements, &g.dimension_type);
             let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);

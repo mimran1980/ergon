@@ -1,0 +1,65 @@
+# Endianness + full type matrix tests with Aeron comparison
+
+**Ref:** user request. Little-endian is standard; big-endian must also work for
+every field type, composite, enum, set, and group.
+
+## Problem
+
+All current tests use little-endian schemas. Big-endian SBE is used by some
+exchanges (CME, ICE). We need:
+
+1. A test schema exercising EVERY field type (int8..int64, uint8..uint64, float,
+   double, char) in composites, enums, sets, arrays, varData, and groups
+2. Both little-endian and big-endian versions of the same schema
+3. ErgoSBE and Aeron Rust output generated from both
+4. Byte-exact comparison: ErgoSBE big-endian bytes == Aeron Rust big-endian bytes
+5. Roundtrip: encode → decode produces same values for both endiannesses
+
+## Design
+
+### Test schema
+
+Create `all-types-schema.xml` with:
+- One composite with all scalar types (int8..int64, uint8..uint64, float, double, char)
+- One enum (uint8 encoding)
+- One set (uint8 bitfield)
+- One fixed-length array
+- One varData field
+- One repeating group with entries containing scalars + varData
+- One nested group
+
+### Aeron comparison
+
+Generate Aeron Rust code from the same schema using the SBE Gradle toolchain
+(`simple-binary-encoding/` submodule):
+
+```sh
+./gradlew generateRust -Pschema=all-types-schema.xml
+```
+
+Then diff ErgoSBE output against Aeron Rust output byte-by-byte for encoded
+messages.
+
+### Test matrix
+
+| Dimension | Variants |
+|-----------|----------|
+| Endianness | LE, BE |
+| Field types | 12 primitives × (scalar, composite, enum, set, array) |
+| Optional/nullable | present, absent, null |
+| Since version | v0, v1 |
+| Groups | empty, single, multi, nested |
+
+## Acceptance criteria
+
+- [ ] `all-types-le-schema.xml` and `all-types-be-schema.xml` fixtures created
+- [ ] ErgoSBE generates code from both schemas
+- [ ] Aeron Rust code generated from both schemas for comparison
+- [ ] Byte-exact parity: ErgoSBE big-endian output == Aeron Rust big-endian output
+- [ ] Roundtrip test: all types encode → decode correctly in both endiannesses
+- [ ] Composite field ordering correct in big-endian
+- [ ] Enum/set byte order correct in big-endian
+- [ ] VarData length prefix byte order correct in big-endian
+- [ ] Group dimension header byte order correct in big-endian
+- [ ] Array elements byte order correct in big-endian
+- [ ] Golden file stability test passes
