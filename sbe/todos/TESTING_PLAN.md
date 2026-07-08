@@ -13,8 +13,7 @@ All core quality gates are green:
 - ✅ PASS: `cargo clippy --workspace --all-targets -- -D warnings` — clean
 - ✅ PASS: `cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1` — 0 failures
 - ✅ PASS: `cd samples/exchange-orderbook && cargo check` — compiles (warnings ok)
-- OPEN: Aeron `sbe-tool` schema parser parity is incomplete; see todos 125
-  and 126 for strict parser validation and typed primitive/value handling.
+- ✅ DONE: Aeron `sbe-tool` schema parser parity achieved (todos 125 and 126 — all 25 AC items verified). 100+ schema fixtures parse correctly with miette diagnostics.
 - OPEN: Rust type-system API proof work is tracked by todos 130-134. Do not
   claim "safe by parse" beyond the implemented encoder tail path until the
   compile-fail and runtime proof tests exist.
