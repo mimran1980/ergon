@@ -1,14 +1,14 @@
-//! Generated from SBE schema package `baseline` id 1 version 0.
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(clippy::identity_op)]
-#![allow(clippy::eq_op)]
-#![allow(clippy::needless_borrow)]
-#![allow(clippy::manual_range_contains)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-#![allow(dead_code)]
+/// Generated from SBE schema package `baseline` id 1 version 0.
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
+#[allow(clippy::identity_op)]
+#[allow(clippy::eq_op)]
+#[allow(clippy::needless_borrow)]
+#[allow(clippy::manual_range_contains)]
+#[allow(unused_imports)]
+#[allow(unused_variables)]
+#[allow(unused_mut)]
+#[allow(dead_code)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {

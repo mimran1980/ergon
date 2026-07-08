@@ -149,20 +149,22 @@ impl Generator {
         // codegen must be updated to emit a separate module file (not include!).
         write!(
             src,
-            "//! Generated from SBE schema package `{}` id {} version {}.\n\n",
+            "/// Generated from SBE schema package `{}` id {} version {}.\n\n",
             schema.package, schema.id, schema.version
         )
         .unwrap();
-        src.push_str("#![allow(non_camel_case_types)]\n");
-        src.push_str("#![allow(non_snake_case)]\n");
-        src.push_str("#![allow(clippy::identity_op)]\n");
-        src.push_str("#![allow(clippy::eq_op)]\n");
-        src.push_str("#![allow(clippy::needless_borrow)]\n");
-        src.push_str("#![allow(clippy::manual_range_contains)]\n");
-        src.push_str("#![allow(unused_imports)]\n");
-        src.push_str("#![allow(unused_variables)]\n");
-        src.push_str("#![allow(unused_mut)]\n");
-        src.push_str("#![allow(dead_code)]\n\n");
+        // Emit outer attributes (not inner `#![]`) so the generated code compiles
+        // when included via `mod { include!(...) }` in Rust edition 2024.
+        src.push_str("#[allow(non_camel_case_types)]\n");
+        src.push_str("#[allow(non_snake_case)]\n");
+        src.push_str("#[allow(clippy::identity_op)]\n");
+        src.push_str("#[allow(clippy::eq_op)]\n");
+        src.push_str("#[allow(clippy::needless_borrow)]\n");
+        src.push_str("#[allow(clippy::manual_range_contains)]\n");
+        src.push_str("#[allow(unused_imports)]\n");
+        src.push_str("#[allow(unused_variables)]\n");
+        src.push_str("#[allow(unused_mut)]\n");
+        src.push_str("#[allow(dead_code)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.
         // This covers shared types + the sbe_rt runtime module.

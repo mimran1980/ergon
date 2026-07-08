@@ -21,6 +21,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 // Include generated code from build.rs output — each schema in its own module
 // to avoid type name collisions between the two formats.
+// NOTE: The generated code uses `#![allow(...)]` inner attributes which work
+// inside `mod { include!(...) }` blocks as long as the module declaration has
+// no outer attributes before the include.
 mod bitget_spot {
     include!(concat!(env!("OUT_DIR"), "/bitget_spot.rs"));
 }
