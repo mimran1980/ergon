@@ -54,8 +54,8 @@ pub fn price(&mut self, val: i64) -> &mut Self {
 - [x] Entry encoder array setters use `write_bytes::<N>` per element
 - [x] Message encoder enum/set/boolean setters use `write_bytes::<N>`
 - [x] Entry encoder enum/set setters use `write_bytes::<N>`
-- [ ] Header template construction uses `write_bytes`
-- [ ] Var-data length prefix uses `write_bytes`
-- [ ] Group dim template uses `write_bytes`
+- [x] Header template construction uses `write_bytes` — N/A: codegen-time buffer construction, not generated runtime code. `copy_from_slice` on a `Vec<u8>` is idiomatic.
+- [x] Var-data length prefix uses `write_bytes` — N/A: same, codegen-time byte buffer.
+- [x] Group dim template uses `write_bytes` — N/A: same.
 - [ ] Golden file updated
 - [ ] All tests pass
