@@ -283,7 +283,7 @@ impl Generator {
             /// Safe path uses slice indexing (bounds-checked, equivalent to Aeron's
             /// `slice[index..index+N].try_into()`). With `bound-check-disabled`,
             /// uses `core::ptr::read_unaligned` for zero-overhead access.
-            #[inline(always)]
+            #[inline]
             pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
                 #[cfg(not(feature = "bound-check-disabled"))]
                 {
@@ -301,7 +301,7 @@ impl Generator {
             ///
             /// Safe path uses `copy_from_slice`. With `bound-check-disabled`,
             /// uses `core::ptr::write_unaligned` for zero-overhead write.
-            #[inline(always)]
+            #[inline]
             pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
                 #[cfg(not(feature = "bound-check-disabled"))]
                 {
@@ -1205,14 +1205,14 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
     let from_bool_impl = if let (Some(ref fv), Some(ref tv)) = (false_ident, true_ident) {
         quote::quote! {
             impl From<bool> for #name_ident {
-                #[inline(always)]
+                #[inline]
                 fn from(val: bool) -> Self {
                     if val { Self::#tv } else { Self::#fv }
                 }
             }
 
             impl From<#name_ident> for bool {
-                #[inline(always)]
+                #[inline]
                 fn from(val: #name_ident) -> bool {
                     val as #r_type_ty != 0
                 }
@@ -1245,14 +1245,14 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
         }
 
         impl From<#name_ident> for #r_type_ty {
-            #[inline(always)]
+            #[inline]
             fn from(val: #name_ident) -> Self {
                 val as #r_type_ty
             }
         }
 
         impl From<#r_type_ty> for #name_ident {
-            #[inline(always)]
+            #[inline]
             fn from(val: #r_type_ty) -> Self {
                 Self::from_raw(val)
             }
@@ -1323,14 +1323,14 @@ fn generate_set(src: &mut String, tokens: &[Token]) {
         }
 
         impl From<#r_type_ty> for #name_ident {
-            #[inline(always)]
+            #[inline]
             fn from(val: #r_type_ty) -> Self {
                 Self(val)
             }
         }
 
         impl From<#name_ident> for #r_type_ty {
-            #[inline(always)]
+            #[inline]
             fn from(val: #name_ident) -> Self {
                 val.0
             }
@@ -3201,30 +3201,36 @@ fn generate_group_decoder(
                 } else if let Some(len) = length {
                     let len_lit =
                         syn::LitInt::new(&len.to_string(), proc_macro2::Span::call_site());
-                    let len_times_prim = syn::LitInt::new(
+
+                    // Build unrolled element parses via direct constant indexing of a
+                    // bulk-read local `all` array. One bulk read (single bounds check
+                    // via read_bytes) + direct constant indexing (no per-element
+                    // bounds check). Matching the message-level decoder pattern.
+                    let total_size_lit = syn::LitInt::new(
                         &(prim_size * len).to_string(),
                         proc_macro2::Span::call_site(),
                     );
-
-                    // _unchecked variant below does bulk copy_from_slice + unrolled elements
+                    let mut elem_exprs: Vec<proc_macro2::TokenStream> = Vec::new();
+                    for i in 0..*len {
+                        let start = i * prim_size;
+                        let end = start + prim_size;
+                        let byte_indices: Vec<proc_macro2::TokenStream> = (start..end)
+                            .map(|idx| quote::quote! { all[#idx] })
+                            .collect();
+                        elem_exprs.push(quote::quote! {
+                            #r_type_ty::#order_fn([#(#byte_indices),*])
+                        });
+                    }
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_ident(&self) -> Result<[#r_type_ty; #len_lit], sbe_rt::DecodeError> {
                             let offset = self.pos + #offset_lit;
-                            let size = #len_times_prim;
+                            let size = #total_size_lit;
                             if cfg!(not(feature = "bound-check-disabled")) && offset + size > self.buf.len() {
                                 return Err(sbe_rt::DecodeError::BufferTooShort { field: #f_name_lit, needed: size, available: self.buf.len() - offset });
                             }
-                            let mut res = [0 as #r_type_ty; #len_lit];
-                            let mut idx = 0;
-                            while idx < #len_lit {
-                                let offset = self.pos + #offset_lit + idx * #prim_size_lit;
-                                res[idx] = #r_type_ty::#order_fn(
-                                    read_bytes::<#prim_size_lit>(self.buf, offset)
-                                );
-                                idx += 1;
-                            }
-                            Ok(res)
+                            let all: [u8; #total_size_lit] = read_bytes::<#total_size_lit>(self.buf, offset);
+                            Ok([#(#elem_exprs),*])
                         }
                     });
                 } else if f.presence == Presence::Optional {
@@ -3507,28 +3513,33 @@ fn generate_group_decoder(
         nvd_idx += 1;
     }
 
-    // encoded_length, skip
-    let total_tail_lit = syn::LitInt::new(&total_tail.to_string(), proc_macro2::Span::call_site());
+    // encoded_length, skip — tail shape is a compile-time constant;
+    // emit only the live path (no dead branch in the generated source).
     let tail_total_fn = quote::format_ident!("tail_offset_{}", total_tail);
-    entry_body.extend(quote::quote! {
-        #[inline]
-        pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-            Ok(self.#tail_total_fn()? - self.pos)
-        }
-
-        #[inline]
-        pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
-            // Wire block_len used for both fixed-entry and tailed-entry groups.
-            // The entry decoder now stores acting_block_length from the dimension
-            // header, so tail_offset_0 uses the wire blockLength.
-            if #total_tail_lit == 0 {
+    if total_tail == 0 {
+        entry_body.extend(quote::quote! {
+            #[inline]
+            pub fn encoded_length(&self) -> usize {
+                self.acting_block_length
+            }
+            #[inline]
+            pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
                 Ok(pos + block_len)
-            } else {
+            }
+        });
+    } else {
+        entry_body.extend(quote::quote! {
+            #[inline]
+            pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+                Ok(self.#tail_total_fn()? - self.pos)
+            }
+            #[inline]
+            pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
                 let entry = Self::wrap(buf, pos, block_len, acting_version);
                 entry.#tail_total_fn()
             }
-        }
-    });
+        });
+    }
 
     // EntryDecoder Display impl body
     let mut entry_display_body = proc_macro2::TokenStream::new();
@@ -3972,19 +3983,31 @@ fn generate_message_encoder(
                 let r_type: syn::Type = syn::parse_str(rust_type(*prim)).unwrap();
                 if let Some(len) = length {
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
-                    impl_contents.extend(quote::quote! {
-                        #[must_use]
-                        #[inline]
-                        pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
-                            let offset = #body_offset_lit;
-                            let mut idx = 0usize;
-                            while idx < #len_lit {
-                                self.buf[offset + idx * #prim_size_lit..][..#prim_size_lit].copy_from_slice(&val[idx].#to_endian());
-                                idx += 1;
+                    if prim_size == 1 {
+                        // [u8; N]: no byte-swap needed, single bulk copy
+                        impl_contents.extend(quote::quote! {
+                            #[must_use]
+                            #[inline]
+                            pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
+                                self.buf[#body_offset_lit..][..#len_lit].copy_from_slice(&val);
+                                self
                             }
-                            self
-                        }
-                    });
+                        });
+                    } else {
+                        impl_contents.extend(quote::quote! {
+                            #[must_use]
+                            #[inline]
+                            pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
+                                let offset = #body_offset_lit;
+                                let mut idx = 0usize;
+                                while idx < #len_lit {
+                                    self.buf[offset + idx * #prim_size_lit..][..#prim_size_lit].copy_from_slice(&val[idx].#to_endian());
+                                    idx += 1;
+                                }
+                                self
+                            }
+                        });
+                    }
                 } else {
                     impl_contents.extend(quote::quote! {
                         #[must_use]

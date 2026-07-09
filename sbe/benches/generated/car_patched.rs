@@ -189,25 +189,25 @@ impl BooleanType {
     }
 }
 impl From<BooleanType> for u8 {
-    #[inline(always)]
+    #[inline]
     fn from(val: BooleanType) -> Self {
         val as u8
     }
 }
 impl From<u8> for BooleanType {
-    #[inline(always)]
+    #[inline]
     fn from(val: u8) -> Self {
         Self::from_raw(val)
     }
 }
 impl From<bool> for BooleanType {
-    #[inline(always)]
+    #[inline]
     fn from(val: bool) -> Self {
         if val { Self::T } else { Self::F }
     }
 }
 impl From<BooleanType> for bool {
-    #[inline(always)]
+    #[inline]
     fn from(val: BooleanType) -> bool {
         val as u8 != 0
     }
@@ -235,13 +235,13 @@ impl Model {
     }
 }
 impl From<Model> for u8 {
-    #[inline(always)]
+    #[inline]
     fn from(val: Model) -> Self {
         val as u8
     }
 }
 impl From<u8> for Model {
-    #[inline(always)]
+    #[inline]
     fn from(val: u8) -> Self {
         Self::from_raw(val)
     }
@@ -288,13 +288,13 @@ impl OptionalExtras {
     }
 }
 impl From<u8> for OptionalExtras {
-    #[inline(always)]
+    #[inline]
     fn from(val: u8) -> Self {
         Self(val)
     }
 }
 impl From<OptionalExtras> for u8 {
-    #[inline(always)]
+    #[inline]
     fn from(val: OptionalExtras) -> Self {
         val.0
     }
@@ -1400,12 +1400,8 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         block_len: usize,
         acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        if 1 == 0 {
-            Ok(pos + block_len)
-        } else {
-            let entry = Self::wrap(buf, pos, block_len, acting_version);
-            entry.tail_offset_1()
-        }
+        let entry = Self::wrap(buf, pos, block_len, acting_version);
+        entry.tail_offset_1()
     }
 }
 impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
@@ -1653,12 +1649,8 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         block_len: usize,
         acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        if 1 == 0 {
-            Ok(pos + block_len)
-        } else {
-            let entry = Self::wrap(buf, pos, block_len, acting_version);
-            entry.tail_offset_1()
-        }
+        let entry = Self::wrap(buf, pos, block_len, acting_version);
+        entry.tail_offset_1()
     }
 }
 impl<'a> core::fmt::Display for PerformanceFiguresEntryDecoder<'a> {
@@ -1847,22 +1839,17 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         Ok(self.pos + self.acting_block_length)
     }
     #[inline]
-    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-        Ok(self.tail_offset_0()? - self.pos)
+    pub fn encoded_length(&self) -> usize {
+        self.acting_block_length
     }
     #[inline]
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
         block_len: usize,
-        acting_version: u16,
+        _acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        if 0 == 0 {
-            Ok(pos + block_len)
-        } else {
-            let entry = Self::wrap(buf, pos, block_len, acting_version);
-            entry.tail_offset_0()
-        }
+        Ok(pos + block_len)
     }
 }
 impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
@@ -1966,12 +1953,7 @@ impl<'a, State> CarEncoder<'a, State> {
     #[must_use]
     #[inline]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
-        let offset = 36;
-        let mut idx = 0usize;
-        while idx < 6 {
-            self.buf[offset + idx * 1..][..1].copy_from_slice(&val[idx].to_le_bytes());
-            idx += 1;
-        }
+        self.buf[36..][..6].copy_from_slice(&val);
         self
     }
     #[must_use]
@@ -2685,7 +2667,7 @@ pub mod prelude {
 /// Safe path uses slice indexing (bounds-checked, equivalent to Aeron's
 /// `slice[index..index+N].try_into()`). With `bound-check-disabled`,
 /// uses `core::ptr::read_unaligned` for zero-overhead access.
-#[inline(always)]
+#[inline]
 pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
     #[cfg(not(feature = "bound-check-disabled"))]
     { buf[offset..][..N].try_into().expect("read_bytes: buffer too short") }
@@ -2696,7 +2678,7 @@ pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
 ///
 /// Safe path uses `copy_from_slice`. With `bound-check-disabled`,
 /// uses `core::ptr::write_unaligned` for zero-overhead write.
-#[inline(always)]
+#[inline]
 pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
     #[cfg(not(feature = "bound-check-disabled"))]
     {
