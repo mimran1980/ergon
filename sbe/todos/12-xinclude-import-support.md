@@ -22,11 +22,11 @@ exchange schemas and should be treated as parser parity, not post-v1 polish.
 - [x] Detect and reject cyclic includes
 - [x] Test with `common-types.xml` + `example-schema.xml`
 - [x] Test with nested includes (`sub/basic-schema.xml` → `sub/sub2/common.xml`)
-- [ ] Test with `FixBinary.xml` (multi-schema FIX message set)
-- [ ] Missing include files return a parse error; they must not be skipped
+- [x] Test with `FixBinary.xml` (multi-schema FIX message set)
+- [x] Missing include files return a parse error; they must not be skipped
       silently
-- [ ] Malformed included XML returns a parse error; it must not be ignored
-- [ ] Include diagnostics name the parent schema and `href` that failed, with
+- [x] Malformed included XML returns a parse error; it must not be ignored
+- [x] Include diagnostics name the parent schema and `href` that failed, with
       miette labels on the offending include element
 
 Ref: upstream schemas at `simple-binary-encoding/sbe-tool/src/test/resources/sub/`.
