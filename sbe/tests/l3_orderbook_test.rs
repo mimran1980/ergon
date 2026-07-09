@@ -149,3 +149,123 @@ fn l3_compute_encoded_length_positive() {
         "#,
     );
 }
+
+#[test]
+fn l3_roundtrip_3_orders_per_level() {
+    let (_schema, src) = generate(&l3_schema(), "l3book");
+    compile_and_run(
+        "l3_three",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 8192];
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        book.timestamp(999u64).sequence(7u64);
+        let complete = book.bids(1, |bids| {
+            bids.add(|level| {
+                level.price(100i64).qty(30i64);
+                level.orders(3, |orders| {
+                    orders.add(|o| { o.order_qty(10i64); o.order_id(b"ID-A").unwrap(); }).unwrap();
+                    orders.add(|o| { o.order_qty(10i64); o.order_id(b"ID-B").unwrap(); }).unwrap();
+                    orders.add(|o| { o.order_qty(10i64); o.order_id(b"ID-C").unwrap(); }).unwrap();
+                }).unwrap();
+            }).unwrap();
+        }).unwrap().asks(0, |_| {}).unwrap();
+        let encoded = complete.as_bytes();
+        let dec = L3BookDecoder::try_from(encoded).unwrap();
+        assert_eq!(dec.timestamp(), 999);
+        let bids = dec.bids().unwrap();
+        let levels: Vec<_> = bids.collect();
+        assert_eq!(levels.len(), 1);
+        let l0 = levels[0].as_ref().unwrap();
+        assert_eq!(l0.price(), 100);
+        assert_eq!(l0.qty(), 30);
+        let orders = l0.orders().unwrap();
+        let order_entries: Vec<_> = orders.collect();
+        assert_eq!(order_entries.len(), 3, "expected 3 orders");
+        assert_eq!(order_entries[0].as_ref().unwrap().order_qty(), 10);
+        assert_eq!(order_entries[0].as_ref().unwrap().order_id().unwrap(), b"ID-A");
+        assert_eq!(order_entries[1].as_ref().unwrap().order_qty(), 10);
+        assert_eq!(order_entries[1].as_ref().unwrap().order_id().unwrap(), b"ID-B");
+        assert_eq!(order_entries[2].as_ref().unwrap().order_qty(), 10);
+        assert_eq!(order_entries[2].as_ref().unwrap().order_id().unwrap(), b"ID-C");
+        println!("3 orders per level: PASSED");
+        "#,
+    );
+}
+
+#[test]
+fn l3_roundtrip_12_orders_per_level() {
+    let (_schema, src) = generate(&l3_schema(), "l3book");
+    compile_and_run(
+        "l3_twelve",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 16384];
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        book.timestamp(555u64).sequence(42u64);
+        let complete = book.bids(1, |bids| {
+            bids.add(|level| {
+                level.price(200i64).qty(120i64);
+                level.orders(12, |orders| {
+                    for i in 0..12u64 {
+                        let id = format!("ORDER-{:02}", i);
+                        orders.add(|o| {
+                            o.order_qty(10i64);
+                            o.order_id(id.as_bytes()).unwrap();
+                        }).unwrap();
+                    }
+                }).unwrap();
+            }).unwrap();
+        }).unwrap().asks(1, |asks| {
+            asks.add(|level| {
+                level.price(201i64).qty(120i64);
+                level.orders(12, |orders| {
+                    for i in 0..12u64 {
+                        let id = format!("ASK-{:-3}", i);
+                        orders.add(|o| {
+                            o.order_qty(10i64);
+                            o.order_id(id.as_bytes()).unwrap();
+                        }).unwrap();
+                    }
+                }).unwrap();
+            }).unwrap();
+        }).unwrap();
+        let encoded = complete.as_bytes();
+        let dec = L3BookDecoder::try_from(encoded).unwrap();
+        assert_eq!(dec.timestamp(), 555);
+        assert_eq!(dec.sequence(), 42);
+        // Verify bids: 1 level, 12 orders
+        let bids = dec.bids().unwrap();
+        let bid_levels: Vec<_> = bids.collect();
+        assert_eq!(bid_levels.len(), 1);
+        let b0 = bid_levels[0].as_ref().unwrap();
+        assert_eq!(b0.price(), 200);
+        assert_eq!(b0.qty(), 120);
+        let b0_orders = b0.orders().unwrap();
+        let b0_entries: Vec<_> = b0_orders.collect();
+        assert_eq!(b0_entries.len(), 12, "expected 12 bid orders");
+        for (i, entry) in b0_entries.iter().enumerate() {
+            let e = entry.as_ref().unwrap();
+            assert_eq!(e.order_qty(), 10, "bid order {} qty", i);
+            let expected = format!("ORDER-{:02}", i);
+            assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "bid order {} id", i);
+        }
+        // Verify asks: 1 level, 12 orders
+        let asks = dec.asks().unwrap();
+        let ask_levels: Vec<_> = asks.collect();
+        assert_eq!(ask_levels.len(), 1);
+        let a0 = ask_levels[0].as_ref().unwrap();
+        assert_eq!(a0.price(), 201);
+        let a0_orders = a0.orders().unwrap();
+        let a0_entries: Vec<_> = a0_orders.collect();
+        assert_eq!(a0_entries.len(), 12, "expected 12 ask orders");
+        for (i, entry) in a0_entries.iter().enumerate() {
+            let e = entry.as_ref().unwrap();
+            assert_eq!(e.order_qty(), 10, "ask order {} qty", i);
+            let expected = format!("ASK-{:-3}", i);
+            assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "ask order {} id", i);
+        }
+        println!("12 orders per level (bids + asks): PASSED");
+        "#,
+    );
+}
