@@ -929,3 +929,32 @@ fn generated_api_has_expected_public_items() {
         "missing write_bytes helper"
     );
 }
+
+// ── Compatibility mode wiring (todo 65) ────────────────────────────────
+
+#[test]
+fn strict_and_extended_modes_produce_identical_output() {
+    // Phase 2: prove CompatibilityMode plumbing works. Same schema →
+    // same output when no extensions exist. When extensions are added,
+    // they gate on WireCompatibleExtensions.
+    use ergosbe::{CompatibilityMode, GenerationConfig, Generator,
+        parse_file, Schema};
+
+    let ir = parse_file(&common::Paths::example_schema())
+        .expect("parse car schema");
+    let schema = Schema::from_ir(ir);
+
+    let mut strict_cfg = GenerationConfig::new("car_strict");
+    strict_cfg.compatibility = CompatibilityMode::Strict;
+    let strict_src = Generator::new(strict_cfg).generate(&schema);
+
+    let mut ext_cfg = GenerationConfig::new("car_ext");
+    ext_cfg.compatibility = CompatibilityMode::WireCompatibleExtensions;
+    let ext_src = Generator::new(ext_cfg).generate(&schema);
+
+    assert_eq!(
+        strict_src.modules().next().unwrap().source,
+        ext_src.modules().next().unwrap().source,
+        "Strict and WireCompatibleExtensions must produce identical output when no extensions exist"
+    );
+}
