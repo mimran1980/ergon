@@ -375,6 +375,80 @@ fn bench_encode_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Decoder skip/rewind API benchmark ────────────────────────────────
+
+fn bench_decode_skip_rewind(c: &mut Criterion) {
+    let car = CarDecoder::wrap_and_apply_header(BASELINE, 0).unwrap();
+
+    let mut group = c.benchmark_group("parity/decode/skip_rewind");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("skip_to_model", |b| {
+        b.iter(|| black_box(car.skip_to_model().unwrap()));
+    });
+
+    group.bench_function("direct_model", |b| {
+        b.iter(|| black_box(car.model().unwrap()));
+    });
+
+    group.bench_function("rewind_then_scalar", |b| {
+        b.iter(|| black_box(car.rewind().serial_number()));
+    });
+
+    group.finish();
+}
+
+// ── Full encoder stage transition (scalars + groups + var-data → Complete) ──
+
+fn bench_encode_full_stage_transition(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parity/encode/full_stage");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("ergosbe", |b| {
+        b.iter_batched(
+            || vec![0u8; 512],
+            |mut buf| {
+                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+                car.serial_number(1234);
+                car.model_year(2013);
+                car.available(BooleanType::T);
+                car.code(Model::A);
+                car.some_numbers([1u32, 2, 3, 4]);
+                car.vehicle_code([97, 98, 99, 100, 101, 102]);
+                car.extras(OptionalExtras::default());
+                car.engine(Engine::new(2000, 4, [49, 0, 0]));
+                let car = car
+                    .fuel_figures(3, |g| {
+                        g.add(|e| {
+                            e.speed(30).mpg(35.9);
+                        })
+                        .unwrap();
+                        g.add(|e| {
+                            e.speed(55).mpg(40.0);
+                        })
+                        .unwrap();
+                    })
+                    .unwrap();
+                let car = car
+                    .performance_figures(1, |g| {
+                        g.add(|e| {
+                            e.octane_rating(95);
+                        })
+                        .unwrap();
+                    })
+                    .unwrap();
+                let car = car.manufacturer(b"Honda").unwrap();
+                let car = car.model(b"Civic").unwrap();
+                let complete = car.activation_code(b"abc").unwrap();
+                black_box(complete.as_bytes());
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_decode_entry_point,
@@ -384,5 +458,7 @@ criterion_group!(
     bench_throughput_batch,
     bench_encode_scalar,
     bench_encode_throughput,
+    bench_decode_skip_rewind,
+    bench_encode_full_stage_transition,
 );
 criterion_main!(benches);
