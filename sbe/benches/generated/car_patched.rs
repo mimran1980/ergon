@@ -1900,33 +1900,33 @@ impl<'a> CarEncoder<'a> {
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = 8;
-        self.buf[offset..][..8].copy_from_slice(&val.to_le_bytes());
+        self.buf[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
         self
     }
     #[must_use]
     #[inline]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = 16;
-        self.buf[offset..][..2].copy_from_slice(&val.to_le_bytes());
+        self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
     #[must_use]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = 18;
-        self.buf[offset..][..1].copy_from_slice(&(val as u8).to_le_bytes());
+        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
     #[must_use]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
         let offset = 18;
         let enum_val: BooleanType = val.into();
-        self.buf[offset..][..1].copy_from_slice(&(enum_val as u8).to_le_bytes());
+        self.buf[offset..offset + 1].copy_from_slice(&(enum_val as u8).to_le_bytes());
         self
     }
     #[must_use]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = 19;
-        self.buf[offset..][..1].copy_from_slice(&(val as u8).to_le_bytes());
+        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
     #[must_use]
@@ -1935,7 +1935,8 @@ impl<'a> CarEncoder<'a> {
         let offset = 20;
         let mut idx = 0usize;
         while idx < 4 {
-            self.buf[offset + idx * 4..][..4].copy_from_slice(&val[idx].to_le_bytes());
+            self.buf[offset + idx * 4..offset + (idx + 1) * 4]
+                .copy_from_slice(&val[idx].to_le_bytes());
             idx += 1;
         }
         self
@@ -1949,7 +1950,7 @@ impl<'a> CarEncoder<'a> {
     #[must_use]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = 42;
-        self.buf[offset..][..1].copy_from_slice(&val.0.to_le_bytes());
+        self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
         self
     }
     #[must_use]
@@ -2282,13 +2283,13 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
     #[must_use]
     pub fn speed(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
-        self.buf[offset..][..2].copy_from_slice(&val.to_le_bytes());
+        self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
     #[must_use]
     pub fn mpg(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
-        self.buf[offset..][..4].copy_from_slice(&val.to_le_bytes());
+        self.buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
         self
     }
     #[must_use]
@@ -2378,7 +2379,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     #[must_use]
     pub fn octane_rating(&mut self, val: u8) -> &mut Self {
         let offset = self.entry_start + 0;
-        self.buf[offset..][..1].copy_from_slice(&val.to_le_bytes());
+        self.buf[offset..offset + 1].copy_from_slice(&val.to_le_bytes());
         self
     }
     #[must_use]
@@ -2484,13 +2485,13 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
     #[must_use]
     pub fn mph(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
-        self.buf[offset..][..2].copy_from_slice(&val.to_le_bytes());
+        self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
     #[must_use]
     pub fn seconds(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
-        self.buf[offset..][..4].copy_from_slice(&val.to_le_bytes());
+        self.buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
         self
     }
 }
@@ -2637,7 +2638,7 @@ pub mod prelude {
 #[inline]
 pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
     #[cfg(not(feature = "bound-check-disabled"))]
-    { buf[offset..][..N].try_into().expect("read_bytes: buffer too short") }
+    { buf[offset..offset + N].try_into().expect("read_bytes: buffer too short") }
     #[cfg(feature = "bound-check-disabled")]
     unsafe { core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N]) }
 }
@@ -2649,7 +2650,7 @@ pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
 pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
     #[cfg(not(feature = "bound-check-disabled"))]
     {
-        buf[offset..][..N].copy_from_slice(bytes);
+        buf[offset..offset + N].copy_from_slice(bytes);
     }
     #[cfg(feature = "bound-check-disabled")]
     unsafe {

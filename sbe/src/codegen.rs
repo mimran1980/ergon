@@ -287,7 +287,7 @@ impl Generator {
             pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
                 #[cfg(not(feature = "bound-check-disabled"))]
                 {
-                    buf[offset..][..N].try_into().expect("read_bytes: buffer too short")
+                    buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
                 }
                 #[cfg(feature = "bound-check-disabled")]
                 // SAFETY: caller guarantees offset + N <= buf.len().
@@ -305,7 +305,7 @@ impl Generator {
             pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
                 #[cfg(not(feature = "bound-check-disabled"))]
                 {
-                    buf[offset..][..N].copy_from_slice(bytes);
+                    buf[offset..offset + N].copy_from_slice(bytes);
                 }
                 #[cfg(feature = "bound-check-disabled")]
                 // SAFETY: caller guarantees offset + N <= buf.len().
@@ -3956,7 +3956,7 @@ fn generate_message_encoder(
                                 let offset = #body_offset_lit;
                                 let mut idx = 0usize;
                                 while idx < #len_lit {
-                                    self.buf[offset + idx * #prim_size_lit..][..#prim_size_lit].copy_from_slice(&val[idx].#to_endian());
+                                    self.buf[offset + idx * #prim_size_lit..offset + (idx + 1) * #prim_size_lit].copy_from_slice(&val[idx].#to_endian());
                                     idx += 1;
                                 }
                                 self
@@ -3969,7 +3969,7 @@ fn generate_message_encoder(
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
                             let offset = #body_offset_lit;
-                            self.buf[offset..][..#prim_size_lit].copy_from_slice(&val.#to_endian());
+                            self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.#to_endian());
                             self
                         }
                     });
@@ -4007,7 +4007,7 @@ fn generate_message_encoder(
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
-                        self.buf[offset..][..#prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
+                        self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
                         self
                     }
                 });
@@ -4019,7 +4019,7 @@ fn generate_message_encoder(
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             let offset = #body_offset_lit;
                             let enum_val: #target_type = val.into();
-                            self.buf[offset..][..#prim_size_lit].copy_from_slice(&(enum_val as #r_type).#to_endian());
+                            self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(enum_val as #r_type).#to_endian());
                             self
                         }
                     });
@@ -4036,7 +4036,7 @@ fn generate_message_encoder(
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
-                        self.buf[offset..][..#prim_size_lit].copy_from_slice(&val.0.#to_endian());
+                        self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
                         self
                     }
                 });
@@ -4510,7 +4510,7 @@ fn generate_group_encoder(
                         #[must_use]
                         pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
-                            self.buf[offset..][..#sz].copy_from_slice(&val.#to_endian());
+                            self.buf[offset..offset + #sz].copy_from_slice(&val.#to_endian());
                             self
                         }
                     });
@@ -4542,7 +4542,7 @@ fn generate_group_encoder(
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
-                        self.buf[offset..][..#sz].copy_from_slice(&(val as #r_ty).#to_endian());
+                        self.buf[offset..offset + #sz].copy_from_slice(&(val as #r_ty).#to_endian());
                         self
                     }
                 });
@@ -4557,7 +4557,7 @@ fn generate_group_encoder(
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
-                        self.buf[offset..][..#sz].copy_from_slice(&val.0.#to_endian());
+                        self.buf[offset..offset + #sz].copy_from_slice(&val.0.#to_endian());
                         self
                     }
                 });
