@@ -1866,22 +1866,13 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
-pub mod car_encoder_state {
-    pub struct NeedsFuelFigures;
-    pub struct NeedsPerformanceFigures;
-    pub struct NeedsManufacturer;
-    pub struct NeedsModel;
-    pub struct NeedsActivationCode;
-    pub struct Complete;
-}
 #[must_use = "encoder must be consumed to write the message"]
-pub struct CarEncoder<'a, State = car_encoder_state::NeedsFuelFigures> {
+pub struct CarEncoder<'a> {
     buf: &'a mut [u8],
     message_start: usize,
     pos: usize,
-    _phantom: core::marker::PhantomData<State>,
 }
-impl<'a, State> CarEncoder<'a, State> {
+impl<'a> CarEncoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
@@ -1898,7 +1889,6 @@ impl<'a, State> CarEncoder<'a, State> {
             buf: &mut buf[pos..],
             message_start: 0,
             pos: 8 + 41,
-            _phantom: core::marker::PhantomData,
         }
     }
     #[inline]
@@ -1995,16 +1985,13 @@ impl<'a, State> CarEncoder<'a, State> {
         len
     }
 }
-impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
+impl<'a> CarEncoder<'a> {
     #[must_use]
     pub fn fuel_figures<F>(
         mut self,
         count: u16,
         f: F,
-    ) -> Result<
-        CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures>,
-        sbe_rt::EncodeError,
-    >
+    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError>
     where
         F: FnOnce(&mut FuelFiguresEncoder<'a>),
     {
@@ -2023,20 +2010,16 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsFuelFigures> {
             buf: group.buf,
             message_start: self.message_start,
             pos: group.pos,
-            _phantom: core::marker::PhantomData,
         })
     }
 }
-impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
+impl<'a> CarEncoder<'a> {
     #[must_use]
     pub fn performance_figures<F>(
         mut self,
         count: u16,
         f: F,
-    ) -> Result<
-        CarEncoder<'a, car_encoder_state::NeedsManufacturer>,
-        sbe_rt::EncodeError,
-    >
+    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError>
     where
         F: FnOnce(&mut PerformanceFiguresEncoder<'a>),
     {
@@ -2055,16 +2038,15 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsPerformanceFigures> {
             buf: group.buf,
             message_start: self.message_start,
             pos: group.pos,
-            _phantom: core::marker::PhantomData,
         })
     }
 }
-impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
+impl<'a> CarEncoder<'a> {
     #[must_use]
     pub fn manufacturer(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a, car_encoder_state::NeedsModel>, sbe_rt::EncodeError> {
+    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
         if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "manufacturer",
@@ -2087,14 +2069,13 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
-            _phantom: core::marker::PhantomData,
         })
     }
     #[must_use]
     pub fn manufacturer_unchecked(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a, car_encoder_state::NeedsModel>, sbe_rt::EncodeError> {
+    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -2110,19 +2091,12 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsManufacturer> {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
-            _phantom: core::marker::PhantomData,
         })
     }
 }
-impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
+impl<'a> CarEncoder<'a> {
     #[must_use]
-    pub fn model(
-        mut self,
-        data: &[u8],
-    ) -> Result<
-        CarEncoder<'a, car_encoder_state::NeedsActivationCode>,
-        sbe_rt::EncodeError,
-    > {
+    pub fn model(mut self, data: &[u8]) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
         if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "model",
@@ -2145,17 +2119,13 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
-            _phantom: core::marker::PhantomData,
         })
     }
     #[must_use]
     pub fn model_unchecked(
         mut self,
         data: &[u8],
-    ) -> Result<
-        CarEncoder<'a, car_encoder_state::NeedsActivationCode>,
-        sbe_rt::EncodeError,
-    > {
+    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -2171,16 +2141,15 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsModel> {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
-            _phantom: core::marker::PhantomData,
         })
     }
 }
-impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
+impl<'a> CarEncoder<'a> {
     #[must_use]
     pub fn activation_code(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a, car_encoder_state::Complete>, sbe_rt::EncodeError> {
+    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
         if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "activationCode",
@@ -2203,14 +2172,13 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
-            _phantom: core::marker::PhantomData,
         })
     }
     #[must_use]
     pub fn activation_code_unchecked(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a, car_encoder_state::Complete>, sbe_rt::EncodeError> {
+    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -2226,23 +2194,22 @@ impl<'a> CarEncoder<'a, car_encoder_state::NeedsActivationCode> {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
-            _phantom: core::marker::PhantomData,
         })
     }
 }
-impl<'a> CarEncoder<'a, car_encoder_state::Complete> {
+impl<'a> CarEncoder<'a> {
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf[self.message_start..self.pos]
     }
 }
-impl<'a> AsRef<[u8]> for CarEncoder<'a, car_encoder_state::Complete> {
+impl<'a> AsRef<[u8]> for CarEncoder<'a> {
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()
     }
 }
-impl<'a, State> sbe_rt::private::Sealed for CarEncoder<'a, State> {}
-impl<'a, State> sbe_rt::SbeMessage for CarEncoder<'a, State> {
+impl<'a> sbe_rt::private::Sealed for CarEncoder<'a> {}
+impl<'a> sbe_rt::SbeMessage for CarEncoder<'a> {
     const TEMPLATE_ID: u16 = 1;
     const BLOCK_LENGTH: usize = 41;
     const SCHEMA_ID: u16 = 1;

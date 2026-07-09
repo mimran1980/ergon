@@ -1337,10 +1337,10 @@ fn static_header_templates_exist() {
         let mut buf = vec![0u8; 512];
         // Drop the encoder immediately to release the mutable borrow,
         // then verify header bytes were written correctly.
-        let _ = CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::wrap_and_apply_header(&mut buf, 0);
+        let _ = CarEncoder::<'_>::wrap_and_apply_header(&mut buf, 0);
         assert_eq!(
             &buf[0..8],
-            &CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::HEADER_TEMPLATE,
+            &CarEncoder::<'_>::HEADER_TEMPLATE,
             "wrap_and_apply_header must write HEADER_TEMPLATE bytes"
         );
         // Verify the template bytes are semantically correct

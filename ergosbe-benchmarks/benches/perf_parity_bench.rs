@@ -22,7 +22,7 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
 // ErgoSBE generated code
-use ergosbe_benchmarks::ergo_car::car_encoder_state;
+
 use ergosbe_benchmarks::ergo_car::*;
 
 // Aeron Rust SBE generated code (patched for module inclusion)
@@ -291,7 +291,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
         b.iter_batched(
             || [0u8; 512],
             |mut buf| {
-                let mut car: CarEncoder<'_, car_encoder_state::NeedsFuelFigures> =
+                let mut car: CarEncoder<'_> =
                     CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
                 car.serial_number(1234);
                 car.model_year(2013);
@@ -340,7 +340,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
             |mut buf| {
                 for i in 0..HFT_BATCH {
                     let off = i * 64;
-                    let mut car: CarEncoder<'_, car_encoder_state::NeedsFuelFigures> =
+                    let mut car: CarEncoder<'_> =
                         CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0);
                     car.serial_number(i as u64);
                     car.model_year(2013);

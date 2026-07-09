@@ -3800,57 +3800,18 @@ fn generate_message_encoder(
 
     let mut ts = proc_macro2::TokenStream::new();
 
-    // ── State module ──
-    if total_tail > 0 {
-        let state_mod_ident = syn::Ident::new(&format!("{}_encoder_state", snake_name), span);
-        let mut needs_structs = proc_macro2::TokenStream::new();
-        for g in &msg.groups {
-            let needs_ident = syn::Ident::new(&format!("Needs{}", to_pascal_case(&g.name)), span);
-            needs_structs.extend(quote::quote! { pub struct #needs_ident; });
+    // ── Encoder struct (non-generic — no State, no PhantomData) ──
+    // Type-state ordering is enforced by consuming `self` in transition
+    // methods. Compile-time ordering between groups/var-data can be added
+    // later via separate concrete structs per state.
+    ts.extend(quote::quote! {
+        #[must_use = "encoder must be consumed to write the message"]
+        pub struct #name_encoder_ident<'a> {
+            buf: &'a mut [u8],
+            message_start: usize,
+            pos: usize,
         }
-        for vd in &msg.var_data {
-            let needs_ident = syn::Ident::new(&format!("Needs{}", to_pascal_case(&vd.name)), span);
-            needs_structs.extend(quote::quote! { pub struct #needs_ident; });
-        }
-        ts.extend(quote::quote! {
-            pub mod #state_mod_ident {
-                #needs_structs
-                pub struct Complete;
-            }
-        });
-    }
-
-    // ── Encoder struct ──
-    if total_tail > 0 {
-        let first_state = msg
-            .groups
-            .first()
-            .map(|g| to_pascal_case(&g.name))
-            .unwrap_or_else(|| to_pascal_case(&msg.var_data.first().unwrap().name));
-        let first_state_path: syn::Path = syn::parse_str(&format!(
-            "{}_encoder_state::Needs{}",
-            snake_name, first_state
-        ))
-        .unwrap();
-        ts.extend(quote::quote! {
-            #[must_use = "encoder must be consumed to write the message"]
-            pub struct #name_encoder_ident<'a, State = #first_state_path> {
-                buf: &'a mut [u8],
-                message_start: usize,
-                pos: usize,
-                _phantom: core::marker::PhantomData<State>,
-            }
-        });
-    } else {
-        ts.extend(quote::quote! {
-            #[must_use = "encoder must be consumed to write the message"]
-            pub struct #name_encoder_ident<'a> {
-                buf: &'a mut [u8],
-                message_start: usize,
-                pos: usize,
-            }
-        });
-    }
+    });
 
     // ── Shared impl block ──
     // Constants, HEADER_TEMPLATE, wrap(), wrap_and_apply_header(), field
@@ -3898,11 +3859,6 @@ fn generate_message_encoder(
     });
 
     // wrap() and wrap_and_apply_header()
-    let phantom_field = if total_tail > 0 {
-        Some(quote::quote! { _phantom: core::marker::PhantomData, })
-    } else {
-        None
-    };
     let wrap_fn = quote::quote! {
         #[inline]
         pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
@@ -3910,8 +3866,7 @@ fn generate_message_encoder(
                 buf: &mut buf[pos..],
                 message_start: 0,
                 pos: #header_size_lit + #block_length_lit,
-                #phantom_field
-            }
+                            }
         }
     };
     impl_contents.extend(wrap_fn);
@@ -4152,7 +4107,7 @@ fn generate_message_encoder(
     // Close the impl block
     if total_tail > 0 {
         ts.extend(quote::quote! {
-            impl<'a, State> #name_encoder_ident<'a, State> {
+            impl<'a> #name_encoder_ident<'a> {
                 #impl_contents
             }
         });
@@ -4176,17 +4131,6 @@ fn generate_message_encoder(
                 to_pascal_case(&g.name)
             ))
             .unwrap();
-            let next_state: syn::Path = if tail_idx + 1 < total_tail {
-                let next_name = if tail_idx + 1 < msg.groups.len() {
-                    to_pascal_case(&msg.groups[tail_idx + 1].name)
-                } else {
-                    to_pascal_case(&msg.var_data[tail_idx + 1 - msg.groups.len()].name)
-                };
-                syn::parse_str(&format!("{}_encoder_state::Needs{}", snake_name, next_name))
-                    .unwrap()
-            } else {
-                syn::parse_str(&format!("{}_encoder_state::Complete", snake_name)).unwrap()
-            };
 
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
             let raw_enc_name = to_pascal_case(&g.name);
@@ -4203,13 +4147,13 @@ fn generate_message_encoder(
             let num_size_lit = syn::LitInt::new(&num_size.to_string(), span);
 
             ts.extend(quote::quote! {
-                impl<'a> #name_encoder_ident<'a, #needs_state> {
+                impl<'a> #name_encoder_ident<'a> {
                     #[must_use]
                     pub fn #g_snake<F>(
                         mut self,
                         count: u16,
                         f: F,
-                    ) -> Result<#name_encoder_ident<'a, #next_state>, sbe_rt::EncodeError>
+                    ) -> Result<#name_encoder_ident<'a>, sbe_rt::EncodeError>
                     where
                         F: FnOnce(&mut #g_pascal_enc<'a>),
                     {
@@ -4231,8 +4175,7 @@ fn generate_message_encoder(
                             buf: group.buf,
                             message_start: self.message_start,
                             pos: group.pos,
-                            _phantom: core::marker::PhantomData,
-                        })
+                                })
                     }
                 }
             });
@@ -4245,13 +4188,6 @@ fn generate_message_encoder(
             let needs_state: syn::Path =
                 syn::parse_str(&format!("{}_encoder_state::Needs{}", snake_name, vd_pascal))
                     .unwrap();
-            let next_state: syn::Path = if tail_idx + 1 < total_tail {
-                let next_name = to_pascal_case(&msg.var_data[tail_idx + 1 - msg.groups.len()].name);
-                syn::parse_str(&format!("{}_encoder_state::Needs{}", snake_name, next_name))
-                    .unwrap()
-            } else {
-                syn::parse_str(&format!("{}_encoder_state::Complete", snake_name)).unwrap()
-            };
 
             let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
             let vd_snake_unchecked =
@@ -4293,17 +4229,16 @@ fn generate_message_encoder(
                     buf: self.buf,
                     message_start: self.message_start,
                     pos: start + data.len(),
-                    _phantom: core::marker::PhantomData,
                 })
             };
 
             ts.extend(quote::quote! {
-                impl<'a> #name_encoder_ident<'a, #needs_state> {
+                impl<'a> #name_encoder_ident<'a> {
                     #[must_use]
                     pub fn #vd_snake(
                         mut self,
                         data: &[u8],
-                    ) -> Result<#name_encoder_ident<'a, #next_state>, sbe_rt::EncodeError> {
+                    ) -> Result<#name_encoder_ident<'a>, sbe_rt::EncodeError> {
                         #checked_body
                         #shared_body
                     }
@@ -4312,7 +4247,7 @@ fn generate_message_encoder(
                     pub fn #vd_snake_unchecked(
                         mut self,
                         data: &[u8],
-                    ) -> Result<#name_encoder_ident<'a, #next_state>, sbe_rt::EncodeError> {
+                    ) -> Result<#name_encoder_ident<'a>, sbe_rt::EncodeError> {
                         #shared_body
                     }
                 }
@@ -4321,17 +4256,15 @@ fn generate_message_encoder(
         }
 
         // Complete state + AsRef
-        let complete_state: syn::Path =
-            syn::parse_str(&format!("{}_encoder_state::Complete", snake_name)).unwrap();
         ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a, #complete_state> {
+            impl<'a> #name_encoder_ident<'a> {
                 #[inline]
                 pub fn as_bytes(&self) -> &[u8] {
                     &self.buf[self.message_start..self.pos]
                 }
             }
 
-            impl<'a> AsRef<[u8]> for #name_encoder_ident<'a, #complete_state> {
+            impl<'a> AsRef<[u8]> for #name_encoder_ident<'a> {
                 fn as_ref(&self) -> &[u8] {
                     self.as_bytes()
                 }
@@ -4350,9 +4283,9 @@ fn generate_message_encoder(
     // ── Sealed + SbeMessage ──
     if total_tail > 0 {
         ts.extend(quote::quote! {
-            impl<'a, State> sbe_rt::private::Sealed for #name_encoder_ident<'a, State> {}
+            impl<'a> sbe_rt::private::Sealed for #name_encoder_ident<'a> {}
 
-            impl<'a, State> sbe_rt::SbeMessage for #name_encoder_ident<'a, State> {
+            impl<'a> sbe_rt::SbeMessage for #name_encoder_ident<'a> {
                 const TEMPLATE_ID: u16 = #msg_id_lit;
                 const BLOCK_LENGTH: usize = #block_length_lit;
                 const SCHEMA_ID: u16 = #schema_id_lit;

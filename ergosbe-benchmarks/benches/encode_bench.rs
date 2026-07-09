@@ -20,7 +20,6 @@
 
 use ergosbe_benchmarks::ergo_car::*;
 
-use car_encoder_state::Complete;
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[path = "_common.rs"]
@@ -89,7 +88,7 @@ fn encode_checked(buf: &mut [u8]) -> usize {
 
     let car = car.manufacturer(b"Honda").unwrap();
     let car = car.model(b"Civic VTi").unwrap();
-    let encoded: CarEncoder<'_, Complete> = car.activation_code(b"abcdef").unwrap();
+    let encoded: CarEncoder<'_> = car.activation_code(b"abcdef").unwrap();
     encoded.encoded_length_with_header()
 }
 
@@ -97,8 +96,7 @@ fn encode_checked(buf: &mut [u8]) -> usize {
 /// checked var-data setters with max-length validation).
 fn encode_full(buf: &mut [u8]) -> usize {
     // Write header manually (wrap does not write it)
-    buf[0..8]
-        .copy_from_slice(&CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::HEADER_TEMPLATE);
+    buf[0..8].copy_from_slice(&CarEncoder::<'_>::HEADER_TEMPLATE);
 
     let mut car = CarEncoder::wrap(buf, 0);
     car.serial_number(1234);
@@ -196,8 +194,7 @@ fn bench_encode_scalar_only(c: &mut Criterion) {
     group.bench_function("checked", |b| {
         let mut buf = [0u8; 1024];
         b.iter(|| {
-            let mut car: CarEncoder<'_, car_encoder_state::NeedsFuelFigures> =
-                CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+            let mut car: CarEncoder<'_> = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             car.serial_number(1234);
             car.model_year(2013);
             car.available(BooleanType::T);
