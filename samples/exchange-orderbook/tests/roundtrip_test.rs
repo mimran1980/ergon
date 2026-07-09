@@ -18,19 +18,17 @@ mod binance_spot {
 #[test]
 fn bitget_best_bid_ask_roundtrip() {
     use bitget_spot::{
-        BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5, best_bid_ask_encoder_state,
-    };
+        BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5, };
 
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length(symbol.len()) + 8;
+    let buf_len = BestBidAskEncoder::compute_encoded_length(symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
     // Encode
     let mut encoder =
-        BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(
+        BestBidAskEncoder::wrap_and_apply_header(
             &mut buf, 0,
-        )
-        .expect("wrap_and_apply_header should succeed");
+        );
     encoder
         .ts(1712345678000u64)
         .bid1_price(50000123456i64)
@@ -71,17 +69,16 @@ fn bitget_best_bid_ask_roundtrip() {
 
 #[test]
 fn bitget_best_bid_ask_verify_passes() {
-    use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, best_bid_ask_encoder_state};
+    use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, };
 
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length(symbol.len()) + 8;
+    let buf_len = BestBidAskEncoder::compute_encoded_length(symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =
-        BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(
+        BestBidAskEncoder::wrap_and_apply_header(
             &mut buf, 0,
-        )
-        .unwrap();
+        );
     encoder
         .ts(1)
         .bid1_price(2)
@@ -105,13 +102,12 @@ fn bitget_best_bid_ask_verify_passes() {
 #[test]
 fn bitget_depth50_group_roundtrip() {
     use bitget_spot::{
-        Depth50Decoder, Depth50Encoder, InstCategory, Padding5, depth50_encoder_state,
-    };
+        Depth50Decoder, Depth50Encoder, InstCategory, Padding5, };
 
     let asks_count = 3u16;
     let bids_count = 2u16;
     let symbol = b"BTCUSDT";
-    let buf_len = Depth50Encoder::<depth50_encoder_state::NeedsAsks>::compute_encoded_length(
+    let buf_len = Depth50Encoder::compute_encoded_length(
         asks_count as usize,
         bids_count as usize,
         symbol.len(),
@@ -120,8 +116,7 @@ fn bitget_depth50_group_roundtrip() {
 
     // Encode
     let mut encoder =
-        Depth50Encoder::<depth50_encoder_state::NeedsAsks>::wrap_and_apply_header(&mut buf, 0)
-            .expect("wrap_and_apply_header should succeed");
+        Depth50Encoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .ts(1000u64)
         .seq(1u64)
@@ -215,22 +210,8 @@ fn bitget_verify_too_short() {
     assert!(result.is_err(), "verify on a 4-byte buffer should fail");
 }
 
-#[test]
-fn bitget_encoder_buffer_too_short() {
-    use bitget_spot::{BestBidAskEncoder, best_bid_ask_encoder_state};
-
-    // Buffer too small even for header + block length
-    let mut small_buf = [0u8; 4];
-    let result =
-        BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(
-            &mut small_buf[..],
-            0,
-        );
-    assert!(
-        result.is_err(),
-        "wrap_and_apply_header on a 4-byte buffer should fail"
-    );
-}
+// Encoder buffer-too-short test removed: encoder is infallible (panics on OOB
+// via slice indexing, matching Aeron). Decoder validates (returns Result).
 
 // ── Binance: ServerTimeResponse (template 102) ────────────────────────────
 
@@ -243,8 +224,7 @@ fn binance_server_time_roundtrip() {
 
     // Encode — ServerTimeResponseEncoder has no type-state, just plain methods
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0)
-        .expect("wrap_and_apply_header should succeed");
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(expected_ts);
     let encoded = encoder.as_ref();
 
@@ -260,7 +240,7 @@ fn binance_server_time_verify_passes() {
     use binance_spot::ServerTimeResponseEncoder;
 
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(42);
     let encoded = encoder.as_ref();
 
@@ -280,14 +260,12 @@ fn binance_server_time_buffer_too_short() {
 #[test]
 fn bitget_trade_roundtrip() {
     use bitget_spot::{
-        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
-        trade_encoder_state,
-    };
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide, };
 
     let trades_count = 2u16;
     let symbol = b"ETHUSDT";
     let buf_len =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length(
+        TradeEncoder::compute_encoded_length(
             trades_count as usize,
             symbol.len(),
         ) + 8;
@@ -295,8 +273,7 @@ fn bitget_trade_roundtrip() {
 
     // Encode
     let mut encoder =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::wrap_and_apply_header(&mut buf, 0)
-            .expect("wrap_and_apply_header should succeed");
+        TradeEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .price_exponent(-5i8)
         .size_exponent(-3i8)
@@ -371,23 +348,20 @@ fn bitget_trade_roundtrip() {
 #[test]
 fn bitget_trade_max_uint64() {
     use bitget_spot::{
-        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
-        trade_encoder_state,
-    };
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide, };
 
     let sts_max = u64::MAX;
     let trades_count = 1u16;
     let symbol = b"BTCUSDT";
     let buf_len =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length(
+        TradeEncoder::compute_encoded_length(
             trades_count as usize,
             symbol.len(),
         ) + 8;
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::wrap_and_apply_header(&mut buf, 0)
-            .expect("wrap_and_apply_header should succeed");
+        TradeEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .price_exponent(-8i8)
         .size_exponent(-2i8)
@@ -422,22 +396,19 @@ fn bitget_trade_max_uint64() {
 #[test]
 fn bitget_trade_zero_values() {
     use bitget_spot::{
-        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
-        trade_encoder_state,
-    };
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide, };
 
     let trades_count = 1u16;
     let symbol = b"";
     let buf_len =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length(
+        TradeEncoder::compute_encoded_length(
             trades_count as usize,
             symbol.len(),
         ) + 8;
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::wrap_and_apply_header(&mut buf, 0)
-            .expect("wrap_and_apply_header should succeed");
+        TradeEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .price_exponent(0i8)
         .size_exponent(0i8)
@@ -486,21 +457,14 @@ fn bitget_trade_zero_values() {
 #[test]
 fn binance_logon_response_roundtrip() {
     use binance_spot::{
-        BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder,
-        web_socket_session_logon_response_encoder_state,
-    };
+        BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder, };
 
     let api_key = b"my-test-api-key";
-    let buf_len = WebSocketSessionLogonResponseEncoder::<
-        web_socket_session_logon_response_encoder_state::NeedsLoggedOnApiKey,
-    >::compute_encoded_length(api_key.len()) + 8;
+    let buf_len = WebSocketSessionLogonResponseEncoder::compute_encoded_length(api_key.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = WebSocketSessionLogonResponseEncoder::<
-        web_socket_session_logon_response_encoder_state::NeedsLoggedOnApiKey,
-    >::wrap_and_apply_header(&mut buf, 0)
-    .expect("wrap_and_apply_header should succeed");
+    let mut encoder = WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .authorized_since(1712345678000000i64)
         .connected_since(1712345679000000i64)
@@ -552,14 +516,13 @@ fn binance_logon_response_roundtrip() {
 fn binance_websocket_response_group_roundtrip() {
     use binance_spot::{
         BoolEnum, RateLimitInterval, RateLimitType, WebSocketResponseDecoder,
-        WebSocketResponseEncoder, web_socket_response_encoder_state,
-    };
+        WebSocketResponseEncoder, };
 
     let rate_limits_count = 2u16;
     let id = b"test-id-1";
     let result = b"{\"data\":\"ok\"}";
     let buf_len =
-        WebSocketResponseEncoder::<web_socket_response_encoder_state::NeedsRateLimits>::compute_encoded_length(
+        WebSocketResponseEncoder::compute_encoded_length(
             rate_limits_count as usize,
             id.len(),
             result.len(),
@@ -568,10 +531,9 @@ fn binance_websocket_response_group_roundtrip() {
 
     // Encode
     let mut encoder =
-        WebSocketResponseEncoder::<web_socket_response_encoder_state::NeedsRateLimits>::wrap_and_apply_header(
+        WebSocketResponseEncoder::wrap_and_apply_header(
             &mut buf, 0,
-        )
-        .expect("wrap_and_apply_header should succeed");
+        );
     encoder
         .sbe_schema_id_version_deprecated(BoolEnum::False)
         .status(200u16);
@@ -687,18 +649,17 @@ fn binance_websocket_response_group_buffer_too_short() {
 #[test]
 fn wrong_schema_bitget_encoded_rejected_by_binance() {
     use binance_spot::WebSocketResponseDecoder;
-    use bitget_spot::{BestBidAskEncoder, InstCategory, Padding5, best_bid_ask_encoder_state};
+    use bitget_spot::{BestBidAskEncoder, InstCategory, Padding5, };
 
     // Encode a valid bitget BestBidAsk message
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length(symbol.len()) + 8;
+    let buf_len = BestBidAskEncoder::compute_encoded_length(symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =
-        BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::wrap_and_apply_header(
+        BestBidAskEncoder::wrap_and_apply_header(
             &mut buf, 0,
-        )
-        .expect("wrap_and_apply_header should succeed");
+        );
     encoder
         .ts(1u64)
         .bid1_price(2i64)
@@ -861,8 +822,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() {
 
     // Encode a valid binance ServerTimeResponse message
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0)
-        .expect("wrap_and_apply_header should succeed");
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(42);
     let encoded = encoder.as_ref();
 
