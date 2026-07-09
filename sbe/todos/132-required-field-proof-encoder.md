@@ -2,7 +2,7 @@
 
 **Blocked by:** `03-group-vardata-wire-parity`, `129-generated-prelude-and-public-api-contract`
 **Severity:** MEDIUM
-**Status: SCOPED ROADMAP / GATED BY TODO 123**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

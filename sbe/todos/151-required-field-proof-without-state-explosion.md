@@ -2,7 +2,7 @@
 
 **Blocked by:** 132-required-field-proof-encoder, 129-generated-prelude-and-public-api-contract
 **Severity:** MEDIUM
-**Status: ACTIVE / STRICT ENCODER ROADMAP**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

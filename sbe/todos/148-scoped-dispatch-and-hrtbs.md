@@ -2,7 +2,7 @@
 
 **Blocked by:** 133-scoped-feed-callbacks-hrtbs, 134-typed-frame-policy-and-schema-identity
 **Severity:** MEDIUM
-**Status: ACTIVE / STRICT DISPATCH ROADMAP**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

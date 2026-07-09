@@ -4,7 +4,7 @@
 
 Developer-facing `build.rs` integration. Single call generates a module into
 `OUT_DIR`. No CLI — the generator library is the single source of truth.
-**Status: ACTIVE / P1 USABILITY**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after deferred recheck (2026-07-08):** unpark for release
 ergonomics. This is not a wire-compatibility gate, but it materially reduces

@@ -2,7 +2,7 @@
 
 **Ref:** user request. Aeron Rust SBE is the reference implementation.
 
-**Status: ACTIVE / AERON QC RELEASE GATE**
+**Status: DONE (Phase 2 gate close)**
 
 ## Current verification status (2026-07-08)
 

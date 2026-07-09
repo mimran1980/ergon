@@ -2,7 +2,7 @@
 
 **Blocked by:** 129-generated-prelude-and-public-api-contract, 139-api-simplicity-audit
 **Severity:** MEDIUM
-**Status: ACTIVE / PUBLIC SURFACE SIMPLIFICATION**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

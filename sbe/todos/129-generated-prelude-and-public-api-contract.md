@@ -2,7 +2,7 @@
 
 **Blocked by:** release-quality gates
 **Severity:** MEDIUM
-**Status: ACTIVE / API CONTRACT RELEASE GATE**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

@@ -5,7 +5,7 @@
 When `bound-check-disabled` feature is active, generate code that uses unsafe
 primitives for maximum throughput. The feature is opt-in and explicitly for
 HFT users who accept the safety trade-off.
-**Status: ACTIVE / FEATURE-GATED INTERNALS**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep the fast-path
 internals active, but do not use this todo to add broad public `_unchecked`

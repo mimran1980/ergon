@@ -2,7 +2,7 @@
 
 **Blocked by:** `129-generated-prelude-and-public-api-contract`
 **Severity:** HIGH
-**Status: ACTIVE IF STRICT APIS ARE SCOPED / GATED BY TODO 123**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

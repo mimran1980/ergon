@@ -9,7 +9,7 @@ execution reports). Each domain schema imports the common one via XInclude.
 
 ErgoSBE generates one Rust module per schema, with shared types emitted
 once and re-used via `use`.
-**Status: IN PROGRESS**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## API (Generator)

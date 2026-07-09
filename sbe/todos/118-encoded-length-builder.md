@@ -2,7 +2,7 @@
 
 **Blocked by:** none
 **Ref:** user request
-**Status: P2 / ONLY IF SIMPLE LENGTH HELPERS ARE INSUFFICIENT**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep this narrower
 builder as a follow-up for schemas whose nested groups or entry-level var-data

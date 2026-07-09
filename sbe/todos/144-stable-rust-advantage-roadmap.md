@@ -2,7 +2,7 @@
 
 **Blocked by:** 123-release-quality-gates, 129-generated-prelude-and-public-api-contract
 **Severity:** HIGH
-**Status: ACTIVE / ROADMAP**
+**Status: DONE (Phase 2 gate close)**
 
 **Coordination:** `154-todo-coherence-and-priority-map.md` defines which
 stable-Rust ideas are active release work, optional improvements, or parked

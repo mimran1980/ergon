@@ -2,7 +2,7 @@
 
 **Blocked by:** none (codegen-only)
 **Severity:** MEDIUM
-**Status: ACTIVE / SCHEMA-CONFIGURABLE FRAMING**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

@@ -12,7 +12,7 @@ priority list and `137-compile-fail-api-proof-suite.md` as the proof gate.
 Rust's lifetimes and type system can enforce correctness at compile time in
 ways no other SBE implementation can. This todo captures patterns that are
 uniquely Rust.
-**Status: HISTORICAL BRAINSTORM / SUPERSEDED BY TODO 144**
+**Status: CLOSED / SUPERSEDED**
 
 
 ## P0 — implement now

@@ -5,7 +5,7 @@
 Feature gate `bound-check-disabled` flips default paths to unchecked internals
 without changing the public API. The feature should subtract branches while
 keeping the crate safe-by-default.
-**Status: ACTIVE / FAST-PATH POLICY**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after todo-coherence recheck (2026-07-08):** align this todo with
 todo 117 and the API simplicity audit. Do not reintroduce broad per-field

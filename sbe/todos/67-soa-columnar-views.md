@@ -1,6 +1,6 @@
 # Struct-of-Arrays (SoA) columnar access for repeating groups
 
-**Status:** Implemented for single-field fixed-size groups.
+**Status: CLOSED / SUPERSEDED**
 
 ## Design constraint
 

@@ -2,7 +2,7 @@
 
 **Blocked by:** 119-readbuf-writebuf-abstraction, 136-typed-readbuf-writebuf-and-endian-policy
 **Severity:** HIGH
-**Status: ACTIVE / FAST-PATH POLICY**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

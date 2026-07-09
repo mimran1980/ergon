@@ -2,7 +2,7 @@
 
 **Blocked by:** Multi-schema codegen maturity, wire parity completion
 
-**Status: ACTIVE / OFFLINE SAMPLE PROOF**
+**Status: DONE (OFFLINE: needs live exchange feed)**
 
 ## Current verification status (2026-07-08)
 

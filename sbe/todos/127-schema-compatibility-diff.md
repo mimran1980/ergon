@@ -2,7 +2,7 @@
 
 **Blocked by:** 125, 126
 **Severity:** HIGH
-**Status: P1 / EXCHANGE ROLLOUT TOOLING**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

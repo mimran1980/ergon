@@ -11,7 +11,7 @@
 
 **Design** (§9 Helpers): "raw_foo() scalar accessors and generated `*_NULL`, `*_MIN`, `*_MAX` constants for users who handle exchange sentinels manually in hot loops."
 
-**Status:** Not tracked in any todo. The 48 audit flags `*_NULL, *_MIN, *_MAX constants — NOT GENERATED` but no implementation todo exists. `raw_foo()` accessors are covered by 02.
+**Status: DONE (Phase 2 gate close)**
 
 **Severity: MEDIUM** — constants are nice-to-have alongside `raw_foo()`. Exchange users can compute null from `FieldMeta`. Not wire-critical.
 

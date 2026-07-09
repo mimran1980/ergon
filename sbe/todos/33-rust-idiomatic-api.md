@@ -5,7 +5,7 @@
 Make generated APIs feel like native Rust, not translated Java. Every Rust
 language feature that fits should be used. Good APIs compose with the
 ecosystem, fail at compile time, and read like the stdlib.
-**Status: SPLIT / ACTIVE FOR RELEASE ERGONOMICS**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after deferred recheck (2026-07-08):** do not treat all API polish
 as post-v1. Iterator `size_hint`/`ExactSizeIterator`, error trait composition,

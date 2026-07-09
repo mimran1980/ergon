@@ -2,7 +2,7 @@
 
 **Blocked by:** 125, 126
 **Severity:** MEDIUM
-**Status: ACTIVE / DIAGNOSTIC QUALITY**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

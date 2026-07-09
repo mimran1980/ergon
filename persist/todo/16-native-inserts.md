@@ -63,10 +63,10 @@ and uses native protocol when available, falling back to SQL VALUES otherwise.
 
 ## Acceptance criteria
 
-- [ ] `PersistSender::persist()` uses ClickHouse native protocol when `T: clickhouse::Row`
-- [ ] Fallback to SQL VALUES for types without `clickhouse::Row`
-- [ ] Batch insert: all accumulated rows sent in a single native block
-- [ ] `PersistSenderBuilder` gains `native()` / `sql()` mode toggle
-- [ ] Benchmark: native inserts ≥ 3× throughput of SQL VALUES for 1000-row batches
-- [ ] Integration tests pass with both native and SQL modes
-- [ ] No regression in existing tests
+- [x] `PersistSender::persist()` uses ClickHouse native protocol when `T: clickhouse::Row`
+- [x] Fallback to SQL VALUES for types without `clickhouse::Row`
+- [x] Batch insert: all accumulated rows sent in a single native block
+- [x] `PersistSenderBuilder` gains `native()` / `sql()` mode toggle
+- [x] Benchmark: native inserts ≥ 3× throughput of SQL VALUES for 1000-row batches
+- [x] Integration tests pass with both native and SQL modes
+- [x] No regression in existing tests

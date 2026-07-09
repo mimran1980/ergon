@@ -16,7 +16,7 @@ The official Java generator stores this in a constant and ignores it. Rust can
 do much more. The key insight: **semanticType tells the generator what the int
 really is**, enabling type-safe APIs that prevent entire classes of bugs at
 compile time.
-**Status: P2 OPTIONAL / NOT A WIRE-PARITY GATE**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep this as an
 optional extension, not v1 wire-parity work. The zero-cost subset is tracked by

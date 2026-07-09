@@ -2,7 +2,7 @@
 
 **Blocked by:** `129-generated-prelude-and-public-api-contract`, `134-typed-frame-policy-and-schema-identity`
 **Severity:** MEDIUM
-**Status: ACTIVE / PUBLIC SURFACE SIMPLIFICATION**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

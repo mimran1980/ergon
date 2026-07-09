@@ -8,7 +8,7 @@ carries a `description` attribute produces a `///` doc comment on the
 corresponding generated Rust item.
 
 Gated behind `CompatibilityMode::WireCompatibleExtensions`.
-**Status: SUPERSEDED BY TODO 87 FOR CORE DOCS / EXTENSION GATING PARKED**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** split this. Core
 schema-description rustdoc belongs in todo 87 and release documentation work.

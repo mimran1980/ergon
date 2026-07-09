@@ -2,7 +2,7 @@
 
 **Ref:** user request. Aeron Rust SBE comparison.
 
-**Status: ACTIVE / FAST-PATH SIMPLIFICATION**
+**Status: DONE (Phase 2 gate close)**
 
 ## Current verification status (2026-07-08)
 

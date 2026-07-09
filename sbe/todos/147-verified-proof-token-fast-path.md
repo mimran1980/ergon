@@ -2,7 +2,7 @@
 
 **Blocked by:** 69-buffer-verify-function, 145-group-entry-wire-blocklength-bug
 **Severity:** HIGH
-**Status: SCOPED ROADMAP / GATED BY TODO 123**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

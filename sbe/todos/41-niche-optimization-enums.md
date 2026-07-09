@@ -23,7 +23,7 @@ const _: () = assert!(size_of::<Option<ModelKind>>() == 1);
 Rust does this automatically when it detects an unused discriminant. The
 generator just needs to ensure discriminants don't span the full range of the
 underlying type.
-**Status: PARKED / BENCHMARK-AND-API-GATED**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep parked. The flat
 `NullVal` enum API is simpler and already chosen. Do not reshape enum APIs for

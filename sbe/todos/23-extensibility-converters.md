@@ -7,7 +7,7 @@ generator. The orphan rule is already in our favour (generated code lives in
 the user's crate), but the ergonomics of adding converters should be
 frictionless. Classic HFT example: a `semanticType="Price"` int64 field should
 trivially become a `rust_decimal::Decimal`.
-**Status: PARKED / SUPERSEDED BY SEMANTIC EXTENSION TODOS**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep raw code-injection
 extension APIs parked. The safer path is `CompatibilityMode` wiring (todo 65),

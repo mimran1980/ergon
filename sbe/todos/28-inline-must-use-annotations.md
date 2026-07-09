@@ -15,7 +15,7 @@ type-state wrappers (`Needs*`) should also carry `#[must_use = "..."]`.
 
 Also: `encoded_length()` silently falls back on error via `unwrap_or` instead
 of propagating. Should return `Result<usize, DecodeError>`.
-**Status: IN PROGRESS**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Acceptance criteria

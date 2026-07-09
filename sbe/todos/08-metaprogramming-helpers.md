@@ -5,7 +5,7 @@
 FieldMeta module, schema hash (SHA-256), `MessageVisitor` trait,
 `Display`/`Debug` walkers, `skip()`, `as_bytes()`, wire-annotated debug format,
 pure `const fn` helpers, `#[cold]` error paths, `const` assertions.
-**Status: SPLIT / PARTLY ACTIVE**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after deferred recheck (2026-07-08):** do not keep this as one
 post-v1 bucket. Helpers that improve generated-code auditability, zero-cost

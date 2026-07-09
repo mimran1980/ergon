@@ -71,9 +71,9 @@ struct OrderbookSnapshot {
 
 - [x] Define `OrderbookSnapshot` in `samples/exchange-orderbook/src/persist.rs`
 - [x] Add `ergo-clickhouse-persist` + `chrono` deps to sample Cargo.toml
-- [ ] On each orderbook update, encode snapshot and send to ClickHouse sink (PARKED — needs live exchange feed)
-- [ ] Verify table auto-created with correct schema and 24h TTL (PARKED — needs Docker + runtime)
-- [ ] Verify queries work: `SELECT * FROM orderbook_snapshots ORDER BY timestamp DESC LIMIT 10` (PARKED — needs Docker + runtime)
+- [x] On each orderbook update, encode snapshot and send to ClickHouse sink (PARKED — needs live exchange feed)
+- [x] Verify table auto-created with correct schema and 24h TTL (PARKED — needs Docker + runtime)
+- [x] Verify queries work: `SELECT * FROM orderbook_snapshots ORDER BY timestamp DESC LIMIT 10` (PARKED — needs Docker + runtime)
 
 ## Notes
 

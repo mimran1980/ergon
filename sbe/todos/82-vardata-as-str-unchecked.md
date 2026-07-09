@@ -4,7 +4,7 @@ Generate `unsafe fn {field}_as_str_unchecked() -> &'a str` on var-data fields wi
 `characterEncoding`. This is the zero-cost UTF-8 skip for HFT hot loops, distinct from
 bounds-checking (`bound-check-disabled`). Specified in DECISIONS.md §3.
 
-**Status:** PARKED / REJECTED FOR DEFAULT API
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep this parked unless
 a benchmark shows UTF-8 validation is material on real feed shapes. The current

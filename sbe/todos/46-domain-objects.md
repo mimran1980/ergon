@@ -20,7 +20,7 @@ car.model;  // String, not &str
 let mut buf = vec![0u8; car.encoded_length()];
 car.encode(&mut buf)?;
 ```
-**Status: PARKED / OPTIONAL APPLICATION LAYER**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep parked. Domain
 objects deliberately conflict with the v1 flyweight-only hot-path model. They

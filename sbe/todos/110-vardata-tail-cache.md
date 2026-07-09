@@ -1,6 +1,6 @@
 # Var-data tail offset caching (avoid re-walking) — WON'T DO
 
-**Status:** REJECTED — infeasible on Rust ≥1.95
+**Status: CLOSED / SUPERSEDED**
 **Blocked by:** Rust language limitation
 **Ref:** Aeron perf audit (todo 105, gap #3)
 

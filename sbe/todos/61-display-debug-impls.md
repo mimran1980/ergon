@@ -6,7 +6,7 @@ SBE's standard `toString()` is ad-hoc and not machine-parseable. Generated
 ErgoSBE types should impl `Display` (human-readable, field-name=value format)
 and `Debug` (derive, struct-like format) for easy logging, debugging, and
 test assertions.
-**Status: ACTIVE / DEBUGGABILITY**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## What to generate

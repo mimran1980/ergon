@@ -2,7 +2,7 @@
 
 **Blocked by:** none (pure codegen)
 **Ref:** Aeron perf audit (todo 105, gap #2)
-**Status: ACTIVE / PERFORMANCE FIX CANDIDATE**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

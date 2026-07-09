@@ -2,7 +2,7 @@
 
 **Blocked by:** `02-composite-enum-set-wire-parity`
 
-**Status: ACTIVE / PARSER-CODEGEN PARITY**
+**Status: DONE (Phase 2 gate close)**
 
 ## Problem
 

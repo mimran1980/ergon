@@ -2,7 +2,7 @@
 
 **Blocked by:** perf baseline, public API stability
 **Severity:** LOW
-**Status: PARKED / GUARDRAILS**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep parked and use
 this file as the boundary for speculative Rust features. Anything listed here

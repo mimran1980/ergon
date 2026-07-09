@@ -32,7 +32,7 @@ dispatch(&buf, |msg| match msg {
 Both `AnyMessage` enum AND `dispatch()` are generated — user picks the right
 tool for the job. Feed handlers use `dispatch()` for speed; one-shot decodes
 use `AnyMessage` for convenience.
-**Status: SUPERSEDED BY SCOPED DISPATCH / BENCHMARK-GATED**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** do not implement this
 standalone shape first. The newer direction is todo 148/133: scoped HRTB

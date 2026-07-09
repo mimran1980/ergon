@@ -2,7 +2,7 @@
 
 **Blocked by:** 39-static-header-templates, 116-pre-encoding-length-calculator
 **Severity:** MEDIUM
-**Status: ACTIVE / ZERO-COST TEMPLATE ROADMAP**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

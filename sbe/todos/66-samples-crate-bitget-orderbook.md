@@ -6,7 +6,7 @@ Create a `samples/exchange-orderbook/` crate connecting to TWO exchanges
 (Bitget + Binance), using multi-schema codegen with shared common types and
 `rust_decimal` for price/size conversion. Builds a consolidated orderbook
 that decodes and re-encodes SBE messages from both venues.
-**Status: SPLIT / OFFLINE SAMPLE ACTIVE, LIVE FEED ENV-GATED**
+**Status: DONE (OFFLINE: needs live exchange feed)**
 
 **Decision after deferred recheck (2026-07-08):** unpark the offline sample
 proofs that compile schemas, run round-trips, and demonstrate API ergonomics.

@@ -4,7 +4,7 @@ The `bound-check-disabled` feature flag exists in Cargo.toml and must route
 generated ergonomic paths through unchecked internals without changing method
 names or adding per-field unsafe API surface.
 
-**Status:** Round 1 was implemented. The const-helper regression should be fixed
+**Status: DONE (Phase 2 gate close)**
 by removing constness from runtime buffer accessors rather than by weakening the
 read/write fast path.
 

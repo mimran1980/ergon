@@ -2,7 +2,7 @@
 
 **Blocked by:** `05-anymessage-framecursor`, `77-message-visitor-trait`, `102-domain-mapper-proxies-and-adapters`
 **Severity:** MEDIUM
-**Status: SCOPED ROADMAP / GATED BY TODO 123**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

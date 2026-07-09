@@ -10,7 +10,7 @@ it wrong means `BufferTooShort` at encode time — or worse, silent truncation.
 The fix: generate a `LengthBuilder` that uses type-state to force the user to
 specify every variable-length element. Cannot forget a group. Cannot forget a
 var-data field. Cannot get the arithmetic wrong.
-**Status: SUPERSEDED / PARKED FULL BUILDER**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** do not treat this
 original full type-state builder as active v1 work. The best path is staged:

@@ -4,7 +4,7 @@
 
 Good documentation means the user never opens the generated `.rs` file. IDE
 hover, rustdoc, and `cargo doc` should answer every question.
-**Status: ACTIVE / RELEASE USABILITY**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after deferred recheck (2026-07-08):** unpark. Documentation is part
 of API usability, especially for generated code users who should not need to

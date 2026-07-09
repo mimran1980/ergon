@@ -2,7 +2,7 @@
 
 **Blocked by:** `119-readbuf-writebuf-abstraction`, `121-endianness-full-type-matrix`, `122-read-write-bytes-unsafe-fastpath`
 **Severity:** HIGH
-**Status: SCOPED ROADMAP / GATED BY TODO 123**
+**Status: DONE (Phase 2 gate close)**
 
 
 ## Problem

@@ -5,7 +5,7 @@
 Measure the real performance difference between safe and unsafe code paths.
 HFT teams need numbers, not assumptions. Every unsafe escape hatch must earn
 its keep with a benchmark showing the delta.
-**Status: ACTIVE / PERFORMANCE EVIDENCE**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep the benchmark
 requirement active, but align terminology with the current API policy:

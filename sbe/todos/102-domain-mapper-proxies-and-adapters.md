@@ -2,7 +2,7 @@
 
 **Blocked by:** `05-anymessage-framecursor`, `77-message-visitor-trait`
 
-**Status: PARKED / SUPERSEDED BY STRICT API ROADMAP**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep this parked as a
 large application-layer idea. The active path is smaller: typed frame/cursor

@@ -2,7 +2,7 @@
 
 **Blocked by:** none
 **Severity:** HIGH
-**Status: ACTIVE / COORDINATION**
+**Status: DONE (Phase 2 gate close)**
 
 ## Problem
 

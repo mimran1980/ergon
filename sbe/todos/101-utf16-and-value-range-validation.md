@@ -6,7 +6,7 @@
 
 ### 1. UTF-16 Character Encoding
 
-**Status:** Parser stores it, codegen ignores it.
+**Status: CLOSED / SUPERSEDED**
 
 - **xml.rs (line 564):** Parser reads `characterEncoding` from XML and stores it in `Encoding::character_encoding`. Works for `UTF-8`, `ASCII`, `ISO-8859-1`, etc.
 - **codegen.rs (lines 2281-2287):** Var-data accessor `{field}_as_str()` hardcodes `core::str::from_utf8`. No UTF-16 decoding variant is generated. Encoding type is not checked.

@@ -4,7 +4,7 @@
 
 Performance is value #3 for ErgoSBE. The design already bakes in zero-alloc and
 flyweight decoders. These are the next-level optimisations for the hot path.
-**Status: SPLIT / P0 ACTIVE, EXPERIMENTS PARKED**
+**Status: DONE (Phase 2 gate close)**
 
 **Decision after todo-coherence recheck (2026-07-08):** unpark the measurable
 P0 audit/fix work and keep P1/P2 ideas benchmark-gated. This file is the

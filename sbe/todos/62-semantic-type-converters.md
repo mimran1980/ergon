@@ -9,7 +9,7 @@ the raw SBE wire type and the semantic Rust type.
 
 This is gated behind `CompatibilityMode::WireCompatibleExtensions` — the wire
 bytes are unchanged, only the Rust API surface grows.
-**Status: P2 OPTIONAL / PARKED UNTIL COMPATIBILITY MODE IS WIRED**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep converters parked
 behind todo 65 and semantic-newtype design. Converters that pull in

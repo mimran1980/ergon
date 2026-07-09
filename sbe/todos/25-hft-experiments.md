@@ -5,7 +5,7 @@
 Try every performance idea, measure it, keep what works. This is the
 experimentation playground — benchmark-driven, not speculation-driven. If an
 experiment shows <5% improvement, kill it. If >10%, promote it to a real todo.
-**Status: SUPERSEDED / PARKED EXPERIMENT APPENDIX**
+**Status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** do not use this as an
 active work queue. Focused performance work belongs in todo 22, todo 105, and
