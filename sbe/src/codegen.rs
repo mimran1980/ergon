@@ -2016,15 +2016,27 @@ fn generate_message_decoder(
         let en = syn::LitStr::new(&schema_name, proc_macro2::Span::call_site());
         impl_body.extend(quote::quote! {
             #[inline]
-            pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Self {
-                // Aeron-equivalent: infallible. No buffer-size check (the header read
-                // panics on a too-short buffer via slice indexing, like Aeron's
-                // get_*_at). Schema identity is a debug_assert (compiled out in
-                // release), matching Aeron which only debug-asserts the template id.
+            pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                // Decoder trust boundary: validate buffer bounds + schema identity.
+                // This is the one place the decoder checks — all field accessors
+                // after this are infallible (offsets are within the validated block).
+                if pos + #hs > buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "message header",
+                        needed: #hs,
+                        available: buf.len().saturating_sub(pos),
+                    });
+                }
                 let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
                 let header = #hp(header_bytes);
-                debug_assert_eq!(header.#hsi(), Self::SCHEMA_ID, "wrong schema id for {}", #en);
-                Self::wrap(buf, pos + #hs, header.#hbl() as usize, header.#hvr())
+                if header.#hsi() != Self::SCHEMA_ID {
+                    return Err(sbe_rt::DecodeError::WrongSchema {
+                        expected: Self::SCHEMA_ID,
+                        actual: header.#hsi(),
+                        expected_name: #en,
+                    });
+                }
+                Ok(Self::wrap(buf, pos + #hs, header.#hbl() as usize, header.#hvr()))
             }
         });
     }
@@ -2826,7 +2838,7 @@ fn generate_message_decoder(
             type Error = sbe_rt::DecodeError;
 
             fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-                Ok(Self::wrap_and_apply_header(buf, 0))
+                Self::wrap_and_apply_header(buf, 0)
             }
         }
 

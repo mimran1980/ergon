@@ -648,13 +648,27 @@ impl<'a> CarDecoder<'a> {
         }
     }
     #[inline]
-    pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Self {
+    pub fn wrap_and_apply_header(
+        buf: &'a [u8],
+        pos: usize,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        if pos + 8 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "message header",
+                needed: 8,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
         let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
-        debug_assert_eq!(
-            header.schema_id(), Self::SCHEMA_ID, "wrong schema id for {}", "baseline"
-        );
-        Self::wrap(buf, pos + 8, header.block_length() as usize, header.version())
+        if header.schema_id() != Self::SCHEMA_ID {
+            return Err(sbe_rt::DecodeError::WrongSchema {
+                expected: Self::SCHEMA_ID,
+                actual: header.schema_id(),
+                expected_name: "baseline",
+            });
+        }
+        Ok(Self::wrap(buf, pos + 8, header.block_length() as usize, header.version()))
     }
     #[inline]
     pub const fn acting_version(&self) -> u16 {
@@ -1125,7 +1139,7 @@ impl<'a> CarDecoder<'a> {
 impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
     type Error = sbe_rt::DecodeError;
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        Ok(Self::wrap_and_apply_header(buf, 0))
+        Self::wrap_and_apply_header(buf, 0)
     }
 }
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}
