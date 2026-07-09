@@ -2997,7 +2997,11 @@ fn generate_domain_recursive(
                 name: enum_name, ..
             } => {
                 let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
-                struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
+                if f.presence == Presence::Optional || f.since_version > 0 {
+                    struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
+                } else {
+                    struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
+                }
                 from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
             }
         }
