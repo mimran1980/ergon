@@ -3492,14 +3492,11 @@ fn generate_group_decoder(
                     }
                     entry_body.extend(quote::quote! {
                         #[inline]
-                        pub fn #f_name_ident(&self) -> Result<[#r_type_ty; #len_lit], sbe_rt::DecodeError> {
+                        pub fn #f_name_ident(&self) -> [#r_type_ty; #len_lit] {
                             let offset = self.pos + #offset_lit;
                             let size = #total_size_lit;
-                            if cfg!(not(feature = "bound-check-disabled")) && offset + size > self.buf.len() {
-                                return Err(sbe_rt::DecodeError::BufferTooShort { field: #f_name_lit, needed: size, available: self.buf.len() - offset });
-                            }
                             let all: [u8; #total_size_lit] = read_bytes::<#total_size_lit>(self.buf, offset);
-                            Ok([#(#elem_exprs),*])
+                            [#(#elem_exprs),*]
                         }
                     });
                 } else if f.presence == Presence::Optional {
