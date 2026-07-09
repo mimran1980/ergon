@@ -296,7 +296,7 @@ None found. All wire-compat invariants (§7) are covered by existing todos.
 | Action | Source | Target |
 |--------|--------|--------|
 | Create AC for `*_NULL`/`*_MIN`/`*_MAX` | A1 | 02 or new sub-todo |
-| Create AC for group-entry `raw_` on all types | A2 | 03 |
+| Supersede group-entry `raw_` expansion recommendation | A2 | 117, 139, 154 |
 | Mark 37 as complete | B1 | 37 |
 | Merge 25 into 22 | E1 | 22 |
 | Fold 47 into 45 | E3 | 45 |
@@ -314,3 +314,18 @@ Produced by: Claude Code audit of todos/ against design/DECISIONS.md.
 - [ ] Ensure all identified gaps have corresponding todo files with explicit tests.
 
 Audit note (2026-07-06): Analysis document verified. Gaps C1(cold)->54, C2(expect)->55, C3(const assertions)->56, A1(NULL/MIN/MAX)->52 all tracked. Unaddressed gaps from audit: A2 (raw_ accessors in groups), C4 (FieldMeta const module), C5 (SEMANTIC_TYPE), C6 (SCHEMA_HASH), G1 (prettyplease unwrap_or).
+
+## Supersession note (2026-07-08)
+
+This gap analysis is historical. Use `154-todo-coherence-and-priority-map.md`
+and the current `design/DECISIONS.md` as the tie-breakers for contradictions.
+
+- The recommendation to add more scalar/group `raw_*` accessors is superseded
+  by todo 117 and todo 139. Do not reintroduce broad `raw_*` aliases unless a
+  newer API review deliberately accepts the surface area.
+- The recommendation to add broad public `_unchecked` methods is superseded by
+  the feature-gated fast-path policy in todos 07, 97, 119, and 146.
+- The rustfmt recommendation is superseded by todo 50; generated code uses
+  `prettyplease`, not a `rustfmt` subprocess.
+- Closure dispatch and full `LengthBuilder` recommendations are superseded by
+  todos 148/133 and 116/118 respectively.

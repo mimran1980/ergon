@@ -2,7 +2,7 @@
 
 **Blocked by:** `69-buffer-verify-function`, `03-group-vardata-wire-parity`, `125-schema-parser-aeron-parity`
 **Severity:** HIGH
-**Status: DESIGN / ROADMAP**
+**Status: SCOPED ROADMAP / GATED BY TODO 123**
 
 
 ## Problem

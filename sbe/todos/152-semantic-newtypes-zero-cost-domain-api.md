@@ -2,7 +2,7 @@
 
 **Blocked by:** 35-semantic-type-system, 62-semantic-type-converters
 **Severity:** LOW
-**Status: DESIGN / ROADMAP**
+**Status: P2 OPTIONAL / ZERO-COST DOMAIN API**
 
 
 ## Problem

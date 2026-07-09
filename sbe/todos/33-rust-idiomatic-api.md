@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Rust-idiomatic API polish is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Rust-idiomatic API polish
 
 **Blocked by:** `01-scalar-wire-parity` (need working decoders/encoders)
@@ -9,7 +5,14 @@
 Make generated APIs feel like native Rust, not translated Java. Every Rust
 language feature that fits should be used. Good APIs compose with the
 ecosystem, fail at compile time, and read like the stdlib.
-**Status: DESIGN / ROADMAP**
+**Status: SPLIT / ACTIVE FOR RELEASE ERGONOMICS**
+
+**Decision after deferred recheck (2026-07-08):** do not treat all API polish
+as post-v1. Iterator `size_hint`/`ExactSizeIterator`, error trait composition,
+`AsRef<[u8]>` on complete encoders, and type-state rustdoc directly support
+the "simpler than Aeron Rust" goal. Serde/no_std/domain objects and broad
+feature matrices remain parked in their own todos until the hot-path codec is
+release-stable.
 
 
 ## Iterator completeness

@@ -5,7 +5,12 @@
 The upstream SBE tool ships 8 error-handler test schemas that verify parser
 error messages are clear, actionable, and correctly span the offending element.
 Import these and assert ErgoSBE's error messages are at least as good.
-**Status: DEFERRED**
+**Status: ACTIVE / PARSER PARITY**
+
+**Decision after deferred recheck (2026-07-08):** unpark. Silent acceptance of
+bad schemas can generate wrong codecs, so semantic validation and diagnostic
+quality are correctness work. miette should let ErgoSBE beat Aeron on user
+feedback while matching Aeron's pass/fail semantics.
 
 
 ## Source schemas

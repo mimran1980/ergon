@@ -5,7 +5,12 @@
 Criterion benchmarks for encode, decode, round-trip, `Display`, `debug_wire`,
 and `skip` on realistic market-data-shaped messages. Allocation-count tests
 asserting zero heap allocation per operation.
-**Status: DEFERRED**
+**Status: ACTIVE / RELEASE GATE**
+
+**Decision after deferred recheck (2026-07-08):** unpark. Zero allocation and
+Aeron-competitive performance are explicit project goals. JDK/Gradle-dependent
+head-to-head Aeron numbers can be environment-gated, but local Criterion
+benchmarks and allocation guards should not be deferred.
 
 
 ## Acceptance criteria

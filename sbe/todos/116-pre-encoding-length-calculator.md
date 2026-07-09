@@ -1,8 +1,13 @@
 # Pre-encoding length calculator for messages with groups/var-data
 
 **Blocked by:** none
-**Ref:** user request, todo 43 (full LengthBuilder deferred to post-v1)
-**Status: DESIGN / ROADMAP**
+**Ref:** user request, todo 43 (full LengthBuilder parked unless needed)
+**Status: ACTIVE / P1 ERGONOMICS**
+
+**Decision after todo-coherence recheck (2026-07-08):** this is the active
+encoded-length path. Prefer simple generated exact-length functions before a
+full type-state `LengthBuilder`; they solve the common allocation problem with
+less API surface.
 
 
 ## Problem

@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Metaprogramming helpers is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Metaprogramming + helpers
 
 **Blocked by:** `05-anymessage-framecursor`, `06-benchmark-perf-gates`
@@ -9,7 +5,15 @@
 FieldMeta module, schema hash (SHA-256), `MessageVisitor` trait,
 `Display`/`Debug` walkers, `skip()`, `as_bytes()`, wire-annotated debug format,
 pure `const fn` helpers, `#[cold]` error paths, `const` assertions.
-**Status: DESIGN / ROADMAP**
+**Status: SPLIT / PARTLY ACTIVE**
+
+**Decision after deferred recheck (2026-07-08):** do not keep this as one
+post-v1 bucket. Helpers that improve generated-code auditability, zero-cost
+introspection, stable layout guarantees, or release diagnostics are active work
+and should be tracked by their focused todos. Broad reflection-style helpers
+such as a full `MessageVisitor`, wire-annotated debug formatter, and complete
+schema-doc extraction remain lower-priority unless a concrete user workflow
+needs them.
 
 
 ## Acceptance criteria

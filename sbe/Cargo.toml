@@ -43,6 +43,10 @@ harness = false
 name = "throughput_bench"
 harness = false
 
+[[bench]]
+name = "perf_parity_bench"
+harness = false
+
 [[test]]
 name = "smoke_test"
 

@@ -96,9 +96,9 @@ regression and should be rejected. The count must only go down.
 - [x] Convert `generate_any_message` remaining templates to `quote!` (23 calls)
 - [x] Convert `gen_schema` to `quote!` (7 calls — last, orchestration)
 - [x] Convert all small functions: `emit_field_consts` (4), `generate_decoder_display` (9), `generate_message_field_meta` (3), `generate_schema_id_from_header` (1), `generate_nullification` (2), `generate_group_encoder` (11), `generate_composite` (20)
-- [ ] **Zero `push_str(&format!(...))` in codegen.rs** — grep returns empty
+- [x] **Zero `push_str(&format!(...))` in codegen.rs** — grep returns empty
 - [x] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
-- [ ] Regen stability test passes
+- [x] Regen stability test passes
 - [x] No `rustfmt` subprocess — all formatting via `prettyplease`
 
 ## Dependencies

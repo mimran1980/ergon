@@ -2,7 +2,13 @@
 
 **Blocked by:** `05-anymessage-framecursor`, `77-message-visitor-trait`
 
-**Status: DESIGN / ROADMAP**
+**Status: PARKED / SUPERSEDED BY STRICT API ROADMAP**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep this parked as a
+large application-layer idea. The active path is smaller: typed frame/cursor
+policies, scoped dispatch, required-field proofs without state explosion, and
+public API contract tests. Do not build a broad domain-mapper layer until those
+focused primitives prove useful.
 
 ## Problem & Gaps
 

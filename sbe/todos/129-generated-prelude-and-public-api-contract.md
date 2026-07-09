@@ -2,7 +2,7 @@
 
 **Blocked by:** release-quality gates
 **Severity:** MEDIUM
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / API CONTRACT RELEASE GATE**
 
 
 ## Problem
@@ -60,8 +60,8 @@ existing helper cannot express compile-fail checks without too much machinery.
 
 ## Acceptance criteria
 
-- [ ] Generated schema has `pub mod prelude`
-- [ ] Prelude exports the common runtime types, message decoders/encoders, and
+- [x] Generated schema has `pub mod prelude`
+- [x] Prelude exports the common runtime types, message decoders/encoders, and
       generated value types
 - [ ] Prelude exports strict feed types when enabled: schema marker,
       frame-policy marker types, and verification proof types

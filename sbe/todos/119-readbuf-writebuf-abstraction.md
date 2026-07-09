@@ -2,7 +2,7 @@
 
 **Ref:** user request. Aeron Rust SBE comparison.
 
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / FAST-PATH SIMPLIFICATION**
 
 ## Current verification status (2026-07-08)
 

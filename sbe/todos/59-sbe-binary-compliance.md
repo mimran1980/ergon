@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** SBE binary compliance is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # SBE binary compliance verification
 
 **Blocked by:** all wire-parity todos (01, 02, 03)
@@ -9,7 +5,12 @@
 Once all implementation is complete, run a comprehensive binary compliance
 verification against the official SBE reference implementation. This is the
 final gate before v1.
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / FINAL RELEASE GATE**
+
+**Decision after deferred recheck (2026-07-08):** unpark. Byte-for-byte SBE
+compatibility is the top-level project promise, so binary compliance is the
+final release proof, not a post-v1 feature. Differential/randomized testing can
+be staged later, but fixed upstream fixture decode/re-encode must stay active.
 
 
 ## Strategy

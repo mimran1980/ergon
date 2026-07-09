@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Domain objects is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Domain objects — owned structs with serde support
 
 **Blocked by:** `01-scalar-wire-parity` (need working encode/decode to build on)
@@ -24,7 +20,12 @@ car.model;  // String, not &str
 let mut buf = vec![0u8; car.encoded_length()];
 car.encode(&mut buf)?;
 ```
-**Status: DESIGN / ROADMAP**
+**Status: PARKED / OPTIONAL APPLICATION LAYER**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep parked. Domain
+objects deliberately conflict with the v1 flyweight-only hot-path model. They
+may become an opt-in application-layer projection later, but they should not
+drive parser, wire-compatibility, or performance work.
 
 
 ## Generated domain struct

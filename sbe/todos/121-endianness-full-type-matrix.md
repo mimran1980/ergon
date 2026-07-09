@@ -2,7 +2,7 @@
 
 **Ref:** user request. Little-endian is standard; big-endian must also work for
 every field type, composite, enum, set, and group.
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / BINARY COMPATIBILITY MATRIX**
 
 
 ## Current verification status (2026-07-08)

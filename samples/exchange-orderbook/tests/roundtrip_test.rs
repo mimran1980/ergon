@@ -22,7 +22,7 @@ fn bitget_best_bid_ask_roundtrip() {
     };
 
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length_with_message_header(symbol.len());
+    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length(symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
     // Encode
@@ -74,7 +74,7 @@ fn bitget_best_bid_ask_verify_passes() {
     use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, best_bid_ask_encoder_state};
 
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length_with_message_header(symbol.len());
+    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length(symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =
@@ -111,11 +111,11 @@ fn bitget_depth50_group_roundtrip() {
     let asks_count = 3u16;
     let bids_count = 2u16;
     let symbol = b"BTCUSDT";
-    let buf_len = Depth50Encoder::<depth50_encoder_state::NeedsAsks>::compute_encoded_length_with_message_header(
+    let buf_len = Depth50Encoder::<depth50_encoder_state::NeedsAsks>::compute_encoded_length(
         asks_count as usize,
         bids_count as usize,
         symbol.len(),
-    );
+    ) + 8;
     let mut buf = vec![0u8; buf_len];
 
     // Encode
@@ -287,10 +287,10 @@ fn bitget_trade_roundtrip() {
     let trades_count = 2u16;
     let symbol = b"ETHUSDT";
     let buf_len =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length_with_message_header(
+        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length(
             trades_count as usize,
             symbol.len(),
-        );
+        ) + 8;
     let mut buf = vec![0u8; buf_len];
 
     // Encode
@@ -379,10 +379,10 @@ fn bitget_trade_max_uint64() {
     let trades_count = 1u16;
     let symbol = b"BTCUSDT";
     let buf_len =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length_with_message_header(
+        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length(
             trades_count as usize,
             symbol.len(),
-        );
+        ) + 8;
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =
@@ -429,10 +429,10 @@ fn bitget_trade_zero_values() {
     let trades_count = 1u16;
     let symbol = b"";
     let buf_len =
-        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length_with_message_header(
+        TradeEncoder::<trade_encoder_state::NeedsTrades>::compute_encoded_length(
             trades_count as usize,
             symbol.len(),
-        );
+        ) + 8;
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =
@@ -493,7 +493,7 @@ fn binance_logon_response_roundtrip() {
     let api_key = b"my-test-api-key";
     let buf_len = WebSocketSessionLogonResponseEncoder::<
         web_socket_session_logon_response_encoder_state::NeedsLoggedOnApiKey,
-    >::compute_encoded_length_with_message_header(api_key.len());
+    >::compute_encoded_length(api_key.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
     // Encode
@@ -559,11 +559,11 @@ fn binance_websocket_response_group_roundtrip() {
     let id = b"test-id-1";
     let result = b"{\"data\":\"ok\"}";
     let buf_len =
-        WebSocketResponseEncoder::<web_socket_response_encoder_state::NeedsRateLimits>::compute_encoded_length_with_message_header(
+        WebSocketResponseEncoder::<web_socket_response_encoder_state::NeedsRateLimits>::compute_encoded_length(
             rate_limits_count as usize,
             id.len(),
             result.len(),
-        );
+        ) + 8;
     let mut buf = vec![0u8; buf_len];
 
     // Encode
@@ -691,7 +691,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() {
 
     // Encode a valid bitget BestBidAsk message
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length_with_message_header(symbol.len());
+    let buf_len = BestBidAskEncoder::<best_bid_ask_encoder_state::NeedsSymbol>::compute_encoded_length(symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =

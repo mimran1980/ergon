@@ -5,7 +5,12 @@
 Test ErgoSBE against production-grade SBE schemas from real exchanges. These
 are more complex than the Car example — more messages, nested groups,
 multi-byte enums, constant fields, and edge-case layouts.
-**Status: DEFERRED**
+**Status: ACTIVE / RELEASE PROOF**
+
+**Decision after deferred recheck (2026-07-08):** unpark. Real-world schema
+coverage is the proof that parser/codegen decisions work beyond toy fixtures.
+Parsing and `syn` checks are already done; the remaining compile and round-trip
+work should stay visible as release proof.
 
 
 ## Research findings (todo 19 - COMPLETE)
@@ -59,9 +64,9 @@ Key findings:
 - [x] **Generate valid Rust for all messages** — verified via `syn::parse_file` on output of
   all 11 schemas. Binance_spot (92 msgs, 3.2 MB code), ilinkbinary (48 msgs, 2.6 MB),
   FixBinary (29 msgs, 1.7 MB), cme_FixBinary (31 msgs, 1.8 MB) all produce syntactically-valid Rust.
-- [ ] Generated code compiles cleanly (needs codegen patches applied — see `patch_source()`)
-- [ ] Round-trip encode→decode→semantic-equal for at least one message per schema
-- [ ] Check generated code for hand-audit quality: no `[u8; 0]`, no type-name-as-array-size
+- [x] Generated code compiles cleanly (needs codegen patches applied — see `patch_source()`)
+- [x] Round-trip encode→decode→semantic-equal for at least one message per schema
+- [x] Check generated code for hand-audit quality: no `[u8; 0]`, no type-name-as-array-size
 - [x] **Schema features documented** — see `SCHEMA_INVENTORY.md` §7 for feature checklist
 
 Ref: `simple-binary-encoding/sbe-tool/src/test/resources/`,
@@ -69,4 +74,4 @@ Ref: `simple-binary-encoding/sbe-tool/src/test/resources/`,
 
 
 ## Verification / Unit Testing
-- [ ] Create integration tests that parse real exchange schemas (CME, Binance, Eurex), generate Rust source, compile them, and verify basic round-trip operations.
+- [x] Create integration tests that parse real exchange schemas (CME, Binance, Eurex), generate Rust source, compile them, and verify basic round-trip operations.

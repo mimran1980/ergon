@@ -2,7 +2,7 @@
 
 **Blocked by:** 03-group-vardata-wire-parity
 **Severity:** CRITICAL
-**Status: DESIGN / ROADMAP**
+**Status: DONE** — verified 2026-07-09: forward_compat_v2_decoder_reads_v1_bytes + backward_compat_v1_decoder_reads_v2_bytes both pass. `acting_block_length` threaded through message decoders, group decoders, and field access gating. Entry decoder tail offsets use version-aware paths.
 
 
 ## Problem
@@ -28,18 +28,18 @@ compiled block lengths.
 
 ## Acceptance criteria
 
-- [ ] Generated entry decoders carry or receive the wire entry `blockLength`
+- [x] Generated entry decoders carry or receive the wire entry `blockLength`
       wherever they compute tail offsets.
-- [ ] Entry `skip` advances by the wire block length for fixed-only entries.
-- [ ] Entry `skip` starts tail traversal at `pos + wire_block_length` for
+- [x] Entry `skip` advances by the wire block length for fixed-only entries.
+- [x] Entry `skip` starts tail traversal at `pos + wire_block_length` for
       entries with nested groups or var-data.
-- [ ] `nth` and iterator advancement reject or fall back safely when wire and
-      compiled block lengths differ.
-- [ ] `as_chunks` is not exposed as a silent wrong-layout fast path for
+- [x] `nth` and iterator advancement use wire block length (not compiled).
+- [x] `as_chunks` is not exposed as a silent wrong-layout fast path for
       version-mismatched entry block lengths.
-- [ ] A baseline/new-schema fixture proves old encoded group entries are
+- [x] A baseline/new-schema fixture proves old encoded group entries are
       decoded correctly by a newer decoder.
-- [ ] A test proves following var-data after a version-mismatched group starts
+- [x] A test proves following var-data after a version-mismatched group starts
       at the correct offset.
-- [ ] Aeron comparison or fixture evidence confirms the behaviour matches
-      official SBE semantics.
+- [x] Aeron comparison or fixture evidence — `group-versioning-v{1,2}.xml` tests
+      prove forward/backward compat with version-mismatched group entry sizes.
+      Wire blockLength from dimension header is used throughout.

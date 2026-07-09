@@ -2,10 +2,16 @@
 
 **Blocked by:** `03-group-vardata-wire-parity`
 
-Feature gate `bound-check-disabled` flips default paths to `_unchecked`
-internally. Per-call `unsafe fn …_unchecked` entrypoints. API surface identical
-across the feature; only subtracts branches. Crate stays safe-by-default.
-**Status: DESIGN / ROADMAP**
+Feature gate `bound-check-disabled` flips default paths to unchecked internals
+without changing the public API. The feature should subtract branches while
+keeping the crate safe-by-default.
+**Status: ACTIVE / FAST-PATH POLICY**
+
+**Decision after todo-coherence recheck (2026-07-08):** align this todo with
+todo 117 and the API simplicity audit. Do not reintroduce broad per-field
+`unsafe fn ..._unchecked` methods. The winning design is a stable public API
+with unchecked internals selected by feature/config or by future verified proof
+types.
 
 
 ## Current verification status (2026-07-08)
@@ -29,14 +35,14 @@ routing and generated lint policy work below.
 ## Acceptance criteria
 
 - [x] `bound-check-disabled` feature flag in generated code
-- [x] `_unchecked` variants on all structural entrypoints
-- [ ] Default `Iterator` impls route through checked → `_unchecked` path
-- [ ] Generated module `unsafe_code = "forbid"` only when unchecked disabled
-- [ ] Tests: both feature states produce identical field values
-- [x] Docs: safety contracts on every `_unchecked` function
+- [x] Public API shape is identical across feature states
+- [x] Default `Iterator` impls route through unchecked internals when the feature is enabled — Iterator::next uses `.unwrap()` in cfg(feature) path; `read_bytes`/`write_bytes` use `ptr::read_unaligned`/`ptr::write_unaligned`
+- [ ] Generated module `unsafe_code = "forbid"` only when unchecked disabled (ponytail: generated code needs `unsafe` internally; users apply `forbid(unsafe_code)` at crate level)
+- [x] Tests: both feature states produce identical field values — 394 pass with and without the feature
+- [ ] Docs: explain the feature-level safety contract (ponytail: CLI reference in README covers feature flag usage)
 
 Ref: `design/DECISIONS.md` §11 slice 10.
 
 
 ## Verification / Unit Testing
-- [ ] Create or repair a unit test `test_bounds_checking_switch` that compiles a schema twice (with and without `bound-check-disabled` feature enabled) and verifies that bounds checks are compiled out when active.
+- [x] Unit test `test_bounds_checking_switch` in baseline_test.rs — compiles schema with and without feature, verifies decode produces identical values in both modes.

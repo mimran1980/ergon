@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Wire up CompatibilityMode is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # WireCompatibleExtensions: wire up CompatibilityMode to codegen
 
 **Blocked by:** 62, 63, 64
@@ -13,7 +9,12 @@ but no code path reads them. Wire them into the codegen so:
   don't affect wire format are silently omitted.
 - `WireCompatibleExtensions`: enable all Rust-side enrichments (semantic
   converters, serde, doc comments, Display impls, field consts).
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / CONFIG HONESTY**
+
+**Decision after deferred recheck (2026-07-08):** unpark. A public
+`CompatibilityMode` knob that is not read is misleading. The extensions
+themselves can remain optional/parked, but the mode plumbing and tests should
+exist so `Strict` and `WireCompatibleExtensions` have real, documented meaning.
 
 
 ## What to change

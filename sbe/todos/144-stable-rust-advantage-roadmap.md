@@ -2,7 +2,11 @@
 
 **Blocked by:** 123-release-quality-gates, 129-generated-prelude-and-public-api-contract
 **Severity:** HIGH
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / ROADMAP**
+
+**Coordination:** `154-todo-coherence-and-priority-map.md` defines which
+stable-Rust ideas are active release work, optional improvements, or parked
+experiments.
 
 
 ## Goal
@@ -61,3 +65,5 @@ SIMD, and generic-const-expr designs are out of scope.
 - [ ] README and guide docs distinguish implemented capabilities from roadmap
       ideas.
 - [ ] No roadmap item requires nightly Rust or unstable language features.
+- [ ] Older todos that conflict with this roadmap are updated or marked
+      superseded in todo 154.

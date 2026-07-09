@@ -17,7 +17,12 @@ all 26 and wrote `crates/ergosbe/tests/issue_regression_test.rs` with:
 - Full codegen output validation (Generator::generate is a stub)
 - Porting the 6 upstream Rust integration tests to compile-and-run assertions
 - `assert_source_ok` / `compile_and_run` helpers (need `syn` dep + real codegen)
-**Status: DEFERRED**
+**Status: ACTIVE / REGRESSION PARITY**
+
+**Decision after deferred recheck (2026-07-08):** unpark. These fixtures encode
+upstream bug history and are exactly the kind of coverage needed before claiming
+wire/parser parity. The old blockers should be revalidated against the current
+implementation because much of the baseline parser/codegen now exists.
 
 
 ## Source schemas (26 files)

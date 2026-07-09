@@ -4,7 +4,13 @@ Generate `unsafe fn {field}_as_str_unchecked() -> &'a str` on var-data fields wi
 `characterEncoding`. This is the zero-cost UTF-8 skip for HFT hot loops, distinct from
 bounds-checking (`bound-check-disabled`). Specified in DECISIONS.md §3.
 
-**Status:** not started
+**Status:** PARKED / REJECTED FOR DEFAULT API
+
+**Decision after todo-coherence recheck (2026-07-08):** keep this parked unless
+a benchmark shows UTF-8 validation is material on real feed shapes. The current
+API-simplicity direction deliberately avoids broad unchecked helpers. Users who
+need this escape hatch can write
+`unsafe { core::str::from_utf8_unchecked(field_bytes) }` at the call site.
 
 ## Acceptance criteria
 
@@ -24,6 +30,7 @@ bounds-checking (`bound-check-disabled`). Specified in DECISIONS.md §3.
 
 ## Notes
 
-- DECISIONS.md §3 and trap 7 explicitly specify this.
-- `as_str_unchecked` is `unsafe fn` (zero-cost via `str::from_utf8_unchecked`), distinct from
-  `bound-check-disabled` (UTF-8 validity vs array bounds).
+- Historical DECISIONS.md wording required this, but the current design has
+  been updated: default generated var-data APIs stay safe and small.
+- If this returns, it must remain distinct from `bound-check-disabled` because
+  UTF-8 validity and buffer bounds are different safety contracts.

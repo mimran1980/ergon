@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<messageSchema package="versmsg"
-               id="1"
+<messageSchema package="grpvers"
+               id="42"
                version="1"
                semanticVersion="1"
-               description="Unit Test"
+               description="Group versioning test V1"
                byteOrder="littleEndian">
     <types>
         <composite name="messageHeader" description="Message identifiers and length of message root">
@@ -12,14 +12,21 @@
             <type name="schemaId" primitiveType="uint16"/>
             <type name="version" primitiveType="uint16"/>
         </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
         <composite name="varStringEncoding">
             <type name="length" primitiveType="uint16"/>
             <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
         </composite>
     </types>
-    <message name="VersionedMessageV1" id="50001" description="A versioned message" blockLength="8">
-        <field name="FieldA1" id="1" type="uint32" semanticType="int" sinceVersion="0"/>
-        <field name="FieldB1" id="2" type="uint32" semanticType="int" sinceVersion="0"/>
-        <data name="String1" id="10" type="varStringEncoding" sinceVersion="0"/>
+    <!-- V1: group entry has 2 fields = 12 bytes -->
+    <message name="GroupMsg" id="50001" description="Message with versioned group" blockLength="0">
+        <group name="entries" id="10" dimensionType="groupSizeEncoding">
+            <field name="price" id="1" type="int64" semanticType="int"/>
+            <field name="qty" id="2" type="uint32" semanticType="int"/>
+        </group>
+        <data name="trailer" id="20" type="varStringEncoding"/>
     </message>
 </messageSchema>

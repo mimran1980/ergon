@@ -5,7 +5,11 @@
 After every push to any branch, verify the CI workflow completes green. Check
 the GitHub Actions tab for failures, investigate any red builds, and fix them
 before proceeding to the next wave of work.
-**Status: DEFERRED**
+**Status: ACTIVE / RELEASE INFRA**
+
+**Decision after deferred recheck (2026-07-08):** unpark when branches are
+pushed. This is operational release hygiene, not codegen scope. It can remain
+manual/local until the repository is actively using GitHub Actions.
 
 
 ## Setup

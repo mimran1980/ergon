@@ -21,8 +21,8 @@
 
 mod common;
 use common::{
-    Paths, assert_source_ok, compile_and_run, compile_and_run_with_feature, generate,
-    run_fixture_test,
+    Paths, assert_source_ok, compile_and_run, compile_and_run_two_modules,
+    compile_and_run_with_feature, generate, run_fixture_test,
 };
 
 const MODULE: &str = "car_example";
@@ -1422,4 +1422,438 @@ fn constant_field_in_message_header_does_not_affect_offsets() {
 
     // Verify the generated code is valid Rust
     syn::parse_file(&src).expect("generated code is not valid Rust");
+}
+
+// ── Versioning forward/backward compatibility (todo 04) ────────────────
+
+#[test]
+fn forward_compat_v2_decoder_reads_v1_bytes() {
+    let v1_path = Paths::sbe_tool_test_resource("versioned-message-v1.xml");
+    let v2_path = Paths::sbe_tool_test_resource("versioned-message-v2.xml");
+    let (_s1, v1_src) = generate(&v1_path, "versmsg_v1");
+    let (_s2, v2_src) = generate(&v2_path, "versmsg_v2");
+
+    compile_and_run_two_modules(
+        "fwd_compat",
+        "versmsg_v1",
+        &v1_src,
+        "versmsg_v2",
+        &v2_src,
+        r#"
+        // ── Encode a V1 message ──
+        let mut buf = vec![0u8; 256];
+        let mut e = versmsg_v1::VersionedMessageV1Encoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        e.field_a1(100);
+        e.field_b1(200);
+        let e = e.string1(b"v1data").unwrap();
+        let encoded = e.as_bytes();
+
+        // ── Decode with V2 decoder (forward compat) ──
+        let d = versmsg_v2::VersionedMessageV2Decoder::wrap_and_apply_header(encoded, 0).unwrap();
+
+        // Common fields (sinceVersion=0) — must decode correctly
+        assert_eq!(d.field_a1(), 100, "FieldA1 should survive forward compat");
+        assert_eq!(d.field_b1(), 200, "FieldB1 should survive forward compat");
+
+        // V2-only fields (sinceVersion=2, acting_version=1) — return None
+        assert_eq!(d.field_c2(), None, "FieldC2 should be None (sinceVersion > actingVersion)");
+        assert_eq!(d.field_d2(), None, "FieldD2 should be None (sinceVersion > actingVersion)");
+        assert_eq!(d.field_e2(), None, "FieldE2 should be None (sinceVersion > actingVersion)");
+
+        // Var-data — must be readable at correct tail offset
+        let s1 = d.string1().unwrap();
+        assert_eq!(s1, b"v1data", "String1 should survive forward compat");
+    "#,
+    );
+}
+
+#[test]
+fn backward_compat_v1_decoder_reads_v2_bytes() {
+    let v1_path = Paths::sbe_tool_test_resource("versioned-message-v1.xml");
+    let v2_path = Paths::sbe_tool_test_resource("versioned-message-v2.xml");
+    let (_s1, v1_src) = generate(&v1_path, "versmsg_v1");
+    let (_s2, v2_src) = generate(&v2_path, "versmsg_v2");
+
+    compile_and_run_two_modules(
+        "bwd_compat",
+        "versmsg_v1",
+        &v1_src,
+        "versmsg_v2",
+        &v2_src,
+        r#"
+        // ── Encode a V2 message with all fields ──
+        let mut buf = vec![0u8; 256];
+        let mut e = versmsg_v2::VersionedMessageV2Encoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        e.field_a1(42);
+        e.field_b1(99);
+        e.field_c2(111);
+        e.field_d2(222);
+        e.field_e2(333);
+        let e = e.string1(b"v2extra").unwrap();
+        let encoded = e.as_bytes();
+
+        // ── Decode with V1 decoder (backward compat) ──
+        let d = versmsg_v1::VersionedMessageV1Decoder::wrap_and_apply_header(encoded, 0).unwrap();
+
+        // Known fields must be correct
+        assert_eq!(d.field_a1(), 42, "FieldA1 should survive backward compat");
+        assert_eq!(d.field_b1(), 99, "FieldB1 should survive backward compat");
+
+        // Var-data: tail offset must skip the extra 12 bytes of V2 fixed fields
+        // (V2 blockLength=20, V1 compiled BLOCK_LENGTH=8, acting_block_length=20)
+        let s1 = d.string1().unwrap();
+        assert_eq!(s1, b"v2extra", "String1 should be at correct tail offset after V2 fixed fields");
+    "#,
+    );
+}
+
+#[test]
+fn wrong_schema_id_returns_error() {
+    let v1_path = Paths::sbe_tool_test_resource("versioned-message-v1.xml");
+    let (_schema, src) = generate(&v1_path, "wrong_schema");
+
+    compile_and_run(
+        "wrong_schema",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut e = wrong_schema::VersionedMessageV1Encoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        e.field_a1(1);
+        e.field_b1(2);
+        let e = e.string1(b"test").unwrap();
+        let encoded = e.as_bytes();
+
+        // Corrupt the schemaId in the header (bytes 4-6 are schemaId in msg header)
+        let mut corrupted = vec![0u8; encoded.len()];
+        corrupted.copy_from_slice(encoded);
+        corrupted[4] = 0xFF; // change schemaId byte
+        corrupted[5] = 0xFF;
+
+        let result = wrong_schema::VersionedMessageV1Decoder::wrap_and_apply_header(&corrupted, 0);
+        assert!(result.is_err(), "wrong schemaId should produce an error");
+    "#,
+    );
+}
+
+// ── AnyMessage dispatch + FrameCursor (todo 05) ──────────────────────
+
+#[test]
+fn anymessage_decode_dispatches_by_template_id() {
+    let (_schema, src) = generate(&Paths::example_schema(), "am_decode");
+    compile_and_run(
+        "am_decode",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(42);
+        car.model_year(2020);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"abc").unwrap();
+        let encoded = car.as_bytes();
+
+        // decode dispatches on templateId
+        let msg = AnyMessage::decode(encoded, 0).unwrap();
+        match msg {
+            AnyMessage::Car(d) => {
+                assert_eq!(d.serial_number(), 42);
+                assert_eq!(d.model_year(), 2020);
+            }
+            _ => panic!("expected Car, got Unknown"),
+        }
+    "#,
+    );
+}
+
+#[test]
+fn anymessage_decode_frame_validates_length() {
+    let (_schema, src) = generate(&Paths::example_schema(), "am_frame");
+    compile_and_run(
+        "am_frame",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(99);
+        car.model_year(2021);
+        car.available(BooleanType::F);
+        car.code(Model::B);
+        car.some_numbers([9, 8, 7, 6]);
+        car.vehicle_code([49, 50, 51, 52, 53, 54]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(1500, 6, [50, 0, 0]));
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Toyo").unwrap();
+        let car = car.model(b"Corolla").unwrap();
+        let car = car.activation_code(b"xyz").unwrap();
+        let encoded = car.as_bytes();
+        let total_len = encoded.len();
+
+        // decode_frame with correct frame length
+        let frame = AnyMessage::decode_frame(encoded, 0, total_len).unwrap();
+        assert_eq!(frame.len, total_len);
+        assert_eq!(frame.range.start, 0);
+        assert_eq!(frame.range.end, total_len);
+        match frame.message {
+            AnyMessage::Car(d) => assert_eq!(d.serial_number(), 99),
+            _ => panic!("expected Car"),
+        }
+
+        // decode_frame with too-short frame length → error
+        let result = AnyMessage::decode_frame(encoded, 0, 10);
+        assert!(result.is_err(), "decode_frame with insufficient frame_len must error");
+    "#,
+    );
+}
+
+#[test]
+fn anymessage_unknown_template_forwards_payload() {
+    let (_schema, src) = generate(&Paths::example_schema(), "am_unknown");
+    compile_and_run(
+        "am_unknown",
+        &src,
+        r#"
+        // Construct a message with a non-existent templateId (99)
+        // Header: blockLength(2) templateId(2) schemaId(2) version(2) = 8 bytes LE
+        let mut buf = vec![0u8; 64];
+        buf[0..2].copy_from_slice(&16u16.to_le_bytes());   // blockLength
+        buf[2..4].copy_from_slice(&99u16.to_le_bytes());   // templateId = unknown
+        buf[4..6].copy_from_slice(&1u16.to_le_bytes());    // schemaId = correct
+        buf[6..8].copy_from_slice(&0u16.to_le_bytes());    // version
+        buf[8..24].fill(0xAB);                             // 16 bytes of payload
+
+        // decode without frame → error for unknown template
+        let result = AnyMessage::decode(&buf, 0);
+        assert!(result.is_err(), "bare decode of unknown template must error");
+
+        // decode_frame with frame_len → Unknown variant
+        let frame = AnyMessage::decode_frame(&buf, 0, 24).unwrap();
+        match frame.message {
+            AnyMessage::Unknown { header, payload } => {
+                assert_eq!(header.template_id(), 99);
+                // payload = &buf[pos..pos+frame_len] = &buf[0..24] = 24 bytes incl header
+                assert_eq!(payload.len(), 24);
+                assert_eq!(payload[8], 0xAB); // body starts at offset 8
+            }
+            _ => panic!("expected Unknown"),
+        }
+    "#,
+    );
+}
+
+#[test]
+fn framecursor_iterates_length_prefixed_frames() {
+    let (_schema, src) = generate(&Paths::example_schema(), "fc_iter");
+    compile_and_run(
+        "fc_iter",
+        &src,
+        r#"
+        // Build two messages
+        let mut buf = vec![0u8; 512];
+        let mut car1 = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car1.serial_number(10);
+        car1.model_year(2022);
+        car1.available(BooleanType::T);
+        car1.code(Model::C);
+        car1.some_numbers([0, 0, 0, 0]);
+        car1.vehicle_code([0; 6]);
+        car1.extras(OptionalExtras::default());
+        car1.engine(Engine::new(1000, 3, [51, 0, 0]));
+        let car1 = car1.fuel_figures(0, |_| {}).unwrap();
+        let car1 = car1.performance_figures(0, |_| {}).unwrap();
+        let car1 = car1.manufacturer(b"").unwrap();
+        let car1 = car1.model(b"").unwrap();
+        let car1 = car1.activation_code(b"").unwrap();
+        let e1 = car1.as_bytes().to_vec();
+
+        let mut car2 = CarEncoder::wrap_and_apply_header(&mut buf[e1.len()..], 0).unwrap();
+        car2.serial_number(20);
+        car2.model_year(2023);
+        car2.available(BooleanType::F);
+        car2.code(Model::A);
+        car2.some_numbers([5, 6, 7, 8]);
+        car2.vehicle_code([97; 6]);
+        car2.extras(OptionalExtras::default());
+        car2.engine(Engine::new(2000, 4, [52, 0, 0]));
+        let car2 = car2.fuel_figures(0, |_| {}).unwrap();
+        let car2 = car2.performance_figures(0, |_| {}).unwrap();
+        let car2 = car2.manufacturer(b"BMW").unwrap();
+        let car2 = car2.model(b"X5").unwrap();
+        let car2 = car2.activation_code(b"").unwrap();
+        let e2 = car2.as_bytes().to_vec();
+
+        // Build length-prefixed frame buffer (u32 LE length prefix)
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&(e1.len() as u32).to_le_bytes());
+        framed.extend_from_slice(&e1);
+        framed.extend_from_slice(&(e2.len() as u32).to_le_bytes());
+        framed.extend_from_slice(&e2);
+
+        // Iterate with FrameCursor
+        let cursor = FrameCursor::new(&framed, FramingPolicy::LengthPrefixU32);
+        let frames: Vec<_> = cursor.collect::<Result<Vec<_>, _>>().unwrap();
+
+        assert_eq!(frames.len(), 2, "FrameCursor should yield 2 frames");
+        match frames[0].message {
+            AnyMessage::Car(d) => assert_eq!(d.serial_number(), 10),
+            _ => panic!("frame 0 should be Car"),
+        }
+        match frames[1].message {
+            AnyMessage::Car(d) => assert_eq!(d.serial_number(), 20),
+            _ => panic!("frame 1 should be Car"),
+        }
+    "#,
+    );
+}
+
+#[test]
+fn sbemessage_trait_provides_constants() {
+    let (_schema, src) = generate(&Paths::example_schema(), "sbe_trait");
+    compile_and_run(
+        "sbe_trait",
+        &src,
+        r#"
+        // Associated constants on decoder
+        assert_eq!(CarDecoder::SCHEMA_ID, 1);
+        assert_eq!(CarDecoder::TEMPLATE_ID, 1);
+        assert_eq!(CarDecoder::BLOCK_LENGTH, 41);
+    "#,
+    );
+}
+
+// ── Real-world schema compilation (todo 19) ──────────────────────────
+
+#[test]
+fn binance_spot_schema_compiles() {
+    let schema_path = Paths::sbe_tool_test_resource("binance_spot_3_5.xml");
+    let (_schema, src) = generate(&schema_path, "binance_spot");
+    syn::parse_file(&src).expect("Binance spot schema must generate valid Rust");
+    assert!(src.contains("pub mod prelude"));
+}
+
+#[test]
+fn cme_fix_binary_schema_compiles() {
+    let schema_path = Paths::sbe_tool_test_resource("cme_templates_FixBinary.xml");
+    let (_schema, src) = generate(&schema_path, "cme_fix");
+    syn::parse_file(&src).expect("CME FIX Binary schema must generate valid Rust");
+    assert!(src.contains("pub mod prelude"));
+}
+
+#[test]
+fn fix_message_samples_schema_compiles() {
+    let schema_path = Paths::sbe_tool_test_resource("fix-message-samples.xml");
+    let (_schema, src) = generate(&schema_path, "fix_samples");
+    syn::parse_file(&src).expect("FIX message samples schema must generate valid Rust");
+}
+
+#[test]
+fn ilink_binary_schema_compiles() {
+    let schema_path = Paths::sbe_tool_test_resource("ilinkbinary.xml");
+    let (_schema, src) = generate(&schema_path, "ilink");
+    syn::parse_file(&src).expect("iLink Binary schema must generate valid Rust");
+    assert!(src.contains("pub mod prelude"));
+}
+
+// ── Group entry wire blockLength versioning (todo 145) ────────────────
+
+#[test]
+fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() {
+    let v1_path = Paths::sbe_tool_test_resource("group-versioning-v1.xml");
+    let v2_path = Paths::sbe_tool_test_resource("group-versioning-v2.xml");
+    let (_s1, v1_src) = generate(&v1_path, "grpvers_v1");
+    let (_s2, v2_src) = generate(&v2_path, "grpvers_v2");
+
+    compile_and_run_two_modules(
+        "grp_wire_bl",
+        "grpvers_v1",
+        &v1_src,
+        "grpvers_v2",
+        &v2_src,
+        r#"
+        // ── Encode a V1 message with 2 group entries and trailer ──
+        let mut buf = vec![0u8; 256];
+        let mut e = grpvers_v1::GroupMsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let after_entries = e.entries(2, |g| {
+            g.add(|entry| { entry.price(100).qty(10); }).unwrap();
+            g.add(|entry| { entry.price(200).qty(20); }).unwrap();
+        }).unwrap();
+        let complete = after_entries.trailer(b"v1_trailer").unwrap();
+        let encoded = complete.as_bytes();
+
+        // ── Decode with V2 decoder (forward compat) ──
+        let d = grpvers_v2::GroupMsgDecoder::try_from(encoded).unwrap();
+
+        // V2 decoder sees V1 entries (blockLength=12 on wire, not compiled 16)
+        let entries: Vec<_> = d.entries().unwrap().collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2, "should find 2 entries");
+
+        // Common fields (sinceVersion=0) — must decode
+        assert_eq!(entries[0].price(), 100);
+        assert_eq!(entries[0].qty(), 10);
+        assert_eq!(entries[1].price(), 200);
+        assert_eq!(entries[1].qty(), 20);
+
+        // Trailer var-data must be at correct offset after group entries.
+        // This proves the iterator advances by wire blockLength, not compiled.
+        let trailer = d.trailer().unwrap();
+        assert_eq!(trailer, b"v1_trailer",
+            "trailer must be at correct offset after V1-size group entries");
+    "#,
+    );
+}
+
+#[test]
+fn var_data_after_version_mismatched_group_at_correct_offset() {
+    let v2_path = Paths::sbe_tool_test_resource("group-versioning-v2.xml");
+    let v1_path = Paths::sbe_tool_test_resource("group-versioning-v1.xml");
+    let (_s1, v2_src) = generate(&v2_path, "grpvers_v2b");
+    let (_s2, v1_src) = generate(&v1_path, "grpvers_v1b");
+
+    compile_and_run_two_modules(
+        "grp_var_offset",
+        "grpvers_v2b",
+        &v2_src,
+        "grpvers_v1b",
+        &v1_src,
+        r#"
+        // ── Encode a V2 message with group entries + trailer ──
+        let mut buf = vec![0u8; 256];
+        let mut e = grpvers_v2b::GroupMsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let after_entries = e.entries(2, |g| {
+            g.add(|entry| { entry.price(111).qty(22).flags(0xABCD); }).unwrap();
+            g.add(|entry| { entry.price(333).qty(44).flags(0xEF01); }).unwrap();
+        }).unwrap();
+        let complete = after_entries.trailer(b"v2_trailer_data").unwrap();
+        let encoded = complete.as_bytes();
+
+        // ── Decode with V1 decoder (backward compat) ──
+        let d = grpvers_v1b::GroupMsgDecoder::try_from(encoded).unwrap();
+
+        // V1 decoder sees V2 entries (wire blockLength=16, compiled blockLength=12)
+        let entries: Vec<_> = d.entries().unwrap().collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2, "should find 2 entries");
+
+        // Known fields correct — V1 decoder reads V2 entries using wire blockLength=16
+        assert_eq!(entries[0].price(), 111);
+        assert_eq!(entries[0].qty(), 22);
+        assert_eq!(entries[1].price(), 333);
+        assert_eq!(entries[1].qty(), 44);
+
+        // Trailer must skip the extra 4 bytes per entry (flags field)
+        // that V1 doesn't know about but the wire blockLength accounts for
+        let trailer = d.trailer().unwrap();
+        assert_eq!(trailer, b"v2_trailer_data",
+            "trailer must be at correct offset after V2-size group entries");
+    "#,
+    );
 }

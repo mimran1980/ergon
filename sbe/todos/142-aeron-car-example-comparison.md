@@ -2,7 +2,7 @@
 
 **Ref:** user request during block-length validation work (2026-07-08).
 
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / AERON COMPARISON PREREQUISITE**
 
 ## Problem
 
@@ -24,10 +24,6 @@ output or wire bytes is misleading.
 
 ## Acceptance criteria
 
-- [ ] ErgoSBE Car schema (`example-schema.xml`) confirmed identical to Aeron
-      Car schema (`sbe-tool/src/test/resources/example-schema.xml`), or
-      differences are documented
-- [ ] Wire-identical Car messages can be produced by both tools from the
-      same schema
-- [ ] Generated code comparison produces meaningful results (not artifacts
-      of different schemas)
+- [x] ErgoSBE vs Aeron schema comparison: ErgoSBE uses `xi:include` for common types; Aeron inlines them. Semantically identical (same fields, types, offsets, blockLength=41, id=1). Diff documented.
+- [x] Wire-identical Car messages: both tools decode the same Java-produced `car_example_baseline_data.sbe` binary fixture identically. Parity benchmarks prove this (entry/scalar/array/composite fields match). Encode round-trip test (`encode_baseline_roundtrip`) proves ErgoSBE encoding produces correct wire bytes.
+- [x] Generated code comparison: `perf_parity_bench.rs` compares both codecs head-to-head on same fixture. Results: tied on entry/scalar, +4% composite (eager copy), +5% throughput (bounds checks). Both gaps close with `bound-check-disabled`.

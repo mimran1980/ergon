@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Extensibility converters is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Extensibility: extension methods + type converters
 
 **Blocked by:** `01-scalar-wire-parity` (need working generated types to extend)
@@ -11,7 +7,13 @@ generator. The orphan rule is already in our favour (generated code lives in
 the user's crate), but the ergonomics of adding converters should be
 frictionless. Classic HFT example: a `semanticType="Price"` int64 field should
 trivially become a `rust_decimal::Decimal`.
-**Status: DESIGN / ROADMAP**
+**Status: PARKED / SUPERSEDED BY SEMANTIC EXTENSION TODOS**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep raw code-injection
+extension APIs parked. The safer path is `CompatibilityMode` wiring (todo 65),
+optional semantic newtypes (todos 35/152), and typed converters (todo 62). Do
+not add arbitrary injected Rust blocks to the generator unless a real user
+workflow justifies the audit and security cost.
 
 
 ## User-facing patterns to support
@@ -88,6 +90,7 @@ do their own conversion. Already spec'd in DECISIONS.md §4.
 - [ ] Example: Car schema with `Price` field → user converts to `Decimal` in 3
       lines of config
 - [ ] Works with both `build.rs` driver and the proc-macro frontend (v1.1)
-- [ ] Extension code is formatted (rustfmt pass) and appears in generated docs
+- [ ] Extension code is formatted by the same `prettyplease` path as generated
+      code and appears in generated docs
 
 Ref: `design/DECISIONS.md` §4 semantic newtypes, §10 orphan rule advantage.

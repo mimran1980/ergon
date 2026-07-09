@@ -5,7 +5,11 @@
 Critically review the Rust source that ErgoSBE emits. Read the generated
 output (e.g. `cargo test` artifacts or `examples/dump_gen.rs`) with fresh eyes
 and ask: is this idiomatic, performant, and maintainable Rust?
-**Status: DEFERRED**
+**Status: ACTIVE / RELEASE GATE**
+
+**Decision after deferred recheck (2026-07-08):** unpark. Generated output is
+the public product. A release cannot credibly claim an idiomatic Rust API until
+the generated source has been reviewed against real schemas and upstream output.
 
 
 ## Areas to inspect

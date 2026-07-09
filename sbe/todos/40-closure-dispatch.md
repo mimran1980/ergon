@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Trait-based closure dispatch is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Trait-based closure dispatch (no enum branch miss)
 
 **Blocked by:** `05-anymessage-framecursor`
@@ -36,7 +32,14 @@ dispatch(&buf, |msg| match msg {
 Both `AnyMessage` enum AND `dispatch()` are generated — user picks the right
 tool for the job. Feed handlers use `dispatch()` for speed; one-shot decodes
 use `AnyMessage` for convenience.
-**Status: DESIGN / ROADMAP**
+**Status: SUPERSEDED BY SCOPED DISPATCH / BENCHMARK-GATED**
+
+**Decision after todo-coherence recheck (2026-07-08):** do not implement this
+standalone shape first. The newer direction is todo 148/133: scoped HRTB
+dispatch that prevents borrowed decoder views from escaping the frame. If
+benchmarks later prove enum dispatch is a bottleneck, fold the performance
+requirement into the scoped-dispatch design instead of adding a second
+lookalike dispatch API.
 
 
 ## Acceptance criteria

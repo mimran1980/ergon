@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** WireCompatibleExtensions converters is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # WireCompatibleExtensions: semanticType-driven converters
 
 **Blocked by:** none (codegen feature)
@@ -13,7 +9,12 @@ the raw SBE wire type and the semantic Rust type.
 
 This is gated behind `CompatibilityMode::WireCompatibleExtensions` — the wire
 bytes are unchanged, only the Rust API surface grows.
-**Status: DESIGN / ROADMAP**
+**Status: P2 OPTIONAL / PARKED UNTIL COMPATIBILITY MODE IS WIRED**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep converters parked
+behind todo 65 and semantic-newtype design. Converters that pull in
+`rust_decimal`, `chrono`, or allocation-heavy formatting should not become part
+of the default hot-path API.
 
 
 ## Examples

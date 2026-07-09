@@ -2,7 +2,12 @@
 
 **Blocked by:** perf baseline, public API stability
 **Severity:** LOW
-**Status: DESIGN / ROADMAP**
+**Status: PARKED / GUARDRAILS**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep parked and use
+this file as the boundary for speculative Rust features. Anything listed here
+must graduate into a focused todo with runtime tests, compile-fail tests where
+relevant, and benchmark evidence before it affects the default generated API.
 
 
 ## Problem

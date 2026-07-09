@@ -2,7 +2,12 @@
 
 **Blocked by:** none
 **Severity:** MEDIUM
-**Status: DEFERRED**
+**Status: MOSTLY DONE / INTEGRATION ENV-GATED**
+
+**Decision after deferred recheck (2026-07-08):** do not keep this blanket
+deferred. Shutdown flush reliability is core persistence behavior. The open
+multi-sender ClickHouse roundtrip should stay as an environment-gated
+integration test.
 
 ## Problem
 
@@ -61,7 +66,7 @@ are not part of the default workspace pass.
 - [x] Senders auto-register on `build()` (`register_sender` at sink.rs:483, Weak refs)
 - [x] Calling `flush()` on a sink with no senders is a no-op (test at sink.rs:1539)
 - [x] Thread-safe: multiple senders built concurrently via `Mutex<Vec<Weak<...>>>` pattern
-- [ ] Integration test: two senders, both with buffered rows, global flush clears both (PARKED — unit test covers register/flush/retain)
+- [x] Integration test: multi-sender global flush verified via Docker ClickHouse `cargo test -- --ignored` (2026-07-09). Unit test covers register/flush/retain.
 
 ## Implementation notes
 

@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Semantic type system is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Semantic type system — from annotations to type safety
 
 **Blocked by:** `02-composite-enum-set-wire-parity`
@@ -20,7 +16,12 @@ The official Java generator stores this in a constant and ignores it. Rust can
 do much more. The key insight: **semanticType tells the generator what the int
 really is**, enabling type-safe APIs that prevent entire classes of bugs at
 compile time.
-**Status: DESIGN / ROADMAP**
+**Status: P2 OPTIONAL / NOT A WIRE-PARITY GATE**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep this as an
+optional extension, not v1 wire-parity work. The zero-cost subset is tracked by
+todo 152; richer converters live in todo 62 and must be gated by
+`CompatibilityMode::WireCompatibleExtensions`.
 
 
 ## What semanticType unlocks

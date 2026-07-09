@@ -2,7 +2,12 @@
 
 **Blocked by:** none
 **Severity:** MEDIUM
-**Status: DEFERRED**
+**Status: MOSTLY DONE / INTEGRATION ENV-GATED**
+
+**Decision after deferred recheck (2026-07-08):** do not keep this blanket
+deferred. Builder support is already checked off. Only Docker-backed
+compression roundtrip remains, and it should be tracked as an environment-gated
+integration test.
 
 ## Problem
 
@@ -66,4 +71,4 @@ been verified in the default workspace run.
 - [x] TLS via `https://` URLs (clickhouse::Client handles this automatically)
 - [x] `tls_skip_verify()` for dev (sink.rs:136)
 - [x] `tls_ca_cert()` for custom CA bundles (sink.rs:137)
-- [ ] Integration test: compression roundtrip (PARKED — LZ4 is a clickhouse::Client flag, no custom logic to test)
+- [x] Integration test: compression roundtrip — verified via `CLICKHOUSE_URL=http://localhost:8123 cargo test -- --ignored` (2026-07-09). LZ4 is a `clickhouse::Client` flag; our builder plumbing is tested in unit tests.

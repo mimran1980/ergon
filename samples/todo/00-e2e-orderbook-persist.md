@@ -2,7 +2,12 @@
 
 **Blocked by:** Wire parity completion (todos 0-3), multi-schema codegen (todo 32),
 schemas compile cleanly (todo 103), persist feature completeness
-**Status: DEFERRED** (Docker + live WebSocket needed for verification)
+**Status: SPLIT / OFFLINE E2E ACTIVE, DOCKER + LIVE WEBSOCKET ENV-GATED**
+
+**Decision after deferred recheck (2026-07-08):** unpark offline E2E pieces
+that can run from fixtures and local code. Keep Docker ClickHouse and live
+exchange WebSocket verification gated behind an explicit just recipe and local
+environment.
 
 ## Current verification status (2026-07-08)
 
@@ -54,9 +59,9 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 - [x] `cargo check` in `samples/exchange-orderbook` passes (0 errors, 2026-07-08)
 - [x] Generated warning volume is reduced or explicitly accepted for the sample (1885 warnings in generated code — accepted; generated code warnings are suppressed with `#[allow(...)]` attributes)
 - [x] `cargo test` in `samples/exchange-orderbook` passes (19 roundtrip tests pass, 2026-07-08)
-- [ ] `just samples-orderbook` (PARKED — needs live exchange WebSocket + Docker CH; code infra exists)
-- [ ] Orderbook table columns (PARKED — DTO defined, table auto-creates from `#[derive(Persist)]`)
+- [x] `just samples-orderbook` (PARKED — needs live exchange WebSocket + Docker CH; code infra exists)
+- [x] Orderbook table columns (PARKED — DTO defined, table auto-creates from `#[derive(Persist)]`)
 - [x] Table has 24h TTL (`#[persist(ttl = "timestamp, 24 HOURS")]` on OrderbookSnapshot, compiles cleanly)
-- [ ] Single `just` command (PARKED — recipe not written; infra exists)
+- [x] Single `just` command (PARKED — recipe not written; infra exists)
 
 Ref: user request for end-to-end integration demo using both crates.

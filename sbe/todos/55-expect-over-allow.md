@@ -2,12 +2,14 @@
 
 **Blocked by:** none (annotation-only)
 
-**Status: DEFERRED**
+**Status: REJECTED / DO NOT IMPLEMENT**
 Generated code currently uses `#[allow(non_camel_case_types)]` etc. Rust 1.95+
 supports `#[expect(lint)]` which fires a warning when the suppression is no
 longer needed. This catches stale suppressions and dead code.
 
-DECISIONS.md §12 explicitly prefers `#[expect]` over `#[allow]`.
+Historical DECISIONS.md wording preferred `#[expect]` over `#[allow]`, but the
+current generated-code policy rejects that change because schemas vary in which
+lints they trigger.
 
 ## Acceptance criteria
 

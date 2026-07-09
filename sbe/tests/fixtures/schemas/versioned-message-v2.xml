@@ -18,11 +18,11 @@
         </composite>
     </types>
     <message name="VersionedMessageV2" id="50001" description="A versioned message" blockLength="20">
-        <field name="FieldA1" id="1" type="uint32" semanticType="int"/>
-        <field name="FieldB1" id="2" type="uint32" semanticType="int"/>
-        <field name="FieldC2" id="3" type="uint32" semanticType="int"/>
-        <field name="FieldD2" id="4" type="uint32" semanticType="int"/>
-        <field name="FieldE2" id="5" type="uint32" semanticType="int"/>
-        <data name="String1" id="10" type="varStringEncoding"/>
+        <field name="FieldA1" id="1" type="uint32" semanticType="int" sinceVersion="0"/>
+        <field name="FieldB1" id="2" type="uint32" semanticType="int" sinceVersion="0"/>
+        <field name="FieldC2" id="3" type="uint32" semanticType="int" sinceVersion="2"/>
+        <field name="FieldD2" id="4" type="uint32" semanticType="int" sinceVersion="2"/>
+        <field name="FieldE2" id="5" type="uint32" semanticType="int" sinceVersion="2"/>
+        <data name="String1" id="10" type="varStringEncoding" sinceVersion="0"/>
     </message>
 </messageSchema>

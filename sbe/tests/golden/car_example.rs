@@ -1212,6 +1212,7 @@ pub struct FuelFiguresDecoder<'a> {
     start: usize,
     total: usize,
     acting_version: u16,
+    acting_block_length: usize,
 }
 impl<'a> FuelFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
@@ -1234,6 +1235,7 @@ impl<'a> FuelFiguresDecoder<'a> {
             .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
+        let block_length = header.block_length() as usize;
         Ok(Self {
             buf,
             pos: pos + 4,
@@ -1241,6 +1243,7 @@ impl<'a> FuelFiguresDecoder<'a> {
             start: pos + 4,
             total: count,
             acting_version,
+            acting_block_length: block_length,
         })
     }
     #[inline]
@@ -1295,15 +1298,15 @@ impl<'a> FuelFiguresDecoder<'a> {
         if idx >= self.total {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
-                needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
-                available: self.total * Self::ENTRY_BLOCK_LENGTH,
+                needed: (idx + 1) * self.acting_block_length,
+                available: self.total * self.acting_block_length,
             });
         }
-        let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
-        if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
+        let offset = self.start + idx * self.acting_block_length;
+        if offset + self.acting_block_length > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
-                needed: Self::ENTRY_BLOCK_LENGTH,
+                needed: self.acting_block_length,
                 available: self.buf.len() - offset,
             });
         }
@@ -1411,11 +1414,15 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
-        _block_len: usize,
+        block_len: usize,
         acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        let entry = Self::wrap(buf, pos, acting_version);
-        entry.tail_offset_1()
+        if 1 == 0 {
+            Ok(pos + block_len)
+        } else {
+            let entry = Self::wrap(buf, pos, acting_version);
+            entry.tail_offset_1()
+        }
     }
 }
 impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
@@ -1442,6 +1449,7 @@ pub struct PerformanceFiguresDecoder<'a> {
     start: usize,
     total: usize,
     acting_version: u16,
+    acting_block_length: usize,
 }
 impl<'a> PerformanceFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
@@ -1464,6 +1472,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
             .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
+        let block_length = header.block_length() as usize;
         Ok(Self {
             buf,
             pos: pos + 4,
@@ -1471,6 +1480,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
             start: pos + 4,
             total: count,
             acting_version,
+            acting_block_length: block_length,
         })
     }
     #[inline]
@@ -1525,15 +1535,15 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         if idx >= self.total {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
-                needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
-                available: self.total * Self::ENTRY_BLOCK_LENGTH,
+                needed: (idx + 1) * self.acting_block_length,
+                available: self.total * self.acting_block_length,
             });
         }
-        let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
-        if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
+        let offset = self.start + idx * self.acting_block_length;
+        if offset + self.acting_block_length > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
-                needed: Self::ENTRY_BLOCK_LENGTH,
+                needed: self.acting_block_length,
                 available: self.buf.len() - offset,
             });
         }
@@ -1640,11 +1650,15 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
-        _block_len: usize,
+        block_len: usize,
         acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        let entry = Self::wrap(buf, pos, acting_version);
-        entry.tail_offset_1()
+        if 1 == 0 {
+            Ok(pos + block_len)
+        } else {
+            let entry = Self::wrap(buf, pos, acting_version);
+            entry.tail_offset_1()
+        }
     }
 }
 impl<'a> core::fmt::Display for PerformanceFiguresEntryDecoder<'a> {
@@ -1674,6 +1688,7 @@ pub struct PerformanceFiguresAccelerationDecoder<'a> {
     start: usize,
     total: usize,
     acting_version: u16,
+    acting_block_length: usize,
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
@@ -1696,6 +1711,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
             .unwrap();
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
+        let block_length = header.block_length() as usize;
         Ok(Self {
             buf,
             pos: pos + 4,
@@ -1703,6 +1719,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
             start: pos + 4,
             total: count,
             acting_version,
+            acting_block_length: block_length,
         })
     }
     #[inline]
@@ -1728,11 +1745,11 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
-                needed: n * Self::ENTRY_BLOCK_LENGTH,
-                available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                needed: n * self.acting_block_length,
+                available: self.count * self.acting_block_length,
             });
         }
-        self.pos += n * Self::ENTRY_BLOCK_LENGTH;
+        self.pos += n * self.acting_block_length;
         self.count -= n;
         Ok(())
     }
@@ -1746,15 +1763,15 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         if idx >= self.total {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
-                needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
-                available: self.total * Self::ENTRY_BLOCK_LENGTH,
+                needed: (idx + 1) * self.acting_block_length,
+                available: self.total * self.acting_block_length,
             });
         }
-        let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
-        if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
+        let offset = self.start + idx * self.acting_block_length;
+        if offset + self.acting_block_length > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
-                needed: Self::ENTRY_BLOCK_LENGTH,
+                needed: self.acting_block_length,
                 available: self.buf.len() - offset,
             });
         }
@@ -1778,7 +1795,7 @@ impl<'a> Iterator for PerformanceFiguresAccelerationDecoder<'a> {
             self.pos,
             self.acting_version,
         );
-        self.pos += Self::ENTRY_BLOCK_LENGTH;
+        self.pos += self.acting_block_length;
         self.count -= 1;
         Some(entry)
     }
@@ -1827,11 +1844,15 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub fn skip(
         buf: &'a [u8],
         pos: usize,
-        _block_len: usize,
+        block_len: usize,
         acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        let entry = Self::wrap(buf, pos, acting_version);
-        entry.tail_offset_0()
+        if 0 == 0 {
+            Ok(pos + block_len)
+        } else {
+            let entry = Self::wrap(buf, pos, acting_version);
+            entry.tail_offset_0()
+        }
     }
 }
 impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
@@ -2642,6 +2663,19 @@ pub const SCHEMA_SHA256: [u8; 32] = [
     0x35, 0x70, 0x74, 0x80,
 ];
 pub const SCHEMA_SHA256_HEX: &str = "adf638ad8497f83b2b0b28502eb2d24fea41d7fa6d21552ecdbac24b35707480";
+pub const SCHEMA_ID: u16 = 1;
+pub const SCHEMA_VERSION: u16 = 0;
+pub mod prelude {
+    pub use super::sbe_rt::{DecodeError, EncodeError, VerifyError, SbeMessage};
+    pub use super::{
+        AnyMessage, DecodedFrame, FrameCursor, FramingPolicy, MessageVisitor,
+        MessageHeader, MessageHeaderDecoder, GroupSizeEncoding, GroupSizeEncodingDecoder,
+        VarStringEncoding, VarStringEncodingDecoder, VarAsciiEncoding,
+        VarAsciiEncodingDecoder, VarDataEncoding, VarDataEncodingDecoder, Booster,
+        BoosterDecoder, Engine, EngineDecoder, BooleanType, Model, OptionalExtras,
+        CarDecoder, CarEncoder,
+    };
+}
 /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
 ///
 /// Safe path uses slice indexing (bounds-checked, equivalent to Aeron's

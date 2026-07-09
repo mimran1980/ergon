@@ -215,6 +215,27 @@ fn version_gap_renders_miette_diagnostic() {
 // An <enum> whose encodingType references a type not defined in the schema.
 // Expected: ParseError::Invalid { what: "enum encodingType", value: "NonExistentEncodingType", .. }
 
+// Parser semantic validation gaps — tracked in todo 20, deferred.
+// The following upstream error-handler schemas are NOT yet rejected by ErgoSBE:
+// - error-handler-enum-violates-min-max-value-range.xml (enum range check)
+// - error-handler-group-dimensions-schema.xml (group dimension type)
+// - error-handler-invalid-composite-offsets-schema.xml (overlapping offsets)
+// - error-handler-invalid-composite.xml (malformed composite)
+// - error-handler-invalid-name.xml (invalid type/field name)
+// - error-handler-message-schema.xml (message validation)
+// - error-handler-since-version.xml (sinceVersion validation)
+// - error-handler-types-schema.xml (invalid type references — caught by
+//   invalid-type-ref.xml but not by the dedicated error-handler variant)
+// - error-handler-types-dup-schema.xml (duplicate types)
+// - cyclic-refs-schema.xml (cyclic type references)
+//
+// Currently validated error conditions:
+// - invalid-type-ref.xml: invalid primitive type reference
+// - duplicate-message-id.xml: duplicate template IDs
+// - invalid-enum-value.xml: invalid enum encodingType
+// - version-gap.xml: sinceVersion beyond schema version
+// - missing-required-attr.xml: missing required XML attributes
+
 #[test]
 fn invalid_enum_encoding_type_returns_invalid_error() {
     let path = fixture_path("invalid-enum-value.xml");

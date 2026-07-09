@@ -130,4 +130,24 @@ impl LocalBook {
     pub fn best_ask(&self) -> Option<Decimal> {
         self.asks.first().map(|l| l.price)
     }
+
+    /// Apply a snapshot using Decimal prices directly (for JSON-based feeds).
+    pub fn apply_snapshot_dec(
+        &mut self,
+        bids: impl IntoIterator<Item = (Decimal, Decimal)>,
+        asks: impl IntoIterator<Item = (Decimal, Decimal)>,
+    ) {
+        self.bids.clear();
+        for (p, s) in bids {
+            if s > Decimal::ZERO {
+                self.bids.insert(BidLevel { price: p, size: s });
+            }
+        }
+        self.asks.clear();
+        for (p, s) in asks {
+            if s > Decimal::ZERO {
+                self.asks.insert(AskLevel { price: p, size: s });
+            }
+        }
+    }
 }

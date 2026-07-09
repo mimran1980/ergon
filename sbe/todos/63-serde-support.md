@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Serde support is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # WireCompatibleExtensions: serde Serialize/Deserialize on domain types
 
 **Blocked by:** `46-domain-objects`
@@ -11,7 +7,12 @@ message decoders, composites, enums, and sets. This is a pure Rust-side
 enrichment — the wire layout is unchanged.
 
 Gated behind `CompatibilityMode::WireCompatibleExtensions`.
-**Status: DESIGN / ROADMAP**
+**Status: PARKED / OPTIONAL APPLICATION LAYER**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep parked until
+domain objects or a concrete decoder-view serialization use case is accepted.
+Serde must not add allocations, feature churn, or generated surface area to the
+default HFT codec path.
 
 
 ## What gets serde

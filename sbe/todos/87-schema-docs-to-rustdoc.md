@@ -3,7 +3,11 @@
 Emit `///` rustdoc comments on generated types and accessors from XML `description`
 attributes, `<!-- -->` comments, and `description` child elements. This is specified
 in DECISIONS.md §9 as a core helper.
-**Status: DEFERRED**
+**Status: ACTIVE / RELEASE USABILITY**
+
+**Decision after deferred recheck (2026-07-08):** unpark the core rustdoc path.
+This is the active implementation todo for schema descriptions. Todo 64 should
+only handle optional compatibility-mode gating, not the main docs feature.
 
 
 ## Status: Message-level + field-level decoder scalar accessors

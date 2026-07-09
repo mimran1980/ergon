@@ -2,7 +2,7 @@
 
 **Blocked by:** 125, 126
 **Severity:** HIGH
-**Status: DESIGN / ROADMAP**
+**Status: P1 / EXCHANGE ROLLOUT TOOLING**
 
 
 ## Problem

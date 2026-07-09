@@ -6,7 +6,12 @@ Every real SBE schema uses `<xi:include href="common-types.xml"/>` to pull in
 the message header, group dimension encoding, and shared type definitions.
 Our parser currently reads a single file. Without XInclude, no real-world
 schema parses.
-**Status: DEFERRED**
+**Status: ACTIVE / PARSER PARITY**
+
+**Decision after deferred recheck (2026-07-08):** unpark the remaining
+diagnostic/error-path work. Most functional XInclude support is already checked
+off, but silent missing/malformed include handling is too risky for real
+exchange schemas and should be treated as parser parity, not post-v1 polish.
 
 
 ## Acceptance criteria

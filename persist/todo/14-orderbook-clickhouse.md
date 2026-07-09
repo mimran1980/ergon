@@ -2,7 +2,11 @@
 
 **Blocked by:** `samples/todo/00-e2e-orderbook-persist.md`, persist
 feature completeness (all outstanding persist todos)
-**Status: DEFERRED**
+**Status: SPLIT / DTO ACTIVE, RUNTIME CLICKHOUSE ENV-GATED**
+
+**Decision after deferred recheck (2026-07-08):** keep DTO/schema work active
+and keep Docker/live-feed verification explicitly environment-gated. This is
+not a reason to defer the whole persistence sample.
 
 Provide the DTO and table schema for persisting exchange orderbook snapshots
 to ClickHouse via `ergo-clickhouse-persist`.

@@ -80,6 +80,24 @@ samples-clickhouse-stop:
 docs:
     cargo doc --no-deps --workspace --open
 
+# ── Benchmarks ──────────────────────────────────────────────────
+
+# Run all Criterion benchmarks
+bench:
+    RUSTC_WRAPPER="" cargo bench --workspace
+
+# Run just the Aeron parity head-to-head
+bench-parity:
+    RUSTC_WRAPPER="" cargo bench --bench perf_parity_bench
+
+# Quick benchmark smoke test (compile check only, no long runs)
+bench-check:
+    RUSTC_WRAPPER="" cargo bench --workspace --no-run
+
+# Benchmark with bound-check-disabled feature enabled
+bench-fast:
+    RUSTC_WRAPPER="" cargo bench --workspace --features bound-check-disabled
+
 # ── Clean ───────────────────────────────────────────────────────
 
 clean:

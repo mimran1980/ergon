@@ -2,7 +2,10 @@
 
 **Blocked by:** 122, 105, 120, 125, 126, generated-code stability
 **Severity:** HIGH
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / RELEASE GATE**
+
+**Coordination:** `154-todo-coherence-and-priority-map.md` is the tie-breaker
+when older todos conflict with this release gate.
 
 
 ## Problem
@@ -59,8 +62,9 @@ samples while one of the hard blockers is still red.
 - [ ] If todo 136 is scoped into v1, typed `ReadBuf`/`WriteBuf` mode/endian
       tests and benchmarks pass for checked, verified, and unchecked paths.
 - [ ] If todo 137 is scoped into v1, the compile-fail proof suite passes in CI.
-- [ ] Stable Rust roadmap todos 144-152 are either implemented with runtime,
-      compile-fail, and benchmark evidence, or explicitly scoped post-v1.
+- [ ] Stable Rust roadmap todos 144-152 and the coherence map in todo 154 are
+      either implemented with runtime, compile-fail, and benchmark evidence, or
+      explicitly scoped post-v1.
 - [x] `cd samples/exchange-orderbook && cargo check` — compiles
 
 ## Acceptance criteria

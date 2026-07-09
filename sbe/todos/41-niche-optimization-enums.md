@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Niche optimisation for Option<Enum> is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Niche optimisation for `Option<Enum>`
 
 **Blocked by:** `02-composite-enum-set-wire-parity`
@@ -27,7 +23,12 @@ const _: () = assert!(size_of::<Option<ModelKind>>() == 1);
 Rust does this automatically when it detects an unused discriminant. The
 generator just needs to ensure discriminants don't span the full range of the
 underlying type.
-**Status: DESIGN / ROADMAP**
+**Status: PARKED / BENCHMARK-AND-API-GATED**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep parked. The flat
+`NullVal` enum API is simpler and already chosen. Do not reshape enum APIs for
+an `Option<T>` niche unless size/perf evidence on real generated code justifies
+the added complexity.
 
 
 ## Acceptance criteria

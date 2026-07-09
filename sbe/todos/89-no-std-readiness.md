@@ -4,7 +4,12 @@ Audit generated code for `no_std` compatibility and add a `no_std` feature flag.
 The design (DECISIONS.md §1, §4, §10) specifies that decode/encode is already
 `no_std`-clean by construction — only allocating helpers need `alloc`. This todo
 makes that promise concrete.
-**Status: DEFERRED**
+**Status: PARKED / READINESS AUDIT ONLY**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep parked. The core
+should avoid unnecessary `std`, but a formal `no_std` feature split is release
+tax unless a real user needs it. Do not let this block wire parity, API
+simplicity, parser parity, or performance gates.
 
 
 ## Status: Not Started

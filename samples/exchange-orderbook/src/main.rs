@@ -11,9 +11,7 @@
 //! - Both use mantissa + exponent decimal encoding → `rust_decimal::Decimal`
 //! - Generated code from build.rs via `ergosbe::Generator`
 
-mod orderbook;
-mod persist;
-
+use exchange_orderbook::{orderbook, persist};
 use futures_util::{SinkExt, StreamExt};
 use orderbook::{AskLevel, BidLevel, LocalBook};
 use rust_decimal::Decimal;
@@ -214,24 +212,3 @@ fn print_book(exchange: &str, book: &LocalBook) {
     );
 }
 
-impl LocalBook {
-    /// Apply a snapshot using Decimal prices directly (for JSON-based feeds).
-    fn apply_snapshot_dec(
-        &mut self,
-        bids: impl IntoIterator<Item = (Decimal, Decimal)>,
-        asks: impl IntoIterator<Item = (Decimal, Decimal)>,
-    ) {
-        self.bids.clear();
-        for (p, s) in bids {
-            if s > Decimal::ZERO {
-                self.bids.insert(BidLevel { price: p, size: s });
-            }
-        }
-        self.asks.clear();
-        for (p, s) in asks {
-            if s > Decimal::ZERO {
-                self.asks.insert(AskLevel { price: p, size: s });
-            }
-        }
-    }
-}

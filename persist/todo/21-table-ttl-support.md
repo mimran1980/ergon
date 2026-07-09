@@ -2,7 +2,12 @@
 
 **Blocked by:** none
 **Severity:** MEDIUM
-**Status: DEFERRED**
+**Status: MOSTLY DONE / INTEGRATION ENV-GATED**
+
+**Decision after deferred recheck (2026-07-08):** do not keep this blanket
+deferred. TTL is already implemented at the DDL/schema level and is required by
+the orderbook sample. Only ClickHouse `SHOW CREATE TABLE` verification remains
+environment-gated.
 
 ## Problem
 
@@ -61,4 +66,4 @@ still open and requires Docker.
 - [x] `SchemaDiff` ignores TTL (no migration needed)
 - [x] `DynamicRecorderBuilder` gains `ttl()` method
 - [x] `#[derive(Persist)]` gets `#[persist(ttl = "...")]` container attribute
-- [ ] Integration test: table created with TTL, verify via `SHOW CREATE TABLE` (PARKED — unit test covers DDL generation)
+- [x] Integration test: TTL verified via Docker ClickHouse `cargo test -- --ignored` (2026-07-09). Unit test `schema_with_ttl_default_column` covers DDL generation.

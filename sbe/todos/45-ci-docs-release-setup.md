@@ -6,7 +6,12 @@ Mirror the rusteron project's automation setup. ErgoSBE is simpler (no Java, no
 Docker, no Gradle, no C deps), so the setup is leaner.
 
 Ref: `https://github.com/mimran1980/rusteron_gsr/tree/v2-redesign`
-**Status: DEFERRED**
+**Status: ACTIVE / RELEASE INFRA**
+
+**Decision after deferred recheck (2026-07-08):** unpark the CI and release
+gates needed for a publishable crate. Bors/release automation can remain later,
+but fmt, clippy, tests, docs, build matrix, MSRV, and local `just` parity are
+release infrastructure, not post-v1 work.
 
 
 ## rust-toolchain.toml

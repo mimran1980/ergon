@@ -31,11 +31,11 @@ output through `prettyplease::unparse`.
 
 ## Acceptance criteria
 
-- [ ] **Zero `push_str(&format!(...))` in codegen.rs** — the count hits 0
+- [x] **Zero `push_str(&format!(...))` in codegen.rs** — the count hits 0
 - [x] All codegen goes through `syn`/`quote!` → `prettyplease::unparse`
-- [ ] Regen stability test passes
+- [x] Regen stability test passes
 - [x] No `rustfmt` subprocess — all formatting via `prettyplease`
-- [ ] CI hook: `grep -c 'push_str(&format!' sbe/src/codegen.rs` fails CI if > 0
+- [x] CI hook: `grep -c 'push_str(&format!' sbe/src/codegen.rs` fails CI if > 0
 
 Ref: user request. `syn`/`quote` deps already in `Cargo.toml`.
 

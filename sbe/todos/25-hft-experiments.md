@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** HFT optimisation experiments is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # HFT optimisation experiments
 
 **Blocked by:** `06-benchmark-perf-gates`, `22-hft-performance`
@@ -9,7 +5,12 @@
 Try every performance idea, measure it, keep what works. This is the
 experimentation playground — benchmark-driven, not speculation-driven. If an
 experiment shows <5% improvement, kill it. If >10%, promote it to a real todo.
-**Status: DESIGN / ROADMAP**
+**Status: SUPERSEDED / PARKED EXPERIMENT APPENDIX**
+
+**Decision after todo-coherence recheck (2026-07-08):** do not use this as an
+active work queue. Focused performance work belongs in todo 22, todo 105, and
+specific bug todos. This file remains as a parking lot for hypotheses that need
+benchmarks before becoming implementation work.
 
 
 ## Experiments to run

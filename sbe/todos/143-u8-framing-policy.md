@@ -2,7 +2,7 @@
 
 **Blocked by:** none (codegen-only)
 **Severity:** MEDIUM
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / SCHEMA-CONFIGURABLE FRAMING**
 
 
 ## Problem

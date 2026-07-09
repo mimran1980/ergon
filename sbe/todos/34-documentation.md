@@ -4,7 +4,12 @@
 
 Good documentation means the user never opens the generated `.rs` file. IDE
 hover, rustdoc, and `cargo doc` should answer every question.
-**Status: DEFERRED**
+**Status: ACTIVE / RELEASE USABILITY**
+
+**Decision after deferred recheck (2026-07-08):** unpark. Documentation is part
+of API usability, especially for generated code users who should not need to
+read large generated files. Keep schema-derived rustdoc as codegen work, but do
+not classify the documentation track as post-v1.
 
 
 ## Generated code docs (user-facing)

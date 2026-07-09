@@ -1,14 +1,15 @@
-⚠️ **DEFERRED — post-v1.** HFT performance optimisations is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # HFT performance optimisations
 
 **Blocked by:** `01-scalar-wire-parity` (need working baseline to profile against)
 
 Performance is value #3 for ErgoSBE. The design already bakes in zero-alloc and
 flyweight decoders. These are the next-level optimisations for the hot path.
-**Status: DESIGN / ROADMAP**
+**Status: SPLIT / P0 ACTIVE, EXPERIMENTS PARKED**
+
+**Decision after todo-coherence recheck (2026-07-08):** unpark the measurable
+P0 audit/fix work and keep P1/P2 ideas benchmark-gated. This file is the
+canonical home for HFT performance work; todo 25 is only the historical
+experiment appendix and should not drive implementation independently.
 
 
 ## P0 — measurable impact, implement now

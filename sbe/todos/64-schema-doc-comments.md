@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Schema doc comments is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # WireCompatibleExtensions: schema doc comments on generated types
 
 **Blocked by:** none (codegen-only)
@@ -12,7 +8,12 @@ carries a `description` attribute produces a `///` doc comment on the
 corresponding generated Rust item.
 
 Gated behind `CompatibilityMode::WireCompatibleExtensions`.
-**Status: DESIGN / ROADMAP**
+**Status: SUPERSEDED BY TODO 87 FOR CORE DOCS / EXTENSION GATING PARKED**
+
+**Decision after todo-coherence recheck (2026-07-08):** split this. Core
+schema-description rustdoc belongs in todo 87 and release documentation work.
+This file should only track optional `WireCompatibleExtensions` gating once
+todo 65 is wired.
 
 
 ## Example

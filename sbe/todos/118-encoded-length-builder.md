@@ -2,7 +2,12 @@
 
 **Blocked by:** none
 **Ref:** user request
-**Status: DESIGN / ROADMAP**
+**Status: P2 / ONLY IF SIMPLE LENGTH HELPERS ARE INSUFFICIENT**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep this narrower
+builder as a follow-up for schemas whose nested groups or entry-level var-data
+cannot be expressed cleanly by todo 116. Do not implement the broad todo 43 API
+until this smaller shape has been validated against real schemas.
 
 
 ## Problem

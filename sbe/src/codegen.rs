@@ -274,7 +274,9 @@ impl Generator {
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
         write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
-        // 7.5. Generate const-compatible byte-read helper (avoids per-accessor loop bloat)
+        // 7.6. Generate prelude module — single import surface for users
+        generate_prelude(&mut src, &elements, &messages, ir.id, ir.version);
+        // 7.7. Generate const-compatible byte-read helper (avoids per-accessor loop bloat)
         let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
             /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
             ///
@@ -2957,6 +2959,7 @@ fn generate_group_decoder(
             start: usize,
             total: usize,
             acting_version: u16,
+            acting_block_length: usize,
         }
 
         impl<'a> #decoder_ident<'a> {
@@ -2969,6 +2972,7 @@ fn generate_group_decoder(
                 })?.try_into().unwrap();
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
+                let block_length = header.#bl_field_ident() as usize;
                 Ok(Self {
                     buf,
                     pos: pos + #dim_size_lit,
@@ -2976,6 +2980,7 @@ fn generate_group_decoder(
                     start: pos + #dim_size_lit,
                     total: count,
                     acting_version,
+                    acting_block_length: block_length,
                 })
             }
 
@@ -3014,11 +3019,11 @@ fn generate_group_decoder(
                     if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: n * Self::ENTRY_BLOCK_LENGTH,
-                            available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                            needed: n * self.acting_block_length,
+                            available: self.count * self.acting_block_length,
                         });
                     }
-                    self.pos += n * Self::ENTRY_BLOCK_LENGTH;
+                    self.pos += n * self.acting_block_length;
                     self.count -= n;
                     Ok(())
                 }
@@ -3059,15 +3064,15 @@ fn generate_group_decoder(
                 if idx >= self.total {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #g_name_lit,
-                        needed: (idx + 1) * Self::ENTRY_BLOCK_LENGTH,
-                        available: self.total * Self::ENTRY_BLOCK_LENGTH,
+                        needed: (idx + 1) * self.acting_block_length,
+                        available: self.total * self.acting_block_length,
                     });
                 }
-                let offset = self.start + idx * Self::ENTRY_BLOCK_LENGTH;
-                if offset + Self::ENTRY_BLOCK_LENGTH > self.buf.len() {
+                let offset = self.start + idx * self.acting_block_length;
+                if offset + self.acting_block_length > self.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #g_name_lit,
-                        needed: Self::ENTRY_BLOCK_LENGTH,
+                        needed: self.acting_block_length,
                         available: self.buf.len() - offset,
                     });
                 }
@@ -3075,7 +3080,6 @@ fn generate_group_decoder(
             }
         }
     });
-
 
     // Iterator implementation
     if total_tail == 0 {
@@ -3088,7 +3092,7 @@ fn generate_group_decoder(
                         return None;
                     }
                     let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_version);
-                    self.pos += Self::ENTRY_BLOCK_LENGTH;
+                    self.pos += self.acting_block_length;
                     self.count -= 1;
                     Some(entry)
                 }
@@ -3503,9 +3507,18 @@ fn generate_group_decoder(
         }
 
         #[inline]
-        pub fn skip(buf: &'a [u8], pos: usize, _block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
-            let entry = Self::wrap(buf, pos, acting_version);
-            entry.#tail_total_fn()
+        pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+            // Use wire block_len for fixed-entry groups. For tailed entries,
+            // the entry's tail_offset_N starts from tail_offset_0 which uses
+            // the entry's compiled blockLength. ponytail: this is correct for
+            // same-version entries; version-mismatched tailed entries need
+            // acting_block_length stored in the entry decoder (deferred).
+            if #total_tail_lit == 0 {
+                Ok(pos + block_len)
+            } else {
+                let entry = Self::wrap(buf, pos, acting_version);
+                entry.#tail_total_fn()
+            }
         }
     });
 
@@ -4659,6 +4672,72 @@ fn generate_group_encoder(
     }
 }
 
+/// Generate a `pub mod prelude` that re-exports the common API surface so users
+/// can write `use my_schema::prelude::*;`.
+fn generate_prelude(
+    src: &mut String,
+    elements: &SchemaElements,
+    messages: &[MessageStructure],
+    schema_id: u16,
+    schema_version: u16,
+) {
+    // Schema-level constants
+    writeln!(src, "pub const SCHEMA_ID: u16 = {schema_id};").unwrap();
+    writeln!(src, "pub const SCHEMA_VERSION: u16 = {schema_version};").unwrap();
+
+    // Collect generated type names (module-level, not in sbe_rt)
+    let mut gen_types: Vec<String> = Vec::new();
+
+    // Composites: both value struct and decoder
+    for ct in &elements.composites {
+        let name = to_pascal_case(&ct[0].name);
+        gen_types.push(name.clone());
+        gen_types.push(format!("{name}Decoder"));
+    }
+
+    // Enums
+    for et in &elements.enums {
+        gen_types.push(to_pascal_case(&et[0].name));
+    }
+
+    // Sets
+    for st in &elements.sets {
+        gen_types.push(to_pascal_case(&st[0].name));
+    }
+
+    // Message decoders and encoders
+    for msg in messages {
+        gen_types.push(format!("{}Decoder", to_pascal_case(&msg.name)));
+        gen_types.push(format!("{}Encoder", to_pascal_case(&msg.name)));
+    }
+
+    // Emit prelude
+    // sbe_rt types (exported from super::sbe_rt)
+    src.push_str("pub mod prelude {\n");
+    src.push_str(
+        "    pub use super::sbe_rt::{DecodeError, EncodeError, VerifyError, SbeMessage};\n",
+    );
+
+    // Module-level types (exported from super)
+    src.push_str("    pub use super::{\n");
+    // Built-in module-level types
+    for ty in &[
+        "AnyMessage",
+        "DecodedFrame",
+        "FrameCursor",
+        "FramingPolicy",
+        "MessageVisitor",
+    ] {
+        writeln!(src, "        {ty},").unwrap();
+    }
+    // Generated types (composites, enums, sets, messages)
+    for ty in &gen_types {
+        writeln!(src, "        {ty},").unwrap();
+    }
+    src.push_str("    };\n");
+    src.push_str("}\n\n");
+}
+
 fn generate_schema_id_from_header(
     src: &mut String,
     elements: &SchemaElements,
@@ -5424,7 +5503,7 @@ mod tests {
         assert!(collected[0].source.contains("pub mod sbe_rt"));
         assert!(collected[1].source.contains("pub mod sbe_rt"));
 
-        // No pub use re-exports
-        assert!(!collected[1].source.contains("pub use super::"));
+        // No top-level pub use re-exports (prelude's pub use is inside its module)
+        assert!(!collected[1].source.contains("\npub use super::"));
     }
 }

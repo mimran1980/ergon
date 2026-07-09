@@ -25,7 +25,7 @@ These are the implemented/generated capabilities. Release-quality claims such as
 - **Multi-schema** — `generate_multi` for projects with shared type definitions across schemas
 - **Type-state tail encoding** — encoder enforces tail element ordering at compile time
 - **Optional/null handling** — `Option<T>` return types for optional and version-gated fields
-- **Unchecked accessors** — `unsafe fn foo_unchecked()` for HFT hot loops (no bounds check)
+- **Feature-gated fast paths** — `bound-check-disabled` keeps the API shape stable while routing internals through unchecked reads where configured
 - **Compile-time constants** — `FIELD_NULL`, `FIELD_MIN`, `FIELD_MAX` on every decoded field
 
 ## Current Status
@@ -145,8 +145,8 @@ fn decode_message(buf: &[u8]) -> Result<(), sbe_rt::DecodeError> {
    on the hot path.
 4. **Version-aware** — every accessor gates on the wire `actingVersion` and
    `actingBlockLength`.
-5. **No `unsafe` by default** — `unsafe` is opt-in via `_unchecked()` methods or the
-   `bound-check-disabled` feature.
+5. **No `unsafe` by default** — unchecked fast paths are opt-in by feature or by
+   narrowly scoped generated APIs with explicit safety contracts.
 
 See [`sbe/design/DECISIONS.md`](sbe/design/DECISIONS.md) for the complete design rationale.
 

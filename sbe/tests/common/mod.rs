@@ -222,3 +222,50 @@ pub fn run_fixture_test(name: &str, schema: &Path, fixture: &Path, code: &str) {
     let body = format!("let FIXTE: &[u8] = &[{hex}];\n{code}");
     compile_and_run(name, &src, &body);
 }
+
+/// Generate two modules, write them into the same temp crate, compile, and run.
+/// `module_a` / `source_a` and `module_b` / `source_b` are written as separate
+/// Rust source files; `code` goes inside `main()` and can `use` both modules.
+pub fn compile_and_run_two_modules(
+    test_name: &str,
+    module_a: &str,
+    source_a: &str,
+    module_b: &str,
+    source_b: &str,
+    code: &str,
+) {
+    let dir = std::env::temp_dir().join(format!("ergo_test_{test_name}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    fs::write(src.join(format!("{module_a}.rs")), source_a).unwrap();
+    fs::write(src.join(format!("{module_b}.rs")), source_b).unwrap();
+
+    let main = format!(
+        "#![allow(dead_code,unused_imports,unused_variables)]\n\
+         mod {module_a};\nmod {module_b};\nfn main() {{\n{code}\n}}\n"
+    );
+    fs::write(src.join("main.rs"), &main).unwrap();
+
+    let cargo =
+        format!("[package]\nname=\"{test_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+
+    let target_dir = dir.join("target_ci");
+    let out = Command::new("cargo")
+        .args(["run"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .output()
+        .expect("cargo run failed");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    if !out.status.success() {
+        let e = String::from_utf8_lossy(&out.stderr);
+        let o = String::from_utf8_lossy(&out.stdout);
+        panic!("test {test_name} FAILED\nstdout:\n{o}\nstderr:\n{e}");
+    }
+}

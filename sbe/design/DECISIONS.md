@@ -81,10 +81,11 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
   `ExactSizeIterator` override, because `ExactSizeIterator::is_empty` is still
   unstable on stable Rust.
 - **Var-data accessor family** (emitted per field as relevant):
-  `as_slice() -> &'a [u8]` (always); `as_str()` (when `characterEncoding` declared);
-  `as_string()` behind `alloc-convenience`; `as_decoder()`; `as_message()`.
-- `as_str() -> Result<&'a str, Utf8Error>` + `unsafe fn as_str_unchecked() -> &'a str`
-  (zero-cost, caller asserts validity). Distinct from bounds-checking.
+  base accessor `field() -> &'a [u8]`; `field_as_str()` when
+  `characterEncoding` is declared; `as_decoder()`/`as_message()` for nested SBE
+  payloads. Do not emit allocation helpers or UTF-8 unchecked helpers by
+  default; users can call `.to_string()` or `core::str::from_utf8_unchecked`
+  explicitly if profiling justifies it.
 - **Always version-aware.** `wrap_and_apply_header(buf, off)` reads the header;
   `wrap(buf, off, header)` wraps the body with a provided header (used by
   `AnyMessage::decode` internally to avoid a double-read). No compiled-`blockLength`
@@ -105,11 +106,12 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
   (`try_into`/slice copies or the verified/unchecked fast path). Do not keep
   byte-by-byte loops just to preserve `const fn`; real feed buffers are runtime
   data, and Aeron does not pay for const-evaluable accessors either.
-- **Raw scalar accessors for HFT.** Every scalar field also gets a `raw_foo()`
-  accessor that returns the wire value without optional-null mapping. For
-  `sinceVersion > acting_version`, raw accessors still return `None` rather than
-  reading bytes that are not present. This gives latency-sensitive users direct
-  sentinel handling while preserving safe version behavior.
+- **No broad scalar `raw_foo()` aliases.** The primary accessor is the
+  zero-allocation hot-path API. Keep `raw()` only where it has different
+  semantics (for example enum/set/composite value wrappers that expose the
+  underlying representation). For sentinel-sensitive workflows, rely on
+  generated null/min/max constants and metadata rather than duplicating every
+  field accessor.
 - **Ordered tail cursor.** For messages or group entries with groups/var-data,
   generate a by-value cursor whose state type is derived from the parsed schema
   order:
@@ -169,7 +171,9 @@ When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat)
     acting version)
   - optional + any version → `Option<T>` (`None` means absent by version or equal
     to the type's null sentinel)
-  - `raw_foo()` preserves the null sentinel when the field is present on the wire.
+  - generated null/min/max constants and field metadata preserve the exact
+    sentinel information for code that needs to distinguish present-null from
+    version absence.
   The IR validation pass resolves SBE default null sentinels and any XML
   `nullValue` overrides into typed constants before codegen.
 - **`semantic_type` on fields** — SBE fields carry `semanticType` (e.g. `Price`,
@@ -306,24 +310,29 @@ Four invariants — the correctness heart of the library:
 - Sub-decoders (groups/entries/composites) thread the wire `version` down so their
   own versioned fields gate correctly.
 - Optional-null handling is orthogonal to versioning: a field can be present in
-  the acting version but null by sentinel. Public accessors collapse both "absent"
-  and "present-null" to `None`; `raw_` accessors distinguish them.
+  the acting version but null by sentinel. Public accessors collapse both
+  "absent" and "present-null" to `None`; generated null/min/max constants,
+  metadata, and value-type `raw()` methods are the supported escape hatches.
 
 ## 8. Bounds checking
 
-- `Result`-returning methods bounds-check; raw-returning methods don't (they read
-  inside a region a structural point already validated).
-- **Structural points** (`wrap_and_apply_header`, group iteration, var-data length)
-  have BOTH a checked `Result` form AND an `unsafe …_unchecked` form — std
-  `get`/`get_unchecked` idiom, both always compiled.
-- **Feature `bound-check-disabled`** (default off) flips the auto-derived ergonomic
-  paths (`Iterator` impls, default decode entry) to call the `_unchecked` primitives
-  internally. API shape is identical across the feature; it only subtracts branches.
-- Group/var-data accessors return `Result` in checked mode (`car.bids()?`) with
-  `_unchecked` companions. `Iterator::next` returns `Option`, so the group's extent
-  is validated when the accessor is called, not inside `next` (trap 5).
-- Crate is **safe by default**; unsafety is opt-in via the feature or per-call
-  `unsafe {}`. Deliberate divergence from the official generator's "no unsafe ever."
+- Structural entrypoints validate extents before returning borrowed views.
+  Fixed-field accessors are infallible where the schema and acting version allow
+  them to be present.
+- **Feature `bound-check-disabled`** (default off) is the canonical fast-path
+  switch. It keeps the public API identical and routes generated internals
+  through unchecked reads/writes where the surrounding structural validation or
+  caller contract makes that acceptable.
+- Avoid per-field `_unchecked` methods in the default public surface. They bloat
+  generated code and duplicate the feature flag. Add an explicit unsafe method
+  only when it exposes a genuinely different operation, such as a var-data
+  encoder length check bypass that has been intentionally retained.
+- Group/var-data accessors return `Result` in checked mode (`car.bids()?`).
+  `Iterator::next` returns `Option`, so the group's extent is validated when the
+  accessor is called, not inside `next` (trap 5).
+- Crate is **safe by default**; unsafety is opt-in by feature/config or by a
+  small number of explicitly justified unsafe APIs. Deliberate divergence from
+  the official generator's "no unsafe ever."
 
 ## 8b. Error taxonomy
 
@@ -395,7 +404,7 @@ Four invariants — the correctness heart of the library:
 ## 10. Internal architecture
 
 ```
-SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt--> .rs
+SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyplease--> .rs
 ```
 
 - **roxmltree** (DOM), not quick-xml streaming — DOM handles SBE's mixed-order
@@ -407,27 +416,30 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
   header type, group dimension type, block lengths, schema hash, and semantic
   metadata before codegen.
 - **Codegen** emits plain Rust source (no proc-macros in the output), run through
-  rustfmt. Output is reviewable text — the point for audit.
+  `prettyplease` after building a `syn` syntax tree. Do not spawn a `rustfmt`
+  subprocess in the generator; formatting must be deterministic and
+  dependency-local. Output is reviewable text — the point for audit.
 - **Driver: `build.rs` in v1** via an `ergosbe-build` crate (no CLI). The generator
   library is the single source of truth; a proc-macro annotation
   (`#[ergosbe::schema("car.xml")] mod messages;`) is the v1.1 ergonomic front-end.
 - **Generated code is a module in the user's crate** — not a separate crate. This is
   load-bearing: it lets users add inherent methods and impl foreign traits (serde,
   rust_decimal) on generated types despite the orphan rule (trap 4).
-- **Runtime inline by default** (zero-dep): `MessageHeader`, read/write primitives,
-  `EncodeGroupEntry`, `SbeMessage` trait, `DecodeError`, checked/`_unchecked` helpers are
-  emitted into each generated module. **Opt-in `ergosbe-rt` shared crate** (config flag
-  `shared_runtime`) deduplicates `MessageHeader` + primitives when multiple schemas
-  are generated into one crate.
+- **Runtime inline by default** (zero-dep): `MessageHeader`, read/write
+  primitives, `EncodeGroupEntry`, `SbeMessage` trait, `DecodeError`, and typed
+  buffer helpers are emitted into each generated module. **Opt-in `ergosbe-rt`
+  shared crate** (config flag `shared_runtime`) deduplicates `MessageHeader` +
+  primitives when multiple schemas are generated into one crate.
 - **Typed buffer policies.** `ReadBuf<'a, Mode, Endian>` and
   `WriteBuf<'a, Mode, Endian>` centralise checked/verified/unchecked bounds
   policy plus little/big-endian reads. These are marker-typed and monomorphised;
   generated field accessors should read like `self.buf.get_u64(offset)` while
   LLVM sees the same constants and branches as hand-written code.
 - The generator crate can keep `unsafe_code = "forbid"`. Generated modules may
-  contain `unsafe fn …_unchecked` declarations by design; generated fixture crates
-  and user crates must not inherit a blanket `unsafe_code = "forbid"` lint unless
-  unchecked APIs are disabled for that output.
+  contain localized unsafe implementation blocks for feature-gated fast paths,
+  but should not expose broad per-field unsafe APIs by default. Generated fixture
+  crates and user crates must not inherit a blanket `unsafe_code = "forbid"` lint
+  unless unchecked internals are disabled for that output.
 
 ### Codegen rules
 
@@ -535,16 +547,19 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
 6. **Type-state needs moves; a `&mut` closure needs `&mut self`.** Incompatible — so
    the encoder is the γ hybrid: scalars `&mut self` (statement-style), tail by-value
    type-state. No enclosing `encode(|c| …)` closure.
-7. **`as_str_unchecked` must be `unsafe fn`** (zero-cost via
-   `str::from_utf8_unchecked`), not a panicking safe fn — and it's a different escape
-   hatch from `bound-check-disabled` (UTF-8 validity vs array bounds).
+7. **Unchecked UTF-8 is not a default API.** If it ever returns, it must be an
+   `unsafe fn` (zero-cost via `str::from_utf8_unchecked`), not a panicking safe
+   fn, and it must remain distinct from bounds-checking. Current default:
+   safe `as_str()` only.
 8. **No silent compiled-`blockLength` decoder path.** Always version-aware, or it's a
    footgun. The only "fast path" is `bound-check-disabled` (bounds), not version-skipping.
 9. **SBE is not a transport frame.** Unknown-template forwarding requires an
    external frame length; the SBE message header alone cannot recover total length.
-10. **Optional null is not version absence.** `Option<T>` is ergonomic; `raw_`
-    accessors are required for hot loops that distinguish null sentinels from old
-    acting versions.
+10. **Optional null is not version absence.** `Option<T>` is ergonomic; generated
+    null/min/max constants, metadata, and value-type `raw()` methods are the
+    escape hatches for hot loops that distinguish null sentinels from old acting
+    versions. Do not re-add broad scalar `raw_foo()` aliases unless a concrete
+    benchmark and API review justify the extra surface.
 11. **Tail order matters on decode too.** Fixed fields are position-addressed, but
     groups/var-data are a sequential tail. Keep random-access convenience, but
     provide a type-state cursor for users who want compile-time ordering and
@@ -599,14 +614,15 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
 2. Codegen for a scalar-only message → golden test (generate, check in, assert
    stable) + wire round-trip. Error taxonomy (`DecodeError`/`EncodeError`) lands
    here — needed for the first `Result`-returning decode. Include optional/null
-   matrix and `raw_` accessors before moving past scalars.
+   matrix and null/min/max metadata before moving past scalars.
 2b. Benchmark scaffold (`criterion`, scalar-only encode/decode baseline).
 3. Reference-resolution pass: byte order, default/null/min/max values,
    `headerType`, `dimensionType`, block lengths, schema hash, field ids.
 4. Composites (value struct + per-field methods).
 5. Enums (flat enum with NullVal) and choices (newtype bitset).
 6. Groups (Iterator decode, type-state encode, tail-free fixed-entry fast path).
-7. Var-data (`as_slice`/`as_str`/`as_string` behind feature/`as_decoder`/`as_message`).
+7. Var-data (base bytes accessor, `as_str`, `as_decoder`, `as_message`; allocation
+   and unchecked UTF-8 helpers stay out of the default surface).
 8. Versioning (baseline/extension cross-version tests + official fixtures).
 8b. Verified-frame proof token and checked-vs-verified decoder mode.
 9. `AnyMessage` dispatch enum + `SbeMessage` trait + typed `FrameCursor`.
@@ -614,7 +630,8 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --rustfmt
     frame dispatch once the core public API is stable.
 9c. `SbeMessage` associated codec types, typed `ReadBuf`/`WriteBuf` policies,
     and compile-fail proof suite for the strict API.
-10. `bound-check-disabled` + `_unchecked` variants.
+10. `bound-check-disabled` feature and typed buffer policies; avoid broad
+    per-field `_unchecked` variants in the public surface.
 11. `Display`/`Debug`, `skip`, length accessors, `as_bytes`, metadata + `meta` module.
 12. `build.rs` driver + `ergosbe-build` crate.
 13. (v1.1) annotation macro; (parked) `no_std`, serde.

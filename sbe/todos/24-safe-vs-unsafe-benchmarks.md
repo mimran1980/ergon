@@ -5,7 +5,12 @@
 Measure the real performance difference between safe and unsafe code paths.
 HFT teams need numbers, not assumptions. Every unsafe escape hatch must earn
 its keep with a benchmark showing the delta.
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / PERFORMANCE EVIDENCE**
+
+**Decision after todo-coherence recheck (2026-07-08):** keep the benchmark
+requirement active, but align terminology with the current API policy:
+benchmarks compare safe/default, feature-gated unchecked internals, and future
+verified proof modes. Do not assume broad public `_unchecked` methods exist.
 
 
 ## Matrix to benchmark

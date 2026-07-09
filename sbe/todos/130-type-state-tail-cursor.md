@@ -2,7 +2,7 @@
 
 **Blocked by:** 125, 126, group/var-data wire parity
 **Severity:** HIGH
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE / STRICT TAIL API ROADMAP**
 
 
 ## Problem

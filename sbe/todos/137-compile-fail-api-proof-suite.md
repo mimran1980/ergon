@@ -2,7 +2,7 @@
 
 **Blocked by:** `129-generated-prelude-and-public-api-contract`
 **Severity:** HIGH
-**Status: DESIGN / ROADMAP**
+**Status: ACTIVE IF STRICT APIS ARE SCOPED / GATED BY TODO 123**
 
 
 ## Problem

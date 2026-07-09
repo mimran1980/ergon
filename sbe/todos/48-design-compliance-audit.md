@@ -14,6 +14,21 @@ Status legend:
 ---
 **Status: DONE**
 
+## Supersession note (2026-07-08)
+
+This is a historical audit against an older `DECISIONS.md`. Several findings
+were intentionally reversed by later API-simplicity work. Use the current
+`design/DECISIONS.md` and `154-todo-coherence-and-priority-map.md` as the
+tie-breakers.
+
+- Broad scalar/group `raw_*` accessors and broad per-field `_unchecked` methods
+  should not be reintroduced from this audit. Todos 117 and 139 supersede those
+  recommendations.
+- `as_str_unchecked()` is parked unless benchmark evidence justifies it; safe
+  `as_str()` remains the default.
+- Generated formatting is handled by `prettyplease`; do not add a `rustfmt`
+  subprocess from this audit.
+
 
 ## §1 Type model
 

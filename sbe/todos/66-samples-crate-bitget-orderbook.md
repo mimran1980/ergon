@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Samples crate is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Samples crate: multi-exchange SBE orderbook demo
 
 **Blocked by:** wire parity (01, 02, 03), multi-schema codegen (32)
@@ -10,7 +6,13 @@ Create a `samples/exchange-orderbook/` crate connecting to TWO exchanges
 (Bitget + Binance), using multi-schema codegen with shared common types and
 `rust_decimal` for price/size conversion. Builds a consolidated orderbook
 that decodes and re-encodes SBE messages from both venues.
-**Status: DEFERRED**
+**Status: SPLIT / OFFLINE SAMPLE ACTIVE, LIVE FEED ENV-GATED**
+
+**Decision after deferred recheck (2026-07-08):** unpark the offline sample
+proofs that compile schemas, run round-trips, and demonstrate API ergonomics.
+Keep live WebSocket and external exchange behavior environment-gated. A sample
+that proves real schema ergonomics is part of the product story, but it should
+not block SBE wire/parser release gates.
 
 
 ## Exchanges

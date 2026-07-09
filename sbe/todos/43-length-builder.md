@@ -1,7 +1,3 @@
-⚠️ **DEFERRED — post-v1.** Type-safe encoded length builder is a planned feature for after the initial release. This todo tracks design intent, not current implementation work.
-
----
-
 # Type-safe encoded length builder
 
 **Blocked by:** `03-group-vardata-wire-parity`
@@ -14,7 +10,14 @@ it wrong means `BufferTooShort` at encode time — or worse, silent truncation.
 The fix: generate a `LengthBuilder` that uses type-state to force the user to
 specify every variable-length element. Cannot forget a group. Cannot forget a
 var-data field. Cannot get the arithmetic wrong.
-**Status: DESIGN / ROADMAP**
+**Status: SUPERSEDED / PARKED FULL BUILDER**
+
+**Decision after todo-coherence recheck (2026-07-08):** do not treat this
+original full type-state builder as active v1 work. The best path is staged:
+todo 116 covers simple exact `encoded_length(...)` helpers first; todo 118
+covers the narrower hard case of nested groups and entry-level var-data. Bring
+back this broad builder only if the simpler APIs cannot express real schemas
+ergonomically.
 
 
 ## API shape
