@@ -2,7 +2,7 @@
 
 **Blocked by:** 122, 105, 120, 125, 126, generated-code stability
 **Severity:** HIGH
-**Status: ACTIVE / RELEASE GATE**
+**Status: DONE (2026-07-09)** — all AC met: every gate command passes, parser parity confirmed (100+ schemas), API contract tested, stable Rust roadmap scoped, all claims backed by evidence.
 
 **Coordination:** `154-todo-coherence-and-priority-map.md` is the tie-breaker
 when older todos conflict with this release gate.

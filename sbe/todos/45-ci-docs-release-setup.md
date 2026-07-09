@@ -6,7 +6,7 @@ Mirror the rusteron project's automation setup. ErgoSBE is simpler (no Java, no
 Docker, no Gradle, no C deps), so the setup is leaner.
 
 Ref: `https://github.com/mimran1980/rusteron_gsr/tree/v2-redesign`
-**Status: ACTIVE / RELEASE INFRA**
+**Status: DONE (2026-07-09)** — all AC met: CI workflow (lint/test/build/bench), release workflow, rust-toolchain.toml, justfile recipes, bors.toml, MSRV gate.
 
 **Decision after deferred recheck (2026-07-08):** unpark the CI and release
 gates needed for a publishable crate. Bors/release automation can remain later,

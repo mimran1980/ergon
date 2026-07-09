@@ -4,7 +4,7 @@
 
 `syn`/`quote`/`prettyplease` deps are already in `Cargo.toml`. `generate()` wraps
 output through `prettyplease::unparse`.
-**Status: IN PROGRESS**
+**Status: DONE (2026-07-09)** — zero `push_str(&format!(...))` in codegen.rs, all codegen through syn/quote!/prettyplease, regen stability test passes.
 
 
 ## Progress (2026-07-07)

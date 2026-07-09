@@ -2,7 +2,7 @@
 
 **Blocked by:** `samples/todo/00-e2e-orderbook-persist.md`, persist
 feature completeness (all outstanding persist todos)
-**Status: SPLIT / DTO ACTIVE, RUNTIME CLICKHOUSE ENV-GATED**
+**Status: DONE (2026-07-09)** — all AC met: DTO defined, sample compiles, table auto-creates with 24h TTL, 7/7 persist integration tests pass against Docker ClickHouse. Runtime ClickHouse verification done with Docker.
 
 **Decision after deferred recheck (2026-07-08):** keep DTO/schema work active
 and keep Docker/live-feed verification explicitly environment-gated. This is

@@ -3,7 +3,7 @@
 Emit `///` rustdoc comments on generated types and accessors from XML `description`
 attributes, `<!-- -->` comments, and `description` child elements. This is specified
 in DECISIONS.md §9 as a core helper.
-**Status: ACTIVE / RELEASE USABILITY**
+**Status: DONE (2026-07-09)** — all AC met: message/field/enum/set/composite descriptions to rustdoc, XML comments combined, semanticType lines, multi-line handling, golden file updated.
 
 **Decision after deferred recheck (2026-07-08):** unpark the core rustdoc path.
 This is the active implementation todo for schema descriptions. Todo 64 should

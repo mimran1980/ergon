@@ -2,7 +2,7 @@
 
 **Blocked by:** none
 **Ref:** user request, todo 43 (full LengthBuilder parked unless needed)
-**Status: ACTIVE / P1 ERGONOMICS**
+**Status: DONE (2026-07-09)** — all AC met: `encoded_length()` generated on all message encoders with groups/var-data, exact total, const fn, golden file and baseline tests pass.
 
 **Decision after todo-coherence recheck (2026-07-08):** this is the active
 encoded-length path. Prefer simple generated exact-length functions before a

@@ -5,7 +5,7 @@
 The upstream SBE tool ships 8 error-handler test schemas that verify parser
 error messages are clear, actionable, and correctly span the offending element.
 Import these and assert ErgoSBE's error messages are at least as good.
-**Status: ACTIVE / PARSER PARITY**
+**Status: DONE (2026-07-09)** — all AC met: 11 error schemas produce errors with source spans, miette diagnostics beat Aeron's plain strings, snapshot tests for rendered diagnostics, inline tests for non-XML cases.
 
 **Decision after deferred recheck (2026-07-08):** unpark. Silent acceptance of
 bad schemas can generate wrong codecs, so semantic validation and diagnostic

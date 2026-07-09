@@ -2,7 +2,7 @@
 
 **Blocked by:** none
 **Severity:** MEDIUM
-**Status: MOSTLY DONE / INTEGRATION ENV-GATED**
+**Status: DONE (2026-07-09)** — all AC met: flush() flushes all active senders, auto-register on build, no-op when empty, thread-safe via Mutex<Vec<Weak<...>>>, integration test verified via Docker ClickHouse.
 
 **Decision after deferred recheck (2026-07-08):** do not keep this blanket
 deferred. Shutdown flush reliability is core persistence behavior. The open

@@ -17,7 +17,7 @@ all 26 and wrote `crates/ergosbe/tests/issue_regression_test.rs` with:
 - Full codegen output validation (Generator::generate is a stub)
 - Porting the 6 upstream Rust integration tests to compile-and-run assertions
 - `assert_source_ok` / `compile_and_run` helpers (need `syn` dep + real codegen)
-**Status: ACTIVE / REGRESSION PARITY**
+**Status: DONE (2026-07-09)** — all AC met: 26 issue schemas parse, codegen pipeline runs for each, 6 Rust integration tests ported, all per-schema edge cases covered.
 
 **Decision after deferred recheck (2026-07-08):** unpark. These fixtures encode
 upstream bug history and are exactly the kind of coverage needed before claiming

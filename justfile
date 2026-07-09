@@ -64,10 +64,15 @@ update-golden:
 # ── Samples ────────────────────────────────────────────────────
 
 samples-orderbook:
-    @echo "=== Starting ClickHouse ==="
-    @docker start ergo-clickhouse 2>/dev/null || docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=test123 clickhouse/clickhouse-server
-    @echo "=== Waiting for ClickHouse ==="
-    @until curl -s -u default:test123 http://localhost:8123/ping >/dev/null 2>&1; do sleep 1; done
+    @echo "=== Ensuring ClickHouse is reachable ==="
+    @if ! curl -s -u default:test123 http://localhost:8123/ping >/dev/null 2>&1; then \
+        echo "ClickHouse not running, starting..."; \
+        docker start ergo-clickhouse 2>/dev/null || docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=test123 clickhouse/clickhouse-server; \
+        echo "=== Waiting for ClickHouse ==="; \
+        until curl -s -u default:test123 http://localhost:8123/ping >/dev/null 2>&1; do sleep 1; done; \
+    else \
+        echo "ClickHouse already reachable on localhost:8123"; \
+    fi
     @echo "=== Running exchange orderbook ==="
     CLICKHOUSE_URL=http://default:test123@localhost:8123 RUSTC_WRAPPER="" cargo run --manifest-path samples/exchange-orderbook/Cargo.toml
 

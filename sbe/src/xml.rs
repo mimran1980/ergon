@@ -1232,8 +1232,10 @@ fn parse_message_child(
                     // valueRef format: "EnumName.ValidValue" — validate the enum and
                     // variant exist at parse time (Aeron rejects invalid valueRef).
                     if let Some((enum_name, variant_name)) = s.split_once('.') {
-                        // ponytail: validate enum exists; deferred validation of variant
-                        // existence is done in IR resolution.
+                        // ponytail: validate enum exists; variant existence is not
+                        // validated at parse time. An invalid variant name produces
+                        // a Rust compile error in the generated code, which is caught
+                        // before the codec is used.
                         if !registry.registry.contains_key(enum_name) {
                             // non-fatal warning: old behaviour was silent strip
                             eprintln!(

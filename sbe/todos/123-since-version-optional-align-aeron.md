@@ -2,7 +2,7 @@
 
 **Ref:** user request. The since-version/optional presence logic must match Aeron's
 behaviour — only the generated code style should differ.
-**Status: ACTIVE / VERSION-OPTIONAL CORRECTNESS**
+**Status: DONE (2026-07-09)** — all AC met: Aeron behaviour matched for return types, null representation, Display output. Option<T> generated only when Aeron does. Golden file + all workspace tests pass.
 
 
 ## Problem

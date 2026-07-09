@@ -2,7 +2,7 @@
 
 **Blocked by:** none
 **Severity:** MEDIUM
-**Status: MOSTLY DONE / INTEGRATION ENV-GATED**
+**Status: DONE (2026-07-09)** — all AC met: compression and TLS builder plumbing in place, Docker-backed compression roundtrip verified (2026-07-09). Unit tests cover builder configuration.
 
 **Decision after deferred recheck (2026-07-08):** do not keep this blanket
 deferred. Builder support is already checked off. Only Docker-backed

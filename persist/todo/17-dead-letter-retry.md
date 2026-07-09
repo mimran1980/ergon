@@ -32,7 +32,7 @@ forever. Production systems need at minimum:
 2. A dead-letter callback for rows that exhaust retries
 3. A counter so operators know data is being dropped
 
-## Status: PARKED (2026-07-08)
+## Status: DONE (2026-07-09)
 
 Retry with exponential backoff + jitter is implemented (`exec_insert_with_retry`).
 Counters (`retries_total`, `dropped_rows_total`) are in place and exposed on

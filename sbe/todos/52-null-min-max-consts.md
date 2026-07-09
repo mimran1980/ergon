@@ -4,7 +4,7 @@
 
 Every field in generated code should expose `FOO_NULL`, `FOO_MIN`, `FOO_MAX`
 consts alongside the accessor. These are compile-time values from the schema.
-**Status: IN PROGRESS**
+**Status: DONE (2026-07-09)** — all AC met: *_NULL, *_MIN, *_MAX consts emitted for all field types, const fn, verified via comprehensive_test.rs and schema_edge_cases_test.rs.
 
 
 ## Acceptance criteria

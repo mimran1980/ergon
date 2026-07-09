@@ -2,7 +2,7 @@
 
 **Blocked by:** Wire parity completion (todos 0-3), multi-schema codegen (todo 32),
 schemas compile cleanly (todo 103), persist feature completeness
-**Status: SPLIT / OFFLINE E2E ACTIVE, DOCKER + LIVE WEBSOCKET ENV-GATED**
+**Status: DONE (2026-07-09)** — all offline E2E AC met: sample compiles (0 errors), 19 roundtrip tests pass, just samples-orderbook recipe works, OrderbookSnapshot DTO derives Persist with Decimal(18,8) and 24h TTL, 7/7 persist integration tests pass against Docker ClickHouse. Live exchange WebSocket remains a documented manual recipe.
 
 **Decision after deferred recheck (2026-07-08):** unpark offline E2E pieces
 that can run from fixtures and local code. Keep Docker ClickHouse and live

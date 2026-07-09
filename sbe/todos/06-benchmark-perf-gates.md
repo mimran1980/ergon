@@ -5,7 +5,7 @@
 Criterion benchmarks for encode, decode, round-trip, `Display`, `debug_wire`,
 and `skip` on realistic market-data-shaped messages. Allocation-count tests
 asserting zero heap allocation per operation.
-**Status: ACTIVE / RELEASE GATE**
+**Status: DONE (2026-07-09)** — all AC met: criterion benches, allocation-guard tests, CI gates, upstream benches ported. Aeron head-to-head parity confirmed.
 
 **Decision after deferred recheck (2026-07-08):** unpark. Zero allocation and
 Aeron-competitive performance are explicit project goals. JDK/Gradle-dependent

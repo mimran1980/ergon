@@ -57,8 +57,11 @@ checked-in file. The golden file is the stability target, generated via
   `FnOnce(&mut EntryEncoder)` so closures work out of the box; user structs opt in
   with a one-line impl. No owned entry types generated.
 - **Encoder is not version-aware** — it emits the current schema version only.
-- **Nullify-on-wrap:** `wrap_and_apply_header` writes each optional field's `NullValue`
-  at its offset, so an unset optional reads as null on the wire, not garbage.
+- **Opt-in nullify-on-wrap:** `wrap_and_apply_header` does NOT nullify optional fields
+  by default (matching Aeron's behaviour). A generated `apply_nulls()` method writes
+  each optional field's schema-defined `NullValue` when called. Aeron does not nullify
+  on wrap either — unset optional fields retain whatever was in the buffer, so
+  calling `apply_nulls()` is the explicit opt-in for deterministic wire output.
 - **`#[must_use]` on encoder types** — an ignored encoder would emit a partial message.
 - **`wrap_and_apply_header` returns `Result`.** If the buffer is too short for the
   header + `blockLength`, it returns `Err(EncodeError::BufferTooShort)` — no panic,
@@ -471,8 +474,10 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
   unsafe casting or custom pointer arithmetic.
 - **`#[cold]`** on error-construction helpers and panic paths — tells LLVM to keep
   them out of the hot instruction cache. The dual of `#[inline]` for error branches.
-- **`#[expect(lint)]`** (stable since 1.81) instead of `#[allow(lint)]` in generated
-  code — warns if the lint stops firing, catching stale suppressions.
+- **`#[allow(lint)]`** (not `#[expect]`) in generated code — the exact set of lints
+  that fire depends on the schema. Using `#[expect]` would produce false-positive
+  stale-suppression warnings when a schema doesn't trigger the suppressed lint,
+  breaking CI for end users.
 - **`const` assertions** emitted into generated code for structural invariants:
   ```rust
   const _: () = assert!(core::mem::size_of::<MessageHeader>() == 8);

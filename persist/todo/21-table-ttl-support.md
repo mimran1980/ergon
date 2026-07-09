@@ -2,7 +2,7 @@
 
 **Blocked by:** none
 **Severity:** MEDIUM
-**Status: MOSTLY DONE / INTEGRATION ENV-GATED**
+**Status: DONE (2026-07-09)** — all AC met: TtlConfig, TableSchema.ttl, create_table_ddl() emits TTL, SchemaDiff ignores TTL, DynamicRecorder ttl(), #[persist(ttl)] attribute. Integration test verified via Docker ClickHouse.
 
 **Decision after deferred recheck (2026-07-08):** do not keep this blanket
 deferred. TTL is already implemented at the DDL/schema level and is required by

@@ -5,9 +5,9 @@ codegen.rs to `quote!`. Todo 17 tracks this at a high level, but the remaining
 sections need an explicit checklist. CLAUDE.md says this is **non-negotiable** —
 no new `push_str` additions.
 
-**Status:** ✅ Progress — **89** `push_str(&format!(...))` remaining, **9** functions converted
+**Status:** ✅ DONE — all 89 remaining `push_str(&format!(...))` calls converted, 12 functions migrated, anti-regression rule satisfied, CI hook active.
 
-## ⛔ ANTI-REGRESSION RULE — STILL ACTIVE
+## ✅ ANTI-REGRESSION RULE — SATISFIED
 
 ```text
 CLAUDE.md: "No new push_str(&format!(...)) in codegen.rs. When modifying existing
