@@ -57,15 +57,15 @@ labels for duplicates, and concise help text.
 
 ## Acceptance criteria
 
-- [ ] All 11 error schemas produce an error (not a panic or silent success)
-- [ ] Each error message names the offending element/type/field
-- [ ] Error messages include source span info (line/column or element path)
+- [x] All 11 error schemas produce an error (not a panic or silent success)
+- [x] Each error message names the offending element/type/field
+- [x] Error messages include source span info (line/column or element path)
 - [x] `ResolveError` and `ParseError` variants are specific (not a catch-all)
-- [ ] Compare ErgoSBE error messages against upstream Java error messages for
+- [x] Compare ErgoSBE error messages against upstream Java error messages for
       semantic coverage, while intentionally making the miette rendering better
       than Aeron's plain strings
-- [ ] Snapshot tests for rendered diagnostics (`insta::assert_snapshot!`)
-- [ ] Add small inline tests for the Aeron parser cases that are not represented
+- [x] Snapshot tests for rendered diagnostics (`insta::assert_snapshot!`)
+- [x] Add small inline tests for the Aeron parser cases that are not represented
       by the 11 error XML files: duplicate enum/set values, set bit out of
       bounds, constant-without-value, nullValue on required type, field after
       group/data, bad valueRef, and malformed include
