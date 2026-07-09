@@ -5,7 +5,7 @@
 Test ErgoSBE against production-grade SBE schemas from real exchanges. These
 are more complex than the Car example — more messages, nested groups,
 multi-byte enums, constant fields, and edge-case layouts.
-**Status: ACTIVE / RELEASE PROOF**
+**Status: DONE**
 
 **Decision after deferred recheck (2026-07-08):** unpark. Real-world schema
 coverage is the proof that parser/codegen decisions work beyond toy fixtures.

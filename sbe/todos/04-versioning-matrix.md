@@ -6,7 +6,7 @@ Baseline/extension schema cross-version tests. Forward compat (new decoder, old
 message → new fields `None`, tail correct), backward compat (old decoder, new
 message → known fields ok, extra bytes skipped, groups at right offset).
 Wrong-`schemaId` → `DecodeError::WrongSchema`. Big-endian fixture.
-**Status: ACTIVE / RELEASE GATE**
+**Status: DONE**
 
 **Decision after deferred recheck (2026-07-08):** unpark. Version-aware decoding
 is a core project claim, not a post-v1 enhancement. The matrix can start small

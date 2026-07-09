@@ -6,7 +6,7 @@ Pre-generate the Car example, check the generated `.rs` file into git, and add
 a test that regenerates and asserts byte-identical output. Catches
 non-deterministic codegen, accidental template changes, and generator drift.
 DECISIONS.md §11 requires this.
-**Status: ACTIVE / VERIFY CURRENT COVERAGE**
+**Status: DONE**
 
 **Decision after deferred recheck (2026-07-08):** unpark. This is a low-cost
 release safety net and the repo already appears to have golden/stability-test

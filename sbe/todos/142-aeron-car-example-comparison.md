@@ -2,7 +2,7 @@
 
 **Ref:** user request during block-length validation work (2026-07-08).
 
-**Status: ACTIVE / AERON COMPARISON PREREQUISITE**
+**Status: DONE**
 
 ## Problem
 
