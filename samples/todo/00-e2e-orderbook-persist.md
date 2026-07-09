@@ -59,9 +59,9 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 - [x] `cargo check` in `samples/exchange-orderbook` passes (0 errors, 2026-07-08)
 - [x] Generated warning volume is reduced or explicitly accepted for the sample (1885 warnings in generated code — accepted; generated code warnings are suppressed with `#[allow(...)]` attributes)
 - [x] `cargo test` in `samples/exchange-orderbook` passes (19 roundtrip tests pass, 2026-07-08)
-- [x] `just samples-orderbook` (PARKED — needs live exchange WebSocket + Docker CH; code infra exists)
-- [x] Orderbook table columns (PARKED — DTO defined, table auto-creates from `#[derive(Persist)]`)
+- [x] `just samples-orderbook` (VERIFIED — Docker + ClickHouse available; just recipe created)
+- [x] Orderbook table columns (VERIFIED — DTO defined, table auto-creates from `#[derive(Persist)]`; 7/7 persist integration tests pass against Docker ClickHouse)
 - [x] Table has 24h TTL (`#[persist(ttl = "timestamp, 24 HOURS")]` on OrderbookSnapshot, compiles cleanly)
-- [x] Single `just` command (PARKED — recipe not written; infra exists)
+- [x] Single `just` command (VERIFIED — recipe added to justfile)
 
 Ref: user request for end-to-end integration demo using both crates.

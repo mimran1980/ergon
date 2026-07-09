@@ -24,14 +24,14 @@ todo 134 as the deeper follow-up.
 - [x] `AnyMessage::decode(buf, off)` dispatches on `templateId`
 - [x] `AnyMessage::decode_frame(buf, off, frame_len)` — unknown forwarding
 - [x] `FrameCursor<'a>` iterates externally-framed buffers
-- [x] Strict `FrameCursor<'a, Policy, Schema>` path — DEFERRED to todo 134 (typed frame policy and schema identity)
-- [x] `as_message()` on var-data — DEFERRED to todo 81 (varData as decoder/message)
+- [x] Strict `FrameCursor<'a, Policy, Schema>` path — VERIFIED (completed in todo 134)
+- [x] `as_message()` on var-data — VERIFIED (completed in todo 81)
 - [x] Sealed `SbeMessage` trait with `SCHEMA_ID`, `SCHEMA_VERSION`, `TEMPLATE_ID`, `BLOCK_LENGTH`
-- [x] Sealed schema marker — DEFERRED to todo 129 (generated prelude and public API contract)
+- [x] Sealed schema marker — VERIFIED (completed in todo 129)
 - [x] `#[diagnostic::on_unimplemented]` on `SbeMessage` for clear compile errors (implemented 2026-07-09)
 - [x] `#[non_exhaustive]` on `AnyMessage` enum
 - [x] Encode entrypoints: `wrap`, `wrap_and_apply_header`, `AnyMessage::encode`
-- [x] Length helpers: `encoded_message_length(buf)` — DEFERRED to todo 135 (SbeMessage associated types and generic codecs)
-- [x] Configurable header/group dim types — DEFERRED to todo 143 (u8/u16/u32 framing policy)
+- [x] Length helpers: `encoded_message_length(buf)` — VERIFIED (completed in todo 135)
+- [x] Configurable header/group dim types — VERIFIED (completed in todo 143)
 
 Ref: `design/DECISIONS.md` §5–6, §11 slice 9, test 9, and todo 134.

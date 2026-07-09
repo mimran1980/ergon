@@ -31,22 +31,6 @@ proc-macro2 = "1"
 prettyplease = "0.2"
 sha2 = "0.10"
 
-[[bench]]
-name = "decode_bench"
-harness = false
-
-[[bench]]
-name = "encode_bench"
-harness = false
-
-[[bench]]
-name = "throughput_bench"
-harness = false
-
-[[bench]]
-name = "perf_parity_bench"
-harness = false
-
 [[test]]
 name = "smoke_test"
 

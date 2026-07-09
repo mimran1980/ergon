@@ -1,9 +1,9 @@
 # Native protocol inserts (replace SQL-string VALUES)
 
 **Blocked by:** none
-**Severity:** PARKED — ponytail
+**Severity:** DECLINED — ponytail (YAGNI for debugging persistence)
 
-**Status: PARKED (2026-07-08)**
+**Status: DECLINED (2026-07-08, re-confirmed 2026-07-09)**
 
 SQL-string VALUES works correctly. Native protocol would be 3-5x faster but
 this crate is debugging persistence — never the hot path. The `clickhouse`

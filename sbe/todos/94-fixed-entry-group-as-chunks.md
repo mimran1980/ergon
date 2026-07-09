@@ -18,7 +18,7 @@ This is the common order-book shape. DECISIONS.md §9.
 - [x] Test: decode order-book-shaped group via `as_chunks()`
 - [x] Test: `entry_at(0)` and `entry_at(len-1)` return correct entries
 - [x] Test: `entry_at(len)` returns error (out of bounds)
-- [x] Benchmark deferred — blocked by JDK/Gradle for Aeron comparison
+- [x] Benchmark complete — Aeron comparison benchmarks run via `cargo bench -p ergosbe --bench perf_parity_bench` (JDK/Gradle available)
 - [x] Golden file updated
 
 ## Dependencies

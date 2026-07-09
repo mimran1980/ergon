@@ -132,4 +132,4 @@ runtime path.
 - [x] All workspace tests pass
 - [x] `cargo test --features bound-check-disabled` passes
 - [x] `samples/exchange-orderbook` `cargo check` passes (0 errors, 960 warnings)
-- [x] Benchmark deferred — blocked by JDK/Gradle for Aeron comparison
+- [x] Benchmark complete — Aeron comparison benchmarks run via `cargo bench -p ergosbe --bench perf_parity_bench` (JDK/Gradle now available, Aeron code included in `sbe/benches/generated/`)

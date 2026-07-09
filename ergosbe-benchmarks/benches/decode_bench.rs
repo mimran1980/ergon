@@ -18,8 +18,8 @@
 )]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
-include!("generated/car_patched.rs");
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use ergosbe_benchmarks::ergo_car::*;
 
 #[path = "_common.rs"]
 mod common;
@@ -125,8 +125,8 @@ fn bench_full_decode_safe(c: &mut Criterion) {
             let _ = car.model_year();
             let _ = car.available();
             let _ = car.code();
-            let _ = car.some_numbers().unwrap();
-            let _ = car.vehicle_code().unwrap();
+            let _ = car.some_numbers();
+            let _ = car.vehicle_code();
             let _ = car.extras();
             let _ = car.engine_as_struct();
             black_box(());
@@ -149,8 +149,8 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
             let _ = car.model_year();
             let _ = car.available();
             let _ = car.code();
-            let _ = car.some_numbers().unwrap();
-            let _ = car.vehicle_code().unwrap();
+            let _ = car.some_numbers();
+            let _ = car.vehicle_code();
             let _ = car.extras();
             let _ = car.engine();
             black_box(());
@@ -163,8 +163,8 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
             let _ = car.model_year();
             let _ = car.available();
             let _ = car.code();
-            let _ = car.some_numbers().unwrap();
-            let _ = car.vehicle_code().unwrap();
+            let _ = car.some_numbers();
+            let _ = car.vehicle_code();
             let _ = car.extras();
             let _ = car.engine_as_struct();
             black_box(());
@@ -235,14 +235,14 @@ fn bench_hft_field_stride(c: &mut Criterion) {
 
     if let Some(entry) = first_entry {
         group.bench_function("fuel_figures[0].speed", |b| {
-            b.iter(|| black_box(entry.raw_speed()));
+            b.iter(|| black_box(entry.speed()));
         });
 
         group.bench_function("all_three_strided", |b| {
             b.iter(|| {
                 let m = car.model_year();
                 let e = engine.capacity();
-                let s = entry.raw_speed();
+                let s = entry.speed();
                 black_box((m, e, s));
             });
         });
@@ -280,6 +280,39 @@ fn bench_hft_alloc_free(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Display / debug_wire / skip ─────────────────────────────────────
+
+fn bench_display(c: &mut Criterion) {
+    let car = CarDecoder::try_from(BASELINE).unwrap();
+
+    let mut group = c.benchmark_group("decode/display");
+    group.throughput(Throughput::Bytes(BASELINE.len() as u64));
+    group.bench_function("car_display", |b| {
+        b.iter(|| {
+            let s = format!("{}", black_box(&car));
+            black_box(s);
+        });
+    });
+    group.finish();
+}
+
+fn bench_skip(c: &mut Criterion) {
+    let car = CarDecoder::try_from(BASELINE).unwrap();
+
+    let mut group = c.benchmark_group("decode/skip");
+    group.throughput(Throughput::Bytes(BASELINE.len() as u64));
+    group.bench_function("fuel_figures_skip_all", |b| {
+        b.iter(|| {
+            let ff = car.fuel_figures().unwrap();
+            // skip_n to advance through all entries without decoding
+            let mut cursor = ff;
+            let result = cursor.skip_n(cursor.len());
+            black_box(result);
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_try_from,
@@ -291,5 +324,7 @@ criterion_group!(
     bench_hft_tight_loop,
     bench_hft_field_stride,
     bench_hft_alloc_free,
+    bench_display,
+    bench_skip,
 );
 criterion_main!(benches);

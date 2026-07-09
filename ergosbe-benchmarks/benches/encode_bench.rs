@@ -18,7 +18,7 @@
 )]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
-include!("generated/car_patched.rs");
+use ergosbe_benchmarks::ergo_car::*;
 
 use car_encoder_state::Complete;
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
@@ -31,7 +31,7 @@ mod common;
 /// Encode a full Car message using the **checked** API.
 /// Returns the total encoded length (header + body).
 fn encode_checked(buf: &mut [u8]) -> usize {
-    let mut car = CarEncoder::wrap_and_apply_header(buf, 0).unwrap();
+    let mut car = CarEncoder::wrap_and_apply_header(buf, 0);
     car.serial_number(1234);
     car.model_year(2013);
     car.available(BooleanType::T);
@@ -197,7 +197,7 @@ fn bench_encode_scalar_only(c: &mut Criterion) {
         let mut buf = [0u8; 1024];
         b.iter(|| {
             let mut car: CarEncoder<'_, car_encoder_state::NeedsFuelFigures> =
-                CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+                CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             car.serial_number(1234);
             car.model_year(2013);
             car.available(BooleanType::T);

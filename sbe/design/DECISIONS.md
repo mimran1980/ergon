@@ -13,10 +13,20 @@ gateways, exchange connectivity).
 The three core values, in priority order:
 
 1. Wire compatible with official SBE (binary layout identical).
-2. Idiomatic Rust, not Java-in-Rust.
-3. Performance-first, zero-allocation hot path.
+2. **Performance-first** — ErgoSBE must never be slower than Aeron SBE. Work
+   backwards from the fastest possible code to a good API, not the other way
+   around. Fast code → easy-to-use API → safe API. When safety conflicts with
+   performance, the safe path is the default; the fast path is opt-in via
+   `bound-check-disabled`.
+3. Idiomatic Rust, not Java-in-Rust.
 
-When these conflict, the earlier one wins (e.g. ergonomics yield to wire compat).
+When these conflict, the earlier one wins.
+
+**Generated code is never checked in.** ErgoSBE code is always generated
+on-the-fly from schemas (via `build.rs` or equivalent). Benchmarks, tests, and
+samples all generate code dynamically — never from a manually-maintained
+checked-in file. The golden file is the stability target, generated via
+`cargo test update_golden -- --ignored`.
 
 ---
 

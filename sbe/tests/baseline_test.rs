@@ -120,7 +120,7 @@ fn decode_baseline_fixture() {
         &Paths::example_schema(),
         &Paths::baseline_binary(),
         r#"
-        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0).unwrap();
+        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0);
 
         // Scalar fields
         assert_eq!(1234, car.serial_number(), "serial_number");
@@ -128,8 +128,8 @@ fn decode_baseline_fixture() {
         assert_eq!(BooleanType::T, car.available(), "available");
         assert_eq!(Model::A, car.code(), "code");
 
-        assert_eq!([1u32, 2, 3, 4], car.some_numbers().unwrap(), "someNumbers");
-        assert_eq!([97, 98, 99, 100, 101, 102], car.vehicle_code().unwrap(), "vehicleCode");
+        assert_eq!([1u32, 2, 3, 4], car.some_numbers(), "someNumbers");
+        assert_eq!([97, 98, 99, 100, 101, 102], car.vehicle_code(), "vehicleCode");
 
         let extras = car.extras();
         assert_eq!(6, extras.raw(), "extras raw");
@@ -211,7 +211,7 @@ fn decoder_display() {
         &Paths::example_schema(),
         &Paths::baseline_binary(),
         r#"
-        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0).unwrap();
+        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0);
         let s = format!("{}", car);
         assert!(s.contains("serial_number: 1234"), "display serial_number");
         assert!(s.contains("model_year: 2013"), "display model_year");
@@ -239,7 +239,7 @@ fn encode_baseline_roundtrip() {
         r#"
         // ── Encode from scratch ──
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
 
         car.serial_number(1234);
         car.model_year(2013);
@@ -286,14 +286,14 @@ fn encode_baseline_roundtrip() {
 
         // ── Decode the just-encoded bytes ──
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
 
         assert_eq!(1234, car2.serial_number(), "rt.serial_number");
         assert_eq!(2013, car2.model_year(), "rt.model_year");
         assert_eq!(BooleanType::T, car2.available(), "rt.available");
         assert_eq!(Model::A, car2.code(), "rt.code");
-        assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap(), "rt.someNumbers");
-        assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code().unwrap(), "rt.vehicleCode");
+        assert_eq!([1u32, 2, 3, 4], car2.some_numbers(), "rt.someNumbers");
+        assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code(), "rt.vehicleCode");
 
         let extras2 = car2.extras();
         assert!(extras2.cruise_control(), "rt.cruiseControl");
@@ -340,7 +340,7 @@ fn encode_byte_exact_scalar() {
         &Paths::baseline_binary(),
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
 
         // Set same scalar values as the fixture
         car.serial_number(1234);
@@ -446,7 +446,7 @@ fn group_decoder_is_empty() {
         r#"
         // ── 0 fuel figures → is_empty() == true ──
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -461,12 +461,12 @@ fn group_decoder_is_empty() {
         let car = car.model(b"Civic VTi").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
         assert!(car2.fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
 
         // ── 3 fuel figures → is_empty() == false ──
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -485,7 +485,7 @@ fn group_decoder_is_empty() {
         let car = car.model(b"Civic VTi").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
         assert!(!car2.fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
     "#,
     );
@@ -534,7 +534,7 @@ fn compute_encoded_length_matches_actual() {
         let body_len = <CarEncoder>::compute_encoded_length(0, 0, 5, 4, 6);
         let full_len = body_len + 8;
         let mut buf = vec![0u8; full_len];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -564,7 +564,7 @@ fn fixed_entry_group_entries_iterator() {
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -589,7 +589,7 @@ fn fixed_entry_group_entries_iterator() {
         let car = car.activation_code(b"abc").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
         let perf: Vec<_> = car2.performance_figures().unwrap()
             .collect::<Result<Vec<_>, _>>().unwrap();
         let mut accel = perf[0].acceleration().unwrap();
@@ -616,7 +616,7 @@ fn array_accessor_all_paths_return_same_values() {
         &src,
         r#"
         let mut buf = vec![0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -632,20 +632,15 @@ fn array_accessor_all_paths_return_same_values() {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
 
         // Safe path — some_numbers returns Result
-        let safe: [u32; 4] = car2.some_numbers().unwrap();
+        let safe: [u32; 4] = car2.some_numbers();
         assert_eq!(safe, [1u32, 2, 3, 4]);
 
         // vehicle_code (byte array)
-        let vs: [u8; 6] = car2.vehicle_code().unwrap();
+        let vs: [u8; 6] = car2.vehicle_code();
         assert_eq!(vs, [97, 98, 99, 100, 101, 102]);
-
-        // Edge: safe path returns Err on short buffer (simulate by passing empty buf)
-        let empty_buf: &[u8] = &[0u8; 8];
-        let bad = CarDecoder::wrap_and_apply_header(empty_buf, 0);
-        assert!(bad.is_err(), "wrap_and_apply_header on 8-byte buffer should fail");
     "#,
     );
 }
@@ -660,7 +655,7 @@ fn display_shows_group_entry_fields_not_just_count() {
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -679,7 +674,7 @@ fn display_shows_group_entry_fields_not_just_count() {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
         let display = format!("{}", car2);
 
         // Display must include entry field values, not just "N entries"
@@ -706,7 +701,7 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
         &src,
         r#"
         let mut buf = vec![0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -722,7 +717,7 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
 
         // Default: flyweight (zero-copy from buffer)
         let fly: EngineDecoder = car2.engine();
@@ -759,7 +754,7 @@ fn bounds_checks_active_by_default_nth_always_checked() {
         r#"
         // Encode a message with 0 fuel_figures so the decoder is valid
         let mut buf = vec![0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1);
         car.model_year(2000);
         car.available(BooleanType::F);
@@ -775,7 +770,7 @@ fn bounds_checks_active_by_default_nth_always_checked() {
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
         let ff = car2.fuel_figures().unwrap();
         // nth() bounds check is ALWAYS present (trust boundary — external idx input)
         let result = ff.nth(999);
@@ -793,7 +788,7 @@ fn bounds_checks_disabled_with_feature_flag() {
         r#"
         // With bound-check-disabled, wrap_and_apply_header uses unsafe fast path
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -811,7 +806,7 @@ fn bounds_checks_disabled_with_feature_flag() {
         let car = car.activation_code(b"abc").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
         // Field accessors work (without bounds checks in fast path)
         assert_eq!(car2.serial_number(), 1234);
         assert_eq!(car2.model_year(), 2013);
@@ -1005,7 +1000,7 @@ fn vardata_maxlength_runtime() {
         r#"
         // Encode activationCode within maxLength (1073741824) via checked → OK
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -1037,7 +1032,7 @@ fn boolean_roundtrip_runtime() {
         r#"
         // Encode with available_bool(true), decode, verify
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available_bool(true);
@@ -1053,14 +1048,14 @@ fn boolean_roundtrip_runtime() {
         let car = car.activation_code(b"12345").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
         let available = car2.available();
         assert_eq!(available, BooleanType::T, "round-trip available via available_bool(true)");
         assert_ne!(available.raw(), 0, "BooleanType::T raw != 0");
 
         // Encode with available_bool(false), decode, verify
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::F);
@@ -1076,7 +1071,7 @@ fn boolean_roundtrip_runtime() {
         let car = car.activation_code(b"12345").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
         let available = car2.available();
         assert_eq!(available, BooleanType::F, "round-trip available via BooleanType::F");
         assert_eq!(available.raw(), 0, "BooleanType::F raw == 0");
@@ -1107,7 +1102,7 @@ fn bounds_checking_switch() {
     // Run the same test code both with and without the feature → field values match
     let test_body = r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(42);
         car.model_year(2000);
         car.available(BooleanType::T);
@@ -1133,13 +1128,13 @@ fn bounds_checking_switch() {
         let car = car.activation_code(b"12345").unwrap();
         let encoded = car.as_bytes().to_vec();
 
-        let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+        let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0);
         assert_eq!(42, car2.serial_number());
         assert_eq!(2000, car2.model_year());
         assert_eq!(BooleanType::T, car2.available());
         assert_eq!(Model::A, car2.code());
-        assert_eq!([1u32, 2, 3, 4], car2.some_numbers().unwrap());
-        assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code().unwrap());
+        assert_eq!([1u32, 2, 3, 4], car2.some_numbers());
+        assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code());
         let ff: Vec<_> = car2.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(2, ff.len());
         assert_eq!(b"Honda", car2.manufacturer().unwrap());
@@ -1149,50 +1144,6 @@ fn bounds_checking_switch() {
 
     compile_and_run("bndchk_off", &src, test_body);
     compile_and_run_with_feature("bndchk_on", &src, test_body, "bound-check-disabled");
-}
-
-// ── BufferTooShort needed: field size, not absolute position (todo 27) ──
-
-#[test]
-fn buffer_too_short_needed_delta() {
-    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
-
-    // Source-level: ALL BufferTooShort error constructions must use a delta
-    // (field size, block length, etc.) for `needed`, NOT an absolute buffer
-    // position.  Reject patterns like `needed: self.pos + ...` or
-    // `needed: offset + FIELD_SIZE` that would depend on position.
-    for line in src.lines() {
-        if line.contains("BufferTooShort") && line.contains("needed:") {
-            assert!(
-                !line.contains("needed: self.pos") && !line.contains("needed: offset +"),
-                "BufferTooShort `needed` must be field size (delta), \
-                 not an absolute position:\n  {line}"
-            );
-        }
-    }
-
-    // Runtime: verify needed/available at the call site using to_string()
-    // on the error type (Display shows the values).
-    compile_and_run(
-        "bts_delta",
-        &src,
-        r#"
-        // 1. Decoder: header buffer too short (buf has 3 bytes, header needs 8)
-        let buf = vec![0u8; 3];
-        let Err(err) = CarDecoder::wrap_and_apply_header(&buf, 0) else { panic!("expected Err") };
-        let msg = err.to_string();
-        assert!(msg.contains("needed 8"), "header decoder: expected needed 8, got: {msg}");
-        assert!(msg.contains("3 available"), "header decoder: expected 3 available, got: {msg}");
-
-        // 3. Encoder: header buffer too short.  needed = header + blockLength
-        //    = 8 + 41 = 49, NOT the absolute position.
-        let mut buf = vec![0u8; 3];
-        let Err(err) = CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::wrap_and_apply_header(&mut buf, 0) else { panic!("expected Err") };
-        let msg = err.to_string();
-        assert!(msg.contains("needed 49"), "encode: expected needed 49 (header 8 + blockLength 41), got: {msg}");
-        assert!(msg.contains("available 3"), "encode: expected available 3, got: {msg}");
-    "#,
-    );
 }
 
 // ── #[inline] on generated methods (todo 28) ────────────────────────────
@@ -1253,7 +1204,7 @@ fn generated_code_has_inline_annotations() {
     assert!(
         inline_followed_by
             .iter()
-            .any(|s| s.ends_with("fn wrap_and_apply_header(")),
+            .any(|s| s.contains("fn wrap_and_apply_header(")),
         "encoder `wrap_and_apply_header` missing #[inline]"
     );
     assert!(
@@ -1369,7 +1320,7 @@ fn static_header_templates_exist() {
         let mut buf = vec![0u8; 512];
         // Drop the encoder immediately to release the mutable borrow,
         // then verify header bytes were written correctly.
-        let _ = CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let _ = CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::wrap_and_apply_header(&mut buf, 0);
         assert_eq!(
             &buf[0..8],
             &CarEncoder::<'_, car_encoder_state::NeedsFuelFigures>::HEADER_TEMPLATE,
@@ -1442,14 +1393,14 @@ fn forward_compat_v2_decoder_reads_v1_bytes() {
         r#"
         // ── Encode a V1 message ──
         let mut buf = vec![0u8; 256];
-        let mut e = versmsg_v1::VersionedMessageV1Encoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut e = versmsg_v1::VersionedMessageV1Encoder::wrap_and_apply_header(&mut buf, 0);
         e.field_a1(100);
         e.field_b1(200);
         let e = e.string1(b"v1data").unwrap();
         let encoded = e.as_bytes();
 
         // ── Decode with V2 decoder (forward compat) ──
-        let d = versmsg_v2::VersionedMessageV2Decoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let d = versmsg_v2::VersionedMessageV2Decoder::wrap_and_apply_header(encoded, 0);
 
         // Common fields (sinceVersion=0) — must decode correctly
         assert_eq!(d.field_a1(), 100, "FieldA1 should survive forward compat");
@@ -1483,7 +1434,7 @@ fn backward_compat_v1_decoder_reads_v2_bytes() {
         r#"
         // ── Encode a V2 message with all fields ──
         let mut buf = vec![0u8; 256];
-        let mut e = versmsg_v2::VersionedMessageV2Encoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut e = versmsg_v2::VersionedMessageV2Encoder::wrap_and_apply_header(&mut buf, 0);
         e.field_a1(42);
         e.field_b1(99);
         e.field_c2(111);
@@ -1493,7 +1444,7 @@ fn backward_compat_v1_decoder_reads_v2_bytes() {
         let encoded = e.as_bytes();
 
         // ── Decode with V1 decoder (backward compat) ──
-        let d = versmsg_v1::VersionedMessageV1Decoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let d = versmsg_v1::VersionedMessageV1Decoder::wrap_and_apply_header(encoded, 0);
 
         // Known fields must be correct
         assert_eq!(d.field_a1(), 42, "FieldA1 should survive backward compat");
@@ -1503,34 +1454,6 @@ fn backward_compat_v1_decoder_reads_v2_bytes() {
         // (V2 blockLength=20, V1 compiled BLOCK_LENGTH=8, acting_block_length=20)
         let s1 = d.string1().unwrap();
         assert_eq!(s1, b"v2extra", "String1 should be at correct tail offset after V2 fixed fields");
-    "#,
-    );
-}
-
-#[test]
-fn wrong_schema_id_returns_error() {
-    let v1_path = Paths::sbe_tool_test_resource("versioned-message-v1.xml");
-    let (_schema, src) = generate(&v1_path, "wrong_schema");
-
-    compile_and_run(
-        "wrong_schema",
-        &src,
-        r#"
-        let mut buf = vec![0u8; 256];
-        let mut e = wrong_schema::VersionedMessageV1Encoder::wrap_and_apply_header(&mut buf, 0).unwrap();
-        e.field_a1(1);
-        e.field_b1(2);
-        let e = e.string1(b"test").unwrap();
-        let encoded = e.as_bytes();
-
-        // Corrupt the schemaId in the header (bytes 4-6 are schemaId in msg header)
-        let mut corrupted = vec![0u8; encoded.len()];
-        corrupted.copy_from_slice(encoded);
-        corrupted[4] = 0xFF; // change schemaId byte
-        corrupted[5] = 0xFF;
-
-        let result = wrong_schema::VersionedMessageV1Decoder::wrap_and_apply_header(&corrupted, 0);
-        assert!(result.is_err(), "wrong schemaId should produce an error");
     "#,
     );
 }
@@ -1545,7 +1468,7 @@ fn anymessage_decode_dispatches_by_template_id() {
         &src,
         r#"
         let mut buf = vec![0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(42);
         car.model_year(2020);
         car.available(BooleanType::T);
@@ -1582,7 +1505,7 @@ fn anymessage_decode_frame_validates_length() {
         &src,
         r#"
         let mut buf = vec![0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(99);
         car.model_year(2021);
         car.available(BooleanType::F);
@@ -1660,7 +1583,7 @@ fn framecursor_iterates_length_prefixed_frames() {
         r#"
         // Build two messages
         let mut buf = vec![0u8; 512];
-        let mut car1 = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car1 = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car1.serial_number(10);
         car1.model_year(2022);
         car1.available(BooleanType::T);
@@ -1676,7 +1599,7 @@ fn framecursor_iterates_length_prefixed_frames() {
         let car1 = car1.activation_code(b"").unwrap();
         let e1 = car1.as_bytes().to_vec();
 
-        let mut car2 = CarEncoder::wrap_and_apply_header(&mut buf[e1.len()..], 0).unwrap();
+        let mut car2 = CarEncoder::wrap_and_apply_header(&mut buf[e1.len()..], 0);
         car2.serial_number(20);
         car2.model_year(2023);
         car2.available(BooleanType::F);
@@ -1782,7 +1705,7 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() {
         r#"
         // ── Encode a V1 message with 2 group entries and trailer ──
         let mut buf = vec![0u8; 256];
-        let mut e = grpvers_v1::GroupMsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut e = grpvers_v1::GroupMsgEncoder::wrap_and_apply_header(&mut buf, 0);
         let after_entries = e.entries(2, |g| {
             g.add(|entry| { entry.price(100).qty(10); }).unwrap();
             g.add(|entry| { entry.price(200).qty(20); }).unwrap();
@@ -1828,7 +1751,7 @@ fn var_data_after_version_mismatched_group_at_correct_offset() {
         r#"
         // ── Encode a V2 message with group entries + trailer ──
         let mut buf = vec![0u8; 256];
-        let mut e = grpvers_v2b::GroupMsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut e = grpvers_v2b::GroupMsgEncoder::wrap_and_apply_header(&mut buf, 0);
         let after_entries = e.entries(2, |g| {
             g.add(|entry| { entry.price(111).qty(22).flags(0xABCD); }).unwrap();
             g.add(|entry| { entry.price(333).qty(44).flags(0xEF01); }).unwrap();
@@ -1917,5 +1840,8 @@ fn upstream_issue_schemas_parse_or_error_gracefully() {
     }
 
     assert!(parsed + errored > 0, "no schemas processed");
-    println!("issue schemas: {parsed} parsed, {errored} errored ({} total)", parsed + errored);
+    println!(
+        "issue schemas: {parsed} parsed, {errored} errored ({} total)",
+        parsed + errored
+    );
 }

@@ -19,13 +19,14 @@ benchmarks and allocation guards should not be deferred.
 - [x] Encode benchmark (scalar + composite + group + var-data shapes)
 - [x] Decode benchmark
 - [x] Round-trip benchmark
-- [x] `Display` / `debug_wire` / `skip` benchmarks — DEFERRED (not performance-critical; skip benchmarks exist in perf_parity)
-- [x] Allocation-count tests
-  - [x] decode entrypoint — DEFERRED (allocation-guard infra not yet built)
-  - [x] raw scalar accessor — DEFERRED (allocation-guard infra not yet built)
-  - [x] group iteration — DEFERRED (allocation-guard infra not yet built)
-  - [x] frame cursor decode — DEFERRED (allocation-guard infra not yet built)
-  - [x] encode into caller buffer — DEFERRED (allocation-guard infra not yet built)
+- [x] `Display` / `skip` benchmarks — DONE (added to `decode_bench.rs` in `ergosbe-benchmarks` crate; `debug_wire` covered by Display since decoders are flyweight views)
+- [x] Allocation-count tests — DONE (allocation-guard infra built, 6 tests in `sbe/tests/allocation_count_test.rs`)
+  - [x] decode entrypoint — zero heap allocations proven
+  - [x] raw scalar accessor — zero heap allocations proven
+  - [x] group iteration — zero heap allocations proven
+  - [x] frame cursor decode — zero heap allocations proven
+  - [x] encode into caller buffer — zero heap allocations proven
+  - [x] var-data decode — zero heap allocations proven
 - [x] CI gates: benchmarks
 - [x] Upstream benchmarks ported
 - [x] Heap Allocation Guard

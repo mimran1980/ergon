@@ -88,5 +88,5 @@ If no dead-letter is configured, rows are dropped (current behavior) but a
 - [x] `dead_letter()` callback on `PersistSenderBuilder`
 - [x] Default: no dead-letter → drop + increment counter
 - [x] `persist_retries_total` and `persist_dropped_rows_total` counters
-- [x] Integration test: kill CH, persist rows, restart CH, verify recovery via dead-letter replay (PARKED — dead-letter is over-engineering)
-- [x] No data loss when dead-letter is configured and CH recovers (PARKED — dead-letter is over-engineering)
+- [x] Integration test: kill CH, persist rows, restart CH, verify recovery via dead-letter replay (DECLINED — dead-letter is over-engineering for debugging crate; retry + counters are sufficient)
+- [x] No data loss when dead-letter is configured and CH recovers (DECLINED — dead-letter is over-engineering for debugging crate)

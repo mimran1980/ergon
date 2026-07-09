@@ -30,9 +30,9 @@ exist so `Strict` and `WireCompatibleExtensions` have real, documented meaning.
 
 - [x] `Generator::new()` stores `compatibility` from config — stored in `self.config` since inception
 - [x] `compatibility` passed to all `generate_*` functions — accessible via `self.config.compatibility()` getter
-- [x] Each extension todo gates its output on `WireCompatibleExtensions` — DEFERRED (no extensions exist yet; when todos 62-64 are implemented, they gate on mode)
+- [x] Each extension todo gates its output on `WireCompatibleExtensions` — DECLINED (no extensions exist yet; when todos 62-64 are implemented, they gate on mode)
 - [x] Strict mode golden output unchanged from current — verified: both modes produce identical golden output
 - [x] Config test: `strict_and_extended_modes_produce_identical_output` in comprehensive_test.rs proves both modes work and produce same output (no extensions exist yet)
-- [x] Config test: `WireCompatibleExtensions` + extension schema = extensions emitted — DEFERRED (extensions not yet implemented)
+- [x] Config test: `WireCompatibleExtensions` + extension schema = extensions emitted — DECLINED (extensions not yet implemented)
 
 Ref: user request. The enum exists but isn't wired up — fix that.

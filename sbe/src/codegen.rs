@@ -2016,28 +2016,15 @@ fn generate_message_decoder(
         let en = syn::LitStr::new(&schema_name, proc_macro2::Span::call_site());
         impl_body.extend(quote::quote! {
             #[inline]
-            pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                // Always validate: this is the trust boundary. Even with
-                // bound-check-disabled, we must reject buffers too short to
-                // contain a header. The feature flag only skips per-field
-                // checks inside the message body.
-                if pos + #hs > buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "message header",
-                        needed: #hs,
-                        available: buf.len().saturating_sub(pos),
-                    });
-                }
+            pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Self {
+                // Aeron-equivalent: infallible. No buffer-size check (the header read
+                // panics on a too-short buffer via slice indexing, like Aeron's
+                // get_*_at). Schema identity is a debug_assert (compiled out in
+                // release), matching Aeron which only debug-asserts the template id.
                 let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
                 let header = #hp(header_bytes);
-                if header.#hsi() != Self::SCHEMA_ID {
-                    return Err(sbe_rt::DecodeError::WrongSchema {
-                        expected: Self::SCHEMA_ID,
-                        actual: header.#hsi(),
-                        expected_name: #en,
-                    });
-                }
-                Ok(Self::wrap(buf, pos + #hs, header.#hbl() as usize, header.#hvr()))
+                debug_assert_eq!(header.#hsi(), Self::SCHEMA_ID, "wrong schema id for {}", #en);
+                Self::wrap(buf, pos + #hs, header.#hbl() as usize, header.#hvr())
             }
         });
     }
@@ -2114,37 +2101,44 @@ fn generate_message_decoder(
                         syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
                     let fn_name_ident = syn::Ident::new(&f.name, proc_macro2::Span::call_site());
 
-                    // Build unrolled element parses: for each element i, extract the
-                    // prim_size byte slice and call r_type::from_X_bytes.
-                    let mut safe_elements: Vec<proc_macro2::TokenStream> = Vec::new();
+                    // Build unrolled element parses via direct constant indexing of a
+                    // bulk-read local `all` array. One bulk read (single bounds check
+                    // via read_bytes) + direct constant indexing (no per-element
+                    // bounds check). This is the fastest safe-mode shape: Aeron's
+                    // 4x per-element try_into is slower here because LLVM cannot elide
+                    // the redundant checks when the offset is runtime-derived.
+                    let mut elements: Vec<proc_macro2::TokenStream> = Vec::new();
                     for i in 0..len_val {
                         let start = i * prim_size;
                         let end = start + prim_size;
-                        safe_elements.push(quote::quote! {
-                            #r_type_ty::#order_fn(
-                                read_bytes::<#prim_size>(&all, #start)
-                            )
+                        let byte_indices: Vec<proc_macro2::TokenStream> = (start..end)
+                            .map(|idx| quote::quote! { all[#idx] })
+                            .collect();
+                        elements.push(quote::quote! {
+                            #r_type_ty::#order_fn([#(#byte_indices),*])
                         });
                     }
 
                     let fn_snake_ident =
                         syn::Ident::new(&fname_snake, proc_macro2::Span::call_site());
+                    // Fixed-length array accessors are INFALLIBLE: a fixed array that
+                    // lies within the message body is guaranteed in-bounds by the
+                    // version/block-length check below (and by wrap, which validates the
+                    // body extent). Returning `Result` here is over-cautious, diverges
+                    // from Aeron (which returns `[T; N]`), and adds Result+unwrap
+                    // overhead that measurably slows decode. OOB only happens for a
+                    // structurally malformed buffer shorter than its declared
+                    // block_length, in which case read_bytes panics — same as Aeron's
+                    // try_into. This matches Aeron's `[T; N]` signature and perf.
                     impl_body.extend(quote::quote! {
                         #[inline]
-                        pub fn #fn_snake_ident(&self) -> Result<[#r_type_ty; #len_lit], sbe_rt::DecodeError> {
+                        pub fn #fn_snake_ident(&self) -> [#r_type_ty; #len_lit] {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
-                                return Ok([0 as #r_type_ty; #len_lit]);
+                                return [0 as #r_type_ty; #len_lit];
                             }
                             let offset = self.pos + #offset_lit;
-                            if offset + #total_size_lit > self.buf.len() {
-                                return Err(sbe_rt::DecodeError::BufferTooShort {
-                                    field: stringify!(#fn_name_ident),
-                                    needed: #total_size_lit,
-                                    available: self.buf.len() - offset,
-                                });
-                            }
                             let all: [u8; #total_size_lit] = read_bytes::<#total_size_lit>(self.buf, offset);
-                            Ok([#(#safe_elements),*])
+                            [#(#elements),*]
                         }
                     });
                 } else {
@@ -2772,7 +2766,7 @@ fn generate_message_decoder(
             type Error = sbe_rt::DecodeError;
 
             fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-                Self::wrap_and_apply_header(buf, 0)
+                Ok(Self::wrap_and_apply_header(buf, 0))
             }
         }
 
@@ -3663,6 +3657,7 @@ fn generate_nullification(
     src: &mut String,
     fields: &[MessageField],
     offset_base: &str,
+    buf_expr: &str,
     byte_order: ByteOrder,
 ) {
     let order_suffix = match byte_order {
@@ -3686,13 +3681,14 @@ fn generate_nullification(
                     proc_macro2::Span::call_site(),
                 );
                 let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
+                let buf_expr_ts: syn::Expr = syn::parse_str(buf_expr).unwrap();
                 let f_offset = syn::Index::from(f.offset);
                 let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
 
                 stmts.extend(quote::quote! {
                     let null_bytes = #null_val_expr.#to_method();
                     let offset = #offset_base_expr + #f_offset;
-                    buf[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+                    #buf_expr_ts[offset..offset + #size_lit].copy_from_slice(&null_bytes);
                 });
             }
         }
@@ -3910,40 +3906,54 @@ fn generate_message_encoder(
     };
     impl_contents.extend(wrap_fn);
 
-    let mut wrap_apply_body = quote::quote! {
-        let needed = #header_size_lit + #block_length_lit;
-        if pos + needed > buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed,
-                available: buf.len() - pos,
-            });
-        }
+    let wrap_apply_body = quote::quote! {
+        // Aeron-equivalent: infallible. No buffer-size check (the header copy
+        // panics on a too-small buffer via slice indexing, like Aeron's put_*_at).
+        // Optional-field nullification is NOT applied by default — call
+        // `apply_nulls()` if you want null sentinels.
         buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
+        Self::wrap(buf, pos)
     };
-    // Insert nullification
-    {
-        let mut null_buf = String::new();
-        generate_nullification(&mut null_buf, &msg.fields, "pos + 8", byte_order);
-        if !null_buf.is_empty() {
-            let null_ts: proc_macro2::TokenStream = null_buf
-                .parse()
-                .expect("generate_nullification produced invalid token stream");
-            wrap_apply_body.extend(null_ts);
-        }
-    }
-    wrap_apply_body.extend(quote::quote! {
-        Ok(Self::wrap(buf, pos))
-    });
     let wrap_apply_fn = quote::quote! {
         #[inline]
-        pub fn wrap_and_apply_header(
-            buf: &'a mut [u8],
-            pos: usize,
-        ) -> Result<Self, sbe_rt::EncodeError> {
+        pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Self {
             #wrap_apply_body
         }
     };
     impl_contents.extend(wrap_apply_fn);
+
+    // Opt-in: write null sentinels for all optional fields. Call this after
+    // wrap_and_apply_header if you want unset optional fields to carry their
+    // schema-defined null value instead of whatever was in the buffer.
+    // Not called by default (Aeron does not nullify on wrap).
+    {
+        let mut null_buf = String::new();
+        let offset_base = format!("self.message_start + {header_size}");
+        generate_nullification(
+            &mut null_buf,
+            &msg.fields,
+            &offset_base,
+            "self.buf",
+            byte_order,
+        );
+        if !null_buf.is_empty() {
+            let null_ts: proc_macro2::TokenStream = null_buf
+                .parse()
+                .expect("generate_nullification produced invalid token stream");
+            let apply_nulls_fn = quote::quote! {
+                /// Write the schema-defined null sentinel into every optional field.
+                ///
+                /// Optional only — `wrap_and_apply_header` does not nullify by default
+                /// (matching Aeron). Call this if you want unset optional fields to
+                /// carry their null value rather than stale buffer contents.
+                #[inline]
+                pub fn apply_nulls(&mut self) {
+                    #null_ts
+                }
+            };
+            impl_contents.extend(apply_nulls_fn);
+        }
+    }
 
     // ── Field setters ──
     for f in &msg.fields {

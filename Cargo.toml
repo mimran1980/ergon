@@ -1,5 +1,5 @@
 [workspace]
-members = ["sbe", "persist", "persist/derive"]
+members = ["sbe", "persist", "persist/derive", "ergosbe-benchmarks"]
 exclude = ["samples"]
 resolver = "3"
 
@@ -23,3 +23,10 @@ nursery = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"
+
+[profile.bench]
+lto = true
+codegen-units = 1
+[profile.release]
+lto = true
+codegen-units = 1

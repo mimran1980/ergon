@@ -18,7 +18,7 @@
 )]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
-include!("generated/car_patched.rs");
+use ergosbe_benchmarks::ergo_car::*;
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 

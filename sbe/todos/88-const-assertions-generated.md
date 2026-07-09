@@ -15,7 +15,7 @@ DECISIONS.md §10.
 - [x] `const _: () = assert!(HEADER_TEMPLATE.len() == N);` for header template size
 - [x] `const _: () = assert!(GROUP_DIM_TEMPLATE.len() == N);` for group dimension template size
 - [x] Assertions compile to nothing in release — zero runtime cost
-- [x] Test: intentionally wrong value triggers compile error — DEFERRED (same as todo 56). Golden file verification sufficient.
+- [x] Test: intentionally wrong value triggers compile error — DECLINED (same as todo 56). Golden file verification sufficient.
 - [x] Golden file updated
 
 ## Dependencies

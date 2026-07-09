@@ -15,8 +15,8 @@ length handling.
 - [x] Group encode: type-state tail ordering, correct on-wire bytes
 - [x] Group accessor returns `Result` (validates extent); iteration is infallible within
 - [x] `ExactSizeIterator` + `len()` on group decoders
-- [x] Var-data: `as_slice()`, `as_str()` accessible via var_data field + manual conversion (PARKED — dedicate methods are over-engineering; the raw bytes are available)
-- [x] `unsafe fn as_str_unchecked()` for zero-cost UTF-8 skip (PARKED — not needed; standard UTF-8 validation is fast enough)
+- [x] Var-data: `as_slice()`, `as_str()` accessible via var_data field + manual conversion (DECLINED — dedicated methods are over-engineering; raw bytes are available)
+- [x] `unsafe fn as_str_unchecked()` for zero-cost UTF-8 skip (DECLINED — not needed; standard UTF-8 validation is fast enough)
 - [x] `AsRef<[u8]>` on decoders exposes `as_bytes()`
 - [x] Full Car example: byte-exact round-trip against upstream `.sbe` fixture
 - [x] Fixed-entry group fast path: `slice::as_chunks` for tail-free fixed-entry groups

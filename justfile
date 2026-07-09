@@ -65,15 +65,26 @@ update-golden:
 
 samples-orderbook:
     @echo "=== Starting ClickHouse ==="
-    @docker start ergo-clickhouse 2>/dev/null || docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 clickhouse/clickhouse-server
+    @docker start ergo-clickhouse 2>/dev/null || docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=test123 clickhouse/clickhouse-server
     @echo "=== Waiting for ClickHouse ==="
-    @until curl -s http://localhost:8123/ping >/dev/null 2>&1; do sleep 1; done
+    @until curl -s -u default:test123 http://localhost:8123/ping >/dev/null 2>&1; do sleep 1; done
     @echo "=== Running exchange orderbook ==="
-    CLICKHOUSE_URL=http://localhost:8123 RUSTC_WRAPPER="" cargo run --manifest-path samples/exchange-orderbook/Cargo.toml
+    CLICKHOUSE_URL=http://default:test123@localhost:8123 RUSTC_WRAPPER="" cargo run --manifest-path samples/exchange-orderbook/Cargo.toml
 
 samples-clickhouse-stop:
     docker stop ergo-clickhouse 2>/dev/null || true
     docker rm ergo-clickhouse 2>/dev/null || true
+
+# Start ClickHouse for integration tests (passes test123 auth)
+clickhouse-start:
+    @docker start clickhouse-test 2>/dev/null || docker run -d --name clickhouse-test -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=test123 clickhouse/clickhouse-server
+    @echo "Waiting for ClickHouse..."
+    @until curl -s -u default:test123 http://localhost:8123/ping >/dev/null 2>&1; do sleep 1; done
+    @echo "ClickHouse ready on localhost:8123"
+
+clickhouse-stop:
+    docker stop clickhouse-test 2>/dev/null || true
+    docker rm clickhouse-test 2>/dev/null || true
 
 # ── Docs ───────────────────────────────────────────────────────
 
@@ -82,21 +93,21 @@ docs:
 
 # ── Benchmarks ──────────────────────────────────────────────────
 
-# Run all Criterion benchmarks
+# Run all Criterion benchmarks (uses on-the-fly generated code in ergosbe-benchmarks)
 bench:
-    RUSTC_WRAPPER="" cargo bench --workspace
+    RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks
 
-# Run just the Aeron parity head-to-head
+# Run just the Aeron parity head-to-head (uses on-the-fly generated code)
 bench-parity:
-    RUSTC_WRAPPER="" cargo bench --bench perf_parity_bench
+    RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
 
 # Quick benchmark smoke test (compile check only, no long runs)
 bench-check:
-    RUSTC_WRAPPER="" cargo bench --workspace --no-run
+    RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --no-run
 
 # Benchmark with bound-check-disabled feature enabled
 bench-fast:
-    RUSTC_WRAPPER="" cargo bench --workspace --features bound-check-disabled
+    RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --features bound-check-disabled
 
 # ── Clean ───────────────────────────────────────────────────────
 

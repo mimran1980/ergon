@@ -648,27 +648,13 @@ impl<'a> CarDecoder<'a> {
         }
     }
     #[inline]
-    pub fn wrap_and_apply_header(
-        buf: &'a [u8],
-        pos: usize,
-    ) -> Result<Self, sbe_rt::DecodeError> {
-        if pos + 8 > buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "message header",
-                needed: 8,
-                available: buf.len().saturating_sub(pos),
-            });
-        }
+    pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Self {
         let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
-        if header.schema_id() != Self::SCHEMA_ID {
-            return Err(sbe_rt::DecodeError::WrongSchema {
-                expected: Self::SCHEMA_ID,
-                actual: header.schema_id(),
-                expected_name: "baseline",
-            });
-        }
-        Ok(Self::wrap(buf, pos + 8, header.block_length() as usize, header.version()))
+        debug_assert_eq!(
+            header.schema_id(), Self::SCHEMA_ID, "wrong schema id for {}", "baseline"
+        );
+        Self::wrap(buf, pos + 8, header.block_length() as usize, header.version())
     }
     #[inline]
     pub const fn acting_version(&self) -> u16 {
@@ -706,51 +692,37 @@ impl<'a> CarDecoder<'a> {
     }
     pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
-    pub fn some_numbers(&self) -> Result<[u32; 4], sbe_rt::DecodeError> {
+    pub fn some_numbers(&self) -> [u32; 4] {
         if self.acting_version < 0 || 28 > self.acting_block_length {
-            return Ok([0 as u32; 4]);
+            return [0 as u32; 4];
         }
         let offset = self.pos + 12;
-        if offset + 16 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: stringify!(someNumbers),
-                needed: 16,
-                available: self.buf.len() - offset,
-            });
-        }
         let all: [u8; 16] = read_bytes::<16>(self.buf, offset);
-        Ok([
-            u32::from_le_bytes(read_bytes::<4usize>(&all, 0usize)),
-            u32::from_le_bytes(read_bytes::<4usize>(&all, 4usize)),
-            u32::from_le_bytes(read_bytes::<4usize>(&all, 8usize)),
-            u32::from_le_bytes(read_bytes::<4usize>(&all, 12usize)),
-        ])
+        [
+            u32::from_le_bytes([all[0usize], all[1usize], all[2usize], all[3usize]]),
+            u32::from_le_bytes([all[4usize], all[5usize], all[6usize], all[7usize]]),
+            u32::from_le_bytes([all[8usize], all[9usize], all[10usize], all[11usize]]),
+            u32::from_le_bytes([all[12usize], all[13usize], all[14usize], all[15usize]]),
+        ]
     }
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
     pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
     #[inline]
-    pub fn vehicle_code(&self) -> Result<[u8; 6], sbe_rt::DecodeError> {
+    pub fn vehicle_code(&self) -> [u8; 6] {
         if self.acting_version < 0 || 34 > self.acting_block_length {
-            return Ok([0 as u8; 6]);
+            return [0 as u8; 6];
         }
         let offset = self.pos + 28;
-        if offset + 6 > self.buf.len() {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: stringify!(vehicleCode),
-                needed: 6,
-                available: self.buf.len() - offset,
-            });
-        }
         let all: [u8; 6] = read_bytes::<6>(self.buf, offset);
-        Ok([
-            u8::from_le_bytes(read_bytes::<1usize>(&all, 0usize)),
-            u8::from_le_bytes(read_bytes::<1usize>(&all, 1usize)),
-            u8::from_le_bytes(read_bytes::<1usize>(&all, 2usize)),
-            u8::from_le_bytes(read_bytes::<1usize>(&all, 3usize)),
-            u8::from_le_bytes(read_bytes::<1usize>(&all, 4usize)),
-            u8::from_le_bytes(read_bytes::<1usize>(&all, 5usize)),
-        ])
+        [
+            u8::from_le_bytes([all[0usize]]),
+            u8::from_le_bytes([all[1usize]]),
+            u8::from_le_bytes([all[2usize]]),
+            u8::from_le_bytes([all[3usize]]),
+            u8::from_le_bytes([all[4usize]]),
+            u8::from_le_bytes([all[5usize]]),
+        ]
     }
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
@@ -1122,7 +1094,7 @@ impl<'a> CarDecoder<'a> {
 impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
     type Error = sbe_rt::DecodeError;
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        Self::wrap_and_apply_header(buf, 0)
+        Ok(Self::wrap_and_apply_header(buf, 0))
     }
 }
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}
@@ -1890,19 +1862,9 @@ impl<'a, State> CarEncoder<'a, State> {
         }
     }
     #[inline]
-    pub fn wrap_and_apply_header(
-        buf: &'a mut [u8],
-        pos: usize,
-    ) -> Result<Self, sbe_rt::EncodeError> {
-        let needed = 8 + 41;
-        if pos + needed > buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed,
-                available: buf.len() - pos,
-            });
-        }
+    pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Self {
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
-        Ok(Self::wrap(buf, pos))
+        Self::wrap(buf, pos)
     }
     #[must_use]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
