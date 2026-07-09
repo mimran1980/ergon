@@ -1226,6 +1226,7 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
     let tokens = quote::quote! {
         #[repr(#r_type_ty)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub enum #name_ident {
             #(#variant_names = #variant_discs,)*
             /// Unknown enum value — the wire discriminant did not match any known variant.
@@ -1308,6 +1309,7 @@ fn generate_set(src: &mut String, tokens: &[Token]) {
 
     let tokens = quote::quote! {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         #[repr(transparent)]
         pub struct #name_ident(pub #r_type_ty);
 
@@ -1573,6 +1575,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
     // ponytail: refactor ctor_params into proper syn::FnArg when polishing
     let ts = quote::quote! {
         #[derive(#derives)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         #[repr(transparent)]
         pub struct #name_ident(pub [u8; #size_lit]);
 

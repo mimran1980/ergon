@@ -170,6 +170,7 @@ pub mod sbe_rt {
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BooleanType {
     F = 0,
     T = 1,
@@ -214,6 +215,7 @@ impl From<BooleanType> for bool {
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Model {
     A = b'A',
     B = b'B',
@@ -247,6 +249,7 @@ impl From<u8> for Model {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct OptionalExtras(pub u8);
 impl OptionalExtras {
@@ -300,6 +303,7 @@ impl From<OptionalExtras> for u8 {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct MessageHeader(pub [u8; 8]);
 impl MessageHeader {
@@ -365,6 +369,7 @@ impl<'a> MessageHeaderDecoder<'a> {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct GroupSizeEncoding(pub [u8; 4]);
 impl GroupSizeEncoding {
@@ -403,6 +408,7 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct VarStringEncoding(pub [u8; 4]);
 impl VarStringEncoding {
@@ -438,6 +444,7 @@ impl<'a> VarStringEncodingDecoder<'a> {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct VarAsciiEncoding(pub [u8; 4]);
 impl VarAsciiEncoding {
@@ -473,6 +480,7 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct VarDataEncoding(pub [u8; 4]);
 impl VarDataEncoding {
@@ -508,6 +516,7 @@ impl<'a> VarDataEncodingDecoder<'a> {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct Booster(pub [u8; 1]);
 impl Booster {
@@ -535,6 +544,7 @@ impl<'a> BoosterDecoder<'a> {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct Engine(pub [u8; 6]);
 impl Engine {
