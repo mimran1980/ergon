@@ -3052,7 +3052,7 @@ fn generate_group_decoder(
                         });
                     }
                     for _ in 0..n {
-                        let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_version);
+                        let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_block_length, self.acting_version);
                         if cfg!(not(feature = "bound-check-disabled")) {
                             self.pos += entry.encoded_length()?;
                         } else {
@@ -3086,7 +3086,7 @@ fn generate_group_decoder(
                         available: self.buf.len() - offset,
                     });
                 }
-                Ok(#entry_decoder_ident::wrap(self.buf, offset, self.acting_version))
+                Ok(#entry_decoder_ident::wrap(self.buf, offset, self.acting_block_length, self.acting_version))
             }
         }
     });
@@ -3101,7 +3101,7 @@ fn generate_group_decoder(
                     if self.count == 0 {
                         return None;
                     }
-                    let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_version);
+                    let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_block_length, self.acting_version);
                     self.pos += self.acting_block_length;
                     self.count -= 1;
                     Some(entry)
@@ -3123,7 +3123,7 @@ fn generate_group_decoder(
                     if self.count == 0 {
                         return None;
                     }
-                    let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_version);
+                    let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_block_length, self.acting_version);
                     #[cfg(not(feature = "bound-check-disabled"))]
                     let size = match entry.encoded_length() {
                         Ok(s) => s,
@@ -3156,8 +3156,8 @@ fn generate_group_decoder(
         pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
         #[inline]
-        pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Self {
-            Self { buf, pos, acting_version }
+        pub fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
+            Self { buf, pos, acting_version, acting_block_length }
         }
     });
 
@@ -3386,7 +3386,7 @@ fn generate_group_decoder(
     entry_body.extend(quote::quote! {
         #[inline]
         fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
-            Ok(self.pos + Self::ENTRY_BLOCK_LENGTH)
+            Ok(self.pos + self.acting_block_length)
         }
     });
 
@@ -3518,15 +3518,13 @@ fn generate_group_decoder(
 
         #[inline]
         pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
-            // Use wire block_len for fixed-entry groups. For tailed entries,
-            // the entry's tail_offset_N starts from tail_offset_0 which uses
-            // the entry's compiled blockLength. ponytail: this is correct for
-            // same-version entries; version-mismatched tailed entries need
-            // acting_block_length stored in the entry decoder (deferred).
+            // Wire block_len used for both fixed-entry and tailed-entry groups.
+            // The entry decoder now stores acting_block_length from the dimension
+            // header, so tail_offset_0 uses the wire blockLength.
             if #total_tail_lit == 0 {
                 Ok(pos + block_len)
             } else {
-                let entry = Self::wrap(buf, pos, acting_version);
+                let entry = Self::wrap(buf, pos, block_len, acting_version);
                 entry.#tail_total_fn()
             }
         }
@@ -3623,6 +3621,7 @@ fn generate_group_decoder(
             buf: &'a [u8],
             pos: usize,
             acting_version: u16,
+            acting_block_length: usize,
         }
 
         impl<'a> #entry_decoder_ident<'a> {
@@ -3897,9 +3896,9 @@ fn generate_message_encoder(
         #[inline]
         pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
             Self {
-                buf,
-                message_start: pos,
-                pos: pos + #header_size_lit + #block_length_lit,
+                buf: &mut buf[pos..],
+                message_start: 0,
+                pos: #header_size_lit + #block_length_lit,
                 #phantom_field
             }
         }
@@ -3977,7 +3976,7 @@ fn generate_message_encoder(
                         #[must_use]
                         #[inline]
                         pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
-                            let offset = self.message_start + #body_offset_lit;
+                            let offset = #body_offset_lit;
                             let mut idx = 0usize;
                             while idx < #len_lit {
                                 self.buf[offset + idx * #prim_size_lit..][..#prim_size_lit].copy_from_slice(&val[idx].#to_endian());
@@ -3991,7 +3990,7 @@ fn generate_message_encoder(
                         #[must_use]
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
-                            let offset = self.message_start + #body_offset_lit;
+                            let offset = #body_offset_lit;
                             self.buf[offset..][..#prim_size_lit].copy_from_slice(&val.#to_endian());
                             self
                         }
@@ -4007,7 +4006,7 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = self.message_start + #body_offset_lit;
+                        let offset = #body_offset_lit;
                         self.buf[offset..offset + #comp_size_lit]
                             .copy_from_slice(&val.0);
                         self
@@ -4029,7 +4028,7 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = self.message_start + #body_offset_lit;
+                        let offset = #body_offset_lit;
                         self.buf[offset..][..#prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
                         self
                     }
@@ -4040,7 +4039,7 @@ fn generate_message_encoder(
                     impl_contents.extend(quote::quote! {
                         #[must_use]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
-                            let offset = self.message_start + #body_offset_lit;
+                            let offset = #body_offset_lit;
                             let enum_val: #target_type = val.into();
                             self.buf[offset..][..#prim_size_lit].copy_from_slice(&(enum_val as #r_type).#to_endian());
                             self
@@ -4058,7 +4057,7 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = self.message_start + #body_offset_lit;
+                        let offset = #body_offset_lit;
                         self.buf[offset..][..#prim_size_lit].copy_from_slice(&val.0.#to_endian());
                         self
                     }
