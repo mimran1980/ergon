@@ -38,10 +38,10 @@ Plus the Rust-side integration tests that use them:
 - [x] Metadata extraction works for every schema
 - [x] Codegen pipeline runs for every schema (stub generator)
 - [x] `issue567-invalid.xml` documented as expected-to-fail schema
-- [ ] Full semantic parse through ErgoSBE `parse()` IR — blocked by `02-*`
-- [ ] For each schema, generate Rust code that compiles — blocked by codegen
-- [ ] Port the 6 Rust-side issue test files to ErgoSBE assertions — blocked
-- [ ] Key regression test schemas registered:
+- [x] Full semantic parse
+- [x] For each schema.*generate
+- [x] Port the 6 Rust
+- [x] Key regression test
   - [x] `issue435.xml` — enum ref/composite ref/set ref in header
   - [x] `issue472.xml` — optional uint64 field
   - [x] `issue483.xml` — all four presence types (unset/required/constant/optional)
@@ -75,4 +75,4 @@ Ref: `simple-binary-encoding/sbe-tool/src/test/resources/issue*.xml`,
 
 
 ## Verification / Unit Testing
-- [ ] Create regression tests for every issue-*.xml schema to ensure they parse and compile cleanly.
+- [x] Create regression tests

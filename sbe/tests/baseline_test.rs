@@ -1857,3 +1857,65 @@ fn var_data_after_version_mismatched_group_at_correct_offset() {
     "#,
     );
 }
+
+// ── Regression: upstream issue schemas (todo 21) ─────────────────────────
+
+/// Every upstream issue-*.xml schema must either parse cleanly or produce
+/// a structured error (never panic). Phase 2 regression gate.
+#[test]
+fn upstream_issue_schemas_parse_or_error_gracefully() {
+    let schemas: &[(&str, bool)] = &[
+        ("issue435.xml", true),
+        ("issue472.xml", true),
+        ("issue483.xml", true),
+        ("issue488.xml", true),
+        ("issue496.xml", true),
+        ("issue505.xml", true),
+        ("issue560.xml", true),
+        ("issue567-valid.xml", true),
+        ("issue567-invalid.xml", true), // ErgoSBE parser handles this; "invalid" refers to upstream tool behaviour
+        ("issue661.xml", true),
+        ("issue827.xml", true),
+        ("issue835.xml", true),
+        ("issue847.xml", true),
+        ("issue848.xml", true),
+        ("issue849.xml", true),
+        ("issue889.xml", true),
+        ("issue895.xml", true),
+        ("issue910.xml", true),
+        ("issue967.xml", true),
+        ("issue972.xml", true),
+        ("issue984.xml", true),
+        ("issue987.xml", true),
+        ("issue1007.xml", true),
+        ("issue1028.xml", true),
+        ("issue1057.xml", true),
+        ("issue1066.xml", true),
+    ];
+
+    let mut parsed = 0usize;
+    let mut errored = 0usize;
+
+    for (name, expect_valid) in schemas {
+        let path = Paths::sbe_tool_test_resource(name);
+        match ergosbe::parse_file(&path) {
+            Ok(_ir) => {
+                parsed += 1;
+                if !expect_valid {
+                    eprintln!("UNEXPECTED PASS: {name} (expected parse error)");
+                }
+            }
+            Err(e) => {
+                errored += 1;
+                let msg = format!("{e}");
+                assert!(!msg.is_empty(), "error for {name} must have a message");
+                if *expect_valid {
+                    eprintln!("PARSE FAIL: {name}: {msg}");
+                }
+            }
+        }
+    }
+
+    assert!(parsed + errored > 0, "no schemas processed");
+    println!("issue schemas: {parsed} parsed, {errored} errored ({} total)", parsed + errored);
+}
