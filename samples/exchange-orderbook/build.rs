@@ -26,7 +26,7 @@ fn main() {
     let binance_schema = ergosbe::Schema::from_ir(binance_ir);
 
     // Generate Rust source files
-    let mut config = ergosbe::GenerationConfig::new("bitget_spot");
+    let mut config = ergosbe::{ let mut c = GenerationConfig::new("bitget_spot"); c.domain_objects = true; c };
     let generator = ergosbe::Generator::new(config.clone());
 
     // Generate Bitget

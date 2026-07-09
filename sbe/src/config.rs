@@ -78,6 +78,12 @@ pub struct GenerationConfig {
     /// This avoids duplicate type definitions across schema modules and keeps
     /// the generated code DRY.
     pub shared_module: Option<String>,
+    /// Generate owned domain structs alongside flyweight decoders.
+    ///
+    /// When `true`, each message gets a `MsgDomain` owned struct with
+    /// `From<MsgDecoder>` for easy application-layer use (persist, serialize,
+    /// cross-thread). Default: `false` (zero-cost for HFT-only users).
+    pub domain_objects: bool,
 }
 
 impl GenerationConfig {
@@ -91,6 +97,7 @@ impl GenerationConfig {
             compatibility: CompatibilityMode::Strict,
             checked_accessors: true,
             shared_module: None,
+            domain_objects: false,
         }
     }
 }

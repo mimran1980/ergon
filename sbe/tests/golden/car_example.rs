@@ -1918,6 +1918,114 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
+/// Owned domain object — application-layer counterpart to the flyweight decoder.
+/// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CarFuelFiguresEntryDomain {
+    pub speed: u16,
+    pub mpg: f32,
+    pub usage_description: Vec<u8>,
+}
+impl<'a> From<FuelFiguresEntryDecoder<'a>> for CarFuelFiguresEntryDomain {
+    fn from(dec: FuelFiguresEntryDecoder<'a>) -> Self {
+        Self {
+            speed: dec.speed(),
+            mpg: dec.mpg(),
+            usage_description: dec.usage_description().unwrap_or(&[]).to_vec(),
+        }
+    }
+}
+/// Owned domain object — application-layer counterpart to the flyweight decoder.
+/// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CarPerformanceFiguresEntryAccelerationEntryDomain {
+    pub mph: u16,
+    pub seconds: f32,
+}
+impl<'a> From<PerformanceFiguresAccelerationEntryDecoder<'a>>
+for CarPerformanceFiguresEntryAccelerationEntryDomain {
+    fn from(dec: PerformanceFiguresAccelerationEntryDecoder<'a>) -> Self {
+        Self {
+            mph: dec.mph(),
+            seconds: dec.seconds(),
+        }
+    }
+}
+/// Owned domain object — application-layer counterpart to the flyweight decoder.
+/// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CarPerformanceFiguresEntryDomain {
+    pub octane_rating: u8,
+    pub acceleration: Vec<CarPerformanceFiguresEntryAccelerationEntryDomain>,
+}
+impl<'a> From<PerformanceFiguresEntryDecoder<'a>> for CarPerformanceFiguresEntryDomain {
+    fn from(dec: PerformanceFiguresEntryDecoder<'a>) -> Self {
+        Self {
+            octane_rating: dec.octane_rating(),
+            acceleration: dec
+                .acceleration()
+                .map(|g| {
+                    g
+                        .map(CarPerformanceFiguresEntryAccelerationEntryDomain::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+}
+/// Owned domain object — application-layer counterpart to the flyweight decoder.
+/// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CarDomain {
+    pub serial_number: u64,
+    pub model_year: u16,
+    pub available: BooleanType,
+    pub code: Model,
+    pub some_numbers: [u32; 4],
+    pub vehicle_code: [u8; 6],
+    pub extras: OptionalExtras,
+    pub engine: Engine,
+    pub fuel_figures: Vec<CarFuelFiguresEntryDomain>,
+    pub performance_figures: Vec<CarPerformanceFiguresEntryDomain>,
+    pub manufacturer: Vec<u8>,
+    pub model: Vec<u8>,
+    pub activation_code: Vec<u8>,
+}
+impl<'a> From<CarDecoder<'a>> for CarDomain {
+    fn from(dec: CarDecoder<'a>) -> Self {
+        Self {
+            serial_number: dec.serial_number(),
+            model_year: dec.model_year(),
+            available: dec.available(),
+            code: dec.code(),
+            some_numbers: dec.some_numbers(),
+            vehicle_code: dec.vehicle_code(),
+            extras: dec.extras(),
+            engine: dec.engine_as_struct(),
+            fuel_figures: dec
+                .fuel_figures()
+                .map(|g| {
+                    g
+                        .filter_map(|e| e.ok())
+                        .map(CarFuelFiguresEntryDomain::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            performance_figures: dec
+                .performance_figures()
+                .map(|g| {
+                    g
+                        .filter_map(|e| e.ok())
+                        .map(CarPerformanceFiguresEntryDomain::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            manufacturer: dec.manufacturer().unwrap_or(&[]).to_vec(),
+            model: dec.model().unwrap_or(&[]).to_vec(),
+            activation_code: dec.activation_code().unwrap_or(&[]).to_vec(),
+        }
+    }
+}
 #[must_use = "encoder must be consumed to write the message"]
 pub struct CarEncoder<'a> {
     buf: &'a mut [u8],

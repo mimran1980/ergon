@@ -235,6 +235,7 @@ impl Generator {
                 &ir.header_type,
                 &ir.package,
                 multi,
+                self.config.domain_objects,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
@@ -1849,6 +1850,7 @@ fn generate_message_decoder(
     header_type: &str,
     schema_name: &str,
     multi_message: bool,
+    domain_objects: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -2894,7 +2896,194 @@ fn generate_message_decoder(
 
     // Group decoders don't need the impl to still be open - they're separate impl blocks
 
+    // 15. Domain objects — owned structs with From<Decoder> for application-layer use
+    if domain_objects {
+        ts.extend(generate_domain_objects(
+            msg,
+            elements,
+            &name,
+            &name,
+            multi_message,
+            byte_order,
+        ));
+    }
+
     ts
+}
+
+/// Generate owned domain structs + From<Decoder> impls for a message and all
+/// its group entries. These are application-layer types (Vec, String) that
+/// coexist with the zero-copy flyweight decoders.
+fn generate_domain_objects(
+    msg: &MessageStructure,
+    elements: &SchemaElements,
+    msg_name: &str,
+    _parent_scope: &str,
+    multi_message: bool,
+    _byte_order: ByteOrder,
+) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let mut ts = proc_macro2::TokenStream::new();
+    generate_domain_recursive(
+        msg_name,
+        msg_name,
+        &msg.fields,
+        &msg.groups,
+        &msg.var_data,
+        elements,
+        multi_message,
+        msg_name,
+        &mut ts,
+        span,
+    );
+    ts
+}
+
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
+fn generate_domain_recursive(
+    struct_prefix: &str,
+    decoder_name: &str,
+    fields: &[MessageField],
+    groups: &[MessageGroup],
+    var_data: &[MessageVarData],
+    elements: &SchemaElements,
+    multi_message: bool,
+    msg_name: &str,
+    ts: &mut proc_macro2::TokenStream,
+    span: proc_macro2::Span,
+) {
+    let domain_ident = syn::Ident::new(&format!("{struct_prefix}Domain"), span);
+    let decoder_ident = syn::Ident::new(&format!("{decoder_name}Decoder"), span);
+
+    let mut struct_fields: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut from_exprs: Vec<proc_macro2::TokenStream> = Vec::new();
+
+    // Scalar / array / composite / enum / set fields
+    for f in fields {
+        if f.presence == Presence::Constant {
+            continue;
+        }
+        let f_snake = to_snake_case(&f.name);
+        let f_ident = syn::Ident::new(&f_snake, span);
+        match &f.field_type {
+            FieldType::Primitive(prim, length) => {
+                let r_type_str = rust_type(*prim);
+                let r_type: syn::Type = syn::parse_str(r_type_str).unwrap();
+                if let Some(len) = length {
+                    let len_lit = syn::LitInt::new(&len.to_string(), span);
+                    struct_fields.push(quote::quote! { pub #f_ident: [#r_type; #len_lit] });
+                    from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                } else if f.presence == Presence::Optional {
+                    struct_fields.push(quote::quote! { pub #f_ident: Option<#r_type> });
+                    from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                } else {
+                    struct_fields.push(quote::quote! { pub #f_ident: #r_type });
+                    from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                }
+            }
+            FieldType::Composite {
+                name: comp_name, ..
+            } => {
+                let comp_pascal = to_pascal_case(comp_name);
+                let comp_ident = syn::Ident::new(&comp_pascal, span);
+                let as_struct_ident = syn::Ident::new(&format!("{f_snake}_as_struct"), span);
+                struct_fields.push(quote::quote! { pub #f_ident: #comp_ident });
+                from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
+            }
+            FieldType::Enum {
+                name: enum_name, ..
+            }
+            | FieldType::Set {
+                name: enum_name, ..
+            } => {
+                let type_ident = syn::Ident::new(enum_name, span);
+                struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
+                from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+            }
+        }
+    }
+
+    // Group fields → Vec<EntryDomain>
+    for g in groups {
+        let g_snake = to_snake_case(&g.name);
+        let g_pascal = to_pascal_case(&g.name);
+        let g_field_ident = syn::Ident::new(&g_snake, span);
+        let entry_domain_ident =
+            syn::Ident::new(&format!("{struct_prefix}{g_pascal}EntryDomain"), span);
+
+        let g_scoped = if decoder_name.ends_with("Entry") {
+            // Nested group: prefix with parent group's scoped name
+            let parent_scoped = decoder_name.trim_end_matches("Entry");
+            format!("{parent_scoped}{g_pascal}")
+        } else if multi_message {
+            format!("{msg_name}{g_pascal}")
+        } else {
+            g_pascal.clone()
+        };
+        let g_entry_dec_ident = syn::Ident::new(&format!("{g_scoped}EntryDecoder"), span);
+
+        struct_fields.push(quote::quote! { pub #g_field_ident: Vec<#entry_domain_ident> });
+        // Fixed-entry groups (no tail) yield entries directly;
+        // tailed-entry groups yield Result<EntryDecoder, _>.
+        let has_tail = !g.var_data.is_empty() || !g.groups.is_empty();
+        if has_tail {
+            from_exprs.push(quote::quote! {
+                #g_field_ident: dec.#g_field_ident()
+                    .map(|g| g.filter_map(|e| e.ok()).map(#entry_domain_ident::from).collect())
+                    .unwrap_or_default()
+            });
+        } else {
+            from_exprs.push(quote::quote! {
+                #g_field_ident: dec.#g_field_ident()
+                    .map(|g| g.map(#entry_domain_ident::from).collect())
+                    .unwrap_or_default()
+            });
+        }
+
+        // Recursively generate the entry domain struct
+        let entry_prefix = format!("{struct_prefix}{g_pascal}Entry");
+        let entry_decoder_name = format!("{g_scoped}Entry");
+        generate_domain_recursive(
+            &entry_prefix,
+            &entry_decoder_name,
+            &g.fields,
+            &g.groups,
+            &g.var_data,
+            elements,
+            multi_message,
+            msg_name,
+            ts,
+            span,
+        );
+    }
+
+    // VarData fields → Vec<u8>
+    for vd in var_data {
+        let vd_snake = to_snake_case(&vd.name);
+        let vd_ident = syn::Ident::new(&vd_snake, span);
+        struct_fields.push(quote::quote! { pub #vd_ident: Vec<u8> });
+        from_exprs.push(quote::quote! {
+            #vd_ident: dec.#vd_ident().unwrap_or(&[]).to_vec()
+        });
+    }
+
+    // Generate the struct + From impl
+    ts.extend(quote::quote! {
+        /// Owned domain object — application-layer counterpart to the flyweight decoder.
+        /// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct #domain_ident {
+            #(#struct_fields),*
+        }
+
+        impl<'a> From<#decoder_ident<'a>> for #domain_ident {
+            fn from(dec: #decoder_ident<'a>) -> Self {
+                Self {
+                    #(#from_exprs),*
+                }
+            }
+        }
+    });
 }
 
 fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream {
