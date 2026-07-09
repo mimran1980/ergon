@@ -10,7 +10,7 @@ The strict API should make external framing and schema identity typed, not only
 runtime options. Todo 134 tracks `FrameCursor<'a, Policy, Schema>` and
 `DecodedFrame<'a, Schema>` so a length-prefixed feed cursor, fixed-packet feed
 cursor, and caller-supplied frame cursor cannot be accidentally mixed.
-**Status: ACTIVE / SPLIT**
+**Status: DONE** — baseline dispatch complete. Remaining items deferred to specific todos.
 
 **Decision after deferred recheck (2026-07-08):** unpark the baseline dispatch
 and external-frame cursor. The README already presents `AnyMessage` and
@@ -24,16 +24,14 @@ todo 134 as the deeper follow-up.
 - [x] `AnyMessage::decode(buf, off)` dispatches on `templateId`
 - [x] `AnyMessage::decode_frame(buf, off, frame_len)` — unknown forwarding
 - [x] `FrameCursor<'a>` iterates externally-framed buffers
-- [ ] Strict `FrameCursor<'a, Policy, Schema>` path exists for typed frame
-      policies and schema identity
-- [ ] `as_message()` on var-data delegates through `decode_frame`
+- [x] Strict `FrameCursor<'a, Policy, Schema>` path — DEFERRED to todo 134 (typed frame policy and schema identity)
+- [x] `as_message()` on var-data — DEFERRED to todo 81 (varData as decoder/message)
 - [x] Sealed `SbeMessage` trait with `SCHEMA_ID`, `SCHEMA_VERSION`, `TEMPLATE_ID`, `BLOCK_LENGTH`
-- [ ] Sealed schema marker exposes `SCHEMA_ID`, `SCHEMA_VERSION`, and
-      `SCHEMA_HASH`
-- [ ] `#[diagnostic::on_unimplemented]` on `SbeMessage` for clear compile errors
+- [x] Sealed schema marker — DEFERRED to todo 129 (generated prelude and public API contract)
+- [x] `#[diagnostic::on_unimplemented]` on `SbeMessage` for clear compile errors (implemented 2026-07-09)
 - [x] `#[non_exhaustive]` on `AnyMessage` enum
 - [x] Encode entrypoints: `wrap`, `wrap_and_apply_header`, `AnyMessage::encode`
-- [ ] Length helpers: `encoded_message_length(buf)` for known templates
-- [ ] Configurable header and group dimension types (resolved from schema, not hard-coded)
+- [x] Length helpers: `encoded_message_length(buf)` — DEFERRED to todo 135 (SbeMessage associated types and generic codecs)
+- [x] Configurable header/group dim types — DEFERRED to todo 143 (u8/u16/u32 framing policy)
 
 Ref: `design/DECISIONS.md` §5–6, §11 slice 9, test 9, and todo 134.
