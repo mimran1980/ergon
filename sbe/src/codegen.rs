@@ -2017,7 +2017,11 @@ fn generate_message_decoder(
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                if cfg!(not(feature = "bound-check-disabled")) && pos + #hs > buf.len() {
+                // Always validate: this is the trust boundary. Even with
+                // bound-check-disabled, we must reject buffers too short to
+                // contain a header. The feature flag only skips per-field
+                // checks inside the message body.
+                if pos + #hs > buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "message header",
                         needed: #hs,
@@ -2973,6 +2977,14 @@ fn generate_group_decoder(
 
             #[inline]
             pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {
+                // Trust boundary: always validate dimension header fits in buffer
+                if pos + #dim_size_lit > buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: #g_name_lit,
+                        needed: #dim_size_lit,
+                        available: buf.len().saturating_sub(pos),
+                    });
+                }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(buf, pos);
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
@@ -5029,6 +5041,14 @@ fn generate_any_message(
             impl<'a> AnyMessage<'a> {
                 #[inline]
                 pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+                    // Trust boundary: always validate header fits
+                    if pos + #header_size_lit > buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "message header",
+                            needed: #header_size_lit,
+                            available: buf.len().saturating_sub(pos),
+                        });
+                    }
                     let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(buf, pos);
                     let header = #header_type_ident(header_bytes);
                     let template_id = header.#ti_ident();

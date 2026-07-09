@@ -652,7 +652,7 @@ impl<'a> CarDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        if cfg!(not(feature = "bound-check-disabled")) && pos + 8 > buf.len() {
+        if pos + 8 > buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "message header",
                 needed: 8,
@@ -1216,6 +1216,13 @@ impl<'a> FuelFiguresDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
+        if pos + 4 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "fuelFigures",
+                needed: 4,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
         let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
@@ -1443,6 +1450,13 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
+        if pos + 4 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "performanceFigures",
+                needed: 4,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
         let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
@@ -1672,6 +1686,13 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
+        if pos + 4 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: 4,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
         let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
@@ -2802,6 +2823,13 @@ impl<'a> AnyMessage<'a> {
         pos: usize,
         frame_len: usize,
     ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+        if pos + 8 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "message header",
+                needed: 8,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
         let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
         let template_id = header.template_id();
