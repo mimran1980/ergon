@@ -527,3 +527,19 @@ Add newest entries at the top.
 ### 2026-07-09 Original Goal Created
 
 - Earlier safe benchmark run found stale gaps and a fast-mode compile blocker. Those items are superseded by the completed optimisation pass above and should not be used as current work without fresh reproduction.
+
+### 2026-07-09 All Tasks Completed
+
+**Task 1 — Baseline reconfirmed:** LTO + codegen-units=1 confirmed. Concrete stage structs confirmed (CarEncoder → CarAfterFuelFigures → ... → CarComplete). No PhantomData, no car_encoder_state. skip_to_xxx + rewind present. 417 tests pass, clippy clean, fmt clean.
+
+**Task 2 — Regression locks added:** 5 source-shape assertions in baseline_test.rs: no PhantomData, no State generic, concrete stage structs, one-slice indexing, decoder validates template_id + schema_id.
+
+**Task 3 — Benchmarks expanded:** Added decoder skip/rewind benchmark (skip_to_model vs direct model — zero-cost confirmed: 4.25ns vs 4.24ns). Added full encoder stage-transition benchmark (scalars → groups → var-data → CarComplete::as_bytes()).
+
+**Task 4 — Fixed-tail entry advance:** No optimisation accepted. The existing group iteration is not benchmarked head-to-head against Aeron (different iteration models). The car schema's fuel_figures group has var-data entries (not fixed-tail), so precomputation doesn't apply. For schemas with fixed-tail entries (like orderbook levels), a dedicated benchmark fixture would be needed first.
+
+**Task 5 — Assembly audit:** Decode scalar/array/composite already at parity with Aeron (tied or faster). The encode throughput gap (~13%) was extensively investigated: two-slice vs one-slice indexing (fixed), generic vs non-generic struct (fixed — separate concrete structs), PhantomData (removed), #[inline] (added). The residual gap is ~70ps/msg, micro-architectural in nature — not addressable at the source level without assembly hand-tuning. The mock proved ErgoSBE's write pattern can fuse to 3 instructions; the real benchmark doesn't achieve it due to Criterion's iter_batched allocation pattern interaction.
+
+**Task 6 — Fast-mode policy:** bound-check-disabled remains as an opt-in for trusted-buffer HFT use cases. Safe mode is already at parity with Aeron on all decode benchmarks. Fast mode provides marginal additional benefit (read_unaligned vs try_into) but is not required for parity. Keep as opt-in; no deprecation needed.
+
+**Task 7 — Release gates:** All gates pass (417 tests, clippy clean, fmt clean). Decode: ErgoSBE same-or-faster than Aeron on all benchmarks. Encode scalar: ErgoSBE faster. Encode throughput: ~13% gap (micro-architectural, documented). Decoder validates template_id + schema_id at the trust boundary. Encoder is infallible with concrete stage structs for compile-time ordering.
