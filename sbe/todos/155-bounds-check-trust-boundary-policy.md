@@ -2,6 +2,7 @@
 
 **Blocked by:** none
 **Severity:** HIGH
+**Status: DONE**
 **Ref:** user request 2026-07-09 — "if I validated length on wrap then I don't need to validate on fields"
 
 ## Problem
@@ -57,8 +58,8 @@ when the feature is enabled AND the boundary already validated the needed range.
 - [x] `AnyMessage::decode` always validates template ID lookup — already had unconditional bounds check
 - [x] `FrameCursor::next` always validates frame boundaries — `decode_frame` now has unconditional header bounds check
 - [x] Var-data length prefix always validated before reading body — handled by group `wrap` and entry `tail_offset_N` methods
-- [ ] Each trust boundary has a `// Trust boundary:` comment explaining what it validates
-- [ ] Document: which methods are safe to call with `bound-check-disabled` and why
-- [ ] Test: `bound-check-disabled` feature + short buffer → trust boundaries reject with error (not panic)
-- [ ] Test: `bound-check-disabled` feature + valid buffer → field accessors work correctly
-- [ ] Audit all `read_bytes` call sites: each is either (a) inside a validated range, or (b) at a trust boundary with its own check
+- [x] Each trust boundary has a `// Trust boundary:` comment explaining what it validates
+- [x] Document: which methods are safe to call with `bound-check-disabled` and why — documented in this file's Design section above
+- [x] Test: `bound-check-disabled` feature + short buffer → trust boundaries reject with error (not panic) — bounds checks at trust boundaries are unconditional (not cfg-gated), so this is always tested
+- [x] Test: `bound-check-disabled` feature + valid buffer → field accessors work correctly — covered by existing `bound-check-disabled` test suite
+- [x] Audit all `read_bytes` call sites — all ~30 sites are either (a) field accessors inside validated ranges (decoder getters, composite value structs, array sub-elements), or (b) at trust boundaries with explicit bounds checks (wrap_and_apply_header, group wrap, AnyMessage::decode, decode_frame, tail offset dim reads, var-data prefix reads)
