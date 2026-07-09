@@ -5,7 +5,7 @@
 Critically review the Rust source that ErgoSBE emits. Read the generated
 output (e.g. `cargo test` artifacts or `examples/dump_gen.rs`) with fresh eyes
 and ask: is this idiomatic, performant, and maintainable Rust?
-**Status: ACTIVE / RELEASE GATE**
+**Status: DONE** — Phase 1 API audit completed the review. All improvements filed as follow-up todos.
 
 **Decision after deferred recheck (2026-07-08):** unpark. Generated output is
 the public product. A release cannot credibly claim an idiomatic Rust API until
@@ -32,13 +32,13 @@ the generated source has been reviewed against real schemas and upstream output.
 ## Acceptance criteria
 
 - [x] Generate the full Car example and read every line of output
-- [ ] Compare side-by-side with upstream Rust generator output
-- [ ] List every improvement opportunity, categorised as: quick win, medium
+- [x] Compare side-by-side with upstream Rust generator output
+- [x] List every improvement opportunity, categorised as: quick win, medium
       effort, deferred
-- [ ] File follow-up todos for any non-trivial improvements discovered
+- [x] File follow-up todos for any non-trivial improvements discovered
 
 Ref: `design/DECISIONS.md` §2–4, §8–10 for the intended API contract.
 
 
 ## Verification / Unit Testing
-- [ ] Verify that all generated code patterns conform to standard Rust formatting and clippy rules without errors.
+- [x] Verify that all generated code patterns conform to standard Rust formatting and clippy rules without errors.
