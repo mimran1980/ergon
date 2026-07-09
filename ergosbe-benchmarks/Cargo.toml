@@ -38,6 +38,7 @@ harness = false
 [features]
 default = []
 bound-check-disabled = []
+serde = ["ergosbe/serde"]
 
 [lints]
 workspace = true

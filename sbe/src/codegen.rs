@@ -2933,6 +2933,7 @@ fn generate_domain_objects(
         elements,
         multi_message,
         msg_name,
+        false, // is_entry — this is a message, not a group entry
         &mut ts,
         span,
     );
@@ -2949,6 +2950,7 @@ fn generate_domain_recursive(
     elements: &SchemaElements,
     multi_message: bool,
     msg_name: &str,
+    is_entry: bool,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
 ) {
@@ -2997,7 +2999,9 @@ fn generate_domain_recursive(
                 name: enum_name, ..
             } => {
                 let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
-                if f.presence == Presence::Optional || f.since_version > 0 {
+                // Message-level sinceVersion > 0 enums return Option<T>.
+                // Group entries and optional enums always return T.
+                if !is_entry && f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
@@ -3056,6 +3060,7 @@ fn generate_domain_recursive(
             elements,
             multi_message,
             msg_name,
+            true, // is_entry — group entries always return T for enums
             ts,
             span,
         );
@@ -3074,8 +3079,9 @@ fn generate_domain_recursive(
     // Generate the struct + From impl
     ts.extend(quote::quote! {
         /// Owned domain object — application-layer counterpart to the flyweight decoder.
-        /// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+        /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
         #[derive(Debug, Clone, PartialEq)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct #domain_ident {
             #(#struct_fields),*
         }

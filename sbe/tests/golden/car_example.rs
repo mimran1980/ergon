@@ -1919,8 +1919,9 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
-/// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+/// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarFuelFiguresEntryDomain {
     pub speed: u16,
     pub mpg: f32,
@@ -1936,8 +1937,9 @@ impl<'a> From<FuelFiguresEntryDecoder<'a>> for CarFuelFiguresEntryDomain {
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
-/// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+/// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarPerformanceFiguresEntryAccelerationEntryDomain {
     pub mph: u16,
     pub seconds: f32,
@@ -1952,8 +1954,9 @@ for CarPerformanceFiguresEntryAccelerationEntryDomain {
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
-/// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+/// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarPerformanceFiguresEntryDomain {
     pub octane_rating: u8,
     pub acceleration: Vec<CarPerformanceFiguresEntryAccelerationEntryDomain>,
@@ -1974,8 +1977,9 @@ impl<'a> From<PerformanceFiguresEntryDecoder<'a>> for CarPerformanceFiguresEntry
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
-/// Use `CarDomain::from(decoder)` or `decoder.into()` to convert.
+/// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarDomain {
     pub serial_number: u64,
     pub model_year: u16,

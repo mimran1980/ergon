@@ -27,6 +27,7 @@ fn main() {
 
     // Generate Rust source files
     let mut config = ergosbe::GenerationConfig::new("bitget_spot");
+    config.domain_objects = true;
     let generator = ergosbe::Generator::new(config.clone());
 
     // Generate Bitget
