@@ -2620,6 +2620,66 @@ fn generate_message_decoder(
         vd_idx += 1;
     }
 
+    // 9b. skip_to_<field>() convenience methods + rewind()
+    // The decoder is a stateless flyweight — each accessor already computes
+    // the correct tail offset (skipping intermediate groups internally).
+    // skip_to_<field>() methods are explicit aliases that make the intent
+    // clear: "I want to jump to this field without reading intermediate ones."
+    // rewind() returns Self since the flyweight doesn't mutate on access.
+    if total_tail > 0 {
+        // Generate skip_to for each tail field
+        let mut skip_idx = 0;
+        for g in &msg.groups {
+            let g_snake = to_snake_case(&g.name);
+            let skip_ident = syn::Ident::new(
+                &format!("skip_to_{g_snake}"),
+                proc_macro2::Span::call_site(),
+            );
+            let accessor_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
+            let g_decoder_name = if multi_message {
+                format!("{}{}", &name, to_pascal_case(&g.name))
+            } else {
+                to_pascal_case(&g.name)
+            };
+            let g_decoder_ident = syn::Ident::new(
+                &format!("{g_decoder_name}Decoder"),
+                proc_macro2::Span::call_site(),
+            );
+            impl_body.extend(quote::quote! {
+                #[inline]
+                pub fn #skip_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+                    self.#accessor_ident()
+                }
+            });
+            skip_idx += 1;
+        }
+        for vd in &msg.var_data {
+            let vd_snake = to_snake_case(&vd.name);
+            let skip_ident = syn::Ident::new(
+                &format!("skip_to_{vd_snake}"),
+                proc_macro2::Span::call_site(),
+            );
+            let accessor_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
+            impl_body.extend(quote::quote! {
+                #[inline]
+                pub fn #skip_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    self.#accessor_ident()
+                }
+            });
+        }
+
+        // rewind(): return a fresh decoder at the same position (decoder is Copy)
+        impl_body.extend(quote::quote! {
+            /// Return a fresh copy of this decoder at the initial body position.
+            /// The decoder is a stateless flyweight (Copy), so rewind is a no-op
+            /// — it exists for API symmetry with cursor-based decoders.
+            #[inline]
+            pub fn rewind(&self) -> Self {
+                *self
+            }
+        });
+    }
+
     // 10. encoded_length, encoded_length_with_header, as_bytes
     let total_tail_ident: syn::Ident = syn::Ident::new(
         &format!("tail_offset_{}", total_tail),
@@ -4070,18 +4130,9 @@ fn generate_message_encoder(
         }
     }
 
-    // encoded_length methods + partial as_bytes (available at ALL stages)
+    // Partial as_bytes for scalar-only inspection (available at ALL stages).
+    // encoded_length / encoded_length_with_header are ONLY on the Complete struct.
     impl_contents.extend(quote::quote! {
-        #[inline]
-        pub fn encoded_length(&self) -> usize {
-            self.pos - (self.message_start + #header_size_lit)
-        }
-
-        #[inline]
-        pub fn encoded_length_with_header(&self) -> usize {
-            self.pos - self.message_start
-        }
-
         /// Return the encoded bytes written so far (partial — available before
         /// the tail is complete, for scalar-only inspection).
         #[inline]

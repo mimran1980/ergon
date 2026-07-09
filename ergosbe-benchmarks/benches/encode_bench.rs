@@ -208,7 +208,7 @@ fn bench_encode_scalar_only(c: &mut Criterion) {
                 car.extras(extras);
             }
             car.engine(Engine::new(2000, 4, [49, 0, 0]));
-            black_box(car.encoded_length());
+            black_box(car.as_bytes().len());
         });
     });
     group.finish();

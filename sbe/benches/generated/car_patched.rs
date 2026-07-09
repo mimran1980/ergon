@@ -950,6 +950,37 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
+    pub fn skip_to_fuel_figures(
+        &self,
+    ) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
+        self.fuel_figures()
+    }
+    #[inline]
+    pub fn skip_to_performance_figures(
+        &self,
+    ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
+        self.performance_figures()
+    }
+    #[inline]
+    pub fn skip_to_manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.manufacturer()
+    }
+    #[inline]
+    pub fn skip_to_model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.model()
+    }
+    #[inline]
+    pub fn skip_to_activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.activation_code()
+    }
+    /// Return a fresh copy of this decoder at the initial body position.
+    /// The decoder is a stateless flyweight (Copy), so rewind is a no-op
+    /// — it exists for API symmetry with cursor-based decoders.
+    #[inline]
+    pub fn rewind(&self) -> Self {
+        *self
+    }
+    #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
         Ok(end - self.pos)
@@ -1988,14 +2019,6 @@ impl<'a> CarEncoder<'a> {
         let offset = 43;
         self.buf[offset..offset + 6].copy_from_slice(&val.0);
         self
-    }
-    #[inline]
-    pub fn encoded_length(&self) -> usize {
-        self.pos - (self.message_start + 8)
-    }
-    #[inline]
-    pub fn encoded_length_with_header(&self) -> usize {
-        self.pos - self.message_start
     }
     /// Return the encoded bytes written so far (partial — available before
     /// the tail is complete, for scalar-only inspection).
