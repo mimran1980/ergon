@@ -117,26 +117,26 @@ consistency and emits the newtype + conversions + Display.
 
 ## Acceptance criteria
 
-- [ ] Parse `semanticType` attribute from XML into the Token IR
-- [ ] IR validation: same semantic type → same primitive type across the schema
-- [ ] Built-in registry: Price, Qty, UTCTimestamp, LocalMktDate, SecurityID,
+- [x] Parse `semanticType` attribute from XML into the Token IR
+- [x] IR validation: same semantic type → same primitive type across the schema
+- [x] Built-in registry: Price, Qty, UTCTimestamp, LocalMktDate, SecurityID,
       StringEnum, BooleanFlag, Percentage
-- [ ] `semantic-newtypes` feature flag: off → raw primitives (current behaviour);
+- [x] `semantic-newtypes` feature flag: off → raw primitives (current behaviour);
       on → newtype wrappers on field accessors
-- [ ] Optional type-level scale/currency/unit markers for Price, Qty,
+- [x] Optional type-level scale/currency/unit markers for Price, Qty,
       Percentage, and timestamp-like semantic types
-- [ ] Generator emits readable aliases for concrete schema fields, not only
+- [x] Generator emits readable aliases for concrete schema fields, not only
       generic wrapper names
-- [ ] Newtypes are `#[repr(transparent)]` with `raw()`, `From`/`Into`, `Debug`, `Clone`, `Copy`
-- [ ] Display impl per semantic type (Price → `$123.45`, UTCTimestamp → ISO 8601)
-- [ ] Validation constructor (`new() -> Result`) for types with business rules
-- [ ] User-extensible registry via `with_semantic_type()` in config
-- [ ] Cross-schema consistency: mismatched wire types for same semantic type → warning
-- [ ] Cross-schema consistency: same semantic type with incompatible scale,
+- [x] Newtypes are `#[repr(transparent)]` with `raw()`, `From`/`Into`, `Debug`, `Clone`, `Copy`
+- [x] Display impl per semantic type (Price → `$123.45`, UTCTimestamp → ISO 8601)
+- [x] Validation constructor (`new() -> Result`) for types with business rules
+- [x] User-extensible registry via `with_semantic_type()` in config
+- [x] Cross-schema consistency: mismatched wire types for same semantic type → warning
+- [x] Cross-schema consistency: same semantic type with incompatible scale,
       currency, or unit emits a warning or error according to configured policy
-- [ ] Field accessor rustdoc includes semantic type: `/// Price (semantic type: Price)`
-- [ ] Test: Car schema with `semanticType` annotations → Price/Qty/StringEnum newtypes generated
-- [ ] Test: passing a Qty to a Price parameter → compile error (type safety proven)
-- [ ] Test: passing `Price<4, Usd>` where `Price<0, Jpy>` is expected fails to compile
+- [x] Field accessor rustdoc includes semantic type: `/// Price (semantic type: Price)`
+- [x] Test: Car schema with `semanticType` annotations → Price/Qty/StringEnum newtypes generated
+- [x] Test: passing a Qty to a Price parameter → compile error (type safety proven)
+- [x] Test: passing `Price<4, Usd>` where `Price<0, Jpy>` is expected fails to compile
 
 Ref: `design/DECISIONS.md` §4 semantic newtypes. SBE XML spec `semanticType` attribute.

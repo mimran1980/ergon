@@ -62,15 +62,15 @@ messages.
 
 ## Acceptance criteria
 
-- [ ] `all-types-le-schema.xml` and `all-types-be-schema.xml` fixtures created
-- [ ] ErgoSBE generates code from both schemas
-- [ ] Aeron Rust code generated from both schemas for comparison
-- [ ] Existing ErgoSBE LE/BE roundtrip tests remain green
-- [ ] Byte-exact parity: ErgoSBE big-endian output == Aeron Rust big-endian output
-- [ ] Roundtrip test: all types encode → decode correctly in both endiannesses
-- [ ] Composite field ordering correct in big-endian
-- [ ] Enum/set byte order correct in big-endian
-- [ ] VarData length prefix byte order correct in big-endian
-- [ ] Group dimension header byte order correct in big-endian
-- [ ] Array elements byte order correct in big-endian
-- [ ] Golden file stability test passes
+- [x] `all-types-le-schema.xml` and `all-types-be-schema.xml` fixtures created
+- [x] ErgoSBE generates code from both schemas
+- [x] Aeron Rust code generated from both schemas for comparison
+- [x] Existing ErgoSBE LE/BE roundtrip tests remain green
+- [x] Byte-exact parity: ErgoSBE big-endian output == Aeron Rust big-endian output
+- [x] Roundtrip test: all types encode → decode correctly in both endiannesses
+- [x] Composite field ordering correct in big-endian
+- [x] Enum/set byte order correct in big-endian
+- [x] VarData length prefix byte order correct in big-endian
+- [x] Group dimension header byte order correct in big-endian
+- [x] Array elements byte order correct in big-endian
+- [x] Golden file stability test passes

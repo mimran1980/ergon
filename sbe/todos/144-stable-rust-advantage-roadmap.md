@@ -56,14 +56,14 @@ SIMD, and generic-const-expr designs are out of scope.
 
 ## Acceptance criteria
 
-- [ ] Every stable Rust idea has a P0/P1/P2 classification.
-- [ ] Every P0 item has a focused todo with runtime tests and release gates.
-- [ ] Every type-level safety claim has a compile-fail test before it is
+- [x] Every stable Rust idea has a P0/P1/P2 classification.
+- [x] Every P0 item has a focused todo with runtime tests and release gates.
+- [x] Every type-level safety claim has a compile-fail test before it is
       documented as shipped.
-- [ ] Every performance claim has an Aeron head-to-head benchmark before it is
+- [x] Every performance claim has an Aeron head-to-head benchmark before it is
       documented as shipped.
-- [ ] README and guide docs distinguish implemented capabilities from roadmap
+- [x] README and guide docs distinguish implemented capabilities from roadmap
       ideas.
-- [ ] No roadmap item requires nightly Rust or unstable language features.
-- [ ] Older todos that conflict with this roadmap are updated or marked
+- [x] No roadmap item requires nightly Rust or unstable language features.
+- [x] Older todos that conflict with this roadmap are updated or marked
       superseded in todo 154.

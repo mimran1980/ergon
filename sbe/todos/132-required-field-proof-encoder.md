@@ -35,22 +35,22 @@ allocation-free.
 
 ## Acceptance criteria
 
-- [ ] Default fixed-field setters remain order-free and write to schema offsets
-- [ ] Strict encoder/proxy path proves all required fixed fields are set before
+- [x] Default fixed-field setters remain order-free and write to schema offsets
+- [x] Strict encoder/proxy path proves all required fixed fields are set before
       exposing `finish()`, `as_bytes()`, `AsRef<[u8]>`, or writer publish
-- [ ] Optional fields can still be omitted because `wrap_and_apply_header`
+- [x] Optional fields can still be omitted because `wrap_and_apply_header`
       nullifies them
-- [ ] Required constant fields are not user-settable and do not count as missing
-- [ ] Required `sinceVersion > 0` fields follow the current-version encoder
+- [x] Required constant fields are not user-settable and do not count as missing
+- [x] Required `sinceVersion > 0` fields follow the current-version encoder
       policy and are required for newly emitted messages
-- [ ] Tail groups/var-data continue to use by-value type-state ordering
-- [ ] No generated API creates one type-state transition per fixed scalar on
+- [x] Tail groups/var-data continue to use by-value type-state ordering
+- [x] No generated API creates one type-state transition per fixed scalar on
       wide messages
-- [ ] Compile-fail test proves strict publish fails when a required field proof
+- [x] Compile-fail test proves strict publish fails when a required field proof
       is missing
-- [ ] Runtime test proves strict encoder bytes match the existing byte-exact
+- [x] Runtime test proves strict encoder bytes match the existing byte-exact
       fixture
-- [ ] Benchmark proves strict proof overhead is zero or noise-level after
+- [x] Benchmark proves strict proof overhead is zero or noise-level after
       monomorphisation
 
 Ref: `design/DECISIONS.md` §2 and trap 15; todo 102 proxy generation.

@@ -26,13 +26,13 @@ buffers without allocation.
 
 ## Acceptance criteria
 
-- [ ] Encoder setup copies schema-fixed header bytes from a static template.
-- [ ] Group dimension writing uses a static block-length template plus runtime
+- [x] Encoder setup copies schema-fixed header bytes from a static template.
+- [x] Group dimension writing uses a static block-length template plus runtime
       count write.
-- [ ] Fixed-size messages expose exact encoded length constants.
-- [ ] Variable-length messages expose maximum bounds only when the schema gives
+- [x] Fixed-size messages expose exact encoded length constants.
+- [x] Variable-length messages expose maximum bounds only when the schema gives
       enough maximum information.
-- [ ] Tests prove template bytes match field-by-field expected header/dimension
+- [x] Tests prove template bytes match field-by-field expected header/dimension
       bytes.
-- [ ] Benchmarks compare template encode setup against current field-by-field
+- [x] Benchmarks compare template encode setup against current field-by-field
       writes and Aeron-generated encoders.

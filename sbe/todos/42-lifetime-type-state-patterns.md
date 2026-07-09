@@ -48,10 +48,10 @@ impl<'a> Encoder<'a, 2> {
 Compile-time guarantee: `.complete()` only exists on the terminal state.
 `Encoder<1>::complete()` is a compile error. No phantom types to name.
 
-- [ ] Replace phantom state types with `const N: usize` pattern
-- [ ] Terminal state implements `AsRef<[u8]>`, `as_bytes()`, `len()`
-- [ ] Each transition is documented: "Returns Encoder<1>. Call add_asks() next."
-- [ ] No runtime cost — const generic is zero-sized
+- [x] Replace phantom state types with `const N: usize` pattern
+- [x] Terminal state implements `AsRef<[u8]>`, `as_bytes()`, `len()`
+- [x] Each transition is documented: "Returns Encoder<1>. Call add_asks() next."
+- [x] No runtime cost — const generic is zero-sized
 
 ### 2. Lifetime-proof encoder — buffer borrow released on complete
 
@@ -66,9 +66,9 @@ let bytes: &[u8] = {
 buf[0] = 0;
 ```
 
-- [ ] Encoder is consumed (by-value) at each step — no lingering borrows
-- [ ] `complete()` returns `&'a [u8]` borrowing the buffer for the written region
-- [ ] Doc: lifetime diagram showing borrow start/end
+- [x] Encoder is consumed (by-value) at each step — no lingering borrows
+- [x] `complete()` returns `&'a [u8]` borrowing the buffer for the written region
+- [x] Doc: lifetime diagram showing borrow start/end
 
 ### 3. `type Decoder<'a>` on SbeMessage for generic dispatch
 
@@ -86,10 +86,10 @@ fn handle_message<M: SbeMessage>(buf: &[u8]) -> Result<(), DecodeError> {
 }
 ```
 
-- [ ] `type Decoder<'a>` associated type on `SbeMessage`
-- [ ] `TryFrom<&'a [u8]>` impl on every decoder (already tracked in 01)
-- [ ] Generic code can name the decoder without knowing the concrete type
-- [ ] Works alongside `AnyMessage` enum — not a replacement, an addition
+- [x] `type Decoder<'a>` associated type on `SbeMessage`
+- [x] `TryFrom<&'a [u8]>` impl on every decoder (already tracked in 01)
+- [x] Generic code can name the decoder without knowing the concrete type
+- [x] Works alongside `AnyMessage` enum — not a replacement, an addition
 
 Tracked in detail by todo 135.
 
@@ -110,10 +110,10 @@ for entry in car.bids()? {   // returns impl Iterator
 }
 ```
 
-- [ ] All group accessors return `impl Iterator<Item = ...>` instead of named types
-- [ ] `ExactSizeIterator` + `DoubleEndedIterator` bounds on the `impl` return
-- [ ] Generated iterator structs are `#[doc(hidden)]` — internal detail
-- [ ] Same for var-data decoders if they produce iterators
+- [x] All group accessors return `impl Iterator<Item = ...>` instead of named types
+- [x] `ExactSizeIterator` + `DoubleEndedIterator` bounds on the `impl` return
+- [x] Generated iterator structs are `#[doc(hidden)]` — internal detail
+- [x] Same for var-data decoders if they produce iterators
 
 ### 5. HRTB for encode closures
 
@@ -127,8 +127,8 @@ The `for<'b>` (Higher-Ranked Trait Bound) means the closure works for ANY borrow
 lifetime, not just the one inferred at the call site. This prevents lifetime
 errors when the closure captures local variables.
 
-- [ ] `for<'a>` on all closure-based encode methods
-- [ ] Test: closure captures a local `String` → compiles (without HRTB it may not)
+- [x] `for<'a>` on all closure-based encode methods
+- [x] Test: closure captures a local `String` → compiles (without HRTB it may not)
 
 ## P1 — implement when basics are stable
 
@@ -149,13 +149,13 @@ This is the decoder-side version of the encoder tail type-state. It is safe by
 the parser: the XML order is validated once, and the generated API exposes only
 the valid next transition.
 
-- [ ] Type-state tail cursor generated for messages with groups/var-data
-- [ ] Entry-level tail cursor generated for group entries with nested groups or
+- [x] Type-state tail cursor generated for messages with groups/var-data
+- [x] Entry-level tail cursor generated for group entries with nested groups or
       var-data
-- [ ] Out-of-order tail reads fail to compile
-- [ ] Ordered cursor provides final offset without rescanning earlier tail
+- [x] Out-of-order tail reads fail to compile
+- [x] Ordered cursor provides final offset without rescanning earlier tail
       elements
-- [ ] Existing random-access convenience accessors remain available
+- [x] Existing random-access convenience accessors remain available
 
 ### 7. Session-type encode: compile-time field ordering
 
@@ -173,9 +173,9 @@ encoder.add_bids(...)   // returns Encoder<1>, ONLY .add_asks() available
 // Encoder<0>.complete() → compile error (groups not written yet)
 ```
 
-- [ ] Each sequential element appears as a method only on the correct state
-- [ ] Rustdoc on each method: "Writes the bids group. Returns Encoder<1>."
-- [ ] Messages with no tail skip type-state entirely (fluent `&mut self` only)
+- [x] Each sequential element appears as a method only on the correct state
+- [x] Rustdoc on each method: "Writes the bids group. Returns Encoder<1>."
+- [x] Messages with no tail skip type-state entirely (fluent `&mut self` only)
 
 ### 8. GAT-based lending group iterator (deferred)
 
@@ -194,9 +194,9 @@ so setter order does not matter. Instead, strict builders/proxies should prove
 required fixed-field completeness at the publish boundary while leaving scalar
 setters order-free.
 
-- [ ] Strict publish capability exists only after required fixed fields are proven
-- [ ] Optional fields remain nullable-by-default through nullify-on-wrap
-- [ ] Wide messages do not generate one state type per fixed scalar
+- [x] Strict publish capability exists only after required fixed fields are proven
+- [x] Optional fields remain nullable-by-default through nullify-on-wrap
+- [x] Wide messages do not generate one state type per fixed scalar
 
 Tracked in detail by todo 132.
 
@@ -211,8 +211,8 @@ where
     F: for<'a> FnMut(DecodedFrame<'a, MySchema>) -> Result<(), DecodeError>;
 ```
 
-- [ ] Callback can read and copy values from the frame
-- [ ] Callback cannot store borrowed decoder views in long-lived state
+- [x] Callback can read and copy values from the frame
+- [x] Callback cannot store borrowed decoder views in long-lived state
 
 Tracked in detail by todo 133.
 
@@ -221,27 +221,27 @@ Tracked in detail by todo 133.
 Every compile-time guarantee above needs a negative test. Do not claim "safe by
 parse" or "safe by type-state" based only on runtime unit tests.
 
-- [ ] Out-of-order tail read fails to compile
-- [ ] Missing required-field proof fails to publish
-- [ ] Scoped callback cannot leak a decoder view
-- [ ] Forged verified mode fails to compile
+- [x] Out-of-order tail read fails to compile
+- [x] Missing required-field proof fails to publish
+- [x] Scoped callback cannot leak a decoder view
+- [x] Forged verified mode fails to compile
 
 Tracked in detail by todo 137.
 
 ## Acceptance criteria
 
-- [ ] Const-generic type-state replaces phantom types on encoders
-- [ ] `.complete()` consumes the encoder; buffer borrow released
-- [ ] `type Decoder<'a>` on `SbeMessage` trait
-- [ ] Group accessors return `impl Iterator + ExactSizeIterator`
-- [ ] HRTB `for<'a>` on encode closures
-- [ ] Compile-time field ordering enforced by type-state
-- [ ] Compile-time tail read ordering enforced by decoder `TailCursor`
-- [ ] Required fixed-field completeness has a proof path without per-scalar
+- [x] Const-generic type-state replaces phantom types on encoders
+- [x] `.complete()` consumes the encoder; buffer borrow released
+- [x] `type Decoder<'a>` on `SbeMessage` trait
+- [x] Group accessors return `impl Iterator + ExactSizeIterator`
+- [x] HRTB `for<'a>` on encode closures
+- [x] Compile-time field ordering enforced by type-state
+- [x] Compile-time tail read ordering enforced by decoder `TailCursor`
+- [x] Required fixed-field completeness has a proof path without per-scalar
       state explosion
-- [ ] Scoped callback APIs prevent borrowed decoded views from escaping a frame
-- [ ] Compile-fail proof suite covers the type-state/lifetime boundaries
-- [ ] All existing tests pass, no wire format change
+- [x] Scoped callback APIs prevent borrowed decoded views from escaping a frame
+- [x] Compile-fail proof suite covers the type-state/lifetime boundaries
+- [x] All existing tests pass, no wire format change
 
 Ref: `design/DECISIONS.md` §2 (encoder), §5 (SbeMessage trait), §6 (dispatch).
 Rust features: const generics, GATs, HRTBs, `impl Trait` in return position,

@@ -14,14 +14,14 @@ need this escape hatch can write
 
 ## Acceptance criteria
 
-- [ ] `unsafe fn {field}_as_str_unchecked(&self) -> &'a str` generated for var-data with `characterEncoding`
-- [ ] Uses `core::str::from_utf8_unchecked()` internally — zero-cost
-- [ ] Safety contract documented in rustdoc: caller must ensure bytes are valid UTF-8
-- [ ] Distinct from `_unchecked()` bounds-checking methods (different escape hatch)
-- [ ] Test: valid UTF-8 → correct string
-- [ ] Test: compile-time check that it requires `unsafe` block
-- [ ] Golden file updated
-- [ ] Benchmark comparing `as_str()` vs `as_str_unchecked()` latency
+- [x] `unsafe fn {field}_as_str_unchecked(&self) -> &'a str` generated for var-data with `characterEncoding`
+- [x] Uses `core::str::from_utf8_unchecked()` internally — zero-cost
+- [x] Safety contract documented in rustdoc: caller must ensure bytes are valid UTF-8
+- [x] Distinct from `_unchecked()` bounds-checking methods (different escape hatch)
+- [x] Test: valid UTF-8 → correct string
+- [x] Test: compile-time check that it requires `unsafe` block
+- [x] Golden file updated
+- [x] Benchmark comparing `as_str()` vs `as_str_unchecked()` latency
 
 ## Dependencies
 

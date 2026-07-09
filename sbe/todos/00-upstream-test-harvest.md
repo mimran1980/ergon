@@ -62,13 +62,13 @@ Track the focused parser work in:
 - [x] Review upstream IR design (`Ir.java`, `Token.java`, `Signal.java`) for
       gaps against ErgoSBE's IR
 - [x] Document any upstream behaviours we deliberately diverge from
-- [ ] Port Aeron's XML parser behaviour tests from `sbe-tool/src/test/java/uk/co/real_logic/sbe/xml/`
+- [x] Port Aeron's XML parser behaviour tests from `sbe-tool/src/test/java/uk/co/real_logic/sbe/xml/`
       as ErgoSBE semantic parser tests, especially `EncodedDataTypeTest`,
       `EnumTypeTest`, `SetTypeTest`, `CompositeTypeTest`, `OffsetFileTest`,
       `ErrorHandlerTest`, `RelativeXIncludeTest`, and `GroupWithDataTest`
-- [ ] Every semantic parser divergence from Aeron is either fixed or documented
+- [x] Every semantic parser divergence from Aeron is either fixed or documented
       as a deliberate departure with a passing test
-- [ ] Error text does not need to copy Aeron; miette diagnostics should be
+- [x] Error text does not need to copy Aeron; miette diagnostics should be
       better than Aeron's plain Java error strings while preserving the same
       semantic pass/fail decisions
 

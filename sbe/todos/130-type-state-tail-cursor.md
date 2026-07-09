@@ -85,19 +85,19 @@ entry requires finishing or explicitly skipping the current entry tail.
 
 ## Acceptance criteria
 
-- [ ] Messages with no groups/var-data do not emit tail cursor types
-- [ ] Messages with tail elements emit `tail_cursor() -> Result<Tail<FirstState>, DecodeError>`
-- [ ] Each group/var-data method exists only on the correct state and consumes
+- [x] Messages with no groups/var-data do not emit tail cursor types
+- [x] Messages with tail elements emit `tail_cursor() -> Result<Tail<FirstState>, DecodeError>`
+- [x] Each group/var-data method exists only on the correct state and consumes
       the current state
-- [ ] Terminal state exposes `end_offset()` / `encoded_length()` without rescanning
-- [ ] Nested group entries have an ordered tail API that prevents advancing to
+- [x] Terminal state exposes `end_offset()` / `encoded_length()` without rescanning
+- [x] Nested group entries have an ordered tail API that prevents advancing to
       the next entry before the current entry tail is completed or skipped
-- [ ] Compile-fail test proves out-of-order tail reads do not compile
-- [ ] Runtime test proves ordered cursor offsets match existing convenience
+- [x] Compile-fail test proves out-of-order tail reads do not compile
+- [x] Runtime test proves ordered cursor offsets match existing convenience
       accessors on baseline and extension fixtures
-- [ ] Benchmark proves ordered cursor traversal does not regress versus current
+- [x] Benchmark proves ordered cursor traversal does not regress versus current
       convenience accessors and is faster for repeated group/var-data traversal
-- [ ] Rustdoc shows the legal method sequence for each generated tail cursor
+- [x] Rustdoc shows the legal method sequence for each generated tail cursor
 
 Ref: DECISIONS.md decoder section, todo 42 type-state patterns, todo 109 group
 lazy tail scanning, todo 131 verified decoder mode, and SBE's ordered

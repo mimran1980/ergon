@@ -28,16 +28,16 @@ tail order matters on the wire.
 
 ## Acceptance criteria
 
-- [ ] Default scalar setters remain order-free and write fixed offsets.
-- [ ] Strict publish capability is unavailable until required fields are proven
+- [x] Default scalar setters remain order-free and write fixed offsets.
+- [x] Strict publish capability is unavailable until required fields are proven
       present.
-- [ ] Optional fields remain safely omitted because wrap nullifies them.
-- [ ] Required constant fields are not user-settable and do not count as
+- [x] Optional fields remain safely omitted because wrap nullifies them.
+- [x] Required constant fields are not user-settable and do not count as
       missing.
-- [ ] Wide messages do not generate one state type per scalar.
-- [ ] Compile-fail test proves strict publish fails without the required-field
+- [x] Wide messages do not generate one state type per scalar.
+- [x] Compile-fail test proves strict publish fails without the required-field
       proof.
-- [ ] Runtime test proves strict encoder bytes match existing byte-exact
+- [x] Runtime test proves strict encoder bytes match existing byte-exact
       fixtures.
-- [ ] Benchmark proves strict proof overhead is zero or noise-level after
+- [x] Benchmark proves strict proof overhead is zero or noise-level after
       monomorphisation.

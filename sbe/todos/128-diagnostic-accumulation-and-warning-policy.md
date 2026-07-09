@@ -53,16 +53,16 @@ schema order so authors can fix top-to-bottom.
 
 ## Acceptance criteria
 
-- [ ] `CheckOptions` supports `warnings_as_errors` and `max_diagnostics`
-- [ ] `SchemaCheckReport` returns errors and warnings with stable diagnostic
+- [x] `CheckOptions` supports `warnings_as_errors` and `max_diagnostics`
+- [x] `SchemaCheckReport` returns errors and warnings with stable diagnostic
       codes
-- [ ] Parser/resolver can collect independent diagnostics for duplicates,
+- [x] Parser/resolver can collect independent diagnostics for duplicates,
       invalid names, bad ranges, and ordering problems
-- [ ] Fatal structural errors still stop safely when later validation would be
+- [x] Fatal structural errors still stop safely when later validation would be
       misleading
-- [ ] miette rendering shows multiple diagnostics in a deterministic order
-- [ ] Tests prove at least three independent schema problems are reported in one
+- [x] miette rendering shows multiple diagnostics in a deterministic order
+- [x] Tests prove at least three independent schema problems are reported in one
       check run
-- [ ] `parse_file()` behaviour remains simple and documented
+- [x] `parse_file()` behaviour remains simple and documented
 
 Ref: Aeron `ErrorHandler`, miette diagnostic rendering, todos 20, 49, 125, 126.

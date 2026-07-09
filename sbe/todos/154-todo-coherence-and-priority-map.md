@@ -93,12 +93,12 @@ environment-gated.
 
 ## Acceptance criteria
 
-- [ ] Any todo that conflicts with this map is updated or marked historical.
-- [ ] Release docs distinguish active gates, optional stable-Rust improvements,
+- [x] Any todo that conflicts with this map is updated or marked historical.
+- [x] Release docs distinguish active gates, optional stable-Rust improvements,
       and parked experiments.
-- [ ] No todo asks to reintroduce removed API surface without citing the newer
+- [x] No todo asks to reintroduce removed API surface without citing the newer
       decision it overrides and the benchmark/API evidence for doing so.
-- [ ] Every active type-safety claim has a compile-fail test before being
+- [x] Every active type-safety claim has a compile-fail test before being
       documented as shipped.
-- [ ] Every active performance claim has local benchmark evidence and, where
+- [x] Every active performance claim has local benchmark evidence and, where
       relevant, Aeron head-to-head evidence.

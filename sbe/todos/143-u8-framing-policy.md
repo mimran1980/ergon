@@ -62,20 +62,20 @@ for whatever unsigned type the schema declares.
 - [x] `GROUP_DIM_TEMPLATE` uses correct byte size from schema (`[u8; 2]` for u8, `[u8; 4]` for u16 default)
 - [x] Verify codegen handles variable-size dimension type (group dim template adapts)
 - [x] Unit test: schema with `groupSize8` dimensionType parses and generates valid Rust
-- [ ] Schema with `uint8` dimensionType generates group decoder/encoder using `u8` count
+- [x] Schema with `uint8` dimensionType generates group decoder/encoder using `u8` count
       (currently `count: u16` is hard-coded — the dimension size adapts but the count type doesn't)
-- [ ] Schema with `uint8` varData length generates correct length prefix read/write (same issue)
-- [ ] Schema with `uint32` dimensionType generates `u32` framing
-- [ ] Roundtrip test: encode → decode with u8 framing
-- [ ] `encoded_length()` correctly accounts for non-u16 framing sizes
-- [ ] `count: u16` → parameterised on dimension's numInGroup primitive type
+- [x] Schema with `uint8` varData length generates correct length prefix read/write (same issue)
+- [x] Schema with `uint32` dimensionType generates `u32` framing
+- [x] Roundtrip test: encode → decode with u8 framing
+- [x] `encoded_length()` correctly accounts for non-u16 framing sizes
+- [x] `count: u16` → parameterised on dimension's numInGroup primitive type
 
 ## Acceptance criteria (remaining)
 
-- [ ] Group encoder/decoder `count` type parameterised on dimension's numInGroup field type
-- [ ] VarData length prefix type parameterised on its encoding type's length field
-- [ ] Roundtrip test with u8-framed group and varData
-- [ ] `encoded_length()` accounts for non-u16 framing
+- [x] Group encoder/decoder `count` type parameterised on dimension's numInGroup field type
+- [x] VarData length prefix type parameterised on its encoding type's length field
+- [x] Roundtrip test with u8-framed group and varData
+- [x] `encoded_length()` accounts for non-u16 framing
 
 ## Existing schemas to verify
 

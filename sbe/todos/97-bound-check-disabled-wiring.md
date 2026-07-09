@@ -30,7 +30,7 @@ const-only byte loops to make it pass.
 - [x] When feature disabled: all checked paths active (current behavior)
 - [x] Test: compile and run tests with feature enabled — all 394 pass
 - [x] Test: compile and run tests with feature disabled — all 394 pass
-- [ ] Benchmark: measure speedup with feature enabled vs disabled (existing `throughput_bench` has `throughput/raw` path; parity bench compiles with `--features bound-check-disabled`)
+- [x] Benchmark: measure speedup with feature enabled vs disabled (existing `throughput_bench` has `throughput/raw` path; parity bench compiles with `--features bound-check-disabled`)
 - [x] Golden file shows the cfg-gated code paths
 
 

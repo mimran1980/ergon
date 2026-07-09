@@ -33,14 +33,14 @@ the added complexity.
 
 ## Acceptance criteria
 
-- [ ] When `nullValue` maps to the max value of the underlying type, use it as niche
-- [ ] Emit discriminants that leave at least one value unused
-- [ ] `const _: () = assert!(size_of::<Option<EnumKind>>() == size_of::<UnderlyingType>());`
-- [ ] If the public enum shape changes, prove wire conversion remains identical
+- [x] When `nullValue` maps to the max value of the underlying type, use it as niche
+- [x] Emit discriminants that leave at least one value unused
+- [x] `const _: () = assert!(size_of::<Option<EnumKind>>() == size_of::<UnderlyingType>());`
+- [x] If the public enum shape changes, prove wire conversion remains identical
       to the flat `NullVal` enum behaviour
-- [ ] Doc comment: "Niche-optimised: Option<EnumKind> is 1 byte"
-- [ ] Test: verify `size_of::<Option<BooleanTypeKind>>() == 1` for the Car example
-- [ ] When niche is NOT possible (all values used), document why
+- [x] Doc comment: "Niche-optimised: Option<EnumKind> is 1 byte"
+- [x] Test: verify `size_of::<Option<BooleanTypeKind>>() == 1` for the Car example
+- [x] When niche is NOT possible (all values used), document why
 
 Guardrail: only do this when it improves layout without making enum handling
 less clear than the current flat `NullVal` API.

@@ -63,21 +63,21 @@ existing helper cannot express compile-fail checks without too much machinery.
 - [x] Generated schema has `pub mod prelude`
 - [x] Prelude exports the common runtime types, message decoders/encoders, and
       generated value types
-- [ ] Prelude exports strict feed types when enabled: schema marker,
+- [x] Prelude exports strict feed types when enabled: schema marker,
       frame-policy marker types, and verification proof types
-- [ ] Prelude exports `SbeMessage` associated-type users need for generic
+- [x] Prelude exports `SbeMessage` associated-type users need for generic
       codecs, plus typed buffer policy markers when public
-- [ ] Multi-schema generation has a documented prelude strategy with no name
+- [x] Multi-schema generation has a documented prelude strategy with no name
       collisions
-- [ ] Public API contract tests compile and run against generated Car code
-- [ ] At least one compile-fail check verifies a deliberate API boundary, such
+- [x] Public API contract tests compile and run against generated Car code
+- [x] At least one compile-fail check verifies a deliberate API boundary, such
       as non-SBE types not satisfying `SbeMessage`
-- [ ] Compile-fail checks cover at least one proof boundary when implemented:
+- [x] Compile-fail checks cover at least one proof boundary when implemented:
       direct `VerifiedFrame` construction, wrong schema marker, or out-of-order
       tail cursor call
-- [ ] Full compile-fail coverage is delegated to todo 137 once strict APIs land
-- [ ] Migration guide and generated API docs use the prelude in first examples
-- [ ] Golden source output remains stable after adding the prelude
+- [x] Full compile-fail coverage is delegated to todo 137 once strict APIs land
+- [x] Migration guide and generated API docs use the prelude in first examples
+- [x] Golden source output remains stable after adding the prelude
 
 Ref: "simpler API than Aeron" goal, `#[diagnostic::on_unimplemented]`, and
 existing generated API documentation.

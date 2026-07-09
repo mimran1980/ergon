@@ -36,16 +36,16 @@ Endian controls byte conversion at the type level, not through runtime branches.
 
 ## Acceptance criteria
 
-- [ ] Generated scalar, enum, set, composite, and array accessors delegate to
+- [x] Generated scalar, enum, set, composite, and array accessors delegate to
       policy buffer methods instead of embedding duplicated read/write logic.
-- [ ] Unsafe read/write code is localized in the buffer policy implementation.
-- [ ] Little-endian and big-endian generated schemas use distinct type-level
+- [x] Unsafe read/write code is localized in the buffer policy implementation.
+- [x] Little-endian and big-endian generated schemas use distinct type-level
       endian policies.
-- [ ] Checked mode stays safe by default and reports contextual errors where
+- [x] Checked mode stays safe by default and reports contextual errors where
       the public interface requires them.
-- [ ] Verified mode only exists after todo 147/131 can prove frame extents.
-- [ ] Unchecked mode requires explicit unsafe API or accepted feature gating.
-- [ ] Generated modules included by downstream crates do not emit
+- [x] Verified mode only exists after todo 147/131 can prove frame extents.
+- [x] Unchecked mode requires explicit unsafe API or accepted feature gating.
+- [x] Generated modules included by downstream crates do not emit
       `unexpected cfg` warning noise for `bound-check-disabled`.
-- [ ] Benchmarks show no regression versus current generated direct reads and
+- [x] Benchmarks show no regression versus current generated direct reads and
       Aeron `ReadBuf`.

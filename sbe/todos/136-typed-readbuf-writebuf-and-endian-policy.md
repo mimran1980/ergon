@@ -51,18 +51,18 @@ Endian controls `from_le_bytes` vs `from_be_bytes` without branchy runtime check
 
 ## Acceptance criteria
 
-- [ ] `ReadBuf<'a, Mode, Endian>` and `WriteBuf<'a, Mode, Endian>` exist in the
+- [x] `ReadBuf<'a, Mode, Endian>` and `WriteBuf<'a, Mode, Endian>` exist in the
       generated runtime or shared runtime
-- [ ] Safe checked mode uses slice-indexing/`try_into()` fast paths
-- [ ] Verified mode can skip structural checks already proven by todo 131
-- [ ] Unchecked mode uses documented unsafe reads/writes only behind the accepted
+- [x] Safe checked mode uses slice-indexing/`try_into()` fast paths
+- [x] Verified mode can skip structural checks already proven by todo 131
+- [x] Unchecked mode uses documented unsafe reads/writes only behind the accepted
       feature or explicit unsafe API
-- [ ] Endianness is a type-level policy generated from schema byte order
-- [ ] Generated field accessors delegate to buffer policy methods instead of
+- [x] Endianness is a type-level policy generated from schema byte order
+- [x] Generated field accessors delegate to buffer policy methods instead of
       duplicating `#[cfg]` blocks
-- [ ] LE and BE schemas are covered by todo 121 fixtures
-- [ ] `cargo test -p ergosbe --features bound-check-disabled` passes
-- [ ] Benchmarks show no regression versus direct hand-written reads and Aeron
+- [x] LE and BE schemas are covered by todo 121 fixtures
+- [x] `cargo test -p ergosbe --features bound-check-disabled` passes
+- [x] Benchmarks show no regression versus direct hand-written reads and Aeron
       `ReadBuf`
 
 Ref: todos 119, 121, 122, 131 and `design/DECISIONS.md` codegen rules.

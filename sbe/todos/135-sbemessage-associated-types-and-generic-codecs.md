@@ -41,16 +41,16 @@ sealed trait so generic feed/proxy code can be monomorphised.
 
 ## Acceptance criteria
 
-- [ ] `SbeMessage` remains sealed; user types cannot forge implementations
-- [ ] Each generated message exposes `type Decoder<'a>` and `type Encoder<'a>`
-- [ ] Checked and verified decoder modes are expressible once todo 131 lands
-- [ ] Each message links to the generated schema marker from todo 134
-- [ ] Generic helper compiles:
+- [x] `SbeMessage` remains sealed; user types cannot forge implementations
+- [x] Each generated message exposes `type Decoder<'a>` and `type Encoder<'a>`
+- [x] Checked and verified decoder modes are expressible once todo 131 lands
+- [x] Each message links to the generated schema marker from todo 134
+- [x] Generic helper compiles:
       `fn decode<M: SbeMessage>(buf: &[u8]) -> Result<M::Decoder<'_>, DecodeError>`
-- [ ] `AnyMessage` dynamic dispatch still works and is not replaced
-- [ ] Public prelude exports the trait and marker types
-- [ ] Compile-fail test proves a non-generated type cannot satisfy `SbeMessage`
-- [ ] Benchmark proves generic monomorphised decode is equivalent to concrete
+- [x] `AnyMessage` dynamic dispatch still works and is not replaced
+- [x] Public prelude exports the trait and marker types
+- [x] Compile-fail test proves a non-generated type cannot satisfy `SbeMessage`
+- [x] Benchmark proves generic monomorphised decode is equivalent to concrete
       decoder use
 
 Ref: `design/DECISIONS.md` §5, todo 42 associated decoder note, todo 129 public

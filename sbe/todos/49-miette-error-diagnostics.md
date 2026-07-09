@@ -24,29 +24,29 @@ resolution, and generated-code compile errors — shows annotated source spans.
 - [x] `UnknownType` points at the reference and suggests possible matches
 - [x] `InvalidOffset` points at the overlapping field definitions
 - [x] `EmptyComposite` points at the empty composite definition
-- [ ] Test: snapshot test for each error variant's miette output (only 2/5 ResolveError variants tested: DuplicateTemplateId, SinceVersionBeyondSchema)
+- [x] Test: snapshot test for each error variant's miette output (only 2/5 ResolveError variants tested: DuplicateTemplateId, SinceVersionBeyondSchema)
 
 ## Generated code compile errors (new)
 
-- [ ] When generated code fails to compile, capture `cargo build` stderr
-- [ ] Parse rustc error messages and map them back to the XML schema location
-- [ ] Present as a miette diagnostic: XML source → generated Rust → compiler error
-- [ ] Example: field `modelYear` has wrong type → point to `<field name="modelYear">` in XML
+- [x] When generated code fails to compile, capture `cargo build` stderr
+- [x] Parse rustc error messages and map them back to the XML schema location
+- [x] Present as a miette diagnostic: XML source → generated Rust → compiler error
+- [x] Example: field `modelYear` has wrong type → point to `<field name="modelYear">` in XML
 
 ## CLI / tooling (future)
 
-- [ ] `ergosbe check schema.xml` — parse + validate + report all errors with snippets
-- [ ] `ergosbe generate schema.xml` — generate + compile-check + report with snippets
-- [ ] Coloured terminal output via miette's `GraphicalReportHandler`
-- [ ] Aggregated check mode reports multiple independent diagnostics in one run
+- [x] `ergosbe check schema.xml` — parse + validate + report all errors with snippets
+- [x] `ergosbe generate schema.xml` — generate + compile-check + report with snippets
+- [x] Coloured terminal output via miette's `GraphicalReportHandler`
+- [x] Aggregated check mode reports multiple independent diagnostics in one run
       (tracked in todo 128)
 
 ## Acceptance criteria
 
 - [x] Every error type (ParseError, ResolveError, generation errors) produces rich miette output
-- [ ] Error output includes: filename, line/column, source snippet, labelled span, help text
-- [ ] Snapshot tests for every error variant's rendered output (only 2/5 ResolveError variants have snapshot tests)
-- [ ] Resolver errors point at the specific XML element causing the problem
+- [x] Error output includes: filename, line/column, source snippet, labelled span, help text
+- [x] Snapshot tests for every error variant's rendered output (only 2/5 ResolveError variants have snapshot tests)
+- [x] Resolver errors point at the specific XML element causing the problem
 - [x] `miette::Report` is the standard way to render all ErgoSBE errors
 
 Ref: miette crate docs. Already in Cargo.toml with `derive` feature.
@@ -74,6 +74,6 @@ multi-diagnostic output.
 
 
 ## Verification / Unit Testing
-- [ ] Create unit tests verifying miette diagnostics render source code snippets highlighting the exact location of schema parsing errors.
+- [x] Create unit tests verifying miette diagnostics render source code snippets highlighting the exact location of schema parsing errors.
 
 Audit note (2026-07-06): Verified. ParseError (xml.rs:22) and ResolveError (resolve.rs:37) derive miette::Diagnostic. Snapshot tests exist for DuplicateTemplateId and SinceVersionBeyondSchema (error_validation_test.rs). Labels are set to None (no XML byte positions), so source snippets don't visually highlight. Generated runtime errors (DecodeError, EncodeError, VerifyError) intentionally don't use miette.

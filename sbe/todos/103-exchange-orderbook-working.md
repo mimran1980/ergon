@@ -43,11 +43,11 @@ The `samples/exchange-orderbook/` crate exists and compiles. It still needs to:
 - [x] Generated code compiles without current hard errors
 - [x] Generated code compiles without `E0015` const-helper regressions
 - [x] Generated Display impls match accessor return shapes well enough to compile
-- [ ] Generated warning volume is reduced or justified
-- [ ] `cargo run` connects to at least one exchange and prints orderbook
-- [ ] Binance uses SBE binary frames, NOT JSON
-- [ ] Orderbook uses BidLevel/AskLevel newtypes with custom Ord (already done
+- [x] Generated warning volume is reduced or justified
+- [x] `cargo run` connects to at least one exchange and prints orderbook
+- [x] Binance uses SBE binary frames, NOT JSON
+- [x] Orderbook uses BidLevel/AskLevel newtypes with custom Ord (already done
   in `orderbook.rs`)
-- [ ] `just test` passes in the samples directory
+- [x] `just test` passes in the samples directory
 
 Ref: user request to make the sample actually work end-to-end.

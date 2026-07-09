@@ -67,13 +67,13 @@ Use a helper macro or function to keep the templates DRY.
 
 ## Acceptance criteria
 
-- [ ] `copy_from_slice` → `ptr::copy_nonoverlapping` when feature on
-- [ ] Array indexing → `get_unchecked` when feature on
-- [ ] All unsafe gated behind `#[cfg(feature = "bound-check-disabled")]`
+- [x] `copy_from_slice` → `ptr::copy_nonoverlapping` when feature on
+- [x] Array indexing → `get_unchecked` when feature on
+- [x] All unsafe gated behind `#[cfg(feature = "bound-check-disabled")]`
 - [x] Safe defaults unchanged when feature off
-- [ ] Benchmarks: measure speed difference for both paths
-- [ ] Tests pass with and without feature
-- [ ] Undefined Behavior & Memory Safety Audit: Run the test suite under Miri (`cargo miri test`) with the `bound-check-disabled` feature enabled to verify that no pointer arithmetic, slicing, or raw pointer casts violate Rust's memory alignment, dereferenceability, or aliasing rules.
+- [x] Benchmarks: measure speed difference for both paths
+- [x] Tests pass with and without feature
+- [x] Undefined Behavior & Memory Safety Audit: Run the test suite under Miri (`cargo miri test`) with the `bound-check-disabled` feature enabled to verify that no pointer arithmetic, slicing, or raw pointer casts violate Rust's memory alignment, dereferenceability, or aliasing rules.
 
 Ref: user request — bound-check-disabled should go all-in on unsafe for HFT.
 

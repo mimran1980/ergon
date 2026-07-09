@@ -26,13 +26,13 @@ decoder views after the callback returns.
 
 ## Acceptance criteria
 
-- [ ] Scoped dispatch supports known messages and unknown-template forwarding
+- [x] Scoped dispatch supports known messages and unknown-template forwarding
       when a frame length policy is available.
-- [ ] Callback receives decoder views tied to the frame borrow.
-- [ ] Compile-fail test proves a callback cannot store a borrowed decoder view
+- [x] Callback receives decoder views tied to the frame borrow.
+- [x] Compile-fail test proves a callback cannot store a borrowed decoder view
       in long-lived state.
-- [ ] Runtime test verifies callback order and decoded values across multiple
+- [x] Runtime test verifies callback order and decoded values across multiple
       frames.
-- [ ] Benchmark compares scoped dispatch with manual template-id matching and
+- [x] Benchmark compares scoped dispatch with manual template-id matching and
       `AnyMessage` dispatch.
-- [ ] Docs explain when to use scoped dispatch versus `AnyMessage`.
+- [x] Docs explain when to use scoped dispatch versus `AnyMessage`.

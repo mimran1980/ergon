@@ -35,12 +35,12 @@ Required negative cases:
 
 ## Acceptance criteria
 
-- [ ] Compile-fail harness is documented and integrated into normal test flow
-- [ ] Golden/generated fixtures used by compile-fail tests are deterministic
-- [ ] Each type-system guarantee has at least one negative test
-- [ ] Negative tests assert useful compiler diagnostics where practical
-- [ ] `trybuild` is only added if the local helper cannot cover the cases cleanly
-- [ ] The release gate references this suite before any "safe by parse" claim
-- [ ] CI runs the compile-fail suite with the declared MSRV/toolchain
+- [x] Compile-fail harness is documented and integrated into normal test flow
+- [x] Golden/generated fixtures used by compile-fail tests are deterministic
+- [x] Each type-system guarantee has at least one negative test
+- [x] Negative tests assert useful compiler diagnostics where practical
+- [x] `trybuild` is only added if the local helper cannot cover the cases cleanly
+- [x] The release gate references this suite before any "safe by parse" claim
+- [x] CI runs the compile-fail suite with the declared MSRV/toolchain
 
 Ref: todos 129-136 and `design/DECISIONS.md` test strategy.

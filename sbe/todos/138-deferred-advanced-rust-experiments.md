@@ -41,11 +41,11 @@ experiments are not confused with v1 requirements.
 
 ## Acceptance criteria
 
-- [ ] Every experiment has a benchmark hypothesis before implementation
-- [ ] Experiments stay behind config flags or separate branches until proven
-- [ ] No experiment changes wire format or default public API without a decision
+- [x] Every experiment has a benchmark hypothesis before implementation
+- [x] Experiments stay behind config flags or separate branches until proven
+- [x] No experiment changes wire format or default public API without a decision
       record update
-- [ ] Release docs distinguish v1 guarantees from parked experiments
+- [x] Release docs distinguish v1 guarantees from parked experiments
 
 Ref: `design/DECISIONS.md` rejected/parked sections, todo 25 HFT experiments,
 todo 89 `no_std`, todo 42 GAT iterator note.

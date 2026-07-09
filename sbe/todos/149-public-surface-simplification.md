@@ -26,14 +26,14 @@ more behaviour hidden behind it.
 
 ## Acceptance criteria
 
-- [ ] Public API contract tests cover decode, encode, group iteration,
+- [x] Public API contract tests cover decode, encode, group iteration,
       var-data access, dispatch, and generic `SbeMessage` helpers through the
       intended public surface.
-- [ ] Users can write common feed-handler code without importing internal group
+- [x] Users can write common feed-handler code without importing internal group
       iterator state types.
-- [ ] Rustdoc shows the intended prelude-first path and hides internal helper
+- [x] Rustdoc shows the intended prelude-first path and hides internal helper
       types where practical.
-- [ ] Simplification does not remove zero-copy decoder access or tail-order
+- [x] Simplification does not remove zero-copy decoder access or tail-order
       guarantees.
-- [ ] API audit compares the final generated surface against Aeron for concrete
+- [x] API audit compares the final generated surface against Aeron for concrete
       schemas and records whether ErgoSBE is simpler in user-facing terms.

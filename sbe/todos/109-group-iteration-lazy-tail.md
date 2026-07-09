@@ -139,13 +139,13 @@ without repeated rescans. `iter_fast()` remains the minimal trusted-buffer path;
 
 ## Acceptance criteria
 
-- [ ] `iter_fast()` method generated on group decoders where
+- [x] `iter_fast()` method generated on group decoders where
   `total_tail > 0`
-- [ ] `iter_fast()` advances by `ENTRY_BLOCK_LENGTH` without tail
+- [x] `iter_fast()` advances by `ENTRY_BLOCK_LENGTH` without tail
   scanning
-- [ ] Existing `Iterator` impl preserved (safe, scans tails)
-- [ ] Benchmark: `iter_fast()` within 10% of Aeron's `advance()` loop
-- [ ] Compare with todo 130 ordered tail cursor; document which API should be
+- [x] Existing `Iterator` impl preserved (safe, scans tails)
+- [x] Benchmark: `iter_fast()` within 10% of Aeron's `advance()` loop
+- [x] Compare with todo 130 ordered tail cursor; document which API should be
       preferred for trusted fixed-entry scans versus schema-order tail reads
 - [x] Golden file stability test passes
 - [x] No regression in baseline test suite

@@ -49,24 +49,24 @@ The public API shape can evolve, but these invariants should not:
 
 ## Acceptance criteria
 
-- [ ] `CarDecoder::verify_frame(buf, off, frame_len)` returns
+- [x] `CarDecoder::verify_frame(buf, off, frame_len)` returns
       `Result<VerifiedFrame<'a, Car>, VerifyError>`
-- [ ] `VerifiedFrame<'a, Car>::decoder()` returns a verified-mode decoder without
+- [x] `VerifiedFrame<'a, Car>::decoder()` returns a verified-mode decoder without
       rereading the message header unnecessarily
-- [ ] Checked-mode decoder APIs remain source-compatible for existing users
-- [ ] Verified-mode constructors are sealed/private except through successful
+- [x] Checked-mode decoder APIs remain source-compatible for existing users
+- [x] Verified-mode constructors are sealed/private except through successful
       generated verification
-- [ ] Verified mode never trusts a buffer whose group or var-data extent was not
+- [x] Verified mode never trusts a buffer whose group or var-data extent was not
       proven by the verifier
-- [ ] Tests cover valid, truncated, bad group-count, and bad var-data-length
+- [x] Tests cover valid, truncated, bad group-count, and bad var-data-length
       frames
-- [ ] Test proves checked and verified decoders return identical values for the
+- [x] Test proves checked and verified decoders return identical values for the
       same valid fixture
-- [ ] Compile-fail test proves user code cannot construct `VerifiedFrame`
+- [x] Compile-fail test proves user code cannot construct `VerifiedFrame`
       directly
-- [ ] Benchmark compares checked decode, `verify + checked decode`, and
+- [x] Benchmark compares checked decode, `verify + checked decode`, and
       `verify_frame + verified decode` on market-data-shaped messages
-- [ ] Miette/verify errors still report field name, offset, needed length, and
+- [x] Miette/verify errors still report field name, offset, needed length, and
       available length
 
 Ref: `design/DECISIONS.md` §3 and trap 12; todo 69 is the baseline verifier.

@@ -45,18 +45,18 @@ borrowed decoder view beyond the callback.
 
 ## Acceptance criteria
 
-- [ ] Generate `dispatch_scoped` or equivalent HRTB callback API per schema
-- [ ] Adapter callbacks borrow decoded views only for the callback scope
-- [ ] Compile-fail test proves storing `CarDecoder<'a>` or `DecodedFrame<'a, _>`
+- [x] Generate `dispatch_scoped` or equivalent HRTB callback API per schema
+- [x] Adapter callbacks borrow decoded views only for the callback scope
+- [x] Compile-fail test proves storing `CarDecoder<'a>` or `DecodedFrame<'a, _>`
       in long-lived handler state does not compile
-- [ ] Runtime test dispatches multiple frames through a handler and verifies
+- [x] Runtime test dispatches multiple frames through a handler and verifies
       callback order and decoded values
-- [ ] Adapter path can select the ordered `TailCursor` mode for messages with
+- [x] Adapter path can select the ordered `TailCursor` mode for messages with
       groups/var-data
-- [ ] Unknown-template handling works only when the selected frame policy
+- [x] Unknown-template handling works only when the selected frame policy
       supplies frame length
-- [ ] Zero allocation in dispatch hot path
-- [ ] Benchmark compares scoped callback dispatch to manual `match template_id`
+- [x] Zero allocation in dispatch hot path
+- [x] Benchmark compares scoped callback dispatch to manual `match template_id`
       dispatch
 
 Ref: `design/DECISIONS.md` §6 scoped callback dispatch; todo 102 adapters.

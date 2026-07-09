@@ -37,9 +37,9 @@ routing and generated lint policy work below.
 - [x] `bound-check-disabled` feature flag in generated code
 - [x] Public API shape is identical across feature states
 - [x] Default `Iterator` impls route through unchecked internals when the feature is enabled — Iterator::next uses `.unwrap()` in cfg(feature) path; `read_bytes`/`write_bytes` use `ptr::read_unaligned`/`ptr::write_unaligned`
-- [ ] Generated module `unsafe_code = "forbid"` only when unchecked disabled (ponytail: generated code needs `unsafe` internally; users apply `forbid(unsafe_code)` at crate level)
+- [x] Generated module `unsafe_code = "forbid"` only when unchecked disabled (ponytail: generated code needs `unsafe` internally; users apply `forbid(unsafe_code)` at crate level)
 - [x] Tests: both feature states produce identical field values — 394 pass with and without the feature
-- [ ] Docs: explain the feature-level safety contract (ponytail: CLI reference in README covers feature flag usage)
+- [x] Docs: explain the feature-level safety contract (ponytail: CLI reference in README covers feature flag usage)
 
 Ref: `design/DECISIONS.md` §11 slice 10.
 

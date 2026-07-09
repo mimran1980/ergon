@@ -51,19 +51,19 @@ The concrete names can change, but these invariants should hold:
 
 ## Acceptance criteria
 
-- [ ] Generate sealed schema marker type per generated schema
-- [ ] Schema marker exposes `SCHEMA_ID`, `SCHEMA_VERSION`, and `SCHEMA_HASH`
-- [ ] `FrameCursor` is parameterised by frame policy and schema marker
-- [ ] `DecodedFrame` carries schema marker type
-- [ ] Length-prefixed, fixed-packet, and caller-supplied policies have separate
+- [x] Generate sealed schema marker type per generated schema
+- [x] Schema marker exposes `SCHEMA_ID`, `SCHEMA_VERSION`, and `SCHEMA_HASH`
+- [x] `FrameCursor` is parameterised by frame policy and schema marker
+- [x] `DecodedFrame` carries schema marker type
+- [x] Length-prefixed, fixed-packet, and caller-supplied policies have separate
       constructors with no ambiguous runtime enum required for the strict API
-- [ ] Unknown-template forwarding is compile-time or runtime-gated to policies
+- [x] Unknown-template forwarding is compile-time or runtime-gated to policies
       that provide a frame length
-- [ ] Compile-fail test proves a frame from one schema marker cannot be passed to
+- [x] Compile-fail test proves a frame from one schema marker cannot be passed to
       another schema's strict adapter/proxy API
-- [ ] Runtime tests cover known and unknown templates under each supported
+- [x] Runtime tests cover known and unknown templates under each supported
       policy
-- [ ] Public prelude exports the policy and schema marker types with clear names
-- [ ] Generated docs show which frame policy to use for common feed shapes
+- [x] Public prelude exports the policy and schema marker types with clear names
+- [x] Generated docs show which frame policy to use for common feed shapes
 
 Ref: `design/DECISIONS.md` §5–6 and traps 9/13; todo 05 FrameCursor.

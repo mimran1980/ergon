@@ -36,9 +36,9 @@ let modules = generator.generate_multi(&[
 
 ## Rules -- not yet implemented
 
-- [ ] Schema ID conflict detection: if two schemas have the same `id`, warn or error
-- [ ] Circular import detection: reject if schema A imports B and B imports A's types
-- [ ] Override detection: if schema B redefines a type from schema A, error (name conflict)
+- [x] Schema ID conflict detection: if two schemas have the same `id`, warn or error
+- [x] Circular import detection: reject if schema A imports B and B imports A's types
+- [x] Override detection: if schema B redefines a type from schema A, error (name conflict)
 
 ## Acceptance criteria -- covered
 
@@ -50,13 +50,13 @@ let modules = generator.generate_multi(&[
 
 ## Acceptance criteria -- integration-level (future)
 
-- [ ] Test: `common-types.xml` + `example-schema.xml` -> two modules, example imports common
-- [ ] Test: `common-types.xml` + `FixBinary.xml` -> Fix messages use shared header types
-- [ ] Test: schema B references a type from schema A not in the import list -> compile error with clear message
-- [ ] Generated code compiles and all messages round-trip
+- [x] Test: `common-types.xml` + `example-schema.xml` -> two modules, example imports common
+- [x] Test: `common-types.xml` + `FixBinary.xml` -> Fix messages use shared header types
+- [x] Test: schema B references a type from schema A not in the import list -> compile error with clear message
+- [x] Generated code compiles and all messages round-trip
 
 Ref: `design/DECISIONS.md` §10 shared runtime. `simple-binary-encoding/sbe-samples/src/main/resources/` for common-types + example-schema multi-file setup.
 
 
 ## Verification / Unit Testing
-- [ ] Create integration tests verifying multi-schema generation produces separate files, deduplicates common types, and compiles cleanly without duplicate symbol errors.
+- [x] Create integration tests verifying multi-schema generation produces separate files, deduplicates common types, and compiles cleanly without duplicate symbol errors.

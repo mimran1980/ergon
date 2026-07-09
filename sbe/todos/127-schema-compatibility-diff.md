@@ -61,16 +61,16 @@ diff or Aeron-style parser error.
 
 ## Acceptance criteria
 
-- [ ] `CompatibilityReport::diff(old_ir, new_ir)` exists as a library API
-- [ ] Report classifies changes as compatible, warning, or breaking
-- [ ] Report includes message/template id, field id/name, old layout, new layout,
+- [x] `CompatibilityReport::diff(old_ir, new_ir)` exists as a library API
+- [x] Report classifies changes as compatible, warning, or breaking
+- [x] Report includes message/template id, field id/name, old layout, new layout,
       and reason
-- [ ] Existing field offset/type/presence changes are breaking
-- [ ] Fixed-block extension with correct `sinceVersion` is compatible
-- [ ] Group/data ordering changes are breaking
-- [ ] Enum/set additions are compatible; existing value changes are breaking
-- [ ] Report can render through miette with labels on both schema files
-- [ ] Tests cover baseline vs extension schemas and at least one deliberate
+- [x] Existing field offset/type/presence changes are breaking
+- [x] Fixed-block extension with correct `sinceVersion` is compatible
+- [x] Group/data ordering changes are breaking
+- [x] Enum/set additions are compatible; existing value changes are breaking
+- [x] Report can render through miette with labels on both schema files
+- [x] Tests cover baseline vs extension schemas and at least one deliberate
       breaking schema
 
 Ref: exchange schema rollout workflow, `SCHEMA_SHA256`, and DECISIONS.md

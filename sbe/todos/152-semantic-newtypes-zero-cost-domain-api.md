@@ -27,12 +27,12 @@ allocation.
 
 ## Acceptance criteria
 
-- [ ] Semantic newtypes are opt-in and off by default.
-- [ ] Generated wrappers are `#[repr(transparent)]` and have the same size as
+- [x] Semantic newtypes are opt-in and off by default.
+- [x] Generated wrappers are `#[repr(transparent)]` and have the same size as
       their raw primitive.
-- [ ] Raw accessors remain available and wire-compatible.
-- [ ] Compile-fail tests prove incompatible semantic units cannot be mixed in
+- [x] Raw accessors remain available and wire-compatible.
+- [x] Compile-fail tests prove incompatible semantic units cannot be mixed in
       typed helper APIs.
-- [ ] Runtime tests prove typed and raw encoders emit identical bytes.
-- [ ] Docs explain when semantic wrappers are useful and when raw primitives
+- [x] Runtime tests prove typed and raw encoders emit identical bytes.
+- [x] Docs explain when semantic wrappers are useful and when raw primitives
       are preferred.

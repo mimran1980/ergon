@@ -46,16 +46,16 @@ impl From<Quantity> for rust_decimal::Decimal { ... }
 
 ## Acceptance criteria
 
-- [ ] Read `semanticType` from XML type/field attributes (parser already
+- [x] Read `semanticType` from XML type/field attributes (parser already
   captures this in IR)
-- [ ] Registry: map from `semanticType` string to converter pair
+- [x] Registry: map from `semanticType` string to converter pair
   (wire → semantic, semantic → wire)
-- [ ] Built-in converters: `Price`/`Quantity` (→ `rust_decimal`),
+- [x] Built-in converters: `Price`/`Quantity` (→ `rust_decimal`),
   `Timestamp` (→ `chrono`), `String` (var-data → `&str`/`String`)
-- [ ] User-extensible: `GenerationConfig.semantic_registry` for custom
+- [x] User-extensible: `GenerationConfig.semantic_registry` for custom
   converters
-- [ ] Gated: only emitted when `compatibility == WireCompatibleExtensions`
-- [ ] Tests: round-trip encode→decode→convert→semantic-equal
+- [x] Gated: only emitted when `compatibility == WireCompatibleExtensions`
+- [x] Tests: round-trip encode→decode→convert→semantic-equal
 
 Ref: DECISIONS.md §11, gap analysis todo 51, user request for extension
 methods/converters.

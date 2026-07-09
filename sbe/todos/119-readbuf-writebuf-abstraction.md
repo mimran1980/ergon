@@ -87,18 +87,18 @@ unchecked modes and little- vs big-endian marker types.
 
 ## Acceptance criteria
 
-- [ ] `ReadBuf` struct generated in the output module (or ergosbe-rt)
-- [ ] `WriteBuf` struct generated in the output module
-- [ ] Buffer mode and endian policy are type parameters, not runtime booleans
-- [ ] `#[cfg]` gating removed from all generated field accessors — delegated to ReadBuf methods
-- [ ] Byte-by-byte copy loops replaced with slice-based reads (`self.buf[offset..][..N].try_into().unwrap()`)
-- [ ] `bound-check-disabled` feature: `ReadBuf`/`WriteBuf` use `unsafe` pointer read/write (zero bounds check)
-- [ ] Safe path: `ReadBuf`/`WriteBuf` use `slice[offset..][..N].try_into().unwrap()` (bounds checked by slice indexing)
-- [ ] Generated code is DRY — one `self.buf.get_u16(offset)` not two `#[cfg]` arms
-- [ ] Golden file regen passes
-- [ ] All existing tests pass with both features
-- [ ] Generated modules do not produce `unexpected cfg` warning noise in crates that include them
-- [ ] `samples/exchange-orderbook` compiles with generated modules included
-- [ ] Performance benchmark shows no regression vs current (should be faster due to no byte-by-byte loops)
+- [x] `ReadBuf` struct generated in the output module (or ergosbe-rt)
+- [x] `WriteBuf` struct generated in the output module
+- [x] Buffer mode and endian policy are type parameters, not runtime booleans
+- [x] `#[cfg]` gating removed from all generated field accessors — delegated to ReadBuf methods
+- [x] Byte-by-byte copy loops replaced with slice-based reads (`self.buf[offset..][..N].try_into().unwrap()`)
+- [x] `bound-check-disabled` feature: `ReadBuf`/`WriteBuf` use `unsafe` pointer read/write (zero bounds check)
+- [x] Safe path: `ReadBuf`/`WriteBuf` use `slice[offset..][..N].try_into().unwrap()` (bounds checked by slice indexing)
+- [x] Generated code is DRY — one `self.buf.get_u16(offset)` not two `#[cfg]` arms
+- [x] Golden file regen passes
+- [x] All existing tests pass with both features
+- [x] Generated modules do not produce `unexpected cfg` warning noise in crates that include them
+- [x] `samples/exchange-orderbook` compiles with generated modules included
+- [x] Performance benchmark shows no regression vs current (should be faster due to no byte-by-byte loops)
 
 Ref: todo 136 for the full typed mode/endian policy.

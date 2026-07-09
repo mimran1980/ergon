@@ -94,10 +94,10 @@ specs and pass it.
 
 ## Acceptance criteria
 
-- [ ] LengthBuilder API generated for messages with groups containing varData or nested groups
-- [ ] Type-state forces complete specification of all variable-length elements
-- [ ] `build()` returns exact encoded length matching actual after encoding
-- [ ] `const fn` where possible
-- [ ] Golden file stability test passes
-- [ ] Baseline tests pass
-- [ ] Test: encode message with complex groups, verify builder length matches actual
+- [x] LengthBuilder API generated for messages with groups containing varData or nested groups
+- [x] Type-state forces complete specification of all variable-length elements
+- [x] `build()` returns exact encoded length matching actual after encoding
+- [x] `const fn` where possible
+- [x] Golden file stability test passes
+- [x] Baseline tests pass
+- [x] Test: encode message with complex groups, verify builder length matches actual

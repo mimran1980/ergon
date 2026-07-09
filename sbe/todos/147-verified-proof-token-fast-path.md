@@ -25,14 +25,14 @@ auditable path without exposing unsound constructors.
 
 ## Acceptance criteria
 
-- [ ] Valid fixed-only, group, and var-data messages can produce verified
+- [x] Valid fixed-only, group, and var-data messages can produce verified
       frames.
-- [ ] Truncated headers, bad schema IDs, bad group extents, and bad var-data
+- [x] Truncated headers, bad schema IDs, bad group extents, and bad var-data
       lengths fail before a verified decoder exists.
-- [ ] Checked and verified decoders return identical values for valid fixtures.
-- [ ] Compile-fail test proves users cannot construct `VerifiedFrame` or
+- [x] Checked and verified decoders return identical values for valid fixtures.
+- [x] Compile-fail test proves users cannot construct `VerifiedFrame` or
       `Verified` mode directly.
-- [ ] Benchmark compares checked decode, `verify + checked decode`, and
+- [x] Benchmark compares checked decode, `verify + checked decode`, and
       `verify_frame + verified decode`.
-- [ ] Public docs describe exactly which checks verified mode is allowed to
+- [x] Public docs describe exactly which checks verified mode is allowed to
       skip.
