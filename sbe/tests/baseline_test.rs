@@ -1189,16 +1189,25 @@ fn generated_code_has_inline_annotations() {
             .any(|s| s.contains("fn is_empty(")),
         "group decoder `is_empty` missing #[inline]"
     );
-    // Group decoder wrap (function signature is `pub fn wrap(buf: ...)` inside
-    // `impl<...> FuelFiguresDecoder<...>` -- no "Decoder" in the fn line itself)
-    assert!(
-        inline_followed_by
-            .iter()
-            .any(|s| !s.starts_with("pub fn encoded_length")
-                && s.contains("fn wrap(")
-                && s.contains("acting_version")),
-        "group decoder `wrap` missing #[inline]"
-    );
+    // Group decoder wrap — #[inline] precedes `pub fn wrap(`, but acting_version
+    // is on a subsequent line when prettyplease breaks the signature. Check
+    // that within 4 lines after #[inline], one line has `fn wrap(` and another
+    // (or the same) has `acting_version`.
+    let inline_wrap_ok = lines
+        .windows(5)
+        .filter(|w| w[0].trim() == "#[inline]")
+        .any(|w| {
+            let window = &w[1..]; // 4 lines after #[inline]
+            let has_wrap = window.iter().any(|line| {
+                let t = line.trim();
+                !t.starts_with("pub fn encoded_length") && t.contains("fn wrap(")
+            });
+            let has_acting = window
+                .iter()
+                .any(|line| line.trim().contains("acting_version"));
+            has_wrap && has_acting
+        });
+    assert!(inline_wrap_ok, "group decoder `wrap` missing #[inline]");
 
     // Encoder entry-point methods
     assert!(
@@ -1252,17 +1261,25 @@ fn generated_code_has_must_use_annotations() {
         "FuelFiguresEncoder struct missing #[must_use]"
     );
 
-    // #[must_use] on encoder setters returning &mut Self
+    // #[must_use] on encoder setters returning &mut Self. Annotation may be
+    // stacked with #[inline], so check within a 3-line window after #[must_use].
+    let must_use_ok = |fn_prefix: &str| -> bool {
+        lines
+            .windows(4)
+            .filter(|w| w[0].trim().starts_with("#[must_use"))
+            .any(|w| {
+                w[1..].iter().any(|line| {
+                    let t = line.trim();
+                    t.starts_with(fn_prefix) && t.contains("&mut Self")
+                })
+            })
+    };
     assert!(
-        must_use_followed_by
-            .iter()
-            .any(|s| s.starts_with("pub fn serial_number(") && s.contains("&mut Self")),
+        must_use_ok("pub fn serial_number("),
         "encoder serial_number setter missing #[must_use]"
     );
     assert!(
-        must_use_followed_by
-            .iter()
-            .any(|s| s.starts_with("pub fn model_year(") && s.contains("&mut Self")),
+        must_use_ok("pub fn model_year("),
         "encoder model_year setter missing #[must_use]"
     );
 

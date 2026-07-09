@@ -291,7 +291,8 @@ fn bench_encode_scalar(c: &mut Criterion) {
         b.iter_batched(
             || [0u8; 512],
             |mut buf| {
-                let mut car: CarEncoder<'_, car_encoder_state::NeedsFuelFigures> = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+                let mut car: CarEncoder<'_, car_encoder_state::NeedsFuelFigures> =
+                    CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
                 car.serial_number(1234);
                 car.model_year(2013);
                 black_box(car);

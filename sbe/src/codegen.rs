@@ -3975,11 +3975,12 @@ fn generate_message_encoder(
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
                     impl_contents.extend(quote::quote! {
                         #[must_use]
+                        #[inline]
                         pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
                             let offset = self.message_start + #body_offset_lit;
                             let mut idx = 0usize;
                             while idx < #len_lit {
-                                write_bytes::<#prim_size_lit>(self.buf, offset + idx * #prim_size_lit, &val[idx].#to_endian());
+                                self.buf[offset + idx * #prim_size_lit..][..#prim_size_lit].copy_from_slice(&val[idx].#to_endian());
                                 idx += 1;
                             }
                             self
@@ -3988,9 +3989,10 @@ fn generate_message_encoder(
                 } else {
                     impl_contents.extend(quote::quote! {
                         #[must_use]
+                        #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
                             let offset = self.message_start + #body_offset_lit;
-                            write_bytes::<#prim_size_lit>(self.buf, offset, &val.#to_endian());
+                            self.buf[offset..][..#prim_size_lit].copy_from_slice(&val.#to_endian());
                             self
                         }
                     });
@@ -4028,7 +4030,7 @@ fn generate_message_encoder(
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = self.message_start + #body_offset_lit;
-                        write_bytes::<#prim_size_lit>(self.buf, offset, &(val as #r_type).#to_endian());
+                        self.buf[offset..][..#prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
                         self
                     }
                 });
@@ -4040,7 +4042,7 @@ fn generate_message_encoder(
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             let offset = self.message_start + #body_offset_lit;
                             let enum_val: #target_type = val.into();
-                            write_bytes::<#prim_size_lit>(self.buf, offset, &(enum_val as #r_type).#to_endian());
+                            self.buf[offset..][..#prim_size_lit].copy_from_slice(&(enum_val as #r_type).#to_endian());
                             self
                         }
                     });
@@ -4057,7 +4059,7 @@ fn generate_message_encoder(
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = self.message_start + #body_offset_lit;
-                        write_bytes::<#prim_size_lit>(self.buf, offset, &val.0.#to_endian());
+                        self.buf[offset..][..#prim_size_lit].copy_from_slice(&val.0.#to_endian());
                         self
                     }
                 });
@@ -4541,7 +4543,7 @@ fn generate_group_encoder(
                             let offset = self.entry_start + #f_offset;
                             let mut idx = 0;
                             while idx < #len_lit {
-                                write_bytes::<#sz>(self.buf, offset + idx * #sz, &val[idx].#to_endian());
+                                self.buf[offset + idx * #sz..][..#sz].copy_from_slice(&val[idx].#to_endian());
                                 idx += 1;
                             }
                             self
@@ -4553,7 +4555,7 @@ fn generate_group_encoder(
                         #[must_use]
                         pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
-                            write_bytes::<#sz>(self.buf, offset, &val.#to_endian());
+                            self.buf[offset..][..#sz].copy_from_slice(&val.#to_endian());
                             self
                         }
                     });
@@ -4585,7 +4587,7 @@ fn generate_group_encoder(
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
-                        write_bytes::<#sz>(self.buf, offset, &(val as #r_ty).#to_endian());
+                        self.buf[offset..][..#sz].copy_from_slice(&(val as #r_ty).#to_endian());
                         self
                     }
                 });
@@ -4600,7 +4602,7 @@ fn generate_group_encoder(
                     #[must_use]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
-                        write_bytes::<#sz>(self.buf, offset, &val.0.#to_endian());
+                        self.buf[offset..][..#sz].copy_from_slice(&val.0.#to_endian());
                         self
                     }
                 });
