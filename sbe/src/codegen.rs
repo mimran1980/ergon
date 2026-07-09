@@ -1666,7 +1666,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
                             let offset = self.pos + #offset_lit;
-                            #r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap())
+                            #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset))
                         }
                     });
                 }
@@ -1704,7 +1704,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                        #target_ident::from_raw(#r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
             }
@@ -1724,7 +1724,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#from_method(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                        #target_ident(#r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
             }
@@ -2005,36 +2005,38 @@ fn generate_message_decoder(
         }
     });
 
-    // 4. wrap_and_apply_header - too complex for pure quote due to cfg + named format args
-    // Build using format! + parse_str for reliability
-    let wrap_header = format!(
-        "    #[inline]\n\
-         pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {{\n\
-             #[cfg(not(feature = \"bound-check-disabled\"))]\n\
-             let header_bytes: [u8; {hs}] = buf.get(pos..pos + {hs}).ok_or_else(|| {{\n\
-                 sbe_rt::DecodeError::BufferTooShort {{ field: \"message header\", needed: {hs}, available: buf.len() - pos }}\n\
-             }})?.try_into().unwrap();\n\
-             #[cfg(feature = \"bound-check-disabled\")]\n\
-             let header_bytes: [u8; {hs}] = unsafe {{\n\
-                 core::ptr::read_unaligned(buf.as_ptr().add(pos) as *const [u8; {hs}])\n\
-             }};\n\
-             let header = {hp}(header_bytes);\n\
-             if header.{hsie}() != Self::SCHEMA_ID {{\n\
-                 return Err(sbe_rt::DecodeError::WrongSchema {{ expected: Self::SCHEMA_ID, actual: header.{hsie}() , expected_name: \"{en}\" }});\n\
-             }}\n\
-             Ok(Self::wrap(buf, pos + {hs}, header.{hbl}() as usize, header.{hvr}()))\n\
-         }}\n",
-        hs = header_size,
-        hp = header_pascal,
-        hsie = header_si,
-        hbl = header_bl,
-        hvr = header_vr,
-        en = schema_name,
-    );
-    impl_body.extend(
-        syn::parse_str::<proc_macro2::TokenStream>(&wrap_header)
-            .unwrap_or_else(|e| panic!("Failed to parse wrap_and_apply_header for {name}: {e}")),
-    );
+    // 4. wrap_and_apply_header — uses read_bytes internally
+    // (feature flag gating is inside read_bytes, not duplicated here)
+    {
+        let hs = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
+        let hp = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
+        let hsi = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
+        let hbl = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
+        let hvr = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
+        let en = syn::LitStr::new(&schema_name, proc_macro2::Span::call_site());
+        impl_body.extend(quote::quote! {
+            #[inline]
+            pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                if cfg!(not(feature = "bound-check-disabled")) && pos + #hs > buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "message header",
+                        needed: #hs,
+                        available: buf.len().saturating_sub(pos),
+                    });
+                }
+                let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
+                let header = #hp(header_bytes);
+                if header.#hsi() != Self::SCHEMA_ID {
+                    return Err(sbe_rt::DecodeError::WrongSchema {
+                        expected: Self::SCHEMA_ID,
+                        actual: header.#hsi(),
+                        expected_name: #en,
+                    });
+                }
+                Ok(Self::wrap(buf, pos + #hs, header.#hbl() as usize, header.#hvr()))
+            }
+        });
+    }
 
     // 5. acting_version and acting_block_length
     impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(
@@ -2116,7 +2118,7 @@ fn generate_message_decoder(
                         let end = start + prim_size;
                         safe_elements.push(quote::quote! {
                             #r_type_ty::#order_fn(
-                                all[#start..#end].try_into().unwrap()
+                                read_bytes::<#prim_size>(&all, #start)
                             )
                         });
                     }
@@ -2137,7 +2139,7 @@ fn generate_message_decoder(
                                     available: self.buf.len() - offset,
                                 });
                             }
-                            let all: [u8; #total_size_lit] = self.buf[offset..offset + #total_size_lit].try_into().unwrap();
+                            let all: [u8; #total_size_lit] = read_bytes::<#total_size_lit>(self.buf, offset);
                             Ok([#(#safe_elements),*])
                         }
                     });
@@ -2170,7 +2172,7 @@ fn generate_message_decoder(
                                      return None;\n\
                                  }}\n\
                                  let offset = self.pos + {offset};\n\
-                                 let val = {rt}::{order}(self.buf[offset..][..{ps}].try_into().unwrap());\n\
+                                 let val = {rt}::{order}(read_bytes::<{ps}>(self.buf, offset));\n\
                                  if {null_check} {{\n\
                                      None\n\
                                  }} else {{\n\
@@ -2207,7 +2209,7 @@ fn generate_message_decoder(
                                     return None;
                                 }
                                 let offset = self.pos + #offset_lit;
-                                Some(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                                Some(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
                             }
                         });
                     } else {
@@ -2219,7 +2221,7 @@ fn generate_message_decoder(
                             #[inline]
                             pub fn #fname_ident(&self) -> #r_type_ty {
                                 let offset = self.pos + #offset_lit;
-                                #r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap())
+                                #r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))
                             }
                         });
                     }
@@ -2285,7 +2287,7 @@ fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap()))
+                            Some(#target_ident(read_bytes::<#comp_size_lit>(self.buf, offset)))
                         }
                     });
                 } else {
@@ -2293,7 +2295,7 @@ fn generate_message_decoder(
                         #[inline]
                         pub fn #as_struct_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap())
+                            #target_ident(read_bytes::<#comp_size_lit>(self.buf, offset))
                         }
                     });
                 }
@@ -2340,7 +2342,7 @@ fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap())))
+                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))))
                         }
                     });
                 } else {
@@ -2348,7 +2350,7 @@ fn generate_message_decoder(
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident::from_raw(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                            #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
                         }
                     });
                 }
@@ -2393,7 +2395,7 @@ fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap())))
+                            Some(#target_ident(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))))
                         }
                     });
                 } else {
@@ -2401,7 +2403,7 @@ fn generate_message_decoder(
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                            #target_ident(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
                         }
                     });
                 }
@@ -2482,7 +2484,7 @@ fn generate_message_decoder(
                         available: self.buf.len() - start,
                     });
                 }
-                let bytes: [u8; #dim_size_lit] = self.buf[start..start + #dim_size_lit].try_into().unwrap();
+                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
                 let header = #dn_ident(bytes);
                 let count = header.#cf_ident() as usize;
                 let block_len = header.#bf_ident() as usize;
@@ -2513,7 +2515,7 @@ fn generate_message_decoder(
                  if start + {ps} > self.buf.len() {{\n\
                      return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps}, available: self.buf.len() - start }});\n\
                  }}\n\
-                 let bytes: [u8; {ps}] = self.buf[start..start + {ps}].try_into().unwrap();\n\
+                 let bytes: [u8; {ps}] = read_bytes::<{ps}>(self.buf, start);\n\
                  let header = {tp}(bytes);\n\
                  let len = header.{lf}() as usize;\n\
                  if start + {ps} + len > self.buf.len() {{\n\
@@ -2576,7 +2578,7 @@ fn generate_message_decoder(
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = self.#vd_tail_ident()?;
-                    let bytes: [u8; #prefix_size_lit] = self.buf[offset..offset + #prefix_size_lit].try_into().unwrap();
+                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let len = header.#len_field_ident() as usize;
                     if len > #max_lit {
@@ -2595,7 +2597,7 @@ fn generate_message_decoder(
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = self.#vd_tail_ident()?;
-                    let bytes: [u8; #prefix_size_lit] = self.buf[offset..offset + #prefix_size_lit].try_into().unwrap();
+                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let len = header.#len_field_ident() as usize;
                     let data_offset = offset + #prefix_size_lit;
@@ -2658,7 +2660,7 @@ fn generate_message_decoder(
         if buf.len() < #hs_lit {
             return Err(sbe_rt::VerifyError::HeaderTooShort);
         }
-        let header_bytes: [u8; #hs_lit] = buf[..#hs_lit].try_into().unwrap();
+        let header_bytes: [u8; #hs_lit] = read_bytes::<#hs_lit>(buf, 0);
         let header = #hp_ident(header_bytes);
         let block_length = header.#hbl_ident() as usize;
         if block_length < Self::BLOCK_LENGTH {
@@ -2693,7 +2695,7 @@ fn generate_message_decoder(
                         offset,
                     });
                 }
-                let bytes: [u8; #ds_lit] = buf[offset..offset + #ds_lit].try_into().unwrap();
+                let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
                 let dim = #dn_ident(bytes);
                 let count = dim.#cf_ident() as usize;
                 let entries_end = offset + #ds_lit + count * #ebl_lit;
@@ -2724,7 +2726,7 @@ fn generate_message_decoder(
                         length: 0,
                     });
                 }
-                let bytes: [u8; #ps_lit] = buf[offset..offset + #ps_lit].try_into().unwrap();
+                let bytes: [u8; #ps_lit] = read_bytes::<#ps_lit>(buf, offset);
                 let var_header = #tp_ident(bytes);
                 let len = var_header.#lf_ident();
                 let data_end = offset + #ps_lit + len as usize;
@@ -2971,9 +2973,7 @@ fn generate_group_decoder(
 
             #[inline]
             pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {
-                let bytes: [u8; #dim_size_lit] = buf.get(pos..pos + #dim_size_lit).ok_or_else(|| {
-                    sbe_rt::DecodeError::BufferTooShort { field: #g_name_lit, needed: #dim_size_lit, available: buf.len() - pos }
-                })?.try_into().unwrap();
+                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(buf, pos);
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
                 let block_length = header.#bl_field_ident() as usize;
@@ -3236,7 +3236,7 @@ fn generate_group_decoder(
                         #[inline]
                         pub fn #f_name_ident(&self) -> Option<#r_type_ty> {
                             let offset = self.pos + #offset_lit;
-                            let val = #r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap());
+                            let val = #r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset));
                             if #null_check_expr {
                                 None
                             } else {
@@ -3249,7 +3249,7 @@ fn generate_group_decoder(
                         #[inline]
                         pub fn #f_name_ident(&self) -> #r_type_ty {
                             let offset = self.pos + #offset_lit;
-                            #r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap())
+                            #r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))
                         }
                     });
                 }
@@ -3285,7 +3285,7 @@ fn generate_group_decoder(
                     #[inline]
                     pub fn #as_struct_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(self.buf[offset..][..#comp_size_lit].try_into().unwrap())
+                        #target_ident(read_bytes::<#comp_size_lit>(self.buf, offset))
                     }
                 });
 
@@ -3317,7 +3317,7 @@ fn generate_group_decoder(
                     #[inline]
                     pub fn #f_name_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                        #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
 
@@ -3357,7 +3357,7 @@ fn generate_group_decoder(
                     #[inline]
                     pub fn #f_name_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#order_fn(self.buf[offset..][..#prim_size_lit].try_into().unwrap()))
+                        #target_ident(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
 
@@ -3407,7 +3407,7 @@ fn generate_group_decoder(
                 if start + #dim_size_lit > self.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort { field: #ng_name_lit, needed: #dim_size_lit, available: self.buf.len() - start });
                 }
-                let bytes: [u8; #dim_size_lit] = self.buf[start..start + #dim_size_lit].try_into().unwrap();
+                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
                 let block_len = header.#bl_field_ident() as usize;
@@ -3442,7 +3442,7 @@ fn generate_group_decoder(
                 if start + #prefix_size_lit > self.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit, available: self.buf.len() - start });
                 }
-                let bytes: [u8; #prefix_size_lit] = self.buf[start..start + #prefix_size_lit].try_into().unwrap();
+                let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, start);
                 let header = #type_pascal_ident(bytes);
                 let len = header.#len_field_ident() as usize;
                 if start + #prefix_size_lit + len > self.buf.len() {
@@ -3491,7 +3491,7 @@ fn generate_group_decoder(
             #[inline]
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 let offset = self.#tail_nvd_fn()?;
-                let bytes: [u8; #prefix_size_lit] = self.buf[offset..offset + #prefix_size_lit].try_into().unwrap();
+                let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                 let header = #type_pascal_ident(bytes);
                 let len = header.#len_field_ident() as usize;
                 let data_offset = offset + #prefix_size_lit;
@@ -4910,7 +4910,7 @@ fn generate_any_message(
                                 available: self.buf.len() - self.pos,
                             }));
                         }
-                        let bytes: [u8; 4] = self.buf[self.pos..self.pos + 4].try_into().unwrap();
+                        let bytes: [u8; 4] = read_bytes::<4>(self.buf, self.pos);
                         let len = u32::from_le_bytes(bytes) as usize;
                         (4, len)
                     }
@@ -4922,7 +4922,7 @@ fn generate_any_message(
                                 available: self.buf.len() - self.pos,
                             }));
                         }
-                        let bytes: [u8; 2] = self.buf[self.pos..self.pos + 2].try_into().unwrap();
+                        let bytes: [u8; 2] = read_bytes::<2>(self.buf, self.pos);
                         let len = u16::from_le_bytes(bytes) as usize;
                         (2, len)
                     }
@@ -5029,13 +5029,7 @@ fn generate_any_message(
             impl<'a> AnyMessage<'a> {
                 #[inline]
                 pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-                    let header_bytes: [u8; #header_size_lit] = buf.get(pos..pos + #header_size_lit).ok_or_else(|| {
-                        sbe_rt::DecodeError::BufferTooShort {
-                            field: "decoded frame",
-                            needed: #header_size_lit,
-                            available: buf.len() - pos,
-                        }
-                    })?.try_into().unwrap();
+                    let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(buf, pos);
                     let header = #header_type_ident(header_bytes);
                     let template_id = header.#ti_ident();
                     let schema_id = header.#si_ident();

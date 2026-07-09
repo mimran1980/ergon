@@ -346,22 +346,22 @@ impl<'a> MessageHeaderDecoder<'a> {
     #[inline]
     pub fn block_length(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
     #[inline]
     pub fn template_id(&self) -> u16 {
         let offset = self.pos + 2;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
     #[inline]
     pub fn schema_id(&self) -> u16 {
         let offset = self.pos + 4;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
     #[inline]
     pub fn version(&self) -> u16 {
         let offset = self.pos + 6;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -394,12 +394,12 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
     #[inline]
     pub fn block_length(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
     #[inline]
     pub fn num_in_group(&self) -> u16 {
         let offset = self.pos + 2;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -430,7 +430,7 @@ impl<'a> VarStringEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
         let offset = self.pos + 0;
-        u32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
+        u32::from_le_bytes(read_bytes::<4>(self.buf, offset))
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -465,7 +465,7 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
         let offset = self.pos + 0;
-        u32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
+        u32::from_le_bytes(read_bytes::<4>(self.buf, offset))
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -500,7 +500,7 @@ impl<'a> VarDataEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
         let offset = self.pos + 0;
-        u32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
+        u32::from_le_bytes(read_bytes::<4>(self.buf, offset))
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -531,7 +531,7 @@ impl<'a> BoosterDecoder<'a> {
     #[inline]
     pub fn horse_power(&self) -> u8 {
         let offset = self.pos + 0;
-        u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap())
+        u8::from_le_bytes(read_bytes::<1>(self.buf, offset))
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -589,12 +589,12 @@ impl<'a> EngineDecoder<'a> {
     #[inline]
     pub fn capacity(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
     #[inline]
     pub fn num_cylinders(&self) -> u8 {
         let offset = self.pos + 2;
-        u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap())
+        u8::from_le_bytes(read_bytes::<1>(self.buf, offset))
     }
     #[inline]
     pub const fn max_rpm(&self) -> u16 {
@@ -652,22 +652,14 @@ impl<'a> CarDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        #[cfg(not(feature = "bound-check-disabled"))]
-        let header_bytes: [u8; 8] = buf
-            .get(pos..pos + 8)
-            .ok_or_else(|| {
-                sbe_rt::DecodeError::BufferTooShort {
-                    field: "message header",
-                    needed: 8,
-                    available: buf.len() - pos,
-                }
-            })?
-            .try_into()
-            .unwrap();
-        #[cfg(feature = "bound-check-disabled")]
-        let header_bytes: [u8; 8] = unsafe {
-            core::ptr::read_unaligned(buf.as_ptr().add(pos) as *const [u8; 8])
-        };
+        if cfg!(not(feature = "bound-check-disabled")) && pos + 8 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "message header",
+                needed: 8,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
+        let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
         if header.schema_id() != Self::SCHEMA_ID {
             return Err(sbe_rt::DecodeError::WrongSchema {
@@ -688,7 +680,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn serial_number(&self) -> u64 {
         let offset = self.pos + 0;
-        u64::from_le_bytes(self.buf[offset..][..8].try_into().unwrap())
+        u64::from_le_bytes(read_bytes::<8>(self.buf, offset))
     }
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
@@ -696,7 +688,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn model_year(&self) -> u16 {
         let offset = self.pos + 8;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
@@ -704,15 +696,13 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn available(&self) -> BooleanType {
         let offset = self.pos + 10;
-        BooleanType::from_raw(
-            u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()),
-        )
+        BooleanType::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
     }
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     #[inline]
     pub fn code(&self) -> Model {
         let offset = self.pos + 11;
-        Model::from_raw(u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()))
+        Model::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
     }
     pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
@@ -728,12 +718,12 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len() - offset,
             });
         }
-        let all: [u8; 16] = self.buf[offset..offset + 16].try_into().unwrap();
+        let all: [u8; 16] = read_bytes::<16>(self.buf, offset);
         Ok([
-            u32::from_le_bytes(all[0usize..4usize].try_into().unwrap()),
-            u32::from_le_bytes(all[4usize..8usize].try_into().unwrap()),
-            u32::from_le_bytes(all[8usize..12usize].try_into().unwrap()),
-            u32::from_le_bytes(all[12usize..16usize].try_into().unwrap()),
+            u32::from_le_bytes(read_bytes::<4usize>(&all, 0usize)),
+            u32::from_le_bytes(read_bytes::<4usize>(&all, 4usize)),
+            u32::from_le_bytes(read_bytes::<4usize>(&all, 8usize)),
+            u32::from_le_bytes(read_bytes::<4usize>(&all, 12usize)),
         ])
     }
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
@@ -752,14 +742,14 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len() - offset,
             });
         }
-        let all: [u8; 6] = self.buf[offset..offset + 6].try_into().unwrap();
+        let all: [u8; 6] = read_bytes::<6>(self.buf, offset);
         Ok([
-            u8::from_le_bytes(all[0usize..1usize].try_into().unwrap()),
-            u8::from_le_bytes(all[1usize..2usize].try_into().unwrap()),
-            u8::from_le_bytes(all[2usize..3usize].try_into().unwrap()),
-            u8::from_le_bytes(all[3usize..4usize].try_into().unwrap()),
-            u8::from_le_bytes(all[4usize..5usize].try_into().unwrap()),
-            u8::from_le_bytes(all[5usize..6usize].try_into().unwrap()),
+            u8::from_le_bytes(read_bytes::<1usize>(&all, 0usize)),
+            u8::from_le_bytes(read_bytes::<1usize>(&all, 1usize)),
+            u8::from_le_bytes(read_bytes::<1usize>(&all, 2usize)),
+            u8::from_le_bytes(read_bytes::<1usize>(&all, 3usize)),
+            u8::from_le_bytes(read_bytes::<1usize>(&all, 4usize)),
+            u8::from_le_bytes(read_bytes::<1usize>(&all, 5usize)),
         ])
     }
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
@@ -768,7 +758,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn extras(&self) -> OptionalExtras {
         let offset = self.pos + 34;
-        OptionalExtras(u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap()))
+        OptionalExtras(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
     }
     #[inline]
     pub const fn discounted_model(&self) -> Model {
@@ -786,7 +776,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn engine_as_struct(&self) -> Engine {
         let offset = self.pos + 35;
-        Engine(self.buf[offset..][..6].try_into().unwrap())
+        Engine(read_bytes::<6>(self.buf, offset))
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -802,7 +792,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len() - start,
             });
         }
-        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_len = header.block_length() as usize;
@@ -829,7 +819,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len() - start,
             });
         }
-        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_len = header.block_length() as usize;
@@ -856,7 +846,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len() - start,
             });
         }
-        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
@@ -878,7 +868,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len() - start,
             });
         }
-        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
@@ -900,7 +890,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len() - start,
             });
         }
-        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
@@ -927,7 +917,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2()?;
-        let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         if len > 1073741824 {
@@ -948,7 +938,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
-        let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         if len > 1073741824 {
@@ -969,7 +959,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
-        let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         if len > 1073741824 {
@@ -1008,7 +998,7 @@ impl<'a> CarDecoder<'a> {
         if buf.len() < 8 {
             return Err(sbe_rt::VerifyError::HeaderTooShort);
         }
-        let header_bytes: [u8; 8] = buf[..8].try_into().unwrap();
+        let header_bytes: [u8; 8] = read_bytes::<8>(buf, 0);
         let header = MessageHeader(header_bytes);
         let block_length = header.block_length() as usize;
         if block_length < Self::BLOCK_LENGTH {
@@ -1032,7 +1022,7 @@ impl<'a> CarDecoder<'a> {
                     offset,
                 });
             }
-            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let dim = GroupSizeEncoding(bytes);
             let count = dim.num_in_group() as usize;
             let entries_end = offset + 4 + count * 6;
@@ -1051,7 +1041,7 @@ impl<'a> CarDecoder<'a> {
                     offset,
                 });
             }
-            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let dim = GroupSizeEncoding(bytes);
             let count = dim.num_in_group() as usize;
             let entries_end = offset + 4 + count * 1;
@@ -1071,7 +1061,7 @@ impl<'a> CarDecoder<'a> {
                     length: 0,
                 });
             }
-            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let var_header = VarStringEncoding(bytes);
             let len = var_header.length();
             let data_end = offset + 4 + len as usize;
@@ -1092,7 +1082,7 @@ impl<'a> CarDecoder<'a> {
                     length: 0,
                 });
             }
-            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let var_header = VarStringEncoding(bytes);
             let len = var_header.length();
             let data_end = offset + 4 + len as usize;
@@ -1113,7 +1103,7 @@ impl<'a> CarDecoder<'a> {
                     length: 0,
                 });
             }
-            let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
+            let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let var_header = VarAsciiEncoding(bytes);
             let len = var_header.length();
             let data_end = offset + 4 + len as usize;
@@ -1226,17 +1216,7 @@ impl<'a> FuelFiguresDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        let bytes: [u8; 4] = buf
-            .get(pos..pos + 4)
-            .ok_or_else(|| {
-                sbe_rt::DecodeError::BufferTooShort {
-                    field: "fuelFigures",
-                    needed: 4,
-                    available: buf.len() - pos,
-                }
-            })?
-            .try_into()
-            .unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_length = header.block_length() as usize;
@@ -1362,7 +1342,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn speed(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
     pub const SPEED_NULL: u16 = 65535_u16;
     pub const SPEED_MIN: u16 = 0_u16;
@@ -1370,7 +1350,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn mpg(&self) -> f32 {
         let offset = self.pos + 2;
-        f32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
+        f32::from_le_bytes(read_bytes::<4>(self.buf, offset))
     }
     pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
     pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
@@ -1389,7 +1369,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
                 available: self.buf.len() - start,
             });
         }
-        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         if start + 4 + len > self.buf.len() {
@@ -1404,7 +1384,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
-        let bytes: [u8; 4] = self.buf[offset..offset + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         let data_offset = offset + 4;
@@ -1463,17 +1443,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        let bytes: [u8; 4] = buf
-            .get(pos..pos + 4)
-            .ok_or_else(|| {
-                sbe_rt::DecodeError::BufferTooShort {
-                    field: "performanceFigures",
-                    needed: 4,
-                    available: buf.len() - pos,
-                }
-            })?
-            .try_into()
-            .unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_length = header.block_length() as usize;
@@ -1599,7 +1569,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     #[inline]
     pub fn octane_rating(&self) -> u8 {
         let offset = self.pos + 0;
-        u8::from_le_bytes(self.buf[offset..][..1].try_into().unwrap())
+        u8::from_le_bytes(read_bytes::<1>(self.buf, offset))
     }
     pub const OCTANE_RATING_NULL: u8 = 255_u8;
     pub const OCTANE_RATING_MIN: u8 = 90_u8;
@@ -1618,7 +1588,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
                 available: self.buf.len() - start,
             });
         }
-        let bytes: [u8; 4] = self.buf[start..start + 4].try_into().unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_len = header.block_length() as usize;
@@ -1702,17 +1672,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         pos: usize,
         acting_version: u16,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        let bytes: [u8; 4] = buf
-            .get(pos..pos + 4)
-            .ok_or_else(|| {
-                sbe_rt::DecodeError::BufferTooShort {
-                    field: "acceleration",
-                    needed: 4,
-                    available: buf.len() - pos,
-                }
-            })?
-            .try_into()
-            .unwrap();
+        let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
         let header = GroupSizeEncoding(bytes);
         let count = header.num_in_group() as usize;
         let block_length = header.block_length() as usize;
@@ -1823,7 +1783,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     #[inline]
     pub fn mph(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(self.buf[offset..][..2].try_into().unwrap())
+        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
     pub const MPH_NULL: u16 = 65535_u16;
     pub const MPH_MIN: u16 = 0_u16;
@@ -1831,7 +1791,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     #[inline]
     pub fn seconds(&self) -> f32 {
         let offset = self.pos + 2;
-        f32::from_le_bytes(self.buf[offset..][..4].try_into().unwrap())
+        f32::from_le_bytes(read_bytes::<4>(self.buf, offset))
     }
     pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
     pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
@@ -2761,10 +2721,7 @@ impl<'a> Iterator for FrameCursor<'a> {
                         }),
                     );
                 }
-                let bytes: [u8; 4] = self
-                    .buf[self.pos..self.pos + 4]
-                    .try_into()
-                    .unwrap();
+                let bytes: [u8; 4] = read_bytes::<4>(self.buf, self.pos);
                 let len = u32::from_le_bytes(bytes) as usize;
                 (4, len)
             }
@@ -2778,10 +2735,7 @@ impl<'a> Iterator for FrameCursor<'a> {
                         }),
                     );
                 }
-                let bytes: [u8; 2] = self
-                    .buf[self.pos..self.pos + 2]
-                    .try_into()
-                    .unwrap();
+                let bytes: [u8; 2] = read_bytes::<2>(self.buf, self.pos);
                 let len = u16::from_le_bytes(bytes) as usize;
                 (2, len)
             }
@@ -2848,17 +2802,7 @@ impl<'a> AnyMessage<'a> {
         pos: usize,
         frame_len: usize,
     ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-        let header_bytes: [u8; 8] = buf
-            .get(pos..pos + 8)
-            .ok_or_else(|| {
-                sbe_rt::DecodeError::BufferTooShort {
-                    field: "decoded frame",
-                    needed: 8,
-                    available: buf.len() - pos,
-                }
-            })?
-            .try_into()
-            .unwrap();
+        let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
         let template_id = header.template_id();
         let schema_id = header.schema_id();
