@@ -7,7 +7,7 @@ message decoders, composites, enums, and sets. This is a pure Rust-side
 enrichment — the wire layout is unchanged.
 
 Gated behind `CompatibilityMode::WireCompatibleExtensions`.
-**Status: CLOSED / SUPERSEDED**
+**Status: DONE — IMPLEMENTED (serde feature on domain objects)**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep parked until
 domain objects or a concrete decoder-view serialization use case is accepted.
