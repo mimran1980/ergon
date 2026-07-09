@@ -661,6 +661,13 @@ impl<'a> CarDecoder<'a> {
         }
         let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
+        if header.template_id() != Self::TEMPLATE_ID {
+            return Err(sbe_rt::DecodeError::WrongSchema {
+                expected: Self::TEMPLATE_ID,
+                actual: header.template_id(),
+                expected_name: "baseline",
+            });
+        }
         if header.schema_id() != Self::SCHEMA_ID {
             return Err(sbe_rt::DecodeError::WrongSchema {
                 expected: Self::SCHEMA_ID,

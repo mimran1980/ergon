@@ -2011,13 +2011,14 @@ fn generate_message_decoder(
         let hs = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
         let hp = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
         let hsi = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
+        let hti = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
         let hbl = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
         let hvr = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
         let en = syn::LitStr::new(&schema_name, proc_macro2::Span::call_site());
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                // Decoder trust boundary: validate buffer bounds + schema identity.
+                // Decoder trust boundary: validate buffer bounds + schema_id + template_id.
                 // This is the one place the decoder checks — all field accessors
                 // after this are infallible (offsets are within the validated block).
                 if pos + #hs > buf.len() {
@@ -2029,6 +2030,13 @@ fn generate_message_decoder(
                 }
                 let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
                 let header = #hp(header_bytes);
+                if header.#hti() != Self::TEMPLATE_ID {
+                    return Err(sbe_rt::DecodeError::WrongSchema {
+                        expected: Self::TEMPLATE_ID,
+                        actual: header.#hti(),
+                        expected_name: #en,
+                    });
+                }
                 if header.#hsi() != Self::SCHEMA_ID {
                     return Err(sbe_rt::DecodeError::WrongSchema {
                         expected: Self::SCHEMA_ID,
