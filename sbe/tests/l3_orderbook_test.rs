@@ -1,4 +1,5 @@
 //! L3 orderbook test — nested repeating groups with var-data.
+#![allow(clippy::literal_string_with_formatting_args)]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, unused)]
 
 mod common;
