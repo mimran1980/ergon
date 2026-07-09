@@ -120,7 +120,7 @@ fn decode_baseline_fixture() {
         &Paths::example_schema(),
         &Paths::baseline_binary(),
         r#"
-        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0);
+        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0).unwrap();
 
         // Scalar fields
         assert_eq!(1234, car.serial_number(), "serial_number");
@@ -211,7 +211,7 @@ fn decoder_display() {
         &Paths::example_schema(),
         &Paths::baseline_binary(),
         r#"
-        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0);
+        let car = CarDecoder::wrap_and_apply_header(FIXTE, 0).unwrap();
         let s = format!("{}", car);
         assert!(s.contains("serial_number: 1234"), "display serial_number");
         assert!(s.contains("model_year: 2013"), "display model_year");
@@ -286,7 +286,7 @@ fn encode_baseline_roundtrip() {
 
         // ── Decode the just-encoded bytes ──
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
         assert_eq!(1234, car2.serial_number(), "rt.serial_number");
         assert_eq!(2013, car2.model_year(), "rt.model_year");
@@ -461,7 +461,7 @@ fn group_decoder_is_empty() {
         let car = car.model(b"Civic VTi").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         assert!(car2.fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
 
         // ── 3 fuel figures → is_empty() == false ──
@@ -485,7 +485,7 @@ fn group_decoder_is_empty() {
         let car = car.model(b"Civic VTi").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         assert!(!car2.fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
     "#,
     );
@@ -589,7 +589,7 @@ fn fixed_entry_group_entries_iterator() {
         let car = car.activation_code(b"abc").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let perf: Vec<_> = car2.performance_figures().unwrap()
             .collect::<Result<Vec<_>, _>>().unwrap();
         let mut accel = perf[0].acceleration().unwrap();
@@ -632,7 +632,7 @@ fn array_accessor_all_paths_return_same_values() {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
         // Safe path — some_numbers returns Result
         let safe: [u32; 4] = car2.some_numbers();
@@ -674,7 +674,7 @@ fn display_shows_group_entry_fields_not_just_count() {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let display = format!("{}", car2);
 
         // Display must include entry field values, not just "N entries"
@@ -717,7 +717,7 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
         // Default: flyweight (zero-copy from buffer)
         let fly: EngineDecoder = car2.engine();
@@ -770,7 +770,7 @@ fn bounds_checks_active_by_default_nth_always_checked() {
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let ff = car2.fuel_figures().unwrap();
         // nth() bounds check is ALWAYS present (trust boundary — external idx input)
         let result = ff.nth(999);
@@ -806,7 +806,7 @@ fn bounds_checks_disabled_with_feature_flag() {
         let car = car.activation_code(b"abc").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // Field accessors work (without bounds checks in fast path)
         assert_eq!(car2.serial_number(), 1234);
         assert_eq!(car2.model_year(), 2013);
@@ -1048,7 +1048,7 @@ fn boolean_roundtrip_runtime() {
         let car = car.activation_code(b"12345").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let available = car2.available();
         assert_eq!(available, BooleanType::T, "round-trip available via available_bool(true)");
         assert_ne!(available.raw(), 0, "BooleanType::T raw != 0");
@@ -1071,7 +1071,7 @@ fn boolean_roundtrip_runtime() {
         let car = car.activation_code(b"12345").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let available = car2.available();
         assert_eq!(available, BooleanType::F, "round-trip available via BooleanType::F");
         assert_eq!(available.raw(), 0, "BooleanType::F raw == 0");
@@ -1128,7 +1128,7 @@ fn bounds_checking_switch() {
         let car = car.activation_code(b"12345").unwrap();
         let encoded = car.as_bytes().to_vec();
 
-        let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
         assert_eq!(42, car2.serial_number());
         assert_eq!(2000, car2.model_year());
         assert_eq!(BooleanType::T, car2.available());
@@ -1417,7 +1417,7 @@ fn forward_compat_v2_decoder_reads_v1_bytes() {
         let encoded = e.as_bytes();
 
         // ── Decode with V2 decoder (forward compat) ──
-        let d = versmsg_v2::VersionedMessageV2Decoder::wrap_and_apply_header(encoded, 0);
+        let d = versmsg_v2::VersionedMessageV2Decoder::wrap_and_apply_header(encoded, 0).unwrap();
 
         // Common fields (sinceVersion=0) — must decode correctly
         assert_eq!(d.field_a1(), 100, "FieldA1 should survive forward compat");
@@ -1461,7 +1461,7 @@ fn backward_compat_v1_decoder_reads_v2_bytes() {
         let encoded = e.as_bytes();
 
         // ── Decode with V1 decoder (backward compat) ──
-        let d = versmsg_v1::VersionedMessageV1Decoder::wrap_and_apply_header(encoded, 0);
+        let d = versmsg_v1::VersionedMessageV1Decoder::wrap_and_apply_header(encoded, 0).unwrap();
 
         // Known fields must be correct
         assert_eq!(d.field_a1(), 42, "FieldA1 should survive backward compat");

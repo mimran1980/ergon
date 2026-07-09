@@ -81,7 +81,7 @@ fn test_fixed_entry_group_access() {
         }
 
         let encoded = encode_car();
-        let car = CarDecoder::wrap_and_apply_header(&encoded, 0);
+        let car = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
 
         // Navigate to acceleration group
         let mut perf = car.performance_figures().unwrap();

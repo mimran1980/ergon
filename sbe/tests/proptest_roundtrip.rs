@@ -142,7 +142,7 @@ proptest! {
         let car = car.activation_code(b"").unwrap();
 
         let encoded = car.as_bytes();
-        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
         prop_assert_eq!(serial_number, decoded.serial_number());
         prop_assert_eq!(model_year, decoded.model_year());
@@ -201,7 +201,7 @@ proptest! {
         let car = car.activation_code(&activation).unwrap();
 
         let encoded = car.as_bytes();
-        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
         prop_assert_eq!(&manufacturer[..], decoded.manufacturer().unwrap());
         prop_assert_eq!(&model[..], decoded.model().unwrap());
@@ -260,7 +260,7 @@ proptest! {
         let car = car.activation_code(b"").unwrap();
 
         let encoded = car.as_bytes();
-        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
         let fuel: Vec<_> = decoded.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         prop_assert_eq!(entries.len(), fuel.len(), "fuel figures count");
@@ -305,7 +305,7 @@ fn zero_length_roundtrip() {
     let car = car.activation_code(b"").unwrap();
 
     let encoded = car.as_bytes();
-    let decoded = CarDecoder::wrap_and_apply_header(encoded, 0);
+    let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
     assert_eq!(0, decoded.serial_number());
     assert!(decoded.fuel_figures().unwrap().is_empty(), "fuel figures not empty");
@@ -353,7 +353,7 @@ fn boundary_values() {
     let car = car.activation_code(b"MAX").unwrap();
 
     let encoded = car.as_bytes();
-    let decoded = CarDecoder::wrap_and_apply_header(encoded, 0);
+    let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
     assert_eq!(u64::MAX, decoded.serial_number());
     assert_eq!(u16::MAX, decoded.model_year());

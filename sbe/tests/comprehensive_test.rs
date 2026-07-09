@@ -36,7 +36,7 @@ fn enum_all_variants_roundtrip() {
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // Enum accessors
         assert_eq!(car2.available(), BooleanType::T);
         assert_eq!(car2.code(), Model::A);
@@ -79,7 +79,7 @@ fn set_fields_roundtrip() {
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let extras = car2.extras();
         assert!(extras.cruise_control());
         assert!(extras.sports_pack());
@@ -125,7 +125,7 @@ fn group_with_vardata_entries_roundtrip() {
         let car = car.activation_code(b"abc").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // Group with var-data: Iterator returns Result
         let ff: Vec<_> = car2.fuel_figures().unwrap()
             .collect::<Result<Vec<_>, _>>().unwrap();
@@ -172,7 +172,7 @@ fn vardata_empty_and_max_roundtrip() {
         let car = car.activation_code(b"XYZ0123456789").unwrap(); // long var-data
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // Empty var-data
         assert_eq!(car2.manufacturer().unwrap(), b"");
         // Short var-data
@@ -208,7 +208,7 @@ fn all_scalar_accessor_paths() {
         let car = car.activation_code(b"abc").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // Safe path: scalars return T directly (infallible)
         assert_eq!(car2.serial_number(), 1234u64);
         assert_eq!(car2.model_year(), 2013u16);
@@ -339,7 +339,7 @@ fn display_includes_scalar_fields() {
         let car = car.activation_code(b"XYZ").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let d = format!("{}", car2);
         // Display contains field names and values
         assert!(d.contains("serial_number"), "serial_number: {d}");
@@ -375,7 +375,7 @@ fn constant_fields_return_correct_values() {
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // discountedModel is presence="constant" valueRef="Model.C"
         assert_eq!(car2.discounted_model(), Model::C);
         assert_eq!(car2.discounted_model().raw(), 67u8); // 'C'
@@ -437,7 +437,7 @@ fn encoder_roundtrip_with_groups_and_vardata() {
         let car = car.activation_code(b"RACE").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         assert_eq!(car2.serial_number(), 7777u64);
         assert_eq!(car2.model_year(), 2022u16);
         assert_eq!(car2.some_numbers(), [10u32, 20, 30, 40]);
@@ -500,7 +500,7 @@ fn fixed_entry_group_as_chunks_and_entries() {
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let pf: Vec<_> = car2.performance_figures().unwrap()
             .collect::<Result<Vec<_>,_>>().unwrap();
         // Acceleration is a fixed-entry group (total_tail == 0)
@@ -620,7 +620,7 @@ fn vardata_truncated_length_detected() {
         let car = car.model(b"911 GT3 RS").unwrap();
         let car = car.activation_code(b"RACE-XYZ").unwrap();
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // Valid varData reads
         assert_eq!(car2.manufacturer().unwrap(), b"Porsche");
         assert_eq!(car2.model().unwrap(), b"911 GT3 RS");
@@ -659,7 +659,7 @@ fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::er
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // raw() returns the underlying integer discriminant
         assert_eq!(car2.available().raw(), 1u8);   // T = 1
         assert_eq!(car2.code().raw(), 65u8);       // A = 65 (char 'A')
@@ -693,7 +693,7 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
-        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0);
+        let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         // raw() returns the underlying bitfield
         let raw = car2.extras().raw();
         // cruise_control = bit 2, sports_pack = bit 1, sun_roof = bit 0

@@ -85,7 +85,7 @@ fn car_encode_decode_perf_smoke() {
         // ── Timed decode ──
         let decode_start = std::time::Instant::now();
         for _ in 0..50 {
-            let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0);
+            let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
             assert_eq!(1234, car2.serial_number());
             assert_eq!(2013, car2.model_year());
             assert_eq!(BooleanType::T, car2.available());
