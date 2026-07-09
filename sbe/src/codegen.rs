@@ -3800,22 +3800,48 @@ fn generate_message_encoder(
 
     let mut ts = proc_macro2::TokenStream::new();
 
-    // ── Encoder struct (non-generic — no State, no PhantomData) ──
-    // Type-state ordering is enforced by consuming `self` in transition
-    // methods. Compile-time ordering between groups/var-data can be added
-    // later via separate concrete structs per state.
-    ts.extend(quote::quote! {
-        #[must_use = "encoder must be consumed to write the message"]
-        pub struct #name_encoder_ident<'a> {
-            buf: &'a mut [u8],
-            message_start: usize,
-            pos: usize,
+    // ── Compute tail field names in wire order (groups then var-data) ──
+    let tail_pascal: Vec<String> = msg
+        .groups
+        .iter()
+        .map(|g| to_pascal_case(&g.name))
+        .chain(msg.var_data.iter().map(|vd| to_pascal_case(&vd.name)))
+        .collect();
+
+    // ── Stage struct names ──
+    // Stage 0 = initial (#name_encoder_ident). After each tail field, a new
+    // concrete struct (e.g. CarEncoderAfterFuelFigures). Final = Complete.
+    // This gives compile-time ordering: each struct only has the transition
+    // for its stage; you can't call asks() before bids() — different type.
+    let stage_idents: Vec<syn::Ident> = if total_tail > 0 {
+        let mut stages = vec![name_encoder_ident.clone()];
+        for (i, field) in tail_pascal.iter().enumerate() {
+            if i < total_tail - 1 {
+                stages.push(syn::Ident::new(&format!("{}After{}", name, field), span));
+            } else {
+                stages.push(syn::Ident::new(&format!("{}Complete", name), span));
+            }
         }
-    });
+        stages
+    } else {
+        vec![name_encoder_ident.clone()]
+    };
+
+    // ── Generate all stage struct definitions (identical layout, non-generic) ──
+    for stage in &stage_idents {
+        ts.extend(quote::quote! {
+            #[must_use = "encoder must be consumed to write the message"]
+            pub struct #stage<'a> {
+                buf: &'a mut [u8],
+                message_start: usize,
+                pos: usize,
+            }
+        });
+    }
 
     // ── Shared impl block ──
     // Constants, HEADER_TEMPLATE, wrap(), wrap_and_apply_header(), field
-    // setters, encoded_length() all live here.
+    // setters, encoded_length() all live on the INITIAL struct only.
     let mut impl_contents = proc_macro2::TokenStream::new();
 
     // Constants
@@ -4044,7 +4070,7 @@ fn generate_message_encoder(
         }
     }
 
-    // encoded_length methods
+    // encoded_length methods + partial as_bytes (available at ALL stages)
     impl_contents.extend(quote::quote! {
         #[inline]
         pub fn encoded_length(&self) -> usize {
@@ -4054,6 +4080,13 @@ fn generate_message_encoder(
         #[inline]
         pub fn encoded_length_with_header(&self) -> usize {
             self.pos - self.message_start
+        }
+
+        /// Return the encoded bytes written so far (partial — available before
+        /// the tail is complete, for scalar-only inspection).
+        #[inline]
+        pub fn as_bytes(&self) -> &[u8] {
+            &self.buf[self.message_start..self.pos]
         }
     });
 
@@ -4125,12 +4158,8 @@ fn generate_message_encoder(
 
         // Group methods
         for g in &msg.groups {
-            let needs_state: syn::Path = syn::parse_str(&format!(
-                "{}_encoder_state::Needs{}",
-                snake_name,
-                to_pascal_case(&g.name)
-            ))
-            .unwrap();
+            let current_stage = &stage_idents[tail_idx];
+            let next_stage = &stage_idents[tail_idx + 1];
 
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
             let raw_enc_name = to_pascal_case(&g.name);
@@ -4147,13 +4176,13 @@ fn generate_message_encoder(
             let num_size_lit = syn::LitInt::new(&num_size.to_string(), span);
 
             ts.extend(quote::quote! {
-                impl<'a> #name_encoder_ident<'a> {
+                impl<'a> #current_stage<'a> {
                     #[must_use]
                     pub fn #g_snake<F>(
                         mut self,
                         count: u16,
                         f: F,
-                    ) -> Result<#name_encoder_ident<'a>, sbe_rt::EncodeError>
+                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
                     where
                         F: FnOnce(&mut #g_pascal_enc<'a>),
                     {
@@ -4171,11 +4200,11 @@ fn generate_message_encoder(
                         let mut group =
                             #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
                         f(&mut group);
-                        Ok(#name_encoder_ident {
+                        Ok(#next_stage {
                             buf: group.buf,
                             message_start: self.message_start,
                             pos: group.pos,
-                                })
+                        })
                     }
                 }
             });
@@ -4184,10 +4213,8 @@ fn generate_message_encoder(
 
         // VarData methods
         for vd in &msg.var_data {
-            let vd_pascal = to_pascal_case(&vd.name);
-            let needs_state: syn::Path =
-                syn::parse_str(&format!("{}_encoder_state::Needs{}", snake_name, vd_pascal))
-                    .unwrap();
+            let current_stage = &stage_idents[tail_idx];
+            let next_stage = &stage_idents[tail_idx + 1];
 
             let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
             let vd_snake_unchecked =
@@ -4225,7 +4252,7 @@ fn generate_message_encoder(
                     .copy_from_slice(&len_bytes);
                 let start = self.pos + #prefix_size_lit;
                 self.buf[start..start + data.len()].copy_from_slice(data);
-                Ok(#name_encoder_ident {
+                Ok(#next_stage {
                     buf: self.buf,
                     message_start: self.message_start,
                     pos: start + data.len(),
@@ -4233,12 +4260,12 @@ fn generate_message_encoder(
             };
 
             ts.extend(quote::quote! {
-                impl<'a> #name_encoder_ident<'a> {
+                impl<'a> #current_stage<'a> {
                     #[must_use]
                     pub fn #vd_snake(
                         mut self,
                         data: &[u8],
-                    ) -> Result<#name_encoder_ident<'a>, sbe_rt::EncodeError> {
+                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError> {
                         #checked_body
                         #shared_body
                     }
@@ -4247,7 +4274,7 @@ fn generate_message_encoder(
                     pub fn #vd_snake_unchecked(
                         mut self,
                         data: &[u8],
-                    ) -> Result<#name_encoder_ident<'a>, sbe_rt::EncodeError> {
+                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError> {
                         #shared_body
                     }
                 }
@@ -4255,16 +4282,25 @@ fn generate_message_encoder(
             tail_idx += 1;
         }
 
-        // Complete state + AsRef
+        // Complete state: as_bytes() + AsRef + encoded_length on the final stage struct
+        let complete_ident = &stage_idents[total_tail];
         ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a> {
+            impl<'a> #complete_ident<'a> {
                 #[inline]
                 pub fn as_bytes(&self) -> &[u8] {
                     &self.buf[self.message_start..self.pos]
                 }
+                #[inline]
+                pub fn encoded_length(&self) -> usize {
+                    self.pos - self.message_start - #header_size_lit
+                }
+                #[inline]
+                pub fn encoded_length_with_header(&self) -> usize {
+                    self.pos - self.message_start
+                }
             }
 
-            impl<'a> AsRef<[u8]> for #name_encoder_ident<'a> {
+            impl<'a> AsRef<[u8]> for #complete_ident<'a> {
                 fn as_ref(&self) -> &[u8] {
                     self.as_bytes()
                 }

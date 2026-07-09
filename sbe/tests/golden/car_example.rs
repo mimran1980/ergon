@@ -1872,6 +1872,36 @@ pub struct CarEncoder<'a> {
     message_start: usize,
     pos: usize,
 }
+#[must_use = "encoder must be consumed to write the message"]
+pub struct CarAfterFuelFigures<'a> {
+    buf: &'a mut [u8],
+    message_start: usize,
+    pos: usize,
+}
+#[must_use = "encoder must be consumed to write the message"]
+pub struct CarAfterPerformanceFigures<'a> {
+    buf: &'a mut [u8],
+    message_start: usize,
+    pos: usize,
+}
+#[must_use = "encoder must be consumed to write the message"]
+pub struct CarAfterManufacturer<'a> {
+    buf: &'a mut [u8],
+    message_start: usize,
+    pos: usize,
+}
+#[must_use = "encoder must be consumed to write the message"]
+pub struct CarAfterModel<'a> {
+    buf: &'a mut [u8],
+    message_start: usize,
+    pos: usize,
+}
+#[must_use = "encoder must be consumed to write the message"]
+pub struct CarComplete<'a> {
+    buf: &'a mut [u8],
+    message_start: usize,
+    pos: usize,
+}
 impl<'a> CarEncoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
@@ -1967,6 +1997,12 @@ impl<'a> CarEncoder<'a> {
     pub fn encoded_length_with_header(&self) -> usize {
         self.pos - self.message_start
     }
+    /// Return the encoded bytes written so far (partial — available before
+    /// the tail is complete, for scalar-only inspection).
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buf[self.message_start..self.pos]
+    }
     /// Compute the exact SBE message length before encoding.
     /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
     #[inline]
@@ -1992,7 +2028,7 @@ impl<'a> CarEncoder<'a> {
         mut self,
         count: u16,
         f: F,
-    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError>
+    ) -> Result<CarAfterFuelFigures<'a>, sbe_rt::EncodeError>
     where
         F: FnOnce(&mut FuelFiguresEncoder<'a>),
     {
@@ -2007,20 +2043,20 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
-        Ok(CarEncoder {
+        Ok(CarAfterFuelFigures {
             buf: group.buf,
             message_start: self.message_start,
             pos: group.pos,
         })
     }
 }
-impl<'a> CarEncoder<'a> {
+impl<'a> CarAfterFuelFigures<'a> {
     #[must_use]
     pub fn performance_figures<F>(
         mut self,
         count: u16,
         f: F,
-    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError>
+    ) -> Result<CarAfterPerformanceFigures<'a>, sbe_rt::EncodeError>
     where
         F: FnOnce(&mut PerformanceFiguresEncoder<'a>),
     {
@@ -2035,19 +2071,19 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
-        Ok(CarEncoder {
+        Ok(CarAfterPerformanceFigures {
             buf: group.buf,
             message_start: self.message_start,
             pos: group.pos,
         })
     }
 }
-impl<'a> CarEncoder<'a> {
+impl<'a> CarAfterPerformanceFigures<'a> {
     #[must_use]
     pub fn manufacturer(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
+    ) -> Result<CarAfterManufacturer<'a>, sbe_rt::EncodeError> {
         if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "manufacturer",
@@ -2066,7 +2102,7 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
         self.buf[start..start + data.len()].copy_from_slice(data);
-        Ok(CarEncoder {
+        Ok(CarAfterManufacturer {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
@@ -2076,7 +2112,7 @@ impl<'a> CarEncoder<'a> {
     pub fn manufacturer_unchecked(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
+    ) -> Result<CarAfterManufacturer<'a>, sbe_rt::EncodeError> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -2088,16 +2124,19 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
         self.buf[start..start + data.len()].copy_from_slice(data);
-        Ok(CarEncoder {
+        Ok(CarAfterManufacturer {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
         })
     }
 }
-impl<'a> CarEncoder<'a> {
+impl<'a> CarAfterManufacturer<'a> {
     #[must_use]
-    pub fn model(mut self, data: &[u8]) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
+    pub fn model(
+        mut self,
+        data: &[u8],
+    ) -> Result<CarAfterModel<'a>, sbe_rt::EncodeError> {
         if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "model",
@@ -2116,7 +2155,7 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
         self.buf[start..start + data.len()].copy_from_slice(data);
-        Ok(CarEncoder {
+        Ok(CarAfterModel {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
@@ -2126,7 +2165,7 @@ impl<'a> CarEncoder<'a> {
     pub fn model_unchecked(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
+    ) -> Result<CarAfterModel<'a>, sbe_rt::EncodeError> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -2138,19 +2177,19 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
         self.buf[start..start + data.len()].copy_from_slice(data);
-        Ok(CarEncoder {
+        Ok(CarAfterModel {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
         })
     }
 }
-impl<'a> CarEncoder<'a> {
+impl<'a> CarAfterModel<'a> {
     #[must_use]
     pub fn activation_code(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
+    ) -> Result<CarComplete<'a>, sbe_rt::EncodeError> {
         if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "activationCode",
@@ -2169,7 +2208,7 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
         self.buf[start..start + data.len()].copy_from_slice(data);
-        Ok(CarEncoder {
+        Ok(CarComplete {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
@@ -2179,7 +2218,7 @@ impl<'a> CarEncoder<'a> {
     pub fn activation_code_unchecked(
         mut self,
         data: &[u8],
-    ) -> Result<CarEncoder<'a>, sbe_rt::EncodeError> {
+    ) -> Result<CarComplete<'a>, sbe_rt::EncodeError> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -2191,20 +2230,28 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
         let start = self.pos + 4;
         self.buf[start..start + data.len()].copy_from_slice(data);
-        Ok(CarEncoder {
+        Ok(CarComplete {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
         })
     }
 }
-impl<'a> CarEncoder<'a> {
+impl<'a> CarComplete<'a> {
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf[self.message_start..self.pos]
     }
+    #[inline]
+    pub fn encoded_length(&self) -> usize {
+        self.pos - self.message_start - 8
+    }
+    #[inline]
+    pub fn encoded_length_with_header(&self) -> usize {
+        self.pos - self.message_start
+    }
 }
-impl<'a> AsRef<[u8]> for CarEncoder<'a> {
+impl<'a> AsRef<[u8]> for CarComplete<'a> {
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()
     }

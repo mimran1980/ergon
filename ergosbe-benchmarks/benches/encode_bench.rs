@@ -88,7 +88,7 @@ fn encode_checked(buf: &mut [u8]) -> usize {
 
     let car = car.manufacturer(b"Honda").unwrap();
     let car = car.model(b"Civic VTi").unwrap();
-    let encoded: CarEncoder<'_> = car.activation_code(b"abcdef").unwrap();
+    let encoded: CarComplete<'_> = car.activation_code(b"abcdef").unwrap();
     encoded.encoded_length_with_header()
 }
 
