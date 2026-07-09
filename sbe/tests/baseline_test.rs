@@ -1862,3 +1862,66 @@ fn upstream_issue_schemas_parse_or_error_gracefully() {
         parsed + errored
     );
 }
+
+// ── Performance regression locks (prevent reintroduction of slow shapes) ──
+
+#[test]
+fn generated_encoder_has_no_phantomdata_or_state_generic() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    assert!(
+        !src.contains("core::marker::PhantomData"),
+        "encoder must not use PhantomData (SROA barrier)"
+    );
+    assert!(
+        !src.contains("car_encoder_state"),
+        "encoder must not use car_encoder_state module (no generic state)"
+    );
+    assert!(
+        !src.contains("State ="),
+        "encoder struct must not have a State generic parameter"
+    );
+}
+
+#[test]
+fn generated_encoder_has_concrete_stage_structs() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    assert!(
+        src.contains("pub struct CarAfterFuelFigures"),
+        "encoder must generate concrete CarAfterFuelFigures stage struct"
+    );
+    assert!(
+        src.contains("pub struct CarComplete"),
+        "encoder must generate CarComplete terminal struct"
+    );
+}
+
+#[test]
+fn generated_code_uses_one_slice_indexing() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    assert!(
+        !src.contains("[offset..][.."),
+        "generated code must use one-slice indexing [offset..offset+N], not [offset..][..N]"
+    );
+}
+
+#[test]
+fn generated_decoder_has_skip_and_rewind() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    assert!(
+        src.contains("pub fn skip_to_fuel_figures"),
+        "decoder must have skip_to_fuel_figures()"
+    );
+    assert!(
+        src.contains("pub fn rewind(&self) -> Self"),
+        "decoder must have rewind() returning Self"
+    );
+}
+
+#[test]
+fn generated_decoder_validates_template_and_schema_id() {
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    assert!(
+        src.contains("TEMPLATE_ID") && src.contains("SCHEMA_ID"),
+        "decoder wrap_and_apply_header must check both template_id and schema_id"
+    );
+}
