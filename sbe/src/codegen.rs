@@ -2996,7 +2996,7 @@ fn generate_domain_recursive(
             | FieldType::Set {
                 name: enum_name, ..
             } => {
-                let type_ident = syn::Ident::new(enum_name, span);
+                let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
                 struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
                 from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
             }
