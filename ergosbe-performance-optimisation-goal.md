@@ -813,7 +813,12 @@ Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
   generated module uses them.
   (2) reach 100% line/function + branch coverage (generator ~91% now;
   `--branch` not yet run; `allocation_count_test` is a justified coverage
-  exclusion).
+  exclusion). **New generator logic is already 100% covered**: lcov shows zero
+  uncovered lines in the consuming-stage functions (`decoder_stage_after_ident`,
+  `generate_owner_consuming_stages`, `generate_decoder_consuming_stages`,
+  `generate_entry_consuming_stages`, lines ~1858–2210). The remaining ~9% gap is
+  pre-existing code (xml.rs parser, resolve.rs, schema.rs, codegen enum/set/
+  composite edge cases) — a separate effort.
 
 **Exact next slice (resume here):** migrate decoder call sites to the consuming
 model (Commit 2: `sbe/tests/{baseline,comprehensive,integration,allocation_count,
