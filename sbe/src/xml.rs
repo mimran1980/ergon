@@ -1607,6 +1607,33 @@ mod tests {
         assert!(matches!(err, ParseError::MalformedXml { .. }));
     }
 
+    #[test]
+    fn parse_set_choice_bit_out_of_range_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <set name="S" encodingType="uint8">
+      <choice name="Big">10</choice>
+    </set>
+  </types>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "set choice bit > max must error");
+    }
+
+    #[test]
+    fn parse_set_duplicate_choice_bit_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <set name="S" encodingType="uint8">
+      <choice name="A">1</choice>
+      <choice name="B">1</choice>
+    </set>
+  </types>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "duplicate set choice bit must error");
+    }
+
     const MINIMAL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="example.sbe" id="1" version="0" byteOrder="littleEndian"
                description="minimal test schema">
