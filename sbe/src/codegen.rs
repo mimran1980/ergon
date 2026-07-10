@@ -328,18 +328,9 @@ impl Generator {
         src.push('\n');
 
         // Format through syn/prettyplease
-        match syn::parse_str::<syn::File>(&src) {
-            Ok(file) => prettyplease::unparse(&file),
-            Err(e) => {
-                // Write the failing source to a temp file for inspection
-                use std::fs::write;
-                write("/tmp/failed_codegen.rs", &src).ok();
-                eprintln!("=== SYNTAX ERROR in generated code ===");
-                eprintln!("{}", e);
-                eprintln!("=== Source written to /tmp/failed_codegen.rs ===");
-                panic!("generated code must be valid Rust syntax: {e}");
-            }
-        }
+        let file =
+            syn::parse_str::<syn::File>(&src).expect("generated code must be valid Rust syntax");
+        prettyplease::unparse(&file)
     }
 }
 
@@ -1132,18 +1123,16 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
                 let lit = syn::LitByte::new(byte, proc_macro2::Span::call_site());
                 quote::quote! { #lit }
             } else {
-                let lit = val.parse::<u64>().map_or_else(
-                    |_| {
-                        val.parse::<i64>()
-                            .map(|v| {
-                                syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site())
-                            })
-                            .unwrap_or_else(|_| {
-                                syn::LitInt::new(val, proc_macro2::Span::call_site())
-                            })
-                    },
-                    |v| syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site()),
-                );
+                let lit = val
+                    .parse::<u64>()
+                    .ok()
+                    .map(|v| syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site()))
+                    .or_else(|| {
+                        val.parse::<i64>().ok().map(|v| {
+                            syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site())
+                        })
+                    })
+                    .unwrap_or_else(|| syn::LitInt::new(val, proc_macro2::Span::call_site()));
                 quote::quote! { #lit }
             };
             Some(Variant {
