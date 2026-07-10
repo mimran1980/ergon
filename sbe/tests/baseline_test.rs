@@ -261,6 +261,18 @@ fn generate_constant_set_field() {
 }
 
 #[test]
+fn generate_vardata_without_max_length() {
+    // vardata-no-maxlength.xml has a custom var-data encoding whose length
+    // field (uint8, no maxValue) gives max_length=None, triggering the
+    // else branch of the var-data accessor generation.
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/vardata-no-maxlength.xml");
+    let (_s, src) = generate(&path, "vd_nomax");
+    syn::parse_file(&src).expect("vardata-no-maxlength generates valid Rust");
+}
+
+#[test]
 fn generate_group_entry_with_composite_enum_set_fields() {
     // group-entry-field-types.xml has a group whose entry has fields of type
     // Composite (Inner), Enum (Colour), and Set (Flags). Covers the

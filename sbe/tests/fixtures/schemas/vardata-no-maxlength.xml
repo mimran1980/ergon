@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="vdnomax" id="83" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+        <!-- Custom var-data encoding: uint8 length without maxValue → max_length=None → triggers the else branch -->
+        <composite name="VarData8"><type name="length" primitiveType="uint8"/><type name="varData" primitiveType="uint8" length="0"/></composite>
+    </types>
+    <sbe:message name="M" id="1">
+        <data name="payload" id="1" type="VarData8"/>
+    </sbe:message>
+</sbe:messageSchema>

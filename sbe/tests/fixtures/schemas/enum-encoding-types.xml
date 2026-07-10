@@ -12,7 +12,7 @@
             <type name="schemaId" primitiveType="uint16"/>
             <type name="version" primitiveType="uint16"/>
         </composite>
-        <enum name="EInt8" encodingType="int8"><validValue name="A">1</validValue></enum>
+        <enum name="EInt8" encodingType="int8"><validValue name="A">1</validValue><validValue name="NegOne">-1</validValue></enum>
         <enum name="EUInt8" encodingType="uint8"><validValue name="A">1</validValue></enum>
         <enum name="EInt16" encodingType="int16"><validValue name="A">1</validValue></enum>
         <enum name="EUInt16" encodingType="uint16"><validValue name="A">1</validValue></enum>
@@ -23,6 +23,7 @@
     </types>
 
     <sbe:message name="M" id="1" description="message referencing every enum encoding">
+        <field name="negE" id="9" type="EInt8" presence="constant" valueRef="EInt8.NegOne"/>
         <field name="a" id="1" type="EInt8"/>
         <field name="b" id="2" type="EUInt8"/>
         <field name="c" id="3" type="EInt16"/>

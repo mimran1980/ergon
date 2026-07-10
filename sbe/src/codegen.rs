@@ -521,13 +521,8 @@ fn to_upper_snake_case(s: &str) -> String {
 
 fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
     match prim {
-        PrimitiveType::Char => {
-            if val.len() == 1 {
-                format!("b'{}'", val)
-            } else {
-                format!("{:?}", val)
-            }
-        }
+        // ponytail: parser validates single-char char constants (xml.rs:252,658).
+        PrimitiveType::Char => format!("b'{}'", val),
         PrimitiveType::Float => {
             format!("{}f32", val)
         }
@@ -726,6 +721,18 @@ enum FieldType {
         name: String,
         encoding_type: PrimitiveType,
     },
+}
+
+impl FieldType {
+    fn size(&self) -> usize {
+        match self {
+            Self::Primitive(p, length) => p.size() * length.unwrap_or(1),
+            Self::Composite { size, .. } => *size,
+            Self::Enum { encoding_type, .. } | Self::Set { encoding_type, .. } => {
+                encoding_type.size()
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -2204,12 +2211,7 @@ fn generate_message_decoder(
     };
 
     let block_length = msg.fields.iter().fold(0, |acc, f| {
-        let size = match f.field_type {
-            FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
-            FieldType::Composite { size, .. } => size,
-            FieldType::Enum { encoding_type, .. } => encoding_type.size(),
-            FieldType::Set { encoding_type, .. } => encoding_type.size(),
-        };
+        let size = f.field_type.size();
         acc.max(f.offset + size)
     });
 
@@ -2792,29 +2794,19 @@ fn generate_message_decoder(
         }
     });
 
-    // Pre-compute deduplicated group names (used by tail offsets, accessors, and struct gen)
-    let group_unique_names = {
-        let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        msg.groups
-            .iter()
-            .map(|g| {
-                let raw = to_pascal_case(&g.name);
-                let scoped = if multi_message {
-                    format!("{}{}", &name, raw)
-                } else {
-                    raw
-                };
-                if let Some(n) = m.get(&scoped) {
-                    let dedup = format!("{}_{}", scoped, n + 1);
-                    *m.get_mut(&scoped).unwrap() += 1;
-                    dedup
-                } else {
-                    m.insert(scoped.clone(), 1);
-                    scoped
-                }
-            })
-            .collect::<Vec<_>>()
-    };
+    // Group PascalCase names (parser guarantees unique names within a message).
+    let group_unique_names: Vec<String> = msg
+        .groups
+        .iter()
+        .map(|g| {
+            let raw = to_pascal_case(&g.name);
+            if multi_message {
+                format!("{}{}", &name, raw)
+            } else {
+                raw
+            }
+        })
+        .collect();
     let mut k = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
         let (dim_name, dim_size, bl_field, count_field) =
@@ -2939,36 +2931,28 @@ fn generate_message_decoder(
             proc_macro2::Span::call_site(),
         );
 
-        if let Some(max) = vd.max_length {
-            let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
-            impl_body.extend(quote::quote! {
-                #[inline]
-                fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                    let offset = self.#vd_tail_ident()?;
-                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
-                    let header = #type_pascal_ident(bytes);
-                    let len = header.#len_field_ident() as usize;
-                    if len > #max_lit {
-                        return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                            field: stringify!(#vd_snake_ident),
-                            length: len as u32,
-                            max_length: #max_lit,
-                        });
-                    }
-                    let data_offset = offset + #prefix_size_lit;
-                    Ok(&self.buf[data_offset .. data_offset + len])
+        // ponytail: resolver (resolve.rs:188-189) fills default_max for every
+        // primitive, so max_length is always Some. The else branch can't fire.
+        let max = vd.max_length.unwrap_or(0);
+        let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
+        impl_body.extend(quote::quote! {
+            #[inline]
+            fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                let offset = self.#vd_tail_ident()?;
+                let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
+                let header = #type_pascal_ident(bytes);
+                let len = header.#len_field_ident() as usize;
+                if len > #max_lit {
+                    return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                        field: stringify!(#vd_snake_ident),
+                        length: len as u32,
+                        max_length: #max_lit,
+                    });
                 }
-            });
-        } else {
-            // Single-line syn::parse_str so coverage tooling attributes the
-            // branch body to one executable statement (not a multi-line quote!
-            // template).
-            let vd_ts: proc_macro2::TokenStream = syn::parse_str(
-                &format!("#[inline] fn {0}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{ let offset = self.{1}()?; let bytes: [u8; {2}] = read_bytes::<{2}>(self.buf, offset); let header = {3}(bytes); let len = header.{4}() as usize; let data_offset = offset + {2}; Ok(&self.buf[data_offset .. data_offset + len]) }}",
-                    vd_snake_ident, vd_tail_ident, prefix_size_lit, type_pascal_ident, len_field_ident),
-            ).expect("vardata accessor without max_length");
-            impl_body.extend(vd_ts);
-        }
+                let data_offset = offset + #prefix_size_lit;
+                Ok(&self.buf[data_offset .. data_offset + len])
+            }
+        });
 
         // UTF-8 str accessor
         let str_ident = syn::Ident::new(
@@ -4304,12 +4288,7 @@ fn generate_nullification(
     for f in fields {
         if f.presence == Presence::Optional {
             if let Some(null_val) = f.null_value {
-                let size = match f.field_type {
-                    FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
-                    FieldType::Composite { size, .. } => size,
-                    FieldType::Enum { encoding_type, .. } => encoding_type.size(),
-                    FieldType::Set { encoding_type, .. } => encoding_type.size(),
-                };
+                let size = f.field_type.size();
 
                 let null_val_expr: syn::Expr = syn::parse_str(&format!("{null_val}_u64")).unwrap();
                 let to_method = syn::Ident::new(
@@ -4352,12 +4331,7 @@ fn generate_message_encoder(
     };
 
     let block_length = msg.fields.iter().fold(0, |acc, f| {
-        let size = match f.field_type {
-            FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
-            FieldType::Composite { size, .. } => size,
-            FieldType::Enum { encoding_type, .. } => encoding_type.size(),
-            FieldType::Set { encoding_type, .. } => encoding_type.size(),
-        };
+        let size = f.field_type.size();
         acc.max(f.offset + size)
     });
 
@@ -4966,28 +4940,18 @@ fn generate_message_encoder(
 
     // ── Generate Repeating Groups encoders ──
     let mut group_buf = String::new();
-    let enc_group_names = {
-        let mut m: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        msg.groups
-            .iter()
-            .map(|g| {
-                let raw = to_pascal_case(&g.name);
-                let scoped = if multi_message {
-                    format!("{}{}", &name, raw)
-                } else {
-                    raw.clone()
-                };
-                if let Some(n) = m.get(&scoped) {
-                    let dedup = format!("{}_{}", scoped, n + 1);
-                    *m.get_mut(&scoped).unwrap() += 1;
-                    dedup
-                } else {
-                    m.insert(scoped.clone(), 1);
-                    scoped
-                }
-            })
-            .collect::<Vec<_>>()
-    };
+    let enc_group_names: Vec<String> = msg
+        .groups
+        .iter()
+        .map(|g| {
+            let raw = to_pascal_case(&g.name);
+            if multi_message {
+                format!("{}{}", &name, raw)
+            } else {
+                raw
+            }
+        })
+        .collect();
     for (gi, g) in msg.groups.iter().enumerate() {
         generate_group_encoder(
             &mut group_buf,
@@ -5049,12 +5013,7 @@ fn generate_group_encoder(
     for f in &g.fields {
         if f.presence == Presence::Optional {
             if let Some(null_val) = f.null_value {
-                let size = match f.field_type {
-                    FieldType::Primitive(p, length) => p.size() * length.unwrap_or(1),
-                    FieldType::Composite { size, .. } => size,
-                    FieldType::Enum { encoding_type, .. } => encoding_type.size(),
-                    FieldType::Set { encoding_type, .. } => encoding_type.size(),
-                };
+                let size = f.field_type.size();
                 let null_val_expr: syn::Expr = syn::parse_str(&format!("{null_val}_u64")).unwrap();
                 let f_offset = syn::Index::from(f.offset);
                 let size_lit = syn::LitInt::new(&size.to_string(), span);
