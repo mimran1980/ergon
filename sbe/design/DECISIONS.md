@@ -429,9 +429,15 @@ Four invariants — the correctness heart of the library:
   shape and removes repeated stride/bounds arithmetic. The typed entry decoder
   still reads field-by-field; the chunk is just a fixed-size backing window, not
   a transmuted struct.
-- **Schema docs → rustdoc.** Both XML `<!-- -->` comments (associated to the nearest
-  element) AND `description` attributes/children are captured and combined into `///`
-  docs on the type, the struct field AND its accessor method, and enum/choice variants.
+- **Every schema documentation source becomes rustdoc.** Capture and combine:
+  `description` attributes, `<description>` child elements, supported
+  `<comment>` child elements/tags, and ordinary XML `<!-- -->` comments
+  associated with the nearest schema element. Emit the combined documentation
+  as `///` docs on generated message/type structs, fields and their accessors,
+  groups/data, and enum/set variants as applicable. Preserve multi-line text,
+  escape it safely, use one deterministic documented merge order, and do not
+  let comments leak to adjacent elements. Documentation-only XML changes must
+  not change wire layout or encoded bytes.
 - **Opt-in extras** (build only when requested):
   - `finish()`/`validate()` encode-completion check (debug feature) — type-state
     covers the tail; this covers required scalars.
@@ -618,6 +624,12 @@ parity until this matrix exists and passes.
   groups; early skip and rewind; acting-version and acting-block-length
   compatibility; nested groups and variable data; zero allocation on every
   ordered hot path; and Aeron parity for every maintained encode/decode case.
+- **Schema documentation provenance suite:** independently prove rustdoc
+  emission from a `description` attribute, `<description>` child,
+  `<comment>` child/tag, and XML `<!-- -->` comment. Cover multi-line and
+  special-character escaping, all supported schema element kinds, deterministic
+  combination when multiple sources are present, nearest-element association,
+  no sibling leakage, clean `cargo doc`, and unchanged wire bytes/layout.
 
 ---
 

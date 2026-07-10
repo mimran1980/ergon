@@ -54,6 +54,17 @@ accepted a schema Aeron would reject or computed a different fixed block layout.
   offset/type/presence change
 - Check mode reports multiple independent schema diagnostics in one run
 
+### 0.4 Schema documentation provenance
+- Parse independent fixtures for a `description` attribute, `<description>`
+  child, `<comment>` child/tag, and XML `<!-- -->` comment
+- Assert each source survives parser -> IR -> generated rustdoc
+- Cover deterministic combination, multi-line/special-character escaping,
+  nearest-element association, and no sibling leakage
+- Cover every supported schema element kind, including enum values and set
+  choices
+- Run generated-code compilation and `cargo doc --no-deps` with warnings denied
+- Assert documentation-only edits do not change wire layout or encoded bytes
+
 ## Phase 1: sbe codegen unit tests (no Docker needed)
 
 These verify that generated code is correct. Each test encodes a message,

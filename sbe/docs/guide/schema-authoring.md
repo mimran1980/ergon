@@ -250,6 +250,10 @@ current working directory, and well-known paths in the
    layout and avoids ambiguity.
 2. **Use `description`** on types and fields -- these become rustdoc comments
    in the generated code.
+   ErgoSBE also preserves `<description>` and supported `<comment>` child
+   elements/tags, plus ordinary XML `<!-- -->` comments associated with the
+   nearest schema element. When more than one source is present, generated
+   rustdoc contains their deterministic combination.
 3. **Use `semanticType`** for domain concepts (`Price`, `Qty`, `UTCTimestamp`)
    -- these appear in IDE hover docs.
 4. **Prefer `uint8`-based enums** for small finite sets -- they produce compact

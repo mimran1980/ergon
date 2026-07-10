@@ -43,6 +43,10 @@ the comparison profile but do not by themselves prove generated-code speed.
 - Do not use bytemuck, Pod, zerocopy transmute, SIMD bulk copy, nightly-only APIs, specialization, or broad per-field `_unchecked` APIs.
 - Preserve the existing dirty worktree. Read `CLAUDE.md`, `sbe/design/DECISIONS.md`, and `phase2-completion-goal.md` before edits.
 - Do not reintroduce legacy `sbe/benches/`; benchmark work belongs in `ergosbe-benchmarks`.
+- Preserve every schema documentation source in generated rustdoc:
+  `description` attributes, `<description>` children, supported `<comment>`
+  children/tags, and ordinary XML `<!-- -->` comments. Test each source
+  independently and in combination; do not rely on a historical DONE marker.
 
 ---
 
@@ -53,6 +57,16 @@ work is large or Java, Docker, Aeron tooling, or another local dependency is
 missing. When authorised, install the dependency or start the available
 service. Record a genuine external blocker, then continue with independent
 work.
+
+### Cross-cutting schema documentation requirement
+
+Before final completion, audit and, where missing, implement the full
+schema-to-rustdoc pipeline. Parser/IR/codegen tests must prove that
+`description` attributes, `<description>` child elements, supported `<comment>`
+child elements/tags, and XML `<!-- -->` comments all reach the correct generated
+Rust item. Prove deterministic combination, multi-line/special-character
+handling, nearest-element association without sibling leakage, clean
+`cargo doc`, and no wire-layout/byte changes from documentation-only edits.
 
 For every feature slice:
 
