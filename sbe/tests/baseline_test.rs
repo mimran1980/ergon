@@ -144,6 +144,18 @@ fn generate_composite_with_named_type_member_refs() {
     assert_source_ok(&src, &["Widget", "Colour", "Flags", "Inner"]);
 }
 
+#[test]
+fn generate_versioned_set_enum_composite_fields() {
+    // extension-schema.xml has message fields with sinceVersion > 0 of set
+    // (ASet), enum (AEnum), and composite (AComposite) types. Generating it
+    // exercises the versioned-field codegen branches (Option<T> accessor shape).
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/extension-schema.xml");
+    let (_s, src) = generate(&path, "ext_versioned");
+    syn::parse_file(&src).expect("extension-schema generates valid Rust");
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
