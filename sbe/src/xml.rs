@@ -1665,6 +1665,55 @@ mod tests {
         assert!(parse(xml).is_err(), "invalid primitiveType must error");
     }
 
+    #[test]
+    fn parse_enum_with_float_encoding_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <enum name="E" encodingType="float"><validValue name="A">1</validValue></enum>
+  </types>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "enum with float encoding must error");
+    }
+
+    #[test]
+    fn parse_set_with_signed_encoding_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <set name="S" encodingType="int8"><choice name="A">0</choice></set>
+  </types>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "set with signed encoding must error");
+    }
+
+    #[test]
+    fn parse_set_duplicate_choice_name_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <set name="S" encodingType="uint8"><choice name="A">0</choice><choice name="A">1</choice></set>
+  </types>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "duplicate set choice name must error");
+    }
+
+    #[test]
+    fn parse_invalid_message_schema_child_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
+  <unexpectedChild/>
+</messageSchema>"#;
+        assert!(
+            parse(xml).is_err(),
+            "invalid messageSchema child must error"
+        );
+    }
+
     const MINIMAL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="example.sbe" id="1" version="0" byteOrder="littleEndian"
                description="minimal test schema">
