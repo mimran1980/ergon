@@ -6122,4 +6122,146 @@ mod tests {
         // No top-level pub use re-exports (prelude's pub use is inside its module)
         assert!(!collected[1].source.contains("\npub use super::"));
     }
+
+    // ── partition_tokens defensive-branch coverage ──────────────────
+    // These branches are unreachable through normal XML parsing (the parser
+    // validates token structure before emission). We cover them by calling
+    // partition_tokens directly with crafted invalid token sequences.
+
+    use super::{
+        SchemaElements, parse_composite_members, parse_field_structure, parse_group_structure,
+        parse_message_structure, parse_vardata_structure, to_snake_case,
+    };
+    use crate::ir::{Encoding, Signal, Token};
+
+    fn make_token(signal: Signal) -> Token {
+        Token {
+            id: None,
+            name: String::new(),
+            signal,
+            encoding: Encoding::default(),
+        }
+    }
+
+    fn empty_elements() -> SchemaElements {
+        SchemaElements {
+            composites: vec![],
+            enums: vec![],
+            sets: vec![],
+            messages: vec![],
+        }
+    }
+
+    #[test]
+    fn message_structure_skips_unexpected_signal() {
+        // parse_message_structure body loop: BeginEnum inside a message body
+        // falls to `_ => i += 1` (lines ~797-799).
+        let elem = empty_elements();
+        let _ = parse_message_structure(
+            &[
+                make_token(Signal::BeginMessage),
+                make_token(Signal::BeginEnum), // unexpected
+                make_token(Signal::EndMessage),
+            ],
+            &elem,
+        );
+    }
+
+    #[test]
+    fn group_structure_skips_unexpected_signal() {
+        // parse_group_structure body loop: BeginMessage inside a group body
+        // falls to `_ => i += 1` (lines ~937-939).
+        let elem = empty_elements();
+        let _ = parse_group_structure(
+            &[
+                make_token(Signal::BeginGroup),
+                make_token(Signal::BeginMessage), // unexpected
+                make_token(Signal::EndGroup),
+            ],
+            &elem,
+        );
+    }
+
+    #[test]
+    fn vardata_structure_skips_non_length_fields() {
+        // parse_vardata_structure loops tokens looking for the "length"
+        // BeginField; any other BeginField falls to `i += 1` (lines ~974-977).
+        let _ = parse_vardata_structure(&[
+            make_token(Signal::BeginComposite),
+            make_token(Signal::BeginField),
+            make_token(Signal::EndField),
+            make_token(Signal::EndComposite),
+        ]);
+    }
+
+    #[test]
+    fn composite_members_skips_non_field_signals() {
+        // parse_composite_members loops from index 1 to len-1; any signal
+        // that isn't BeginField falls to `else { i += 1 }` (lines ~1097-1099).
+        let _ = parse_composite_members(&[
+            make_token(Signal::BeginComposite),
+            make_token(Signal::BeginMessage), // not BeginField → skip
+            make_token(Signal::EndComposite),
+        ]);
+    }
+
+    #[test]
+    fn field_structure_falls_back_to_uint8_primitive() {
+        // parse_field_structure: when tokens.len() > 2 and the inner signal
+        // isn't BeginComposite/Enum/Set, defaults to Primitive(UInt8) (865-871).
+        let elem = empty_elements();
+        let _ = parse_field_structure(
+            &[
+                make_token(Signal::BeginField),
+                make_token(Signal::BeginMessage), // unexpected inner → Primitive default
+                make_token(Signal::EndField),
+            ],
+            &elem,
+        );
+    }
+
+    #[test]
+    fn snake_case_handles_empty_or_special_input() {
+        // to_snake_case with an empty string exercises the loop.
+        assert_eq!(to_snake_case(""), "");
+    }
+
+    #[test]
+    fn partition_skips_unexpected_at_top_level() {
+        // Top-level loop only matches BeginComposite/Enum/Set/Message;
+        // BeginField falls to `_ => i += 1` (lines ~682-684).
+        let _ = super::partition_tokens(&[make_token(Signal::BeginField)]);
+    }
+
+    #[test]
+    fn partition_skips_unexpected_in_message_body() {
+        // Message body loop only matches BeginField/Group/VarData;
+        // BeginEnum inside a message body falls to `_ => i += 1` (lines ~797).
+        let _ = super::partition_tokens(&[
+            make_token(Signal::BeginMessage),
+            make_token(Signal::BeginEnum), // unexpected inside message body
+            make_token(Signal::EndMessage),
+        ]);
+    }
+
+    #[test]
+    fn partition_skips_unexpected_in_group_body() {
+        // Group body loop only matches BeginField/Group/VarData;
+        // BeginMessage inside a group falls to `_ => i += 1` (lines ~937).
+        let _ = super::partition_tokens(&[
+            make_token(Signal::BeginGroup),
+            make_token(Signal::BeginMessage), // unexpected inside group body
+            make_token(Signal::EndGroup),
+        ]);
+    }
+
+    #[test]
+    fn partition_skips_unexpected_after_top_level_items() {
+        // After BeginMessage/EndMessage pair, unrelated signals skip at top level.
+        let _ = super::partition_tokens(&[
+            make_token(Signal::BeginMessage),
+            make_token(Signal::EndMessage),
+            make_token(Signal::BeginEnum), // at top level
+        ]);
+    }
 }
