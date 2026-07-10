@@ -1206,6 +1206,13 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
         quote::quote! {}
     };
 
+    // Emit enum rustdoc from the type's XML description.
+    if let Some(ref desc) = tokens[0].encoding.description {
+        for line in desc.lines() {
+            src.push_str(&format!("///{line}\n"));
+        }
+    }
+
     let tokens = quote::quote! {
         #[repr(#r_type_ty)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
