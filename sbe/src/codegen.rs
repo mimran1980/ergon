@@ -1855,59 +1855,75 @@ fn generate_dim_new_call(
 /// The final component yields `{name}DecoderComplete`; earlier ones yield
 /// `{name}DecoderAfter{FieldPascal}`.
 fn decoder_stage_after_ident(
-    name: &str,
+    stage_prefix: &str,
     field_pascal: &str,
     i: usize,
     total_tail: usize,
     span: proc_macro2::Span,
 ) -> syn::Ident {
     if i == total_tail - 1 {
-        syn::Ident::new(&format!("{name}DecoderComplete"), span)
+        syn::Ident::new(&format!("{stage_prefix}Complete"), span)
     } else {
-        syn::Ident::new(&format!("{name}DecoderAfter{field_pascal}"), span)
+        syn::Ident::new(&format!("{stage_prefix}After{field_pascal}"), span)
     }
 }
 
-/// Generate concrete consuming decoder tail stages (DECISIONS.md §3):
+/// One tail group component of an owner (message or entry), resolved for codegen.
+struct OwnerTailGroup {
+    accessor_snake: String,
+    field_pascal: String,
+    group_decoder_ident: String,
+    entry_decoder_ident: String,
+}
+
+/// One tail var-data component of an owner, resolved for codegen.
+struct OwnerTailVarData {
+    accessor_snake: String,
+    field_pascal: String,
+    type_pascal: String,
+    prefix_size: usize,
+    len_field: String,
+    max_length: Option<usize>,
+    name: String,
+}
+
+/// Core generator for concrete consuming tail stages (DECISIONS.md §3), shared
+/// by message-level and entry-level tails. Emits non-`Copy` stage structs plus
+/// `into_*`, `finish`, and `skip_remaining` methods. Additive: does not touch
+/// the legacy `&self` random-access surface.
 ///
-/// ```text
-/// NameDecoder --into_<g>()--> <G>Decoder --finish()--> NameDecoderAfter<G>
-///            --into_<vd>()--> (&[u8], NameDecoderAfter<V>) -> ... -> NameDecoderComplete
-/// ```
-///
-/// Additive: emits new non-`Copy` stage structs plus `into_*`, `finish`, and
-/// `skip_remaining` methods without touching the legacy `&self` random-access
-/// decoder surface, so existing call sites keep compiling.
-fn generate_decoder_consuming_stages(
-    msg: &MessageStructure,
-    elements: &SchemaElements,
-    name: &str,
+/// `initial_ident` is the existing decoder (e.g. `CarDecoder`, `BidsEntryDecoder`);
+/// `stage_prefix` is its string form, used to name the `After*`/`Complete` stages.
+/// `header_size` is the message header size for messages (0 for entries).
+fn generate_owner_consuming_stages(
+    initial_ident: syn::Ident,
+    stage_prefix: &str,
     header_size: usize,
-    _multi_message: bool,
-    group_unique_names: &[String],
+    groups: &[OwnerTailGroup],
+    vardata: &[OwnerTailVarData],
 ) -> proc_macro2::TokenStream {
-    let total_tail = msg.groups.len() + msg.var_data.len();
+    let total_tail = groups.len() + vardata.len();
     if total_tail == 0 {
         return proc_macro2::TokenStream::new();
     }
     let span = proc_macro2::Span::call_site();
-    let initial_ident = syn::Ident::new(&format!("{name}Decoder"), span);
     let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
 
-    // Tail component pascal names in wire order (groups then var-data).
-    let field_pascals: Vec<String> = msg
-        .groups
+    let field_pascals: Vec<String> = groups
         .iter()
-        .map(|g| to_pascal_case(&g.name))
-        .chain(msg.var_data.iter().map(|vd| to_pascal_case(&vd.name)))
+        .map(|g| g.field_pascal.clone())
+        .chain(vardata.iter().map(|v| v.field_pascal.clone()))
         .collect();
+
+    let stage_after_ident =
+        |i: usize| decoder_stage_after_ident(stage_prefix, &field_pascals[i], i, total_tail, span);
 
     let mut ts = proc_macro2::TokenStream::new();
 
-    // 1. Stage struct definitions (After stages + Complete). Identical layout,
+    // 1. Stage struct definitions (After + Complete). Identical 5-field layout,
     //    non-Copy: a stage carries the tail cursor, so consuming it prevents reuse.
     for i in 0..total_tail {
-        let stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
+        let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
             pub struct #stage<'a> {
                 buf: &'a [u8],
@@ -1921,7 +1937,7 @@ fn generate_decoder_consuming_stages(
 
     // acting_version() / acting_block_length() on every stage (DECISIONS.md §3).
     for i in 0..total_tail {
-        let stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
+        let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
             impl<'a> #stage<'a> {
                 #[inline]
@@ -1932,23 +1948,25 @@ fn generate_decoder_consuming_stages(
         });
     }
 
-    // 2a. Group into_<g>() accessors on the stage that precedes each group.
-    for (gi, g) in msg.groups.iter().enumerate() {
-        let i = gi; // groups occupy the first tail indices
-        let current_stage = if i == 0 {
-            initial_ident.clone()
-        } else {
-            decoder_stage_after_ident(name, &field_pascals[i - 1], i - 1, total_tail, span)
-        };
-        let into_ident = syn::Ident::new(&format!("into_{}", to_snake_case(&g.name)), span);
-        let g_decoder_ident = syn::Ident::new(&format!("{}Decoder", group_unique_names[gi]), span);
-        // Initial stage derives the first group start from the fixed block;
-        // later stages carry the cached next-tail position.
-        let start_expr: syn::Expr = if i == 0 {
+    let start_expr = |i: usize| -> syn::Expr {
+        if i == 0 {
             syn::parse_str("self.pos + self.acting_block_length").unwrap()
         } else {
             syn::parse_str("self.tail_start").unwrap()
+        }
+    };
+
+    // 2a. Group into_<g>() on the stage that precedes each group.
+    for (gi, tg) in groups.iter().enumerate() {
+        let i = gi;
+        let current_stage = if i == 0 {
+            initial_ident.clone()
+        } else {
+            stage_after_ident(i - 1)
         };
+        let into_ident = syn::Ident::new(&format!("into_{}", tg.accessor_snake), span);
+        let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
+        let se = start_expr(i);
         ts.extend(quote::quote! {
             impl<'a> #current_stage<'a> {
                 /// Consume this stage and start decoding the next tail group,
@@ -1956,7 +1974,7 @@ fn generate_decoder_consuming_stages(
                 /// right to advance to the following stage via `finish()`.
                 #[inline]
                 pub fn #into_ident(self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
-                    let group_start = #start_expr;
+                    let group_start = #se;
                     #g_decoder_ident::wrap_with_parent(
                         self.buf,
                         group_start,
@@ -1969,26 +1987,21 @@ fn generate_decoder_consuming_stages(
         });
     }
 
-    // 2b. Var-data into_<vd>() accessors: read the field and advance.
-    for (vi, vd) in msg.var_data.iter().enumerate() {
-        let i = msg.groups.len() + vi;
+    // 2b. Var-data into_<vd>(): read the field and advance.
+    for (vi, vd) in vardata.iter().enumerate() {
+        let i = groups.len() + vi;
         let current_stage = if i == 0 {
             initial_ident.clone()
         } else {
-            decoder_stage_after_ident(name, &field_pascals[i - 1], i - 1, total_tail, span)
+            stage_after_ident(i - 1)
         };
-        let next_stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
-        let into_ident = syn::Ident::new(&format!("into_{}", to_snake_case(&vd.name)), span);
-        let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
-        let vd_type_ident = syn::Ident::new(&type_pascal, span);
-        let len_field_ident = syn::Ident::new(&len_field, span);
+        let next_stage = stage_after_ident(i);
+        let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
+        let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
+        let vd_type_ident = syn::Ident::new(&vd.type_pascal, span);
+        let len_field_ident = syn::Ident::new(&vd.len_field, span);
         let vd_name_lit = syn::LitStr::new(&vd.name, span);
-        let start_expr: syn::Expr = if i == 0 {
-            syn::parse_str("self.pos + self.acting_block_length").unwrap()
-        } else {
-            syn::parse_str("self.tail_start").unwrap()
-        };
+        let se = start_expr(i);
         let mut max_check = proc_macro2::TokenStream::new();
         if let Some(max) = vd.max_length {
             let max_lit = syn::LitInt::new(&max.to_string(), span);
@@ -2008,7 +2021,7 @@ fn generate_decoder_consuming_stages(
                 /// to the following stage. Wire order is enforced by consumption.
                 #[inline]
                 pub fn #into_ident(self) -> Result<(&'a [u8], #next_stage<'a>), sbe_rt::DecodeError> {
-                    let offset = #start_expr;
+                    let offset = #se;
                     if offset + #prefix_size_lit > self.buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
@@ -2042,17 +2055,16 @@ fn generate_decoder_consuming_stages(
         });
     }
 
-    // 3. finish()/skip_remaining() for each top-level group -> next message stage.
-    for (gi, _g) in msg.groups.iter().enumerate() {
+    // 3. finish()/skip_remaining() for each group -> next owner stage.
+    for (gi, tg) in groups.iter().enumerate() {
         let i = gi;
-        let next_stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
-        let g_decoder_ident = syn::Ident::new(&format!("{}Decoder", group_unique_names[gi]), span);
-        let entry_decoder_ident =
-            syn::Ident::new(&format!("{}EntryDecoder", group_unique_names[gi]), span);
+        let next_stage = stage_after_ident(i);
+        let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
+        let entry_decoder_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
         ts.extend(quote::quote! {
             impl<'a> #g_decoder_ident<'a> {
                 /// Scan past any unread entries (including nested tails) in wire
-                /// order and return the next message decoder stage.
+                /// order and return the next decoder stage.
                 #[inline]
                 pub fn finish(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
                     let mut pos = self.pos;
@@ -2080,16 +2092,10 @@ fn generate_decoder_consuming_stages(
     }
 
     // 4. Terminal (Complete) stage extent helpers.
-    let complete_ident = decoder_stage_after_ident(
-        name,
-        &field_pascals[total_tail - 1],
-        total_tail - 1,
-        total_tail,
-        span,
-    );
+    let complete_ident = stage_after_ident(total_tail - 1);
     ts.extend(quote::quote! {
         impl<'a> #complete_ident<'a> {
-            /// Header-inclusive message bytes.
+            /// Header-inclusive bytes (for an entry, the entry bytes; header_size is 0).
             #[inline]
             pub fn as_bytes(&self) -> &'a [u8] {
                 &self.buf[self.pos - #header_size_lit..self.tail_start]
@@ -2108,6 +2114,95 @@ fn generate_decoder_consuming_stages(
     });
 
     ts
+}
+
+/// Message-level consuming tail stages (DECISIONS.md §3): thin wrapper that
+/// resolves the message's tail groups + var-data into descriptors and delegates
+/// to `generate_owner_consuming_stages`.
+fn generate_decoder_consuming_stages(
+    msg: &MessageStructure,
+    elements: &SchemaElements,
+    name: &str,
+    header_size: usize,
+    _multi_message: bool,
+    group_unique_names: &[String],
+) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let stage_prefix = format!("{name}Decoder");
+    let initial_ident = syn::Ident::new(&stage_prefix, span);
+    let groups: Vec<OwnerTailGroup> = msg
+        .groups
+        .iter()
+        .enumerate()
+        .map(|(gi, g)| OwnerTailGroup {
+            accessor_snake: to_snake_case(&g.name),
+            field_pascal: to_pascal_case(&g.name),
+            group_decoder_ident: format!("{}Decoder", group_unique_names[gi]),
+            entry_decoder_ident: format!("{}EntryDecoder", group_unique_names[gi]),
+        })
+        .collect();
+    let vardata: Vec<OwnerTailVarData> = msg
+        .var_data
+        .iter()
+        .map(|vd| {
+            let (type_pascal, prefix_size, len_field, _) =
+                get_vardata_info(elements, &vd.type_name);
+            OwnerTailVarData {
+                accessor_snake: to_snake_case(&vd.name),
+                field_pascal: to_pascal_case(&vd.name),
+                type_pascal,
+                prefix_size,
+                len_field,
+                max_length: vd.max_length,
+                name: vd.name.clone(),
+            }
+        })
+        .collect();
+    generate_owner_consuming_stages(initial_ident, &stage_prefix, header_size, &groups, &vardata)
+}
+
+/// Entry-level consuming tail stages for a group whose entries have nested
+/// groups and/or var-data (DECISIONS.md §3, Task D). `name` is the group's
+/// scoped name; nested group decoder names are `{name}{Ng}Decoder`.
+fn generate_entry_consuming_stages(
+    g: &MessageGroup,
+    elements: &SchemaElements,
+    name: &str,
+) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let entry_prefix = format!("{name}EntryDecoder");
+    let initial_ident = syn::Ident::new(&entry_prefix, span);
+    let groups: Vec<OwnerTailGroup> = g
+        .groups
+        .iter()
+        .map(|ng| {
+            let ng_pascal = format!("{}{}", name, to_pascal_case(&ng.name));
+            OwnerTailGroup {
+                accessor_snake: to_snake_case(&ng.name),
+                field_pascal: to_pascal_case(&ng.name),
+                group_decoder_ident: format!("{ng_pascal}Decoder"),
+                entry_decoder_ident: format!("{ng_pascal}EntryDecoder"),
+            }
+        })
+        .collect();
+    let vardata: Vec<OwnerTailVarData> = g
+        .var_data
+        .iter()
+        .map(|vd| {
+            let (type_pascal, prefix_size, len_field, _) =
+                get_vardata_info(elements, &vd.type_name);
+            OwnerTailVarData {
+                accessor_snake: to_snake_case(&vd.name),
+                field_pascal: to_pascal_case(&vd.name),
+                type_pascal,
+                prefix_size,
+                len_field,
+                max_length: vd.max_length,
+                name: vd.name.clone(),
+            }
+        })
+        .collect();
+    generate_owner_consuming_stages(initial_ident, &entry_prefix, 0, &groups, &vardata)
 }
 
 fn generate_message_decoder(
@@ -4238,6 +4333,12 @@ fn generate_group_decoder(
             &nested_name,
         ));
     }
+
+    // Concrete consuming entry-level tail stages (DECISIONS.md §3, Task D) for
+    // entries that have nested groups and/or var-data. Additive: the legacy
+    // `&self` entry accessors remain. Emitted after the nested group decoders
+    // above so `finish()` can name them.
+    ts.extend(generate_entry_consuming_stages(g, elements, &name));
 
     ts
 }

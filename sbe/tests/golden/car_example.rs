@@ -1499,6 +1499,84 @@ impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
+pub struct FuelFiguresEntryDecoderComplete<'a> {
+    buf: &'a [u8],
+    pos: usize,
+    tail_start: usize,
+    acting_version: u16,
+    acting_block_length: usize,
+}
+impl<'a> FuelFiguresEntryDecoderComplete<'a> {
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
+}
+impl<'a> FuelFiguresEntryDecoder<'a> {
+    /// Consume this stage, read the next var-data field, and advance
+    /// to the following stage. Wire order is enforced by consumption.
+    #[inline]
+    pub fn into_usage_description(
+        self,
+    ) -> Result<(&'a [u8], FuelFiguresEntryDecoderComplete<'a>), sbe_rt::DecodeError> {
+        let offset = self.pos + self.acting_block_length;
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "usageDescription",
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        let header = VarAsciiEncoding(bytes);
+        let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "usageDescription",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
+        let data_start = offset + 4;
+        if data_start + len > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "usageDescription",
+                needed: 4 + len,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let data = &self.buf[data_start..data_start + len];
+        let next = FuelFiguresEntryDecoderComplete {
+            buf: self.buf,
+            pos: self.pos,
+            tail_start: data_start + len,
+            acting_version: self.acting_version,
+            acting_block_length: self.acting_block_length,
+        };
+        Ok((data, next))
+    }
+}
+impl<'a> FuelFiguresEntryDecoderComplete<'a> {
+    /// Header-inclusive bytes (for an entry, the entry bytes; header_size is 0).
+    #[inline]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        &self.buf[self.pos - 0..self.tail_start]
+    }
+    /// Body length (excluding header).
+    #[inline]
+    pub fn encoded_length(&self) -> usize {
+        self.tail_start - self.pos
+    }
+    /// Header-inclusive length.
+    #[inline]
+    pub fn encoded_length_with_header(&self) -> usize {
+        self.tail_start - self.pos + 0
+    }
+}
 pub struct PerformanceFiguresDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -1976,6 +2054,93 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
+pub struct PerformanceFiguresEntryDecoderComplete<'a> {
+    buf: &'a [u8],
+    pos: usize,
+    tail_start: usize,
+    acting_version: u16,
+    acting_block_length: usize,
+}
+impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
+}
+impl<'a> PerformanceFiguresEntryDecoder<'a> {
+    /// Consume this stage and start decoding the next tail group,
+    /// enforcing wire order. The returned group decoder owns the
+    /// right to advance to the following stage via `finish()`.
+    #[inline]
+    pub fn into_acceleration(
+        self,
+    ) -> Result<PerformanceFiguresAccelerationDecoder<'a>, sbe_rt::DecodeError> {
+        let group_start = self.pos + self.acting_block_length;
+        PerformanceFiguresAccelerationDecoder::wrap_with_parent(
+            self.buf,
+            group_start,
+            self.acting_version,
+            self.pos,
+            self.acting_block_length,
+        )
+    }
+}
+impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
+    /// Scan past any unread entries (including nested tails) in wire
+    /// order and return the next decoder stage.
+    #[inline]
+    pub fn finish(
+        self,
+    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError> {
+        let mut pos = self.pos;
+        let mut remaining = self.count;
+        let block_len = self.acting_block_length;
+        while remaining > 0 {
+            pos = PerformanceFiguresAccelerationEntryDecoder::skip(
+                self.buf,
+                pos,
+                block_len,
+                self.acting_version,
+            )?;
+            remaining -= 1;
+        }
+        Ok(PerformanceFiguresEntryDecoderComplete {
+            buf: self.buf,
+            pos: self.parent_pos,
+            tail_start: pos,
+            acting_version: self.acting_version,
+            acting_block_length: self.parent_block_length,
+        })
+    }
+    /// Explicit sequential spelling of "advance past the rest of this group".
+    #[inline]
+    pub fn skip_remaining(
+        self,
+    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError> {
+        self.finish()
+    }
+}
+impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
+    /// Header-inclusive bytes (for an entry, the entry bytes; header_size is 0).
+    #[inline]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        &self.buf[self.pos - 0..self.tail_start]
+    }
+    /// Body length (excluding header).
+    #[inline]
+    pub fn encoded_length(&self) -> usize {
+        self.tail_start - self.pos
+    }
+    /// Header-inclusive length.
+    #[inline]
+    pub fn encoded_length_with_header(&self) -> usize {
+        self.tail_start - self.pos + 0
+    }
+}
 pub struct CarDecoderAfterFuelFigures<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -2231,7 +2396,7 @@ impl<'a> CarDecoderAfterModel<'a> {
 }
 impl<'a> FuelFiguresDecoder<'a> {
     /// Scan past any unread entries (including nested tails) in wire
-    /// order and return the next message decoder stage.
+    /// order and return the next decoder stage.
     #[inline]
     pub fn finish(self) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
         let mut pos = self.pos;
@@ -2264,7 +2429,7 @@ impl<'a> FuelFiguresDecoder<'a> {
 }
 impl<'a> PerformanceFiguresDecoder<'a> {
     /// Scan past any unread entries (including nested tails) in wire
-    /// order and return the next message decoder stage.
+    /// order and return the next decoder stage.
     #[inline]
     pub fn finish(
         self,
@@ -2298,7 +2463,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     }
 }
 impl<'a> CarDecoderComplete<'a> {
-    /// Header-inclusive message bytes.
+    /// Header-inclusive bytes (for an entry, the entry bytes; header_size is 0).
     #[inline]
     pub fn as_bytes(&self) -> &'a [u8] {
         &self.buf[self.pos - 8..self.tail_start]

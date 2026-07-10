@@ -141,3 +141,95 @@ fn cf_finish_consumes_group_decoder() {
     "#,
     );
 }
+
+/// Entry-level consuming stages (Task D): a bid level's nested `orders` (and each
+/// order's `orderId` var-data) are read through consuming entry stages, in wire
+/// order. The level entry is consumed by `into_orders`; each order entry by
+/// `into_order_id`.
+#[test]
+fn decode_l3_entry_consuming_stages() {
+    let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_entry_stages_rt");
+    compile_and_run(
+        "l3_entry_stages_rt",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 1024];
+        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        e.timestamp(5);
+        e.sequence(3);
+        let c = e.bids(2, |g| {
+            g.add(|lvl| {
+                lvl.price(100);
+                lvl.qty(10);
+                lvl.orders(2, |o| {
+                    o.add(|ord| { ord.order_qty(4); ord.order_id(b"ord-1").unwrap(); }).unwrap();
+                    o.add(|ord| { ord.order_qty(6); ord.order_id(b"ord-2").unwrap(); }).unwrap();
+                }).unwrap();
+            }).unwrap();
+            g.add(|lvl| {
+                lvl.price(101);
+                lvl.qty(5);
+                lvl.orders(0, |_| {}).unwrap();
+            }).unwrap();
+        }).unwrap().asks(0, |_| {}).unwrap();
+        let encoded = c.as_bytes();
+
+        let dec = L3BookDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let mut bids = dec.into_bids().unwrap();
+
+        // Level 0: read fixed fields, then consume the nested orders stage.
+        let lvl0 = bids.next().unwrap().unwrap();
+        assert_eq!(lvl0.price(), 100);
+        assert_eq!(lvl0.qty(), 10);
+        let mut orders = lvl0.into_orders().unwrap();
+        assert_eq!(orders.len(), 2);
+        let mut order_ids = Vec::new();
+        while let Some(Ok(ord)) = orders.next() {
+            let (id, _done) = ord.into_order_id().unwrap();
+            order_ids.push(id.to_vec());
+        }
+        let _lvl0_done = orders.finish().unwrap();
+        assert_eq!(order_ids, vec![b"ord-1".to_vec(), b"ord-2".to_vec()]);
+
+        // Level 1: empty nested orders still traverse to the entry-complete stage.
+        let lvl1 = bids.next().unwrap().unwrap();
+        assert_eq!(lvl1.price(), 101);
+        let orders1 = lvl1.into_orders().unwrap();
+        assert!(orders1.is_empty());
+        let _lvl1_done = orders1.finish().unwrap();
+
+        // bids -> after_bids -> asks (empty) -> complete.
+        let after_bids = bids.finish().unwrap();
+        let asks = after_bids.into_asks().unwrap();
+        assert!(asks.is_empty());
+        let done = asks.finish().unwrap();
+        assert_eq!(done.encoded_length_with_header(), encoded.len());
+        assert_eq!(done.as_bytes(), encoded);
+    "#,
+    );
+}
+
+/// Compile-fail: `into_orders()` consumes the (non-Copy) entry decoder, so the
+/// consumed level cannot be read afterwards.
+#[test]
+fn cf_entry_consumed_by_into_orders() {
+    let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_cf_entry_consumed");
+    compile_fails(
+        "l3_cf_entry_consumed",
+        &src,
+        r#"
+        let mut buf = [0u8; 256];
+        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        e.timestamp(1);
+        e.sequence(1);
+        let c = e.bids(1, |g| {
+            g.add(|lvl| { lvl.price(1); lvl.qty(1); lvl.orders(0, |_| {}).unwrap(); }).unwrap();
+        }).unwrap().asks(0, |_| {}).unwrap();
+        let dec = L3BookDecoder::wrap_and_apply_header(c.as_bytes(), 0).unwrap();
+        let mut bids = dec.into_bids().unwrap();
+        let lvl = bids.next().unwrap().unwrap();
+        let _orders = lvl.into_orders().unwrap(); // lvl moved here
+        let _p = lvl.price();                      // ILLEGAL: use of moved value `lvl`
+    "#,
+    );
+}
