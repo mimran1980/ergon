@@ -415,28 +415,11 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("ergosbe_legacy", |b| {
-        b.iter(|| {
-            let car = CarDecoder::wrap(black_box(BASELINE), 8, bl_e, ver_e);
-            for entry in car.fuel_figures().unwrap() {
-                let e = entry.unwrap();
-                black_box((e.speed(), e.mpg()));
-                black_box(e.usage_description().unwrap());
-            }
-            for entry in car.performance_figures().unwrap() {
-                let e = entry.unwrap();
-                black_box(e.octane_rating());
-                for a in e.acceleration().unwrap() {
-                    black_box((a.mph(), a.seconds()));
-                }
-            }
-            black_box((
-                car.manufacturer().unwrap(),
-                car.model().unwrap(),
-                car.activation_code().unwrap(),
-            ));
-        });
-    });
+    // The legacy `&self` random-access full-decode bench used to live here to
+    // show consuming < legacy. It was removed: those `&self` group/var-data
+    // accessors are the rejected out-of-order surface (DECISIONS.md §10) and are
+    // no longer public. Recorded result (commit a989a97, 2026-07-10): consuming
+    // ~13.06 ns vs legacy ~26.55 ns (legacy rescanned preceding groups per call).
 
     group.bench_function("aeron", |b| {
         b.iter(|| {
@@ -483,13 +466,10 @@ fn bench_decode_skip_rewind(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/decode/skip_rewind");
     group.throughput(Throughput::Elements(1));
 
-    // skip_to_model removed: skip_to_<later>() is the rejected out-of-order
-    // surface (DECISIONS.md §10). `direct_model` (random-access model field on
-    // the fixed block) remains and is the relevant comparison.
-
-    group.bench_function("direct_model", |b| {
-        b.iter(|| black_box(car.model().unwrap()));
-    });
+    // skip_to_model and direct_model removed: both read tail/var-data fields
+    // via the rejected out-of-order `&self` surface (DECISIONS.md §10).
+    // rewind_then_scalar stays — rewind() returns a fresh decoder and is not a
+    // tail out-of-order accessor.
 
     group.bench_function("rewind_then_scalar", |b| {
         b.iter(|| black_box(car.rewind().serial_number()));

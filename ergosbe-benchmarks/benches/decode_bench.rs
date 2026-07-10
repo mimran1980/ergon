@@ -93,17 +93,17 @@ fn bench_field_access_safe(c: &mut Criterion) {
 // ── Group iteration ────────────────────────────────────────────────
 
 fn bench_group_iteration(c: &mut Criterion) {
-    let car = CarDecoder::try_from(BASELINE).unwrap();
-
     let mut group = c.benchmark_group("decode/group");
     group.bench_function("fuel_figures", |b| {
         b.iter(|| {
-            let ff = car.fuel_figures().unwrap();
+            let mut ff = CarDecoder::try_from(black_box(BASELINE))
+                .unwrap()
+                .into_fuel_figures()
+                .unwrap();
             let n = ff.len();
             let mut sum_speed: u64 = 0;
             let mut sum_mpg: f64 = 0.0;
-            for entry in ff {
-                let entry = entry.unwrap();
+            while let Some(Ok(entry)) = ff.next() {
                 sum_speed += entry.speed() as u64;
                 sum_mpg += entry.mpg() as f64;
             }
@@ -205,21 +205,16 @@ fn bench_hft_tight_loop(c: &mut Criterion) {
     group.finish();
 }
 
-// ── HFT: field stride ─────────────────────────────────────────────
+// ── HFT: fixed-field stride ──────────────────────────────────────
 //
-// Measures latency of striding through specific fields in sequence:
-// modelYear, engine.capacity, fuelFigures[0].speed.
-// Each benchmark measures one stride pattern independently.
+// Measures latency of striding to fixed-block fields (modelYear,
+// engine.capacity). Tail-group strides (fuelFigures[0].speed) are not
+// random-access in the consuming model (DECISIONS.md §3/§10), so they are
+// not benchmarked here.
 
 fn bench_hft_field_stride(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let engine = car.engine_as_struct();
-    let ff = car.fuel_figures().unwrap();
-    let first_entry = if ff.len() > 0 {
-        Some(ff.into_iter().next().unwrap().unwrap())
-    } else {
-        None
-    };
 
     let mut group = c.benchmark_group("decode/hft/field_stride");
     group.throughput(Throughput::Elements(1));
@@ -232,21 +227,6 @@ fn bench_hft_field_stride(c: &mut Criterion) {
         let cap = engine.capacity();
         b.iter(|| black_box(cap));
     });
-
-    if let Some(entry) = first_entry {
-        group.bench_function("fuel_figures[0].speed", |b| {
-            b.iter(|| black_box(entry.speed()));
-        });
-
-        group.bench_function("all_three_strided", |b| {
-            b.iter(|| {
-                let m = car.model_year();
-                let e = engine.capacity();
-                let s = entry.speed();
-                black_box((m, e, s));
-            });
-        });
-    }
 
     group.finish();
 }
@@ -297,15 +277,15 @@ fn bench_display(c: &mut Criterion) {
 }
 
 fn bench_skip(c: &mut Criterion) {
-    let car = CarDecoder::try_from(BASELINE).unwrap();
-
     let mut group = c.benchmark_group("decode/skip");
     group.throughput(Throughput::Bytes(BASELINE.len() as u64));
     group.bench_function("fuel_figures_skip_all", |b| {
         b.iter(|| {
-            let ff = car.fuel_figures().unwrap();
+            let mut cursor = CarDecoder::try_from(black_box(BASELINE))
+                .unwrap()
+                .into_fuel_figures()
+                .unwrap();
             // skip_n to advance through all entries without decoding
-            let mut cursor = ff;
             let result = cursor.skip_n(cursor.len());
             black_box(result);
         });
