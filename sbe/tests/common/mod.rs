@@ -152,16 +152,24 @@ pub fn patch_source(src: &str) -> String {
 /// Write generated source + a `main()` test body into a temp crate, compile,
 /// and run.  `code` is placed directly inside `main()`.
 pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
-    _compile_and_run(module_name, source, code, &[]);
+    _compile_and_run(module_name, source, code, &[], "");
 }
 
 /// Like `compile_and_run` but adds the given feature to `[features]` in the
 /// temp crate's `Cargo.toml` and passes `--features <feature>` at build time.
 pub fn compile_and_run_with_feature(module_name: &str, source: &str, code: &str, feature: &str) {
-    _compile_and_run(module_name, source, code, &[feature]);
+    _compile_and_run(module_name, source, code, &[feature], "");
 }
 
-fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&str]) {
+/// Like `compile_and_run` but enables the generated module's `serde` feature
+/// and adds serde + serde_json as dependencies, for Serialize/Deserialize
+/// round-trip tests. Requires the crates in the cargo registry cache.
+pub fn compile_and_run_serde(module_name: &str, source: &str, code: &str) {
+    const DEPS: &str = "serde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n";
+    _compile_and_run(module_name, source, code, &["serde"], DEPS);
+}
+
+fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&str], deps: &str) {
     let dir = std::env::temp_dir().join(format!("ergo_test_{module_name}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -184,6 +192,10 @@ fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&st
         for f in features {
             cargo.push_str(&format!("{f} = []\n"));
         }
+    }
+    if !deps.is_empty() {
+        cargo.push_str("[dependencies]\n");
+        cargo.push_str(deps);
     }
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
 

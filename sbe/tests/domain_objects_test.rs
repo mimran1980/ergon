@@ -7,7 +7,7 @@
     unused
 )]
 mod common;
-use common::{Paths, compile_and_run, generate_domain as generate};
+use common::{Paths, compile_and_run, compile_and_run_serde, generate_domain as generate};
 use std::path::PathBuf;
 
 fn l3_schema() -> PathBuf {
@@ -328,6 +328,46 @@ fn binance_depth_domain() {
         let dbg = format!("{:?}", dom);
         assert!(dbg.contains("DepthResponseDomain"));
         println!("binance_depth_domain: PASSED");
+    "#,
+    );
+}
+
+// ── serde: Serialize/Deserialize round-trip on a domain object ─────────
+
+#[test]
+fn car_serde_round_trip() {
+    let (_schema, src) = generate(&Paths::example_schema(), "car_serde");
+    compile_and_run_serde(
+        "car_serde",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        car.serial_number(1234).model_year(2013).available(BooleanType::T).code(Model::A);
+        car.some_numbers([10u32, 20, 30, 40]);
+        car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
+        let mut extras = OptionalExtras::default();
+        extras.set_cruise_control(true);
+        car.extras(extras);
+        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        let car = car.fuel_figures(1, |g| {
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban").unwrap(); }).unwrap();
+        }).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let complete = car.model(b"Civic").unwrap().activation_code(b"abc").unwrap();
+        let encoded = complete.as_bytes().to_vec();
+
+        let d1: CarDomain = CarDecoder::try_from(&encoded[..]).unwrap().into();
+
+        let json = serde_json::to_string(&d1).expect("serialize");
+        let d2: CarDomain = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(d1, d2, "serde JSON round-trip must preserve the domain");
+
+        // Sanity: the derives produce real values, not an empty/null payload.
+        assert!(json.contains("\"serial_number\":1234"), "json missing serial_number: {json}");
+        assert!(json.contains("\"model_year\":2013"), "json missing model_year: {json}");
+        println!("car_serde_round_trip: PASSED json_len={}", json.len());
     "#,
     );
 }
