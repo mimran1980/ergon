@@ -1752,6 +1752,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_var_data_with_simple_encoding_type_is_error() {
+        // A var-data field whose type is a simple encoding (uint32), not a
+        // var-data composite, must be rejected.
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  </types>
+  <message name="M" id="1"><data name="d" id="1" type="uint32"/></message>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "simple encoding as varData must error");
+    }
+
     const MINIMAL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="example.sbe" id="1" version="0" byteOrder="littleEndian"
                description="minimal test schema">
