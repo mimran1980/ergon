@@ -724,6 +724,10 @@ model that DECISIONS §3 / §10 reject.
   `compile_fails()` harness in `sbe/tests/common/mod.rs`; two ordering proofs:
   `into_asks` on the initial `L3BookDecoder` is rejected, and `finish()`
   consumes the non-Copy group decoder. Added `Paths::l3_orderbook_schema()`.
+- `7d50551 test(decoder): zero-allocation proof for consuming stage decode` —
+  refreshed stale `sbe/benches/generated/car_patched.rs` from the golden;
+  `consuming_stage_decode_zero_alloc` proves the new path (into_<group> ->
+  iterate -> finish -> into_<vd> -> complete) allocates zero heap bytes.
 
 **Gates at this point:** `cargo fmt --all --check` clean; `cargo clippy
 --workspace --all-targets -- -D warnings` clean; `cargo test --workspace --
