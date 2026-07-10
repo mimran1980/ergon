@@ -686,6 +686,71 @@ git commit -m "docs: close ergosbe performance gates"
 
 Add newest entries at the top.
 
+### 2026-07-10 Concrete consuming decoder stages — first slices landed
+
+Implementation of the canonical ordered-tail decoder (DECISIONS.md §3) is under
+way on branch `first_cut`. The decoder was the real gap: the encoder already had
+concrete stages, but the decoder still used the single-struct `skip_to_<later>()`
+model that DECISIONS §3 / §10 reject.
+
+**Design (durable, realised in `sbe/src/codegen.rs`):**
+
+- New message-level consuming decoder stages, mirroring the encoder but with
+  distinct names: `CarDecoder --into_fuel_figures(self)--> FuelFiguresDecoder
+  --finish(self)--> CarDecoderAfterFuelFigures --into_performance_figures(self)-->
+  ... --into_activation_code(self)--> CarDecoderComplete`. l3 (bids/asks) gives
+  `L3BookDecoder → into_bids → finish → L3BookDecoderAfterBids → into_asks →
+  finish → L3BookDecoderComplete`.
+- Stages are non-`Copy` and carry a cached `tail_start` (next unconsumed tail
+  offset), so transitions never rescan earlier groups. Group decoders gained
+  `parent_pos`/`parent_block_length` + `wrap_with_parent`; `finish()` scans
+  remaining entries (via `EntryDecoder::skip`, which already handles nested
+  groups + var-data) and rebuilds the next stage. Terminal stage has
+  `as_bytes`/`encoded_length`/`encoded_length_with_header`.
+- **Additive/coexistent:** the legacy `&self` random-access group accessors,
+  `skip_to_<field>()`, and non-consuming `rewind(&self)` are intentionally left
+  in place so all existing tests/benchmarks/samples stay green. The new API uses
+  distinct method names (`into_*`, `finish`), so compile-fail proofs for the new
+  surface hold even while the old surface coexists.
+
+**Commits (this session):**
+
+- `e520353 feat(decoder): concrete consuming tail stages (DECISIONS §3)` —
+  codegen + regenerated golden + `ordered_decoder_stages_test.rs` (3 runtime
+  tests: full car dual-group+var-data round trip, `finish`-scans-unread, empty
+  tails).
+- `e9a17ae test(decoder): l3 bids/asks consuming-stage runtime + compile-fail
+  proofs` — l3 runtime decode of bids/asks with nested orders+orderId; new
+  `compile_fails()` harness in `sbe/tests/common/mod.rs`; two ordering proofs:
+  `into_asks` on the initial `L3BookDecoder` is rejected, and `finish()`
+  consumes the non-Copy group decoder. Added `Paths::l3_orderbook_schema()`.
+
+**Gates at this point:** `cargo fmt --all --check` clean; `cargo clippy
+--workspace --all-targets -- -D warnings` clean; `cargo test --workspace --
+--include-ignored --test-threads=1` all green (0 failures; +6 new tests).
+Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
+
+**Known gaps / deferred (intentional, tracked here):**
+
+- The new After stages do not yet re-export the fixed-block field accessors
+  (read fixed fields from the initial stage before transitioning). Add when an
+  ergonomic need or benchmark shows it.
+- Entry-level (nested) consuming stages are not yet generated; l3 entries still
+  expose nested groups/var-data via the legacy `&self` entry accessors.
+  `finish()` already skips nested tails correctly at the message level.
+- Legacy `skip_to_<later>()` + `&self` random-access group accessors still
+  present (DECISIONS §10 reject-table end-state not yet reached).
+- `rewind(self)` is not yet the consuming variant on the new stages.
+- Five-run Aeron matrix and coverage gates for the new paths are not yet run.
+
+**Exact next slice (resume here):** Task D — generate entry-level consuming
+stages for nested groups + var-data inside entries (mirror the message-level
+helper), prove on l3 that a parent level cannot advance while its nested
+`orders` stage is active (compile-fail), and that `finish()` handles empty /
+partial / unread nested tails. After that, migrate decoder call sites to the
+consuming model and remove the legacy out-of-order surface (DECISIONS §10), then
+run the full five-run Aeron parity matrix + coverage gate (Task F/G).
+
 ### 2026-07-10 Ordered-tail policy and performance gate reset
 
 - Made `sbe/design/DECISIONS.md` the canonical authority for the five-level
