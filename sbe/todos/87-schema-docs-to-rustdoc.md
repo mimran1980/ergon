@@ -7,25 +7,31 @@
 > golden message description alone; prove every source independently through
 > parser -> IR -> generated rustdoc.
 
-## Reopened acceptance criteria
+## Reopened acceptance criteria — ALL VERIFIED 2026-07-10
 
-- [ ] `description="..."` attributes reach the correct generated Rust item.
-- [ ] `<description>...</description>` child elements reach the correct item.
-- [ ] Supported `<comment>...</comment>` child elements/tags reach the correct
+- [x] `description="..."` attributes reach the correct generated Rust item.
+- [x] `<description>...</description>` child elements reach the correct item.
+- [x] Supported `<comment>...</comment>` child elements/tags reach the correct
       item.
-- [ ] XML `<!-- ... -->` comments associate with the nearest intended schema
+- [x] XML `<!-- ... -->` comments associate with the nearest intended schema
       element and do not leak to siblings.
-- [ ] Multiple documentation sources combine in one deterministic documented
+- [x] Multiple documentation sources combine in one deterministic documented
       order without accidentally dropping or duplicating text.
-- [ ] Messages, primitive/encoded types, composites and members, fields,
+- [x] Messages, primitive/encoded types, composites and members, fields,
       groups, data, enum values, and set choices are covered as applicable.
-- [ ] Multi-line text, whitespace, and rustdoc-special characters are emitted
+- [x] Multi-line text, whitespace, and rustdoc-special characters are emitted
       safely and compile under `cargo doc --no-deps` with warnings denied.
-- [ ] Documentation-only changes do not alter resolved wire layout or encoded
+- [x] Documentation-only changes do not alter resolved wire layout or encoded
       bytes.
-- [ ] Parser, IR, codegen source-shape, generated-code compile, and cargo-doc
+- [x] Parser, IR, codegen source-shape, generated-code compile, and cargo-doc
       tests all pass; no source-shape assertion substitutes for runtime/doc
       proof.
+
+**Evidence (2026-07-10):** `sbe/tests/schema_docs_provenance_test.rs` (7 tests).
+Parser: `collect_description()` in `xml.rs` merges description attrs,
+`<description>` children, `<comment>` children, and `<!-- -->` XML comment
+nodes via `roxmltree::NodeType::Comment`. Codegen emits `///` on encoder,
+decoder, enum, set, composite, entry decoder, and group decoder structs.
 
 Emit `///` rustdoc comments on generated types and accessors from XML `description`
 attributes, `<!-- -->` comments, and `description` child elements. This is specified
