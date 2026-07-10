@@ -1829,28 +1829,6 @@ fn get_vardata_info(
     (name, size, len_field, prim)
 }
 
-#[allow(dead_code)]
-fn generate_dim_new_call(
-    elements: &SchemaElements,
-    dim_type: &str,
-    block_len_expr: &str,
-    count_expr: &str,
-) -> String {
-    let raw_name = dim_type;
-    let name = to_pascal_case(raw_name);
-    let mut args = vec![block_len_expr.to_string(), count_expr.to_string()];
-    if let Some(comp) = elements.composites.iter().find(|c| c[0].name == raw_name) {
-        let members = parse_composite_members(comp);
-        if members.len() == 2 {
-            let lower_0 = members[0].name.to_lowercase();
-            if lower_0.contains("numingroup") || lower_0.contains("count") {
-                args = vec![count_expr.to_string(), block_len_expr.to_string()];
-            }
-        }
-    }
-    format!("{}::new({})", name, args.join(", "))
-}
-
 /// Name of the concrete decoder stage entered after consuming tail component `i`.
 /// `stage_prefix` is the owner decoder's name (e.g. `CarDecoder` or
 /// `BidsEntryDecoder`); the final component yields `{prefix}Complete`, earlier
