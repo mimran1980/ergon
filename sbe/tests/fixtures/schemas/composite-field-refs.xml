@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="comprefs"
+    id="77"
+    version="0"
+    semanticVersion="1.0"
+    description="Composite whose members reference named enum/set/composite types"
+    byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="SBE message header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <enum name="Colour" encodingType="uint8" description="named enum referenced by a composite member">
+            <validValue name="Red">1</validValue>
+            <validValue name="Green">2</validValue>
+            <validValue name="Blue">3</validValue>
+        </enum>
+        <set name="Flags" encodingType="uint8" description="named set referenced by a composite member">
+            <choice name="A">0</choice>
+            <choice name="B">1</choice>
+            <choice name="C">2</choice>
+        </set>
+        <composite name="Inner" description="named composite referenced by a composite member">
+            <type name="x" primitiveType="uint16"/>
+            <type name="y" primitiveType="uint16"/>
+        </composite>
+        <composite name="Widget" description="composite with enum/set/composite member references">
+            <type name="primary" primitiveType="uint32"/>
+            <type name="colour" type="Colour"/>
+            <type name="flags" type="Flags"/>
+            <type name="inner" type="Inner"/>
+        </composite>
+    </types>
+
+    <sbe:message name="Thing" id="1" description="message with a Widget field">
+        <field name="widget" id="1" type="Widget"/>
+    </sbe:message>
+</sbe:messageSchema>

@@ -131,6 +131,19 @@ fn generate_composite_with_enum_set_and_nested_composite() {
     );
 }
 
+#[test]
+fn generate_composite_with_named_type_member_refs() {
+    // composite-field-refs.xml defines a composite "Widget" whose members
+    // reference a named enum (Colour), set (Flags), and composite (Inner).
+    // Generating it exercises the composite field-type codegen arms that handle
+    // enum/set/nested-composite *member references* (a shape no other fixture has).
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/composite-field-refs.xml");
+    let (_s, src) = generate(&path, "comp_field_refs");
+    assert_source_ok(&src, &["Widget", "Colour", "Flags", "Inner"]);
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
