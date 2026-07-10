@@ -1714,6 +1714,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_field_offset_out_of_order_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <message name="M" id="1" blockLength="8">
+    <field name="a" id="1" type="uint32" offset="4"/>
+    <field name="b" id="2" type="uint32" offset="0"/>
+  </message>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "out-of-order field offsets must error");
+    }
+
+    #[test]
+    fn parse_invalid_message_child_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <message name="M" id="1"><bogusElement/></message>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "invalid message child must error");
+    }
+
+    #[test]
+    fn parse_invalid_types_container_child_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite>
+    <bogusType/>
+  </types>
+</messageSchema>"#;
+        assert!(
+            parse(xml).is_err(),
+            "invalid types container child must error"
+        );
+    }
+
     const MINIMAL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="example.sbe" id="1" version="0" byteOrder="littleEndian"
                description="minimal test schema">
