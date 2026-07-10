@@ -794,37 +794,28 @@ Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
   ergonomic need or benchmark shows it.
 - Entry-level consuming stages ARE now generated (Task D, commit `49ca67d`);
   l3 entries still ALSO keep the legacy `&self` entry accessors for coexistence.
-- Legacy `&self` random-access group/var-data accessors still present (DECISIONS
-  §10 reject-table end-state not yet reached). The new consuming API uses
-  distinct `into_*` names, so compile-fail proofs already hold under coexistence.
-  `skip_to_<later>()` was REMOVED (commit `72f36a5`).
-- `rewind(self)` is not yet the consuming variant on the new stages.
+- **DECISIONS §10 message-level compliance DONE** (commit `efe0de2`): the
+  message-level `&self` group/var-data accessors (fuel_figures,
+  performance_figures, manufacturer/model/activation_code, `*_as_str`) are now
+  **private** — only the generated `Display` walker + domain `From` impls (same
+  module) use them. The concrete consuming stages (`into_<g>`, `into_<vd>`,
+  `finish`, `skip_remaining`) are the sole public tail-traversal contract;
+  `skip_to_<later>()` was removed (`72f36a5`). No public API permits out-of-order
+  message-tail reads. All call sites migrated: `exchange-orderbook` sample,
+  `proptest_roundtrip`, `l3_orderbook_test`, `allocation_count_test`,
+  `integration_tests`, `comprehensive_test`, `baseline_test` (incl. version-compat
+  bodies), `decode_bench`, `perf_parity_bench`. 453 tests, 0 fail; fmt+clippy
+  clean; benches + sample compile. **Remaining §10 refinement:** entry-level
+  `&sh` accessors (`entry.orders()`, `entry.acceleration()`) are still public —
+  the consuming entry stages exist but coexist; privatizing them is secondary.
+- `rewind(self)` is not yet the consuming variant on the new stages (legacy
+  `rewind(&self) -> Self` stays public; not an out-of-order tail accessor).
 - Five-run Aeron matrix for the new paths is DONE (see ratios above; all ≤ 1.00
-  in the apples-to-apples trusted-input mode). **Remaining gates:**
-  (1) migrate decoder call sites + privatise/remove the legacy `&self`
-  group/var-data accessors + make `rewind` consuming (DECISIONS §10). This is
-  judgment-heavy: several tests deliberately exercise legacy behaviours the
-  consuming model removes (`integration_tests` skips `fuel_figures` to reach
-  `performance_figures` and uses `nth()` random access; `comprehensive_test`
-  calls `fuel_figures()` 4× and re-reads groups; `baseline_test`/`proptest`/
-  `l3_orderbook_test` re-read groups). They must be repurposed to single
-  sequential consumption, and the generated `Display` walker + domain `From`
-  impls (which use the `&self` accessors internally) kept working — simplest by
-  keeping those accessors private (non-`pub`) so only the generated module uses
-  them. **Progress:** `skip_to_<later>()` removed (`72f36a5`); the
-  `exchange-orderbook` sample migrated to consuming stages (`fe41821`, fixing
-  two latent out-of-order tail reads). Remaining: the sbe test files
-  (`baseline/comprehensive/integration/allocation/proptest/l3_orderbook/
-  domain_objects`), `ergosbe-benchmarks/benches/{decode_bench,perf_parity
-  legacy}`, then the codegen privatisation flip. The privatisation is gated on
-  all external call sites migrating first.
-  (2) reach 100% line/function + branch coverage (generator ~91% now;
+  in the apples-to-apples trusted-input mode). **Remaining gate: 100% coverage.**
+  New generator logic is already 100% covered (lcov-verified, lines ~1858–2210);
   `--branch` not yet run; `allocation_count_test` is a justified coverage
-  exclusion). **New generator logic is already 100% covered**: lcov shows zero
-  uncovered lines in the consuming-stage functions (`decoder_stage_after_ident`,
-  `generate_owner_consuming_stages`, `generate_decoder_consuming_stages`,
-  `generate_entry_consuming_stages`, lines ~1858–2210). The remaining ~9% gap is
-  pre-existing code (xml.rs parser, resolve.rs, schema.rs, codegen enum/set/
+  exclusion. The ~9% generator gap is pre-existing (xml.rs parser, resolve.rs,
+  schema.rs, codegen enum/set/composite edge cases).
   composite edge cases) — a separate effort.
 
 **Exact next slice (resume here):** migrate decoder call sites to the consuming
