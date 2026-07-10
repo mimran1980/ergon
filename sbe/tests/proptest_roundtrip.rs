@@ -202,10 +202,22 @@ proptest! {
 
         let encoded = car.as_bytes();
         let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let after_perf = decoded
+            .into_fuel_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap()
+            .finish()
+            .unwrap();
+        let (dec_mfr, s1) = after_perf.into_manufacturer().unwrap();
+        let (dec_model, s2) = s1.into_model().unwrap();
+        let (dec_activation, _done) = s2.into_activation_code().unwrap();
 
-        prop_assert_eq!(&manufacturer[..], decoded.manufacturer().unwrap());
-        prop_assert_eq!(&model[..], decoded.model().unwrap());
-        prop_assert_eq!(&activation[..], decoded.activation_code().unwrap());
+        prop_assert_eq!(&manufacturer[..], dec_mfr);
+        prop_assert_eq!(&model[..], dec_model);
+        prop_assert_eq!(&activation[..], dec_activation);
     }
 }
 "##;
@@ -262,7 +274,11 @@ proptest! {
         let encoded = car.as_bytes();
         let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
-        let fuel: Vec<_> = decoded.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut fuel_iter = decoded.into_fuel_figures().unwrap();
+        let fuel: Vec<_> = fuel_iter
+            .by_ref()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         prop_assert_eq!(entries.len(), fuel.len(), "fuel figures count");
 
         for (i, (speed, mpg, usage)) in entries.iter().enumerate() {
@@ -308,11 +324,17 @@ fn zero_length_roundtrip() {
     let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
 
     assert_eq!(0, decoded.serial_number());
-    assert!(decoded.fuel_figures().unwrap().is_empty(), "fuel figures not empty");
-    assert!(decoded.performance_figures().unwrap().is_empty(), "perf figures not empty");
-    assert_eq!(b"", decoded.manufacturer().unwrap(), "manufacturer");
-    assert_eq!(b"", decoded.model().unwrap(), "model");
-    assert_eq!(b"", decoded.activation_code().unwrap(), "activationCode");
+    let fuel = decoded.into_fuel_figures().unwrap();
+    assert!(fuel.is_empty(), "fuel figures not empty");
+    let perf = fuel.finish().unwrap().into_performance_figures().unwrap();
+    assert!(perf.is_empty(), "perf figures not empty");
+    let after_perf = perf.finish().unwrap();
+    let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+    assert_eq!(b"", mfr, "manufacturer");
+    let (model, a2) = a1.into_model().unwrap();
+    assert_eq!(b"", model, "model");
+    let (activation, _done) = a2.into_activation_code().unwrap();
+    assert_eq!(b"", activation, "activationCode");
 }
 "##;
 
@@ -370,15 +392,29 @@ fn boundary_values() {
     assert_eq!(u16::MAX, de.capacity());
     assert_eq!(u8::MAX, de.num_cylinders());
 
-    let ff: Vec<_> = decoded.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    let mut fuel_iter = decoded.into_fuel_figures().unwrap();
+    let ff: Vec<_> = fuel_iter
+        .by_ref()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(1, ff.len());
     assert_eq!(u16::MAX, ff[0].speed());
     // f32::MAX is the largest finite f32; check round-trip within epsilon
     assert!((f32::MAX - ff[0].mpg()).abs() < 1.0, "ff[0].mpg");
 
-    assert_eq!(b"MAX", decoded.manufacturer().unwrap());
-    assert_eq!(b"MAX", decoded.model().unwrap());
-    assert_eq!(b"MAX", decoded.activation_code().unwrap());
+    let after_perf = fuel_iter
+        .finish()
+        .unwrap()
+        .into_performance_figures()
+        .unwrap()
+        .finish()
+        .unwrap();
+    let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+    assert_eq!(b"MAX", mfr);
+    let (model, a2) = a1.into_model().unwrap();
+    assert_eq!(b"MAX", model);
+    let (activation, _done) = a2.into_activation_code().unwrap();
+    assert_eq!(b"MAX", activation);
 }
 "##;
 
