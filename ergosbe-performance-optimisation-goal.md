@@ -805,12 +805,19 @@ Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
   group/var-data accessors + make `rewind` consuming (DECISIONS §10). This is
   judgment-heavy: several tests deliberately exercise legacy behaviours the
   consuming model removes (`integration_tests` skips `fuel_figures` to reach
-  `performance_figures` and uses `nth()` random access; `baseline_test`/`
-  comprehensive_test`/`proptest`/`l3_orderbook_test` re-read groups). They must
-  be repurposed to the sequential consuming model, and the generated `Display`
-  walker + domain `From` impls (which use the `&self` accessors internally) kept
-  working — simplest by keeping those accessors private (non-`pub`) so only the
-  generated module uses them.
+  `performance_figures` and uses `nth()` random access; `comprehensive_test`
+  calls `fuel_figures()` 4× and re-reads groups; `baseline_test`/`proptest`/
+  `l3_orderbook_test` re-read groups). They must be repurposed to single
+  sequential consumption, and the generated `Display` walker + domain `From`
+  impls (which use the `&self` accessors internally) kept working — simplest by
+  keeping those accessors private (non-`pub`) so only the generated module uses
+  them. **Progress:** `skip_to_<later>()` removed (`72f36a5`); the
+  `exchange-orderbook` sample migrated to consuming stages (`fe41821`, fixing
+  two latent out-of-order tail reads). Remaining: the sbe test files
+  (`baseline/comprehensive/integration/allocation/proptest/l3_orderbook/
+  domain_objects`), `ergosbe-benchmarks/benches/{decode_bench,perf_parity
+  legacy}`, then the codegen privatisation flip. The privatisation is gated on
+  all external call sites migrating first.
   (2) reach 100% line/function + branch coverage (generator ~91% now;
   `--branch` not yet run; `allocation_count_test` is a justified coverage
   exclusion). **New generator logic is already 100% covered**: lcov shows zero
