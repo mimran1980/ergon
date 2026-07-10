@@ -728,6 +728,13 @@ model that DECISIONS §3 / §10 reject.
   refreshed stale `sbe/benches/generated/car_patched.rs` from the golden;
   `consuming_stage_decode_zero_alloc` proves the new path (into_<group> ->
   iterate -> finish -> into_<vd> -> complete) allocates zero heap bytes.
+- `49ca67d feat(decoder): entry-level consuming tail stages (Task D)` —
+  generalised the generator into `generate_owner_consuming_stages` (shared by
+  message and entry tails) and added entry-level consuming stages:
+  `BidsEntryDecoder --into_orders--> BidsOrdersDecoder --finish-->
+  BidsEntryDecoderComplete`, per-order `OrdersEntryDecoder --into_order_id-->
+  (&[u8], Complete)`. l3 runtime + compile-fail (`into_orders` consumes the
+  non-Copy entry). 453 tests, 0 fail.
 
 **Gates at this point:** `cargo fmt --all --check` clean; `cargo clippy
 --workspace --all-targets -- -D warnings` clean; `cargo test --workspace --
@@ -739,21 +746,22 @@ Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
 - The new After stages do not yet re-export the fixed-block field accessors
   (read fixed fields from the initial stage before transitioning). Add when an
   ergonomic need or benchmark shows it.
-- Entry-level (nested) consuming stages are not yet generated; l3 entries still
-  expose nested groups/var-data via the legacy `&self` entry accessors.
-  `finish()` already skips nested tails correctly at the message level.
-- Legacy `skip_to_<later>()` + `&self` random-access group accessors still
-  present (DECISIONS §10 reject-table end-state not yet reached).
+- Entry-level consuming stages ARE now generated (Task D, commit `49ca67d`);
+  l3 entries still ALSO keep the legacy `&self` entry accessors for coexistence.
+- Legacy `skip_to_<later>()` + `&self` random-access group/var-data accessors
+  still present (DECISIONS §10 reject-table end-state not yet reached). The new
+  consuming API uses distinct `into_*` names, so compile-fail proofs already
+  hold under coexistence.
 - `rewind(self)` is not yet the consuming variant on the new stages.
 - Five-run Aeron matrix and coverage gates for the new paths are not yet run.
 
-**Exact next slice (resume here):** Task D — generate entry-level consuming
-stages for nested groups + var-data inside entries (mirror the message-level
-helper), prove on l3 that a parent level cannot advance while its nested
-`orders` stage is active (compile-fail), and that `finish()` handles empty /
-partial / unread nested tails. After that, migrate decoder call sites to the
-consuming model and remove the legacy out-of-order surface (DECISIONS §10), then
-run the full five-run Aeron parity matrix + coverage gate (Task F/G).
+**Exact next slice (resume here):** migrate decoder call sites to the consuming
+model (Commit 2: `sbe/tests/{baseline,comprehensive,integration,allocation_count,
+proptest_roundtrip}_test.rs`, `ergosbe-benchmarks/benches/{decode_bench,
+perf_parity_bench}.rs`, `samples/exchange-orderbook`), then remove the legacy
+`skip_to_*`/`&self`/non-consuming-`rewind` surface + update the
+`baseline_test.rs` source-shape assertions (Commit 3, DECISIONS §10). Then run
+the full five-run Aeron parity matrix + coverage gate (Task F/G).
 
 ### 2026-07-10 Ordered-tail policy and performance gate reset
 
