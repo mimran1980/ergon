@@ -269,3 +269,15 @@ pub fn compile_and_run_two_modules(
         panic!("test {test_name} FAILED\nstdout:\n{o}\nstderr:\n{e}");
     }
 }
+
+/// Generate with domain objects enabled.
+pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
+    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let schema = Schema::from_ir(ir);
+    let mut config = GenerationConfig::new(module_name);
+    config.domain_objects = true;
+    let g = Generator::new(config);
+    let ms = g.generate(&schema);
+    let module = ms.modules().next().unwrap();
+    (schema, module.source.clone())
+}
