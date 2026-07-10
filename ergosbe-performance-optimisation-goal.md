@@ -828,17 +828,19 @@ Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
   in the apples-to-apples trusted-input mode). **Remaining gate: 100% coverage.**
   New generator logic is already 100% covered (lcov-verified, lines ~1858–2210);
   `--branch` not yet run; `allocation_count_test` is a justified coverage
-  exclusion. **Coverage push** (commits `8844e53`, `0e00932`, `928251f`,
-  `582197f`, `e6bdd22`): schema.rs now **100% functions**; xml.rs `parse_u64_val`
-  value branches + parse-error paths covered; new `composite-field-refs.xml`
-  fixture (composite with named enum/set/composite member refs) covered the
-  composite field-type codegen arms (**codegen.rs 93→97% lines**, −175 missed);
-  `extension-schema` generation covers versioned set/enum/composite fields;
-  dead `generate_dim_new_call` helper deleted. Generator TOTAL **~95.0% lines /
-  ~92.7% functions** (was ~91.4%); codegen.rs ~97.0%, xml.rs ~91.0%,
-  resolve.rs ~94.9%. Remaining pre-existing gap: diverse codegen edge branches
-  (constant/versioned field shapes, enum null for diverse prim types) + xml.rs
-  parser member/error branches — each needs a specific fixture/malformed schema.
+  exclusion. **Coverage push** (commits `8844e53`..`0808365`): schema.rs now
+  **100% functions**; xml.rs `parse_u64_val` value branches + a broad batch of
+  parse-error paths covered (invalid byteOrder/presence/primitiveType, enum-float
+  /set-signed/duplicate-choice-name/invalid-child/offset-order/message-child/
+  types-child, set bit-range/duplicate); new `composite-field-refs.xml` fixture
+  (composite with named enum/set/composite member refs) covered the composite
+  field-type codegen arms (**codegen.rs 93→97% lines**, −175 missed);
+  `extension-schema` generation covers versioned set/enum/composite fields; dead
+  `generate_dim_new_call` helper deleted. Generator TOTAL **~96.1% lines /
+  ~93.0% functions** (was ~91.4%); codegen.rs ~96.7%, xml.rs ~94.9%,
+  resolve.rs ~94.9%. 473 tests pass. Remaining pre-existing gap (~4%): defensive
+  parser/codegen fallback branches (e.g. indirect-ref-doesn't-resolve) + a few
+  more error paths + enum-null edge — each needs a specific fixture/schema.
   composite edge cases) — a separate effort.
 
 **Exact next slice (resume here):** migrate decoder call sites to the consuming
