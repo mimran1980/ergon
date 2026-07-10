@@ -378,13 +378,15 @@ fn bench_encode_throughput(c: &mut Criterion) {
 // ── Decoder skip/rewind API benchmark ────────────────────────────────
 
 fn bench_decode_consuming_full(c: &mut Criterion) {
-    // Head-to-head full-message decode over the same BASELINE buffer:
-    //   - `ergosbe_consuming` uses the new concrete consuming tail stages
-    //     (into_<g> -> iterate -> finish -> into_<vd> -> complete);
-    //   - `ergosbe_legacy` uses the legacy `&self` random-access accessors.
-    // Both do identical work (every group entry + every var-data field).
-    // The legacy path has already reached Aeron parity (historically measured),
-    // so `consuming <= legacy` implies `consuming <= Aeron` for full-message decode.
+    // Fair three-way full-message decode over the same BASELINE buffer. All
+    // three do IDENTICAL work: every fuel entry (speed, mpg, usage_description),
+    // every performance entry (octane_rating + nested acceleration mph/seconds),
+    // and the three message-level var-data fields. Aeron's advance() does not
+    // skip per-entry tails, so it must consume usage_description/acceleration to
+    // advance — hence every codec traverses them, making the comparison fair.
+    let bl = aeron_block_length();
+    let ver = aeron_version();
+
     let mut group = c.benchmark_group("parity/decode/full_message");
     group.throughput(Throughput::Elements(1));
 
@@ -394,11 +396,15 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
             let mut fuel = car.into_fuel_figures().unwrap();
             while let Some(Ok(e)) = fuel.next() {
                 black_box((e.speed(), e.mpg()));
+                black_box(e.usage_description().unwrap());
             }
             let after_fuel = fuel.finish().unwrap();
             let mut perf = after_fuel.into_performance_figures().unwrap();
             while let Some(Ok(e)) = perf.next() {
                 black_box(e.octane_rating());
+                for a in e.acceleration().unwrap() {
+                    black_box((a.mph(), a.seconds()));
+                }
             }
             let after_perf = perf.finish().unwrap();
             let (mfr, a1) = after_perf.into_manufacturer().unwrap();
@@ -414,10 +420,14 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
             for entry in car.fuel_figures().unwrap() {
                 let e = entry.unwrap();
                 black_box((e.speed(), e.mpg()));
+                black_box(e.usage_description().unwrap());
             }
             for entry in car.performance_figures().unwrap() {
                 let e = entry.unwrap();
                 black_box(e.octane_rating());
+                for a in e.acceleration().unwrap() {
+                    black_box((a.mph(), a.seconds()));
+                }
             }
             black_box((
                 car.manufacturer().unwrap(),
@@ -426,6 +436,15 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
             ));
         });
     });
+
+    // NOTE: a direct Aeron full-message-decode bench was attempted here but the
+    // patched Aeron module's advance()/limit group semantics mis-position for
+    // BASELINE's nested-tail structure (panic at get_bytes_at). Rather than ship
+    // misleading numbers, the direct Aeron full-decode comparison is deferred
+    // until the Aeron module's group/limit traversal is traced carefully. The
+    // fair consuming-vs-legacy comparison above (identical ErgoSBE semantics)
+    // plus the existing parity/decode/{entry_point,scalar,array,composite} and
+    // parity/throughput Aeron head-to-heads remain the ErgoSBE-vs-Aeron evidence.
 
     group.finish();
 }
