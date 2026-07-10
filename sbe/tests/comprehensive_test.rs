@@ -126,24 +126,22 @@ fn group_with_vardata_entries_roundtrip() {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        // Group with var-data: Iterator returns Result
-        let ff: Vec<_> = car2.fuel_figures().unwrap()
-            .collect::<Result<Vec<_>, _>>().unwrap();
+        // Group with var-data: one consuming stage; the group decoder's own
+        // iterator methods (len/is_empty/rewind/skip_n/remaining) are exercised
+        // on it directly.
+        let mut ff_dec = car2.into_fuel_figures().unwrap();
+        assert_eq!(ff_dec.len(), 2);
+        assert!(!ff_dec.is_empty());
+        let ff: Vec<_> = ff_dec.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(ff.len(), 2);
         assert_eq!(ff[0].speed(), 30);
         assert_eq!(ff[0].usage_description().unwrap(), b"Urban");
         assert_eq!(ff[1].speed(), 55);
         assert_eq!(ff[1].mpg(), 49.0);
-        // is_empty
-        assert!(!car2.fuel_figures().unwrap().is_empty());
-        // rewind
-        let mut ff_dec = car2.fuel_figures().unwrap();
-        assert_eq!(ff_dec.len(), 2);
+        // rewind resets the group decoder to the start of the group.
         ff_dec.rewind();
         assert_eq!(ff_dec.len(), 2);
-        // remaining
         assert_eq!(ff_dec.remaining(), 2);
-        // skip_n
         ff_dec.skip_n(1).unwrap();
         assert_eq!(ff_dec.remaining(), 1);
     "#,
@@ -173,14 +171,22 @@ fn vardata_empty_and_max_roundtrip() {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        // Empty var-data
-        assert_eq!(car2.manufacturer().unwrap(), b"");
-        // Short var-data
-        assert_eq!(car2.model().unwrap(), b"ABC");
-        // Longer var-data
-        assert_eq!(car2.activation_code().unwrap(), b"XYZ0123456789");
-        // is_empty on empty group
-        assert!(car2.fuel_figures().unwrap().is_empty());
+        // Tail in wire order: fuel -> performance -> manufacturer/model/activation
+        let fuel = car2.into_fuel_figures().unwrap();
+        assert!(fuel.is_empty(), "empty fuel group");
+        let after_perf = fuel
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap()
+            .finish()
+            .unwrap();
+        let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+        assert_eq!(mfr, b"", "empty var-data");
+        let (model, a2) = a1.into_model().unwrap();
+        assert_eq!(model, b"ABC", "short var-data");
+        let (activation, _done) = a2.into_activation_code().unwrap();
+        assert_eq!(activation, b"XYZ0123456789", "longer var-data");
     "#,
     );
 }
@@ -444,26 +450,29 @@ fn encoder_roundtrip_with_groups_and_vardata() {
         let engine_fly = car2.engine();
         assert_eq!(engine_fly.capacity(), 2500);
         assert_eq!(engine_fly.num_cylinders(), 6);
-        // Groups
-        let ff: Vec<_> = car2.fuel_figures().unwrap()
-            .collect::<Result<Vec<_>,_>>().unwrap();
+        // Groups + var-data in wire order via the consuming stages.
+        let mut fuel = car2.into_fuel_figures().unwrap();
+        let ff: Vec<_> = fuel.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(ff.len(), 2);
         assert_eq!(ff[0].speed(), 100);
         assert_eq!(ff[0].usage_description().unwrap(), b"City");
         assert_eq!(ff[1].speed(), 200);
-        // Nested group
-        let pf: Vec<_> = car2.performance_figures().unwrap()
-            .collect::<Result<Vec<_>,_>>().unwrap();
-        let acc: Vec<_> = pf[0].acceleration().unwrap()
-            .collect::<Vec<_>>();
+        let mut perf = fuel.finish().unwrap().into_performance_figures().unwrap();
+        // Nested group (entry-level accessor remains)
+        let pf: Vec<_> = perf.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
+        let acc: Vec<_> = pf[0].acceleration().unwrap().collect::<Vec<_>>();
         assert_eq!(acc.len(), 2);
         assert_eq!(acc[0].mph(), 60);
         assert!((acc[0].seconds() - 3.5).abs() < 0.01);
         assert_eq!(acc[1].mph(), 120);
         // VarData
-        assert_eq!(car2.manufacturer().unwrap(), b"Porsche");
-        assert_eq!(car2.model().unwrap(), b"911 GT3");
-        assert_eq!(car2.activation_code().unwrap(), b"RACE");
+        let after_perf = perf.finish().unwrap();
+        let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+        assert_eq!(mfr, b"Porsche");
+        let (model, a2) = a1.into_model().unwrap();
+        assert_eq!(model, b"911 GT3");
+        let (activation, _done) = a2.into_activation_code().unwrap();
+        assert_eq!(activation, b"RACE");
     "#,
     );
 }
@@ -501,8 +510,16 @@ fn fixed_entry_group_as_chunks_and_entries() {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        let pf: Vec<_> = car2.performance_figures().unwrap()
-            .collect::<Result<Vec<_>,_>>().unwrap();
+        // Traverse fuel first (wire order), then performance.
+        let pf: Vec<_> = car2
+            .into_fuel_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         // Acceleration is a fixed-entry group (total_tail == 0)
         let acc = pf[0].acceleration().unwrap();
         // Use group decoder's Iterator impl (replaces as_chunks)
@@ -621,10 +638,22 @@ fn vardata_truncated_length_detected() {
         let car = car.activation_code(b"RACE-XYZ").unwrap();
         let encoded = car.as_bytes();
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        // Valid varData reads
-        assert_eq!(car2.manufacturer().unwrap(), b"Porsche");
-        assert_eq!(car2.model().unwrap(), b"911 GT3 RS");
-        assert_eq!(car2.activation_code().unwrap(), b"RACE-XYZ");
+        // Valid varData reads — traverse the groups first (wire order).
+        let after_perf = car2
+            .into_fuel_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap()
+            .finish()
+            .unwrap();
+        let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+        assert_eq!(mfr, b"Porsche");
+        let (model, a2) = a1.into_model().unwrap();
+        assert_eq!(model, b"911 GT3 RS");
+        let (activation, _done) = a2.into_activation_code().unwrap();
+        assert_eq!(activation, b"RACE-XYZ");
         // Truncated buffer at the very end should fail to decode varData
         // (length prefix points past end of buffer)
         // Severely truncated buffer fails to parse
