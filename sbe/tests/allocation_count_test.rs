@@ -110,18 +110,22 @@ fn warm_up_all() {
     let _nums = car.some_numbers();
     let _vc = car.vehicle_code();
 
-    // Group iteration — actually iterate to settle per-entry lazy-inits
-    let ff = car.fuel_figures().unwrap();
-    for entry in ff {
+    // Group + var-data iteration in wire order via the consuming stages
+    // (DECISIONS.md §3/§10), to settle per-entry/per-field lazy-inits.
+    let mut fuel = car.into_fuel_figures().unwrap();
+    for entry in fuel.by_ref() {
         let e = entry.unwrap();
         let _speed = e.speed();
         let _mpg = e.mpg();
         let _desc = e.usage_description();
     }
-
-    // Var-data
-    let _mfr = car.manufacturer();
-    let _mod = car.model();
+    let mut perf = fuel.finish().unwrap().into_performance_figures().unwrap();
+    for entry in perf.by_ref() {
+        let _ = entry.unwrap().octane_rating();
+    }
+    let after_perf = perf.finish().unwrap();
+    let (_mfr, a1) = after_perf.into_manufacturer().unwrap();
+    let (_mod, _a2) = a1.into_model().unwrap();
 
     // Frame cursor — actually unwrap and inspect to settle lazy-inits
     let msg = AnyMessage::decode_frame(BASELINE, 0, BASELINE.len()).unwrap();
