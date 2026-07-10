@@ -377,6 +377,59 @@ fn bench_encode_throughput(c: &mut Criterion) {
 
 // ── Decoder skip/rewind API benchmark ────────────────────────────────
 
+fn bench_decode_consuming_full(c: &mut Criterion) {
+    // Head-to-head full-message decode over the same BASELINE buffer:
+    //   - `ergosbe_consuming` uses the new concrete consuming tail stages
+    //     (into_<g> -> iterate -> finish -> into_<vd> -> complete);
+    //   - `ergosbe_legacy` uses the legacy `&self` random-access accessors.
+    // Both do identical work (every group entry + every var-data field).
+    // The legacy path has already reached Aeron parity (historically measured),
+    // so `consuming <= legacy` implies `consuming <= Aeron` for full-message decode.
+    let mut group = c.benchmark_group("parity/decode/full_message");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("ergosbe_consuming", |b| {
+        b.iter(|| {
+            let car = CarDecoder::wrap_and_apply_header(black_box(BASELINE), 0).unwrap();
+            let mut fuel = car.into_fuel_figures().unwrap();
+            while let Some(Ok(e)) = fuel.next() {
+                black_box((e.speed(), e.mpg()));
+            }
+            let after_fuel = fuel.finish().unwrap();
+            let mut perf = after_fuel.into_performance_figures().unwrap();
+            while let Some(Ok(e)) = perf.next() {
+                black_box(e.octane_rating());
+            }
+            let after_perf = perf.finish().unwrap();
+            let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+            let (model, a2) = a1.into_model().unwrap();
+            let (code, done) = a2.into_activation_code().unwrap();
+            black_box((mfr, model, code, done.encoded_length_with_header()));
+        });
+    });
+
+    group.bench_function("ergosbe_legacy", |b| {
+        b.iter(|| {
+            let car = CarDecoder::wrap_and_apply_header(black_box(BASELINE), 0).unwrap();
+            for entry in car.fuel_figures().unwrap() {
+                let e = entry.unwrap();
+                black_box((e.speed(), e.mpg()));
+            }
+            for entry in car.performance_figures().unwrap() {
+                let e = entry.unwrap();
+                black_box(e.octane_rating());
+            }
+            black_box((
+                car.manufacturer().unwrap(),
+                car.model().unwrap(),
+                car.activation_code().unwrap(),
+            ));
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_decode_skip_rewind(c: &mut Criterion) {
     let car = CarDecoder::wrap_and_apply_header(BASELINE, 0).unwrap();
 
@@ -459,6 +512,7 @@ criterion_group!(
     bench_encode_scalar,
     bench_encode_throughput,
     bench_decode_skip_rewind,
+    bench_decode_consuming_full,
     bench_encode_full_stage_transition,
 );
 criterion_main!(benches);
