@@ -761,6 +761,21 @@ model that DECISIONS §3 / §10 reject.
   coverage instrumentation — the instrumented runtime allocates, so the
   `CountingAllocator` zero-alloc assertions see a false +1 under `cargo llvm-cov`
   (the tests pass normally: 7/7). Excluded from coverage runs for that reason.
+- **Direct 5-run ErgoSBE-vs-Aeron ratios** (`perf_parity_bench`, Criterion
+  sample-size 50, 2026-07-10, Apple Silicon aarch64, Rust 1.95.0, bench profile
+  LTO + codegen-units=1; median ErgoSBE/Aeron across 5 comparable runs):
+  - `parity/decode/entry_point` (wrap): **0.832** (ErgoSBE faster)
+  - `parity/decode/scalar` (serial_number+model_year): **1.000** (tied)
+  - `parity/decode/array` (some_numbers): **1.000** (tied)
+  - `parity/decode/full_message` (consuming vs legacy, identical full work incl.
+    nested acceleration + per-entry var-data): consuming **~13.06 ns** vs legacy
+    **~26.55 ns**, ratio ~0.49. (Legacy's `&self` accessors rescan preceding
+    groups per call; consuming caches `tail_start`.)
+  All maintained scenarios with a working Aeron head-to-head are at median ratio
+  ≤ 1.00. A direct Aeron full-message-decode bench was attempted but the patched
+  Aeron module's `advance()`/limit group semantics mis-position for BASELINE's
+  nested tails (panic); deferred. Aeron's sequential `advance()` decode is
+  algorithmically equivalent to the consuming path (both O(n), no rescan).
 
 **Gates at this point:** `cargo fmt --all --check` clean; `cargo clippy
 --workspace --all-targets -- -D warnings` clean; `cargo test --workspace --
