@@ -3553,6 +3553,10 @@ fn generate_group_decoder(
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
 
     // Struct definition + wrap() + wrap_with_parent() + is_empty()
+    if let Some(ref desc) = g.description {
+        let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
+        ts.extend(quote::quote! { #[doc = #desc_lit] });
+    }
     ts.extend(quote::quote! {
         pub struct #decoder_ident<'a> {
             buf: &'a [u8],
@@ -4243,6 +4247,10 @@ fn generate_group_decoder(
     }
 
     // Emit the EntryDecoder struct + its impl block + Display impl
+    if let Some(ref desc) = g.description {
+        let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
+        ts.extend(quote::quote! { #[doc = #desc_lit] });
+    }
     ts.extend(quote::quote! {
         pub struct #entry_decoder_ident<'a> {
             buf: &'a [u8],
