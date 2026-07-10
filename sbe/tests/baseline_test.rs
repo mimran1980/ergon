@@ -168,6 +168,18 @@ fn generate_enums_over_every_integer_encoding_type() {
     syn::parse_file(&src).expect("enum-encoding-types generates valid Rust");
 }
 
+#[test]
+fn generate_big_endian_and_unbounded_var_data_schemas() {
+    // Big-endian schema exercises the BE byte-order codegen branches; the
+    // unbounded-var-data schema (no maxLength attr) exercises the var-data
+    // accessor's else branch.
+    let (_s1, src1) = generate(&Paths::bigendian_schema(), "be_schema");
+    syn::parse_file(&src1).expect("bigendian schema generates valid Rust");
+
+    let (_s2, src2) = generate(&Paths::basic_variable_length_schema(), "unbounded_vd");
+    syn::parse_file(&src2).expect("unbounded var-data schema generates valid Rust");
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
