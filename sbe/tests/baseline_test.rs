@@ -273,6 +273,18 @@ fn generate_vardata_without_max_length() {
 }
 
 #[test]
+fn generate_schema_with_include_file() {
+    // Exercises the include processing code path in read_include_file +
+    // parse_schema (lines 540-564 in xml.rs). types-include.xml defines
+    // types referenced by schema-with-include.xml.
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/schema-with-include.xml");
+    let (_s, src) = generate(&path, "schema_with_inc");
+    syn::parse_file(&src).expect("schema-with-include generates valid Rust");
+}
+
+#[test]
 fn generate_group_entry_with_composite_enum_set_fields() {
     // group-entry-field-types.xml has a group whose entry has fields of type
     // Composite (Inner), Enum (Colour), and Set (Flags). Covers the

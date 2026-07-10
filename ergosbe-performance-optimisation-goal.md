@@ -993,3 +993,26 @@ the full five-run Aeron parity matrix + coverage gate (Task F/G).
 **Task 6 — Fast-mode policy:** bound-check-disabled remains as an opt-in for trusted-buffer HFT use cases. Safe mode is already at parity with Aeron on all decode benchmarks. Fast mode provides marginal additional benefit (read_unaligned vs try_into) but is not required for parity. Keep as opt-in; no deprecation needed.
 
 **Task 7 — Release gates:** All gates pass (417 tests, clippy clean, fmt clean). Decode: ErgoSBE same-or-faster than Aeron on all benchmarks. Encode scalar: ErgoSBE faster. Encode throughput: ~13% gap (micro-architectural, documented). Decoder validates template_id + schema_id at the trust boundary. Encoder is infallible with concrete stage structs for compile-time ordering.
+
+### 2026-07-10 Codegen coverage push: 99.11% lines, dead-code removal
+
+Commit `4c56771`. Coverage from 97.43% → 99.11% in codegen.rs through
+restructuring rather than fixture proliferation:
+
+- **FieldType::size()** replaces 4 duplicated match blocks (24 lines → 4 calls),
+  all arms covered through existing block-length computation paths.
+- **Dead `char_else`** deleted: parser validates single-char char constants at
+  xml.rs:252 and xml.rs:658-667 before codegen sees them.
+- **Dead group-name dedup** deleted (decoder + encoder): parser rejects duplicate
+  group names within a message at xml.rs:1098.
+- **Dead var-data else branch** deleted: resolver fills `default_max` for every
+  primitive type (resolve.rs:188-189), so `max_length` is never `None`.
+- **Optional Double field** (group-entry-field-types.xml) covers the encoder's
+  Double null-check arm.
+- **Negative enum value** (EInt8.NegOne=-1) covers the i64 fallback in enum
+  constant-value parsing.
+
+Repo totals: 97.86% lines, 95.03% functions. Remaining codegen.rs gaps (46
+regions, 36 lines) are inside `quote!` proc-macro blocks — llvm-cov stable
+cannot attribute individual template lines. xml.rs (92 uncovered) and
+resolve.rs (14 uncovered) remain as future work.

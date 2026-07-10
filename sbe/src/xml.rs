@@ -1883,6 +1883,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_malformed_include_file_is_error() {
+        // The include file is found but contains invalid XML — covers the
+        // Document::parse error handler in parse_schema (xml.rs:544-548).
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <include href="bad-include.xml"/>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "malformed include file must error");
+    }
+
+    #[test]
     fn parse_var_data_with_simple_encoding_type_is_error() {
         // A var-data field whose type is a simple encoding (uint32), not a
         // var-data composite, must be rejected.

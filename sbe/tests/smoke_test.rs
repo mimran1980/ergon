@@ -29,6 +29,8 @@ const INCLUDE_FRAGMENTS: &[&str] = &[
     "common-types.xml",
     "fix_types_include.xml",
     "fix_messages_include.xml",
+    "types-include.xml",
+    "bad-include.xml",
 ];
 
 /// Error-handler schemas that are intentionally invalid.
@@ -37,6 +39,7 @@ const ERROR_SCHEMAS: &[&str] = &[
     "error-handler-group-dimensions-schema.xml",
     "error-handler-message-schema.xml",
     "error-handler-since-version.xml",
+    "schema-with-bad-include.xml",
 ];
 
 fn schema_dir() -> &'static Path {

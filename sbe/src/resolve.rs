@@ -294,13 +294,9 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
                 .map_or(0, |p| p.size());
             (size, end_idx + 1)
         }
-        Signal::Encoding => {
-            let size = tokens[start]
-                .encoding
-                .primitive_type
-                .map_or(0, |p| p.size());
-            (size, start + 1)
-        }
+        // ponytail: composite children are always Begin* signals; Encoding
+        // tokens are nested inside BeginEnum/BeginSet/EndEnum/EndSet and
+        // never appear as direct children.
         _ => (0, start + 1),
     }
 }
