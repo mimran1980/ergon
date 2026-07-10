@@ -1753,6 +1753,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_include_file_not_found_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
+  <include href="definitely_nonexistent_file_12345.xml"/>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "include file not found must error");
+    }
+
+    #[test]
     fn parse_var_data_with_simple_encoding_type_is_error() {
         // A var-data field whose type is a simple encoding (uint32), not a
         // var-data composite, must be rejected.
