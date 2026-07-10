@@ -483,9 +483,9 @@ fn bench_decode_skip_rewind(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/decode/skip_rewind");
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("skip_to_model", |b| {
-        b.iter(|| black_box(car.skip_to_model().unwrap()));
-    });
+    // skip_to_model removed: skip_to_<later>() is the rejected out-of-order
+    // surface (DECISIONS.md §10). `direct_model` (random-access model field on
+    // the fixed block) remains and is the relevant comparison.
 
     group.bench_function("direct_model", |b| {
         b.iter(|| black_box(car.model().unwrap()));

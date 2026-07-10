@@ -1905,11 +1905,17 @@ fn generated_code_uses_one_slice_indexing() {
 }
 
 #[test]
-fn generated_decoder_has_skip_and_rewind() {
+fn generated_decoder_has_consuming_stages_and_rewind() {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    // DECISIONS.md §10: the out-of-order skip_to_<later>() surface is removed.
     assert!(
-        src.contains("pub fn skip_to_fuel_figures"),
-        "decoder must have skip_to_fuel_figures()"
+        !src.contains("skip_to_fuel_figures"),
+        "decoder must NOT emit the removed skip_to_<later>() out-of-order surface"
+    );
+    // The concrete consuming tail stages are the public tail-traversal contract.
+    assert!(
+        src.contains("pub fn into_fuel_figures"),
+        "decoder must have the consuming into_fuel_figures() stage"
     );
     assert!(
         src.contains("pub fn rewind(&self) -> Self"),

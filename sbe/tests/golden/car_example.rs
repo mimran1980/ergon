@@ -980,30 +980,6 @@ impl<'a> CarDecoder<'a> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
-    #[inline]
-    pub fn skip_to_fuel_figures(
-        &self,
-    ) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
-        self.fuel_figures()
-    }
-    #[inline]
-    pub fn skip_to_performance_figures(
-        &self,
-    ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
-        self.performance_figures()
-    }
-    #[inline]
-    pub fn skip_to_manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.manufacturer()
-    }
-    #[inline]
-    pub fn skip_to_model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.model()
-    }
-    #[inline]
-    pub fn skip_to_activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.activation_code()
-    }
     /// Return a fresh copy of this decoder at the initial body position.
     /// The decoder is a stateless flyweight (Copy), so rewind is a no-op
     /// — it exists for API symmetry with cursor-based decoders.
