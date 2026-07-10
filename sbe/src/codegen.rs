@@ -1852,8 +1852,9 @@ fn generate_dim_new_call(
 }
 
 /// Name of the concrete decoder stage entered after consuming tail component `i`.
-/// The final component yields `{name}DecoderComplete`; earlier ones yield
-/// `{name}DecoderAfter{FieldPascal}`.
+/// `stage_prefix` is the owner decoder's name (e.g. `CarDecoder` or
+/// `BidsEntryDecoder`); the final component yields `{prefix}Complete`, earlier
+/// ones yield `{prefix}After{FieldPascal}`.
 fn decoder_stage_after_ident(
     stage_prefix: &str,
     field_pascal: &str,
