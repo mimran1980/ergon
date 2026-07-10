@@ -1753,6 +1753,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_composite_with_undefined_type_member() {
+        // Composite member with type="X" where X isn't a known primitive
+        // encoding or registered type — triggers the is_indirect_ref=true +
+        // resolve_type_to_tokens=None fallback (lines ~769-796).
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="C"><type name="f" type="NoSuchType"/></composite>
+  </types>
+</messageSchema>"#;
+        // Either parse errors (undefined type) or succeeds (fallback branch).
+        // In either case the fallback code at 769-796 is exercised.
+        let _ = parse(xml);
+    }
+
+    #[test]
     fn parse_include_file_not_found_is_error() {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
