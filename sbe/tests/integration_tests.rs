@@ -83,8 +83,15 @@ fn test_fixed_entry_group_access() {
         let encoded = encode_car();
         let car = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
 
-        // Navigate to acceleration group
-        let mut perf = car.performance_figures().unwrap();
+        // Navigate to acceleration group. Wire order is fuel_figures then
+        // performance_figures; traverse fuel first via the consuming stages.
+        let mut perf = car
+            .into_fuel_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap();
         let pf = perf.next().unwrap().unwrap();
         let mut accel = pf.acceleration().unwrap();
 
