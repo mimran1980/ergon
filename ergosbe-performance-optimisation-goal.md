@@ -828,8 +828,12 @@ Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
   in the apples-to-apples trusted-input mode). **Remaining gate: 100% coverage.**
   New generator logic is already 100% covered (lcov-verified, lines ~1858–2210);
   `--branch` not yet run; `allocation_count_test` is a justified coverage
-  exclusion. The ~9% generator gap is pre-existing (xml.rs parser, resolve.rs,
-  schema.rs, codegen enum/set/composite edge cases).
+  exclusion. **Coverage push in progress** (commits `8844e53`, `0e00932`):
+  schema.rs now **100% functions**; xml.rs `parse_u64_val` value branches
+  (float/double/char/empty/i64) + parse-error paths (malformed/no-root/missing-
+  file) covered. Generator TOTAL **~92.5% lines / ~92.1% functions** (was
+  ~91.4%). Remaining pre-existing gap: codegen.rs enum/set/composite generation
+  edge branches + more xml/resolve parser paths — a continued grinding effort.
   composite edge cases) — a separate effort.
 
 **Exact next slice (resume here):** migrate decoder call sites to the consuming
