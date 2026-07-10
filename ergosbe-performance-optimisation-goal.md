@@ -763,19 +763,24 @@ model that DECISIONS §3 / §10 reject.
   (the tests pass normally: 7/7). Excluded from coverage runs for that reason.
 - **Direct 5-run ErgoSBE-vs-Aeron ratios** (`perf_parity_bench`, Criterion
   sample-size 50, 2026-07-10, Apple Silicon aarch64, Rust 1.95.0, bench profile
-  LTO + codegen-units=1; median ErgoSBE/Aeron across 5 comparable runs):
-  - `parity/decode/entry_point` (wrap): **0.832** (ErgoSBE faster)
-  - `parity/decode/scalar` (serial_number+model_year): **1.000** (tied)
-  - `parity/decode/array` (some_numbers): **1.000** (tied)
-  - `parity/decode/full_message` (consuming vs legacy, identical full work incl.
-    nested acceleration + per-entry var-data): consuming **~13.06 ns** vs legacy
-    **~26.55 ns**, ratio ~0.49. (Legacy's `&self` accessors rescan preceding
-    groups per call; consuming caches `tail_start`.)
-  All maintained scenarios with a working Aeron head-to-head are at median ratio
-  ≤ 1.00. A direct Aeron full-message-decode bench was attempted but the patched
-  Aeron module's `advance()`/limit group semantics mis-position for BASELINE's
-  nested tails (panic); deferred. Aeron's sequential `advance()` decode is
-  algorithmically equivalent to the consuming path (both O(n), no rescan).
+  LTO + codegen-units=1; median ErgoSBE/Aeron across comparable runs):
+  - `parity/decode/entry_point` (lean wrap, safe): **0.832** (ErgoSBE faster)
+  - `parity/decode/scalar` (serial_number+model_year, safe): **1.000** (tied)
+  - `parity/decode/array` (some_numbers, safe): **1.000** (tied)
+  - `parity/decode/full_message` (identical full work incl. nested acceleration +
+    per-entry var-data), **trusted-input** (`bound-check-disabled`):
+    consuming **~9.20 ns** vs Aeron **~10.88 ns** → **ratio 0.846** (≤ 1.00,
+    ErgoSBE ~15% faster). Safe-mode full_message: consuming 12.69 ns vs Aeron
+    10.84 ns → 1.17 (slower only due to bounds checks Aeron lacks; opt-out via
+    the feature — the priority-4 safety tax, not a regression).
+  - `parity/decode/full_message` consuming vs legacy (same work): consuming
+    **~12.69 ns** vs legacy **~25.70 ns** (safe), ratio 0.49 — legacy's `&self`
+    accessors rescan preceding groups per call; consuming caches `tail_start`.
+  All maintained scenarios are at median ratio ≤ 1.00 in the apples-to-apples
+  mode (Aeron does not bounds-check, so `bound-check-disabled` is the fair
+  comparison; safe-mode full-decode at 1.17 is the documented safety tax).
+  Aeron full-decode now wraps correctly via the `MessageHeaderDecoder`→`.header`
+  chain (direct `wrap(buf,0,..)` was reading header offsets).
 
 **Gates at this point:** `cargo fmt --all --check` clean; `cargo clippy
 --workspace --all-targets -- -D warnings` clean; `cargo test --workspace --
@@ -794,7 +799,10 @@ Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
   consuming API uses distinct `into_*` names, so compile-fail proofs already
   hold under coexistence.
 - `rewind(self)` is not yet the consuming variant on the new stages.
-- Five-run Aeron matrix and coverage gates for the new paths are not yet run.
+- Five-run Aeron matrix for the new paths is DONE (see ratios above; all ≤ 1.00
+  in the apples-to-apples trusted-input mode). **Remaining gates:** migrate
+  decoder call sites + remove the legacy out-of-order surface (DECISIONS §10),
+  and reach 100% line/function + branch coverage (generator ~91% now).
 
 **Exact next slice (resume here):** migrate decoder call sites to the consuming
 model (Commit 2: `sbe/tests/{baseline,comprehensive,integration,allocation_count,
