@@ -1941,8 +1941,7 @@ fn generate_decoder_consuming_stages(
             decoder_stage_after_ident(name, &field_pascals[i - 1], i - 1, total_tail, span)
         };
         let into_ident = syn::Ident::new(&format!("into_{}", to_snake_case(&g.name)), span);
-        let g_decoder_ident =
-            syn::Ident::new(&format!("{}Decoder", group_unique_names[gi]), span);
+        let g_decoder_ident = syn::Ident::new(&format!("{}Decoder", group_unique_names[gi]), span);
         // Initial stage derives the first group start from the fixed block;
         // later stages carry the cached next-tail position.
         let start_expr: syn::Expr = if i == 0 {
@@ -2047,8 +2046,7 @@ fn generate_decoder_consuming_stages(
     for (gi, _g) in msg.groups.iter().enumerate() {
         let i = gi;
         let next_stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
-        let g_decoder_ident =
-            syn::Ident::new(&format!("{}Decoder", group_unique_names[gi]), span);
+        let g_decoder_ident = syn::Ident::new(&format!("{}Decoder", group_unique_names[gi]), span);
         let entry_decoder_ident =
             syn::Ident::new(&format!("{}EntryDecoder", group_unique_names[gi]), span);
         ts.extend(quote::quote! {

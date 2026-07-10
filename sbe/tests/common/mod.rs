@@ -94,6 +94,13 @@ impl Paths {
         Self::fixtures_dir().join(format!("issue{num}.xml"))
     }
 
+    /// L3 orderbook: two sequential top-level groups (`bids` then `asks`), each
+    /// with a nested `orders` group + `orderId` var-data. The canonical
+    /// dual-group fixture for DECISIONS.md §3 consuming-stage proofs.
+    pub fn l3_orderbook_schema() -> PathBuf {
+        Self::fixtures_dir().join("l3-orderbook-schema.xml")
+    }
+
     pub fn baseline_binary() -> PathBuf {
         Self::sbe_dir()
             .join("tests")
@@ -153,6 +160,50 @@ pub fn patch_source(src: &str) -> String {
 /// and run.  `code` is placed directly inside `main()`.
 pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
     _compile_and_run(module_name, source, code, &[], "");
+}
+
+/// Negative-proof helper: write generated source + a `main()` body into a temp
+/// crate and assert that it FAILS to compile. Used for compile-fail API proofs
+/// (DECISIONS.md §11 / todo 137): out-of-order tail access, reused consumed
+/// stages, etc. `code` is placed directly inside `main()`.
+pub fn compile_fails(module_name: &str, source: &str, code: &str) {
+    let dir = std::env::temp_dir().join(format!("ergo_test_cf_{module_name}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    let patched = patch_source(source);
+    fs::write(src.join(format!("{module_name}.rs")), &patched).unwrap();
+
+    let main = format!(
+        "#![allow(dead_code,unused_imports,unused_variables)]\n\
+         mod {module_name};\nuse {module_name}::*;\nfn main() {{\n{code}\n}}\n"
+    );
+    fs::write(src.join("main.rs"), &main).unwrap();
+
+    let cargo =
+        format!("[package]\nname=\"{module_name}_cf\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+
+    let target_dir = dir.join("target_ci");
+    let out = Command::new("cargo")
+        .args(["build"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .output()
+        .expect("cargo build failed");
+
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = fs::remove_dir_all(&dir);
+
+    if out.status.success() {
+        panic!(
+            "compile_fails {module_name}: expected a compile error, but the crate built successfully.\nstderr:\n{stderr}"
+        );
+    }
+    // Keep stderr reachable for diagnostics via the returned-into-owned value above;
+    // callers may extend this to assert specific error text.
 }
 
 /// Like `compile_and_run` but adds the given feature to `[features]` in the
