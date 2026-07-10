@@ -213,6 +213,17 @@ fn generate_multi_schema_entry_point() {
     assert!(count >= 2, "expected >=2 modules, got {count}");
 }
 
+#[test]
+fn generate_coverage_edges_schema() {
+    // coverage-edges.xml exercises: group-name dedup, constant set field,
+    // and BooleanType in a group entry (the _bool accessor).
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/coverage-edges.xml");
+    let (_s, src) = generate(&path, "covedges");
+    syn::parse_file(&src).expect("coverage-edges generates valid Rust");
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
