@@ -224,6 +224,20 @@ fn generate_coverage_edges_schema() {
     syn::parse_file(&src).expect("coverage-edges generates valid Rust");
 }
 
+#[test]
+fn generate_custom_header_type_schema() {
+    // custom-header-type.xml uses headerType="foo" (not "messageHeader"). This
+    // exercises the MessageHeader type-alias codegen branch (line 217).
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/custom-header-type.xml");
+    let (_s, src) = generate(&path, "custom_hdr");
+    assert!(
+        src.contains("pub type MessageHeader = Foo"),
+        "custom header type alias"
+    );
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
