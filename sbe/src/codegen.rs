@@ -1290,6 +1290,13 @@ fn generate_set(src: &mut String, tokens: &[Token]) {
         })
         .collect();
 
+    // Emit enum doc from the type's XML description (DECISIONS.md §9).
+    if let Some(ref desc) = tokens[0].encoding.description {
+        for line in desc.lines() {
+            src.push_str(&format!("///{line}\n"));
+        }
+    }
+
     let tokens = quote::quote! {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -4428,6 +4435,11 @@ fn generate_message_encoder(
     };
 
     // ── Generate all stage struct definitions (identical layout, non-generic) ──
+    // Emit encoder struct doc from the message's XML description.
+    if let Some(ref desc) = msg.description {
+        let desc_lit = syn::LitStr::new(desc, span);
+        ts.extend(quote::quote! { #[doc = #desc_lit] });
+    }
     for stage in &stage_idents {
         ts.extend(quote::quote! {
             #[must_use = "encoder must be consumed to write the message"]

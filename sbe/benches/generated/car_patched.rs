@@ -2567,6 +2567,7 @@ impl<'a> From<CarDecoder<'a>> for CarDomain {
         }
     }
 }
+///Description of a basic Car
 #[must_use = "encoder must be consumed to write the message"]
 pub struct CarEncoder<'a> {
     buf: &'a mut [u8],
