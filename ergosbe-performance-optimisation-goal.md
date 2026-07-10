@@ -794,15 +794,26 @@ Preserved the pre-existing dirty `simple-binary-encoding` submodule untouched.
   ergonomic need or benchmark shows it.
 - Entry-level consuming stages ARE now generated (Task D, commit `49ca67d`);
   l3 entries still ALSO keep the legacy `&self` entry accessors for coexistence.
-- Legacy `skip_to_<later>()` + `&self` random-access group/var-data accessors
-  still present (DECISIONS §10 reject-table end-state not yet reached). The new
-  consuming API uses distinct `into_*` names, so compile-fail proofs already
-  hold under coexistence.
+- Legacy `&self` random-access group/var-data accessors still present (DECISIONS
+  §10 reject-table end-state not yet reached). The new consuming API uses
+  distinct `into_*` names, so compile-fail proofs already hold under coexistence.
+  `skip_to_<later>()` was REMOVED (commit `72f36a5`).
 - `rewind(self)` is not yet the consuming variant on the new stages.
 - Five-run Aeron matrix for the new paths is DONE (see ratios above; all ≤ 1.00
-  in the apples-to-apples trusted-input mode). **Remaining gates:** migrate
-  decoder call sites + remove the legacy out-of-order surface (DECISIONS §10),
-  and reach 100% line/function + branch coverage (generator ~91% now).
+  in the apples-to-apples trusted-input mode). **Remaining gates:**
+  (1) migrate decoder call sites + privatise/remove the legacy `&self`
+  group/var-data accessors + make `rewind` consuming (DECISIONS §10). This is
+  judgment-heavy: several tests deliberately exercise legacy behaviours the
+  consuming model removes (`integration_tests` skips `fuel_figures` to reach
+  `performance_figures` and uses `nth()` random access; `baseline_test`/`
+  comprehensive_test`/`proptest`/`l3_orderbook_test` re-read groups). They must
+  be repurposed to the sequential consuming model, and the generated `Display`
+  walker + domain `From` impls (which use the `&self` accessors internally) kept
+  working — simplest by keeping those accessors private (non-`pub`) so only the
+  generated module uses them.
+  (2) reach 100% line/function + branch coverage (generator ~91% now;
+  `--branch` not yet run; `allocation_count_test` is a justified coverage
+  exclusion).
 
 **Exact next slice (resume here):** migrate decoder call sites to the consuming
 model (Commit 2: `sbe/tests/{baseline,comprehensive,integration,allocation_count,
