@@ -1588,6 +1588,25 @@ mod tests {
         assert_eq!(parse_u64_val("garbage", None), None);
     }
 
+    #[test]
+    fn parse_malformed_xml_is_error() {
+        let err = parse("<messageSchema><unclosed>").unwrap_err();
+        assert!(matches!(err, ParseError::MalformedXml { .. }));
+    }
+
+    #[test]
+    fn parse_valid_xml_without_message_schema_root_is_missing() {
+        // Valid XML, but no <messageSchema> root element.
+        let err = parse("<root/>").unwrap_err();
+        assert!(matches!(err, ParseError::Missing { .. }));
+    }
+
+    #[test]
+    fn parse_file_missing_path_is_malformed_xml() {
+        let err = parse_file("/nonexistent/ergosbe/coverage/schema.xml").unwrap_err();
+        assert!(matches!(err, ParseError::MalformedXml { .. }));
+    }
+
     const MINIMAL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="example.sbe" id="1" version="0" byteOrder="littleEndian"
                description="minimal test schema">
