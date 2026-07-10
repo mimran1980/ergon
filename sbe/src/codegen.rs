@@ -1297,6 +1297,13 @@ fn generate_set(src: &mut String, tokens: &[Token]) {
         }
     }
 
+    // Emit set doc from the type's XML description.
+    if let Some(ref desc) = tokens[0].encoding.description {
+        for line in desc.lines() {
+            src.push_str(&format!("///{line}\n"));
+        }
+    }
+
     let tokens = quote::quote! {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1563,6 +1570,14 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
     }
 
     // ponytail: refactor ctor_params into proper syn::FnArg when polishing
+
+    // Emit composite doc from the type's XML description.
+    if let Some(ref desc) = tokens[0].encoding.description {
+        for line in desc.lines() {
+            src.push_str(&format!("///{line}\n"));
+        }
+    }
+
     let ts = quote::quote! {
         #[derive(#derives)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

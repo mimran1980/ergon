@@ -302,6 +302,7 @@ impl From<OptionalExtras> for u8 {
         val.0
     }
 }
+///Message identifiers and length of message root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
@@ -368,6 +369,7 @@ impl<'a> MessageHeaderDecoder<'a> {
         u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
 }
+///Repeating group dimensions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
@@ -407,6 +409,7 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
         u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
     }
 }
+///Variable length UTF-8 String.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
@@ -443,6 +446,7 @@ impl<'a> VarStringEncodingDecoder<'a> {
         []
     }
 }
+///Variable length ASCII String.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
@@ -479,6 +483,7 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
         []
     }
 }
+///Variable length binary blob.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
