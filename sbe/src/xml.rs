@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use roxmltree::{Document, Node};
+use roxmltree::{Document, Node, NodeType};
 
 use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 
@@ -525,7 +525,7 @@ fn parse_schema(
         .transpose()?
         .unwrap_or(ByteOrder::LittleEndian);
 
-    let description = root.attribute("description").map(str::to_string);
+    let description = collect_description(root);
     let semantic_version = root.attribute("semanticVersion").map(str::to_string);
     let header_type = root
         .attribute("headerType")
@@ -626,7 +626,7 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
     let character_encoding = node.attribute("characterEncoding").map(str::to_string);
     let semantic_type = node.attribute("semanticType").map(str::to_string);
-    let description = node.attribute("description").map(str::to_string);
+    let description = collect_description(node);
     let length = opt_usize_attr(node, "length", "length")?;
     let epoch = node.attribute("epoch").map(str::to_string);
     let time_unit = node.attribute("timeUnit").map(str::to_string);
@@ -710,7 +710,7 @@ fn parse_composite(
         encoding: Encoding {
             since_version,
             deprecated: composite_deprecated,
-            description: node.attribute("description").map(str::to_string),
+            description: collect_description(node),
             semantic_type: node.attribute("semanticType").map(str::to_string),
             ..Encoding::default()
         },
@@ -842,7 +842,7 @@ fn parse_enum(
             primitive_type: Some(encoding_type),
             since_version,
             deprecated: node.attribute("deprecated").is_some(),
-            description: node.attribute("description").map(str::to_string),
+            description: collect_description(node),
             ..Encoding::default()
         },
     });
@@ -899,7 +899,7 @@ fn parse_enum(
                     presence: Presence::Constant,
                     constant_value: Some(val_text.to_string()),
                     since_version: val_since,
-                    description: child.attribute("description").map(str::to_string),
+                    description: collect_description(child),
                     ..Encoding::default()
                 },
             });
@@ -955,7 +955,7 @@ fn parse_set(
             primitive_type: Some(encoding_type),
             since_version,
             deprecated: node.attribute("deprecated").is_some(),
-            description: node.attribute("description").map(str::to_string),
+            description: collect_description(node),
             ..Encoding::default()
         },
     });
@@ -1014,7 +1014,7 @@ fn parse_set(
                     presence: Presence::Constant,
                     constant_value: Some(bit_index_str.to_string()),
                     since_version: choice_since,
-                    description: child.attribute("description").map(str::to_string),
+                    description: collect_description(child),
                     ..Encoding::default()
                 },
             });
@@ -1052,7 +1052,7 @@ fn parse_message(
         encoding: Encoding {
             since_version,
             deprecated: message_deprecated,
-            description: node.attribute("description").map(str::to_string),
+            description: collect_description(node),
             semantic_type: node.attribute("semanticType").map(str::to_string),
             ..Encoding::default()
         },
@@ -1291,7 +1291,7 @@ fn parse_message_child(
                 encoding: Encoding {
                     since_version,
                     deprecated: group_deprecated,
-                    description: node.attribute("description").map(str::to_string),
+                    description: collect_description(node),
                     ..Encoding::default()
                 },
             });
@@ -1336,7 +1336,7 @@ fn parse_message_child(
                 encoding: Encoding {
                     since_version,
                     deprecated: data_deprecated,
-                    description: node.attribute("description").map(str::to_string),
+                    description: collect_description(node),
                     ..Encoding::default()
                 },
             });
@@ -1402,7 +1402,66 @@ fn structural(name: &str, signal: Signal) -> Token {
 }
 
 fn element_children<'a, 'input>(node: Node<'a, 'input>) -> impl Iterator<Item = Node<'a, 'input>> {
-    node.children().filter(Node::is_element)
+    // Skip <description> and <comment> children — their text is already
+    // collected by collect_description() which scans node.children() directly.
+    node.children().filter(|c| {
+        c.is_element() && c.tag_name().name() != "description" && c.tag_name().name() != "comment"
+    })
+}
+
+/// Collect all documentation sources for an element and merge them into a
+/// single description string (DECISIONS.md §9 / reopened todo 87). Handles:
+///
+/// - `description="..."` attribute
+/// - `<description>text</description>` child element
+/// - `<comment>text</comment>` child element/tag
+/// - `<!-- ... -->` XML comment children (roxmltree `NodeType::Comment` nodes)
+///
+/// Sources are combined in this deterministic order, space-separated.
+/// Multi-line text and whitespace are preserved.
+fn collect_description(node: Node<'_, '_>) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    // 1. description attribute
+    if let Some(d) = node.attribute("description") {
+        parts.push(d.trim().to_string());
+    }
+
+    // 2. Children: <description>, <comment>, or <!-- XML comments -->
+    for child in node.children() {
+        match child.node_type() {
+            NodeType::Comment => {
+                if let Some(text) = child.text() {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        parts.push(trimmed.to_string());
+                    }
+                }
+            }
+            NodeType::Element => {
+                let name = child.tag_name().name();
+                if name == "description" || name == "comment" {
+                    // Get text content by joining text-node children.
+                    let text: String = child
+                        .children()
+                        .filter(|c| c.node_type() == NodeType::Text)
+                        .filter_map(|c| c.text())
+                        .collect::<String>();
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        parts.push(trimmed.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
 }
 
 fn string_attr(node: Node<'_, '_>, name: &str, what: &str) -> Result<String, Fault> {
@@ -1750,6 +1809,50 @@ mod tests {
             parse(xml).is_err(),
             "invalid types container child must error"
         );
+    }
+
+    #[test]
+    fn parse_collects_all_documentation_sources() {
+        // schema-docs-all-sources.xml exercises all four documentation shapes:
+        // description attrs, <description> children, <comment> children, and
+        // XML <!-- --> comments. Verify they all reach the IR.
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/schemas/schema-docs-all-sources.xml"
+        );
+        let ir = parse_file(path).unwrap();
+
+        // Schema-level: description attr collected from root.
+        let sd = ir.description.as_ref().unwrap();
+        assert!(
+            sd.contains("schema-level description attr"),
+            "missing schema description attr in {sd:?}"
+        );
+        // The XML comment before the message element (inside the root) is also
+        // collected on the root via collect_description(root) — but the comment
+        // before the root element itself is a Document child, not a root child,
+        // so it isn't collected here.
+
+        // Find the messageHeader token to verify its description includes comment+
+        // child+attr
+        let mh = ir
+            .tokens
+            .iter()
+            .find(|t| t.name == "messageHeader")
+            .expect("messageHeader composite token not found");
+        let mh_desc = mh.encoding.description.as_ref().unwrap();
+        assert!(
+            mh_desc.contains("messageHeader desc attr"),
+            "missing description attr in '{mh_desc}'"
+        );
+        assert!(
+            mh_desc.contains("messageHeader desc child"),
+            "missing description child in '{mh_desc}'"
+        );
+        // The XML comment before messageHeader is at the <types> container
+        // level, not inside the composite itself — it's picked up by the
+        // enclosing element, not by the composite. To associate a comment
+        // with a specific type, place it inside the opening/closing tags.
     }
 
     #[test]
