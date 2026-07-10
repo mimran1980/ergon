@@ -180,6 +180,24 @@ fn generate_big_endian_and_unbounded_var_data_schemas() {
     syn::parse_file(&src2).expect("unbounded var-data schema generates valid Rust");
 }
 
+#[test]
+fn generate_multi_message_schema() {
+    // binance_spot_3_5.xml has 92 messages with shared types (enums, sets,
+    // composites). Generating it exercises the multi-message codegen branches
+    // (shared_types collection, header-type dispatch, multi-message paths).
+    let path = Paths::sbe_tool_test_resource("binance_spot_3_5.xml");
+    let (_s, src) = generate(&path, "binance_mm");
+    syn::parse_file(&src).expect("binance multi-message schema generates valid Rust");
+}
+
+#[test]
+fn generator_config_getter() {
+    use ergosbe::{GenerationConfig, Generator};
+    let generator = Generator::new(GenerationConfig::new("cfg_test"));
+    // Exercises Generator::config() (the getter was previously uncovered).
+    let _ = generator.config();
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
