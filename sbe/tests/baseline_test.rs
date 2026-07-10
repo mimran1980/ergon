@@ -152,8 +152,9 @@ fn decode_baseline_fixture() {
         assert_eq!(2000, engine.capacity(), "engine.capacity");
         assert_eq!(4, engine.num_cylinders(), "engine.numCylinders");
 
-        // Group: fuelFigures (3 entries)
-        let fuel_figures: Vec<_> = car.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        // Group: fuelFigures (3 entries) — consuming stages, wire order.
+        let mut fuel = car.into_fuel_figures().unwrap();
+        let fuel_figures: Vec<_> = fuel.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(3, fuel_figures.len(), "fuelFigures count");
 
         assert_eq!(30, fuel_figures[0].speed(), "ff[0].speed");
@@ -169,7 +170,8 @@ fn decode_baseline_fixture() {
         assert_eq!(b"Highway Cycle",  fuel_figures[2].usage_description().unwrap(), "ff[2].usage");
 
         // Group: performanceFigures (2 entries), each with nested acceleration group
-        let perf: Vec<_> = car.performance_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut perf_iter = fuel.finish().unwrap().into_performance_figures().unwrap();
+        let perf: Vec<_> = perf_iter.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(2, perf.len(), "performanceFigures count");
 
         // --- 95 octane ---
@@ -194,10 +196,14 @@ fn decode_baseline_fixture() {
         assert_eq!(100, accel1[2].mph(), "pf[1].acc[2].mph");
         assert!((accel1[2].seconds() - 11.8).abs() < 0.01, "pf[1].acc[2].seconds");
 
-        // Var-data fields
-        assert_eq!(b"Honda",     car.manufacturer().unwrap(), "manufacturer");
-        assert_eq!(b"Civic VTi", car.model().unwrap(), "model");
-        assert_eq!(b"abcdef",    car.activation_code().unwrap(), "activationCode");
+        // Var-data fields — continue the consuming chain in wire order.
+        let after_perf = perf_iter.finish().unwrap();
+        let (manufacturer, c1) = after_perf.into_manufacturer().unwrap();
+        assert_eq!(b"Honda", manufacturer, "manufacturer");
+        let (model, c2) = c1.into_model().unwrap();
+        assert_eq!(b"Civic VTi", model, "model");
+        let (activation_code, _done) = c2.into_activation_code().unwrap();
+        assert_eq!(b"abcdef", activation_code, "activationCode");
         "#,
     );
 }
@@ -307,7 +313,8 @@ fn encode_baseline_roundtrip() {
         assert_eq!([49, 0, 0], e2.manufacturer_code(), "rt.engine.manufacturerCode");
         assert_eq!("Petrol", e2.fuel(), "rt.engine.fuel");
 
-        let ff2: Vec<_> = car2.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut fuel = car2.into_fuel_figures().unwrap();
+        let ff2: Vec<_> = fuel.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(3, ff2.len());
         assert_eq!(30, ff2[0].speed());  assert!((ff2[0].mpg() - 35.9).abs() < 0.01);
         assert_eq!(b"Urban Cycle", ff2[0].usage_description().unwrap());
@@ -316,16 +323,21 @@ fn encode_baseline_roundtrip() {
         assert_eq!(75, ff2[2].speed());  assert!((ff2[2].mpg() - 40.0).abs() < 0.01);
         assert_eq!(b"Highway Cycle", ff2[2].usage_description().unwrap());
 
-        let pf2: Vec<_> = car2.performance_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut perf_iter = fuel.finish().unwrap().into_performance_figures().unwrap();
+        let pf2: Vec<_> = perf_iter.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(2, pf2.len());
         assert_eq!(95, pf2[0].octane_rating());
         let a0: Vec<_> = pf2[0].acceleration().unwrap().collect::<Vec<_>>();
         assert_eq!(3, a0.len());
         assert_eq!(30, a0[0].mph());  assert!((a0[0].seconds() - 4.0).abs() < 0.01);
 
-        assert_eq!(b"Honda",     car2.manufacturer().unwrap(), "rt.manufacturer");
-        assert_eq!(b"Civic VTi", car2.model().unwrap(), "rt.model");
-        assert_eq!(b"abcdef",    car2.activation_code().unwrap(), "rt.activationCode");
+        let after_perf = perf_iter.finish().unwrap();
+        let (mfr, c1) = after_perf.into_manufacturer().unwrap();
+        assert_eq!(b"Honda", mfr, "rt.manufacturer");
+        let (model, c2) = c1.into_model().unwrap();
+        assert_eq!(b"Civic VTi", model, "rt.model");
+        let (activation_code, _done) = c2.into_activation_code().unwrap();
+        assert_eq!(b"abcdef", activation_code, "rt.activationCode");
         "#,
     );
 }
@@ -462,7 +474,7 @@ fn group_decoder_is_empty() {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        assert!(car2.fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
+        assert!(car2.into_fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
 
         // ── 3 fuel figures → is_empty() == false ──
         let mut buf = vec![0u8; 512];
@@ -486,7 +498,7 @@ fn group_decoder_is_empty() {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes();
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        assert!(!car2.fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
+        assert!(!car2.into_fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
     "#,
     );
 }
@@ -590,8 +602,15 @@ fn fixed_entry_group_entries_iterator() {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        let perf: Vec<_> = car2.performance_figures().unwrap()
-            .collect::<Result<Vec<_>, _>>().unwrap();
+        let perf: Vec<_> = car2
+            .into_fuel_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         let mut accel = perf[0].acceleration().unwrap();
         assert_eq!(accel.len(), 3);
         let a0 = accel.next().unwrap();
@@ -771,7 +790,7 @@ fn bounds_checks_active_by_default_nth_always_checked() {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
-        let ff = car2.fuel_figures().unwrap();
+        let mut ff = car2.into_fuel_figures().unwrap();
         // nth() bounds check is ALWAYS present (trust boundary — external idx input)
         let result = ff.nth(999);
         assert!(result.is_err(), "nth(999) on 0-entry group must return Err");
@@ -811,7 +830,7 @@ fn bounds_checks_disabled_with_feature_flag() {
         assert_eq!(car2.serial_number(), 1234);
         assert_eq!(car2.model_year(), 2013);
         // Group iteration works
-        let ff: Vec<_> = car2.fuel_figures().unwrap()
+        let ff: Vec<_> = car2.into_fuel_figures().unwrap()
             .collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(ff.len(), 1);
         assert_eq!(ff[0].speed(), 30);
@@ -1135,11 +1154,22 @@ fn bounds_checking_switch() {
         assert_eq!(Model::A, car2.code());
         assert_eq!([1u32, 2, 3, 4], car2.some_numbers());
         assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code());
-        let ff: Vec<_> = car2.fuel_figures().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut fuel = car2.into_fuel_figures().unwrap();
+        let ff: Vec<_> = fuel.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(2, ff.len());
-        assert_eq!(b"Honda", car2.manufacturer().unwrap());
-        assert_eq!(b"Civic", car2.model().unwrap());
-        assert_eq!(b"12345", car2.activation_code().unwrap());
+        let after_perf = fuel
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap()
+            .finish()
+            .unwrap();
+        let (mfr, c1) = after_perf.into_manufacturer().unwrap();
+        assert_eq!(b"Honda", mfr);
+        let (model, c2) = c1.into_model().unwrap();
+        assert_eq!(b"Civic", model);
+        let (activation_code, _done) = c2.into_activation_code().unwrap();
+        assert_eq!(b"12345", activation_code);
     "#;
 
     compile_and_run("bndchk_off", &src, test_body);
