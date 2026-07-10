@@ -111,6 +111,26 @@ fn generated_code_contains_expected_types() {
     );
 }
 
+#[test]
+fn generate_composite_with_enum_set_and_nested_composite() {
+    // composite-elements-schema.xml has a composite ("outer") containing an
+    // enum, a set, and a nested composite ("inner"); the rc4 variant adds
+    // explicit offsets. Generating these exercises the composite field-type
+    // codegen branches (enum/set/nested-composite-in-composite + offsets).
+    let path = Paths::sbe_tool_test_resource("composite-elements-schema.xml");
+    let (_s, src) = generate(&path, "comp_elems");
+    // Generating exercises the enum/set/nested-composite-in-composite branches;
+    // assert the result is valid Rust and contains the outer composite.
+    assert_source_ok(&src, &["Outer"]);
+
+    let path_rc4 = Paths::sbe_tool_test_resource("composite-elements-schema-rc4.xml");
+    let (_s2, src2) = generate(&path_rc4, "comp_rc4");
+    assert!(
+        src2.contains("OuterWithOffsets"),
+        "rc4 composite must generate"
+    );
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
