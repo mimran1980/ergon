@@ -1851,6 +1851,267 @@ fn generate_dim_new_call(
     format!("{}::new({})", name, args.join(", "))
 }
 
+/// Name of the concrete decoder stage entered after consuming tail component `i`.
+/// The final component yields `{name}DecoderComplete`; earlier ones yield
+/// `{name}DecoderAfter{FieldPascal}`.
+fn decoder_stage_after_ident(
+    name: &str,
+    field_pascal: &str,
+    i: usize,
+    total_tail: usize,
+    span: proc_macro2::Span,
+) -> syn::Ident {
+    if i == total_tail - 1 {
+        syn::Ident::new(&format!("{name}DecoderComplete"), span)
+    } else {
+        syn::Ident::new(&format!("{name}DecoderAfter{field_pascal}"), span)
+    }
+}
+
+/// Generate concrete consuming decoder tail stages (DECISIONS.md §3):
+///
+/// ```text
+/// NameDecoder --into_<g>()--> <G>Decoder --finish()--> NameDecoderAfter<G>
+///            --into_<vd>()--> (&[u8], NameDecoderAfter<V>) -> ... -> NameDecoderComplete
+/// ```
+///
+/// Additive: emits new non-`Copy` stage structs plus `into_*`, `finish`, and
+/// `skip_remaining` methods without touching the legacy `&self` random-access
+/// decoder surface, so existing call sites keep compiling.
+fn generate_decoder_consuming_stages(
+    msg: &MessageStructure,
+    elements: &SchemaElements,
+    name: &str,
+    header_size: usize,
+    _multi_message: bool,
+    group_unique_names: &[String],
+) -> proc_macro2::TokenStream {
+    let total_tail = msg.groups.len() + msg.var_data.len();
+    if total_tail == 0 {
+        return proc_macro2::TokenStream::new();
+    }
+    let span = proc_macro2::Span::call_site();
+    let initial_ident = syn::Ident::new(&format!("{name}Decoder"), span);
+    let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
+
+    // Tail component pascal names in wire order (groups then var-data).
+    let field_pascals: Vec<String> = msg
+        .groups
+        .iter()
+        .map(|g| to_pascal_case(&g.name))
+        .chain(msg.var_data.iter().map(|vd| to_pascal_case(&vd.name)))
+        .collect();
+
+    let mut ts = proc_macro2::TokenStream::new();
+
+    // 1. Stage struct definitions (After stages + Complete). Identical layout,
+    //    non-Copy: a stage carries the tail cursor, so consuming it prevents reuse.
+    for i in 0..total_tail {
+        let stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
+        ts.extend(quote::quote! {
+            pub struct #stage<'a> {
+                buf: &'a [u8],
+                pos: usize,
+                tail_start: usize,
+                acting_version: u16,
+                acting_block_length: usize,
+            }
+        });
+    }
+
+    // acting_version() / acting_block_length() on every stage (DECISIONS.md §3).
+    for i in 0..total_tail {
+        let stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
+        ts.extend(quote::quote! {
+            impl<'a> #stage<'a> {
+                #[inline]
+                pub const fn acting_version(&self) -> u16 { self.acting_version }
+                #[inline]
+                pub const fn acting_block_length(&self) -> usize { self.acting_block_length }
+            }
+        });
+    }
+
+    // 2a. Group into_<g>() accessors on the stage that precedes each group.
+    for (gi, g) in msg.groups.iter().enumerate() {
+        let i = gi; // groups occupy the first tail indices
+        let current_stage = if i == 0 {
+            initial_ident.clone()
+        } else {
+            decoder_stage_after_ident(name, &field_pascals[i - 1], i - 1, total_tail, span)
+        };
+        let into_ident = syn::Ident::new(&format!("into_{}", to_snake_case(&g.name)), span);
+        let g_decoder_ident =
+            syn::Ident::new(&format!("{}Decoder", group_unique_names[gi]), span);
+        // Initial stage derives the first group start from the fixed block;
+        // later stages carry the cached next-tail position.
+        let start_expr: syn::Expr = if i == 0 {
+            syn::parse_str("self.pos + self.acting_block_length").unwrap()
+        } else {
+            syn::parse_str("self.tail_start").unwrap()
+        };
+        ts.extend(quote::quote! {
+            impl<'a> #current_stage<'a> {
+                /// Consume this stage and start decoding the next tail group,
+                /// enforcing wire order. The returned group decoder owns the
+                /// right to advance to the following stage via `finish()`.
+                #[inline]
+                pub fn #into_ident(self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+                    let group_start = #start_expr;
+                    #g_decoder_ident::wrap_with_parent(
+                        self.buf,
+                        group_start,
+                        self.acting_version,
+                        self.pos,
+                        self.acting_block_length,
+                    )
+                }
+            }
+        });
+    }
+
+    // 2b. Var-data into_<vd>() accessors: read the field and advance.
+    for (vi, vd) in msg.var_data.iter().enumerate() {
+        let i = msg.groups.len() + vi;
+        let current_stage = if i == 0 {
+            initial_ident.clone()
+        } else {
+            decoder_stage_after_ident(name, &field_pascals[i - 1], i - 1, total_tail, span)
+        };
+        let next_stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
+        let into_ident = syn::Ident::new(&format!("into_{}", to_snake_case(&vd.name)), span);
+        let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
+        let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+        let vd_type_ident = syn::Ident::new(&type_pascal, span);
+        let len_field_ident = syn::Ident::new(&len_field, span);
+        let vd_name_lit = syn::LitStr::new(&vd.name, span);
+        let start_expr: syn::Expr = if i == 0 {
+            syn::parse_str("self.pos + self.acting_block_length").unwrap()
+        } else {
+            syn::parse_str("self.tail_start").unwrap()
+        };
+        let mut max_check = proc_macro2::TokenStream::new();
+        if let Some(max) = vd.max_length {
+            let max_lit = syn::LitInt::new(&max.to_string(), span);
+            max_check.extend(quote::quote! {
+                if len > #max_lit {
+                    return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                        field: #vd_name_lit,
+                        length: len as u32,
+                        max_length: #max_lit,
+                    });
+                }
+            });
+        }
+        ts.extend(quote::quote! {
+            impl<'a> #current_stage<'a> {
+                /// Consume this stage, read the next var-data field, and advance
+                /// to the following stage. Wire order is enforced by consumption.
+                #[inline]
+                pub fn #into_ident(self) -> Result<(&'a [u8], #next_stage<'a>), sbe_rt::DecodeError> {
+                    let offset = #start_expr;
+                    if offset + #prefix_size_lit > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #vd_name_lit,
+                            needed: #prefix_size_lit,
+                            available: self.buf.len().saturating_sub(offset),
+                        });
+                    }
+                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
+                    let header = #vd_type_ident(bytes);
+                    let len = header.#len_field_ident() as usize;
+                    #max_check
+                    let data_start = offset + #prefix_size_lit;
+                    if data_start + len > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #vd_name_lit,
+                            needed: #prefix_size_lit + len,
+                            available: self.buf.len().saturating_sub(offset),
+                        });
+                    }
+                    let data = &self.buf[data_start..data_start + len];
+                    let next = #next_stage {
+                        buf: self.buf,
+                        pos: self.pos,
+                        tail_start: data_start + len,
+                        acting_version: self.acting_version,
+                        acting_block_length: self.acting_block_length,
+                    };
+                    Ok((data, next))
+                }
+            }
+        });
+    }
+
+    // 3. finish()/skip_remaining() for each top-level group -> next message stage.
+    for (gi, _g) in msg.groups.iter().enumerate() {
+        let i = gi;
+        let next_stage = decoder_stage_after_ident(name, &field_pascals[i], i, total_tail, span);
+        let g_decoder_ident =
+            syn::Ident::new(&format!("{}Decoder", group_unique_names[gi]), span);
+        let entry_decoder_ident =
+            syn::Ident::new(&format!("{}EntryDecoder", group_unique_names[gi]), span);
+        ts.extend(quote::quote! {
+            impl<'a> #g_decoder_ident<'a> {
+                /// Scan past any unread entries (including nested tails) in wire
+                /// order and return the next message decoder stage.
+                #[inline]
+                pub fn finish(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
+                    let mut pos = self.pos;
+                    let mut remaining = self.count;
+                    let block_len = self.acting_block_length;
+                    while remaining > 0 {
+                        pos = #entry_decoder_ident::skip(self.buf, pos, block_len, self.acting_version)?;
+                        remaining -= 1;
+                    }
+                    Ok(#next_stage {
+                        buf: self.buf,
+                        pos: self.parent_pos,
+                        tail_start: pos,
+                        acting_version: self.acting_version,
+                        acting_block_length: self.parent_block_length,
+                    })
+                }
+                /// Explicit sequential spelling of "advance past the rest of this group".
+                #[inline]
+                pub fn skip_remaining(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
+                    self.finish()
+                }
+            }
+        });
+    }
+
+    // 4. Terminal (Complete) stage extent helpers.
+    let complete_ident = decoder_stage_after_ident(
+        name,
+        &field_pascals[total_tail - 1],
+        total_tail - 1,
+        total_tail,
+        span,
+    );
+    ts.extend(quote::quote! {
+        impl<'a> #complete_ident<'a> {
+            /// Header-inclusive message bytes.
+            #[inline]
+            pub fn as_bytes(&self) -> &'a [u8] {
+                &self.buf[self.pos - #header_size_lit..self.tail_start]
+            }
+            /// Body length (excluding header).
+            #[inline]
+            pub fn encoded_length(&self) -> usize {
+                self.tail_start - self.pos
+            }
+            /// Header-inclusive length.
+            #[inline]
+            pub fn encoded_length_with_header(&self) -> usize {
+                self.tail_start - self.pos + #header_size_lit
+            }
+        }
+    });
+
+    ts
+}
+
 fn generate_message_decoder(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -2894,6 +3155,19 @@ fn generate_message_decoder(
         ts.extend(generate_group_decoder(g, elements, byte_order, unique));
     }
 
+    // 14b. Concrete consuming decoder tail stages (DECISIONS.md §3):
+    //      NameDecoder --into_<g>()--> GroupDecoder --finish()--> NameDecoderAfter<G>
+    //      -> ... -> NameDecoderComplete. Additive: leaves the legacy `&self`
+    //      random-access surface in place so existing call sites stay green.
+    ts.extend(generate_decoder_consuming_stages(
+        msg,
+        elements,
+        &name,
+        header_size,
+        multi_message,
+        &group_unique_names,
+    ));
+
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)
     // Actually the impl block is opened but the `}` is emitted by the trait impls section above.
     // The quote! for trait impls starts with `}` to close the impl block first.
@@ -3243,7 +3517,7 @@ fn generate_group_decoder(
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
 
-    // Struct definition + wrap() + is_empty()
+    // Struct definition + wrap() + wrap_with_parent() + is_empty()
     ts.extend(quote::quote! {
         pub struct #decoder_ident<'a> {
             buf: &'a [u8],
@@ -3253,6 +3527,12 @@ fn generate_group_decoder(
             total: usize,
             acting_version: u16,
             acting_block_length: usize,
+            // Parent message body position + acting block length, remembered so
+            // `finish()` can reconstruct the next message decoder stage
+            // (DECISIONS.md §3 consuming tail stages). Unused by the legacy
+            // `&self` random-access accessors.
+            parent_pos: usize,
+            parent_block_length: usize,
         }
 
         impl<'a> #decoder_ident<'a> {
@@ -3260,6 +3540,19 @@ fn generate_group_decoder(
 
             #[inline]
             pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {
+                Self::wrap_with_parent(buf, pos, acting_version, 0, 0)
+            }
+
+            /// Like `wrap()` but remembers the parent message body position and
+            /// acting block length so `finish()` can rebuild the next stage.
+            #[inline]
+            pub fn wrap_with_parent(
+                buf: &'a [u8],
+                pos: usize,
+                acting_version: u16,
+                parent_pos: usize,
+                parent_block_length: usize,
+            ) -> Result<Self, sbe_rt::DecodeError> {
                 // Trust boundary: always validate dimension header fits in buffer
                 if pos + #dim_size_lit > buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3280,6 +3573,8 @@ fn generate_group_decoder(
                     total: count,
                     acting_version,
                     acting_block_length: block_length,
+                    parent_pos,
+                    parent_block_length,
                 })
             }
 

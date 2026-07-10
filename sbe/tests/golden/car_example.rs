@@ -1241,6 +1241,8 @@ pub struct FuelFiguresDecoder<'a> {
     total: usize,
     acting_version: u16,
     acting_block_length: usize,
+    parent_pos: usize,
+    parent_block_length: usize,
 }
 impl<'a> FuelFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
@@ -1249,6 +1251,18 @@ impl<'a> FuelFiguresDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        Self::wrap_with_parent(buf, pos, acting_version, 0, 0)
+    }
+    /// Like `wrap()` but remembers the parent message body position and
+    /// acting block length so `finish()` can rebuild the next stage.
+    #[inline]
+    pub fn wrap_with_parent(
+        buf: &'a [u8],
+        pos: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
         if pos + 4 > buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -1269,6 +1283,8 @@ impl<'a> FuelFiguresDecoder<'a> {
             total: count,
             acting_version,
             acting_block_length: block_length,
+            parent_pos,
+            parent_block_length,
         })
     }
     #[inline]
@@ -1491,6 +1507,8 @@ pub struct PerformanceFiguresDecoder<'a> {
     total: usize,
     acting_version: u16,
     acting_block_length: usize,
+    parent_pos: usize,
+    parent_block_length: usize,
 }
 impl<'a> PerformanceFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
@@ -1499,6 +1517,18 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        Self::wrap_with_parent(buf, pos, acting_version, 0, 0)
+    }
+    /// Like `wrap()` but remembers the parent message body position and
+    /// acting block length so `finish()` can rebuild the next stage.
+    #[inline]
+    pub fn wrap_with_parent(
+        buf: &'a [u8],
+        pos: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
         if pos + 4 > buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -1519,6 +1549,8 @@ impl<'a> PerformanceFiguresDecoder<'a> {
             total: count,
             acting_version,
             acting_block_length: block_length,
+            parent_pos,
+            parent_block_length,
         })
     }
     #[inline]
@@ -1743,6 +1775,8 @@ pub struct PerformanceFiguresAccelerationDecoder<'a> {
     total: usize,
     acting_version: u16,
     acting_block_length: usize,
+    parent_pos: usize,
+    parent_block_length: usize,
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
@@ -1751,6 +1785,18 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        Self::wrap_with_parent(buf, pos, acting_version, 0, 0)
+    }
+    /// Like `wrap()` but remembers the parent message body position and
+    /// acting block length so `finish()` can rebuild the next stage.
+    #[inline]
+    pub fn wrap_with_parent(
+        buf: &'a [u8],
+        pos: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
         if pos + 4 > buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -1771,6 +1817,8 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
             total: count,
             acting_version,
             acting_block_length: block_length,
+            parent_pos,
+            parent_block_length,
         })
     }
     #[inline]
@@ -1926,6 +1974,344 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
             write!(f, ", seconds: {:?}", v)?;
         }
         write!(f, " }}")
+    }
+}
+pub struct CarDecoderAfterFuelFigures<'a> {
+    buf: &'a [u8],
+    pos: usize,
+    tail_start: usize,
+    acting_version: u16,
+    acting_block_length: usize,
+}
+pub struct CarDecoderAfterPerformanceFigures<'a> {
+    buf: &'a [u8],
+    pos: usize,
+    tail_start: usize,
+    acting_version: u16,
+    acting_block_length: usize,
+}
+pub struct CarDecoderAfterManufacturer<'a> {
+    buf: &'a [u8],
+    pos: usize,
+    tail_start: usize,
+    acting_version: u16,
+    acting_block_length: usize,
+}
+pub struct CarDecoderAfterModel<'a> {
+    buf: &'a [u8],
+    pos: usize,
+    tail_start: usize,
+    acting_version: u16,
+    acting_block_length: usize,
+}
+pub struct CarDecoderComplete<'a> {
+    buf: &'a [u8],
+    pos: usize,
+    tail_start: usize,
+    acting_version: u16,
+    acting_block_length: usize,
+}
+impl<'a> CarDecoderAfterFuelFigures<'a> {
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
+}
+impl<'a> CarDecoderAfterPerformanceFigures<'a> {
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
+}
+impl<'a> CarDecoderAfterManufacturer<'a> {
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
+}
+impl<'a> CarDecoderAfterModel<'a> {
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
+}
+impl<'a> CarDecoderComplete<'a> {
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
+}
+impl<'a> CarDecoder<'a> {
+    /// Consume this stage and start decoding the next tail group,
+    /// enforcing wire order. The returned group decoder owns the
+    /// right to advance to the following stage via `finish()`.
+    #[inline]
+    pub fn into_fuel_figures(
+        self,
+    ) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
+        let group_start = self.pos + self.acting_block_length;
+        FuelFiguresDecoder::wrap_with_parent(
+            self.buf,
+            group_start,
+            self.acting_version,
+            self.pos,
+            self.acting_block_length,
+        )
+    }
+}
+impl<'a> CarDecoderAfterFuelFigures<'a> {
+    /// Consume this stage and start decoding the next tail group,
+    /// enforcing wire order. The returned group decoder owns the
+    /// right to advance to the following stage via `finish()`.
+    #[inline]
+    pub fn into_performance_figures(
+        self,
+    ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
+        let group_start = self.tail_start;
+        PerformanceFiguresDecoder::wrap_with_parent(
+            self.buf,
+            group_start,
+            self.acting_version,
+            self.pos,
+            self.acting_block_length,
+        )
+    }
+}
+impl<'a> CarDecoderAfterPerformanceFigures<'a> {
+    /// Consume this stage, read the next var-data field, and advance
+    /// to the following stage. Wire order is enforced by consumption.
+    #[inline]
+    pub fn into_manufacturer(
+        self,
+    ) -> Result<(&'a [u8], CarDecoderAfterManufacturer<'a>), sbe_rt::DecodeError> {
+        let offset = self.tail_start;
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "manufacturer",
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        let header = VarStringEncoding(bytes);
+        let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "manufacturer",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
+        let data_start = offset + 4;
+        if data_start + len > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "manufacturer",
+                needed: 4 + len,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let data = &self.buf[data_start..data_start + len];
+        let next = CarDecoderAfterManufacturer {
+            buf: self.buf,
+            pos: self.pos,
+            tail_start: data_start + len,
+            acting_version: self.acting_version,
+            acting_block_length: self.acting_block_length,
+        };
+        Ok((data, next))
+    }
+}
+impl<'a> CarDecoderAfterManufacturer<'a> {
+    /// Consume this stage, read the next var-data field, and advance
+    /// to the following stage. Wire order is enforced by consumption.
+    #[inline]
+    pub fn into_model(
+        self,
+    ) -> Result<(&'a [u8], CarDecoderAfterModel<'a>), sbe_rt::DecodeError> {
+        let offset = self.tail_start;
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "model",
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        let header = VarStringEncoding(bytes);
+        let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "model",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
+        let data_start = offset + 4;
+        if data_start + len > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "model",
+                needed: 4 + len,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let data = &self.buf[data_start..data_start + len];
+        let next = CarDecoderAfterModel {
+            buf: self.buf,
+            pos: self.pos,
+            tail_start: data_start + len,
+            acting_version: self.acting_version,
+            acting_block_length: self.acting_block_length,
+        };
+        Ok((data, next))
+    }
+}
+impl<'a> CarDecoderAfterModel<'a> {
+    /// Consume this stage, read the next var-data field, and advance
+    /// to the following stage. Wire order is enforced by consumption.
+    #[inline]
+    pub fn into_activation_code(
+        self,
+    ) -> Result<(&'a [u8], CarDecoderComplete<'a>), sbe_rt::DecodeError> {
+        let offset = self.tail_start;
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "activationCode",
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        let header = VarAsciiEncoding(bytes);
+        let len = header.length() as usize;
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "activationCode",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
+        let data_start = offset + 4;
+        if data_start + len > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "activationCode",
+                needed: 4 + len,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let data = &self.buf[data_start..data_start + len];
+        let next = CarDecoderComplete {
+            buf: self.buf,
+            pos: self.pos,
+            tail_start: data_start + len,
+            acting_version: self.acting_version,
+            acting_block_length: self.acting_block_length,
+        };
+        Ok((data, next))
+    }
+}
+impl<'a> FuelFiguresDecoder<'a> {
+    /// Scan past any unread entries (including nested tails) in wire
+    /// order and return the next message decoder stage.
+    #[inline]
+    pub fn finish(self) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
+        let mut pos = self.pos;
+        let mut remaining = self.count;
+        let block_len = self.acting_block_length;
+        while remaining > 0 {
+            pos = FuelFiguresEntryDecoder::skip(
+                self.buf,
+                pos,
+                block_len,
+                self.acting_version,
+            )?;
+            remaining -= 1;
+        }
+        Ok(CarDecoderAfterFuelFigures {
+            buf: self.buf,
+            pos: self.parent_pos,
+            tail_start: pos,
+            acting_version: self.acting_version,
+            acting_block_length: self.parent_block_length,
+        })
+    }
+    /// Explicit sequential spelling of "advance past the rest of this group".
+    #[inline]
+    pub fn skip_remaining(
+        self,
+    ) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
+        self.finish()
+    }
+}
+impl<'a> PerformanceFiguresDecoder<'a> {
+    /// Scan past any unread entries (including nested tails) in wire
+    /// order and return the next message decoder stage.
+    #[inline]
+    pub fn finish(
+        self,
+    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, sbe_rt::DecodeError> {
+        let mut pos = self.pos;
+        let mut remaining = self.count;
+        let block_len = self.acting_block_length;
+        while remaining > 0 {
+            pos = PerformanceFiguresEntryDecoder::skip(
+                self.buf,
+                pos,
+                block_len,
+                self.acting_version,
+            )?;
+            remaining -= 1;
+        }
+        Ok(CarDecoderAfterPerformanceFigures {
+            buf: self.buf,
+            pos: self.parent_pos,
+            tail_start: pos,
+            acting_version: self.acting_version,
+            acting_block_length: self.parent_block_length,
+        })
+    }
+    /// Explicit sequential spelling of "advance past the rest of this group".
+    #[inline]
+    pub fn skip_remaining(
+        self,
+    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, sbe_rt::DecodeError> {
+        self.finish()
+    }
+}
+impl<'a> CarDecoderComplete<'a> {
+    /// Header-inclusive message bytes.
+    #[inline]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        &self.buf[self.pos - 8..self.tail_start]
+    }
+    /// Body length (excluding header).
+    #[inline]
+    pub fn encoded_length(&self) -> usize {
+        self.tail_start - self.pos
+    }
+    /// Header-inclusive length.
+    #[inline]
+    pub fn encoded_length_with_header(&self) -> usize {
+        self.tail_start - self.pos + 8
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
