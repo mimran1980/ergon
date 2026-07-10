@@ -257,7 +257,7 @@ fn raw_scalar_accessor_zero_alloc() {
 fn group_iteration_zero_alloc() {
     warm_up_all();
     let car = CarDecoder::try_from(BASELINE).unwrap();
-    let ff = car.fuel_figures().unwrap();
+    let ff = car.into_fuel_figures().unwrap();
 
     let guard = AllocGuard::after_warmup();
     let mut count = 0u64;
@@ -328,8 +328,18 @@ fn vardata_decode_zero_alloc() {
     let car = CarDecoder::try_from(BASELINE).unwrap();
 
     let guard = AllocGuard::after_warmup();
-    let mfr = car.manufacturer().unwrap();
-    let model = car.model().unwrap();
+    let (mfr, a1) = car
+        .into_fuel_figures()
+        .unwrap()
+        .finish()
+        .unwrap()
+        .into_performance_figures()
+        .unwrap()
+        .finish()
+        .unwrap()
+        .into_manufacturer()
+        .unwrap();
+    let (model, _done) = a1.into_model().unwrap();
     black_box((mfr, model));
     assert_eq!(
         guard.diff(),
