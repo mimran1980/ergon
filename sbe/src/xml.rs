@@ -1553,6 +1553,41 @@ mod tests {
     use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
     use miette::Diagnostic;
 
+    #[test]
+    fn parse_u64_val_handles_value_types() {
+        // Empty -> None.
+        assert_eq!(parse_u64_val("", None), None);
+        // Char (single byte).
+        assert_eq!(
+            parse_u64_val("A", Some(PrimitiveType::Char)),
+            Some(b'A' as u64)
+        );
+        // Float bit reinterpret (f32 branch).
+        assert_eq!(
+            parse_u64_val("1.5", Some(PrimitiveType::Float)),
+            Some(1.5_f32.to_bits() as u64)
+        );
+        // Double bit reinterpret (f64 branch).
+        assert_eq!(
+            parse_u64_val("1.5", Some(PrimitiveType::Double)),
+            Some(1.5_f64.to_bits() as u64)
+        );
+        // Unparseable float/double -> None (the branch fall-through return).
+        assert_eq!(
+            parse_u64_val("not_a_number", Some(PrimitiveType::Float)),
+            None
+        );
+        assert_eq!(
+            parse_u64_val("not_a_number", Some(PrimitiveType::Double)),
+            None
+        );
+        // Negative -> i64 reinterpret.
+        assert_eq!(parse_u64_val("-1", None), Some(u64::MAX));
+        // Plain u64 / invalid.
+        assert_eq!(parse_u64_val("42", None), Some(42));
+        assert_eq!(parse_u64_val("garbage", None), None);
+    }
+
     const MINIMAL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="example.sbe" id="1" version="0" byteOrder="littleEndian"
                description="minimal test schema">

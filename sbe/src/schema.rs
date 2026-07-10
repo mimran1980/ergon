@@ -125,7 +125,7 @@ impl Schema {
 
 #[cfg(test)]
 mod tests {
-    use super::Schema;
+    use super::{Schema, SchemaSource};
 
     #[test]
     fn schema_metadata_preserves_identity_fields() {
@@ -134,5 +134,17 @@ mod tests {
         assert_eq!(schema.package, "fix.sbe");
         assert_eq!(schema.id, 42);
         assert_eq!(schema.version, 7);
+    }
+
+    #[test]
+    fn schema_source_constructors_hold_xml() {
+        let borrowed = SchemaSource::borrowed_xml("<messageSchema/>");
+        let owned = SchemaSource::owned_xml("<messageSchema/>".to_string());
+        match &borrowed {
+            SchemaSource::Xml(cow) => assert!(matches!(cow, std::borrow::Cow::Borrowed(_))),
+        }
+        match &owned {
+            SchemaSource::Xml(cow) => assert!(matches!(cow, std::borrow::Cow::Owned(_))),
+        }
     }
 }
