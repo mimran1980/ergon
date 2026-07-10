@@ -386,13 +386,14 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
     // advance — hence every codec traverses them, making the comparison fair.
     let bl = aeron_block_length();
     let ver = aeron_version();
+    let (bl_e, ver_e) = ergosbe_header_fields();
 
     let mut group = c.benchmark_group("parity/decode/full_message");
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("ergosbe_consuming", |b| {
         b.iter(|| {
-            let car = CarDecoder::wrap_and_apply_header(black_box(BASELINE), 0).unwrap();
+            let car = CarDecoder::wrap(black_box(BASELINE), 8, bl_e, ver_e);
             let mut fuel = car.into_fuel_figures().unwrap();
             while let Some(Ok(e)) = fuel.next() {
                 black_box((e.speed(), e.mpg()));
@@ -416,7 +417,7 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
 
     group.bench_function("ergosbe_legacy", |b| {
         b.iter(|| {
-            let car = CarDecoder::wrap_and_apply_header(black_box(BASELINE), 0).unwrap();
+            let car = CarDecoder::wrap(black_box(BASELINE), 8, bl_e, ver_e);
             for entry in car.fuel_figures().unwrap() {
                 let e = entry.unwrap();
                 black_box((e.speed(), e.mpg()));
@@ -437,14 +438,41 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
         });
     });
 
-    // NOTE: a direct Aeron full-message-decode bench was attempted here but the
-    // patched Aeron module's advance()/limit group semantics mis-position for
-    // BASELINE's nested-tail structure (panic at get_bytes_at). Rather than ship
-    // misleading numbers, the direct Aeron full-decode comparison is deferred
-    // until the Aeron module's group/limit traversal is traced carefully. The
-    // fair consuming-vs-legacy comparison above (identical ErgoSBE semantics)
-    // plus the existing parity/decode/{entry_point,scalar,array,composite} and
-    // parity/throughput Aeron head-to-heads remain the ErgoSBE-vs-Aeron evidence.
+    group.bench_function("aeron", |b| {
+        b.iter(|| {
+            use ergosbe_benchmarks::aeron_car::aeron::{
+                ReadBuf, car_codec::decoder::CarDecoder,
+                message_header_codec::decoder::MessageHeaderDecoder,
+            };
+            // Correct Aeron wrap: header decoder at 0, then car decoder at 0+HEADER_LEN.
+            // (Direct wrap(buf,0,..) reads fields at header offsets — wrong for the body.)
+            let header = MessageHeaderDecoder::default().wrap(ReadBuf::new(black_box(BASELINE)), 0);
+            let mut car = CarDecoder::default().header(header, 0);
+            let mut ff = car.fuel_figures_decoder();
+            while let Some(_) = ff.advance().unwrap() {
+                black_box((ff.speed(), ff.mpg()));
+                let c = ff.usage_description_decoder();
+                black_box(ff.usage_description_slice(c));
+            }
+            car = ff.parent().unwrap();
+            let mut pf = car.performance_figures_decoder();
+            while let Some(_) = pf.advance().unwrap() {
+                black_box(pf.octane_rating());
+                let mut acc = pf.acceleration_decoder();
+                while let Some(_) = acc.advance().unwrap() {
+                    black_box((acc.mph(), acc.seconds()));
+                }
+                pf = acc.parent().unwrap();
+            }
+            car = pf.parent().unwrap();
+            let mfr = car.manufacturer_decoder();
+            black_box(car.manufacturer_slice(mfr));
+            let model = car.model_decoder();
+            black_box(car.model_slice(model));
+            let code = car.activation_code_decoder();
+            black_box(car.activation_code_slice(code));
+        });
+    });
 
     group.finish();
 }
