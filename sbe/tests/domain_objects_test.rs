@@ -17,6 +17,13 @@ fn l3_schema() -> PathBuf {
     ))
 }
 
+fn binance_schema() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/binance_spot_3_5.xml"
+    ))
+}
+
 // ── Car: domain with all field types ────────────────────────────────────
 
 #[test]
@@ -279,6 +286,48 @@ fn l3_compute_encoded_length_matches() {
         }).unwrap();
         assert!(computed > 0 && complete.encoded_length() > 0, "both must be positive: {} vs {}", computed, complete.encoded_length());
         println!("l3_compute_encoded_length_matches: PASSED ({} == {})", computed, complete.encoded_length());
+    "#,
+    );
+}
+
+// ── Binance: DepthResponse domain (scalars + 2 groups, no var-data) ─────
+
+#[test]
+fn binance_depth_domain() {
+    let (_schema, src) = generate(&binance_schema(), "binance_depth_dom");
+    compile_and_run(
+        "binance_depth_dom",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 4096];
+        let mut d = DepthResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+        d.last_update_id(123456).price_exponent(-8).qty_exponent(-8);
+        let complete = d.bids(2, |bids| {
+            bids.add(|l| { l.price(50001).qty(150); }).unwrap();
+            bids.add(|l| { l.price(50000).qty(200); }).unwrap();
+        }).unwrap().asks(1, |asks| {
+            asks.add(|l| { l.price(50100).qty(300); }).unwrap();
+        }).unwrap();
+        let encoded = complete.as_bytes().to_vec();
+
+        let dom: DepthResponseDomain = DepthResponseDecoder::try_from(&encoded[..]).unwrap().into();
+
+        assert_eq!(dom.last_update_id, 123456);
+        assert_eq!(dom.price_exponent, -8);
+        assert_eq!(dom.qty_exponent, -8);
+        assert_eq!(dom.bids.len(), 2);
+        assert_eq!(dom.bids[0].price, 50001);
+        assert_eq!(dom.bids[0].qty, 150);
+        assert_eq!(dom.bids[1].price, 50000);
+        assert_eq!(dom.bids[1].qty, 200);
+        assert_eq!(dom.asks.len(), 1);
+        assert_eq!(dom.asks[0].price, 50100);
+        assert_eq!(dom.asks[0].qty, 300);
+        let cloned = dom.clone();
+        assert_eq!(dom, cloned);
+        let dbg = format!("{:?}", dom);
+        assert!(dbg.contains("DepthResponseDomain"));
+        println!("binance_depth_domain: PASSED");
     "#,
     );
 }

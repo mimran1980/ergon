@@ -375,7 +375,7 @@ fn generate_sbe_rt_src() -> String {
             pub enum EncodeError {
                 BufferTooShort { needed: usize, available: usize },
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
-                GroupFull { declared: u16, attempted: u16 },
+                GroupFull { declared: u32, attempted: u32 },
                 Decode(DecodeError),
             }
 
@@ -1775,25 +1775,32 @@ fn get_dimension_info(
     (name, size, bl, num)
 }
 
-/// Returns (offset, size) of the numInGroup field within a dimension composite.
-fn get_dim_num_layout(elements: &SchemaElements, dim_type: &str) -> (usize, usize) {
+/// Returns (offset, size, primitive) of the numInGroup field within a dimension
+/// composite. The primitive drives the encoder's `count` parameter width so a
+/// schema whose dimensionType declares numInGroup as uint32 (e.g. Binance's
+/// default `groupSizeEncoding`) writes all 4 bytes, not just 2.
+fn get_dim_num_layout(elements: &SchemaElements, dim_type: &str) -> (usize, usize, PrimitiveType) {
     let raw_name = dim_type;
     let mut offset = 2;
     let mut size = 2;
+    let mut prim = PrimitiveType::UInt16;
     if let Some(comp) = elements.composites.iter().find(|c| c[0].name == raw_name) {
         let members = parse_composite_members(comp);
         for m in members {
             let lower = m.name.to_lowercase();
             if lower.contains("numingroup") || lower.contains("count") {
                 offset = m.offset;
-                size = match &m.member_type {
-                    MemberType::Primitive { prim, length, .. } => prim.size() * length.unwrap_or(1),
-                    _ => 2,
-                };
+                if let MemberType::Primitive {
+                    prim: p, length, ..
+                } = &m.member_type
+                {
+                    prim = *p;
+                    size = p.size() * length.unwrap_or(1);
+                }
             }
         }
     }
-    (offset, size)
+    (offset, size, prim)
 }
 
 fn get_vardata_info(
@@ -4440,17 +4447,18 @@ fn generate_message_encoder(
             };
             let g_pascal_enc = syn::Ident::new(&format!("{scoped_enc}Encoder"), span);
             let (_dim_name, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
-            let (num_offset, num_size) = get_dim_num_layout(elements, &g.dimension_type);
+            let (num_offset, num_size, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
             let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
             let num_offset_lit = syn::LitInt::new(&num_offset.to_string(), span);
             let num_size_lit = syn::LitInt::new(&num_size.to_string(), span);
+            let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
                     #[must_use]
                     pub fn #g_snake<F>(
                         mut self,
-                        count: u16,
+                        count: #count_ty,
                         f: F,
                     ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
                     where
@@ -4667,6 +4675,8 @@ fn generate_group_encoder(
         ByteOrder::BigEndian => "be",
     };
     let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+    let (_, _, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
+    let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
     let mut dim_tpl = vec![0u8; dim_size];
     match byte_order {
@@ -4714,7 +4724,7 @@ fn generate_group_encoder(
 
     let mut add_body = quote::quote! {
         if self.written >= self.count {
-            return Err(sbe_rt::EncodeError::GroupFull { declared: self.count, attempted: self.written + 1 });
+            return Err(sbe_rt::EncodeError::GroupFull { declared: self.count as u32, attempted: self.written as u32 + 1 });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
@@ -4744,8 +4754,8 @@ fn generate_group_encoder(
         pub struct #group_enc_ident<'a> {
             buf: &'a mut [u8],
             pos: usize,
-            count: u16,
-            written: u16,
+            count: #count_ty,
+            written: #count_ty,
         }
 
         impl<'a> #group_enc_ident<'a> {
@@ -4754,7 +4764,7 @@ fn generate_group_encoder(
             const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == #dim_size_lit);
 
             #[inline]
-            pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
+            pub fn wrap(buf: &'a mut [u8], pos: usize, count: #count_ty) -> Self {
                 Self { buf, pos, count, written: 0 }
             }
 
@@ -4877,14 +4887,15 @@ fn generate_group_encoder(
         let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
         let ng_enc = syn::Ident::new(&format!("{ng_pascal_scoped}Encoder"), span);
         let (_dim_name, ng_dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
-        let (num_off, num_sz) = get_dim_num_layout(elements, &ng.dimension_type);
+        let (num_off, num_sz, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
         let ng_dim = syn::LitInt::new(&ng_dim_size.to_string(), span);
         let num_off_idx = syn::Index::from(num_off);
         let num_sz_lit = syn::LitInt::new(&num_sz.to_string(), span);
+        let ng_count_ty: syn::Type = syn::parse_str(rust_type(ng_num_prim)).unwrap();
 
         entry_methods.extend(quote::quote! {
             #[must_use]
-            pub fn #ng_snake<F>(&mut self, count: u16, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
+            pub fn #ng_snake<F>(&mut self, count: #ng_count_ty, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
             where
                 F: FnOnce(&mut #ng_enc<'a>),
             {

@@ -65,7 +65,7 @@ pub mod sbe_rt {
     pub enum EncodeError {
         BufferTooShort { needed: usize, available: usize },
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
-        GroupFull { declared: u16, attempted: u16 },
+        GroupFull { declared: u32, attempted: u32 },
         Decode(DecodeError),
     }
     impl core::fmt::Display for EncodeError {
@@ -2456,8 +2456,8 @@ impl<'a> FuelFiguresEncoder<'a> {
     {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count,
-                attempted: self.written + 1,
+                declared: self.count as u32,
+                attempted: self.written as u32 + 1,
             });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
@@ -2552,8 +2552,8 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count,
-                attempted: self.written + 1,
+                declared: self.count as u32,
+                attempted: self.written as u32 + 1,
             });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
@@ -2655,8 +2655,8 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count,
-                attempted: self.written + 1,
+                declared: self.count as u32,
+                attempted: self.written as u32 + 1,
             });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
