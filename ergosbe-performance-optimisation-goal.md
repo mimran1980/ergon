@@ -735,6 +735,32 @@ model that DECISIONS §3 / §10 reject.
   BidsEntryDecoderComplete`, per-order `OrdersEntryDecoder --into_order_id-->
   (&[u8], Complete)`. l3 runtime + compile-fail (`into_orders` consumes the
   non-Copy entry). 453 tests, 0 fail.
+- `bb5102b bench: consuming vs legacy full-message decode (Task F)` — new
+  `parity/decode/full_message` group. Five Criterion runs (sample-size 50,
+  2026-07-10, release profile, Apple Silicon): consuming **~7.02 ns** vs legacy
+  **~19.46 ns** (2.77× faster; CI ±~0.1%). Root cause measured: the legacy
+  `&self` accessors rescan all preceding groups on every call (O(n²)); the
+  consuming path caches `tail_start` (O(n)) — the DECISIONS §3 rationale, now
+  proven. Legacy already matched Aeron on the previously benchmarked scenarios
+  (entry/scalar/throughput), and Aeron's sequential `advance()` decode is
+  algorithmically equivalent to the consuming path, so consuming ≤ Aeron for
+  full-message decode. Direct Aeron full-group-decode comparison is the
+  remaining refinement (Aeron's `fuel_figures_decoder(self)` + parent-ref +
+  `advance()` API is fiddly to mirror).
+- Coverage tooling installed (`cargo-llvm-cov 0.8.7` + `llvm-tools-preview`),
+  authorised by the implementation prompt's "install missing local tools".
+  Generator coverage baseline measured
+  (`cargo llvm-cov -p ergosbe --lib --test {baseline,ordered_decoder_stages,
+  l3_consuming_stages,comprehensive,integration,stability}_test --summary-only`,
+  excluding the allocation test — see below): **codegen.rs 91.58% lines / 91.45%
+  functions, xml.rs 89.90%, resolve.rs 87.87%, schema.rs 84.21% lines (60%
+  functions), config.rs + ir.rs 100%; TOTAL ~90.87% lines / 89.51% functions**.
+  Branch coverage requires the `--branch` flag (not yet run). Reaching 100% for
+  new+changed generator logic is the remaining Task G work.
+- **Justified coverage exclusion:** `allocation_count_test` is incompatible with
+  coverage instrumentation — the instrumented runtime allocates, so the
+  `CountingAllocator` zero-alloc assertions see a false +1 under `cargo llvm-cov`
+  (the tests pass normally: 7/7). Excluded from coverage runs for that reason.
 
 **Gates at this point:** `cargo fmt --all --check` clean; `cargo clippy
 --workspace --all-targets -- -D warnings` clean; `cargo test --workspace --
