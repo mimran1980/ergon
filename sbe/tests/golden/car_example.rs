@@ -906,19 +906,19 @@ impl<'a> CarDecoder<'a> {
         Ok(start + 4 + len)
     }
     #[inline]
-    pub fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
+    fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
         FuelFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
     #[inline]
-    pub fn performance_figures(
+    fn performance_figures(
         &self,
     ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_1()?;
         PerformanceFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
     #[inline]
-    pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+    fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
@@ -934,12 +934,12 @@ impl<'a> CarDecoder<'a> {
         Ok(&self.buf[data_offset..data_offset + len])
     }
     #[inline]
-    pub fn manufacturer_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+    fn manufacturer_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.manufacturer()?;
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
-    pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+    fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
@@ -955,12 +955,12 @@ impl<'a> CarDecoder<'a> {
         Ok(&self.buf[data_offset..data_offset + len])
     }
     #[inline]
-    pub fn model_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+    fn model_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.model()?;
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
-    pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+    fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
@@ -976,7 +976,7 @@ impl<'a> CarDecoder<'a> {
         Ok(&self.buf[data_offset..data_offset + len])
     }
     #[inline]
-    pub fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+    fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }

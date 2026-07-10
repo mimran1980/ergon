@@ -1459,7 +1459,7 @@ fn forward_compat_v2_decoder_reads_v1_bytes() {
         assert_eq!(d.field_e2(), None, "FieldE2 should be None (sinceVersion > actingVersion)");
 
         // Var-data — must be readable at correct tail offset
-        let s1 = d.string1().unwrap();
+        let (s1, _done) = d.into_string1().unwrap();
         assert_eq!(s1, b"v1data", "String1 should survive forward compat");
     "#,
     );
@@ -1499,7 +1499,7 @@ fn backward_compat_v1_decoder_reads_v2_bytes() {
 
         // Var-data: tail offset must skip the extra 12 bytes of V2 fixed fields
         // (V2 blockLength=20, V1 compiled BLOCK_LENGTH=8, acting_block_length=20)
-        let s1 = d.string1().unwrap();
+        let (s1, _done) = d.into_string1().unwrap();
         assert_eq!(s1, b"v2extra", "String1 should be at correct tail offset after V2 fixed fields");
     "#,
     );
@@ -1764,7 +1764,8 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() {
         let d = grpvers_v2::GroupMsgDecoder::try_from(encoded).unwrap();
 
         // V2 decoder sees V1 entries (blockLength=12 on wire, not compiled 16)
-        let entries: Vec<_> = d.entries().unwrap().collect::<Vec<_>>();
+        let mut entries_iter = d.into_entries().unwrap();
+        let entries: Vec<_> = entries_iter.by_ref().collect::<Vec<_>>();
         assert_eq!(entries.len(), 2, "should find 2 entries");
 
         // Common fields (sinceVersion=0) — must decode
@@ -1775,7 +1776,7 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() {
 
         // Trailer var-data must be at correct offset after group entries.
         // This proves the iterator advances by wire blockLength, not compiled.
-        let trailer = d.trailer().unwrap();
+        let (trailer, _done) = entries_iter.finish().unwrap().into_trailer().unwrap();
         assert_eq!(trailer, b"v1_trailer",
             "trailer must be at correct offset after V1-size group entries");
     "#,
@@ -1810,7 +1811,8 @@ fn var_data_after_version_mismatched_group_at_correct_offset() {
         let d = grpvers_v1b::GroupMsgDecoder::try_from(encoded).unwrap();
 
         // V1 decoder sees V2 entries (wire blockLength=16, compiled blockLength=12)
-        let entries: Vec<_> = d.entries().unwrap().collect::<Vec<_>>();
+        let mut entries_iter = d.into_entries().unwrap();
+        let entries: Vec<_> = entries_iter.by_ref().collect::<Vec<_>>();
         assert_eq!(entries.len(), 2, "should find 2 entries");
 
         // Known fields correct — V1 decoder reads V2 entries using wire blockLength=16
@@ -1821,7 +1823,7 @@ fn var_data_after_version_mismatched_group_at_correct_offset() {
 
         // Trailer must skip the extra 4 bytes per entry (flags field)
         // that V1 doesn't know about but the wire blockLength accounts for
-        let trailer = d.trailer().unwrap();
+        let (trailer, _done) = entries_iter.finish().unwrap().into_trailer().unwrap();
         assert_eq!(trailer, b"v2_trailer_data",
             "trailer must be at correct offset after V2-size group entries");
     "#,

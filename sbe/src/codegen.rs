@@ -2934,7 +2934,7 @@ fn generate_message_decoder(
         );
         impl_body.extend(quote::quote! {
             #[inline]
-            pub fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+            fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
                 let offset = self.#tail_offset_ident()?;
                 #g_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }
@@ -2961,7 +2961,7 @@ fn generate_message_decoder(
             let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
             impl_body.extend(quote::quote! {
                 #[inline]
-                pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = self.#vd_tail_ident()?;
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
@@ -2980,7 +2980,7 @@ fn generate_message_decoder(
         } else {
             impl_body.extend(quote::quote! {
                 #[inline]
-                pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = self.#vd_tail_ident()?;
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
@@ -2998,7 +2998,7 @@ fn generate_message_decoder(
         );
         impl_body.extend(quote::quote! {
             #[inline]
-            pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+            fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
                 let bytes = self.#vd_snake_ident()?;
                 core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
             }
