@@ -23,7 +23,7 @@
     </types>
 
     <sbe:message name="MsgA" id="1" description="has group 'items' with BooleanType entry field">
-        <group name="items" id="2" dimensionType="groupSize" blockLength="4">
+        <group name="items" id="2" dimensionType="groupSize" blockLength="4" description="Items group with BooleanType entry">
             <field name="tag" id="3" type="uint32" offset="0"/>
             <field name="flag" id="4" type="BooleanType" offset="4"/>
         </group>
