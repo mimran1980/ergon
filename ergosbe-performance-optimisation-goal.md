@@ -2,18 +2,43 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Preserve ErgoSBE's official-SBE wire compatibility while keeping every measured hot path at parity with or faster than Aeron SBE, then expand measurement coverage and accept only further speedups that are proven by benchmarks.
+**Goal:** Preserve official-SBE wire compatibility while implementing concrete,
+compile-time ordered encoder and decoder stages, then make every maintained
+ErgoSBE scenario equal to or faster than Aeron SBE under the canonical
+five-run acceptance rule.
 
-**Architecture:** Treat the generated Rust as the product. Optimisations land in `sbe/src/codegen.rs`, are regenerated into `sbe/tests/golden/car_example.rs`, and are measured through the on-the-fly `ergosbe-benchmarks` crate. Legacy `sbe/benches/` is superseded and must not be revived.
+**Architecture:** Treat generated Rust as the product. Tail components become
+concrete consuming encoder and decoder stages; fixed fields remain available
+through a zero-cost body view. Generator changes land in `sbe/src/codegen.rs`,
+are regenerated into the golden stability target, and are measured through the
+on-the-fly `ergosbe-benchmarks` crate. Legacy `sbe/benches/` is superseded and
+must not be revived.
 
-**Tech Stack:** Rust 1.95 workspace, `ergosbe`, `ergosbe-benchmarks`, Criterion, Aeron SBE reference code, `syn`/`quote`/`prettyplease` codegen, LTO-enabled release and bench profiles.
+**Tech Stack:** The workspace's current stable Rust toolchain, `ergosbe`,
+`ergosbe-benchmarks`, Criterion, Aeron SBE reference code, and
+`syn`/`quote`/`prettyplease` codegen. LTO and `codegen-units = 1` may be used by
+the comparison profile but do not by themselves prove generated-code speed.
 
 ## Global Constraints
 
-- Wire compatibility is the floor. Reject any speedup that changes official-SBE bytes or valid decoder behaviour.
-- Performance comes first among wire-valid designs. Hot paths must stay allocation-free and never slower than Aeron without explicit opt-in.
-- Rust ergonomics and safety are allowed only when zero-cost or off the hot path.
-- Simplicity wins when performance and safety are equal.
+- Official-SBE wire compatibility is non-negotiable.
+- ErgoSBE must be equal to or faster than Aeron in every maintained measured
+  scenario.
+- Prefer an easier or safer Rust API when it is zero-cost or outside the hot
+  path.
+- No safety check, abstraction, branch, or ergonomic wrapper may slow a
+  benchmarked hot path unless it is an explicit opt-in.
+- Simplicity decides only when compatibility, performance, and safety are equal.
+- Concrete generated encoder and decoder stages enforce the order of every
+  group and variable-data tail component. Do not use public state generics,
+  `PhantomData`, turbofish, raw tail cursors, or arbitrary later-field skips.
+- Generated ordered hot paths allocate no heap memory.
+- `encoded_length()` and complete-message `as_bytes()` exist only on complete
+  encoder stages. Any partial view has an explicitly partial name.
+- Checked constructors/validation may exist outside the hot path. Any omitted
+  validation is a documented trusted-input mode, not a blanket Aeron-matching
+  policy.
+- `#[inline(always)]` is kept only while assembly and measurements justify it.
 - Do not add `push_str(&format!(...))` to `sbe/src/codegen.rs`; codegen changes must not grow string-template debt.
 - Do not use bytemuck, Pod, zerocopy transmute, SIMD bulk copy, nightly-only APIs, specialization, or broad per-field `_unchecked` APIs.
 - Preserve the existing dirty worktree. Read `CLAUDE.md`, `sbe/design/DECISIONS.md`, and `phase2-completion-goal.md` before edits.
@@ -21,7 +46,150 @@
 
 ---
 
-## Current Completed State
+## Current ordered-tail execution plan
+
+Work one small measured feature at a time. Do not stop because the remaining
+work is large or Java, Docker, Aeron tooling, or another local dependency is
+missing. When authorised, install the dependency or start the available
+service. Record a genuine external blocker, then continue with independent
+work.
+
+For every feature slice:
+
+- [ ] Inspect the worktree and preserve unrelated changes.
+- [ ] Measure the current narrow ErgoSBE path and its Aeron equivalent.
+- [ ] State one falsifiable source/assembly hypothesis.
+- [ ] Add or update the narrow runtime and compile-fail proof first.
+- [ ] Make the smallest `syn`/`quote`/`prettyplease` generator change.
+- [ ] Inspect regenerated source and relevant assembly.
+- [ ] Run wire-parity and allocation-count tests.
+- [ ] Run five comparable warmed-up ErgoSBE and Aeron measurements.
+- [ ] Record medians, Criterion confidence intervals, hardware, toolchain,
+      profile, command, and date.
+- [ ] Keep the change only when the median ErgoSBE/Aeron ratio is at most
+      `1.00`; a ratio above `1.00` remains unfinished.
+- [ ] Compare with the previous ErgoSBE baseline as well as Aeron.
+
+### Task A: Lock the sequential dual-group API contract
+
+Use or add an order-book-shaped fixture with `bids` followed by `asks`. Generate
+these concrete public transitions:
+
+```text
+OrderBookEncoder
+  -> BidsEncoder
+  -> OrderBookAfterBids
+  -> AsksEncoder
+  -> OrderBookComplete
+
+OrderBookDecoder
+  -> BidsDecoder
+  -> OrderBookAfterBids
+  -> AsksDecoder
+  -> OrderBookComplete
+```
+
+- [ ] Add compile-fail coverage for encoding `asks` before `bids`.
+- [ ] Add compile-fail coverage for decoding `asks` before `bids`.
+- [ ] Add compile-fail coverage for reusing a consumed stage.
+- [ ] Add compile-fail coverage for advancing a parent while a group entry or
+      nested tail is active.
+- [ ] Add compile-fail coverage for calling complete-message `as_bytes()` on an
+      incomplete encoder.
+- [ ] Assert the public source has concrete stages and no state generic,
+      `PhantomData`, or arbitrary `skip_to_<later_field>()`.
+
+### Task B: Implement concrete encoder stages
+
+- [ ] Keep fixed-block scalar/composite setters order-free through a zero-cost
+      body view.
+- [ ] Make starting `bids` consume `OrderBookEncoder`.
+- [ ] Make active entry stages prevent their group from advancing.
+- [ ] Return `OrderBookAfterBids` only after all bids are completed or an
+      explicit zero-count/skip transition writes the correct dimension header.
+- [ ] Expose `asks()` only on `OrderBookAfterBids`.
+- [ ] Put `encoded_length()`, `as_bytes()`, and `AsRef<[u8]>` only on
+      `OrderBookComplete`.
+- [ ] Use `written_prefix()` or `partial_bytes()` only if a measured workflow
+      still needs partial inspection.
+
+### Task C: Implement concrete decoder stages
+
+- [ ] Return the initial concrete stage from checked, verified, and
+      trusted-input constructors.
+- [ ] Make starting `bids` consume `OrderBookDecoder`.
+- [ ] Make an active entry or nested tail own the right to return to its parent,
+      preventing parent advancement.
+- [ ] Implement `finish(self)` to scan unread entries in wire order and return
+      `OrderBookAfterBids`.
+- [ ] Provide `skip_remaining(self)` only as an explicit sequential transition.
+- [ ] Expose `asks()` only on `OrderBookAfterBids`.
+- [ ] Make `rewind(self)` consume every current stage and return a fresh
+      `OrderBookDecoder`.
+- [ ] Do not expose a raw cursor or a convenience accessor that permits
+      out-of-order tail reads.
+- [ ] Keep runtime group-count validation separate from compile-time component
+      order.
+
+### Task D: Extend stages through nested groups and variable data
+
+- [ ] Generate equivalent entry stages for nested groups and var-data.
+- [ ] Prove a parent cannot advance while any nested stage remains active.
+- [ ] Verify `finish()` and `skip_remaining()` handle empty, partial, and unread
+      nested tails in official-SBE wire order.
+- [ ] Verify acting-version and acting-block-length compatibility at message and
+      entry levels.
+
+### Task E: Preserve trusted-input and zero-allocation performance
+
+- [ ] Keep checked constructors or full verification available outside the hot
+      path.
+- [ ] Document the preconditions for `bound-check-disabled` and any verified
+      proof path.
+- [ ] Reject broad per-field unchecked variants.
+- [ ] Prove zero heap allocation for every ordered encode, full decode, skip,
+      rewind, and nested-tail path.
+- [ ] Audit every retained `#[inline(always)]` with assembly and benchmarks;
+      downgrade it when forced inlining is not a demonstrated win.
+
+### Task F: Complete the maintained Aeron comparison matrix
+
+For both `bids` and `asks`, cover zero, one, typical, and large counts. Maintain
+comparable ErgoSBE and Aeron cases for:
+
+- [ ] encode;
+- [ ] full decode;
+- [ ] early first-group skip;
+- [ ] rewind;
+- [ ] nested tails and variable data;
+- [ ] safe mode;
+- [ ] `bound-check-disabled` trusted-input mode.
+
+Run five comparable warmed-up runs per case. The median ErgoSBE/Aeron ratio must
+be at most `1.00`, and Criterion confidence intervals must be recorded. Wire
+parity and allocation-count tests must pass in the same worktree. Do not claim
+universal Aeron parity until this sequential dual-group matrix passes.
+
+### Task G: Close the feature with scoped evidence
+
+- [ ] Run formatting, clippy, targeted compile-fail tests, the full workspace
+      tests, wire parity, allocation counts, safe benchmarks, and trusted-input
+      benchmarks.
+- [ ] Record the exact date, hardware, OS, Rust toolchain, Aeron revision,
+      profile flags, commands, five-run medians, ratios, and confidence
+      intervals.
+- [ ] State only benchmark-scoped conclusions. Preserve older records below and
+      mark their broader conclusions superseded.
+
+---
+
+## Historical completed state (superseded as current policy on 2026-07-10)
+
+The following dated record is preserved as history. Its single-decoder
+`skip_to_...`, incomplete `as_bytes()`, unconditional inline, validation
+stripping, and universal parity implications are superseded by the current plan
+and `sbe/design/DECISIONS.md`. Reproduce any useful measurement before relying
+on it.
 
 The following work is already done. Do not redo it unless a fresh benchmark or test proves a regression.
 
@@ -517,6 +685,20 @@ git commit -m "docs: close ergosbe performance gates"
 ## Progress Ledger
 
 Add newest entries at the top.
+
+### 2026-07-10 Ordered-tail policy and performance gate reset
+
+- Made `sbe/design/DECISIONS.md` the canonical authority for the five-level
+  priority ladder and concrete consuming encoder/decoder stages.
+- Replaced the active single-decoder/arbitrary-`skip_to_...` plan with
+  sequential decoder stages, consuming `finish`/`skip_remaining`, and consuming
+  `rewind`.
+- Reset universal Aeron parity: historical results remain preserved below, but
+  the active gate now requires five comparable warmed-up runs, a median
+  ErgoSBE/Aeron ratio at most `1.00`, Criterion confidence intervals, and
+  sequential dual-group coverage.
+- This ledger entry records a Markdown-only policy update. No Rust tests,
+  generated-code update, or benchmarks were run for it.
 
 ### 2026-07-09 Plan Updated After Optimisation Pass
 

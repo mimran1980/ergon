@@ -130,11 +130,11 @@ fn main() -> Result<(), sbe_rt::DecodeError> {
         println!("Pegged: {}", pegged_price);
     }
 
-    // Groups and var-data still return Result:
-    for entry in quote.orders()? {
-        let id = entry.order_id();    // u64 -- infallible
-        println!("Order: {}", id);
-    }
+    // Groups and var-data use concrete consuming stages. A later tail
+    // component is not available before the current one is completed/skipped.
+    let orders = quote.orders()?;
+    let after_orders = orders.finish()?;
+    let _complete = after_orders.description()?;
 
     Ok(())
 }
@@ -167,12 +167,17 @@ fn encode_example() -> Result<(), sbe_rt::EncodeError> {
         .quantity(100)
         .side(Side::from_raw(1));
 
-    // Get the encoded bytes
+    // A fixed-size message has no ordered tail, so this encoder is complete.
     let encoded = encoder.as_ref();
     assert!(encoded.len() > 0);
     Ok(())
 }
 ```
+
+For messages with groups or var-data, starting a tail component consumes the
+current concrete stage. Complete-message `encoded_length()`, `as_bytes()`, and
+`AsRef<[u8]>` appear only on the terminal complete stage. Incomplete stages do
+not expose a complete-looking byte slice.
 
 ## Understanding the pipeline
 

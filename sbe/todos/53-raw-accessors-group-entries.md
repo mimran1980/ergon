@@ -1,5 +1,9 @@
 # raw_ accessors for composite/enum/set types inside group entries
 
+> **Superseded public-surface decision (2026-07-10):** preserve the raw-value
+> semantics record, but do not generate per-field unchecked variants. Select
+> trusted-input internals through one stable accessor surface.
+
 **Blocked by:** `02-composite-enum-set-wire-parity`
 
 Group entry decoders only offer high-level `foo()` accessors that collapse

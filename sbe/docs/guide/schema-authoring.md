@@ -188,14 +188,13 @@ and var-data:
 
 Generated access:
 ```rust
-for entry in quote.orders()? {          // Result<GroupDecoder> -- group access checks bounds
-    let id = entry.order_id();          // u64 -- infallible
-    let qty = entry.order_qty();        // u32 -- infallible
-}
+let orders = quote.orders()?;            // consumes the current message stage
+let after_orders = orders.finish()?;     // advances unread entries in wire order
 ```
 
-Groups themselves return `Result` (the group header may be out of bounds),
-but entry field accessors are infallible.
+Concrete group and entry stages enforce the schema order. An active entry
+prevents its parent group from advancing; fixed entry fields remain infallible.
+Runtime counts are still validated from the group dimension header.
 
 ### Variable-length data
 
@@ -206,11 +205,13 @@ Var-data fields carry a length prefix followed by raw bytes:
       description="Free-text description"/>
 ```
 
-Access returns `Result<&[u8]>`; use `_as_str()` for UTF-8:
+Var-data uses the next concrete tail stage and returns borrowed bytes; use
+`_as_str()` for UTF-8:
 
 ```rust
-let desc = quote.description()?;         // &[u8]
-let desc_str = quote.description_as_str()?;  // &str
+let description = after_orders.description()?;
+let desc = description.as_bytes()?;         // &[u8]
+let desc_str = description.as_str()?;       // &str
 ```
 
 ## Versioning

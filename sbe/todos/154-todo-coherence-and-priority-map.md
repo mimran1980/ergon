@@ -1,5 +1,11 @@
 # Todo coherence and priority map
 
+> **Historical coordination map (superseded 2026-07-10):**
+> `design/DECISIONS.md` is now the canonical authority. Where this completed map
+> mentions optional ordered cursors, generic state, or retained random-access
+> tail access, use the concrete consuming encoder/decoder stages in the
+> canonical decision instead.
+
 **Blocked by:** none
 **Severity:** HIGH
 **Status: DONE (Phase 2 gate close)**
@@ -23,9 +29,10 @@ decision file explicitly overrides them.
 3. **Fast paths are policy-selected.** Use `bound-check-disabled`,
    typed `ReadBuf`/`WriteBuf`, and future verified proof tokens to choose
    checked/verified/unchecked internals while keeping method names stable.
-4. **Tail order gets type-state; fixed fields do not.** SBE fixed fields remain
-   random-access and order-free. Groups and var-data can use ordered cursors or
-   encoder type-state because the wire tail is sequential.
+4. **Tail order gets concrete consuming stages; fixed fields do not.** SBE
+   fixed fields remain random-access and order-free through a zero-cost body
+   view. Groups and var-data use sequential encoder and decoder stages because
+   the wire tail is sequential.
 5. **Simple APIs before clever builders.** Prefer exact `encoded_length(...)`
    helpers before a full type-state `LengthBuilder`. Add a builder only for
    real nested group/var-data schemas the simple helper cannot express cleanly.

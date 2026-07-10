@@ -1,5 +1,10 @@
 # Complete `quote!` migration — remaining codegen sections
 
+> **API references qualified 2026-07-10:** the completed `quote!` migration
+> remains authoritative, but references below to phantom/generic encoder states
+> describe the generator at that historical point. Current tail stages are
+> concrete generated structs.
+
 Track and complete the migration of remaining `push_str(&format!(...))` sections in
 codegen.rs to `quote!`. Todo 17 tracks this at a high level, but the remaining
 sections need an explicit checklist. CLAUDE.md says this is **non-negotiable** —

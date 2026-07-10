@@ -1,5 +1,11 @@
 # Group iteration: lazy tail scanning for entries with var-data
 
+> **Superseded API note (2026-07-10):** `iter_fast()` and an optional
+> `TailCursor` are historical designs. Sequential tails now use concrete
+> consuming entry/group stages. A trusted-input optimisation may change
+> internals, but must not expose a path that advances a parent while an entry or
+> nested tail is active.
+
 **Blocked by:** none (pure codegen)
 **Ref:** Aeron perf audit (todo 105, gap #2)
 **Status: DONE (Phase 2 gate close)**

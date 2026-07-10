@@ -1,5 +1,12 @@
 # Performance parity: ErgoSBE must match or beat Aeron Rust SBE in every scenario
 
+> **Historical audit; completion superseded 2026-07-10.** Preserve the dated
+> measurements below, but do not treat their broader conclusions or accepted
+> Aeron-faster safe paths as current policy. A maintained scenario passes only
+> after five comparable warmed-up runs have a median ErgoSBE/Aeron ratio at most
+> `1.00`, with Criterion confidence intervals and environment details recorded.
+> Universal parity is unproven until sequential dual-group coverage exists.
+
 **Hard requirement**: There cannot be a single benchmark where Aeron Rust SBE
 is faster than ErgoSBE. If such a scenario exists, it must be fixed before v1.
 **Status: DONE**

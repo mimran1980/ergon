@@ -1,5 +1,9 @@
 # ReadBuf / WriteBuf abstraction for dual bounds-check modes
 
+> **Historical inline choice, qualified 2026-07-10:** `#[inline(always)]` in
+> the completed sketch below is not unconditional policy. Keep forced inlining
+> only when current assembly and maintained benchmarks justify it.
+
 **Ref:** user request. Aeron Rust SBE comparison.
 
 **Status: DONE (Phase 2 gate close)**

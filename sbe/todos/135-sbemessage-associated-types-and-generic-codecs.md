@@ -1,5 +1,10 @@
 # SbeMessage associated types and generic codec APIs
 
+> **Decoder bound superseded 2026-07-10:** the associated initial decoder type
+> remains useful, but it is no longer required to be `Copy`. Ordered decoder
+> stages consume themselves; only the zero-cost fixed-block body view may be
+> copyable.
+
 **Blocked by:** `129-generated-prelude-and-public-api-contract`, `134-typed-frame-policy-and-schema-identity`
 **Severity:** MEDIUM
 **Status: DONE (Phase 2 gate close)**

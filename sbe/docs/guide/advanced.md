@@ -63,29 +63,18 @@ Cyclic includes are detected and produce a `ParseError::IncludeError`.
 </messageSchema>
 ```
 
-## Unsafe code
+## Trusted-input fast path
 
-ErgoSBE is **safe by default**. All generated accessors are safe `fn`s.
-Unsafe is opt-in.
+ErgoSBE is safe by default. Checked constructors or verification APIs establish
+message structure at a trust boundary. For feeds that validate framing and
+message extents outside the hot loop, the `bound-check-disabled` build mode may
+route the same public field accessors through unchecked internals.
 
-### `_unchecked` methods
-
-Every scalar field, composite, enum, set, and fixed array accessor has an
-accompanying `unsafe fn foo_unchecked()` variant. These skip bounds checks.
-Use them only when you have verified the buffer is large enough and the offset
-is valid.
-
-**Safety precondition**: The caller must ensure the buffer region starting at
-`self.pos + offset` contains at least `N` readable bytes (where `N` is the
-field size). Calling `_unchecked` with an undersized buffer is UB.
-
-```rust
-// Safe, checked:
-let price = quote.price();              // i64 (infallible)
-
-// Unsafe, unchecked -- caller must verify buffer:
-let price = unsafe { quote.price_unchecked() };  // i64
-```
+This is a whole-path contract, not a family of per-field escape hatches. Broad
+`foo_unchecked()` variants are intentionally not part of the generated public
+surface. The caller must satisfy the trusted-input preconditions documented by
+the selected constructor/mode; otherwise unchecked internal reads may be
+undefined behaviour.
 
 ### `raw_` accessors
 
@@ -105,18 +94,9 @@ For version-gated fields, `raw_` distinguishes between "field absent
 by version" (returns `None`) and "field present but null sentinel" (returns
 `Some(sentinel_value)`).
 
-### `as_str_unchecked`
-
-Var-data `_as_str` accessors have an `unsafe fn _as_str_unchecked` variant
-that skips UTF-8 validation:
-
-```rust
-// Safe, validates UTF-8:
-let s: &str = quote.description_as_str()?;
-
-// Unsafe, no UTF-8 validation -- caller must ensure valid UTF-8:
-let s: &str = unsafe { quote.description_as_str_unchecked() };
-```
+Unchecked UTF-8 helpers are also excluded from the default generated surface.
+Use the checked string accessor, or perform an explicitly local unsafe
+conversion in application code when profiling proves it necessary.
 
 ## Buffer verification
 
@@ -148,18 +128,22 @@ let mut buf = [0u8; QuoteEncoder::ENCODED_LENGTH];
 let mut buf = [0u8; QuoteEncoder::MAX_ENCODED_LENGTH];
 ```
 
-### Use unchecked accessors in hot loops
+### Select trusted-input mode outside the hot loop
 
-Avoid bounds-check branches in tight loops:
+Validate framing and message extents at the boundary, then use the unchanged
+generated accessor names in the hot loop. Do not mix checked and per-field
+unchecked method families.
 
-```rust
-// HFT hot loop -- skip bounds checks
-for entry in orders {
-    let id = unsafe { entry.order_id_unchecked() };
-    let qty = unsafe { entry.order_qty_unchecked() };
-    process_order(id, qty);
-}
-```
+### Process ordered tails through concrete stages
+
+For a message containing `bids` followed by `asks`, the decoder exposes
+`asks()` only after `bids` has been completed or explicitly skipped. Starting a
+group consumes the previous stage, and an active entry prevents its parent
+group from advancing. Nested groups and var-data follow the same rule.
+
+Fixed-block fields remain available through a zero-cost body view and do not
+advance tail state. `finish()` and `skip_remaining()` move sequentially;
+`rewind()` consumes the current stage and returns a fresh initial decoder.
 
 ### Use `as_chunks` for fixed-entry groups
 
@@ -257,10 +241,9 @@ calculation. This is the correct behaviour for forward/backward compatibility.
 |---------|-------|-------|
 | `foo()` | Yes | Bounds-checked, null-mapped, infallible for scalars/enums/sets/composites |
 | `raw_foo()` | Yes | Bounds-checked, no null mapping (optional/versioned/array fields) |
-| `foo_unchecked()` | **No** | No bounds check, no null mapping |
 | `foo_as_str()` | Yes | UTF-8 validated |
-| `foo_as_str_unchecked()` | **No** | No UTF-8 validation |
-| `Iterator` on groups | Yes | Extent validated at accessor call |
+| Concrete tail stages | Yes | Compile-time component order; runtime counts remain checked separately |
+| `bound-check-disabled` | Conditional | Explicit trusted-input mode with documented preconditions |
 | `as_chunks()` | Yes | Bounds-checked |
 | `verify()` | Yes | Pre-decode buffer structural validation |
 | Encoder setters | Yes | Bounds-checked on write |

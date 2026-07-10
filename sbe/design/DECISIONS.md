@@ -1,26 +1,30 @@
 # ErgoSBE — Design Decisions
 
-Status: Draft (grilling output, 2026-07-05; revised after the upstream generator
-inventory and HFT completeness review). The shared understanding between the
-author and the design pass. Implementation follows this record; deviations
-update this file.
+Status: Canonical design authority (created 2026-07-05; canonical priority and
+ordered-tail decision revised 2026-07-10). Implementation, goal files, guides,
+and todos defer to this record. Historical measurements and decisions remain in
+their dated documents, but a conflict is resolved in favour of this file.
 
 ErgoSBE is an opinionated, idiomatic Rust code generator for Simple Binary
 Encoding (SBE). Wire-compatible with the official SBE; API-shaped for Rust, not
 translated from Java. Target: low-latency trading (HFT, market data, order
 gateways, exchange connectivity).
 
-The three core values, in priority order:
+The canonical priority order is:
 
-1. Wire compatible with official SBE (binary layout identical).
-2. **Performance-first** — ErgoSBE must never be slower than Aeron SBE. Work
-   backwards from the fastest possible code to a good API, not the other way
-   around. Fast code → easy-to-use API → safe API. When safety conflicts with
-   performance, the safe path is the default; the fast path is opt-in via
-   `bound-check-disabled`.
-3. Idiomatic Rust, not Java-in-Rust.
+1. **Official-SBE wire compatibility is non-negotiable.** Binary layout and
+   version-aware decoder behaviour must match official SBE.
+2. **ErgoSBE must be equal to or faster than Aeron SBE in every maintained,
+   measured scenario.** A measured regression remains unfinished.
+3. **The Rust API should be easier or safer than Aeron** whenever that is
+   zero-cost or the work stays outside the hot path.
+4. **No safety check, abstraction, branch, or ergonomic wrapper may slow a
+   benchmarked hot path** unless it is an explicit opt-in.
+5. **Simplicity decides only when compatibility, performance, and safety are
+   equal.**
 
-When these conflict, the earlier one wins.
+When these priorities conflict, the earlier item wins. Performance claims are
+always scoped to the named benchmark, hardware, toolchain, profile, and date.
 
 **Generated code is never checked in.** ErgoSBE code is always generated
 on-the-fly from schemas (via `build.rs` or equivalent). Benchmarks, tests, and
@@ -35,7 +39,9 @@ checked-in file. The golden file is the stability target, generated via
 - **Flyweight-only.** Decoders borrow `&'a [u8]`; encoders borrow `&'a mut [u8]`.
   No owned/`Vec`/`String` generation.
 - `OwnershipMode` is removed from `config.rs` — there is one mode.
-- Decoders are `Copy` (`{ buf: &'a [u8], pos }`); encoders hold `&'a mut [u8]` (not Copy).
+- Ordered decoder stages are consuming and are not `Copy`. A generated
+  fixed-block body view may be `Copy` because it has no tail cursor and cannot
+  be used to advance tail state. Encoders hold `&'a mut [u8]` and are not Copy.
 - **Serde, `no_std`, `zerocopy` all parked** for v1. The hot path is allocation-free
   by construction regardless; we just don't pay the `no_std`/`alloc`-feature tax yet.
   Allocating conveniences are opt-in so HFT users do not accidentally pull heap
@@ -43,19 +49,23 @@ checked-in file. The golden file is the stability target, generated via
 
 ## 2. Encoder
 
-- **Scalars and composites:** `&mut self -> &mut Self` fluent setters, statement-style.
-  They write to fixed schema-known offsets, so order is irrelevant on the wire.
-- **Closure sub-encoders** for composites, groups, and var-data. The sub-encoder is
-  borrowed only inside the closure; the caller never holds it, so there is no
-  `.parent()` ping-pong (the official generator's main ergonomic flaw).
-- **No top-level `encode(|c| …)` closure** — incompatible with type-state (trap 6).
-- **Type-state tail ordering.** Only the variable-length tail (groups + var-data) is
-  ordered on the wire, so only it earns type-state. By-value setters advance a
-  phantom state named after the next-needed field: `NeedsBids` → `NeedsAsks` →
-  `Complete`. Messages with no tail generate no phantom types.
-- **`.add(impl EncodeGroupEntry<E>)`** — one generic trait, implemented for all
-  `FnOnce(&mut EntryEncoder)` so closures work out of the box; user structs opt in
-  with a one-line impl. No owned entry types generated.
+- **Scalars and composites:** `&mut self -> &mut Self` fluent setters,
+  statement-style. They write to fixed schema-known offsets, so order is
+  irrelevant on the wire. A zero-cost body view may keep these accessors
+  available while tail stages advance.
+- **Concrete generated tail stages.** Generate a distinct public struct for
+  each legal position in the ordered groups/var-data tail. Do not use public
+  state generics, `PhantomData`, const-state indices, or APIs that require
+  turbofish when concrete generated names suffice.
+- **Consuming transitions.** Starting or skipping a tail component consumes the
+  current stage. The moved stage cannot be reused. A group entry stage owns the
+  right to return to its parent group, so the parent cannot advance while an
+  entry, nested group, or variable-data stage is active.
+- **No closure-only tail abstraction.** Entry closures may exist only as an
+  optional convenience if measurement proves they are zero-cost. The generated
+  concrete stages are the contract and must remain directly usable.
+- **Zero allocation.** Generated stage transitions, group entry handling, nested
+  tails, and variable data allocate no heap memory.
 - **Encoder is not version-aware** — it emits the current schema version only.
 - **Opt-in nullify-on-wrap:** `wrap_and_apply_header` does NOT nullify optional fields
   by default (matching Aeron's behaviour). A generated `apply_nulls()` method writes
@@ -66,9 +76,11 @@ checked-in file. The golden file is the stability target, generated via
 - **`wrap_and_apply_header` returns `Result`.** If the buffer is too short for the
   header + `blockLength`, it returns `Err(EncodeError::BufferTooShort)` — no panic,
   no silent truncation. Order-entry systems need this.
-- **`AsRef<[u8]>` on the `Complete` terminal state** — after type-state tail
-  completes, the encoder exposes the written region via `as_bytes()` /
-  `AsRef<[u8]>`, matching the decoder's shape.
+- **Completion-only bytes and length.** `encoded_length()`, complete-message
+  `as_bytes()`, and `AsRef<[u8]>` exist only on the terminal complete stage.
+  Incomplete stages must not expose an `as_bytes()` that looks like a complete
+  message. If partial inspection is genuinely needed, use an explicit name such
+  as `written_prefix()` or `partial_bytes()` and benchmark any hot-path effect.
 - **Required-field proof without scalar-order state explosion.** Fixed-block
   fields remain order-free because their offsets are schema-known, but generated
   strict builders/proxies can prove all required fixed fields were set before
@@ -77,16 +89,37 @@ checked-in file. The golden file is the stability target, generated via
   Optional fields are already nullified on wrap, so omission stays explicit and
   cheap.
 
+For a message whose tail is `bids` followed by `asks`, the generated shape is:
+
+```text
+OrderBookEncoder
+  -> BidsEncoder
+  -> OrderBookAfterBids
+  -> AsksEncoder
+  -> OrderBookComplete
+```
+
+`asks()` exists only on `OrderBookAfterBids`. Starting `bids` consumes
+`OrderBookEncoder`; finishing the group consumes `BidsEncoder` and returns
+`OrderBookAfterBids`. An explicit zero-count/skip transition must still write
+the correct SBE group dimension and move sequentially to
+`OrderBookAfterBids`.
+
 ## 3. Decoder
 
-- **`Copy` decoders**, all accessors return borrows tied to `'a` (the buffer), not
-  `&self`. Plain `Iterator` over groups — no GATs / lending iterators — because
-  every item borrows the buffer, not the iterator.
-- **Fixed block reads are random-access; tail reads can be ordered.** Scalar,
-  enum, set, and composite fields in the fixed block stay direct/infallible where
-  the acting version permits. Groups and var-data form the SBE tail and are
-  ordered on the wire, so the generator also emits an optional type-state
-  `TailCursor` for schema-order traversal.
+- **Concrete generated tail stages are the only tail traversal contract.**
+  Scalar, enum, set, composite, and fixed-array fields in the fixed block remain
+  direct and version-aware. Groups and var-data are sequential on the wire, so
+  each legal tail position is a distinct consuming decoder stage.
+- **No raw or random-access tail cursor.** Do not expose a cursor, offset, or
+  earlier-stage convenience accessor that permits an arbitrary later group or
+  var-data field to be read out of order.
+- **Body access stays zero-cost.** A fixed-block body view may be borrowed or
+  copied from each stage. Reading fixed fields never advances the tail cursor.
+- **Entry ownership enforces nesting.** Starting a group consumes its parent
+  stage. Taking an entry consumes or exclusively borrows the group stage so the
+  parent group cannot advance until the entry and any nested group/var-data tail
+  have been completed or explicitly skipped.
 - **`acting_version() -> u16` and `acting_block_length() -> usize`** expose the wire
   header fields the decoder already carries internally (lets users branch on version).
 - **Group decoders implement `ExactSizeIterator`** (count from the group dimension)
@@ -125,23 +158,29 @@ checked-in file. The golden file is the stability target, generated via
   underlying representation). For sentinel-sensitive workflows, rely on
   generated null/min/max constants and metadata rather than duplicating every
   field accessor.
-- **Ordered tail cursor.** For messages or group entries with groups/var-data,
-  generate a by-value cursor whose state type is derived from the parsed schema
-  order:
-  ```rust
-  let tail = car.tail_cursor()?;                 // TailCursor<NeedsFuelFigures>
-  let (fuel, tail) = tail.fuel_figures()?;       // TailCursor<NeedsPerformanceFigures>
-  let (perf, tail) = tail.performance_figures()?;
-  let (manufacturer, tail) = tail.manufacturer()?;
-  let (model, tail) = tail.model()?;
-  let (_activation, done) = tail.activation_code()?;
-  let end = done.end_offset();
-  ```
-  Out-of-order tail reads are compile errors because the method is not present on
-  the current state. This is "safe by parse": XML validation proves the SBE tail
-  order once, and codegen exposes only the legal next transition. The existing
-  convenience accessors remain for ad hoc reads; the cursor is the strict/fast
-  path for feed handlers that naturally process fields in wire order.
+- **Sequential finish, skip, and rewind.** `finish(self)` scans past unread
+  entries and nested tails in wire order and returns the next concrete stage.
+  `skip_remaining(self)` may be provided as an explicit spelling of that intent.
+  `rewind(self)` consumes any current stage and returns a fresh initial decoder;
+  no stale stage remains usable after the move.
+- **Runtime counts are separate from compile-time order.** Types prove that
+  `bids` precedes `asks`; ordinary runtime state validates and tracks the count
+  encoded in each group dimension header.
+
+For the same order-book schema, the decoder shape is:
+
+```text
+OrderBookDecoder
+  -> BidsDecoder
+  -> OrderBookAfterBids
+  -> AsksDecoder
+  -> OrderBookComplete
+```
+
+`asks()` exists only on `OrderBookAfterBids`. Empty groups, fully-read groups,
+`finish()`, and `skip_remaining()` all reach that stage through the same
+wire-order transition. Nested groups and variable data use equivalent entry
+stages.
 
 ## 4. Data types
 
@@ -230,7 +269,7 @@ Generated code is self-describing — for audit, tooling, generic code, and disp
   dispatch is built on and enables user generics:
   ```rust
   pub trait SbeMessage {
-      type Decoder<'a>: Copy + TryFrom<&'a [u8], Error = DecodeError>;
+      type Decoder<'a>: TryFrom<&'a [u8], Error = DecodeError>;
       type Encoder<'a>;
       type Schema: SchemaIdentity;
       const TEMPLATE_ID: u16; const BLOCK_LENGTH: usize;
@@ -295,9 +334,9 @@ Generated code is self-describing — for audit, tooling, generic code, and disp
   Result<usize, DecodeError>` returns total known-template size (header + block +
   groups + var-data computed by scanning structural extents). For unknown
   templates, length is unavailable unless the caller supplies a frame length.
-- **Ordered decode helpers:** `AnyMessage` and generated adapters can choose the
-  ordered `TailCursor` path when they want schema-order processing and exact
-  final offsets without repeatedly rescanning previous groups/var-data.
+- **Ordered decode helpers:** `AnyMessage` and generated adapters return the
+  initial concrete decoder stage. Adapters may drive those stages internally,
+  but cannot bypass the schema-ordered transitions.
 - **Configurable header and group dimensions.** Do not hard-code `messageHeader` or
   `groupSizeEncoding`: resolve the root `headerType` and each group's
   `dimensionType`. v1 supports custom names and primitive widths when they resolve
@@ -327,15 +366,19 @@ Four invariants — the correctness heart of the library:
   "absent" and "present-null" to `None`; generated null/min/max constants,
   metadata, and value-type `raw()` methods are the supported escape hatches.
 
-## 8. Bounds checking
+## 8. Bounds checking and trust boundaries
 
-- Structural entrypoints validate extents before returning borrowed views.
-  Fixed-field accessors are infallible where the schema and acting version allow
-  them to be present.
+- Checked constructors and verification APIs validate structural extents before
+  returning borrowed views. Fixed-field accessors are infallible where the
+  schema and acting version allow them to be present.
 - **Feature `bound-check-disabled`** (default off) is the canonical fast-path
   switch. It keeps the public API identical and routes generated internals
   through unchecked reads/writes where the surrounding structural validation or
   caller contract makes that acceptable.
+- Describe omitted validation only as a **trusted-input fast path**. Do not
+  present "validation stripping to match Aeron" as a general design rule.
+  Checked construction or validation may remain outside the benchmarked hot
+  loop, and the trust preconditions must be explicit and tested.
 - Avoid per-field `_unchecked` methods in the default public surface. They bloat
   generated code and duplicate the feature flag. Add an explicit unsafe method
   only when it exposes a genuinely different operation, such as a var-data
@@ -371,11 +414,13 @@ Four invariants — the correctness heart of the library:
 
 - `Display` + `Debug` walkers (the idiomatic `toString` equivalent — gives
   `format!("{}", msg)`, `println!`, `to_string()`). Zero-alloc until formatted.
-- `skip()` — advance past a group/var-data region without decoding, returns the
-  post-region offset.
-- `encoded_length()` (body) and `encoded_length_with_header()` (body + 8).
-- `as_bytes() -> &'a [u8]` — header-inclusive current slice on a decoder; the
-  written region on an encoder.
+- Sequential `finish()` / `skip_remaining()` transitions advance past the
+  current group or var-data component without exposing an arbitrary raw offset.
+- Decoder length helpers report body and header-inclusive extents after
+  sequential structural scanning. Encoder `encoded_length()` is terminal-stage
+  only.
+- `as_bytes() -> &'a [u8]` may expose the header-inclusive message slice on a
+  decoder; on an encoder it exists only on the complete stage.
 - `raw_foo()` scalar accessors and generated `*_NULL`, `*_MIN`, `*_MAX` constants
   for users who handle exchange sentinels manually in hot loops.
 - **Fixed-entry group fast path.** When a group entry has no nested groups or
@@ -456,9 +501,11 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
 
 ### Codegen rules
 
-- **`#[inline]`** on primitive field accessors — the mechanism behind the Q5
-  "not slower than transmute" promise (lets LLVM elide the LE `bswap` and dead field
-  reads). `#[inline]` broadly; `#[inline(always)]` only on the hottest one-liners.
+- **Inlining is measured, not ceremonial.** Use `#[inline]` where cross-crate
+  inlining is needed. Keep `#[inline(always)]` only while assembly inspection
+  and repeatable benchmarks show that the forced inline improves a maintained
+  hot path without harmful code-size or instruction-cache effects. It is not a
+  permanent generated-code rule.
 - **Hand-roll the `Error` impl** in the inline runtime (~15 lines) — no `thiserror`/`miette`
   in generated code, to keep the zero-dep story. The *generator* crate itself uses both:
   `thiserror` for `Error`/`Display` and `miette` for span-rich diagnostics (the parser's
@@ -501,6 +548,32 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
 | Specialization | Not stable, and the same behaviour can be generated concretely. |
 | Type-state for every fixed scalar | Fixed fields are offset-addressed; prove completeness at publish boundary instead. |
 | `MaybeUninit` by default | Only worth it for owned/bulk buffers after a benchmark proves zero-fill cost matters. |
+| Generic/`PhantomData` public tail states | Concrete generated stage structs are clearer and need no turbofish. |
+| Raw decoder tail cursor or arbitrary `skip_to_<later>()` | Permits out-of-order sequential-tail reads. Consume stages in wire order. |
+| Per-field unchecked variants | Bloats the API; use a trusted-input mode behind one stable public surface. |
+| Incomplete encoder `as_bytes()` | Looks like a complete message; use completion-only `as_bytes()` or an explicitly partial name. |
+
+## 10b. Performance acceptance
+
+Performance changes are measured against both the previous ErgoSBE baseline
+and Aeron. LTO and `codegen-units = 1` are benchmark/profile choices, not proof
+that generated code is intrinsically fast.
+
+For every maintained scenario:
+
+1. Run comparable, warmed-up ErgoSBE and Aeron benchmarks five times.
+2. Record Criterion confidence intervals, plus hardware, toolchain, profile,
+   command, and date.
+3. Compute the median ErgoSBE/Aeron ratio across the five comparable runs. The
+   ratio must be at most `1.00`; anything above `1.00` remains unfinished even
+   when the gap is small or within ordinary noise.
+4. Keep byte-parity and allocation-count tests passing.
+
+The maintained matrix must grow to cover zero, one, typical, and large counts
+in both groups of a sequential dual-group message such as `bids` then `asks`.
+It must include encode, full decode, early group skip, rewind, nested tails,
+and both safe and `bound-check-disabled` modes. Do not claim universal Aeron
+parity until this matrix exists and passes.
 
 ## 11. Test strategy (tests are the source of truth)
 
@@ -527,16 +600,24 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
 - **Benchmark suite** (`criterion` crate, separate `benches/` crate in the workspace).
   Baseline from step 2 (scalar-only message), extended with each vertical slice.
   Benchmarks: encode, decode, round-trip, `Display` format, `debug_wire`, and
-  `skip` — all on realistic market-data-shaped messages. Performance is value #3;
-  it must be measured from day one.
+  sequential `finish`/skip, and rewind -- all on realistic market-data-shaped
+  messages. Performance is priority 2 and must be measured from day one under
+  the acceptance rule in section 10b.
 - **HFT perf gates:** allocation-count tests assert zero allocations for decode,
   raw scalar access, group iteration, frame cursor decode, and encode into caller
   buffers. Optional instruction/cache-oriented benches can be run locally for
   release decisions, but CI always keeps the no-allocation hot path honest.
 - **Compile-fail proof suite:** type-state/proof-token guarantees need negative
-  tests, not only runtime tests. Cover out-of-order tail cursor calls, forged
-  verified frames, schema-marker mismatches, scoped callback lifetime escape,
-  missing required-field proof, and non-generated `SbeMessage` implementations.
+  tests, not only runtime tests. At minimum cover encoding `asks` before `bids`,
+  decoding `asks` before `bids`, reusing a consumed stage, advancing a parent
+  while an entry or nested tail is active, and calling complete-message
+  `as_bytes()` on an incomplete encoder. Also cover forged verified frames,
+  schema-marker mismatches, scoped callback lifetime escape, missing
+  required-field proof, and non-generated `SbeMessage` implementations.
+- **Ordered-tail runtime suite:** cover empty, single, typical, and large dual
+  groups; early skip and rewind; acting-version and acting-block-length
+  compatibility; nested groups and variable data; zero allocation on every
+  ordered hot path; and Aeron parity for every maintained encode/decode case.
 
 ---
 
@@ -559,9 +640,9 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
 5. **`Iterator::next` returns `Option`, not `Result`.** A checked group iterator can't
    signal OOB through the trait. Validate the group's extent when the accessor is
    called (`bids() -> Result<…>`), making iteration infallible within.
-6. **Type-state needs moves; a `&mut` closure needs `&mut self`.** Incompatible — so
-   the encoder is the γ hybrid: scalars `&mut self` (statement-style), tail by-value
-   type-state. No enclosing `encode(|c| …)` closure.
+6. **Type-state needs moves.** Scalars remain `&mut self` and offset-addressed;
+   each tail component is a concrete by-value stage. Closure conveniences must
+   not hide or weaken the consuming stage contract.
 7. **Unchecked UTF-8 is not a default API.** If it ever returns, it must be an
    `unsafe fn` (zero-cost via `str::from_utf8_unchecked`), not a panicking safe
    fn, and it must remain distinct from bounds-checking. Current default:
@@ -575,10 +656,10 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
     escape hatches for hot loops that distinguish null sentinels from old acting
     versions. Do not re-add broad scalar `raw_foo()` aliases unless a concrete
     benchmark and API review justify the extra surface.
-11. **Tail order matters on decode too.** Fixed fields are position-addressed, but
-    groups/var-data are a sequential tail. Keep random-access convenience, but
-    provide a type-state cursor for users who want compile-time ordering and
-    single-pass traversal.
+11. **Tail order matters on decode too.** Fixed fields are position-addressed,
+    but groups/var-data are sequential. Concrete consuming stages are the only
+    public tail traversal path; do not retain an arbitrary random-access tail
+    escape hatch.
 12. **A verified buffer is a proof token, not a bool.** `verify(buf)?; decode(buf)?`
     throws away information. A generated verified frame/decoder state lets safe
     Rust carry the structural proof into the hot path.
@@ -635,9 +716,11 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
    `headerType`, `dimensionType`, block lengths, schema hash, field ids.
 4. Composites (value struct + per-field methods).
 5. Enums (flat enum with NullVal) and choices (newtype bitset).
-6. Groups (Iterator decode, type-state encode, tail-free fixed-entry fast path).
-7. Var-data (base bytes accessor, `as_str`, `as_decoder`, `as_message`; allocation
-   and unchecked UTF-8 helpers stay out of the default surface).
+6. Groups (concrete consuming encoder and decoder stages, entry stages,
+   zero/single/many counts, tail-free fixed-entry fast path).
+7. Var-data and nested tails (equivalent consuming entry stages; base bytes
+   accessor, `as_str`, `as_decoder`, `as_message`; allocation and unchecked
+   UTF-8 helpers stay out of the default surface).
 8. Versioning (baseline/extension cross-version tests + official fixtures).
 8b. Verified-frame proof token and checked-vs-verified decoder mode.
 9. `AnyMessage` dispatch enum + `SbeMessage` trait + typed `FrameCursor`.
@@ -645,8 +728,10 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
     frame dispatch once the core public API is stable.
 9c. `SbeMessage` associated codec types, typed `ReadBuf`/`WriteBuf` policies,
     and compile-fail proof suite for the strict API.
-10. `bound-check-disabled` feature and typed buffer policies; avoid broad
-    per-field `_unchecked` variants in the public surface.
+10. `bound-check-disabled` trusted-input mode and typed buffer policies; avoid
+    broad per-field `_unchecked` variants in the public surface.
+10b. Sequential dual-group compile-fail, runtime, allocation, and five-run
+     Aeron comparison matrix before any universal parity claim.
 11. `Display`/`Debug`, `skip`, length accessors, `as_bytes`, metadata + `meta` module.
 12. `build.rs` driver + `ergosbe-build` crate.
 13. (v1.1) annotation macro; (parked) `no_std`, serde.

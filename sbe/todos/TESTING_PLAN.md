@@ -116,12 +116,18 @@ from existing baseline_test.rs.
 - Add one compile-fail check for a deliberate boundary if existing helpers can
   express it cleanly
 
-### 1.9 ordered tail cursor (todo 130)
-- Decode a message with multiple tail elements through `tail_cursor()`
-- Verify each transition returns the next state and final `end_offset()`
-- Compile-fail: trying to read var-data before the preceding group does not
-  compile
+### 1.9 concrete ordered tail stages (todo 130 superseded shape)
+- Decode a message with `bids` followed by `asks` through concrete consuming
+  stages
+- Verify only the next component method exists and the complete stage reports
+  the final extent
+- Compile-fail: encode or decode `asks` before `bids`
+- Compile-fail: reuse a consumed stage
+- Compile-fail: advance a parent while an entry or nested tail is active
+- Compile-fail: call complete-message `as_bytes()` on an incomplete encoder
 - Repeat inside a group entry with entry-level var-data or nested groups
+- Runtime: empty, single, typical, and large dual groups; early skip and rewind;
+  acting version/block length; nested tails; zero allocation
 
 ### 1.10 verified frame proof and mode-typed decoders (todo 131)
 - Verify a valid externally framed message into `VerifiedFrame<'_, Car>`
@@ -266,7 +272,7 @@ from existing baseline_test.rs.
 | 7 | 1.6 composite test | After 1.5 | Parser composite parity |
 | 8 | 1.7 bounds check test | After 1.6 | None |
 | 9 | 1.8 public API contract | After 1.4 | Generated API stable enough |
-| 10 | 1.9 ordered tail cursor | After parser order validation | Tail API design |
+| 10 | 1.9 concrete ordered tail stages | After parser order validation | Tail API design |
 | 11 | 1.10 verified frame proof | After 69 + 1.9 | Verifier + tail extents |
 | 12 | 1.11 required-field proof | After 1.8 | Encoder API stable enough |
 | 13 | 1.12 scoped callbacks | After 1.10 | Dispatch API + lifetimes |

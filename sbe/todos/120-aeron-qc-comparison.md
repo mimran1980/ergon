@@ -1,5 +1,10 @@
 # Aeron-vs-ErgoSBE quality control — compare and copy what's better
 
+> **Acceptance rule revised 2026-07-10:** historical thresholds below are
+> preserved, but "within 10%" no longer passes. Each maintained scenario needs
+> five comparable runs and a median ErgoSBE/Aeron ratio at most `1.00` under the
+> canonical benchmark rule.
+
 **Ref:** user request. Aeron Rust SBE is the reference implementation.
 
 **Status: DONE (Phase 2 gate close)**

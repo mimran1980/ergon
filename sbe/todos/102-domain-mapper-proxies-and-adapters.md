@@ -33,9 +33,9 @@ The Aeron Premium **SBE Domain Mapper** solves this by generating **Adapters** (
    - Prefer a scoped/HRTB adapter variant (`for<'a>`) so decoded flyweight views
      cannot escape the callback lifetime or be stored in long-lived handler
      state by accident.
-   - For messages with ordered tails, offer an adapter mode that receives a
-     type-state tail cursor or consumes it internally so handler code cannot
-     accidentally read groups/var-data out of schema order.
+   - For messages with ordered tails, pass the initial concrete decoder stage
+     or consume the concrete stages internally so handler code cannot read
+     groups/var-data out of schema order.
 
 2. **Proxy Generation (Event Encoder):**
    - Generate a `SchemaProxy<W: SbeWriter>` struct that encapsulates message writing:
@@ -58,7 +58,7 @@ The Aeron Premium **SBE Domain Mapper** solves this by generating **Adapters** (
 - [x] Generator emits a `dispatch_message` function that parses message headers and multiplexes to the adapter callbacks
 - [x] Generator emits a `SchemaProxy` struct supporting high-level message writing methods
 - [x] Proxy methods enforce correct SBE field, group, and var-data writing order by construction
-- [x] Adapter/cursor path enforces correct SBE group and var-data read order by
+- [x] Adapter/concrete-stage path enforces correct SBE group and var-data read order by
       construction for messages with tails
 - [x] Scoped adapter path uses HRTB lifetimes so decoded views cannot outlive the
       input frame
@@ -73,5 +73,5 @@ The Aeron Premium **SBE Domain Mapper** solves this by generating **Adapters** (
 - [x] Compile-fail test proves a callback cannot store a borrowed decoder beyond
       the callback scope.
 
-Refs: todo 130 ordered tail cursor, todo 132 required-field proxy proof, and
+Refs: todo 130 historical ordered-tail work, todo 132 required-field proxy proof, and
 todo 133 scoped feed callbacks.

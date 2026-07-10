@@ -74,7 +74,7 @@ existing helper cannot express compile-fail checks without too much machinery.
       as non-SBE types not satisfying `SbeMessage`
 - [x] Compile-fail checks cover at least one proof boundary when implemented:
       direct `VerifiedFrame` construction, wrong schema marker, or out-of-order
-      tail cursor call
+      out-of-order concrete tail-stage call
 - [x] Full compile-fail coverage is delegated to todo 137 once strict APIs land
 - [x] Migration guide and generated API docs use the prelude in first examples
 - [x] Golden source output remains stable after adding the prelude

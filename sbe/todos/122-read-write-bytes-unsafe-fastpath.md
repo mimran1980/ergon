@@ -1,5 +1,10 @@
 # Replace read_bytes/write_bytes const helpers with Aeron-style slice reads
 
+> **Superseded annotation policy (2026-07-10):** this completed optimisation
+> record preserves the `#[inline(always)]` choice that was measured at the time.
+> It is not a permanent requirement; re-audit forced inlining against assembly
+> and maintained benchmarks whenever the surrounding generated path changes.
+
 **Ref:** user request. The current `read_bytes::<N>`/`write_bytes::<N>` helpers
 use `while i < N` loops internally. Aeron does NOT — it uses direct slice
 indexing: `slice[index..index+N].try_into().expect("...")`.

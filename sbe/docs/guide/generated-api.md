@@ -168,7 +168,6 @@ For a `price` field (`int64`, `sinceVersion=0`, required) -- **infallible**:
 
 ```rust
 pub fn price(&self) -> i64;
-pub const unsafe fn price_unchecked(&self) -> i64;  // no bounds check
 ```
 
 For a required field with `sinceVersion=0` -- the accessor is always a plain
@@ -178,7 +177,6 @@ For a `sinceVersion > 0` field (`uint32`, `sinceVersion=1`, required):
 
 ```rust
 pub fn new_field(&self) -> Option<u32>;               // None if version below sinceVersion
-pub const unsafe fn new_field_unchecked(&self) -> u32; // raw wire value
 pub fn raw_new_field(&self) -> Option<u32>;            // no checked fallback
 ```
 
@@ -189,7 +187,6 @@ For an optional field (`int64`, `presence="optional"`):
 
 ```rust
 pub fn pegged_price(&self) -> Option<i64>;             // None if null sentinel or absent by version
-pub unsafe fn pegged_price_unchecked(&self) -> i64;    // raw wire value, no null mapping
 pub fn raw_pegged_price(&self) -> Option<i64>;         // None if absent by version, not null-sentinel
 ```
 
@@ -202,17 +199,17 @@ For a constant field:
 pub fn message_type(&self) -> &'static str;  // or typed value
 ```
 
-For a fixed-size array (`int32[3]`) -- may be version-gated:
+For a required version-zero fixed-size array (`int32[3]`):
 
 ```rust
-pub fn some_numbers(&self) -> Result<[i32; 3], sbe_rt::DecodeError>;
-pub unsafe fn some_numbers_unchecked(&self) -> [i32; 3];
-pub fn raw_some_numbers(&self) -> [i32; 3];
+pub fn some_numbers(&self) -> [i32; 3];
 ```
 
-Fixed arrays return `Result` when version-gated (they can be conditionally
-absent), or can be plain values when always present. Runtime array reads should
-prefer slice/byte-copy fast paths over const-only byte loops.
+Version-gated or optional arrays use `Option<[T; N]>` as required by the same
+acting-version/null rules as scalars. Runtime array reads use slice/byte-copy
+fast paths rather than const-only byte loops. The default public surface does
+not generate a per-field unchecked variant; trusted-input mode changes
+internals without changing accessor names.
 
 Every field also exposes compile-time constants:
 
@@ -222,27 +219,36 @@ pub const PRICE_MIN: i64 = i64::MIN + 1;
 pub const PRICE_MAX: i64 = i64::MAX - 1;
 ```
 
-### Group access
+### Ordered group and var-data access
+
+Tail components are available only through concrete consuming stages. For an
+order book whose schema contains `bids` followed by `asks`:
 
 ```rust
-pub fn orders(&self) -> Result<OrdersDecoder<'a>, sbe_rt::DecodeError>;
+OrderBookDecoder
+  -> BidsDecoder
+  -> OrderBookAfterBids
+  -> AsksDecoder
+  -> OrderBookComplete
 ```
 
-The group decoder implements `Iterator` and `ExactSizeIterator`:
+`asks()` exists only on `OrderBookAfterBids`. Starting `bids` consumes the
+initial decoder. An active bid entry owns the transition back to `BidsDecoder`,
+so the group cannot advance while that entry or a nested tail is active.
 
-```rust
-let orders = quote.orders()?;
-for order in orders {
-    let id = order.order_id();    // infallible
-    let qty = order.order_qty();  // infallible
-}
-```
+`BidsDecoder::finish(self)` advances over unread entries in wire order.
+`skip_remaining(self)` may be provided as the explicit skip spelling. Either
+returns `OrderBookAfterBids`. `rewind(self)` consumes any current stage and
+returns a fresh `OrderBookDecoder`.
 
-Group entry accessors follow the same patterns as messages: scalar/enum/set
-accessors are infallible, groups and var-data return `Result`, unchecked
-methods exist as `unsafe fn`.
+Fixed-block scalar, enum, set, composite, and array accessors remain available
+through a zero-cost body view and do not advance tail state. Compile-time types
+enforce component order; group counts remain runtime values validated from the
+wire dimension header.
 
-### Var-data access
+Nested groups and var-data use equivalent concrete entry stages. A var-data
+stage exposes borrowed bytes and, when character encoding is declared, a
+checked string view:
 
 ```rust
 pub fn description(&self) -> Result<&'a [u8], sbe_rt::DecodeError>;
@@ -267,28 +273,26 @@ let bytes = encoder.as_ref();  // &[u8]
 
 ### Messages with tail (groups and/or var-data)
 
-Encoders use type-state to enforce tail ordering at compile time:
+Encoders use concrete consuming stages to enforce tail ordering at compile
+time. For the same order-book schema:
 
 ```rust
-// State: NeedsOrders
-let encoder = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?;
-
-// Transition: NeedsOrders -> NeedsDescription
-let encoder = encoder.orders(2, |group| {
-    group.add(|entry| { entry.order_id(1).order_qty(100); })?;
-    group.add(|entry| { entry.order_id(2).order_qty(200); })?;
-    Ok(())
-})?;
-
-// Transition: NeedsDescription -> Complete
-let encoder = encoder.description(b"Free text")?;
-
-// Complete state exposes as_bytes()
-let bytes = encoder.as_bytes();
+OrderBookEncoder
+  -> BidsEncoder
+  -> OrderBookAfterBids
+  -> AsksEncoder
+  -> OrderBookComplete
 ```
 
-The `add` method on group encoders returns `Result<(), EncodeError>`. Entry
-setters return `&mut Self` for chaining.
+Starting a group consumes the previous stage. Completing or explicitly writing
+an empty/skipped group consumes the group stage and returns the next message
+stage. An active entry prevents its parent group from advancing. Nested groups
+and var-data use the same ownership pattern.
+
+`encoded_length()`, complete-message `as_bytes()`, and `AsRef<[u8]>` exist only
+on `OrderBookComplete`. Incomplete stages do not expose `as_bytes()`; if a
+partial view is generated for a measured need, it is named `written_prefix()`
+or `partial_bytes()`.
 
 ## AnyMessage dispatch
 

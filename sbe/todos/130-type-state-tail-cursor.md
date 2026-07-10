@@ -1,5 +1,12 @@
 # Type-state tail cursor for ordered decode
 
+> **Superseded API shape (2026-07-10):** ordered decode is no longer an optional
+> generic `TailCursor` beside random-access tail convenience methods. Generate
+> concrete consuming decoder stages (`OrderBookDecoder -> BidsDecoder ->
+> OrderBookAfterBids -> AsksDecoder -> OrderBookComplete`) as the only public
+> tail traversal path. The original problem statement and completion record
+> below are preserved as history.
+
 **Blocked by:** 125, 126, group/var-data wire parity
 **Severity:** HIGH
 **Status: DONE (Phase 2 gate close)**

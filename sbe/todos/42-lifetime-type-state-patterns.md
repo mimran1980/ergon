@@ -3,6 +3,13 @@ only when they simplify the public interface or prove safety without widening
 generated code unnecessarily. Use `144-stable-rust-advantage-roadmap.md` as the
 priority list and `137-compile-fail-api-proof-suite.md` as the proof gate.
 
+> **Superseded ordered-tail design (2026-07-10):** the const-generic,
+> `TailCursor<State>`, closure, and retained random-access tail sketches below
+> are preserved as historical exploration. The canonical API now generates
+> concrete consuming encoder and decoder stages, with no public state generic,
+> `PhantomData`, turbofish, or out-of-order tail convenience path. See
+> `design/DECISIONS.md`.
+
 ---
 
 # Lifetime and type-state patterns for safety and ergonomics

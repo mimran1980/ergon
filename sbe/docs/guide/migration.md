@@ -24,14 +24,14 @@ and `<data>` type system.
 | Enum access | `decoder.side()` returns `u8` | `decoder.code()` returns flat `Model` enum (infallible); `NullVal` catches unknown wire values |
 | Set (bitset) access | `decoder.flags()` returns raw int | `decoder.extras()` returns `OptionalExtras` (infallible); `extras.sun_roof()` returns `bool` |
 | Optional/version-gated | Manual version check + null sentinel check | `decoder.optional_field()` returns `Option<T>` (infallible) |
-| Group iteration | Manual loop over count | `ExactSizeIterator` via `decoder.group()?` |
+| Ordered groups/var-data | Manual mutable limit | Concrete consuming stages in schema order |
 | Var-data | `decoder.get_foo(bytes, dst)` writes to buffer | `decoder.foo()?` returns `&'a [u8]`; `decoder.foo_as_str()?` returns `&'a str` |
 | Encoder construction | `encoder.wrap(buffer, offset, blockLength, version)` | `CarEncoder::wrap_and_apply_header(&mut buf, pos)?` |
 | Scalar setters | Setter returns nothing | `encoder.field(val)` returns `&mut Self` for chaining |
-| Tail fields (groups, var-data) | Manual offset management | Type-state: each tail field is a by-value method that returns the next state |
+| Tail fields (groups, var-data) | Manual offset management | Concrete by-value stages; later components do not exist on earlier stages |
 | Error handling | Panics on buffer overflow, silent defaults | `Result<T, DecodeError/EncodeError>` throughout |
 | Build integration | External `sbe-tool` Java process | `build.rs` calling `ergosbe::Generator::generate()` |
-| `unsafe` | Required for all field access | Safe by default; `_unchecked()` methods opt in |
+| Trusted input | Raw indexing is caller-managed | Safe by default; one explicit trusted-input mode keeps accessor names stable |
 
 ## Decoder: before and after
 
@@ -82,23 +82,23 @@ if let Some(val) = available {
     println!("Available: {}", val);
 }
 
-// Groups still return Result (header bounds check)
-let figures = car.fuel_figures()?;          // Result<FuelFiguresDecoder>
-for entry in figures {                      // iteration is infallible
-    println!("speed: {}", entry.speed());   // u16 -- infallible
-}
-
-// Var-data returns Result<&'a [u8]> or Result<&'a str>
-let manufacturer = car.manufacturer_as_str()?;  // Result<&str>
+// Tail groups/var-data are traversed through concrete consuming stages.
+let fuel = car.fuel_figures()?;               // consumes CarDecoder
+let after_fuel = fuel.finish()?;               // skips unread entries in wire order
+let performance = after_fuel.performance_figures()?;
+let _after_performance = performance.finish()?;
 ```
 
 Key differences:
 - Scalar, enum, set, and composite field accessors are **infallible** -- no `?`, no `unwrap`.
 - Enums are flat Rust `enum`s with a `NullVal` variant for unknown wire values (no separate `Kind` type).
 - Optional and version-gated fields return `Option<T>` directly (infallible).
-- Groups implement `Iterator` and `ExactSizeIterator` -- no manual count management.
+- Concrete group/var-data stages enforce schema order. Runtime group counts are
+  still read and validated from the wire.
 - Var-data accessors return borrowed slices (`&'a [u8]` / `&'a str`)
   instead of writing into a caller-provided buffer.
+- Fixed-block fields remain random-access through a zero-cost body view and do
+  not advance the tail stage.
 
 ## Encoder: before and after
 
@@ -131,40 +131,34 @@ car.fuelFiguresLength = FuelFiguresEncoder::encodedLength();
 ### ErgoSBE style
 
 ```rust
-// ErgoSBE -- fluent, type-state enforced ordering
+// ErgoSBE -- fluent fixed fields, concrete ordered-tail stages
 let mut buf = vec![0u8; 512];
-let mut encoder = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
+let mut encoder = OrderBookEncoder::wrap_and_apply_header(&mut buf, 0)?;
 
 encoder
-    .serial_number(1234)
-    .model_year(2013)
-    .available(BooleanType::T)
-    .code(Model::A)
-    .some_numbers([1, 2, 3, 4])
-    .vehicle_code([b'a', b'b', b'c', b'd', b'e', b'f']);
+    .instrument_id(1234)
+    .sequence_number(42);
 
-// Tail fields (groups, var-data) are type-state: each method
-// consumes the encoder and returns a new state.
-let encoder = encoder.fuel_figures(1, |g| {
-    g.add(|e| { e.speed(30).mpg(35.9); })?;
-    Ok(())
-})?;
+let bids = encoder.bids(1)?;             // consumes OrderBookEncoder
+let entry = bids.next_entry()?;          // parent cannot advance now
+let bids = entry.price(100).quantity(10).finish()?;
+let after_bids = bids.finish()?;          // OrderBookAfterBids
+let asks = after_bids.asks(0)?;           // only legal after bids
+let complete = asks.finish()?;            // OrderBookComplete
 
-let encoder = encoder.manufacturer(b"Honda")?;
-let encoded = encoder.activation_code(b"abcdef")?;
-
-let bytes: &[u8] = encoded.as_bytes();  // &[u8]
+let bytes: &[u8] = complete.as_bytes();
 ```
 
 Key differences:
 - Scalar setters chain via `&mut Self` return.
-- **Type-state tail ordering**: the encoder transitions through phantom
-  states (`NeedsFuelFigures` -> `NeedsPerformanceFigures` -> ... ->
-  `Complete`). The compiler rejects tail fields in the wrong order.
-- Groups use a closure-based `add()` pattern -- entry encoding is
-  scoped within the closure, eliminating offset management.
+- **Concrete-stage tail ordering**: `OrderBookEncoder -> BidsEncoder ->
+  OrderBookAfterBids -> AsksEncoder -> OrderBookComplete`. No generics,
+  `PhantomData`, or turbofish are needed.
+- Starting a group consumes the previous stage. An active entry prevents its
+  parent group from advancing, including through nested groups or var-data.
 - After all tail fields are written, `as_bytes()` on the `Complete`
   state returns the encoded region.
+- Incomplete stages do not expose a complete-looking `as_bytes()` method.
 - Encoder setters write the SBE header automatically via
   `wrap_and_apply_header` -- no manual header assembly.
 
@@ -330,28 +324,16 @@ Benefits:
 
 ## Performance
 
-ErgoSBE is designed for low-latency trading. Benchmarks use `criterion` on a
-Car message (~125 bytes) from the baseline SBE example schema.
+Performance conclusions are benchmark-specific. Record the schema/scenario,
+hardware, toolchain, profile, date, five warmed-up comparable runs, medians,
+ErgoSBE/Aeron ratio, and Criterion confidence intervals. A maintained scenario
+passes only when the median ratio is at most `1.00`.
 
-### Decode throughput (10,000 messages, ~1.25 MB)
-
-| Variant | Relative speed | Notes |
-|---------|---------------|-------|
-| Checked `Result` accessor | baseline | Returns `Result`, every field bounds-checked |
-| `raw_` / `_unchecked` | ~1.5-2x faster | No null-sentinel mapping, no bounds checks |
-| Hand-written unsafe raw | ~3-5x faster | Pointer arithmetic, no struct allocation |
-
-The checked path is fast enough that most applications should use it.
-For HFT hot loops, `raw_` accessors skip null-sentinel branches while
-still checking buffer bounds. The truly hot path can use `_unchecked()`
-methods (unsafe).
-
-### Decode latency (single message)
-
-- `CarDecoder::try_from()`: low single-digit microseconds
-- `serial_number()` checked: ~5-15 ns
-- `serial_number()` raw: ~2-5 ns
-- Group iteration (`fuelFigures`): comparable to manual offset loop
+Profile settings such as LTO and `codegen-units = 1` are comparison choices,
+not proof of intrinsic generated-code speed. Universal Aeron parity is not
+claimed until the maintained matrix includes sequential dual-group messages
+with zero, one, typical, and large `bids` and `asks` counts, plus encode, full
+decode, early skip, rewind, nested tails, and safe/trusted-input modes.
 
 ### Key performance properties
 
@@ -370,9 +352,9 @@ methods (unsafe).
 
 | Feature | Upstream | ErgoSBE |
 |---------|----------|---------|
-| Bounds checking | None (raw indexing) | Checked `Result` by default |
+| Bounds checking | None (raw indexing) | Checked trust boundary by default |
 | `unsafe` | Required for all field reads | None in default accessors |
-| `_unchecked()` methods | N/A | `unsafe fn` -- opt-in per field |
+| Trusted-input mode | Caller-managed | Explicit whole-path opt-in; stable accessor names |
 | Null-sentinel mapping | Manual | Automatic in checked accessors |
 | Version gating | Manual `if acting_version >= N` | Automatic: returns `Option` or `Ok(default)` |
 
@@ -381,11 +363,14 @@ methods (unsafe).
 1. **No `Default` on decoders.** ErgoSBE decoders borrow the buffer; they
    have no sensible default. Use `wrap_and_apply_header()` or `try_from()`.
 
-2. **Encoder consumes self on tail fields.** To write groups/var-data, you
-   must consume the encoder and capture the returned next state:
+2. **Encoder consumes concrete stages on tail fields.** To write groups/var-data,
+   capture the returned next stage. There is no arbitrary jump to a later tail
+   component, and a parent cannot advance while an entry is active:
 
    ```rust
-   let encoder = encoder.fuel_figures(1, |g| { /* ... */ })?;  // note: let encoder =
+   let bids = encoder.bids(1)?;
+   let after_bids = bids.finish()?;
+   let asks = after_bids.asks(0)?;
    ```
 
 3. **Enum is flat with `NullVal`.** Access `Model::A` directly.
@@ -395,20 +380,22 @@ methods (unsafe).
 4. **Var-data returns `&'a [u8]`, not a copy.** The decoder borrows the
    original buffer. Don't drop the buffer before processing var-data.
 
-5. **Entry field accessors are infallible for scalars/enums/sets/composites.**
-   `Iterator::next` returns `Option<Entry>`, and within each entry,
-   scalar, enum, set, and composite field accessors return `T`
-   (no `?`, no `unwrap`). Groups and var-data within entries still
-   return `Result`.
+5. **Entry field accessors are infallible for fixed fields.** Nested groups and
+   var-data transition through concrete entry stages. Finish or explicitly skip
+   them before returning to the parent group.
 
-6. **`encoded_length()` propagates errors.** Unlike the upstream (which
-   returns 0 on error), ErgoSBE returns `Result<usize, DecodeError>`.
+6. **Complete-message encoder length is completion-only.** `encoded_length()`
+   and `as_bytes()` are available on the complete encoder stage, not on an
+   incomplete message.
 
-7. **`Display` uses checked accessors.** The generated `Display` impl
+7. **Decoder rewind consumes the current stage.** Capture the fresh initial
+   decoder returned by `rewind()`; the previous stage has moved.
+
+8. **`Display` uses checked accessors.** The generated `Display` impl
    calls `foo()?` style accessors and silently omits fields that error
    rather than panicking.
 
-8. **No `TryFrom<&[u8]>` on encoders.** Encoders need `&mut [u8]`;
+9. **No `TryFrom<&[u8]>` on encoders.** Encoders need `&mut [u8]`;
    use `Encoder::wrap_and_apply_header(&mut buf, pos)?` directly.
 
 ## Related documentation

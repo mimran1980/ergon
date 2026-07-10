@@ -51,8 +51,8 @@ borrowed decoder view beyond the callback.
       in long-lived handler state does not compile
 - [x] Runtime test dispatches multiple frames through a handler and verifies
       callback order and decoded values
-- [x] Adapter path can select the ordered `TailCursor` mode for messages with
-      groups/var-data
+- [x] Adapter path can accept or drive the initial concrete decoder stage for
+      messages with groups/var-data
 - [x] Unknown-template handling works only when the selected frame policy
       supplies frame length
 - [x] Zero allocation in dispatch hot path

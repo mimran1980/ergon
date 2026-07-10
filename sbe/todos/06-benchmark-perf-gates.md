@@ -1,5 +1,11 @@
 # Benchmark + perf gate scaffold
 
+> **Historical result, qualified 2026-07-10:** the 2026-07-09 completion record
+> applies only to the then-maintained benchmark set. It does not establish
+> universal Aeron parity. The gate is reopened by the sequential dual-group
+> matrix and five-run median-ratio rule in `design/DECISIONS.md` and
+> `ergosbe-performance-optimisation-goal.md`.
+
 **Blocked by:** `01-scalar-wire-parity`
 
 Criterion benchmarks for encode, decode, round-trip, `Display`, `debug_wire`,

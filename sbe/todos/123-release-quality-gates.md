@@ -1,11 +1,18 @@
 # Release quality gates before moving to persist or samples
 
+> **Historical release result, scope corrected 2026-07-10:** the dated green
+> gates below remain evidence for that worktree and benchmark set. They do not
+> prove universal Aeron parity or the new concrete sequential decoder API. The
+> release gate is incomplete until the ordered dual-group compile-fail/runtime,
+> allocation, versioning, and five-run Aeron matrix in the canonical decisions
+> passes.
+
 **Blocked by:** 122, 105, 120, 125, 126, generated-code stability
 **Severity:** HIGH
 **Status: DONE (2026-07-09)** — all AC met: every gate command passes, parser parity confirmed (100+ schemas), API contract tested, stable Rust roadmap scoped, all claims backed by evidence.
 
-**Coordination:** `154-todo-coherence-and-priority-map.md` is the tie-breaker
-when older todos conflict with this release gate.
+**Coordination:** `design/DECISIONS.md` is the canonical tie-breaker. Todo 154 is
+a historical coordination map only.
 
 
 ## Problem

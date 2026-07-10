@@ -1,5 +1,9 @@
 # Typed ReadBuf/WriteBuf mode and endian policy
 
+> **Historical inline choice, qualified 2026-07-10:** the completed design
+> sketch preserves its original `#[inline(always)]`, but forced inlining now
+> requires current assembly and benchmark evidence.
+
 **Blocked by:** `119-readbuf-writebuf-abstraction`, `121-endianness-full-type-matrix`, `122-read-write-bytes-unsafe-fastpath`
 **Severity:** HIGH
 **Status: DONE (Phase 2 gate close)**

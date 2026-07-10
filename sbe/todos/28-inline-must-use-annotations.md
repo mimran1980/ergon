@@ -1,5 +1,9 @@
 # Add `#[inline]` and `#[must_use]` annotations to generated code
 
+> **Superseded policy note (2026-07-10):** the completed annotation audit below
+> is historical. `#[inline(always)]` is not a permanent generated-code rule;
+> retain it only while assembly and maintained benchmarks demonstrate a win.
+
 **Blocked by:** `01-scalar-wire-parity`
 
 Two missing annotations that matter for correctness and performance:

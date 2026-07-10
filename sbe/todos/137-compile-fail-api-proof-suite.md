@@ -1,5 +1,11 @@
 # Compile-fail API proof suite
 
+> **Coverage extended 2026-07-10:** the historical completed suite below is no
+> longer sufficient. The current gate must also reject encoding `asks` before
+> `bids`, decoding `asks` before `bids`, reusing a consumed stage, advancing a
+> parent while an entry/nested tail is active, and calling complete-message
+> `as_bytes()` on an incomplete encoder.
+
 **Blocked by:** `129-generated-prelude-and-public-api-contract`
 **Severity:** HIGH
 **Status: DONE (Phase 2 gate close)**
@@ -25,7 +31,7 @@ Required negative cases:
 
 - non-generated type cannot implement/satisfy sealed `SbeMessage`
 - `VerifiedFrame` / `Verified` decoder mode cannot be constructed by user code
-- tail cursor cannot read group/var-data out of schema order
+- concrete decoder stages cannot read group/var-data out of schema order
 - strict encoder/proxy cannot publish without required-field proof
 - scoped callback cannot store `Decoder<'a>` / `DecodedFrame<'a, _>` beyond the
   callback lifetime

@@ -1,5 +1,9 @@
 # 139 — API Simplicity Audit: ErgoSBE vs Aeron (Car Example)
 
+> **Ordered-decoder correction (2026-07-10):** historical claims below that the
+> message decoder itself is `Copy` are superseded. Concrete tail stages consume
+> themselves; a fixed-block body view can remain a small `Copy` flyweight.
+
 **Status:** Verified — user-facing API IS simpler than Aeron's despite larger golden file
 **Scope:** Golden file `car_example.rs` (3311 lines) vs Aeron `aeron_car.rs` (2627 lines)
 **Schema:** `baseline` id=1 version=0, Car template
@@ -351,7 +355,11 @@ off (zero generated impls). This is already hinted in DECISIONS.md as an opt-in.
 **Saves:** ~50-150 lines per schema. Car example: ~100 lines.
 
 **Acceptance criteria:**
-- [x] `Display` impls generated only with `"display"` feature — WONT DO (ponytail). Display impls are dead-code-eliminable by LTO when unused. Adding a Cargo feature or config flag for ~100 lines of generated debug output adds complexity with no runtime benefit. The `Display` impls are useful for debugging and cost zero when not called.
+- [x] `Display` impls generated only with `"display"` feature -- WONT DO
+      (historical decision). Optimised profiles can eliminate unused display
+      code, but LTO is not proof of intrinsic generated hot-path speed. The API
+      decision was to avoid a feature/config split for useful debugging output;
+      any hot-path claim still requires measurement.
 - [x] Default: no `Display` impls — N/A (see above)
 - [x] All tests pass with default and with `"display"` feature — N/A (see above)
 

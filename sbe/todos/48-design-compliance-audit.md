@@ -29,6 +29,12 @@ tie-breakers.
 - Generated formatting is handled by `prettyplease`; do not add a `rustfmt`
   subprocess from this audit.
 
+**Further supersession (2026-07-10):** this audit's `Copy` decoder, phantom
+tail state, broad unchecked accessor, optional cursor, and forced-inline
+findings are historical. Ordered decoder stages now consume themselves;
+fixed-block body views may remain `Copy`. Concrete stages and measured inlining
+in the current `design/DECISIONS.md` control.
+
 
 ## §1 Type model
 

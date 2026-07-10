@@ -1,5 +1,11 @@
 # Generated SBE codecs for benchmarking
 
+> Historical benchmark record, superseded 2026-07-10. Do not revive this
+> checked-in/hand-patched benchmark path. Maintained comparisons generate
+> ErgoSBE codecs on the fly in `ergosbe-benchmarks` and follow the five-run
+> acceptance rule in `sbe/design/DECISIONS.md`. The table and bootstrap notes
+> below are preserved only to explain the old fixture provenance.
+
 | File | Origin | Description |
 |------|--------|-------------|
 | `car_patched.rs` | ErgoSBE codegen | Patched (hand-fixed) to compile. Used as golden reference. |

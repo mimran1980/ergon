@@ -1,5 +1,11 @@
 # Group skip, indexed access, and rewind
 
+> **Superseded message-tail API (2026-07-10):** preserve the group-local
+> indexing measurements below, but remove message-level `skip_all()`, direct
+> jumps to later groups, reusable rewind-in-place, and unchecked skip families
+> from the current public design. `finish(self)` / `skip_remaining(self)` move
+> one component at a time, and `rewind(self)` returns a fresh initial decoder.
+
 **Blocked by:** `03-group-vardata-wire-parity`
 
 Groups in the SBE tail are sequential. To reach the third group you must step
