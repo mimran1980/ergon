@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="enumenc"
+    id="78"
+    version="0"
+    description="Enums over every integer encoding type (covers max_encoding_value arms)"
+    byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="SBE message header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <enum name="EInt8" encodingType="int8"><validValue name="A">1</validValue></enum>
+        <enum name="EUInt8" encodingType="uint8"><validValue name="A">1</validValue></enum>
+        <enum name="EInt16" encodingType="int16"><validValue name="A">1</validValue></enum>
+        <enum name="EUInt16" encodingType="uint16"><validValue name="A">1</validValue></enum>
+        <enum name="EInt32" encodingType="int32"><validValue name="A">1</validValue></enum>
+        <enum name="EUInt32" encodingType="uint32"><validValue name="A">1</validValue></enum>
+        <enum name="EInt64" encodingType="int64"><validValue name="A">1</validValue></enum>
+        <enum name="EUInt64" encodingType="uint64"><validValue name="A">1</validValue></enum>
+    </types>
+
+    <sbe:message name="M" id="1" description="message referencing every enum encoding">
+        <field name="a" id="1" type="EInt8"/>
+        <field name="b" id="2" type="EUInt8"/>
+        <field name="c" id="3" type="EInt16"/>
+        <field name="d" id="4" type="EUInt16"/>
+        <field name="e" id="5" type="EInt32"/>
+        <field name="f" id="6" type="EUInt32"/>
+        <field name="g" id="7" type="EInt64"/>
+        <field name="h" id="8" type="EUInt64"/>
+    </sbe:message>
+</sbe:messageSchema>

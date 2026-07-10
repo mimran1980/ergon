@@ -565,23 +565,6 @@ fn field_const_value_expr(val: u64, prim: PrimitiveType) -> String {
     }
 }
 
-/// Return the maximum value the encoding type can represent.
-/// Used for enum NULL consts (SBE convention: null = encodingType.maxValue()).
-fn max_encoding_value(prim: PrimitiveType) -> u64 {
-    match prim {
-        PrimitiveType::Char | PrimitiveType::UInt8 => 255,
-        PrimitiveType::UInt16 => 65535,
-        PrimitiveType::UInt32 => 4_294_967_295,
-        PrimitiveType::UInt64 => 18_446_744_073_709_551_615,
-        PrimitiveType::Int8 => 127,
-        PrimitiveType::Int16 => 32767,
-        PrimitiveType::Int32 => 2_147_483_647,
-        PrimitiveType::Int64 => 9_223_372_036_854_775_807,
-        PrimitiveType::Float => 0x7F80_0001,
-        PrimitiveType::Double => 0x7FF8_0000_0000_0001,
-    }
-}
-
 /// Emit `*_NULL`, `*_MIN`, `*_MAX` compile-time constants for a message field.
 fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
     let upper_name = to_upper_snake_case(&f.name);

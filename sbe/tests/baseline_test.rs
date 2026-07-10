@@ -156,6 +156,18 @@ fn generate_versioned_set_enum_composite_fields() {
     syn::parse_file(&src).expect("extension-schema generates valid Rust");
 }
 
+#[test]
+fn generate_enums_over_every_integer_encoding_type() {
+    // enum-encoding-types.xml has one enum per int/uint encoding type. Generating
+    // it exercises max_encoding_value for every integer primitive (the enum NULL
+    // const = encodingType.maxValue()) and the enum codegen for each width.
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/enum-encoding-types.xml");
+    let (_s, src) = generate(&path, "enum_enc");
+    syn::parse_file(&src).expect("enum-encoding-types generates valid Rust");
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
