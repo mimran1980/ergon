@@ -1634,6 +1634,37 @@ mod tests {
         assert!(parse(xml).is_err(), "duplicate set choice bit must error");
     }
 
+    #[test]
+    fn parse_invalid_byte_order_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="sideways">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "invalid byteOrder must error");
+    }
+
+    #[test]
+    fn parse_invalid_presence_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <message name="M" id="1"><field name="f" id="1" type="uint32" presence="bogus"/></message>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "invalid presence must error");
+    }
+
+    #[test]
+    fn parse_invalid_primitive_type_is_error() {
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <type name="bad" primitiveType="notatype"/>
+  </types>
+</messageSchema>"#;
+        assert!(parse(xml).is_err(), "invalid primitiveType must error");
+    }
+
     const MINIMAL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="example.sbe" id="1" version="0" byteOrder="littleEndian"
                description="minimal test schema">
