@@ -238,6 +238,18 @@ fn generate_custom_header_type_schema() {
     );
 }
 
+#[test]
+fn generate_constant_value_schema() {
+    // constant-value-types.xml has message fields of presence="constant" with
+    // float, double, and int64 types. Generating it covers the constant_value_expr
+    // formatting branches (f32/f64/i64 format strings, 537/541/544).
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/constant-value-types.xml");
+    let (_s, src) = generate(&path, "const_vals");
+    syn::parse_file(&src).expect("constant-value-types generates valid Rust");
+}
+
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
