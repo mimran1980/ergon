@@ -251,6 +251,16 @@ fn generate_constant_value_schema() {
 }
 
 #[test]
+fn generate_constant_set_field() {
+    // constant-set-field.xml has a SET field with presence="constant".
+    use std::path::PathBuf;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas/constant-set-field.xml");
+    let (_s, src) = generate(&path, "const_set");
+    syn::parse_file(&src).expect("constant-set-field generates valid Rust");
+}
+
+#[test]
 fn generate_group_entry_with_composite_enum_set_fields() {
     // group-entry-field-types.xml has a group whose entry has fields of type
     // Composite (Inner), Enum (Colour), and Set (Flags). Covers the

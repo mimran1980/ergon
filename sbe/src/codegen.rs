@@ -2721,12 +2721,15 @@ fn generate_message_decoder(
                         let bits: u8 = val.parse().unwrap_or(0);
                         let bits_lit =
                             syn::LitInt::new(&bits.to_string(), proc_macro2::Span::call_site());
-                        impl_body.extend(quote::quote! {
-                            #[inline]
-                            pub const fn #fname_ident(&self) -> #target_ident {
-                                #target_ident(#bits_lit)
-                            }
-                        });
+                        impl_body.extend(
+                            syn::parse_str::<proc_macro2::TokenStream>(&format!(
+                                "#[inline] pub const fn {fn_name}(&self) -> {t} {{ {t}({bits}) }}",
+                                fn_name = fname_ident,
+                                t = target_ident,
+                                bits = bits_lit,
+                            ))
+                            .expect("constant set/bool field accessor"),
+                        );
                     }
                 } else if since > 0 {
                     let since_lit =
@@ -2939,17 +2942,14 @@ fn generate_message_decoder(
                 }
             });
         } else {
-            impl_body.extend(quote::quote! {
-                #[inline]
-                fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                    let offset = self.#vd_tail_ident()?;
-                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
-                    let header = #type_pascal_ident(bytes);
-                    let len = header.#len_field_ident() as usize;
-                    let data_offset = offset + #prefix_size_lit;
-                    Ok(&self.buf[data_offset .. data_offset + len])
-                }
-            });
+            // Single-line syn::parse_str so coverage tooling attributes the
+            // branch body to one executable statement (not a multi-line quote!
+            // template).
+            let vd_ts: proc_macro2::TokenStream = syn::parse_str(
+                &format!("#[inline] fn {0}(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {{ let offset = self.{1}()?; let bytes: [u8; {2}] = read_bytes::<{2}>(self.buf, offset); let header = {3}(bytes); let len = header.{4}() as usize; let data_offset = offset + {2}; Ok(&self.buf[data_offset .. data_offset + len]) }}",
+                    vd_snake_ident, vd_tail_ident, prefix_size_lit, type_pascal_ident, len_field_ident),
+            ).expect("vardata accessor without max_length");
+            impl_body.extend(vd_ts);
         }
 
         // UTF-8 str accessor
