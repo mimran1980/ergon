@@ -65,3 +65,17 @@ Once both ErgoSBE and Ergo-ClickHouse-Persist are feature-complete, the
 - [x] Single `just` command (VERIFIED — recipe added to justfile)
 
 Ref: user request for end-to-end integration demo using both crates.
+
+## Future advanced successor (not part of the historical DONE result)
+
+The completed scope above does not include the later three-thread Bitget,
+Rusteron IPC, dual typed/dynamic SBE, and ClickHouse pipeline. That future work
+is specified separately in
+[`docs/superpowers/specs/2026-07-10-bitget-aeron-clickhouse-sample-design.md`](../../docs/superpowers/specs/2026-07-10-bitget-aeron-clickhouse-sample-design.md).
+
+Do not reinterpret the historical checks above as evidence for the advanced
+sample. In particular, the future design requires exact Rusteron 0.2.1 pins,
+SHARED media-driver ownership, separate IPC stream IDs, direct zero-copy
+`try_claim` encoding, normalized L2Book and Trade messages, dynamic
+`Array(Decimal(18,8))` book rows, foreground ClickHouse work, deterministic E2E
+proof, live Bitget evidence, coverage, allocation tests, and benchmark gates.

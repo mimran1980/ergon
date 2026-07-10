@@ -81,6 +81,23 @@ checked-in file. The golden file is the stability target, generated via
   Incomplete stages must not expose an `as_bytes()` that looks like a complete
   message. If partial inspection is genuinely needed, use an explicit name such
   as `written_prefix()` or `partial_bytes()` and benchmark any hot-path effect.
+- **Exact pre-encoding length.** A variable-length encoder exposes
+  `compute_encoded_length(...)` for the body and
+  `compute_encoded_length_with_message_header(...)` for the standard SBE
+  header plus body. Inputs must describe every runtime group count, nested
+  count, and variable-data length needed for an exact result. Callers must not
+  replace the header-inclusive helper with a hand-written `+ 8`.
+- **Explicit header-inclusive completion view.** A complete encoder produced by
+  `wrap_and_apply_header` exposes `as_bytes_with_header()` for the exact SBE
+  header-plus-body region. It remains completion-only. This explicit view is
+  used when the caller pre-sizes an external frame or encodes directly into an
+  Aeron claim.
+- **L3Book sample proof.** The maintained L3Book example pre-sizes with
+  `compute_encoded_length_with_message_header(...)`, writes through fluent
+  fixed-field setters followed by consuming nested tail stages, and ends with
+  `as_bytes_with_header()` (or the equivalent complete `as_bytes()` view where
+  its header inclusion is explicit). The final slice length must equal the
+  computed length.
 - **Required-field proof without scalar-order state explosion.** Fixed-block
   fields remain order-free because their offsets are schema-known, but generated
   strict builders/proxies can prove all required fixed fields were set before
