@@ -172,19 +172,26 @@ fn handle_bitget_sbe(data: &[u8], book: &mut LocalBook) -> Result<Option<()>, St
 
     match template_id {
         1001 => {
-            // Depth50 snapshot
+            // Depth50 snapshot. Wire order is asks -> bids; the consuming tail
+            // stages enforce it (DECISIONS.md §3/§10 — no out-of-order tail reads).
             book.price_exponent = match decoder.price_exponent() {
                 val if val > 0 => -val,
                 e => e,
             };
-            let bids: Vec<(i64, i64)> = match decoder.bids() {
-                Ok(g) => g.map(|e| (e.price(), e.size())).collect(),
-                Err(_) => vec![],
-            };
-            let asks: Vec<(i64, i64)> = match decoder.asks() {
-                Ok(g) => g.map(|e| (e.price(), e.size())).collect(),
-                Err(_) => vec![],
-            };
+            let mut asks: Vec<(i64, i64)> = Vec::new();
+            let mut bids: Vec<(i64, i64)> = Vec::new();
+            if let Ok(mut asks_g) = decoder.into_asks() {
+                while let Some(e) = asks_g.next() {
+                    asks.push((e.price(), e.size()));
+                }
+                if let Ok(after_asks) = asks_g.finish() {
+                    if let Ok(mut bids_g) = after_asks.into_bids() {
+                        while let Some(e) = bids_g.next() {
+                            bids.push((e.price(), e.size()));
+                        }
+                    }
+                }
+            }
             book.apply_snapshot(bids, asks);
             Ok(Some(()))
         }

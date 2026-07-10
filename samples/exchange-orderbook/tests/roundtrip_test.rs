@@ -173,21 +173,33 @@ fn bitget_depth50_group_roundtrip() {
     assert_eq!(decoder.price_exponent(), -8, "price_exponent");
     assert_eq!(decoder.size_exponent(), -2, "size_exponent");
     assert_eq!(decoder.category(), InstCategory::Spot, "category");
-    assert_eq!(
-        decoder.symbol_as_str().expect("symbol_as_str"),
-        "BTCUSDT",
-        "symbol"
-    );
 
-    // Verify asks group entries
-    let asks = decoder.asks().expect("asks group decode");
-    let ask_prices: Vec<i64> = asks.map(|e| e.price()).collect();
+    // Tail components in wire order: asks -> bids -> symbol. The consuming
+    // stages enforce this order (DECISIONS.md §3/§10); symbol is read last.
+    let mut asks = decoder.into_asks().expect("asks group decode");
+    let mut ask_prices = Vec::new();
+    while let Some(e) = asks.next() {
+        ask_prices.push(e.price());
+    }
     assert_eq!(ask_prices, vec![100, 200, 300], "ask prices");
 
-    // Verify bids group entries
-    let bids = decoder.bids().expect("bids group decode");
-    let bid_prices: Vec<i64> = bids.map(|e| e.price()).collect();
+    let mut bids = asks
+        .finish()
+        .expect("finish asks")
+        .into_bids()
+        .expect("bids group decode");
+    let mut bid_prices = Vec::new();
+    while let Some(e) = bids.next() {
+        bid_prices.push(e.price());
+    }
     assert_eq!(bid_prices, vec![1000, 2000], "bid prices");
+
+    let (symbol, _done) = bids
+        .finish()
+        .expect("finish bids")
+        .into_symbol()
+        .expect("symbol decode");
+    assert_eq!(core::str::from_utf8(symbol).unwrap(), "BTCUSDT", "symbol");
 }
 
 // ── Buffer-too-short error tests ──────────────────────────────────────────
