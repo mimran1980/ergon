@@ -6222,8 +6222,9 @@ mod tests {
 
     #[test]
     fn snake_case_handles_empty_or_special_input() {
-        // to_snake_case with an empty string exercises the loop.
         assert_eq!(to_snake_case(""), "");
+        // Double-underscore input exercises the dedup `continue` (line 520).
+        assert_eq!(to_snake_case("Foo__Bar"), "foo_bar");
     }
 
     #[test]
