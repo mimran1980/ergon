@@ -122,27 +122,25 @@ fn publish_l2book(pubn: &rusteron_client::AeronExclusivePublication,
     if let Ok(mut claim) = pubn.try_claim_owned(outer_len) {
         let r = (|| -> Result<(), sbe_rt::EncodeError> {
             let mut app = AppMessageEncoder::wrap_and_apply_header(claim.data(), 0)?;
-            app.sent_ts(now_ns());
+            let _ = app.sent_ts(now_ns());
             let after = app.app_name(b"ergosbe")?;
             after.payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
                 let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
-                enc.source(Source::Bitget);
-                enc.exchange_timestamp(now_ns());
-                enc.receive_timestamp(now_ns());
-                enc.sequence(seq);
+                let _ = enc.source(Source::Bitget);
+                let _ = enc.exchange_timestamp(now_ns());
+                let _ = enc.receive_timestamp(now_ns());
+                let _ = enc.sequence(seq);
                 let after_bids = enc.bids(b_ct as u16, |g| {
                     for &(pm, pe, sm, se) in bids {
                         g.add(|e| {
-                            e.price(Decimal::new(pm, pe));
-                            e.size(Decimal::new(sm, se));
+                            let _ = e.price(Decimal::new(pm, pe)).size(Decimal::new(sm, se));
                         });
                     }
                 })?;
                 let after_asks = after_bids.asks(a_ct as u16, |g| {
                     for &(pm, pe, sm, se) in asks {
                         g.add(|e| {
-                            e.price(Decimal::new(pm, pe));
-                            e.size(Decimal::new(sm, se));
+                            let _ = e.price(Decimal::new(pm, pe)).size(Decimal::new(sm, se));
                         });
                     }
                 })?;
