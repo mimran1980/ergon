@@ -5,11 +5,16 @@ edition = "2024"
 description = "Advanced sample: Bitget WS → AppMessage → Aeron IPC → ClickHouse"
 
 [dependencies]
-ergosbe = { path = "../../sbe" }
+ergosbe = { path = "../../sbe", features = ["serde"] }
 ergo-clickhouse-persist = { path = "../../persist" }
 rusteron-client = "=0.2.1"
 rusteron-media-driver = "=0.2.1"
 rust_decimal = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = "0.3"
 
 [build-dependencies]
 ergosbe = { path = "../../sbe" }

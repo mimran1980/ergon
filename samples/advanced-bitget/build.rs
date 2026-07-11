@@ -15,6 +15,7 @@ fn generate_schema(out_dir: &PathBuf, xml_path: &str, module_name: &str, decimal
     let schema = ergosbe::Schema::from_ir(ir);
 
     let mut config = ergosbe::GenerationConfig::new(module_name);
+    config.domain_objects = true; // generate Serde-enabled domain structs
     if decimal {
         config = config.enable_decimal_converters("Decimal");
     }
