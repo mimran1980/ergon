@@ -38,6 +38,15 @@ path = "tests/clickhouse_persist_test.rs"
 name = "dynamic_stream_test"
 path = "tests/dynamic_stream_test.rs"
 
+[[test]]
+name = "e2e_deterministic_test"
+path = "tests/e2e_deterministic_test.rs"
+
+[features]
+default = []
+bound-check-disabled = []
+serde = ["ergosbe/serde"]
+
 [dev-dependencies]
 tempfile = "3"
 ctrlc = "3"
