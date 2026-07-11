@@ -2441,3 +2441,55 @@ fn try_fixed_manual_equivalence() {
     "#,
     );
 }
+
+// ── Task 7/8/9 extended: compile-fail proofs ──────────────────────────
+
+/// Borrowed var-data slice must not escape a try_<data> callback (HRTB).
+#[test]
+fn callback_escape_try_data_is_compile_fail() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/nested-message-payload.xml"
+    ));
+    let (_schema, src) = generate(&path, "cb_escape");
+    compile_fails(
+        "cb_escape",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        outer.trace_id(7);
+        let complete = outer.app_name(b"test").unwrap().payload(b"data").unwrap();
+        let _ = complete.as_bytes();
+        // Encode, then try to escape the payload borrow via try_app_name
+        let dec = OuterDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let mut escaped: Option<&[u8]> = None;
+        let _ = dec.try_app_name::<sbe_rt::DecodeError, _>(|name| {
+            escaped = Some(name); // HRTB: borrowed data cannot escape closure
+            Ok(())
+        });
+    "#,
+    );
+}
+
+/// A consumed encoder stage cannot be reused after a tail transition.
+#[test]
+fn consumed_encoder_stage_cannot_be_reused() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/nested-message-payload.xml"
+    ));
+    let (_schema, src) = generate(&path, "consume_reuse");
+    compile_fails(
+        "consume_reuse",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        outer.trace_id(7);
+        let after_name = outer.app_name(b"t").unwrap();
+        outer.trace_id(8); // outer consumed by app_name(), cannot reuse
+    "#,
+    );
+}
+
