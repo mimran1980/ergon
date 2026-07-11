@@ -107,4 +107,4 @@ fn verify_counts(received: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHe
 #[test] fn e2e_zero_levels()   { EXPECTED_BIDS.store(0, Ordering::Relaxed); EXPECTED_ASKS.store(0, Ordering::Relaxed); EXPECTED_SEQ.store(1, Ordering::Relaxed); run_roundtrip(b"BTCUSDT", 0, 0, 1); }
 #[test] fn e2e_one_level()    { EXPECTED_BIDS.store(1, Ordering::Relaxed); EXPECTED_ASKS.store(1, Ordering::Relaxed); EXPECTED_SEQ.store(2, Ordering::Relaxed); run_roundtrip(b"BTCUSDT", 1, 1, 2); }
 #[test] fn e2e_typical()      { EXPECTED_BIDS.store(10, Ordering::Relaxed); EXPECTED_ASKS.store(8, Ordering::Relaxed); EXPECTED_SEQ.store(3, Ordering::Relaxed); run_roundtrip(b"ETHUSDT", 10, 8, 3); }
-#[test] fn e2e_large_25x25()  { EXPECTED_BIDS.store(25, Ordering::Relaxed); EXPECTED_ASKS.store(25, Ordering::Relaxed); EXPECTED_SEQ.store(4, Ordering::Relaxed); run_roundtrip(b"BTCUSDT", 25, 25, 4); }
+#[test] fn e2e_large_50x50()  { EXPECTED_BIDS.store(50, Ordering::Relaxed); EXPECTED_ASKS.store(50, Ordering::Relaxed); EXPECTED_SEQ.store(4, Ordering::Relaxed); run_roundtrip(b"X", 50, 50, 4); }

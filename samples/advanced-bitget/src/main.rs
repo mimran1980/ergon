@@ -35,6 +35,7 @@ use normalized_app::{
 // ── Constants ─────────────────────────────────────────────────────────
 const S_L2_BITGET: i32 = 1001;
 const S_L2_AGG:     i32 = 1006;
+const S_DYNAMIC:    i32 = 1002;
 
 // ── Atomics for fn-pointer fragment handlers ──────────────────────────
 static BEST_BID_M: AtomicI64 = AtomicI64::new(0);
@@ -231,8 +232,10 @@ fn main() {
         let aeron = aeron_client(&d2);
         let sub_bg = add_sub(&aeron, S_L2_BITGET);
         let pub_agg = add_pub(&aeron, S_L2_AGG);
+        let pub_dyn = add_pub(&aeron, S_DYNAMIC);
         let mut asm = rusteron_client::AeronFragmentClosureAssembler::new().expect("asm");
         let sym = b"BTCUSDT"; let mut seq: u64 = 0;
+        let mut dyn_seq: u64 = 0;
 
         while r2.load(Ordering::SeqCst) {
             let _ = asm.poll(&sub_bg, &mut (), handle_l2book, 10);
@@ -241,6 +244,12 @@ fn main() {
                 let bid = (BEST_BID_M.load(Ordering::Acquire), BEST_BID_E.load(Ordering::Acquire) as i8, 0i64, 0i8);
                 let ask = (BEST_ASK_M.load(Ordering::Acquire), BEST_ASK_E.load(Ordering::Acquire) as i8, 0i64, 0i8);
                 publish_l2book(&pub_agg, seq, sym, &[bid], &[ask]);
+                // Dynamic stream heartbeat
+                dyn_seq += 1;
+                if let Ok(mut claim) = pub_dyn.try_claim_owned(8) {
+                    claim.data().copy_from_slice(&dyn_seq.to_le_bytes());
+                    let _ = claim.commit();
+                }
             }
             thread::sleep(Duration::from_millis(1));
         }
@@ -253,15 +262,17 @@ fn main() {
         let aeron = aeron_client(&d3);
         let sub_bg  = add_sub(&aeron, S_L2_BITGET);
         let sub_agg = add_sub(&aeron, S_L2_AGG);
+        let sub_dyn = add_sub(&aeron, S_DYNAMIC);
         let mut asm = rusteron_client::AeronFragmentClosureAssembler::new().expect("asm");
-        let (mut c_bg, mut c_agg) = (0u64, 0);
+        let (mut c_bg, mut c_agg, mut c_dyn) = (0u64, 0, 0);
 
         while r3.load(Ordering::SeqCst) {
             let _ = asm.poll(&sub_bg,  &mut c_bg,  |c,_,_| *c+=1, 10);
             let _ = asm.poll(&sub_agg, &mut c_agg, |c,_,_| *c+=1, 10);
+            let _ = asm.poll(&sub_dyn, &mut c_dyn, |c,_,_| *c+=1, 10);
             thread::sleep(Duration::from_millis(1));
         }
-        eprintln!("[persist] exited (bg={c_bg} agg={c_agg})");
+        eprintln!("[persist] exited (bg={c_bg} agg={c_agg} dyn={c_dyn})");
     });
 
     // ── Run ───────────────────────────────────────────────────────────
