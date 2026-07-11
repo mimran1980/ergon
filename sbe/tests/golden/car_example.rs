@@ -343,6 +343,7 @@ impl MessageHeader {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < MessageHeader > () == 8);
 #[derive(Clone, Copy)]
 pub struct MessageHeaderDecoder<'a> {
     buf: &'a [u8],
@@ -393,6 +394,7 @@ impl GroupSizeEncoding {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < GroupSizeEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct GroupSizeEncodingDecoder<'a> {
     buf: &'a [u8],
@@ -431,6 +433,7 @@ impl VarStringEncoding {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < VarStringEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarStringEncodingDecoder<'a> {
     buf: &'a [u8],
@@ -468,6 +471,7 @@ impl VarAsciiEncoding {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < VarAsciiEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarAsciiEncodingDecoder<'a> {
     buf: &'a [u8],
@@ -505,6 +509,7 @@ impl VarDataEncoding {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < VarDataEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarDataEncodingDecoder<'a> {
     buf: &'a [u8],
@@ -537,6 +542,7 @@ impl Booster {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < Booster > () == 1);
 #[derive(Clone, Copy)]
 pub struct BoosterDecoder<'a> {
     buf: &'a [u8],
@@ -596,6 +602,7 @@ impl Engine {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < Engine > () == 6);
 #[derive(Clone, Copy)]
 pub struct EngineDecoder<'a> {
     buf: &'a [u8],

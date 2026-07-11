@@ -1596,6 +1596,10 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
                 Self(bytes)
             }
         }
+
+        // DECISIONS.md §10: compile-time proof that the Rust struct matches the
+        // wire size — catches generator bugs at compile time, zero runtime cost.
+        const _: () = assert!(core::mem::size_of::<#name_ident>() == #size_lit);
     };
     src.push_str(&ts.to_string());
     src.push('\n');
