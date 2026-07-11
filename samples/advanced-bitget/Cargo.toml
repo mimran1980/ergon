@@ -22,6 +22,10 @@ path = "tests/ipc_roundtrip_test.rs"
 name = "allocation_test"
 path = "tests/allocation_test.rs"
 
+[[test]]
+name = "clickhouse_e2e_test"
+path = "tests/clickhouse_e2e_test.rs"
+
 [dev-dependencies]
 tempfile = "3"
 ctrlc = "3"
