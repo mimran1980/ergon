@@ -1565,6 +1565,39 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         Ok((frame, next))
     }
 }
+impl<'a> FuelFiguresEntryDecoder<'a> {
+    /// Fallible scoped var-data accessor. Calls the closure with
+    /// the decoded bytes and returns the next stage on success.
+    #[inline]
+    pub fn try_usage_description<E, F>(
+        self,
+        f: F,
+    ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&[u8]) -> Result<(), E>,
+    {
+        let (data, next) = self.into_usage_description()?;
+        f(data)?;
+        Ok(next)
+    }
+    /// Fallible scoped nested-message accessor. Decodes the
+    /// var-data as an SBE message, calls the closure with the
+    /// decoded frame, and returns the next stage on success.
+    #[inline]
+    pub fn try_usage_description_as_message<E, F>(
+        self,
+        f: F,
+    ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(DecodedFrame<'a>) -> Result<(), E>,
+    {
+        let (frame, next) = self.into_usage_description_as_message()?;
+        f(frame)?;
+        Ok(next)
+    }
+}
 impl<'a> FuelFiguresEntryDecoderComplete<'a> {
     /// Header-inclusive bytes (for an entry, the entry bytes; header_size is 0).
     #[inline]
@@ -2327,6 +2360,39 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
         Ok((frame, next))
     }
 }
+impl<'a> CarDecoderAfterPerformanceFigures<'a> {
+    /// Fallible scoped var-data accessor. Calls the closure with
+    /// the decoded bytes and returns the next stage on success.
+    #[inline]
+    pub fn try_manufacturer<E, F>(
+        self,
+        f: F,
+    ) -> Result<CarDecoderAfterManufacturer<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&[u8]) -> Result<(), E>,
+    {
+        let (data, next) = self.into_manufacturer()?;
+        f(data)?;
+        Ok(next)
+    }
+    /// Fallible scoped nested-message accessor. Decodes the
+    /// var-data as an SBE message, calls the closure with the
+    /// decoded frame, and returns the next stage on success.
+    #[inline]
+    pub fn try_manufacturer_as_message<E, F>(
+        self,
+        f: F,
+    ) -> Result<CarDecoderAfterManufacturer<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(DecodedFrame<'a>) -> Result<(), E>,
+    {
+        let (frame, next) = self.into_manufacturer_as_message()?;
+        f(frame)?;
+        Ok(next)
+    }
+}
 impl<'a> CarDecoderAfterManufacturer<'a> {
     /// Consume this stage, read the next var-data field, and advance
     /// to the following stage. Wire order is enforced by consumption.
@@ -2384,6 +2450,33 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
         Ok((frame, next))
     }
 }
+impl<'a> CarDecoderAfterManufacturer<'a> {
+    /// Fallible scoped var-data accessor. Calls the closure with
+    /// the decoded bytes and returns the next stage on success.
+    #[inline]
+    pub fn try_model<E, F>(self, f: F) -> Result<CarDecoderAfterModel<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&[u8]) -> Result<(), E>,
+    {
+        let (data, next) = self.into_model()?;
+        f(data)?;
+        Ok(next)
+    }
+    /// Fallible scoped nested-message accessor. Decodes the
+    /// var-data as an SBE message, calls the closure with the
+    /// decoded frame, and returns the next stage on success.
+    #[inline]
+    pub fn try_model_as_message<E, F>(self, f: F) -> Result<CarDecoderAfterModel<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(DecodedFrame<'a>) -> Result<(), E>,
+    {
+        let (frame, next) = self.into_model_as_message()?;
+        f(frame)?;
+        Ok(next)
+    }
+}
 impl<'a> CarDecoderAfterModel<'a> {
     /// Consume this stage, read the next var-data field, and advance
     /// to the following stage. Wire order is enforced by consumption.
@@ -2439,6 +2532,36 @@ impl<'a> CarDecoderAfterModel<'a> {
         let (data, next) = self.into_activation_code()?;
         let frame = AnyMessage::decode_frame(data, 0, data.len())?;
         Ok((frame, next))
+    }
+}
+impl<'a> CarDecoderAfterModel<'a> {
+    /// Fallible scoped var-data accessor. Calls the closure with
+    /// the decoded bytes and returns the next stage on success.
+    #[inline]
+    pub fn try_activation_code<E, F>(self, f: F) -> Result<CarDecoderComplete<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&[u8]) -> Result<(), E>,
+    {
+        let (data, next) = self.into_activation_code()?;
+        f(data)?;
+        Ok(next)
+    }
+    /// Fallible scoped nested-message accessor. Decodes the
+    /// var-data as an SBE message, calls the closure with the
+    /// decoded frame, and returns the next stage on success.
+    #[inline]
+    pub fn try_activation_code_as_message<E, F>(
+        self,
+        f: F,
+    ) -> Result<CarDecoderComplete<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(DecodedFrame<'a>) -> Result<(), E>,
+    {
+        let (frame, next) = self.into_activation_code_as_message()?;
+        f(frame)?;
+        Ok(next)
     }
 }
 impl<'a> FuelFiguresDecoder<'a> {
@@ -2863,6 +2986,37 @@ impl<'a> CarEncoder<'a> {
             pos: group.pos,
         })
     }
+    /// Fallible group: propagates caller `?` errors via `E: From<EncodeError>`.
+    #[must_use]
+    pub fn try_fuel_figures<E, F>(
+        mut self,
+        count: u16,
+        f: F,
+    ) -> Result<CarAfterFuelFigures<'a>, E>
+    where
+        E: From<sbe_rt::EncodeError>,
+        F: FnOnce(&mut FuelFiguresEncoder<'a>) -> Result<(), E>,
+    {
+        if self.pos + 4 > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: 4,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
+        }
+        self.buf[self.pos..self.pos + 4]
+            .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
+        self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
+        let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group)?;
+        Ok(CarAfterFuelFigures {
+            buf: group.buf,
+            message_start: self.message_start,
+            pos: group.pos,
+        })
+    }
 }
 impl<'a> CarAfterFuelFigures<'a> {
     #[must_use]
@@ -2885,6 +3039,37 @@ impl<'a> CarAfterFuelFigures<'a> {
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group);
+        Ok(CarAfterPerformanceFigures {
+            buf: group.buf,
+            message_start: self.message_start,
+            pos: group.pos,
+        })
+    }
+    /// Fallible group: propagates caller `?` errors via `E: From<EncodeError>`.
+    #[must_use]
+    pub fn try_performance_figures<E, F>(
+        mut self,
+        count: u16,
+        f: F,
+    ) -> Result<CarAfterPerformanceFigures<'a>, E>
+    where
+        E: From<sbe_rt::EncodeError>,
+        F: FnOnce(&mut PerformanceFiguresEncoder<'a>) -> Result<(), E>,
+    {
+        if self.pos + 4 > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: 4,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
+        }
+        self.buf[self.pos..self.pos + 4]
+            .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
+        self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
+        let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
+        f(&mut group)?;
         Ok(CarAfterPerformanceFigures {
             buf: group.buf,
             message_start: self.message_start,

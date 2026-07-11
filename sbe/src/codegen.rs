@@ -2144,6 +2144,53 @@ fn generate_owner_consuming_stages(
                 }
             }
         });
+
+        // Scoped fallible combinators: try_<data> and try_<data>_as_message
+        // delegate to the manual consuming methods and propagate caller errors.
+        let try_data_ident = syn::Ident::new(
+            &format!("try_{}", vd.accessor_snake),
+            span,
+        );
+        let try_data_as_msg_ident = syn::Ident::new(
+            &format!("try_{}_as_message", vd.accessor_snake),
+            span,
+        );
+        ts.extend(quote::quote! {
+            impl<'a> #current_stage<'a> {
+                /// Fallible scoped var-data accessor. Calls the closure with
+                /// the decoded bytes and returns the next stage on success.
+                #[inline]
+                pub fn #try_data_ident<E, F>(
+                    self,
+                    f: F,
+                ) -> Result<#next_stage<'a>, E>
+                where
+                    E: From<sbe_rt::DecodeError>,
+                    F: FnOnce(&[u8]) -> Result<(), E>,
+                {
+                    let (data, next) = self.#into_ident()?;
+                    f(data)?;
+                    Ok(next)
+                }
+
+                /// Fallible scoped nested-message accessor. Decodes the
+                /// var-data as an SBE message, calls the closure with the
+                /// decoded frame, and returns the next stage on success.
+                #[inline]
+                pub fn #try_data_as_msg_ident<E, F>(
+                    self,
+                    f: F,
+                ) -> Result<#next_stage<'a>, E>
+                where
+                    E: From<sbe_rt::DecodeError>,
+                    F: FnOnce(DecodedFrame<'a>) -> Result<(), E>,
+                {
+                    let (frame, next) = self.#as_msg_ident()?;
+                    f(frame)?;
+                    Ok(next)
+                }
+            }
+        });
     }
 
     // 3. finish()/skip_remaining() for each group -> next owner stage.
@@ -4896,6 +4943,10 @@ fn generate_message_encoder(
             let next_stage = &stage_idents[tail_idx + 1];
 
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
+            let try_g_snake = syn::Ident::new(
+                &format!("try_{}", to_snake_case(&g.name)),
+                span,
+            );
             let raw_enc_name = to_pascal_case(&g.name);
             let scoped_enc = if multi_message {
                 format!("{}{}", &name, raw_enc_name)
@@ -4935,6 +4986,37 @@ fn generate_message_encoder(
                         let mut group =
                             #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
                         f(&mut group);
+                        Ok(#next_stage {
+                            buf: group.buf,
+                            message_start: self.message_start,
+                            pos: group.pos,
+                        })
+                    }
+
+                    /// Fallible group: propagates caller `?` errors via `E: From<EncodeError>`.
+                    #[must_use]
+                    pub fn #try_g_snake<E, F>(
+                        mut self,
+                        count: #count_ty,
+                        f: F,
+                    ) -> Result<#next_stage<'a>, E>
+                    where
+                        E: From<sbe_rt::EncodeError>,
+                        F: FnOnce(&mut #g_pascal_enc<'a>) -> Result<(), E>,
+                    {
+                        if self.pos + #dim_size_lit > self.buf.len() {
+                            return Err(sbe_rt::EncodeError::BufferTooShort {
+                                needed: #dim_size_lit,
+                                available: self.buf.len() - self.pos,
+                            }.into());
+                        }
+                        self.buf[self.pos..self.pos + #dim_size_lit]
+                            .copy_from_slice(&#g_pascal_enc::GROUP_DIM_TEMPLATE);
+                        self.buf[self.pos + #num_offset_lit..self.pos + #num_offset_lit + #num_size_lit]
+                            .copy_from_slice(&count.#to_endian());
+                        let mut group =
+                            #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
+                        f(&mut group)?;
                         Ok(#next_stage {
                             buf: group.buf,
                             message_start: self.message_start,
