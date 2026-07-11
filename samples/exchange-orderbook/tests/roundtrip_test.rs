@@ -12,6 +12,9 @@ mod bitget_spot {
 mod binance_spot {
     include!(concat!(env!("OUT_DIR"), "/binance_spot.rs"));
 }
+mod normalized_app {
+    include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
+}
 
 // ── Bitget: BestBidAsk (template 1002) ────────────────────────────────────
 
@@ -835,4 +838,88 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() {
         result.is_err(),
         "binance-encoded data rejected by bitget decoder: schema_id differs"
     );
+}
+
+// ── Task 10: AppMessage/L2Book/Trade roundtrip ─────────────────────────
+
+#[test]
+fn app_message_l2book_roundtrip() {
+    use normalized_app::{
+        AppMessageDecoder, AppMessageEncoder, AnyMessage,
+        Decimal, L2BookEncoder, Source, sbe_rt,
+    };
+
+    let symbol = b"BTCUSDT";
+    let bids_count: u16 = 2;
+    let asks_count: u16 = 1;
+
+    // Encode L2Book (inner payload)
+    let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(
+        bids_count as usize,
+        asks_count as usize,
+        symbol.len(),
+    );
+    let app_name = b"bitget";
+    let outer_len = AppMessageEncoder::compute_encoded_length_with_message_header(
+        app_name.len(),
+        inner_len,
+    );
+
+    let mut buf = vec![0u8; outer_len];
+    let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    outer.sent_ts(1_700_000_000_000_000_000);
+
+    // Nested encode via payload_with
+    let complete = outer
+        .app_name(app_name).unwrap()
+        .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
+            let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
+            book.source(Source::Bitget);
+            book.exchange_timestamp(1_700_000_000_000_000_001);
+            book.receive_timestamp(1_700_000_000_000_000_002);
+            book.sequence(42);
+            let book = book.bids(bids_count, |g| {
+                g.add(|e| {
+                    e.price(Decimal::new(50000_00, -2));
+                    e.size(Decimal::new(1_50, -2));
+                });
+                g.add(|e| {
+                    e.price(Decimal::new(49900_00, -2));
+                    e.size(Decimal::new(2_00, -2));
+                });
+            }).unwrap();
+            let book = book.asks(asks_count, |g| {
+                g.add(|e| {
+                    e.price(Decimal::new(50100_00, -2));
+                    e.size(Decimal::new(0_50, -2));
+                });
+            }).unwrap();
+            let book = book.symbol(symbol).unwrap();
+            let _ = book.as_bytes_with_header();
+            Ok(())
+        }).unwrap();
+    assert_eq!(complete.as_bytes().len(), outer_len);
+
+    // Decode outer -> inner
+    let outer_dec = AppMessageDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+    assert_eq!(outer_dec.sent_ts(), 1_700_000_000_000_000_000);
+    let (name, after_name) = outer_dec.into_app_name().unwrap();
+    assert_eq!(name, app_name);
+    let (frame, _complete) = after_name.into_payload_as_message().unwrap();
+    match frame.message {
+        AnyMessage::L2Book(book) => {
+            assert_eq!(book.source(), Source::Bitget);
+            assert_eq!(book.sequence(), 42);
+            // Verify bids
+            let bids = book.into_bids().unwrap();
+            assert_eq!(bids.len(), 2);
+            let mut iter = bids.into_iter();
+            let b0 = iter.next().unwrap();
+            assert_eq!(b0.price().mantissa(), 50000_00);
+            assert_eq!(b0.price().exponent(), -2);
+            let b1 = iter.next().unwrap();
+            assert_eq!(b1.price().mantissa(), 49900_00);
+        }
+        _ => panic!("expected L2Book"),
+    }
 }

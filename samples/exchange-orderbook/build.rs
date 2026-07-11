@@ -50,7 +50,24 @@ fn main() {
         println!("cargo:rerun-if-changed={}", dest.display());
     }
 
+    // Generate normalized AppMessage schema with decimal converters
+    let norm_xml = fs::read_to_string(schema_dir.join("normalized-app.xml"))
+        .expect("normalized-app.xml not found");
+    let norm_ir = ergosbe::parse(&norm_xml).expect("failed to parse normalized-app schema");
+    let norm_schema = ergosbe::Schema::from_ir(norm_ir);
+    let norm_config = ergosbe::GenerationConfig::new("normalized_app")
+        .enable_decimal_converters("Decimal");
+    let norm_generator = ergosbe::Generator::new(norm_config);
+    let norm_modules = norm_generator.generate(&norm_schema);
+    for m in norm_modules.modules() {
+        let dest = out_dir.join(&m.path);
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        fs::write(&dest, &m.source).unwrap();
+        println!("cargo:rerun-if-changed={}", dest.display());
+    }
+
     // Tell cargo to re-run if schemas change
     println!("cargo:rerun-if-changed=schemas/bitget-spot.xml");
     println!("cargo:rerun-if-changed=schemas/binance-spot.xml");
+    println!("cargo:rerun-if-changed=schemas/normalized-app.xml");
 }
