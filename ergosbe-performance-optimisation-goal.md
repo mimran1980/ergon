@@ -992,7 +992,40 @@ the full five-run Aeron parity matrix + coverage gate (Task F/G).
 
 **Task 6 — Fast-mode policy:** bound-check-disabled remains as an opt-in for trusted-buffer HFT use cases. Safe mode is already at parity with Aeron on all decode benchmarks. Fast mode provides marginal additional benefit (read_unaligned vs try_into) but is not required for parity. Keep as opt-in; no deprecation needed.
 
-**Task 7 — Release gates:** All gates pass (417 tests, clippy clean, fmt clean). Decode: ErgoSBE same-or-faster than Aeron on all benchmarks. Encode scalar: ErgoSBE faster. Encode throughput: ~13% gap (micro-architectural, documented). Decoder validates template_id + schema_id at the trust boundary. Encoder is infallible with concrete stage structs for compile-time ordering.
+### 2026-07-11 Encoder API compliance + sample fixes + const assertions
+
+Commits `dff21d2`, `04b9575`, `e7221fa`, `cd5fe53`.
+
+**Encoder API (DECISIONS.md §2 compliance):**
+- Added `compute_encoded_length_with_message_header(...)` — replaces manual `+ 8`
+  which DECISIONS.md §2 explicitly prohibits.
+- Added `as_bytes_with_header()` on complete encoder stage — explicit
+  header-inclusive view.
+- Migrated all callers (baseline test, sample tests, L3Book consuming stages
+  test) to the new methods.
+
+**Sample tests unblocked (18 pass):**
+- Fixed 10 pre-existing private-method errors: the consuming-stages
+  implementation made direct `&self` var-data/group accessors private.
+  Migrated to `into_*()` consuming transitions with `while let` iteration
+  (not `.collect()` which consumes the decoder before `finish()`).
+- Wire-order enforcement verified: the consuming API prevents out-of-order
+  access (e.g. symbol-after-trades, not before).
+
+**Const assertions (todo 88 closed):**
+- Added `core::mem::size_of::<Composite>()` assertions for all generated
+  composite types — matches DECISIONS.md §10 example. 7 assertions in the
+  car example schema. Complements existing `_BLOCK_LEN`, `_HEADER_TEMPLATE_LEN`,
+  `_GROUP_DIM_TEMPLATE_LEN`, `_ENCODED_LEN` assertions already in place.
+
+**Todo state:** All non-CLOSED/SUPERSEDED todos verified DONE. Todo 88 updated
+with evidence. The `101-utf16-and-value-range-validation` partial items remain
+documented as known gaps (not blocking).
+
+**Coverage:** 98.02% lines (unchanged — const assertions are inside `quote!`
+blocks). The architectural gap remains: llvm-cov cannot attribute individual
+lines inside proc-macro templates. This is the verified ceiling on stable Rust
+with current tooling.
 
 ### 2026-07-10 Coverage push: 98.02% lines, dead-code removal, tooling assessment
 
