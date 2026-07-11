@@ -57,6 +57,9 @@ pub enum DynamicValue {
     String(String),
     /// Explicit null (stored in `nullFields` group).
     Null,
+    /// Decimal array: list of (mantissa: i64, exponent: i8) pairs.
+    /// Stored in `decimalArrayFields` group (V2 only).
+    DecimalArray(Vec<(i64, i8)>),
 }
 
 // ── DynamicValueType ─────────────────────────────────────────────────────
@@ -72,6 +75,8 @@ enum DynamicValueType {
     Float64,
     Bool,
     String,
+    /// Decimal array type (V2 only).
+    DecimalArray,
 }
 
 impl DynamicValueType {
@@ -452,6 +457,16 @@ impl DynamicRecorder {
                 }
                 // Null is always valid regardless of column type.
                 (_, DynamicValue::Null) => actual_null += 1,
+                // DecimalArray — V2 only; rejected by V1 recorder.
+                (_, DynamicValue::DecimalArray(_)) => {
+                    return Err(DynamicRecorderError::UnsupportedColumnType {
+                        column_name: format!("position {i}"),
+                        column_type: ColumnType::Array(Box::new(ColumnType::Decimal {
+                            precision: 38,
+                            scale: 18,
+                        })),
+                    });
+                }
                 _ => {
                     let expected_name = match expected {
                         DynamicValueType::Int64 => "Int64",
@@ -459,6 +474,7 @@ impl DynamicRecorder {
                         DynamicValueType::Float64 => "Float64",
                         DynamicValueType::Bool => "Bool",
                         DynamicValueType::String => "String",
+                        DynamicValueType::DecimalArray => "DecimalArray",
                     };
                     let actual_name = match v {
                         DynamicValue::Int64(_) => "Int64",
@@ -467,6 +483,8 @@ impl DynamicRecorder {
                         DynamicValue::Bool(_) => "Bool",
                         DynamicValue::String(_) => "String",
                         DynamicValue::Null => "Null",
+                        DynamicValue::DecimalArray(_) => "DecimalArray",
+                        DynamicValue::DecimalArray(_) => "DecimalArray",
                     };
                     return Err(DynamicRecorderError::ValueTypeMismatch {
                         position: i,
@@ -616,6 +634,11 @@ impl DynamicRecorder {
                 DynamicValue::Null => {
                     buf[nul_w] = fid;
                     nul_w += 1;
+                }
+                DynamicValue::DecimalArray(_) => {
+                    return Err(DynamicRecorderError::Encode(
+                        "DecimalArray requires V2 recorder".into(),
+                    ));
                 }
             }
         }
