@@ -21,7 +21,7 @@ fn bitget_best_bid_ask_roundtrip() {
         BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5, };
 
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::compute_encoded_length(symbol.len()) + 8;
+    let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
     // Encode
@@ -72,7 +72,7 @@ fn bitget_best_bid_ask_verify_passes() {
     use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, };
 
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::compute_encoded_length(symbol.len()) + 8;
+    let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =
@@ -107,11 +107,11 @@ fn bitget_depth50_group_roundtrip() {
     let asks_count = 3u16;
     let bids_count = 2u16;
     let symbol = b"BTCUSDT";
-    let buf_len = Depth50Encoder::compute_encoded_length(
+    let buf_len = Depth50Encoder::compute_encoded_length_with_message_header(
         asks_count as usize,
         bids_count as usize,
         symbol.len(),
-    ) + 8;
+    );
     let mut buf = vec![0u8; buf_len];
 
     // Encode
@@ -472,7 +472,7 @@ fn binance_logon_response_roundtrip() {
         BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder, };
 
     let api_key = b"my-test-api-key";
-    let buf_len = WebSocketSessionLogonResponseEncoder::compute_encoded_length(api_key.len()) + 8;
+    let buf_len = WebSocketSessionLogonResponseEncoder::compute_encoded_length_with_message_header(api_key.len());
     let mut buf = vec![0u8; buf_len];
 
     // Encode
@@ -665,7 +665,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() {
 
     // Encode a valid bitget BestBidAsk message
     let symbol = b"BTCUSDT";
-    let buf_len = BestBidAskEncoder::compute_encoded_length(symbol.len()) + 8;
+    let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
     let mut encoder =

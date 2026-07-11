@@ -4689,6 +4689,7 @@ fn generate_message_encoder(
     // Pre-encoding length calculator for messages with tails
     if total_tail > 0 {
         let mut params = Vec::<proc_macro2::TokenStream>::new();
+        let mut param_names = Vec::<syn::Ident>::new();
         let mut sum_body = Vec::<proc_macro2::TokenStream>::new();
 
         for g_e in &msg.groups {
@@ -4702,6 +4703,7 @@ fn generate_message_encoder(
                 len += #dim_size_lit + #param_ident * #g_block_len_lit;
             });
             params.push(quote::quote! { #param_ident: usize });
+            param_names.push(param_ident);
         }
 
         for vd in &msg.var_data {
@@ -4714,10 +4716,11 @@ fn generate_message_encoder(
                 len += #prefix_size_lit + #param_ident;
             });
             params.push(quote::quote! { #param_ident: usize });
+            param_names.push(param_ident);
         }
 
         impl_contents.extend(quote::quote! {
-            /// Compute the exact SBE message length before encoding.
+            /// Compute the exact SBE message body length before encoding.
             /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
             #[inline]
             pub const fn compute_encoded_length(
@@ -4728,8 +4731,15 @@ fn generate_message_encoder(
                 len
             }
 
-            // ponytail: compute_encoded_length_with_message_header removed —
-            // callers use compute_encoded_length() + 8
+            /// Compute the exact SBE message length including the standard
+            /// message header (header size + body). DECISIONS.md §2: callers
+            /// must use this — not a hand-written `+ 8`.
+            #[inline]
+            pub const fn compute_encoded_length_with_message_header(
+                #(#params),*
+            ) -> usize {
+                #header_size + Self::compute_encoded_length(#(#param_names),*)
+            }
         });
     }
 
@@ -4879,13 +4889,22 @@ fn generate_message_encoder(
             tail_idx += 1;
         }
 
-        // Complete state: as_bytes() + AsRef + encoded_length on the final stage struct
+        // Complete state: as_bytes() + as_bytes_with_header() + AsRef +
+        // encoded_length on the final stage struct
         let complete_ident = &stage_idents[total_tail];
         ts.extend(quote::quote! {
             impl<'a> #complete_ident<'a> {
+                /// Returns the complete SBE message bytes (header + body).
                 #[inline]
                 pub fn as_bytes(&self) -> &[u8] {
                     &self.buf[self.message_start..self.pos]
+                }
+                /// Explicit header-inclusive view (alias for `as_bytes()`).
+                /// DECISIONS.md §2: use this when header inclusion must be
+                /// explicit rather than implied by the complete stage.
+                #[inline]
+                pub fn as_bytes_with_header(&self) -> &[u8] {
+                    self.as_bytes()
                 }
                 #[inline]
                 pub fn encoded_length(&self) -> usize {

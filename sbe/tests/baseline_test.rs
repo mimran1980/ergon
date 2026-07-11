@@ -712,12 +712,12 @@ fn compute_encoded_length_matches_actual() {
         // Groups and var-data are always present (dim headers + length prefixes even at 0)
         let empty = <CarEncoder>::compute_encoded_length(0, 0, 0, 0, 0);
         assert_eq!(empty, 61); // 41 (block) + 2×4 (group dims) + 3×4 (vardata prefixes)
-        let empty_full = <CarEncoder>::compute_encoded_length(0, 0, 0, 0, 0) + 8;
+        let empty_full = <CarEncoder>::compute_encoded_length_with_message_header(0, 0, 0, 0, 0);
         assert_eq!(empty_full, 69); // 61 + 8-byte header
 
-        // ponytail: compute_encoded_length_with_message_header removed — callers add 8
+        // DECISIONS.md §2: header-inclusive length must use the dedicated helper.
         let body = <CarEncoder>::compute_encoded_length(1, 0, 5, 4, 6);
-        let full = body + 8;
+        let full = <CarEncoder>::compute_encoded_length_with_message_header(1, 0, 5, 4, 6);
         assert!(full > body, "full length must exceed body length");
 
         // Computed length must be ≤ MAX_ENCODED_LENGTH (worst-case bound)
