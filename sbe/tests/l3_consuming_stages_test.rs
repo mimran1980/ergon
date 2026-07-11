@@ -54,6 +54,8 @@ fn decode_l3_through_consuming_stages() {
             }).unwrap();
         }).unwrap();
         let encoded = c.as_bytes();
+        // DECISIONS.md §2: as_bytes_with_header() is the explicit header-inclusive view.
+        assert_eq!(c.as_bytes_with_header(), encoded);
         let total_len = encoded.len();
 
         let dec = L3BookDecoder::wrap_and_apply_header(encoded, 0).unwrap();
@@ -173,6 +175,7 @@ fn decode_l3_entry_consuming_stages() {
             }).unwrap();
         }).unwrap().asks(0, |_| {}).unwrap();
         let encoded = c.as_bytes();
+        assert_eq!(c.as_bytes_with_header(), encoded);
 
         let dec = L3BookDecoder::wrap_and_apply_header(encoded, 0).unwrap();
         let mut bids = dec.into_bids().unwrap();
