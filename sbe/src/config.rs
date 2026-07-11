@@ -84,6 +84,14 @@ pub struct GenerationConfig {
     /// `From<MsgDecoder>` for easy application-layer use (persist, serialize,
     /// cross-thread). Default: `false` (zero-cost for HFT-only users).
     pub domain_objects: bool,
+    /// Composite type names registered for generic decimal conversion.
+    ///
+    /// Each entry names a composite whose first two members are
+    /// `mantissa: int64` and `exponent: int8`. The generator emits a local
+    /// `SbeDecimal` trait plus generic converter methods on fields backed
+    /// by these composites. Insertion order is preserved; duplicates are
+    /// ignored. Default: empty (no converter emission).
+    pub decimal_composites: Vec<String>,
 }
 
 impl GenerationConfig {
@@ -98,7 +106,22 @@ impl GenerationConfig {
             checked_accessors: true,
             shared_module: None,
             domain_objects: false,
+            decimal_composites: Vec::new(),
         }
+    }
+
+    /// Register a composite for generic decimal conversion.
+    ///
+    /// The composite must have `mantissa: int64` followed by `exponent: int8`.
+    /// The generator emits a local `SbeDecimal` trait and generic converter
+    /// methods. Insertion order is preserved; duplicate names are ignored.
+    #[must_use]
+    pub fn enable_decimal_converters(mut self, composite: impl Into<String>) -> Self {
+        let name = composite.into();
+        if !self.decimal_composites.contains(&name) {
+            self.decimal_composites.push(name);
+        }
+        self
     }
 }
 

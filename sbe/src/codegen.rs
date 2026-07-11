@@ -43,6 +43,31 @@ pub struct GeneratedModuleSet {
     modules: Vec<GeneratedModule>,
 }
 
+/// Errors returned by [`Generator::try_generate`] when the configuration
+/// is invalid for the given schema.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GenerateError {
+    /// A registered decimal composite is missing or has the wrong layout.
+    InvalidDecimalComposite {
+        /// Name of the composite.
+        name: String,
+        /// Why validation failed.
+        reason: String,
+    },
+}
+
+impl core::fmt::Display for GenerateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidDecimalComposite { name, reason } => {
+                write!(f, "invalid decimal composite '{name}': {reason}")
+            }
+        }
+    }
+}
+
+impl core::error::Error for GenerateError {}
+
 impl GeneratedModuleSet {
     /// Add a generated module to the set.
     pub fn push(&mut self, module: GeneratedModule) {
@@ -73,6 +98,51 @@ impl Generator {
     #[must_use]
     pub const fn config(&self) -> &GenerationConfig {
         &self.config
+    }
+
+    /// Generate Rust modules for a normalized schema, returning an error
+    /// on invalid configuration (e.g. bad decimal composite registration).
+    pub fn try_generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
+        self.validate_decimal_composites(schema)?;
+        Ok(self.generate(schema))
+    }
+
+    fn validate_decimal_composites(&self, schema: &Schema) -> Result<(), GenerateError> {
+        let elements = partition_tokens(&schema.ir.tokens);
+        for name in &self.config.decimal_composites {
+            let ct = elements
+                .composites
+                .iter()
+                .find(|c| c[0].name == *name)
+                .ok_or_else(|| GenerateError::InvalidDecimalComposite {
+                    name: name.clone(),
+                    reason: "composite not found in schema".into(),
+                })?;
+            // Filter to BeginField tokens only (skip EndField, etc.)
+            let fields: Vec<_> = ct
+                .iter()
+                .filter(|t| matches!(t.signal, Signal::BeginField))
+                .collect();
+            if fields.len() < 2 {
+                return Err(GenerateError::InvalidDecimalComposite {
+                    name: name.clone(),
+                    reason: "composite must have at least 2 members".into(),
+                });
+            }
+            let mantissa = fields[0];
+            let exponent = fields[1];
+            let valid = mantissa.name == "mantissa"
+                && mantissa.encoding.primitive_type == Some(PrimitiveType::Int64)
+                && exponent.name == "exponent"
+                && exponent.encoding.primitive_type == Some(PrimitiveType::Int8);
+            if !valid {
+                return Err(GenerateError::InvalidDecimalComposite {
+                    name: name.clone(),
+                    reason: "expected mantissa: int64, exponent: int8 layout".into(),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Generate Rust modules for a normalized schema.
@@ -179,6 +249,16 @@ impl Generator {
         // 1. Generate inline SBE runtime (only once)
         if emit_sbe_rt {
             src.push_str(&generate_sbe_rt_src());
+            // Decimal converter trait (opt-in, dependency-free).
+            if !self.config.decimal_composites.is_empty() {
+                src.push_str(
+                    "pub trait SbeDecimal: Sized {\n\
+                         type Error;\n\
+                         fn try_from_sbe(mantissa: i64, exponent: i8) -> Result<Self, Self::Error>;\n\
+                         fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;\n\
+                     }\n",
+                );
+            }
         }
 
         // 2. Group the tokens into composites, enums, sets, and messages

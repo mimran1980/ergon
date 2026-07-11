@@ -2321,3 +2321,82 @@ fn bounded_nested_payload_encode_via_with() {
     "#,
     );
 }
+
+// ── Task 6: SbeDecimal converter seam ──────────────────────────────────
+
+#[test]
+fn decimal_converter_enable_config() {
+    let config = ergosbe::GenerationConfig::new("decimal_test")
+        .enable_decimal_converters("Decimal");
+    assert_eq!(config.decimal_composites, vec!["Decimal"]);
+    assert!(ergosbe::GenerationConfig::default().decimal_composites.is_empty());
+}
+
+#[test]
+fn decimal_converter_emits_sbe_decimal_trait() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    let ir = ergosbe::parse_file(&path).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config = ergosbe::GenerationConfig::new("decimal_test")
+        .enable_decimal_converters("Decimal");
+    let g = ergosbe::Generator::new(config);
+    // try_generate validates the composite
+    let modules = g.try_generate(&schema).unwrap();
+    let src = &modules.modules().next().unwrap().source;
+
+    // SbeDecimal trait emitted
+    assert!(src.contains("pub trait SbeDecimal"), "SbeDecimal trait missing");
+    assert!(src.contains("fn try_from_sbe"), "try_from_sbe missing");
+    assert!(src.contains("fn try_into_sbe"), "try_into_sbe missing");
+}
+
+#[test]
+fn decimal_converter_rejects_invalid_composite() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="bad" id="99" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="BadDecimal"><type name="mantissa" primitiveType="int32"/><type name="exponent" primitiveType="int8"/></composite>
+</types>
+<sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config = ergosbe::GenerationConfig::new("bad_decimal")
+        .enable_decimal_converters("BadDecimal");
+    let g = ergosbe::Generator::new(config);
+    let err = g.try_generate(&schema).unwrap_err();
+    assert!(matches!(err, ergosbe::GenerateError::InvalidDecimalComposite { .. }));
+}
+
+#[test]
+fn decimal_converter_composite_roundtrip() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    let (_schema, src) = generate(&path, "decimal_rt");
+    compile_and_run(
+        "decimal_rt",
+        &src,
+        r#"
+        // Round-trip raw Decimal composite values
+        let mut buf = vec![0u8; 256];
+        let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        enc.price(Decimal::new(12345, -2));  // 123.45
+        enc.size(Decimal::new(100, 0));       // 100
+        let encoded = enc.as_ref().to_vec();
+
+        let dec = OrderDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+        let price = dec.price();
+        assert_eq!(price.mantissa(), 12345);
+        assert_eq!(price.exponent(), -2);
+        let size = dec.size();
+        assert_eq!(size.mantissa(), 100);
+        assert_eq!(size.exponent(), 0);
+    "#,
+    );
+}

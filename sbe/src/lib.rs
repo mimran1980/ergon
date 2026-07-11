@@ -127,7 +127,7 @@ pub mod resolve;
 pub mod schema;
 pub mod xml;
 
-pub use codegen::{GeneratedModule, GeneratedModuleSet, Generator};
+pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{CompatibilityMode, GenerationConfig};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
