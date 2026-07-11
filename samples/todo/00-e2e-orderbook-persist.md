@@ -79,3 +79,8 @@ SHARED media-driver ownership, separate IPC stream IDs, direct zero-copy
 `try_claim` encoding, normalized L2Book and Trade messages, dynamic
 `Array(Decimal(18,8))` book rows, foreground ClickHouse work, deterministic E2E
 proof, live Bitget evidence, coverage, allocation tests, and benchmark gates.
+The approved 2026-07-11 revision additionally wraps every normalized `L2Book`
+and `Trade` in a same-schema `AppMessage` carrying epoch-nanosecond `sentTs`,
+UTF-8 `appName`, and a complete header-inclusive nested SBE payload. Dynamic
+schema and row messages remain direct, unwrapped platform messages. Track the
+advanced implementation in `01-bitget-aeron-app-message.md`.

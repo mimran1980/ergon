@@ -149,6 +149,11 @@ Start with these known unresolved or suspicious files:
 - `sbe/todos/123-since-version-optional-align-aeron.md`
 - `sbe/todos/66-samples-crate-bitget-orderbook.md`
 - `sbe/todos/103-exchange-orderbook-working.md`
+- `sbe/todos/81-vardata-as-decoder-as-message.md`
+- `sbe/todos/156-fallible-stage-combinators.md`
+- `sbe/todos/157-completion-only-encoder-bytes.md`
+- `sbe/todos/27-fix-buffer-too-short-needed.md`
+- `sbe/todos/86-encoder-wrap-body-only.md`
 
 Required SBE outcomes:
 
@@ -156,7 +161,15 @@ Required SBE outcomes:
 - Versioning and optional-field behavior match Aeron semantics.
 - Benchmark/perf gates exist and can be run locally.
 - Hot paths are allocation-free where claimed.
+- New or changed handwritten production code has 100 percent line, function,
+  region, and branch coverage; generated and external FFI exclusions are
+  explicit and backed by complementary behavioural proofs.
 - Any Rust-ergonomic API improvement has no hot-path regression.
+- Manual concrete stages and fallible closure conveniences both remain usable;
+  the convenience/manual median ratio and the ErgoSBE/Aeron median ratio are at
+  most 1.00 in every maintained case.
+- Nested SBE var-data encode/decode, scoped `AnyMessage` dispatch, caller-error
+  propagation, and completion-only byte views match the canonical decisions.
 - CI, docs, release, and public API contracts are coherent.
 - Stale `ACTIVE` or `IN PROGRESS` statuses are either completed with evidence or
   formally closed with evidence.
@@ -205,6 +218,7 @@ After Persist is coherent and green, resolve Samples.
 Start with:
 
 - `samples/todo/00-e2e-orderbook-persist.md`
+- `samples/todo/01-bitget-aeron-app-message.md`
 
 Required Samples outcomes:
 
@@ -213,6 +227,10 @@ Required Samples outcomes:
 - Run `just samples-orderbook` or create/fix an equivalent repeatable command.
 - Live exchange websocket support may remain a manual recipe only after offline
   E2E is complete and documented.
+- Complete the approved three-thread Bitget successor: normalized `L2Book` and
+  `Trade` inside same-schema `AppMessage`, direct exact-sized Rusteron 0.2.1
+  claims, unwrapped dynamic infrastructure messages, typed/dynamic comparison,
+  and foreground ClickHouse persistence.
 
 ## Required Final Gates
 
@@ -240,6 +258,22 @@ explicitly documented live/manual-only recipes accepted by the human.
 ## Progress Ledger
 
 Add a new entry at the top of this ledger after every iteration.
+
+### 2026-07-11 AppMessage and fallible-stage design approved
+
+- Reopened nested var-data message dispatch after source inspection showed the
+  generated `as_decoder`/`as_message` bridge is absent despite old DONE markers.
+- Reopened schema documentation provenance because preceding XML comments are
+  not associated with the nearest element and the current tests do not
+  independently prove all four sources or run their claimed `cargo doc` gate.
+- Added active SBE work for bounded nested payload encoding plus both manual and
+  caller-error-propagating closure stage models.
+- Added the advanced sample todo: `AppMessage` wraps normalized `L2Book` and
+  `Trade`; dynamic schema/row messages remain direct infrastructure messages.
+- Added the five-run convenience/manual ratio gate alongside the canonical
+  ErgoSBE/Aeron gate.
+- This was a Markdown-only design reconciliation. No Rust tests, generation,
+  coverage, assembly inspection, integration, or benchmarks were run.
 
 ### 2026-07-10 SBE decision authority consolidated
 

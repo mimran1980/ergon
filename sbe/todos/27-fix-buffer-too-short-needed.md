@@ -5,7 +5,8 @@
 Every decoder field template that computes `needed` for `DecodeError::BufferTooShort`
 has a systematic off-by-offset bug.
 
-**Status: DONE** The `needed` value is `offset + prim_size`
+**Status: DECODER CASES DONE; ENCODER WRAP CASE REOPENED (2026-07-11).**
+The `needed` value is `offset + prim_size`
 (field *position* + field size) instead of just `prim_size` (field size).
 
 For field `model_year` at offset 8 with size 2, the error reports
@@ -24,7 +25,9 @@ debugging and recovery logic.
 - [x] Group decoder entry fields (all types)
 - [x] Group decoder entry tail offsets
 - [x] Group decoder `wrap` and `as_chunks`
-- [x] Message encoder `wrap_and_apply_header`
+- [ ] Message encoder `wrap`/`wrap_and_apply_header`: current generated
+      entrypoints do not return `EncodeError`; complete the fallible contract in
+      todo 86, then prove exact `needed` and `available` values here.
 - [x] Message encoder group/var_data methods
 - [x] Group entry encoder `add` and nested group/var_data setters
 - [x] FrameCursor (length prefix, frame bounds)

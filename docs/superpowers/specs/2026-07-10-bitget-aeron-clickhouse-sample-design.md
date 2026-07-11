@@ -1,6 +1,7 @@
 # Bitget to Aeron IPC to ClickHouse Sample Design
 
-**Status:** Approved for future implementation on 2026-07-10
+**Status:** Approved for future implementation on 2026-07-10; `AppMessage`
+envelope and fallible-chaining revision approved on 2026-07-11
 
 **Current change scope:** Documentation only. Do not implement code as part of
 this documentation change.
@@ -17,7 +18,8 @@ Build a production-shaped sample that proves the following path end to end:
 Bitget BTCUSDT WebSocket
   -> parse Bitget book and trade messages
   -> build a normalized L2 book
-  -> encode normalized SBE messages directly into Aeron IPC claims
+  -> wrap normalized L2Book and Trade payloads in AppMessage
+  -> encode both SBE layers directly into Aeron IPC claims
   -> consume typed and dynamic streams
   -> compare both L2 representations
   -> persist typed books, dynamic books, and trades into ClickHouse
@@ -58,6 +60,9 @@ Additional sample constraints:
 - Drop a data message immediately when its claim fails. Do not retry, block,
   queue, or fall back to `offer`.
 - Publish control-plane schema data successfully before live ingestion begins.
+- Wrap every normalized `L2Book` and `Trade` in `AppMessage`. Do not wrap
+  `DynamicSchema`, `DynamicRow`, or their V2 replacements; they are platform
+  infrastructure messages on the separate dynamic stream.
 - Do not introduce unbounded queues.
 - Do not run code generation as part of a Markdown-only documentation change.
 
@@ -92,6 +97,7 @@ owns:
 - the typed and dynamic Aeron exclusive publications;
 - the producer Aeron client conductor invoker;
 - exact-length calculation, claiming, direct encoding, and committing;
+- outer `AppMessage` metadata plus zero-copy nested-message encoding;
 - producer-side counters and reconnect state.
 
 Bitget parsing is an external-feed boundary. The Aeron payloads are new,
@@ -144,8 +150,8 @@ Use one IPC media channel and two stream IDs:
 
 ```text
 aeron:ipc + TYPED_STREAM_ID = 1001
-  - normalized L2Book
-  - normalized Trade
+  - AppMessage(payload = normalized L2Book)
+  - AppMessage(payload = normalized Trade)
 
 aeron:ipc + DYNAMIC_STREAM_ID = 1002
   - dynamic schema registration
@@ -153,9 +159,10 @@ aeron:ipc + DYNAMIC_STREAM_ID = 1002
 ```
 
 Use these stable named constants and values unless a verified Aeron constraint
-requires a separately reviewed change. Dispatch payloads by the standard SBE
-message header, including both schema ID and template ID. Do not add a
-redundant non-SBE envelope merely to identify a payload.
+requires a separately reviewed change. `AppMessage` is an ordinary SBE message,
+not a transport-specific or redundant non-SBE discriminator. Dispatch the outer
+fragment and the complete nested payload by their standard SBE message headers,
+including both schema ID and template ID.
 
 Every typed L2 book and corresponding dynamic row carries the same monotonically
 ordered sequence/correlation value. Each stream preserves its own ordering.
@@ -172,7 +179,38 @@ limit.
 
 ## 6. Normalized internal SBE messages
 
-### 6.1 L2Book
+### 6.1 AppMessage application envelope
+
+Place `AppMessage`, `L2Book`, and `Trade` in the same normalized application SBE
+schema so the generated `AnyMessage` enum can dispatch both the outer and inner
+messages. `AppMessage` contains:
+
+- fixed `sentTs: uint64`, defined as a Unix epoch timestamp in nanoseconds;
+- UTF-8 `appName` variable data;
+- terminal `payload` variable data containing one complete same-schema SBE
+  message, including its standard SBE message header.
+
+The only accepted nested payload variants are `L2Book` and `Trade`. Reject and
+count recursive `AppMessage`, unknown templates, wrong schema IDs, malformed or
+incomplete nested frames, and infrastructure messages. `DynamicSchema` and
+`DynamicRow` families remain unwrapped on `DYNAMIC_STREAM_ID`.
+
+The ordered envelope shape is:
+
+```text
+AppMessageEncoder
+  -> AppMessageAfterAppName
+  -> AppMessageComplete
+
+AppMessageDecoder
+  -> AppMessageAfterAppName
+  -> AppMessageComplete
+```
+
+The final transition is the terminal `payload` field. Manual consuming methods
+and fallible closure conveniences must return the same concrete stages.
+
+### 6.2 L2Book
 
 Generate a new exchange-neutral `L2Book` schema. It contains at least:
 
@@ -201,7 +239,7 @@ The decoder uses equivalent consuming stages. It must be impossible to encode
 or decode asks before completing or explicitly skipping bids. An active group
 entry prevents its parent from advancing.
 
-### 6.2 Trade
+### 6.3 Trade
 
 Generate a normalized singular `Trade` message for each public trade entry.
 It contains at least:
@@ -216,7 +254,7 @@ It contains at least:
 If one incoming Bitget frame contains several trades, attempt one independent
 claim per normalized trade. Failure to claim one trade drops only that trade.
 
-### 6.3 Schema documentation
+### 6.4 Schema documentation
 
 The new schemas must intentionally exercise all supported schema documentation
 sources:
@@ -246,19 +284,28 @@ only top-level group counts is not exact and does not satisfy this design.
 The header-inclusive helper returns the SBE message header plus SBE body. It
 does not include the Aeron data-frame header.
 
+For an application message, calculate the header-inclusive `L2Book` or `Trade`
+length first. Then calculate the outer `AppMessage` length from
+`app_name.len()` and that exact inner length. The inner length is the declared
+length of the terminal payload var-data field.
+
 The producer lifecycle is:
 
 1. Validate and normalize source values before claiming.
-2. Compute the exact header-inclusive encoded length.
-3. Verify the length is no greater than the publication maximum payload.
-4. Call `try_claim_owned(length)` on the correct exclusive publication.
-5. If claiming fails, increment the relevant drop counter and return
+2. Compute the exact header-inclusive inner message length.
+3. Compute the exact header-inclusive outer `AppMessage` length.
+4. Verify the outer length is no greater than the publication maximum payload.
+5. Call `try_claim_owned(outer_length)` on the typed exclusive publication.
+6. If claiming fails, increment the relevant drop counter and return
    immediately.
-6. Wrap the SBE encoder directly around the claim's writable data slice.
-7. Encode through the generated consuming stages.
-8. On the complete stage, assert that `as_bytes_with_header().len()` equals the
-   claimed length.
-9. End the encoder borrow and commit the claim.
+7. Wrap `AppMessageEncoder` directly around the claim's writable data slice.
+8. Encode `sentTs` and `appName`, then call
+   `payload_with(inner_length, |payload| -> Result<(), E> { ... })`.
+9. The closure receives exactly the inner payload region. Wrap and complete the
+   inner encoder directly in that slice; do not expose the rest of the claim.
+10. Assert the inner complete header-inclusive view equals `inner_length` and
+    the outer complete header-inclusive view equals `outer_length`.
+11. End both encoder borrows and commit the claim.
 
 An owned claim that leaves scope before commit must abort through its RAII
 lifecycle. Unexpected encoding failure after a successful exact claim is an
@@ -271,6 +318,85 @@ There must be no use of:
 - `copy_from_slice` from an encoded message into a claim;
 - Aeron fragmentation as a substitute for a correct claim size;
 - incomplete-stage `as_bytes()` masquerading as a complete message.
+
+### 7.1 Dual manual and fallible-closure interfaces
+
+Concrete consuming stages remain the canonical interface. A caller can set
+every fixed field directly, then drive every group, nested tail, and var-data
+transition manually. No dummy closure is required.
+
+The maintained sample includes the manual model:
+
+```rust
+let mut app = AppMessageEncoder::wrap_and_apply_header(claim.data_mut(), 0)?;
+app.sent_ts(epoch_ns);
+
+let complete = app
+    .app_name(app_name.as_bytes())?
+    .payload_with(inner_len, |payload| -> Result<(), AppError> {
+        let inner = encode_l2book_manually(payload)?;
+        debug_assert_eq!(inner.as_bytes_with_header().len(), payload.len());
+        Ok(())
+    })?;
+```
+
+The `Trade` publication uses the same outer sequence with its own concrete
+inner complete stage.
+
+Additive fallible helpers return the same concrete next stages:
+
+```rust
+let complete = AppMessageEncoder::wrap_and_apply_header(claim.data_mut(), 0)?
+    .try_fixed(|app| -> Result<(), AppError> {
+        validate_timestamp(epoch_ns)?;
+        app.sent_ts(epoch_ns);
+        Ok(())
+    })?
+    .app_name(app_name.as_bytes())?
+    .payload_with(inner_len, |payload| -> Result<(), AppError> {
+        let inner = encode_l2book_fallibly(payload)?;
+        debug_assert_eq!(inner.as_bytes_with_header().len(), payload.len());
+        Ok(())
+    })?;
+```
+
+Equivalent decoder conveniences are `try_fixed`, `try_app_name`, and
+`try_payload_as_message`. The last helper reborrows the payload for a scoped
+same-schema `AnyMessage` dispatch and accepts only `L2Book` or `Trade`.
+
+The maintained decoder examples also show both models. Manual decoding uses
+`sent_ts()`, `into_app_name()`, `into_payload()`, and explicit
+`AnyMessage::decode_frame(...)`. Fallible chaining uses:
+
+```rust
+let complete = AppMessageDecoder::try_from(fragment)?
+    .try_fixed(|app| -> Result<(), AppError> {
+        validate_sent_ts(app.sent_ts())?;
+        Ok(())
+    })?
+    .try_app_name(|name| {
+        validate_app_name(name)?;
+        Ok(())
+    })?
+    .try_payload_as_message(|message| {
+        match message {
+            AnyMessage::L2Book(book) => decode_book(book)?,
+            AnyMessage::Trade(trade) => decode_trade(trade)?,
+            _ => return Err(AppError::UnsupportedPayload),
+        }
+        Ok(())
+    })?;
+```
+
+Fallible helpers are generic over the caller's error. Helpers that can produce
+codec failures require `E: From<EncodeError>` or `E: From<DecodeError>`;
+custom closure failures propagate unchanged. Use higher-ranked callback
+lifetimes so borrowed slices, entries, and decoders cannot escape. Do not add a
+boxed error, trait object, allocation, or formatted error on the success path.
+
+The maintained manual and closure examples must produce identical bytes and
+decoded values. A closure helper is retained only after assembly, allocation,
+and five-run benchmarks prove it does not slow the equivalent manual hot path.
 
 ## 8. Dynamic Decimal array support
 
@@ -295,6 +421,10 @@ level, or lossy floating-point values.
 The current dynamic recorder does not support Decimal or Array values. Add
 Decimal-array support as an independently verified prerequisite before wiring
 the E2E sample.
+
+Dynamic schema and row messages are platform infrastructure. Publish their
+standard SBE messages directly on `DYNAMIC_STREAM_ID`; never put them inside
+`AppMessage`.
 
 Preserve the existing version-0 `DynamicSchema` and `DynamicRow` template IDs
 1 and 2, bytes, and decoding behaviour. Do not insert a new variable tail
@@ -395,7 +525,10 @@ Maintain at least these counters:
 - ClickHouse rows and batches persisted;
 - ClickHouse batches dropped;
 - WebSocket reconnects;
-- invariant and shutdown errors.
+- invariant and shutdown errors;
+- rejected recursive, unknown, wrong-schema, infrastructure, and malformed
+  `AppMessage` payloads;
+- custom encode/decode callback failures and aborted claims.
 
 Counters must be observable at shutdown and periodically without adding
 per-message logging to the hot path.
@@ -436,6 +569,14 @@ Add compile-fail tests proving at least:
 - incomplete encoders cannot call complete-message byte views;
 - complete encoders expose the explicit header-inclusive byte view used by the
   claim-length assertion.
+- borrowed payload slices, nested decoders, and group entries cannot escape a
+  fallible callback;
+- manual and closure paths return the same concrete next-stage types;
+- custom error types can use `?` inside fixed-body, group, var-data, and nested
+  message callbacks;
+- calling the completion-only byte/length view used by the maintained payload
+  closure on an incomplete nested encoder fails to compile; runtime tests prove
+  the sample performs the exact-length assertion before returning `Ok(())`.
 
 ### 12.2 Length, wire, allocation, and runtime proofs
 
@@ -445,6 +586,7 @@ Test at least:
 - zero, one, and batched incoming trades;
 - exact length for typed books, trades, schema messages, and Decimal-array
   dynamic rows;
+- exact inner `L2Book`/`Trade` and outer `AppMessage` header-inclusive lengths;
 - claimed length equal to final header-inclusive encoded length;
 - message length no greater than actual publication maximum payload;
 - independent official-Aeron SBE byte parity;
@@ -454,6 +596,14 @@ Test at least:
   precision-loss cases;
 - zero heap allocation for warmed-up size, claim, direct encode, and commit of
   each maintained producer message;
+- manual/fallible-closure byte equality and decoded-value equality;
+- unchanged custom-error propagation, closure-error claim abort, and no commit
+  of a partial inner or outer message;
+- `AppMessage` parity for empty, short, typical, and maximum app names and
+  epoch-nanosecond timestamp boundary values;
+- rejection of recursive envelopes, unknown or wrong-schema inner headers,
+  infrastructure payloads, malformed payloads, and declared-length mismatch;
+- unchanged unwrapped version-0 and V2 dynamic-message bytes;
 - real IPC round trips through a SHARED Rusteron 0.2.1 driver;
 - immediate claim-drop behaviour;
 - asymmetric typed/dynamic drops and ordered unmatched handling;
@@ -489,9 +639,12 @@ deterministic gate.
 Benchmark:
 
 - exact length calculation;
-- typed L2 direct-claim encode for 0, 1, typical, and 50-by-50 counts;
+- manual and fallible-closure `AppMessage` plus nested L2 direct-claim encode
+  for 0, 1, typical, and 50-by-50 counts;
 - dynamic Decimal-array direct-claim encode for the same shapes;
-- normalized trade direct-claim encode;
+- manual and fallible-closure `AppMessage` plus nested Trade direct-claim encode;
+- manual and fallible-closure outer decode plus nested enum dispatch;
+- raw inner-message and complete-envelope costs reported separately;
 - typed and dynamic decode;
 - pair comparison;
 - IPC claim/commit throughput;
@@ -501,6 +654,14 @@ For each maintained ErgoSBE/Aeron comparison, run five comparable warmed-up
 runs. The median ErgoSBE/Aeron ratio must be at most 1.00. Record Criterion
 confidence intervals, the previous ErgoSBE baseline, exact commands, date,
 hardware, OS, Rust toolchain, Rusteron version, Aeron revision, and profile.
+
+For each fallible helper, also run five comparable warmed-up measurements
+against the equivalent manual concrete-stage path. The median
+fallible-convenience/manual ratio must be at most 1.00. Anything above 1.00 is
+unfinished even when close or inside ordinary noise. Compare Aeron against the
+same outer and inner schemas; an unenveloped Aeron message is not comparable.
+Inspect generated assembly for both success paths and record zero-allocation
+evidence. LTO and profile settings are not proof of zero-cost abstraction.
 
 Reach 100 percent line, function, region, and branch coverage for all new or
 changed handwritten production code. Report generated codecs and external FFI
@@ -523,15 +684,18 @@ Recommended dependency order:
 
 1. Exact `compute_encoded_length_with_message_header` and complete
    header-inclusive byte-view contracts.
-2. Independent Decimal-array dynamic schema, recorder, decoder, and foreground
+2. Reconcile the actual nested-var-data surface: implement and prove
+   `as_decoder`/`as_message`, bounded `payload_with`, manual stages, fallible
+   combinators, custom-error propagation, and completion-only byte views.
+3. Add the normalized application schema containing `AppMessage`, `L2Book`, and
+   `Trade`, with official parity and exact inner/outer length proofs.
+4. Independent Decimal-array dynamic schema, recorder, decoder, and foreground
    persistence support.
-3. Normalized L2Book and Trade schemas with consuming stages and official wire
-   parity.
-4. Rusteron 0.2.1 direct-claim adapter and maximum-payload proofs.
-5. Foreground ClickHouse execution without an extra long-lived thread.
-6. Deterministic three-thread fixture pipeline.
-7. Live Bitget BTCUSDT integration and reconnect behaviour.
-8. Full allocation, coverage, parity, performance, and final quality gates.
+5. Rusteron 0.2.1 direct-claim adapter and maximum-payload proofs.
+6. Foreground ClickHouse execution without an extra long-lived thread.
+7. Deterministic three-thread fixture pipeline.
+8. Live Bitget BTCUSDT integration and reconnect behaviour.
+9. Full allocation, coverage, parity, performance, and final quality gates.
 
 Do not start with the live WebSocket and leave the prerequisites as stubs. Each
 slice must be independently useful, tested, benchmarked where performance
@@ -550,8 +714,14 @@ same final worktree:
 - the process has the approved three-thread ownership model;
 - Rusteron dependencies are pinned exactly to 0.2.1;
 - Bitget BTCUSDT books and trades feed normalized internal messages;
+- every normalized `L2Book` and `Trade` is a complete same-schema SBE payload
+  inside `AppMessage` with `sentTs` epoch nanoseconds and UTF-8 `appName`;
+- dynamic schema and row messages remain direct, unwrapped infrastructure
+  messages on their separate stream;
 - typed and dynamic messages use separate IPC stream IDs;
 - every publication uses exact-length direct `try_claim` encoding;
+- manual concrete stages and fallible closure chaining are both implemented,
+  tested, documented, allocation-free, and within both median performance gates;
 - no `offer`, encoded temporary buffer, copy fallback, or fragmentation is
   present;
 - full 50-by-50 books fit the configured and verified IPC maximum payload;

@@ -7,7 +7,13 @@ Generate a scalar-only test message; assert byte-exact encode output against the
 upstream `.sbe` fixture; decode the fixture and assert every field. Fix the
 VarStringEncoding size mismatch bug as a prerequisite. Finalise the
 `DecodeError`/`EncodeError` taxonomy here.
-**Status: DONE**
+**Status: WIRE PARITY DONE; WRAP ERROR CONTRACT REOPENED (2026-07-11)**
+
+A fresh source audit confirmed scalar wire tests remain historical evidence,
+but current generated encoder `wrap` and `wrap_and_apply_header` return `Self`
+and rely on slice-index panics for undersized buffers. The canonical interface
+requires `Result<_, EncodeError>`. The older nullify-on-wrap criterion was also
+superseded: optional nullification is explicit through `apply_nulls()`.
 
 
 ## Acceptance criteria
@@ -22,8 +28,12 @@ VarStringEncoding size mismatch bug as a prerequisite. Finalise the
 - [x] `#[must_use]` on encoder types (dropped encoder = lost message)
 - [x] Primitive scalar accessors are infallible and inline-friendly; constness is
       not required for runtime buffer reads
-- [x] Nullify-on-wrap: `wrap_and_apply_header` writes null sentinels at optional field offsets (codegen calls `generate_nullification`)
-- [x] `wrap_and_apply_header` returns `Result` (buffer-too-short, not panic)
+- [x] Optional nullification is explicit through `apply_nulls()`;
+      `wrap_and_apply_header` does not nullify by default.
+- [ ] `wrap_and_apply_header` returns `Result` (buffer-too-short, not panic).
+- [ ] `wrap` returns `Result` when the body region is too short.
+- [ ] Runtime tests prove exact `needed`/`available` values and no partial write
+      for undersized header and body buffers.
 
 Ref: `design/DECISIONS.md` §2–3, §11 slices 2a, tests 1–2, 10.
 

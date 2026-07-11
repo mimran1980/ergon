@@ -3,6 +3,12 @@
 This guide documents every type and trait that ErgoSBE generates from an SBE
 schema. The examples use a hypothetical `Quote` message from a market-data schema.
 
+> **Encoder-wrap status (2026-07-11):** examples show the approved fallible
+> `wrap`/`wrap_and_apply_header` target. Current generated encoders still return
+> `Self` and can panic on an undersized slice; todos 27 and 86 are reopened.
+> Do not treat the `?` examples as shipped until those todos and the golden/API
+> tests pass.
+
 ## Module structure
 
 For a schema with package `"market_data"`, `id=2`, `version=1`, and module name
@@ -289,10 +295,27 @@ an empty/skipped group consumes the group stage and returns the next message
 stage. An active entry prevents its parent group from advancing. Nested groups
 and var-data use the same ownership pattern.
 
-`encoded_length()`, complete-message `as_bytes()`, and `AsRef<[u8]>` exist only
-on `OrderBookComplete`. Incomplete stages do not expose `as_bytes()`; if a
-partial view is generated for a measured need, it is named `written_prefix()`
-or `partial_bytes()`.
+The canonical target puts `encoded_length()`, complete-message `as_bytes()`,
+and `AsRef<[u8]>` only on `OrderBookComplete`. A 2026-07-11 source audit found
+that the current generator still emits an incomplete-stage `as_bytes()` for
+partial inspection. Todo 157 tracks removing it or renaming a justified
+partial view to `written_prefix()`/`partial_bytes()`. Do not treat the current
+partial method as a publishable complete message.
+
+### Planned fallible chaining (not yet shipped)
+
+The approved strict interface keeps the manual stages above and adds optional
+fallible helpers such as `try_fixed`, `try_<group>`, and bounded
+`<data>_with(exact_len, closure)`. Equivalent decoder helpers process var-data
+or nested `AnyMessage` values and return the same concrete next stage. The
+closure error is caller-selected so application code can use `?`; codec errors
+convert through `From<EncodeError>` or `From<DecodeError>`.
+
+These helpers are tracked by todos 81 and 156. Do not depend on them until the
+generated source and golden tests contain them. They are accepted only after
+manual/closure byte equivalence, scoped-lifetime compile-fail tests, zero
+allocations, assembly inspection, and the five-run manual/Aeron performance
+gates pass.
 
 ## AnyMessage dispatch
 

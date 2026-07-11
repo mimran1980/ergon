@@ -1,5 +1,10 @@
 # Migration guide: upstream SBE Rust to ErgoSBE
 
+> **Encoder-wrap status (2026-07-11):** this guide shows the approved
+> `Result`-returning Rust interface. Current generated encoder `wrap` and
+> `wrap_and_apply_header` still return `Self`; todos 27 and 86 are reopened to
+> align implementation, golden output, tests, and these examples.
+
 This guide is for users switching from the [official SBE Java-generated Rust
 code](https://github.com/real-logic/simple-binary-encoding) (sbe-tool) to
 ErgoSBE. The two implementations produce byte-identical wire format; the

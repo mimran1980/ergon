@@ -10,7 +10,8 @@ The strict API should make external framing and schema identity typed, not only
 runtime options. Todo 134 tracks `FrameCursor<'a, Policy, Schema>` and
 `DecodedFrame<'a, Schema>` so a length-prefixed feed cursor, fixed-packet feed
 cursor, and caller-supplied frame cursor cannot be accidentally mixed.
-**Status: DONE** — baseline dispatch complete. Remaining items deferred to specific todos.
+**Status: BASELINE DONE; VAR-DATA BRIDGE REOPENED (2026-07-11)** - core
+dispatch is complete, but the generated bridge tracked by todo 81 is not.
 
 **Decision after deferred recheck (2026-07-08):** unpark the baseline dispatch
 and external-frame cursor. The README already presents `AnyMessage` and
@@ -25,7 +26,9 @@ todo 134 as the deeper follow-up.
 - [x] `AnyMessage::decode_frame(buf, off, frame_len)` — unknown forwarding
 - [x] `FrameCursor<'a>` iterates externally-framed buffers
 - [x] Strict `FrameCursor<'a, Policy, Schema>` path — VERIFIED (completed in todo 134)
-- [x] `as_message()` on var-data — VERIFIED (completed in todo 81)
+- [ ] `as_message()` on var-data - REOPENED by the 2026-07-11 source audit;
+      `AnyMessage::decode_frame` exists but the generated var-data bridge does
+      not. Track implementation and proof in todo 81.
 - [x] Sealed `SbeMessage` trait with `SCHEMA_ID`, `SCHEMA_VERSION`, `TEMPLATE_ID`, `BLOCK_LENGTH`
 - [x] Sealed schema marker — VERIFIED (completed in todo 129)
 - [x] `#[diagnostic::on_unimplemented]` on `SbeMessage` for clear compile errors (implemented 2026-07-09)

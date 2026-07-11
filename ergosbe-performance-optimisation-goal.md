@@ -5,7 +5,9 @@
 **Goal:** Preserve official-SBE wire compatibility while implementing concrete,
 compile-time ordered encoder and decoder stages, then make every maintained
 ErgoSBE scenario equal to or faster than Aeron SBE under the canonical
-five-run acceptance rule.
+five-run acceptance rule. The current active slice also adds bounded nested SBE
+payloads plus manual and fallible-closure stage models without allowing the
+closure convenience to be slower than the direct model.
 
 **Architecture:** Treat generated Rust as the product. Tail components become
 concrete consuming encoder and decoder stages; fixed fields remain available
@@ -32,6 +34,12 @@ the comparison profile but do not by themselves prove generated-code speed.
 - Concrete generated encoder and decoder stages enforce the order of every
   group and variable-data tail component. Do not use public state generics,
   `PhantomData`, turbofish, raw tail cursors, or arbitrary later-field skips.
+- Manual fixed-field setters/accessors and direct concrete stages remain
+  first-class. Fallible `try_fixed`, `try_<group>`, bounded var-data writers,
+  and scoped nested-message decoder callbacks are additive only.
+- Fallible helpers use caller-selected monomorphised errors and allow `?`.
+  Do not add boxed errors, trait objects, allocations, or formatted errors on
+  the generated success path.
 - Generated ordered hot paths allocate no heap memory.
 - `encoded_length()` and complete-message `as_bytes()` exist only on complete
   encoder stages. Any partial view has an explicitly partial name.
@@ -47,6 +55,11 @@ the comparison profile but do not by themselves prove generated-code speed.
   `description` attributes, `<description>` children, supported `<comment>`
   children/tags, and ordinary XML `<!-- -->` comments. Test each source
   independently and in combination; do not rely on a historical DONE marker.
+- Reach 100 percent line, function, region, and branch coverage for every new
+  or changed handwritten production path. Report generated templates and FFI
+  separately, but do not use a historical tooling-ceiling claim to skip
+  behavioural proofs. Add complementary generated-code, compile, wire, or
+  source-shape proofs where llvm-cov cannot attribute template lines.
 
 ---
 
@@ -115,6 +128,11 @@ OrderBookDecoder
 
 ### Task B: Implement concrete encoder stages
 
+- [ ] Make `wrap` and `wrap_and_apply_header` return
+      `Result<_, EncodeError>` for undersized body/header buffers, with no
+      panic or partial publication.
+- [ ] Keep optional nullification explicit through `apply_nulls()`; neither
+      wrapping entrypoint nullifies by default.
 - [ ] Keep fixed-block scalar/composite setters order-free through a zero-cost
       body view.
 - [ ] Make starting `bids` consume `OrderBookEncoder`.
@@ -154,6 +172,39 @@ OrderBookDecoder
 - [ ] Verify acting-version and acting-block-length compatibility at message and
       entry levels.
 
+### Task D2: Reconcile and implement nested var-data message dispatch
+
+The 2026-07-11 source audit reopened todo 81. `AnyMessage::decode_frame` exists,
+but generated var-data `as_decoder`/`as_message` bridges do not. Earlier DONE
+claims are not implementation evidence.
+
+- [ ] Generate manual consuming `as_decoder`/`as_message` transitions that
+      return the correct concrete next stage.
+- [ ] Use the var-data length as the external nested-frame length.
+- [ ] Add scoped `try_<field>_as_message` callbacks with HRTBs and
+      `E: From<DecodeError>`.
+- [ ] Add bounded `<field>_with(exact_len, closure)` encoding that lends exactly
+      the declared payload slice and supports `E: From<EncodeError>`.
+- [ ] Prove nested complete header-inclusive length equals the declared payload
+      length before a maintained caller reports success.
+- [ ] Cover known, unknown, wrong-schema, malformed, truncated, recursive, and
+      infrastructure payloads.
+
+### Task D3: Add both manual and fallible stage models
+
+- [ ] Keep every direct setter, accessor, and concrete consuming transition
+      usable without a closure.
+- [ ] Add `try_fixed` for fixed-block work without changing scalar wire order.
+- [ ] Add `try_<group>` through top-level and nested groups.
+- [ ] Propagate custom errors unchanged and codec errors through `From`.
+- [ ] Compile-fail borrowed callback views that escape and reuse of a consumed
+      stage.
+- [ ] Prove manual and closure paths produce identical bytes, decoded values,
+      concrete next-stage types, and zero allocations.
+- [ ] Inspect assembly and run five comparable warmed-up measurements. The
+      median fallible-convenience/manual ratio must be at most `1.00` for every
+      maintained case; anything above remains unfinished.
+
 ### Task E: Preserve trusted-input and zero-allocation performance
 
 - [ ] Keep checked constructors or full verification available outside the hot
@@ -183,12 +234,18 @@ Run five comparable warmed-up runs per case. The median ErgoSBE/Aeron ratio must
 be at most `1.00`, and Criterion confidence intervals must be recorded. Wire
 parity and allocation-count tests must pass in the same worktree. Do not claim
 universal Aeron parity until this sequential dual-group matrix passes.
+For every fallible helper in the matrix, the five-run median helper/manual
+ratio must also be at most `1.00`. Aeron cases must use the same outer and inner
+schemas as ErgoSBE.
 
 ### Task G: Close the feature with scoped evidence
 
 - [ ] Run formatting, clippy, targeted compile-fail tests, the full workspace
       tests, wire parity, allocation counts, safe benchmarks, and trusted-input
       benchmarks.
+- [ ] Record 100 percent line, function, region, and branch coverage for new or
+      changed handwritten production code and prove every generated branch via
+      generated-code/runtime tests where instrumentation cannot attribute it.
 - [ ] Record the exact date, hardware, OS, Rust toolchain, Aeron revision,
       profile flags, commands, five-run medians, ratios, and confidence
       intervals.
@@ -992,6 +1049,33 @@ the full five-run Aeron parity matrix + coverage gate (Task F/G).
 
 **Task 6 — Fast-mode policy:** bound-check-disabled remains as an opt-in for trusted-buffer HFT use cases. Safe mode is already at parity with Aeron on all decode benchmarks. Fast mode provides marginal additional benefit (read_unaligned vs try_into) but is not required for parity. Keep as opt-in; no deprecation needed.
 
+### 2026-07-11 AppMessage and fallible-stage design recheck
+
+- Approved a same-schema `AppMessage` envelope for normalized `L2Book` and
+  `Trade`: fixed epoch-nanosecond `sentTs`, UTF-8 `appName`, and terminal
+  header-inclusive nested SBE payload. Dynamic schema/row messages remain
+  direct infrastructure messages on their separate stream.
+- Approved both manual concrete stages and additive fallible `try_fixed`,
+  `try_<group>`, bounded payload writer, and scoped nested-message decoder
+  callbacks. Caller errors propagate with `?`; no allocation or trait object is
+  permitted.
+- Added a second performance gate: five-run median
+  fallible-convenience/manual ratio at most 1.00, alongside the existing
+  ErgoSBE/Aeron ratio at most 1.00.
+- Fresh source inspection found four implementation/documentation gaps: generated
+  var-data `as_decoder`/`as_message` methods are absent despite DONE claims, and
+  the current encoder generator still emits an incomplete-stage method named
+  `as_bytes`; encoder `wrap`/`wrap_and_apply_header` are infallible and panic by
+  slice indexing on undersized buffers despite the canonical `Result` contract.
+  Schema documentation also fails to associate common preceding XML comments
+  with the nearest element, and its tests do not independently prove all four
+  sources or run the claimed `cargo doc` command. Todos 27, 81, 86, and 87 are
+  reopened; Task B remains open until the partial byte view is removed or
+  explicitly renamed.
+- This ledger entry records a Markdown-only design and audit update. No Rust
+  code, generation, tests, coverage, assembly inspection, or benchmarks were
+  run for it.
+
 ### 2026-07-11 Encoder API compliance + sample fixes + const assertions
 
 Commits `dff21d2`, `04b9575`, `e7221fa`, `cd5fe53`.
@@ -1018,9 +1102,12 @@ Commits `dff21d2`, `04b9575`, `e7221fa`, `cd5fe53`.
   car example schema. Complements existing `_BLOCK_LEN`, `_HEADER_TEMPLATE_LEN`,
   `_GROUP_DIM_TEMPLATE_LEN`, `_ENCODED_LEN` assertions already in place.
 
-**Todo state:** All non-CLOSED/SUPERSEDED todos verified DONE. Todo 88 updated
-with evidence. The `101-utf16-and-value-range-validation` partial items remain
-documented as known gaps (not blocking).
+**Historical todo conclusion (superseded by the later 2026-07-11 source
+audit):** All non-CLOSED/SUPERSEDED todos were reported verified DONE. Todo 88
+was updated with evidence. The later audit reopened todos 27, 81, 86, and 87 and
+confirmed the completion-only `as_bytes` work remains active. The
+`101-utf16-and-value-range-validation` partial items remain documented as known
+gaps.
 
 **Coverage:** 98.02% lines (unchanged — const assertions are inside `quote!`
 blocks). The architectural gap remains: llvm-cov cannot attribute individual

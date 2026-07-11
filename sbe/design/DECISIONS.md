@@ -1,7 +1,8 @@
 # ErgoSBE — Design Decisions
 
 Status: Canonical design authority (created 2026-07-05; canonical priority and
-ordered-tail decision revised 2026-07-10). Implementation, goal files, guides,
+ordered-tail decision revised 2026-07-10; fallible stage-combinator and nested
+application-envelope decision revised 2026-07-11). Implementation, goal files, guides,
 and todos defer to this record. Historical measurements and decisions remain in
 their dated documents, but a conflict is resolved in favour of this file.
 
@@ -64,6 +65,17 @@ checked-in file. The golden file is the stability target, generated via
 - **No closure-only tail abstraction.** Entry closures may exist only as an
   optional convenience if measurement proves they are zero-cost. The generated
   concrete stages are the contract and must remain directly usable.
+- **Manual and fallible-closure models are both first-class.** Callers may set
+  every fixed field and drive every concrete stage directly. Additive helpers
+  such as `try_fixed(...)`, `try_<group>(...)`, and
+  `payload_with(exact_len, ...)` may return the same concrete next stage while
+  allowing a caller-selected error to propagate with `?`. A closure helper
+  must not replace, hide, or weaken the manual stage interface.
+- **Caller errors remain monomorphised.** A fallible helper that can itself
+  encounter an encode failure returns the caller's `E` with
+  `E: From<EncodeError>`; `try_fixed` needs only the closure's `E` after a
+  successful wrap. Do not box errors, use trait objects, allocate, or format
+  strings on the generated success path.
 - **Zero allocation.** Generated stage transitions, group entry handling, nested
   tails, and variable data allocate no heap memory.
 - **Encoder is not version-aware** — it emits the current schema version only.
@@ -87,6 +99,13 @@ checked-in file. The golden file is the stability target, generated via
   header plus body. Inputs must describe every runtime group count, nested
   count, and variable-data length needed for an exact result. Callers must not
   replace the header-inclusive helper with a hand-written `+ 8`.
+- **Bounded nested-message encoding.** A var-data encoder may expose
+  `payload_with(exact_len, |buf| -> Result<(), E> { ... })`. It writes the
+  declared prefix, lends exactly `exact_len` bytes (never the rest of the outer
+  buffer), and advances only after the closure succeeds. Nested SBE payloads
+  include their own standard message header. Maintained callers must retain the
+  nested complete stage and prove its header-inclusive length equals the lent
+  slice before returning `Ok(())`.
 - **Explicit header-inclusive completion view.** A complete encoder produced by
   `wrap_and_apply_header` exposes `as_bytes_with_header()` for the exact SBE
   header-plus-body region. It remains completion-only. This explicit view is
@@ -183,6 +202,13 @@ the correct SBE group dimension and move sequentially to
 - **Runtime counts are separate from compile-time order.** Types prove that
   `bids` precedes `asks`; ordinary runtime state validates and tracks the count
   encoded in each group dimension header.
+- **Fallible decoder combinators are additive.** The manual consuming methods
+  (`into_<group>`, `into_<data>`, `finish`, and `skip_remaining`) remain the
+  canonical escape hatch. Additive `try_fixed`, `try_<data>`, and
+  `try_<data>_as_message` helpers may run caller closures and return the same
+  concrete next stage. Helpers that decode structure require
+  `E: From<DecodeError>` and use higher-ranked callback lifetimes so borrowed
+  slices, entries, and message views cannot escape the callback.
 
 For the same order-book schema, the decoder shape is:
 
@@ -342,8 +368,18 @@ Generated code is self-describing — for audit, tooling, generic code, and disp
 - `as_message()` on a var-data field is
   `AnyMessage::decode_frame(field_bytes, 0, field_bytes.len())` — same enum, with
   the var-data length acting as the external frame length for unknown templates.
+- **Nested application-message envelope.** The advanced Bitget sample places
+  `AppMessage`, `L2Book`, and `Trade` in one normalized application schema.
+  `AppMessage` contains fixed `sentTs: uint64` Unix-epoch nanoseconds followed
+  by UTF-8 `appName` var-data and terminal `payload` var-data. The payload is a
+  complete same-schema `L2Book` or `Trade`, including its SBE header, and is
+  dispatched through the generated `AnyMessage` enum. Recursive envelopes,
+  unknown/wrong-schema payloads, and infrastructure templates are rejected by
+  the sample. `DynamicSchema` and `DynamicRow` are platform messages and remain
+  unwrapped on their separate IPC stream.
 - Encode entrypoints: `wrap` (body only, header managed elsewhere),
-  `wrap_and_apply_header` (writes header + body, nullifies optionals), `AnyMessage::encode`.
+  `wrap_and_apply_header` (writes header + body without nullifying optionals),
+  explicit `apply_nulls()`, and `AnyMessage::encode`.
 - **`#[non_exhaustive]` on the `AnyMessage<'a>` dispatch enum** — new variants appear
   on schema evolution; downstream `match` must have a `_ =>` arm. Prevents hard
   breakage when the schema adds messages.
@@ -426,6 +462,9 @@ Four invariants — the correctness heart of the library:
   Encoder failures are simpler; the type-state prevents structural mis-ordering.
 - Both error types are hand-rolled in the inline runtime (~20 lines each).
   `core::error::Error` impl, `Display` impl, no dependencies.
+- Fallible closure conveniences do not add a third generated wrapper error.
+  They are generic over the caller's `E`; codec failures convert through
+  `From`, while custom closure failures propagate unchanged.
 
 ## 9. Helpers
 
@@ -592,6 +631,14 @@ For every maintained scenario:
    when the gap is small or within ordinary noise.
 4. Keep byte-parity and allocation-count tests passing.
 
+For every maintained fallible closure convenience, also compare the success
+path with the equivalent manual concrete-stage path. The median
+fallible-convenience/manual ratio must be at most `1.00`; a slower convenience
+remains unfinished even if it is easier to use. Inspect generated assembly and
+prove zero allocation. Aeron comparisons must encode and decode the same outer
+and inner schema rather than comparing an enveloped ErgoSBE message with an
+unenveloped Aeron message.
+
 The maintained matrix must grow to cover zero, one, typical, and large counts
 in both groups of a sequential dual-group message such as `bids` then `asks`.
 It must include encode, full decode, early group skip, rewind, nested tails,
@@ -637,6 +684,17 @@ parity until this matrix exists and passes.
   `as_bytes()` on an incomplete encoder. Also cover forged verified frames,
   schema-marker mismatches, scoped callback lifetime escape, missing
   required-field proof, and non-generated `SbeMessage` implementations.
+- **Fallible-combinator proof suite:** compile and run custom errors using `?`
+  inside fixed-body, group, var-data, and nested-message callbacks. Compile-fail
+  borrowed payload/message escape, consumed-stage reuse after callback entry,
+  and complete-byte access on incomplete nested or outer encoders. Runtime
+  tests must prove manual/closure byte and value parity, unchanged custom-error
+  propagation, exact lent payload bounds, and claim abort on callback failure.
+- **Application-envelope suite:** prove official-Aeron parity for `AppMessage`
+  carrying `L2Book` and `Trade`; empty/short/typical/maximum app names; epoch-ns
+  timestamp boundaries; exact inner/outer lengths; malformed, recursive,
+  unknown, and wrong-schema rejection; and unchanged unwrapped dynamic-message
+  bytes.
 - **Ordered-tail runtime suite:** cover empty, single, typical, and large dual
   groups; early skip and rewind; acting-version and acting-block-length
   compatibility; nested groups and variable data; zero allocation on every
@@ -706,6 +764,13 @@ parity until this matrix exists and passes.
     reads require slower byte loops or block Aeron-style read/write helpers,
     remove `const fn` from those accessors. Preserve constness only for pure
     metadata, constants, and no-buffer wrappers.
+17. **A closure convenience is not the state machine.** The manual concrete
+    stages must remain usable without a dummy closure. A fallible helper returns
+    the same next stage and is kept only when assembly, allocations, and the
+    five-run manual/Aeron comparisons pass.
+18. **Nested var-data is a bounded frame, not spare capacity.** Pass the exact
+    precomputed payload region to a nested encoder. Do not expose the remainder
+    of the outer claim or infer length from unused capacity.
 
 ---
 
@@ -750,6 +815,10 @@ parity until this matrix exists and passes.
 7. Var-data and nested tails (equivalent consuming entry stages; base bytes
    accessor, `as_str`, `as_decoder`, `as_message`; allocation and unchecked
    UTF-8 helpers stay out of the default surface).
+7b. Bounded nested-message encode plus manual and fallible stage combinators;
+    prove custom-error `?`, HRTB non-escape, manual/closure equivalence, exact
+    lengths, zero allocation, assembly equivalence, and the five-run performance
+    gates before documenting them as shipped.
 8. Versioning (baseline/extension cross-version tests + official fixtures).
 8b. Verified-frame proof token and checked-vs-verified decoder mode.
 9. `AnyMessage` dispatch enum + `SbeMessage` trait + typed `FrameCursor`.

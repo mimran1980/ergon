@@ -1,5 +1,36 @@
 # Schema XML descriptions → rustdoc comments
 
+> **REOPENED AGAIN 2026-07-11:** the later ALL VERIFIED conclusion below is now
+> historical. `collect_description()` does read `description="..."`,
+> `<description>`, `<comment>`, and XML comment *children*, but ordinary XML
+> comments placed immediately before a schema element are siblings. The current
+> parser associates those comments with the container, not the nearest following
+> element. The fixture uses preceding comments, while the provenance tests do
+> not assert their text on the intended item. The test named
+> `generated_rustdoc_compiles_with_cargo_doc` parses Rust syntax but does not run
+> `cargo doc`. Do not close this without the proofs below.
+
+## Current reopened acceptance criteria
+
+- [x] `description="..."` attributes are parsed and emitted.
+- [x] `<description>...</description>` child text is collected by the parser.
+- [x] `<comment>...</comment>` child text is collected by the parser.
+- [ ] Independently assert each of those three sources reaches the correct
+      generated Rust item, rather than merely checking that some rustdoc exists.
+- [ ] Associate ordinary `<!-- ... -->` comments with the nearest intended
+      schema element, including the common immediately-preceding sibling form,
+      without leaking to the next sibling.
+- [ ] Assert the exact deterministic merge order and exact text for all four
+      sources on one item.
+- [ ] Cover messages, types, composite members, fields/accessors, groups, data,
+      enum values, and set choices as applicable.
+- [ ] Run a real `cargo doc --no-deps` command with warnings denied against
+      generated code containing multi-line and rustdoc-special characters.
+- [ ] Prove documentation-only changes leave resolved layout and encoded bytes
+      unchanged.
+- [ ] Record the exact passing commands and generated-source evidence before
+      restoring DONE status.
+
 > **REOPENED 2026-07-10:** the 2026-07-09 DONE record below is historical.
 > Current source inspection finds `description` attribute reads, but no explicit
 > parser mapping for roxmltree comment nodes, `<description>` child elements, or

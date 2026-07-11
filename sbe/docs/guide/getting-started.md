@@ -153,6 +153,12 @@ let quote = QuoteDecoder::wrap_and_apply_header(buf, 0)?;
 
 ### Encoding messages
 
+> **Current gap (2026-07-11):** the example below uses the canonical fallible
+> encoder-wrap contract. Current generated encoder wraps still return `Self`;
+> todos 27 and 86 track making undersized buffers return `EncodeError` instead
+> of panicking. Remove the `?` only when using the current interim generated
+> interface, not from the target design.
+
 ```rust
 fn encode_example() -> Result<(), sbe_rt::EncodeError> {
     // Allocate a buffer (fixed-size messages have ENCODED_LENGTH)

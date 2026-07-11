@@ -5,6 +5,15 @@
 > mentions optional ordered cursors, generic state, or retained random-access
 > tail access, use the concrete consuming encoder/decoder stages in the
 > canonical decision instead.
+>
+> **Post-map active work (2026-07-11):** todo 81 is reopened because generated
+> var-data `as_decoder`/`as_message` methods are absent, todo 156 tracks the
+> approved dual manual/fallible stage interface plus bounded nested-message
+> encoding, and todo 157 removes the misleading incomplete-stage `as_bytes`.
+> Todos 27 and 86 also reopen the canonical fallible encoder-wrap contract.
+> Todo 87 is reopened for nearest-element XML comment association and real
+> end-to-end rustdoc provenance proofs.
+> Their active state supersedes this historical map's phase-close conclusion.
 
 **Blocked by:** none
 **Severity:** HIGH
