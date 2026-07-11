@@ -1,29 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- top-level comment: describes the schema -->
+<!-- xml-comment:schema — top-level comment before root element -->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
     package="docstest" id="84" version="0"
-    description="schema-level description attr"
+    description="attr:schema"
     byteOrder="littleEndian">
     <types>
-        <!-- comment before messageHeader -->
-        <composite name="messageHeader" description="messageHeader desc attr">
-            <description>messageHeader desc child</description>
+        <!-- xml-comment:header — preceding-sibling comment for messageHeader -->
+        <composite name="messageHeader" description="attr:header">
+            <description>description-child:header</description>
+            <comment>comment-child:header</comment>
             <type name="blockLength" primitiveType="uint16"/>
             <type name="templateId" primitiveType="uint16"/>
             <type name="schemaId" primitiveType="uint16"/>
             <type name="version" primitiveType="uint16"/>
         </composite>
-        <!-- comment before enum -->
-        <enum name="Colour" encodingType="uint8" description="Colour desc attr">
-            <description>Colour desc child</description>
-            <comment>Colour comment child</comment>
-            <validValue name="Red" description="Red desc attr">1</validValue>
+        <!-- xml-comment:enum — preceding-sibling comment for Colour -->
+        <enum name="Colour" encodingType="uint8" description="attr:enum">
+            <description>description-child:enum</description>
+            <comment>comment-child:enum</comment>
+            <validValue name="Red" description="attr:enum-value">1</validValue>
         </enum>
     </types>
-    <!-- comment before message -->
-    <sbe:message name="M" id="1" description="M desc attr">
-        <description>M desc child</description>
-        <comment>M comment child</comment>
-        <field name="f" id="1" type="uint32" description="f desc attr"/>
+    <!-- xml-comment:message — preceding-sibling comment for M -->
+    <sbe:message name="M" id="1" description="attr:message">
+        <description>description-child:message</description>
+        <comment>comment-child:message</comment>
+        <field name="f" id="1" type="uint32" description="attr:field"/>
     </sbe:message>
 </sbe:messageSchema>

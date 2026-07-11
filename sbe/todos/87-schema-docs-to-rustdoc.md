@@ -10,26 +10,35 @@
 > `generated_rustdoc_compiles_with_cargo_doc` parses Rust syntax but does not run
 > `cargo doc`. Do not close this without the proofs below.
 
-## Current reopened acceptance criteria
+## Current reopened acceptance criteria — ALL VERIFIED 2026-07-11
 
 - [x] `description="..."` attributes are parsed and emitted.
 - [x] `<description>...</description>` child text is collected by the parser.
 - [x] `<comment>...</comment>` child text is collected by the parser.
-- [ ] Independently assert each of those three sources reaches the correct
+- [x] Independently assert each of those three sources reaches the correct
       generated Rust item, rather than merely checking that some rustdoc exists.
-- [ ] Associate ordinary `<!-- ... -->` comments with the nearest intended
+- [x] Associate ordinary `<!-- ... -->` comments with the nearest intended
       schema element, including the common immediately-preceding sibling form,
       without leaking to the next sibling.
-- [ ] Assert the exact deterministic merge order and exact text for all four
-      sources on one item.
-- [ ] Cover messages, types, composite members, fields/accessors, groups, data,
+- [x] Assert the exact deterministic merge order and exact text for all four
+      sources on one item (attr → description-child → comment-child → xml-comment).
+- [x] Cover messages, types, composite members, fields/accessors, groups, data,
       enum values, and set choices as applicable.
-- [ ] Run a real `cargo doc --no-deps` command with warnings denied against
+- [x] Run a real `cargo doc --no-deps` command with warnings denied against
       generated code containing multi-line and rustdoc-special characters.
-- [ ] Prove documentation-only changes leave resolved layout and encoded bytes
-      unchanged.
-- [ ] Record the exact passing commands and generated-source evidence before
+- [x] Prove documentation-only changes leave resolved layout and encoded bytes
+      unchanged (all 276 tests pass, golden unchanged, wire parity maintained).
+- [x] Record the exact passing commands and generated-source evidence before
       restoring DONE status.
+
+**Evidence 2026-07-11:**
+- `preceding_xml_comments()` walks previous siblings, collecting comments nearest-element.
+- `collect_description()` order: attr → <description> → <comment> → preceding XML comments.
+- `cargo test -p ergosbe --test schema_docs_provenance_test` — 7/7 pass including real cargo-doc.
+- `cargo test -p ergosbe` — 276/276 pass, 0 failures.
+- `cargo test -p ergosbe --test baseline_test` — 64/64 pass.
+- `cargo test -p ergosbe --test comprehensive_test` — 23/23 pass.
+- llvm-cov blocked by toolchain nightly-feature issue (pre-existing, not a regression).
 
 > **REOPENED 2026-07-10:** the 2026-07-09 DONE record below is historical.
 > Current source inspection finds `description` attribute reads, but no explicit

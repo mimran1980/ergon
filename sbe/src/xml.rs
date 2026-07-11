@@ -1415,10 +1415,12 @@ fn element_children<'a, 'input>(node: Node<'a, 'input>) -> impl Iterator<Item = 
 /// - `description="..."` attribute
 /// - `<description>text</description>` child element
 /// - `<comment>text</comment>` child element/tag
-/// - `<!-- ... -->` XML comment children (roxmltree `NodeType::Comment` nodes)
+/// - `<!-- ... -->` XML comments (nearest preceding siblings, not children)
 ///
 /// Sources are combined in this deterministic order, space-separated.
-/// Multi-line text and whitespace are preserved.
+/// Multi-line text and whitespace are preserved. Preceding-sibling XML
+/// comments are associated with the nearest following element — they are
+/// never duplicated to both container and child.
 fn collect_description(node: Node<'_, '_>) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
@@ -1427,41 +1429,58 @@ fn collect_description(node: Node<'_, '_>) -> Option<String> {
         parts.push(d.trim().to_string());
     }
 
-    // 2. Children: <description>, <comment>, or <!-- XML comments -->
+    // 2-3. <description> and <comment> child elements
     for child in node.children() {
-        match child.node_type() {
-            NodeType::Comment => {
-                if let Some(text) = child.text() {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        parts.push(trimmed.to_string());
-                    }
+        if child.is_element() {
+            let name = child.tag_name().name();
+            if name == "description" || name == "comment" {
+                let text: String = child
+                    .children()
+                    .filter(|c| c.node_type() == NodeType::Text)
+                    .filter_map(|c| c.text())
+                    .collect::<String>();
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
                 }
             }
-            NodeType::Element => {
-                let name = child.tag_name().name();
-                if name == "description" || name == "comment" {
-                    // Get text content by joining text-node children.
-                    let text: String = child
-                        .children()
-                        .filter(|c| c.node_type() == NodeType::Text)
-                        .filter_map(|c| c.text())
-                        .collect::<String>();
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        parts.push(trimmed.to_string());
-                    }
-                }
-            }
-            _ => {}
         }
     }
+
+    // 4. Preceding-sibling XML comments (nearest-element association).
+    // Replaces the old child-comment scan so a comment before a child
+    // element is associated with that child, not with both container
+    // and child.
+    parts.extend(preceding_xml_comments(node));
 
     if parts.is_empty() {
         None
     } else {
         Some(parts.join(" "))
     }
+}
+
+/// Collect XML comments that immediately precede `node` as siblings.
+/// Walks previous siblings, collecting comments and skipping whitespace-only
+/// text nodes, stopping at the first non-comment, non-whitespace element.
+/// Comments are returned in document order.
+fn preceding_xml_comments(node: Node<'_, '_>) -> Vec<String> {
+    let mut comments = Vec::new();
+    let mut sibling = node.prev_sibling();
+    while let Some(current) = sibling {
+        match current.node_type() {
+            NodeType::Comment => {
+                if let Some(text) = current.text().map(str::trim).filter(|text| !text.is_empty()) {
+                    comments.push(text.to_owned());
+                }
+            }
+            NodeType::Text if current.text().is_some_and(|text| text.trim().is_empty()) => {}
+            _ => break,
+        }
+        sibling = current.prev_sibling();
+    }
+    comments.reverse();
+    comments
 }
 
 fn string_attr(node: Node<'_, '_>, name: &str, what: &str) -> Result<String, Fault> {
@@ -1822,19 +1841,33 @@ mod tests {
         );
         let ir = parse_file(path).unwrap();
 
-        // Schema-level: description attr collected from root.
+        // Schema-level: description attr collected from root + preceding
+        // XML comment (<!-- xml-comment:schema --> before root element).
         let sd = ir.description.as_ref().unwrap();
         assert!(
-            sd.contains("schema-level description attr"),
+            sd.contains("attr:schema"),
             "missing schema description attr in {sd:?}"
         );
-        // The XML comment before the message element (inside the root) is also
-        // collected on the root via collect_description(root) — but the comment
-        // before the root element itself is a Document child, not a root child,
-        // so it isn't collected here.
 
-        // Find the messageHeader token to verify its description includes comment+
-        // child+attr
+        // Root-level preceding XML comment: the comment before the root
+        // element in the Document is a preceding sibling of the root,
+        // so preceding_xml_comments(root) picks it up.
+        assert!(
+            sd.contains("xml-comment:schema"),
+            "missing preceding XML comment on schema root in {sd:?}"
+        );
+
+        // Verify deterministic merge order on the root: attr first, then
+        // preceding XML comments (root has no child <description>/<comment>).
+        let attr_pos = sd.find("attr:schema").expect("attr:schema");
+        let comment_pos = sd.find("xml-comment:schema").expect("xml-comment:schema");
+        assert!(
+            attr_pos < comment_pos,
+            "description attr must precede XML comments; got {sd:?}"
+        );
+
+        // Find the messageHeader token — must now include all 4 sources
+        // including the preceding-sibling XML comment.
         let mh = ir
             .tokens
             .iter()
@@ -1842,17 +1875,45 @@ mod tests {
             .expect("messageHeader composite token not found");
         let mh_desc = mh.encoding.description.as_ref().unwrap();
         assert!(
-            mh_desc.contains("messageHeader desc attr"),
+            mh_desc.contains("attr:header"),
             "missing description attr in '{mh_desc}'"
         );
         assert!(
-            mh_desc.contains("messageHeader desc child"),
+            mh_desc.contains("description-child:header"),
             "missing description child in '{mh_desc}'"
         );
-        // The XML comment before messageHeader is at the <types> container
-        // level, not inside the composite itself — it's picked up by the
-        // enclosing element, not by the composite. To associate a comment
-        // with a specific type, place it inside the opening/closing tags.
+        assert!(
+            mh_desc.contains("comment-child:header"),
+            "missing comment child in '{mh_desc}'"
+        );
+        assert!(
+            mh_desc.contains("xml-comment:header"),
+            "missing preceding-sibling XML comment in '{mh_desc}'"
+        );
+
+        // Also verify the enum picked up its preceding comment.
+        let colour = ir
+            .tokens
+            .iter()
+            .find(|t| t.name == "Colour")
+            .expect("Colour token not found");
+        let colour_desc = colour.encoding.description.as_ref().unwrap();
+        assert!(
+            colour_desc.contains("xml-comment:enum"),
+            "missing preceding-sibling XML comment on Colour in '{colour_desc}'"
+        );
+
+        // And the message picked up its preceding comment.
+        let msg = ir
+            .tokens
+            .iter()
+            .find(|t| t.name == "M")
+            .expect("M token not found");
+        let msg_desc = msg.encoding.description.as_ref().unwrap();
+        assert!(
+            msg_desc.contains("xml-comment:message"),
+            "missing preceding-sibling XML comment on M in '{msg_desc}'"
+        );
     }
 
     #[test]

@@ -746,18 +746,30 @@ fn all_types_little_endian_roundtrip() {
     assert!(src.contains("TestEnum"), "TestEnum missing");
     assert!(src.contains("TestSet"), "TestSet missing");
     assert!(src.contains("AllTypesDecoder"), "message decoder missing");
-    // AllScalars contains f32/f64 → should NOT derive Eq/Ord/Hash
+    // AllScalars contains f32/f64 → should NOT derive Eq/Ord/Hash.
+    // Check the actual #[derive(...)] line, not doc comments.
     let asc_idx = src.find("pub struct AllScalars").unwrap();
-    let asc_pre = &src[asc_idx.saturating_sub(200)..asc_idx + 50];
-    assert!(!asc_pre.contains(" Eq,"), "AllScalars with floats: no Eq");
-    assert!(!asc_pre.contains(" Ord,"), "AllScalars with floats: no Ord");
-    assert!(!asc_pre.contains("Hash"), "AllScalars with floats: no Hash");
+    let asc_pre = &src[asc_idx.saturating_sub(200)..asc_idx];
+    // Extract the #[derive] line if present.
+    let asc_derive = asc_pre
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with("#[derive"))
+        .unwrap_or("");
+    assert!(!asc_derive.contains(" Eq,"), "AllScalars with floats: no Eq");
+    assert!(!asc_derive.contains(" Ord,"), "AllScalars with floats: no Ord");
+    assert!(!asc_derive.contains("Hash"), "AllScalars with floats: no Hash");
     // Float composite should NOT derive Eq/Ord/Hash
     let fp_idx = src.find("pub struct FloatPair").unwrap();
-    let fp_pre = &src[fp_idx.saturating_sub(200)..fp_idx + 50];
-    assert!(!fp_pre.contains(" Eq,"), "FloatPair should NOT derive Eq");
-    assert!(!fp_pre.contains(" Ord,"), "FloatPair should NOT derive Ord");
-    assert!(!fp_pre.contains("Hash"), "FloatPair should NOT derive Hash");
+    let fp_pre = &src[fp_idx.saturating_sub(200)..fp_idx];
+    let fp_derive = fp_pre
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with("#[derive"))
+        .unwrap_or("");
+    assert!(!fp_derive.contains(" Eq,"), "FloatPair should NOT derive Eq");
+    assert!(!fp_derive.contains(" Ord,"), "FloatPair should NOT derive Ord");
+    assert!(!fp_derive.contains("Hash"), "FloatPair should NOT derive Hash");
     // Compile check: types exist and are callable
     compile_and_run(
         "all_types_le",
@@ -955,4 +967,16 @@ fn strict_and_extended_modes_produce_identical_output() {
         ext_src.modules().next().unwrap().source,
         "Strict and WireCompatibleExtensions must produce identical output when no extensions exist"
     );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────
+
+/// Strip `/// ...` doc-comment lines from a source snippet so substring
+/// checks for `Hash`, `Eq`, `Ord` etc. don't false-positive on prose.
+fn strip_doc_lines(snippet: &str) -> String {
+    snippet
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("///"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
