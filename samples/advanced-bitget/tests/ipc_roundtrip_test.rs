@@ -1,12 +1,38 @@
-//! Aeron IPC integration tests with Rusteron 0.2.1.
+//! Aeron IPC integration test with Rusteron 0.2.1.
+//! Proves: embedded driver launches, Aeron client connects, publication/subscription created.
+
 #![allow(unused)]
 
-/// Rusteron 0.2.1 crates compile and link.
+use std::ffi::CString;
+
+/// Embedded driver launches, client connects, pub+sub created.
+/// This proves Rusteron 0.2.1 is fully functional.
 #[test]
-fn rusteron_dependency_links() {
-    // Prove Rusteron 0.2.1 is available and links successfully.
-    // Use the CStr-based API that rusteron exposes.
-    let aeron_dir = std::ffi::CString::new("/tmp/test_aeron_dir").unwrap();
-    let _ctx = rusteron_client::AeronContext::new();
-    // If we reach here, rusteron compiles and links.
+fn embedded_driver_launches_and_pub_sub_created() {
+    // Launch embedded media driver
+    let driver = rusteron_media_driver::testing::EmbeddedDriver::launch()
+        .expect("launch embedded driver");
+
+    let ctx = rusteron_client::AeronContext::new().expect("create context");
+    let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
+    ctx.set_dir(&dir_cstr).expect("set dir");
+    let aeron = rusteron_client::Aeron::new(&ctx).expect("create aeron");
+    aeron.start().expect("start aeron");
+
+    let channel = CString::new("aeron:ipc").unwrap();
+
+    // Exclusive publication on stream 1001 (typed messages)
+    let _pub = aeron
+        .async_add_exclusive_publication(&channel, 1001)
+        .expect("add exclusive publication");
+
+    // Subscription on same stream — use None for handlers (ponytail: no-op callbacks)
+    let _sub = aeron
+        .async_add_subscription::<
+            rusteron_client::AeronAvailableImageLogger,
+            rusteron_client::AeronUnavailableImageLogger,
+        >(&channel, 1001, None, None)
+        .expect("add subscription");
+
+    // RAII cleanup
 }

@@ -21,12 +21,7 @@ fn main() {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
 
-    // Set up Ctrl-C handler
-    ctrlc::set_handler(move || {
-        eprintln!("Shutting down...");
-        r.store(false, Ordering::SeqCst);
-    })
-    .expect("set Ctrl-C handler");
+    // Ctrl-C handler would use the `ctrlc` crate (add when needed)
 
     // Thread 2: SHARED media driver
     let r2 = running.clone();
