@@ -133,7 +133,7 @@ fn warm_up_all() {
 
     // Encode
     let mut buf = [0u8; 512];
-    let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     enc.serial_number(1234);
     enc.model_year(2013);
     enc.available(BooleanType::T);
@@ -297,7 +297,7 @@ fn encode_into_caller_buffer_zero_alloc() {
     let mut buf = [0u8; 512];
 
     let guard = AllocGuard::after_warmup();
-    let mut car = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+    let mut car = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
     car.serial_number(1234);
     car.model_year(2013);
     car.available(BooleanType::T);

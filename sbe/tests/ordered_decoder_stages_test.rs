@@ -38,7 +38,7 @@ fn decode_car_through_consuming_stages() {
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234);
         car.model_year(2013);
         let car = car.fuel_figures(3, |g| {
@@ -111,7 +111,7 @@ fn finish_skips_unread_entries() {
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(7);
         let car = car.fuel_figures(3, |g| {
             g.add(|e| { e.speed(10).mpg(1.0); e.usage_description(b"aaa").unwrap(); }).unwrap();
@@ -155,7 +155,7 @@ fn empty_tail_components_traverse_stages() {
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1);
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();

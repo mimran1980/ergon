@@ -343,6 +343,7 @@ impl MessageHeader {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < MessageHeader > () == 8);
 #[derive(Clone, Copy)]
 pub struct MessageHeaderDecoder<'a> {
     buf: &'a [u8],
@@ -393,6 +394,7 @@ impl GroupSizeEncoding {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < GroupSizeEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct GroupSizeEncodingDecoder<'a> {
     buf: &'a [u8],
@@ -431,6 +433,7 @@ impl VarStringEncoding {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < VarStringEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarStringEncodingDecoder<'a> {
     buf: &'a [u8],
@@ -468,6 +471,7 @@ impl VarAsciiEncoding {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < VarAsciiEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarAsciiEncodingDecoder<'a> {
     buf: &'a [u8],
@@ -505,6 +509,7 @@ impl VarDataEncoding {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < VarDataEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarDataEncodingDecoder<'a> {
     buf: &'a [u8],
@@ -537,6 +542,7 @@ impl Booster {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < Booster > () == 1);
 #[derive(Clone, Copy)]
 pub struct BoosterDecoder<'a> {
     buf: &'a [u8],
@@ -596,6 +602,7 @@ impl Engine {
         Self(bytes)
     }
 }
+const _: () = assert!(core::mem::size_of:: < Engine > () == 6);
 #[derive(Clone, Copy)]
 pub struct EngineDecoder<'a> {
     buf: &'a [u8],
@@ -2621,16 +2628,39 @@ impl<'a> CarEncoder<'a> {
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
+    /// Wrap a mutable buffer for encoding. Returns an error if the buffer
+    /// is too short for the header + fixed block.
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
-        Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
+        let needed: usize = 8 + Self::BLOCK_LENGTH;
+        let available: usize = buf.len().saturating_sub(pos);
+        if available < needed {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available,
+            });
+        }
+        Ok(Self {
             buf: &mut buf[pos..],
             message_start: 0,
-            pos: 8 + 41,
-        }
+            pos: needed,
+        })
     }
+    /// Wrap a mutable buffer and write the SBE message header.
+    /// Returns an error if the buffer is too short.
     #[inline]
-    pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Self {
+    pub fn wrap_and_apply_header(
+        buf: &'a mut [u8],
+        pos: usize,
+    ) -> Result<Self, sbe_rt::EncodeError> {
+        let needed: usize = 8 + Self::BLOCK_LENGTH;
+        let available: usize = buf.len().saturating_sub(pos);
+        if available < needed {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available,
+            });
+        }
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
         Self::wrap(buf, pos)
     }
@@ -2703,7 +2733,7 @@ impl<'a> CarEncoder<'a> {
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf[self.message_start..self.pos]
     }
-    /// Compute the exact SBE message length before encoding.
+    /// Compute the exact SBE message body length before encoding.
     /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
     #[inline]
     pub const fn compute_encoded_length(
@@ -2720,6 +2750,26 @@ impl<'a> CarEncoder<'a> {
         len += 4 + model_len;
         len += 4 + activation_code_len;
         len
+    }
+    /// Compute the exact SBE message length including the standard
+    /// message header (header size + body). DECISIONS.md §2: callers
+    /// must use this — not a hand-written `+ 8`.
+    #[inline]
+    pub const fn compute_encoded_length_with_message_header(
+        fuel_figures_count: usize,
+        performance_figures_count: usize,
+        manufacturer_len: usize,
+        model_len: usize,
+        activation_code_len: usize,
+    ) -> usize {
+        8usize
+            + Self::compute_encoded_length(
+                fuel_figures_count,
+                performance_figures_count,
+                manufacturer_len,
+                model_len,
+                activation_code_len,
+            )
     }
 }
 impl<'a> CarEncoder<'a> {
@@ -2938,9 +2988,17 @@ impl<'a> CarAfterModel<'a> {
     }
 }
 impl<'a> CarComplete<'a> {
+    /// Returns the complete SBE message bytes (header + body).
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf[self.message_start..self.pos]
+    }
+    /// Explicit header-inclusive view (alias for `as_bytes()`).
+    /// DECISIONS.md §2: use this when header inclusion must be
+    /// explicit rather than implied by the complete stage.
+    #[inline]
+    pub fn as_bytes_with_header(&self) -> &[u8] {
+        self.as_bytes()
     }
     #[inline]
     pub fn encoded_length(&self) -> usize {

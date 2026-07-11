@@ -34,7 +34,7 @@ fn car_domain_all_fields() {
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234).model_year(2013).available(BooleanType::T).code(Model::A);
         car.some_numbers([10u32, 20, 30, 40]);
         car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
@@ -104,7 +104,7 @@ fn car_domain_clone_eq_debug() {
         &src,
         r#"
         let mut buf = vec![0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(42).model_year(2021).available(BooleanType::F).code(Model::B);
         car.some_numbers([5; 4]).vehicle_code([b'Z'; 6]);
         car.extras(OptionalExtras::default());
@@ -136,7 +136,7 @@ fn car_domain_empty_groups() {
         &src,
         r#"
         let mut buf = vec![0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1).model_year(2000).available(BooleanType::T).code(Model::A);
         car.some_numbers([0; 4]).vehicle_code([0; 6]);
         car.extras(OptionalExtras::default());
@@ -167,7 +167,7 @@ fn l3_domain_nested_groups_vardata() {
         &src,
         r#"
         let mut buf = vec![0u8; 8192];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(111).sequence(222);
         let complete = book.bids(2, |bids| {
             bids.add(|level| {
@@ -236,7 +236,7 @@ fn l3_domain_12_orders() {
         &src,
         r#"
         let mut buf = vec![0u8; 32768];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(333).sequence(444);
         let complete = book.bids(1, |bids| {
             bids.add(|level| {
@@ -276,7 +276,7 @@ fn l3_compute_encoded_length_matches() {
         r#"
         let computed = L3BookEncoder::compute_encoded_length(2, 1);
         let mut buf = vec![0u8; 4096];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(0).sequence(0);
         let complete = book.bids(2, |bids| {
             bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| {}).unwrap(); }).unwrap();
@@ -300,7 +300,7 @@ fn binance_depth_domain() {
         &src,
         r#"
         let mut buf = vec![0u8; 4096];
-        let mut d = DepthResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut d = DepthResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         d.last_update_id(123456).price_exponent(-8).qty_exponent(-8);
         let complete = d.bids(2, |bids| {
             bids.add(|l| { l.price(50001).qty(150); }).unwrap();
@@ -342,7 +342,7 @@ fn car_serde_round_trip() {
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234).model_year(2013).available(BooleanType::T).code(Model::A);
         car.some_numbers([10u32, 20, 30, 40]);
         car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);

@@ -24,7 +24,7 @@ fn bitget_best_bid_ask_roundtrip() {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .ts(1712345678000u64)
         .bid1_price(50000123456i64)
@@ -72,7 +72,7 @@ fn bitget_best_bid_ask_verify_passes() {
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .ts(1)
         .bid1_price(2)
@@ -108,7 +108,7 @@ fn bitget_depth50_group_roundtrip() {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = Depth50Encoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = Depth50Encoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .ts(1000u64)
         .seq(1u64)
@@ -228,7 +228,7 @@ fn binance_server_time_roundtrip() {
 
     // Encode — ServerTimeResponseEncoder has no type-state, just plain methods
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder.server_time(expected_ts);
     let encoded = encoder.as_ref();
 
@@ -244,7 +244,7 @@ fn binance_server_time_verify_passes() {
     use binance_spot::ServerTimeResponseEncoder;
 
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder.server_time(42);
     let encoded = encoder.as_ref();
 
@@ -271,7 +271,7 @@ fn bitget_trade_roundtrip() {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .price_exponent(-5i8)
         .size_exponent(-3i8)
@@ -358,7 +358,7 @@ fn bitget_trade_max_uint64() {
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .price_exponent(-8i8)
         .size_exponent(-2i8)
@@ -399,7 +399,7 @@ fn bitget_trade_zero_values() {
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .price_exponent(0i8)
         .size_exponent(0i8)
@@ -462,7 +462,7 @@ fn binance_logon_response_roundtrip() {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .authorized_since(1712345678000000i64)
         .connected_since(1712345679000000i64)
@@ -527,7 +527,7 @@ fn binance_websocket_response_group_roundtrip() {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = WebSocketResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = WebSocketResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .sbe_schema_id_version_deprecated(BoolEnum::False)
         .status(200u16);
@@ -662,7 +662,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() {
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .ts(1u64)
         .bid1_price(2i64)
@@ -825,7 +825,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() {
 
     // Encode a valid binance ServerTimeResponse message
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder.server_time(42);
     let encoded = encoder.as_ref();
 

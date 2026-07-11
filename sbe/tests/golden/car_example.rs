@@ -2628,16 +2628,39 @@ impl<'a> CarEncoder<'a> {
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
+    /// Wrap a mutable buffer for encoding. Returns an error if the buffer
+    /// is too short for the header + fixed block.
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
-        Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
+        let needed: usize = 8 + Self::BLOCK_LENGTH;
+        let available: usize = buf.len().saturating_sub(pos);
+        if available < needed {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available,
+            });
+        }
+        Ok(Self {
             buf: &mut buf[pos..],
             message_start: 0,
-            pos: 8 + 41,
-        }
+            pos: needed,
+        })
     }
+    /// Wrap a mutable buffer and write the SBE message header.
+    /// Returns an error if the buffer is too short.
     #[inline]
-    pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Self {
+    pub fn wrap_and_apply_header(
+        buf: &'a mut [u8],
+        pos: usize,
+    ) -> Result<Self, sbe_rt::EncodeError> {
+        let needed: usize = 8 + Self::BLOCK_LENGTH;
+        let available: usize = buf.len().saturating_sub(pos);
+        if available < needed {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available,
+            });
+        }
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
         Self::wrap(buf, pos)
     }

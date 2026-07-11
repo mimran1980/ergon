@@ -38,7 +38,7 @@ fn car_encode_decode_perf_smoke() {
         // ── Build reference encoded Car, return a Vec so ownership is clean ──
         fn encode_car_vec() -> Vec<u8> {
             let mut buf = vec![0u8; 512];
-            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
             car.serial_number(1234);
             car.model_year(2013);
             car.available(BooleanType::T);

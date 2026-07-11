@@ -292,7 +292,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
             || [0u8; 512],
             |mut buf| {
                 let mut car: CarEncoder<'_> =
-                    CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+                    CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
                 car.serial_number(1234);
                 car.model_year(2013);
                 black_box(car);
@@ -341,7 +341,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
                 for i in 0..HFT_BATCH {
                     let off = i * 64;
                     let mut car: CarEncoder<'_> =
-                        CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0);
+                        CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0).unwrap();
                     car.serial_number(i as u64);
                     car.model_year(2013);
                 }
@@ -488,7 +488,7 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
         b.iter_batched(
             || vec![0u8; 512],
             |mut buf| {
-                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
                 car.serial_number(1234);
                 car.model_year(2013);
                 car.available(BooleanType::T);

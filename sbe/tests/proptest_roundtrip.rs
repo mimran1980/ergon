@@ -125,7 +125,7 @@ proptest! {
         let engine = Engine::new(capacity, num_cylinders, mc);
 
         let mut buf = vec![0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(serial_number);
         car.model_year(model_year);
         car.available(available);
@@ -185,7 +185,7 @@ proptest! {
         activation in proptest::collection::vec(32u8..=126, 0..100),
     ) {
         let mut buf = vec![0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(0);
         car.model_year(2000);
         car.available(BooleanType::F);
@@ -245,7 +245,7 @@ proptest! {
         ),
     ) {
         let mut buf = vec![0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(0);
         car.model_year(2000);
         car.available(BooleanType::F);
@@ -305,7 +305,7 @@ use prop_car_example::*;
 #[test]
 fn zero_length_roundtrip() {
     let mut buf = vec![0u8; 512];
-    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     car.serial_number(0);
     car.model_year(0);
     car.available(BooleanType::F);
@@ -352,7 +352,7 @@ use prop_car_example::*;
 #[test]
 fn boundary_values() {
     let mut buf = vec![0u8; 512];
-    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     car.serial_number(u64::MAX);
     car.model_year(u16::MAX);
     car.available(BooleanType::T);

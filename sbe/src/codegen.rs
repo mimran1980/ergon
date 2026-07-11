@@ -4493,30 +4493,43 @@ fn generate_message_encoder(
         const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
     });
 
-    // wrap() and wrap_and_apply_header()
+    // wrap() and wrap_and_apply_header() — fallible, non-panicking.
     let wrap_fn = quote::quote! {
+        /// Wrap a mutable buffer for encoding. Returns an error if the buffer
+        /// is too short for the header + fixed block.
         #[inline]
-        pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
-            Self {
+        pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
+            let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
+            let available: usize = buf.len().saturating_sub(pos);
+            if available < needed {
+                return Err(sbe_rt::EncodeError::BufferTooShort { needed, available });
+            }
+            Ok(Self {
                 buf: &mut buf[pos..],
                 message_start: 0,
-                pos: #header_size_lit + #block_length_lit,
-                            }
+                pos: needed,
+            })
         }
     };
     impl_contents.extend(wrap_fn);
 
     let wrap_apply_body = quote::quote! {
-        // Aeron-equivalent: infallible. No buffer-size check (the header copy
-        // panics on a too-small buffer via slice indexing, like Aeron's put_*_at).
         // Optional-field nullification is NOT applied by default — call
         // `apply_nulls()` if you want null sentinels.
+        // Check buffer size before touching memory.
+        let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
+        let available: usize = buf.len().saturating_sub(pos);
+        if available < needed {
+            return Err(sbe_rt::EncodeError::BufferTooShort { needed, available });
+        }
         buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
         Self::wrap(buf, pos)
     };
     let wrap_apply_fn = quote::quote! {
+        /// Wrap a mutable buffer and write the SBE message header.
+        /// Returns an error if the buffer is too short.
         #[inline]
-        pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Self {
+        pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
             #wrap_apply_body
         }
     };

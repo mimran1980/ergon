@@ -27,7 +27,7 @@ fn decode_l3_through_consuming_stages() {
         &src,
         r#"
         let mut buf = vec![0u8; 1024];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(99);
         e.sequence(7);
         let c = e.bids(2, |g| {
@@ -112,7 +112,7 @@ fn cf_decode_asks_before_bids() {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(1);
         e.sequence(1);
         let c = e.bids(0, |_| {}).unwrap().asks(0, |_| {}).unwrap();
@@ -132,7 +132,7 @@ fn cf_finish_consumes_group_decoder() {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(1);
         e.sequence(1);
         let c = e.bids(0, |_| {}).unwrap().asks(0, |_| {}).unwrap();
@@ -156,7 +156,7 @@ fn decode_l3_entry_consuming_stages() {
         &src,
         r#"
         let mut buf = vec![0u8; 1024];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(5);
         e.sequence(3);
         let c = e.bids(2, |g| {
@@ -222,7 +222,7 @@ fn cf_entry_consumed_by_into_orders() {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(1);
         e.sequence(1);
         let c = e.bids(1, |g| {
