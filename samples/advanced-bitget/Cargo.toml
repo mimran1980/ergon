@@ -1,0 +1,22 @@
+[package]
+name = "advanced-bitget"
+version = "0.1.0"
+edition = "2024"
+description = "Advanced sample: Bitget WS → AppMessage → Aeron IPC → ClickHouse"
+
+[dependencies]
+ergosbe = { path = "../../sbe" }
+ergo-clickhouse-persist = { path = "../../persist" }
+rusteron-client = "=0.2.1"
+rusteron-media-driver = "=0.2.1"
+rust_decimal = "1"
+
+[build-dependencies]
+ergosbe = { path = "../../sbe" }
+
+[[test]]
+name = "ipc_roundtrip_test"
+path = "tests/ipc_roundtrip_test.rs"
+
+[dev-dependencies]
+tempfile = "3"

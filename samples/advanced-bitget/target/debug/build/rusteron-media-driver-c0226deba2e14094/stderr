@@ -1,0 +1,12 @@
+running: cd "/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build" && CMAKE_PREFIX_PATH="" LC_ALL="C" "cmake" "/Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusteron-media-driver-0.2.1/aeron" "-B" "/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build" "-DCMAKE_OSX_ARCHITECTURES=arm64" "-DCMAKE_C_FLAGS=-fcommon" "-DBUILD_AERON_DRIVER=OFF" "-DBUILD_AERON_ARCHIVE_API=OFF" "-DAERON_TESTS=OFF" "-DAERON_BUILD_SAMPLES=OFF" "-DAERON_BUILD_DOCUMENTATION=OFF" "-DBUILD_AERON_DRIVER=ON" "-DCMAKE_INSTALL_PREFIX=/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out" "-DCMAKE_C_COMPILER=/usr/bin/cc" "-DCMAKE_CXX_FLAGS= -ffunction-sections -fdata-sections -fPIC --target=arm64-apple-macosx -mmacosx-version-min=26.5 -w" "-DCMAKE_CXX_COMPILER=/usr/bin/c++" "-DCMAKE_ASM_FLAGS= -ffunction-sections -fdata-sections -fPIC --target=arm64-apple-macosx -mmacosx-version-min=26.5 -w" "-DCMAKE_ASM_COMPILER=/usr/bin/cc" "-DCMAKE_BUILD_TYPE=Debug"
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+CMake Warning (unused-cli):
+  Manually-specified variables were not used by the project:
+
+    CMAKE_ASM_COMPILER
+    CMAKE_ASM_FLAGS
+
+
+running: cd "/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build" && LC_ALL="C" "cmake" "--build" "/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build" "--target" "aeron_driver" "--config" "Debug" "--parallel" "10"
+Saved unformatted code to: /Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/aeron_unformatted.rs

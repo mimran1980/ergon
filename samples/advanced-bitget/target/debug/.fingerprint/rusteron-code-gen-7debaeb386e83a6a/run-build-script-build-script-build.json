@@ -1,0 +1,1 @@
+{"rustc":2179919275645516985,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[319742282547327341,"build_script_build",false,12320543457506283474]],"local":[{"RerunIfChanged":{"output":"debug/build/rusteron-code-gen-7debaeb386e83a6a/output","paths":["src/build_common.rs"]}}],"rustflags":[],"config":0,"compile_kind":0}

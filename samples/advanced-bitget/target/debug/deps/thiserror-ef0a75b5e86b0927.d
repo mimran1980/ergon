@@ -1,0 +1,14 @@
+/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/deps/thiserror-ef0a75b5e86b0927.d: /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/thiserror-9fa644c4e4c11820/out/private.rs
+
+/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/deps/libthiserror-ef0a75b5e86b0927.rlib: /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/thiserror-9fa644c4e4c11820/out/private.rs
+
+/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/deps/libthiserror-ef0a75b5e86b0927.rmeta: /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/thiserror-9fa644c4e4c11820/out/private.rs
+
+/Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/thiserror-9fa644c4e4c11820/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/thiserror-9fa644c4e4c11820/out

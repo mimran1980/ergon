@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-client-7327a2c418f3be54/out/build/cmake_install.cmake",
+		"/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-client-7327a2c418f3be54/out/build/aeron-client/src/main/cpp_wrapper/cmake_install.cmake",
+		"/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-client-7327a2c418f3be54/out/build/aeron-client/src/main/c/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

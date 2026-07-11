@@ -1,0 +1,245 @@
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-changed=bindings.h
+cargo:rerun-if-env-changed=UUID_NO_PKG_CONFIG
+cargo:rerun-if-env-changed=PKG_CONFIG_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG
+cargo:rerun-if-env-changed=PKG_CONFIG
+cargo:rerun-if-env-changed=UUID_STATIC
+cargo:rerun-if-env-changed=UUID_DYNAMIC
+cargo:rerun-if-env-changed=PKG_CONFIG_ALL_STATIC
+cargo:rerun-if-env-changed=PKG_CONFIG_ALL_DYNAMIC
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_PATH
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_LIBDIR
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_SYSROOT_DIR
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR
+cargo:rerun-if-env-changed=UUID_STATIC
+cargo:rerun-if-env-changed=UUID_DYNAMIC
+cargo:rerun-if-env-changed=PKG_CONFIG_ALL_STATIC
+cargo:rerun-if-env-changed=PKG_CONFIG_ALL_DYNAMIC
+cargo:rerun-if-env-changed=PKG_CONFIG_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG
+cargo:rerun-if-env-changed=PKG_CONFIG
+cargo:rerun-if-env-changed=UUID_STATIC
+cargo:rerun-if-env-changed=UUID_DYNAMIC
+cargo:rerun-if-env-changed=PKG_CONFIG_ALL_STATIC
+cargo:rerun-if-env-changed=PKG_CONFIG_ALL_DYNAMIC
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_PATH
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_LIBDIR
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_SYSROOT_DIR
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR
+cargo:rustc-link-lib=dylib=aeron_driver
+cargo:rustc-link-lib=dylib=aeron
+cargo:rerun-if-env-changed=RUSTERON_SANITIZE
+CMAKE_TOOLCHAIN_FILE_aarch64-apple-darwin = None
+CMAKE_TOOLCHAIN_FILE_aarch64_apple_darwin = None
+HOST_CMAKE_TOOLCHAIN_FILE = None
+CMAKE_TOOLCHAIN_FILE = None
+CMAKE_GENERATOR_aarch64-apple-darwin = None
+CMAKE_GENERATOR_aarch64_apple_darwin = None
+HOST_CMAKE_GENERATOR = None
+CMAKE_GENERATOR = None
+CMAKE_PREFIX_PATH_aarch64-apple-darwin = None
+CMAKE_PREFIX_PATH_aarch64_apple_darwin = None
+HOST_CMAKE_PREFIX_PATH = None
+CMAKE_PREFIX_PATH = None
+CMAKE_aarch64-apple-darwin = None
+CMAKE_aarch64_apple_darwin = None
+HOST_CMAKE = None
+CMAKE = None
+-- The C compiler identification is AppleClang 21.0.0.21000101
+-- The CXX compiler identification is AppleClang 21.0.0.21000101
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Looking up: /dev/urandom
+-- Looking for bsd/stdlib.h
+-- Looking for bsd/stdlib.h - not found
+-- Looking for arc4random
+-- Looking for arc4random - found
+-- Looking for posix_memalign
+-- Looking for posix_memalign - found
+-- Looking for reallocf
+-- Looking for reallocf - found
+-- Looking for fallocate
+-- Looking for fallocate - not found
+-- Looking for posix_fallocate
+-- Looking for posix_fallocate - not found
+-- Looking for F_PREALLOCATE
+-- Looking for F_PREALLOCATE - found
+-- Found: /dev/urandom
+-- Looking up: /dev/urandom
+-- Looking for uuid/uuid.h
+-- Looking for uuid/uuid.h - found
+-- Looking for uuid_generate
+-- Looking for uuid_generate - found
+-- Looking for poll
+-- Looking for poll - found
+-- Looking for epoll_create
+-- Looking for epoll_create - not found
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stddef.h
+-- Looking for stddef.h - found
+-- Check size of struct mmsghdr
+-- Check size of struct mmsghdr - failed
+-- Looking for recvmmsg
+-- Looking for recvmmsg - not found
+-- Looking for sendmmsg
+-- Looking for sendmmsg - not found
+-- Found: /dev/urandom
+-- Configuring done (2.9s)
+-- Generating done (0.1s)
+-- Build files have been written to: /Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build
+[  0%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_int64_to_ptr_hash_map.c.o
+[  0%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_linked_queue.c.o
+[  2%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_int64_to_tagged_ptr_hash_map.c.o
+[  2%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_int64_counter_map.c.o
+[  2%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_bit_set.c.o
+[  5%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_hashing.c.o
+[  5%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_array_to_ptr_hash_map.c.o
+[  7%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_str_to_ptr_hash_map.c.o
+[  7%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_atomic.c.o
+[  7%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/collections/aeron_map.c.o
+[ 10%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_broadcast_transmitter.c.o
+[ 10%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_broadcast_receiver.c.o
+[ 10%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_counters_manager.c.o
+[ 13%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_logbuffer_descriptor.c.o
+[ 13%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_distinct_error_log.c.o
+[ 13%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_mpsc_rb.c.o
+[ 13%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_mpsc_concurrent_array_queue.c.o
+[ 13%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_spsc_rb.c.o
+[ 15%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_spsc_concurrent_array_queue.c.o
+[ 15%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_term_gap_filler.c.o
+[ 18%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_term_gap_scanner.c.o
+[ 18%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_term_rebuilder.c.o
+[ 18%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_term_scanner.c.o
+[ 21%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_term_unblocker.c.o
+[ 23%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/reports/aeron_loss_reporter.c.o
+[ 23%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/concurrent/aeron_thread.c.o
+[ 23%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/protocol/aeron_udp_protocol.c.o
+[ 23%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/status/aeron_local_sockaddr.c.o
+[ 23%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_arrayutil.c.o
+[ 26%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_bitutil.c.o
+[ 26%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_clock.c.o
+[ 26%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_deque.c.o
+[ 28%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_dlopen.c.o
+[ 28%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_env.c.o
+[ 28%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_error.c.o
+[ 31%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_fileutil.c.o
+[ 31%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_math.c.o
+[ 31%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_http_util.c.o
+[ 34%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_netutil.c.o
+[ 34%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_parse_util.c.o
+[ 34%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_properties_util.c.o
+[ 36%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_strutil.c.o
+[ 36%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/util/aeron_symbol_table.c.o
+[ 36%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/uri/aeron_uri.c.o
+[ 39%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/uri/aeron_uri_string_builder.c.o
+[ 39%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_agent.c.o
+[ 39%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_alloc.c.o
+[ 42%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_client.c.o
+[ 42%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_client_conductor.c.o
+[ 44%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_cnc.c.o
+[ 44%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_cnc_file_descriptor.c.o
+[ 44%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_context.c.o
+[ 47%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_counter.c.o
+[ 47%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_fragment_assembler.c.o
+[ 47%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_exclusive_publication.c.o
+[ 50%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_image.c.o
+[ 50%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_log_buffer.c.o
+[ 50%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_publication.c.o
+[ 52%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_socket.c.o
+[ 52%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_subscription.c.o
+[ 55%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeronc.c.o
+[ 55%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_version.c.o
+[ 55%] Building C object aeron-client/src/main/c/CMakeFiles/aeron.dir/aeron_windows.c.o
+[ 55%] Linking C shared library ../../../../lib/libaeron.dylib
+[ 55%] Built target aeron
+[ 57%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_receive_channel_endpoint.c.o
+[ 57%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/agent/aeron_driver_agent.c.o
+[ 57%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_send_channel_endpoint.c.o
+[ 60%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_receive_destination.c.o
+[ 60%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/concurrent/aeron_logbuffer_unblocker.c.o
+[ 60%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_timestamps.c.o
+[ 63%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_udp_channel.c.o
+[ 63%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_udp_channel_transport.c.o
+[ 65%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_udp_channel_transport_fixed_loss.c.o
+[ 65%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_udp_channel_transport_bindings.c.o
+[ 65%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_udp_channel_transport_multi_gap_loss.c.o
+[ 65%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_udp_channel_transport_loss.c.o
+[ 68%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_random_loss_generator.c.o
+[ 68%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_fixed_loss_generator.c.o
+[ 68%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_multi_gap_loss_generator.c.o
+[ 71%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_debug_channel_endpoint_configuration.c.o
+[ 71%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_udp_destination_tracker.c.o
+[ 71%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/media/aeron_udp_transport_poller.c.o
+[ 71%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_native_resource_agent.c.o
+[ 73%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/uri/aeron_driver_uri.c.o
+[ 73%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_native_resource_agent_proxy.c.o
+[ 76%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_congestion_control.c.o
+[ 76%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_csv_table_name_resolver.c.o
+[ 76%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_cpuset.c.o
+[ 78%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_data_packet_dispatcher.c.o
+[ 78%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_version.c.o
+[ 78%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver.c.o
+[ 81%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_conductor.c.o
+[ 81%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_conductor_proxy.c.o
+[ 81%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_context.c.o
+[ 84%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_name_resolver.c.o
+[ 84%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_receiver.c.o
+[ 84%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_receiver_proxy.c.o
+[ 86%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_sender.c.o
+[ 86%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_driver_sender_proxy.c.o
+[ 89%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_flow_control.c.o
+[ 89%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_loss_detector.c.o
+[ 89%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_ipc_publication.c.o
+[ 92%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_min_flow_control.c.o
+[ 92%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_name_resolver.c.o
+[ 92%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_name_resolver_cache.c.o
+[ 94%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_network_publication.c.o
+[ 94%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_port_manager.c.o
+[ 94%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_position.c.o
+[ 97%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_publication_image.c.o
+[ 97%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_system_counters.c.o
+[ 97%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_retransmit_handler.c.o
+[100%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_termination_validator.c.o
+[100%] Building C object aeron-driver/src/main/c/CMakeFiles/aeron_driver.dir/aeron_topology.c.o
+[100%] Linking C shared library ../../../../lib/libaeron_driver.dylib
+[100%] Built target aeron_driver
+cargo:root=/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out
+cargo:rustc-link-search=native=/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build/lib
+cargo:rustc-link-search=native=/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build/lib/Debug
+cargo:rustc-link-search=native=/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build/binaries/Debug
+cargo:rustc-link-search=native=/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build/lib/Release
+cargo:rustc-link-search=native=/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build/binaries/Release
+cargo:include=/Users/imran/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rusteron-media-driver-0.2.1/aeron/aeron-driver/src/main/c
