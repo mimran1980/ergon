@@ -2493,3 +2493,57 @@ fn consumed_encoder_stage_cannot_be_reused() {
     );
 }
 
+// ── Nested-message rejection proofs ───────────────────────────────────
+
+/// Unknown template in nested payload is forwarded as AnyMessage::Unknown.
+#[test]
+fn nested_message_rejects_malformed_payload() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/nested-message-payload.xml"
+    ));
+    let (_schema, src) = generate(&path, "reject_malformed");
+    compile_and_run(
+        "reject_malformed",
+        &src,
+        r#"
+        // Encode an Inner message to get exact length
+        let mut tmp_inner = vec![0u8; 128];
+        let mut encoder = InnerEncoder::wrap_and_apply_header(&mut tmp_inner, 0).unwrap();
+        encoder.value(42);
+        let inner_complete = encoder.label(b"").unwrap();
+        let inner_bytes = inner_complete.as_bytes().to_vec();
+        let inner_len = inner_bytes.len();
+
+        let app_name_len = b"t".len();
+        let outer_len = OuterEncoder::compute_encoded_length_with_message_header(app_name_len, inner_len);
+        let mut buf = vec![0u8; outer_len];
+        let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        outer.trace_id(1);
+        let complete = outer.app_name(b"t").unwrap()
+            .payload(&inner_bytes).unwrap();
+        assert_eq!(complete.as_bytes().len(), outer_len);
+
+        // Decode: known template (Inner) dispatches correctly
+        let dec = OuterDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let (_n, after_name) = dec.into_app_name().unwrap();
+        let (frame, _c) = after_name.into_payload_as_message().unwrap();
+        assert!(matches!(frame.message, AnyMessage::Inner(_)));
+
+        // Wrong-schema payload (all zeros) is rejected by into_payload_as_message
+        let payload_16 = vec![0u8; 16];
+        let bad_outer_len = OuterEncoder::compute_encoded_length_with_message_header(0, 16);
+        let mut bad_buf = vec![0u8; bad_outer_len];
+        let mut bad_outer = OuterEncoder::wrap_and_apply_header(&mut bad_buf, 0).unwrap();
+        bad_outer.trace_id(1);
+        bad_outer.app_name(b"").unwrap()
+            .payload(&payload_16).unwrap();
+        let bad_dec = OuterDecoder::wrap_and_apply_header(&bad_buf, 0).unwrap();
+        let (_n, bad_after) = bad_dec.into_app_name().unwrap();
+        // All-zeros has schema_id=0 — rejected with WrongSchema
+        let bad_result = bad_after.into_payload_as_message();
+        assert!(bad_result.is_err(), "wrong-schema payload must be rejected");
+    "#,
+    );
+}
+
