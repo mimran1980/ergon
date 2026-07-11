@@ -15,6 +15,10 @@ rust_decimal = "1"
 ergosbe = { path = "../../sbe" }
 
 [[test]]
+name = "roundtrip_test"
+path = "tests/roundtrip_test.rs"
+
+[[test]]
 name = "ipc_roundtrip_test"
 path = "tests/ipc_roundtrip_test.rs"
 

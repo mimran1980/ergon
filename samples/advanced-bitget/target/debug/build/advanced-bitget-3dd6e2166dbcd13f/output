@@ -1,1 +1,3 @@
 cargo:rerun-if-changed=schemas/normalized-app.xml
+cargo:rerun-if-changed=schemas/bitget-spot.xml
+cargo:rerun-if-changed=schemas/binance-spot.xml
