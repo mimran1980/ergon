@@ -4692,16 +4692,10 @@ fn generate_message_encoder(
         }
     }
 
-    // Partial as_bytes for scalar-only inspection (available at ALL stages).
-    // encoded_length / encoded_length_with_header are ONLY on the Complete struct.
-    impl_contents.extend(quote::quote! {
-        /// Return the encoded bytes written so far (partial — available before
-        /// the tail is complete, for scalar-only inspection).
-        #[inline]
-        pub fn as_bytes(&self) -> &[u8] {
-            &self.buf[self.message_start..self.pos]
-        }
-    });
+    // No partial as_bytes on incomplete stages — complete-message byte/length
+    // views exist only on the terminal complete stage (DECISIONS.md §2).
+    // Callers that genuinely need partial inspection should use an explicit
+    // name such as `written_prefix()`."
 
     // Pre-encoding length calculator for messages with tails
     if total_tail > 0 {

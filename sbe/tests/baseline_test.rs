@@ -22,7 +22,7 @@
 mod common;
 use common::{
     Paths, assert_source_ok, compile_and_run, compile_and_run_two_modules,
-    compile_and_run_with_feature, generate, run_fixture_test,
+    compile_and_run_with_feature, compile_fails, generate, run_fixture_test,
 };
 
 const MODULE: &str = "car_example";
@@ -554,6 +554,13 @@ fn encode_byte_exact_scalar() {
         // Engine (composite) — same values as fixture
         car.engine(Engine::new(2000, 4, [49, 0, 0]));
 
+        // Write empty tails to reach the complete stage (as_bytes is
+        // completion-only per DECISIONS.md §2).
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
         // Compare non-blockLength header bytes: templateId, schemaId, version
@@ -1598,6 +1605,21 @@ fn encoder_wrap_short_buffer_returns_error() {
         // Exactly right size works
         let mut exact = vec![0u8; total_needed];
         let _encoder = CarEncoder::wrap_and_apply_header(&mut exact, 0).unwrap();
+    "#,
+    );
+}
+
+#[test]
+fn incomplete_encoder_has_no_complete_bytes() {
+    let (_schema, src) = generate(&Paths::example_schema(), "incomplete_bytes");
+    compile_fails(
+        "incomplete_bytes",
+        &src,
+        r#"
+        let mut buf = [0u8; 512];
+        let mut encoder = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        encoder.serial_number(1);
+        let _ = encoder.as_bytes();
     "#,
     );
 }

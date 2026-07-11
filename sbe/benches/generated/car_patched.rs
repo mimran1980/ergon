@@ -2727,12 +2727,6 @@ impl<'a> CarEncoder<'a> {
         self.buf[offset..offset + 6].copy_from_slice(&val.0);
         self
     }
-    /// Return the encoded bytes written so far (partial — available before
-    /// the tail is complete, for scalar-only inspection).
-    #[inline]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.buf[self.message_start..self.pos]
-    }
     /// Compute the exact SBE message body length before encoding.
     /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
     #[inline]
