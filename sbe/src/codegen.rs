@@ -4857,12 +4857,15 @@ fn generate_message_encoder(
             let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
             let vd_snake_unchecked =
                 syn::Ident::new(&format!("{}_unchecked", to_snake_case(&vd.name)), span);
+            let vd_snake_with =
+                syn::Ident::new(&format!("{}_with", to_snake_case(&vd.name)), span);
             let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
             let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
             let len_rust_type: syn::Type = syn::parse_str(rust_type(len_type)).unwrap();
 
-            // Checked body: conditionally includes max_length guard
+            // Checked body: conditionally includes max_length guard.
             let mut checked_body = proc_macro2::TokenStream::new();
+            let mut with_checked_body = proc_macro2::TokenStream::new();
             if let Some(max) = vd.max_length {
                 let max_lit = syn::LitInt::new(&max.to_string(), span);
                 let vd_name_str = &vd.name;
@@ -4873,6 +4876,15 @@ fn generate_message_encoder(
                             max_length: #max_lit,
                             actual: data.len(),
                         });
+                    }
+                });
+                with_checked_body.extend(quote::quote! {
+                    if exact_len > #max_lit {
+                        return Err(sbe_rt::EncodeError::VarDataTooLong {
+                            field: #vd_name_str,
+                            max_length: #max_lit,
+                            actual: exact_len,
+                        }.into());
                     }
                 });
             }
@@ -4914,6 +4926,42 @@ fn generate_message_encoder(
                         data: &[u8],
                     ) -> Result<#next_stage<'a>, sbe_rt::EncodeError> {
                         #shared_body
+                    }
+
+                    /// Lend exactly `exact_len` bytes of the var-data region
+                    /// to a closure for nested-message encoding. Zero-copy:
+                    /// the closure writes directly into the outer buffer.
+                    /// Returns the next stage on success; on failure the
+                    /// caller error propagates unchanged and no partial
+                    /// data is published.
+                    #[must_use]
+                    pub fn #vd_snake_with<E, F>(
+                        mut self,
+                        exact_len: usize,
+                        f: F,
+                    ) -> Result<#next_stage<'a>, E>
+                    where
+                        E: From<sbe_rt::EncodeError>,
+                        F: FnOnce(&mut [u8]) -> Result<(), E>,
+                    {
+                        #with_checked_body
+                        let needed = #prefix_size_lit + exact_len;
+                        if self.pos + needed > self.buf.len() {
+                            return Err(sbe_rt::EncodeError::BufferTooShort {
+                                needed,
+                                available: self.buf.len() - self.pos,
+                            }.into());
+                        }
+                        let len_bytes = (exact_len as #len_rust_type).#to_endian();
+                        self.buf[self.pos..self.pos + #prefix_size_lit]
+                            .copy_from_slice(&len_bytes);
+                        let start = self.pos + #prefix_size_lit;
+                        f(&mut self.buf[start..start + exact_len])?;
+                        Ok(#next_stage {
+                            buf: self.buf,
+                            message_start: self.message_start,
+                            pos: start + exact_len,
+                        })
                     }
                 }
             });

@@ -2932,6 +2932,52 @@ impl<'a> CarAfterPerformanceFigures<'a> {
             pos: start + data.len(),
         })
     }
+    /// Lend exactly `exact_len` bytes of the var-data region
+    /// to a closure for nested-message encoding. Zero-copy:
+    /// the closure writes directly into the outer buffer.
+    /// Returns the next stage on success; on failure the
+    /// caller error propagates unchanged and no partial
+    /// data is published.
+    #[must_use]
+    pub fn manufacturer_with<E, F>(
+        mut self,
+        exact_len: usize,
+        f: F,
+    ) -> Result<CarAfterManufacturer<'a>, E>
+    where
+        E: From<sbe_rt::EncodeError>,
+        F: FnOnce(&mut [u8]) -> Result<(), E>,
+    {
+        if exact_len > 1073741824 {
+            return Err(
+                sbe_rt::EncodeError::VarDataTooLong {
+                    field: "manufacturer",
+                    max_length: 1073741824,
+                    actual: exact_len,
+                }
+                    .into(),
+            );
+        }
+        let needed = 4 + exact_len;
+        if self.pos + needed > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
+        }
+        let len_bytes = (exact_len as u32).to_le_bytes();
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
+        let start = self.pos + 4;
+        f(&mut self.buf[start..start + exact_len])?;
+        Ok(CarAfterManufacturer {
+            buf: self.buf,
+            message_start: self.message_start,
+            pos: start + exact_len,
+        })
+    }
 }
 impl<'a> CarAfterManufacturer<'a> {
     #[must_use]
@@ -2985,6 +3031,52 @@ impl<'a> CarAfterManufacturer<'a> {
             pos: start + data.len(),
         })
     }
+    /// Lend exactly `exact_len` bytes of the var-data region
+    /// to a closure for nested-message encoding. Zero-copy:
+    /// the closure writes directly into the outer buffer.
+    /// Returns the next stage on success; on failure the
+    /// caller error propagates unchanged and no partial
+    /// data is published.
+    #[must_use]
+    pub fn model_with<E, F>(
+        mut self,
+        exact_len: usize,
+        f: F,
+    ) -> Result<CarAfterModel<'a>, E>
+    where
+        E: From<sbe_rt::EncodeError>,
+        F: FnOnce(&mut [u8]) -> Result<(), E>,
+    {
+        if exact_len > 1073741824 {
+            return Err(
+                sbe_rt::EncodeError::VarDataTooLong {
+                    field: "model",
+                    max_length: 1073741824,
+                    actual: exact_len,
+                }
+                    .into(),
+            );
+        }
+        let needed = 4 + exact_len;
+        if self.pos + needed > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
+        }
+        let len_bytes = (exact_len as u32).to_le_bytes();
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
+        let start = self.pos + 4;
+        f(&mut self.buf[start..start + exact_len])?;
+        Ok(CarAfterModel {
+            buf: self.buf,
+            message_start: self.message_start,
+            pos: start + exact_len,
+        })
+    }
 }
 impl<'a> CarAfterModel<'a> {
     #[must_use]
@@ -3036,6 +3128,52 @@ impl<'a> CarAfterModel<'a> {
             buf: self.buf,
             message_start: self.message_start,
             pos: start + data.len(),
+        })
+    }
+    /// Lend exactly `exact_len` bytes of the var-data region
+    /// to a closure for nested-message encoding. Zero-copy:
+    /// the closure writes directly into the outer buffer.
+    /// Returns the next stage on success; on failure the
+    /// caller error propagates unchanged and no partial
+    /// data is published.
+    #[must_use]
+    pub fn activation_code_with<E, F>(
+        mut self,
+        exact_len: usize,
+        f: F,
+    ) -> Result<CarComplete<'a>, E>
+    where
+        E: From<sbe_rt::EncodeError>,
+        F: FnOnce(&mut [u8]) -> Result<(), E>,
+    {
+        if exact_len > 1073741824 {
+            return Err(
+                sbe_rt::EncodeError::VarDataTooLong {
+                    field: "activationCode",
+                    max_length: 1073741824,
+                    actual: exact_len,
+                }
+                    .into(),
+            );
+        }
+        let needed = 4 + exact_len;
+        if self.pos + needed > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
+        }
+        let len_bytes = (exact_len as u32).to_le_bytes();
+        self.buf[self.pos..self.pos + 4].copy_from_slice(&len_bytes);
+        let start = self.pos + 4;
+        f(&mut self.buf[start..start + exact_len])?;
+        Ok(CarComplete {
+            buf: self.buf,
+            message_start: self.message_start,
+            pos: start + exact_len,
         })
     }
 }

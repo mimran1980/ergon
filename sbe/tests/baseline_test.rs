@@ -2275,3 +2275,49 @@ fn nested_message_as_message_requires_ordered_consumption() {
     "#,
     );
 }
+
+#[test]
+fn bounded_nested_payload_encode_via_with() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/nested-message-payload.xml"
+    ));
+    let (_schema, src) = generate(&path, "bounded_nested");
+    compile_and_run(
+        "bounded_nested",
+        &src,
+        r#"
+        let inner_len = InnerEncoder::compute_encoded_length_with_message_header(
+            b"nested".len(),
+        );
+        let outer_len = OuterEncoder::compute_encoded_length_with_message_header(
+            b"test-app".len(),
+            inner_len,
+        );
+        let mut buf = vec![0u8; outer_len];
+        let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        outer.trace_id(7);
+        let complete = outer
+            .app_name(b"test-app").unwrap()
+            .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
+                assert_eq!(payload.len(), inner_len);
+                let mut inner = InnerEncoder::wrap_and_apply_header(payload, 0)?;
+                inner.value(42);
+                let inner_complete = inner.label(b"nested")?;
+                assert_eq!(inner_complete.as_bytes_with_header().len(), payload.len());
+                Ok(())
+            }).unwrap();
+        assert_eq!(complete.as_bytes().len(), outer_len);
+
+        // Verify decode works
+        let dec = OuterDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let (_app_name, after_name) = dec.into_app_name().unwrap();
+        let (frame, _complete) = after_name.into_payload_as_message().unwrap();
+        if let AnyMessage::Inner(inner) = frame.message {
+            assert_eq!(inner.value(), 42);
+        } else {
+            panic!("expected Inner");
+        }
+    "#,
+    );
+}
