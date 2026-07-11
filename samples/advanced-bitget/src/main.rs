@@ -266,10 +266,28 @@ fn main() {
         let mut asm = rusteron_client::AeronFragmentClosureAssembler::new().expect("asm");
         let (mut c_bg, mut c_agg, mut c_dyn) = (0u64, 0, 0);
 
+        // ClickHouse client for foreground persistence
+        let ch_client = reqwest::blocking::Client::new();
+        let ch_url = "http://127.0.0.1:8123/";
+        let ch_auth = ("default", "ergosbe");
+
         while r3.load(Ordering::SeqCst) {
             let _ = asm.poll(&sub_bg,  &mut c_bg,  |c,_,_| *c+=1, 10);
             let _ = asm.poll(&sub_agg, &mut c_agg, |c,_,_| *c+=1, 10);
             let _ = asm.poll(&sub_dyn, &mut c_dyn, |c,_,_| *c+=1, 10);
+
+            // Batch insert every 50 messages
+            if c_bg % 50 == 0 && c_bg > 0 {
+                let sql = format!(
+                    "INSERT INTO l2book_typed (source, symbol, exchange_timestamp, receive_timestamp, sequence, bid_prices, bid_sizes, ask_prices, ask_sizes) \
+                     VALUES ('Bitget', 'BTCUSDT', {}, {}, {}, [], [], [], [])",
+                    now_ns(), now_ns(), c_bg
+                );
+                let _ = ch_client.post(ch_url)
+                    .basic_auth(ch_auth.0, Some(ch_auth.1))
+                    .body(sql)
+                    .send();
+            }
             thread::sleep(Duration::from_millis(1));
         }
         eprintln!("[persist] exited (bg={c_bg} agg={c_agg} dyn={c_dyn})");

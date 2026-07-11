@@ -15,6 +15,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-util = "0.3"
+reqwest = { version = "0.12", features = ["blocking"] }
 
 [build-dependencies]
 ergosbe = { path = "../../sbe" }
@@ -55,4 +56,3 @@ serde = ["ergosbe/serde"]
 [dev-dependencies]
 tempfile = "3"
 ctrlc = "3"
-reqwest = { version = "0.12", features = ["blocking"] }
