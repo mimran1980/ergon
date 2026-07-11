@@ -2201,3 +2201,77 @@ fn generated_decoder_validates_template_and_schema_id() {
         "decoder wrap_and_apply_header must check both template_id and schema_id"
     );
 }
+
+// ── Task 4: nested-message decode via var-data ──────────────────────────
+
+#[test]
+fn nested_message_decode_via_vardata() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/nested-message-payload.xml"
+    ));
+    let (_schema, src) = generate(&path, "nested_msg");
+    compile_and_run(
+        "nested_msg",
+        &src,
+        r#"
+        // Encode inner message in a separate buffer first
+        let inner_len = InnerEncoder::compute_encoded_length_with_message_header(
+            b"nested".len(),
+        );
+        let mut inner_buf = vec![0u8; inner_len];
+        let mut inner = InnerEncoder::wrap_and_apply_header(&mut inner_buf, 0).unwrap();
+        inner.value(42);
+        let inner_complete = inner.label(b"nested").unwrap();
+        let inner_bytes = inner_complete.as_bytes().to_vec();
+
+        // Encode outer message, appending inner bytes as payload
+        let outer_len = OuterEncoder::compute_encoded_length_with_message_header(
+            b"test-app".len(),
+            inner_bytes.len(),
+        );
+        let mut buf = vec![0u8; outer_len];
+        let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        outer.trace_id(7);
+        let after_name = outer.app_name(b"test-app").unwrap();
+        let complete = after_name.payload(&inner_bytes).unwrap();
+        assert_eq!(complete.as_bytes().len(), outer_len);
+
+        // Decode: into_app_name -> into_payload_as_message
+        let outer_decoder = OuterDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let (app_name, after_name) = outer_decoder.into_app_name().unwrap();
+        assert_eq!(app_name, b"test-app");
+        let (frame, complete) = after_name.into_payload_as_message().unwrap();
+        match frame.message {
+            AnyMessage::Inner(inner) => {
+                assert_eq!(inner.value(), 42);
+                assert_eq!(inner.into_label().unwrap().0, b"nested");
+            }
+            _ => panic!("expected Inner"),
+        }
+        assert_eq!(complete.encoded_length_with_header(), outer_len);
+    "#,
+    );
+}
+
+/// `into_payload_as_message` only exists after preceding fields are consumed.
+#[test]
+fn nested_message_as_message_requires_ordered_consumption() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/nested-message-payload.xml"
+    ));
+    let (_schema, src) = generate(&path, "nested_msg_cf");
+    compile_fails(
+        "nested_msg_cf",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        outer.trace_id(7);
+        let _complete = outer.app_name(b"t").unwrap();
+        let dec = OuterDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let _ = dec.into_payload_as_message();
+    "#,
+    );
+}

@@ -2044,6 +2044,26 @@ fn generate_owner_consuming_stages(
                 }
             }
         });
+
+        // Nested-message decode convenience: into_<field>_as_message()
+        // delegates to into_<field>() then AnyMessage::decode_frame.
+        let as_msg_ident = syn::Ident::new(
+            &format!("into_{}_as_message", vd.accessor_snake),
+            span,
+        );
+        ts.extend(quote::quote! {
+            impl<'a> #current_stage<'a> {
+                /// Consume this stage, decode the var-data field as a nested
+                /// SBE message via `AnyMessage::decode_frame`, and advance
+                /// to the next stage.
+                #[inline]
+                pub fn #as_msg_ident(self) -> Result<(DecodedFrame<'a>, #next_stage<'a>), sbe_rt::DecodeError> {
+                    let (data, next) = self.#into_ident()?;
+                    let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+                    Ok((frame, next))
+                }
+            }
+        });
     }
 
     // 3. finish()/skip_remaining() for each group -> next owner stage.

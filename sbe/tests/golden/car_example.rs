@@ -1549,6 +1549,22 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         Ok((data, next))
     }
 }
+impl<'a> FuelFiguresEntryDecoder<'a> {
+    /// Consume this stage, decode the var-data field as a nested
+    /// SBE message via `AnyMessage::decode_frame`, and advance
+    /// to the next stage.
+    #[inline]
+    pub fn into_usage_description_as_message(
+        self,
+    ) -> Result<
+        (DecodedFrame<'a>, FuelFiguresEntryDecoderComplete<'a>),
+        sbe_rt::DecodeError,
+    > {
+        let (data, next) = self.into_usage_description()?;
+        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+        Ok((frame, next))
+    }
+}
 impl<'a> FuelFiguresEntryDecoderComplete<'a> {
     /// Header-inclusive bytes (for an entry, the entry bytes; header_size is 0).
     #[inline]
@@ -2295,6 +2311,22 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
         Ok((data, next))
     }
 }
+impl<'a> CarDecoderAfterPerformanceFigures<'a> {
+    /// Consume this stage, decode the var-data field as a nested
+    /// SBE message via `AnyMessage::decode_frame`, and advance
+    /// to the next stage.
+    #[inline]
+    pub fn into_manufacturer_as_message(
+        self,
+    ) -> Result<
+        (DecodedFrame<'a>, CarDecoderAfterManufacturer<'a>),
+        sbe_rt::DecodeError,
+    > {
+        let (data, next) = self.into_manufacturer()?;
+        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+        Ok((frame, next))
+    }
+}
 impl<'a> CarDecoderAfterManufacturer<'a> {
     /// Consume this stage, read the next var-data field, and advance
     /// to the following stage. Wire order is enforced by consumption.
@@ -2339,6 +2371,19 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
         Ok((data, next))
     }
 }
+impl<'a> CarDecoderAfterManufacturer<'a> {
+    /// Consume this stage, decode the var-data field as a nested
+    /// SBE message via `AnyMessage::decode_frame`, and advance
+    /// to the next stage.
+    #[inline]
+    pub fn into_model_as_message(
+        self,
+    ) -> Result<(DecodedFrame<'a>, CarDecoderAfterModel<'a>), sbe_rt::DecodeError> {
+        let (data, next) = self.into_model()?;
+        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+        Ok((frame, next))
+    }
+}
 impl<'a> CarDecoderAfterModel<'a> {
     /// Consume this stage, read the next var-data field, and advance
     /// to the following stage. Wire order is enforced by consumption.
@@ -2381,6 +2426,19 @@ impl<'a> CarDecoderAfterModel<'a> {
             acting_block_length: self.acting_block_length,
         };
         Ok((data, next))
+    }
+}
+impl<'a> CarDecoderAfterModel<'a> {
+    /// Consume this stage, decode the var-data field as a nested
+    /// SBE message via `AnyMessage::decode_frame`, and advance
+    /// to the next stage.
+    #[inline]
+    pub fn into_activation_code_as_message(
+        self,
+    ) -> Result<(DecodedFrame<'a>, CarDecoderComplete<'a>), sbe_rt::DecodeError> {
+        let (data, next) = self.into_activation_code()?;
+        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+        Ok((frame, next))
     }
 }
 impl<'a> FuelFiguresDecoder<'a> {
