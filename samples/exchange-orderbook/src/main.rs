@@ -218,4 +218,3 @@ fn print_book(exchange: &str, book: &LocalBook) {
         asks = book.asks.len()
     );
 }
-

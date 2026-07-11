@@ -3,12 +3,17 @@
 Emit `const _: () = assert!(...)` assertions for structural invariants in generated
 code. These catch generator bugs at compile time, not runtime. Specified in
 DECISIONS.md §10.
-**Status: DONE**
+**Status: DONE (2026-07-11)**
 
+All acceptance criteria met:
+- `const _: () = assert!(core::mem::size_of::<X>() == N);` for every composite ✓
+- `const _: () = assert!(BLOCK_LENGTH == N);` for every message ✓
+- `const _HEADER_TEMPLATE_LEN: () = assert!(...);` for header template size ✓
+- `const _GROUP_DIM_TEMPLATE_LEN: () = assert!(...);` for group dimensions ✓
+- Compiles to nothing in release — zero runtime cost ✓
+- Golden file updated ✓
 
-## Status: Not Started
-
-## Acceptance Criteria
+## Completed Acceptance Criteria
 
 ^- [x] `const _: () = assert!(core::mem::size_of::<MessageHeader>() == N);` for the resolved header size
 ^- [x] `const _: () = assert!(BLOCK_LENGTH == N);` for each message's block length
