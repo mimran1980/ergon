@@ -1,5 +1,56 @@
 # WireCompatibleExtensions: semanticType-driven converters
 
+> **REOPENED 2026-07-11 with a narrower approved interface:** the historical
+> semantic-type registry and built-in dependency design below remains
+> superseded. The active requirement is a dependency-free generic converter
+> seam for a structurally validated SBE Decimal composite.
+
+**Status: ACTIVE (approved generic Decimal seam 2026-07-11)**
+
+## Active Decimal converter design
+
+`GenerationConfig::enable_decimal_converters("Decimal")` validates that the
+named composite contains signed `int64` `mantissa` followed by signed `int8`
+`exponent`. The generator emits:
+
+```rust
+pub trait SbeDecimal: Sized {
+    type Error;
+
+    fn try_from_sbe(mantissa: i64, exponent: i8) -> Result<Self, Self::Error>;
+    fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;
+}
+```
+
+Any application type can implement the local trait. Generated code does not
+depend on `rust_decimal`. In converter mode, ordinary Decimal-backed field
+methods are generic over `D: SbeDecimal`; infallible `*_wire` methods retain
+the raw generated composite. Without converter mode, ordinary methods continue
+to use the raw composite.
+
+## Active acceptance criteria
+
+- [ ] Add repeatable registration for one or more named Decimal composites.
+- [ ] Reject missing composites, wrong member names/order, unsigned mantissa or
+      exponent, and primitive widths other than int64/int8 during generation.
+- [ ] Emit one local dependency-free `SbeDecimal` trait when at least one
+      Decimal composite is enabled.
+- [ ] Emit generic converted decoder accessors and encoder setters plus raw
+      infallible `*_wire` methods.
+- [ ] Preserve ordinary raw methods when converter mode is disabled.
+- [ ] Prove application implementations for `rust_decimal::Decimal` and a
+      second custom decimal type without generator source injection.
+- [ ] Prove exact forward/reverse conversion, mixed exponents, negative values,
+      adapter range failures, overflow, and precision-loss rejection.
+- [ ] Compose converter errors through `try_fixed`, `try_<group>`, and nested
+      payload closures with `?`.
+- [ ] Prove zero allocation and inspect monomorphised assembly.
+- [ ] Benchmark raw and converted paths separately; Aeron comparisons include
+      equivalent conversion work and pass the canonical five-run ratio gate.
+- [ ] Reach 100 percent line, function, region, and branch coverage for new or
+      changed handwritten production paths with complementary generated-code
+      proofs.
+
 **Blocked by:** none (codegen feature)
 
 When a schema field or type carries a `semanticType` attribute
@@ -9,7 +60,7 @@ the raw SBE wire type and the semantic Rust type.
 
 This is gated behind `CompatibilityMode::WireCompatibleExtensions` — the wire
 bytes are unchanged, only the Rust API surface grows.
-**Status: CLOSED / SUPERSEDED**
+**Historical status: CLOSED / SUPERSEDED**
 
 **Decision after todo-coherence recheck (2026-07-08):** keep converters parked
 behind todo 65 and semantic-newtype design. Converters that pull in

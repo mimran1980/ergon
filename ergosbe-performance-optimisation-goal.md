@@ -40,6 +40,10 @@ the comparison profile but do not by themselves prove generated-code speed.
 - Fallible helpers use caller-selected monomorphised errors and allow `?`.
   Do not add boxed errors, trait objects, allocations, or formatted errors on
   the generated success path.
+- Variable-exponent price/quantity values use a generated `Decimal` composite
+  (`int64` mantissa, `int8` exponent). Opt-in
+  `enable_decimal_converters("Decimal")` emits a local generic `SbeDecimal`
+  seam; application adapters remain external and raw `*_wire` access remains.
 - Generated ordered hot paths allocate no heap memory.
 - `encoded_length()` and complete-message `as_bytes()` exist only on complete
   encoder stages. Any partial view has an explicitly partial name.
@@ -204,6 +208,22 @@ claims are not implementation evidence.
 - [ ] Inspect assembly and run five comparable warmed-up measurements. The
       median fallible-convenience/manual ratio must be at most `1.00` for every
       maintained case; anything above remains unfinished.
+
+### Task D4: Add generic exact Decimal conversion
+
+- [ ] Add `GenerationConfig::enable_decimal_converters("Decimal")` and validate
+      the registered composite is exactly signed int64 mantissa followed by
+      signed int8 exponent.
+- [ ] Emit the dependency-free local `SbeDecimal` trait with associated error
+      and fallible exact `try_from_sbe`/`try_into_sbe` methods.
+- [ ] In converter mode, emit generic converted price/quantity methods plus
+      infallible raw `*_wire` methods; without it, retain ordinary raw methods.
+- [ ] Implement the sample adapter for `rust_decimal::Decimal` outside generated
+      code and prove a second custom adapter works.
+- [ ] Test exact round trips, mixed exponents, adapter range rejection,
+      overflow, and precision-loss rejection with zero allocation.
+- [ ] Benchmark raw and converted paths separately and include equivalent
+      conversion work in Aeron comparisons.
 
 ### Task E: Preserve trusted-input and zero-allocation performance
 
@@ -1059,6 +1079,11 @@ the full five-run Aeron parity matrix + coverage gate (Task F/G).
   `try_<group>`, bounded payload writer, and scoped nested-message decoder
   callbacks. Caller errors propagate with `?`; no allocation or trait object is
   permitted.
+- Revised normalized prices and quantities to per-value int64 mantissa/int8
+  exponent composites. Approved a dependency-free generated `SbeDecimal` trait
+  so the sample can use `rust_decimal::Decimal` directly while retaining raw
+  wire access; ClickHouse arrays target Decimal(38,18) with exact checked
+  rescaling.
 - Added a second performance gate: five-run median
   fallible-convenience/manual ratio at most 1.00, alongside the existing
   ErgoSBE/Aeron ratio at most 1.00.

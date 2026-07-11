@@ -233,6 +233,27 @@ stages.
   Both a struct accessor (`car.header() -> MessageHeader`) AND per-field direct
   methods (`car.template_id()`) are generated, single source of truth. Encode side
   dual: value or closure.
+- **Variable-exponent Decimal composite.** Market prices and quantities that
+  cannot share one schema-wide scale use an ordinary SBE composite with
+  `mantissa: int64` and `exponent: int8`, representing
+  `mantissa * 10^exponent`. The exponent is present per value; do not bake scale
+  8 into the normalized `L2Book`/`Trade` wire schema. Generated access remains a
+  zero-allocation `Copy` composite. Fixed-scale persistence conversion is an
+  explicit checked adapter outside the codec hot path.
+- **Generic decimal-converter seam.** A caller opts a structurally valid wire
+  composite into conversion with
+  `GenerationConfig::enable_decimal_converters("Decimal")`. The generator
+  validates signed `int64` mantissa plus signed `int8` exponent and emits a
+  local `SbeDecimal` trait with fallible `try_from_sbe`/`try_into_sbe` methods.
+  Any application type may implement that local trait, including
+  `rust_decimal::Decimal`; generated code does not depend on `rust_decimal`.
+- **Converted and raw decimal access coexist.** In converter mode, ordinary
+  price/quantity methods are generic over `D: SbeDecimal`, are monomorphised,
+  and return conversion errors without allocation. Infallible `*_wire()` raw
+  accessors/setters remain available. Without converter mode, the ordinary
+  methods continue to use the generated wire composite directly. This is a
+  legitimate generic seam because the application adapter type is not known at
+  generation time; it does not weaken the concrete tail-stage rule.
 - **Fixed arrays** (`int32[8]`, `char[16]`): concrete `[T; N]` returned by value.
   Const generics live only inside the runtime-support read helper, not in user types.
 - **Enums:** Aeron-style flat enum with `NullVal` catch-all.
@@ -638,6 +659,12 @@ remains unfinished even if it is easier to use. Inspect generated assembly and
 prove zero allocation. Aeron comparisons must encode and decode the same outer
 and inner schema rather than comparing an enveloped ErgoSBE message with an
 unenveloped Aeron message.
+
+Opt-in `SbeDecimal` converter benchmarks must include the same exact conversion
+work on the Aeron side. Record raw-wire and converted paths separately. Prove
+round-trip exactness, custom-adapter support, zero allocation, mixed exponents,
+and rejection of unrepresentable values; never describe a converter-only cost
+as codec overhead or compare it with an Aeron raw-only path.
 
 The maintained matrix must grow to cover zero, one, typical, and large counts
 in both groups of a sequential dual-group message such as `bids` then `asks`.

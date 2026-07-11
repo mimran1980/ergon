@@ -33,6 +33,15 @@ AppMessage
 platform infrastructure messages. Publish them directly and unwrapped on the
 separate dynamic stream.
 
+## Decimal contract
+
+Every normalized price and quantity uses the SBE `Decimal` composite
+`{ mantissa: int64, exponent: int8 }`. Enable the generated generic
+`SbeDecimal` conversion seam for that composite and implement it in the sample
+for `rust_decimal::Decimal`; keep raw `*_wire` methods available. Persist book
+arrays as `Array(Decimal(38,18))` through exact checked rescaling. Reject
+overflow, unsupported adapter ranges, rounding, and non-zero precision loss.
+
 ## Required implementation sequence
 
 - [ ] Implement and prove the nested var-data decode bridge in SBE todo 81.
@@ -40,6 +49,9 @@ separate dynamic stream.
       in SBE todo 156.
 - [ ] Define the normalized application schema and exercise every supported XML
       documentation source.
+- [ ] Implement and prove the generic `SbeDecimal` converter seam, the
+      `rust_decimal::Decimal` sample adapter, raw wire access, mixed exponents,
+      exact reverse conversion, zero allocation, and comparable Aeron work.
 - [ ] Prove official-Aeron bytes for outer `AppMessage` plus nested `L2Book` and
       `Trade`.
 - [ ] Add exact inner and outer

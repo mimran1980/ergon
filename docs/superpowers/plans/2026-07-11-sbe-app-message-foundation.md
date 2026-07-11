@@ -20,6 +20,9 @@
 - Optional fields are nullified only by explicit `apply_nulls()`.
 - Nested payload closures receive exactly the precomputed var-data region.
 - Complete-message byte/length views exist only on complete stages.
+- Normalized price/quantity wire values use `Decimal { mantissa: int64,
+  exponent: int8 }`. Generic conversion is opt-in, dependency-free,
+  monomorphised, exact, and retains raw `*_wire` access.
 - Use `#[inline(always)]` only when assembly and five-run benchmarks justify it.
 - For each maintained case, median fallible-convenience/manual and ErgoSBE/Aeron ratios must both be at most `1.00` over five comparable warmed-up runs.
 - Reach 100 percent line, function, region, and branch coverage for new or changed handwritten production code; supplement unattributed generated templates with compile, runtime, source-shape, allocation, and wire proofs.
@@ -30,6 +33,7 @@
 ## File map
 
 - `sbe/src/xml.rs`: schema documentation-source association and merge order.
+- `sbe/src/config.rs`: registered Decimal-composite names and builder method.
 - `sbe/src/codegen.rs`: generated runtime errors, encoders, decoders, concrete stages, nested-message helpers, and fallible combinators.
 - `sbe/tests/fixtures/schemas/schema-docs-all-sources.xml`: independently identifiable documentation provenance fixture.
 - `sbe/tests/schema_docs_provenance_test.rs`: parser-to-generated-rustdoc and real cargo-doc proofs.
@@ -41,6 +45,7 @@
 - `ergosbe-benchmarks/benches/perf_parity_bench.rs`: ErgoSBE/Aeron and manual/closure Criterion comparisons.
 - `ergosbe-benchmarks/benches/_common.rs`: shared benchmark fixtures and measurement metadata.
 - `sbe/todos/27-fix-buffer-too-short-needed.md`, `81-vardata-as-decoder-as-message.md`, `86-encoder-wrap-body-only.md`, `87-schema-docs-to-rustdoc.md`, `156-fallible-stage-combinators.md`, and `157-completion-only-encoder-bytes.md`: evidence-backed status.
+- `sbe/todos/62-semantic-type-converters.md`: generic `SbeDecimal` evidence.
 - `ergosbe-performance-optimisation-goal.md`: dated commands, results, medians, ratios, confidence intervals, and exact next slice.
 
 ### Task 1: Complete all four schema-documentation provenance paths
@@ -430,7 +435,137 @@ git add sbe/src/codegen.rs sbe/tests sbe/todos/156-fallible-stage-combinators.md
 git commit -m "feat(sbe): encode nested payloads into exact var-data slices"
 ```
 
-### Task 6: Add `try_fixed` while preserving direct fixed-field access
+### Task 6: Add the generic `SbeDecimal` converter seam
+
+**Files:**
+- Modify: `sbe/src/config.rs`
+- Modify: `sbe/src/codegen.rs`
+- Modify: `sbe/src/lib.rs`
+- Create: `sbe/tests/fixtures/schemas/decimal-converter-schema.xml`
+- Modify: `sbe/tests/baseline_test.rs`
+- Modify: `sbe/tests/common/mod.rs`
+- Modify: `sbe/tests/allocation_count_test.rs`
+- Modify: `sbe/todos/62-semantic-type-converters.md`
+
+**Interfaces:**
+- Produces: `GenerationConfig::enable_decimal_converters(self, composite: impl Into<String>) -> Self`.
+- Produces: `Generator::try_generate(&Schema) -> Result<GeneratedModuleSet, GenerateError>` with `GenerateError::InvalidDecimalComposite`; existing `generate` remains a compatibility wrapper.
+- Produces generated local trait `SbeDecimal` with associated `Error`, `try_from_sbe(i64, i8)`, and `try_into_sbe(self)`.
+- Produces generic converted field methods and infallible raw `*_wire` methods only for fields backed by an enabled Decimal composite.
+
+- [ ] **Step 1: Add configuration tests**
+
+```rust
+let config = GenerationConfig::new("decimal_test")
+    .enable_decimal_converters("Decimal");
+assert_eq!(config.decimal_composites, vec!["Decimal"]);
+assert!(GenerationConfig::default().decimal_composites.is_empty());
+```
+
+Store registered names in insertion order, deduplicate repeated registration,
+and preserve deterministic generated output.
+
+- [ ] **Step 2: Add a Decimal fixture and failing generated-source tests**
+
+The fixture contains:
+
+```xml
+<composite name="Decimal">
+  <type name="mantissa" primitiveType="int64"/>
+  <type name="exponent" primitiveType="int8"/>
+</composite>
+```
+
+Add one message and one repeating-group entry with `price` and `size` fields of
+type `Decimal`. Assert converter mode emits `SbeDecimal`, generic ordinary
+methods, and raw `price_wire`/`size_wire`; default mode emits only raw ordinary
+methods and no `SbeDecimal` trait.
+
+- [ ] **Step 3: Add invalid-registration tests**
+
+Generate schemas with a missing composite, reversed members, wrong names,
+unsigned members, `int32` mantissa, and `int16` exponent. Assert generation
+rejects each with a diagnostic naming the composite and required
+`mantissa: int64, exponent: int8` layout. Add a focused hand-rolled
+`GenerateError` implementing `Display` and `core::error::Error` in the generator
+crate. `try_generate` returns it; the existing `generate` method delegates to
+`try_generate` and preserves source compatibility for already validated
+configurations. Do not silently omit methods or emit `compile_error!` output.
+
+- [ ] **Step 4: Emit the dependency-free trait once per generated runtime**
+
+```rust
+pub trait SbeDecimal: Sized {
+    type Error;
+
+    fn try_from_sbe(mantissa: i64, exponent: i8) -> Result<Self, Self::Error>;
+    fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;
+}
+```
+
+For shared-runtime multi-schema generation, emit the trait in the shared
+runtime and reuse it from importing modules.
+
+- [ ] **Step 5: Emit converted and raw methods**
+
+Decoder target:
+
+```rust
+pub fn price<D: SbeDecimal>(&self) -> Result<D, D::Error> {
+    let wire = self.price_wire();
+    D::try_from_sbe(wire.mantissa(), wire.exponent())
+}
+
+pub fn price_wire(&self) -> Decimal {
+    // Existing composite read path.
+}
+```
+
+Encoder target:
+
+```rust
+pub fn price<D: SbeDecimal>(&mut self, value: D) -> Result<&mut Self, D::Error> {
+    let (mantissa, exponent) = value.try_into_sbe()?;
+    self.price_wire(Decimal::new(mantissa, exponent));
+    Ok(self)
+}
+
+pub fn price_wire(&mut self, value: Decimal) -> &mut Self {
+    // Existing composite write path.
+}
+```
+
+Use the generated composite's actual constructor/accessor names. Do not add a
+`rust_decimal` reference anywhere in generated output.
+
+- [ ] **Step 6: Prove two application adapters**
+
+Extend the temporary-crate helper to accept explicit dependencies. Implement
+`SbeDecimal` once for `rust_decimal::Decimal` and once for a small test
+`ExactDecimal { mantissa: i64, exponent: i8 }`. Test positive/negative values,
+exponents `0`, `-8`, `-15`, `-18`, adapter range failure, overflow, and exact
+reverse conversion. Conversion must reject rounding and non-zero precision
+loss.
+
+- [ ] **Step 7: Prove raw escape, byte equivalence, and zero allocation**
+
+Use `price_wire` without a converter; assert identical wire bytes for converted
+and raw inputs; add counting-allocator cases for both. Do not test
+`try_fixed`/`try_<group>` composition yet because those helpers are introduced
+by Tasks 7 and 8. Their tasks own the corresponding `?` integration proofs.
+
+- [ ] **Step 8: Run focused gates and commit**
+
+```sh
+cargo test -p ergosbe config::tests -- --nocapture
+cargo test -p ergosbe --test baseline_test decimal_converter -- --nocapture
+cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
+cargo llvm-cov -p ergosbe --tests --branch --summary-only
+git add sbe/src/config.rs sbe/src/codegen.rs sbe/src/lib.rs sbe/tests sbe/todos/62-semantic-type-converters.md
+git commit -m "feat(sbe): add generic decimal converter seam"
+```
+
+### Task 7: Add `try_fixed` while preserving direct fixed-field access
 
 **Files:**
 - Modify: `sbe/src/codegen.rs`
@@ -445,6 +580,8 @@ git commit -m "feat(sbe): encode nested payloads into exact var-data slices"
 - [ ] **Step 1: Add manual/closure equivalence and custom-error tests**
 
 Encode identical fixed fields once with direct setters and once with `try_fixed`; assert byte equality after completing identical tails. Add a closure returning a custom error and assert exact propagation.
+When converter mode is enabled, also use an `SbeDecimal` setter inside
+`try_fixed` and propagate its adapter error through `?`.
 
 - [ ] **Step 2: Add a compile-fail test preventing tail transition inside the fixed closure if the closure receives a body-only view**
 
@@ -483,7 +620,7 @@ git add sbe/src/codegen.rs sbe/tests sbe/todos/156-fallible-stage-combinators.md
 git commit -m "feat(sbe): add fallible fixed-body chaining"
 ```
 
-### Task 7: Add manual group stages and fallible group conveniences
+### Task 8: Add manual group stages and fallible group conveniences
 
 **Files:**
 - Modify: `sbe/src/codegen.rs:4765-4840`
@@ -517,6 +654,8 @@ The entry's mutable borrow prevents the parent group from advancing.
 - [ ] **Step 2: Add fallible closure and compile-fail proofs**
 
 Use `try_bids`/`try_asks` with custom `?`. Compile-fail finishing a group while an entry is active, asks before bids, and reuse after consumption.
+Include Decimal-backed entry fields and prove their `SbeDecimal` adapter errors
+bubble through the group callback unchanged.
 
 - [ ] **Step 3: Generate parent-aware manual group stages and `try_<group>` adapters**
 
@@ -542,7 +681,7 @@ git add sbe/src/codegen.rs sbe/tests sbe/todos/156-fallible-stage-combinators.md
 git commit -m "feat(sbe): expose manual and fallible group stages"
 ```
 
-### Task 8: Add scoped fallible decoder combinators
+### Task 9: Add scoped fallible decoder combinators
 
 **Files:**
 - Modify: `sbe/src/codegen.rs:1889-2050`
@@ -586,7 +725,7 @@ git add sbe/src/codegen.rs sbe/tests sbe/todos/81-vardata-as-decoder-as-message.
 git commit -m "feat(sbe): add scoped fallible decoder chaining"
 ```
 
-### Task 9: Add the normalized AppMessage/L2Book/Trade schema proof
+### Task 10: Add the normalized AppMessage/L2Book/Trade schema proof
 
 **Files:**
 - Create: `samples/exchange-orderbook/schemas/normalized-app.xml`
@@ -629,6 +768,10 @@ the indicated schema items without changing the layout):
       <type name="length" primitiveType="uint32" maxValue="1073741824"/>
       <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
     </composite>
+    <composite name="Decimal">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8"/>
+    </composite>
     <enum name="Source" encodingType="uint8">
       <validValue name="Bitget">1</validValue>
     </enum>
@@ -653,12 +796,12 @@ the indicated schema items without changing the layout):
     <field name="receiveTimestamp" id="3" type="uint64" semanticType="UTCTimestamp"/>
     <field name="sequence" id="4" type="uint64"/>
     <group name="bids" id="5" dimensionType="groupSizeEncoding">
-      <field name="price" id="1" type="int64" semanticType="Price"/>
-      <field name="size" id="2" type="int64" semanticType="Qty"/>
+      <field name="price" id="1" type="Decimal" semanticType="Price"/>
+      <field name="size" id="2" type="Decimal" semanticType="Qty"/>
     </group>
     <group name="asks" id="6" dimensionType="groupSizeEncoding">
-      <field name="price" id="1" type="int64" semanticType="Price"/>
-      <field name="size" id="2" type="int64" semanticType="Qty"/>
+      <field name="price" id="1" type="Decimal" semanticType="Price"/>
+      <field name="size" id="2" type="Decimal" semanticType="Qty"/>
     </group>
     <data name="symbol" id="7" type="varStringEncoding"/>
   </sbe:message>
@@ -668,16 +811,19 @@ the indicated schema items without changing the layout):
     <field name="exchangeTimestamp" id="2" type="uint64" semanticType="UTCTimestamp"/>
     <field name="receiveTimestamp" id="3" type="uint64" semanticType="UTCTimestamp"/>
     <field name="tradeId" id="4" type="uint64"/>
-    <field name="price" id="5" type="int64" semanticType="Price"/>
-    <field name="size" id="6" type="int64" semanticType="Qty"/>
+    <field name="price" id="5" type="Decimal" semanticType="Price"/>
+    <field name="size" id="6" type="Decimal" semanticType="Qty"/>
     <field name="side" id="7" type="Side"/>
     <data name="symbol" id="8" type="varStringEncoding"/>
   </sbe:message>
 </sbe:messageSchema>
 ```
 
-Interpret every price and size mantissa at fixed scale 8 in the sample and
-ClickHouse adapters; no floating-point conversion is allowed.
+Enable `.enable_decimal_converters("Decimal")` for this generated module.
+Implement the local `SbeDecimal` trait for `rust_decimal::Decimal` in the sample
+crate and keep raw `*_wire` coverage. The wire exponent remains per value.
+ClickHouse adapters convert exactly to Decimal(38,18); no floating-point,
+rounding, truncation, or silent range loss is allowed.
 
 - [ ] **Step 2: Add exact-length manual and closure round trips**
 
@@ -691,6 +837,10 @@ let outer_len = AppMessageEncoder::compute_encoded_length_with_message_header(
 ```
 
 Encode directly into one outer buffer, dispatch outer `AnyMessage::AppMessage`, then nested `AnyMessage::L2Book` or `AnyMessage::Trade`.
+
+Use `rust_decimal::Decimal` through the generated generic accessors for the
+application-facing path and the raw `Decimal` composite for a byte-identical
+control path. Cover mixed exponents `0`, `-8`, `-15`, and `-18`.
 
 - [ ] **Step 3: Add rejection tests**
 
@@ -715,7 +865,7 @@ git add samples/exchange-orderbook samples/todo/01-bitget-aeron-app-message.md
 git commit -m "feat(samples): add normalized AppMessage schema proof"
 ```
 
-### Task 10: Benchmark and close the SBE foundation
+### Task 11: Benchmark and close the SBE foundation
 
 **Files:**
 - Modify: `ergosbe-benchmarks/benches/perf_parity_bench.rs`
@@ -725,6 +875,8 @@ git commit -m "feat(samples): add normalized AppMessage schema proof"
 
 **Interfaces:**
 - Produces maintained direct/closure/Aeron benchmarks for outer encode, inner encode, full envelope encode, outer decode, nested enum dispatch, and zero/one/typical/large dual groups in safe and trusted-input modes.
+- Produces separate raw-wire and generic `SbeDecimal` conversion cases with the
+  same conversion work in the Aeron case.
 
 - [ ] **Step 1: Add benchmark cases with identical inputs and black-box boundaries**
 
@@ -777,6 +929,6 @@ git add ergosbe-benchmarks ergosbe-performance-optimisation-goal.md sbe/todos sb
 git commit -m "perf(sbe): verify manual and fallible AppMessage paths"
 ```
 
-## Execution boundary after Task 10
+## Execution boundary after Task 11
 
 After this plan passes, continue with `docs/superpowers/specs/2026-07-10-bitget-aeron-clickhouse-sample-design.md` and `samples/todo/01-bitget-aeron-app-message.md`. Implement Decimal-array infrastructure, the Rusteron 0.2.1 direct-claim adapter, foreground ClickHouse persistence, the deterministic three-thread pipeline, and the dated live Bitget smoke test in that exact dependency order. Do not treat completion of this SBE foundation as completion of the advanced sample.

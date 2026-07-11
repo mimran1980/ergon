@@ -13,6 +13,9 @@
 > Todos 27 and 86 also reopen the canonical fallible encoder-wrap contract.
 > Todo 87 is reopened for nearest-element XML comment association and real
 > end-to-end rustdoc provenance proofs.
+> Todo 62 is reopened only for the dependency-free generic `SbeDecimal` seam;
+> its older built-in dependency and arbitrary converter-registry design remains
+> superseded.
 > Their active state supersedes this historical map's phase-close conclusion.
 
 **Blocked by:** none

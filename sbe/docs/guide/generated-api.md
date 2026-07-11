@@ -317,6 +317,39 @@ manual/closure byte equivalence, scoped-lifetime compile-fail tests, zero
 allocations, assembly inspection, and the five-run manual/Aeron performance
 gates pass.
 
+### Planned generic Decimal conversion (not yet shipped)
+
+For a schema-defined composite whose members are exactly `mantissa: int64`
+followed by `exponent: int8`, the approved opt-in target is:
+
+```rust
+let config = GenerationConfig::new("market_data")
+    .enable_decimal_converters("Decimal");
+```
+
+The generated module then owns a dependency-free trait:
+
+```rust
+pub trait SbeDecimal: Sized {
+    type Error;
+
+    fn try_from_sbe(mantissa: i64, exponent: i8)
+        -> Result<Self, Self::Error>;
+    fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;
+}
+```
+
+Applications may implement this local trait for `rust_decimal::Decimal` or
+another exact decimal type. Generated output does not depend on
+`rust_decimal`. Converter mode gives Decimal-backed fields generic fallible
+ordinary methods and keeps infallible raw `*_wire` methods; without converter
+mode, the ordinary methods continue to expose the raw generated composite.
+Conversions must be exact, allocation-free, and reject overflow, rounding, or
+precision loss.
+
+This interface is tracked by todo 62. Do not depend on it until configuration,
+generated-source, adapter, allocation, assembly, and benchmark tests pass.
+
 ## AnyMessage dispatch
 
 ```rust

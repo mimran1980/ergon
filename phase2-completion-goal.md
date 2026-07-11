@@ -154,6 +154,7 @@ Start with these known unresolved or suspicious files:
 - `sbe/todos/157-completion-only-encoder-bytes.md`
 - `sbe/todos/27-fix-buffer-too-short-needed.md`
 - `sbe/todos/86-encoder-wrap-body-only.md`
+- `sbe/todos/62-semantic-type-converters.md`
 
 Required SBE outcomes:
 
@@ -170,6 +171,9 @@ Required SBE outcomes:
   most 1.00 in every maintained case.
 - Nested SBE var-data encode/decode, scoped `AnyMessage` dispatch, caller-error
   propagation, and completion-only byte views match the canonical decisions.
+- Variable-exponent Decimal composites retain exact mantissa/exponent wire
+  values. Opt-in generic `SbeDecimal` conversion supports application adapters
+  without adding external generated-code dependencies or hiding raw wire access.
 - CI, docs, release, and public API contracts are coherent.
 - Stale `ACTIVE` or `IN PROGRESS` statuses are either completed with evidence or
   formally closed with evidence.
@@ -231,6 +235,8 @@ Required Samples outcomes:
   `Trade` inside same-schema `AppMessage`, direct exact-sized Rusteron 0.2.1
   claims, unwrapped dynamic infrastructure messages, typed/dynamic comparison,
   and foreground ClickHouse persistence.
+- Persist normalized price/quantity arrays as `Decimal(38,18)` only through
+  exact checked conversion from per-value SBE mantissa/exponent composites.
 
 ## Required Final Gates
 

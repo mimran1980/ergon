@@ -66,6 +66,13 @@ Composite accessors are **infallible** -- no `Result`, no `?`. Accessors that
 read runtime buffers optimise for fast inline reads instead of preserving
 `const fn`.
 
+The default generated API keeps this raw composite behaviour. A planned,
+not-yet-shipped opt-in for an exact `mantissa: int64`, `exponent: int8`
+Decimal composite emits generic fallible `SbeDecimal` field methods while
+retaining infallible `*_wire` raw access. See todo 62 and the generated API
+guide; generated output will not depend on a particular application decimal
+crate.
+
 ### Enums
 
 Enums become a flat Rust `enum` with a `NullVal` variant for unknown wire

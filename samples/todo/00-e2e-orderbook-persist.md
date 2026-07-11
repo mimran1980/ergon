@@ -77,7 +77,7 @@ Do not reinterpret the historical checks above as evidence for the advanced
 sample. In particular, the future design requires exact Rusteron 0.2.1 pins,
 SHARED media-driver ownership, separate IPC stream IDs, direct zero-copy
 `try_claim` encoding, normalized L2Book and Trade messages, dynamic
-`Array(Decimal(18,8))` book rows, foreground ClickHouse work, deterministic E2E
+`Array(Decimal(38,18))` book rows, foreground ClickHouse work, deterministic E2E
 proof, live Bitget evidence, coverage, allocation tests, and benchmark gates.
 The approved 2026-07-11 revision additionally wraps every normalized `L2Book`
 and `Trade` in a same-schema `AppMessage` carrying epoch-nanosecond `sentTs`,

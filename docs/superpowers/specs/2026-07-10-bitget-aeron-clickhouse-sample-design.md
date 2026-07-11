@@ -222,7 +222,55 @@ Generate a new exchange-neutral `L2Book` schema. It contains at least:
 - ordered `asks` repeating group;
 - trailing symbol variable data.
 
-Each level contains signed 64-bit price and size mantissas at fixed scale 8.
+Each level contains `price` and `size` as a variable-exponent SBE `Decimal`
+composite:
+
+```text
+Decimal
+  mantissa: int64
+  exponent: int8
+```
+
+The represented value is `mantissa * 10^exponent`. The exponent is encoded per
+value so instruments requiring 15 or more fractional decimal places remain
+exact. Do not assume or bake scale 8 into the normalized wire message.
+
+The sample enables the generator's generic converter seam:
+
+```rust
+let config = GenerationConfig::new("normalized_app")
+    .enable_decimal_converters("Decimal");
+```
+
+The generator validates the composite shape and emits a local `SbeDecimal`
+trait. The sample implements that trait for `rust_decimal::Decimal`, so ordinary
+generated price/size accessors and setters use `rust_decimal::Decimal` directly
+with fallible exact conversion. Generated code must not depend on
+`rust_decimal`; any application decimal type may implement the trait. Raw
+infallible `price_wire()`/`size_wire()` accessors and setters preserve the
+generated composite escape hatch. Without converter mode, ordinary methods use
+the raw generated composite.
+
+```rust
+pub trait SbeDecimal: Sized {
+    type Error;
+
+    fn try_from_sbe(mantissa: i64, exponent: i8)
+        -> Result<Self, Self::Error>;
+    fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;
+}
+```
+
+Generated setters use a named inferred type parameter such as
+`fn price<D: SbeDecimal>(..., value: D) -> Result<..., D::Error>`. This accepts
+any implementing type without a turbofish while allowing the return type to
+name that adapter's error.
+
+`SbeDecimal` conversion must be allocation-free and exact. Reject exponent,
+mantissa, scale, or range combinations that `rust_decimal` cannot represent;
+reverse conversion must reproduce the same numeric value without rounding or
+truncation. Conversion errors compose with the approved caller-error `?`
+closures.
 The tail order is exactly:
 
 ```text
@@ -247,7 +295,7 @@ It contains at least:
 - source/exchange identifier;
 - exchange and receive timestamps;
 - trade/execution ID;
-- signed 64-bit price and size mantissas at fixed scale 8;
+- variable-exponent `Decimal` composites for price and size;
 - side enum;
 - trailing symbol variable data.
 
@@ -409,10 +457,10 @@ symbol               String
 exchange_timestamp   UInt64
 receive_timestamp    UInt64
 sequence              UInt64
-bid_prices            Array(Decimal(18,8))
-bid_sizes             Array(Decimal(18,8))
-ask_prices            Array(Decimal(18,8))
-ask_sizes             Array(Decimal(18,8))
+bid_prices            Array(Decimal(38,18))
+bid_sizes             Array(Decimal(38,18))
+ask_prices            Array(Decimal(38,18))
+ask_sizes             Array(Decimal(38,18))
 ```
 
 Do not represent these arrays as JSON, strings, opaque byte columns, one row per
@@ -441,22 +489,24 @@ template 4: DynamicRowV2
 `DynamicSchemaV2` has column descriptors for outer type, element type,
 precision, and scale. `DynamicRowV2` retains the scalar field groups, then adds
 an ordered `decimalArrayFields` group whose entries contain `fieldId` followed
-by a nested `values` group of signed 64-bit mantissas; its symbol table remains
-the terminal variable data. `SchemaRegistry` and `RowDecoder` accept both the
-version-0 and V2 template families. Independently validate the new templates
-against official SBE tooling before keeping the implementation.
+by a nested `values` group of the same variable-exponent `Decimal` composite
+(`mantissa: int64`, `exponent: int8`). Its symbol table remains the terminal
+variable data. `SchemaRegistry` and `RowDecoder` accept both the version-0 and
+V2 template families. Independently validate the new templates against
+official SBE tooling before keeping the implementation.
 
 The array-capable schema communicates:
 
 - the outer Array type;
 - Decimal element type;
-- precision 18;
-- scale 8.
+- precision 38;
+- ClickHouse target scale 18.
 
-Each dynamic row carries signed 64-bit scaled mantissas for the four arrays.
-The row schema, not each value, owns the precision and scale. Nested repeating
-groups are preferred over an undocumented binary blob so official SBE tooling
-can describe and decode the layout.
+Each dynamic row preserves the original mantissa and exponent for every value.
+The dynamic schema owns the ClickHouse precision and target scale metadata;
+the transport does not destroy the per-value exponent. Nested repeating groups
+are preferred over an undocumented binary blob so official SBE tooling can
+describe and decode the layout.
 
 Add a borrowed recording API, such as `DynamicValueRef<'a>`, so strings and
 Decimal arrays can be supplied without constructing owned values on every
@@ -464,8 +514,12 @@ record. Add exact header-inclusive size calculation and a `record_into`-style
 API that writes directly into the caller-provided Aeron claim. Preserve the
 existing owning and reusable-buffer APIs for compatibility.
 
-Decimal normalization must reject overflow and any conversion that would lose
-non-zero precision. It must never silently truncate a value to scale 8.
+Conversion to ClickHouse `Decimal(38,18)` is exact and checked. For wire value
+`mantissa * 10^exponent`, the stored scaled integer is
+`mantissa * 10^(exponent + 18)`. When `exponent + 18` is negative, division is
+allowed only if every discarded digit is zero. Reject non-zero precision loss,
+checked-integer overflow, values outside Decimal(38,18), and any value the
+selected Rust adapter cannot represent. Never round or silently truncate.
 
 ## 9. ClickHouse persistence
 
@@ -481,7 +535,7 @@ trades
 ```
 
 The typed and dynamic L2 tables use equivalent user columns, including all four
-`Array(Decimal(18,8))` columns. They may contain the normal persistence metadata
+`Array(Decimal(38,18))` columns. They may contain the normal persistence metadata
 columns added by the persistence crate. Both rows from an equal matched pair
 are persisted so ClickHouse can be queried for row-for-row equivalence.
 
@@ -594,6 +648,11 @@ Test at least:
 - array-capable dynamic schema/row compatibility and acting-version behaviour;
 - Decimal positive, negative, minimum, maximum, rescale, overflow, and
   precision-loss cases;
+- mixed wire exponents including `0`, `-8`, `-15`, `-18`, exact values below
+  `-18`, inexact values below `-18`, and values outside `rust_decimal` or
+  ClickHouse Decimal(38,18) range;
+- generic `SbeDecimal` round trips for `rust_decimal::Decimal` and a second
+  test adapter, plus infallible raw `*_wire` access;
 - zero heap allocation for warmed-up size, claim, direct encode, and commit of
   each maintained producer message;
 - manual/fallible-closure byte equality and decoded-value equality;
@@ -645,6 +704,8 @@ Benchmark:
 - manual and fallible-closure `AppMessage` plus nested Trade direct-claim encode;
 - manual and fallible-closure outer decode plus nested enum dispatch;
 - raw inner-message and complete-envelope costs reported separately;
+- raw Decimal-composite and converted `SbeDecimal` paths reported separately,
+  with equivalent conversion work in the Aeron comparison;
 - typed and dynamic decode;
 - pair comparison;
 - IPC claim/commit throughput;
@@ -722,10 +783,13 @@ same final worktree:
 - every publication uses exact-length direct `try_claim` encoding;
 - manual concrete stages and fallible closure chaining are both implemented,
   tested, documented, allocation-free, and within both median performance gates;
+- normalized price/quantity wire fields use per-value mantissa/exponent Decimal
+  composites; the sample uses the generic `SbeDecimal` seam with
+  `rust_decimal::Decimal` while retaining raw `*_wire` access;
 - no `offer`, encoded temporary buffer, copy fallback, or fragmentation is
   present;
 - full 50-by-50 books fit the configured and verified IPC maximum payload;
-- dynamic rows use the four required `Array(Decimal(18,8))` columns;
+- dynamic rows use the four required `Array(Decimal(38,18))` columns;
 - version-0 dynamic messages retain their documented compatibility;
 - typed and dynamic books are matched, compared, and persisted to separate
   tables;
