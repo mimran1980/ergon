@@ -44,6 +44,7 @@ use std::hash::{Hash, Hasher};
 /// `Null` is encoded in the nullFields group — the underlying column type's
 /// group is simply skipped for that position.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // DecimalArray — V2 only, actively used in sample crate
 pub enum DynamicValue {
     /// Signed integer (stored in `int64Fields` group).
     Int64(i64),
@@ -69,6 +70,7 @@ pub enum DynamicValue {
 /// Used internally by [`DynamicRecorder`] to map registered [`ColumnType`]s
 /// to their wire groups.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)] // DecimalArray — V2 only
 enum DynamicValueType {
     Int64,
     UInt64,
@@ -483,7 +485,6 @@ impl DynamicRecorder {
                         DynamicValue::Bool(_) => "Bool",
                         DynamicValue::String(_) => "String",
                         DynamicValue::Null => "Null",
-                        DynamicValue::DecimalArray(_) => "DecimalArray",
                         DynamicValue::DecimalArray(_) => "DecimalArray",
                     };
                     return Err(DynamicRecorderError::ValueTypeMismatch {
