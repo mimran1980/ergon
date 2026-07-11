@@ -4854,6 +4854,23 @@ fn generate_message_encoder(
         });
     }
 
+    // Fallible fixed-body chaining: try_fixed runs a closure over &mut self
+    // and propagates caller errors, keeping the same concrete stage.
+    impl_contents.extend(quote::quote! {
+        /// Run a fallible closure over the fixed-body fields. The closure
+        /// receives `&mut Self` and can set/read fixed fields; tail
+        /// transitions are unavailable inside the closure. Returns the
+        /// same stage on success, or the caller's error on failure.
+        #[inline]
+        pub fn try_fixed<E, F>(mut self, f: F) -> Result<Self, E>
+        where
+            F: FnOnce(&mut Self) -> Result<(), E>,
+        {
+            f(&mut self)?;
+            Ok(self)
+        }
+    });
+
     // Close the impl block
     if total_tail > 0 {
         ts.extend(quote::quote! {

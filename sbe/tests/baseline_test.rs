@@ -2400,3 +2400,44 @@ fn decimal_converter_composite_roundtrip() {
     "#,
     );
 }
+
+// ── Task 7: try_fixed ──────────────────────────────────────────────────
+
+#[test]
+fn try_fixed_manual_equivalence() {
+    let (_schema, src) = generate(&Paths::example_schema(), "try_fixed_eq");
+    compile_and_run(
+        "try_fixed_eq",
+        &src,
+        r#"
+        let mut buf_direct = vec![0u8; 256];
+        let mut buf_fallible = vec![0u8; 256];
+        let mut d = CarEncoder::wrap_and_apply_header(&mut buf_direct, 0).unwrap();
+        d.serial_number(42); d.model_year(2020);
+        d.available(BooleanType::T); d.code(Model::A);
+        d.some_numbers([0u32;4]); d.vehicle_code([0u8;6]);
+        d.extras(OptionalExtras::default());
+        d.engine(Engine::new(1000, 4, [0,0,0]));
+        let d = d.fuel_figures(0, |_|{}).unwrap();
+        let d = d.performance_figures(0, |_|{}).unwrap();
+        let d = d.manufacturer(b"H").unwrap();
+        let d = d.model(b"C").unwrap();
+        let direct = d.activation_code(b"X").unwrap().as_bytes().to_vec();
+        let mut f = CarEncoder::wrap_and_apply_header(&mut buf_fallible, 0).unwrap();
+        let f = f.try_fixed::<sbe_rt::EncodeError, _>(|enc| {
+            enc.serial_number(42); enc.model_year(2020);
+            enc.available(BooleanType::T); enc.code(Model::A);
+            enc.some_numbers([0u32;4]); enc.vehicle_code([0u8;6]);
+            enc.extras(OptionalExtras::default());
+            enc.engine(Engine::new(1000, 4, [0,0,0]));
+            Ok(())
+        }).unwrap();
+        let f = f.fuel_figures(0, |_|{}).unwrap();
+        let f = f.performance_figures(0, |_|{}).unwrap();
+        let f = f.manufacturer(b"H").unwrap();
+        let f = f.model(b"C").unwrap();
+        let fallible = f.activation_code(b"X").unwrap().as_bytes().to_vec();
+        assert_eq!(direct, fallible);
+    "#,
+    );
+}
