@@ -2547,3 +2547,43 @@ fn nested_message_rejects_malformed_payload() {
     );
 }
 
+/// Recursive AppMessage payloads (same template as outer) are dispatched
+/// as AnyMessage::Outer, enabling explicit rejection by the application.
+#[test]
+fn nested_message_identifies_recursive_payload() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/nested-message-payload.xml"
+    ));
+    let (_schema, src) = generate(&path, "recurse_id");
+    compile_and_run(
+        "recurse_id",
+        &src,
+        r#"
+        // Encode Outer(appName="x", payload=Outer(traceId=99, appName="", payload=""))
+        let inner_outer_len = OuterEncoder::compute_encoded_length_with_message_header(0, 0);
+        let outer_len = OuterEncoder::compute_encoded_length_with_message_header(1, inner_outer_len);
+        let mut buf = vec![0u8; outer_len];
+        let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        outer.trace_id(1);
+        let complete = outer.app_name(b"x").unwrap()
+            .payload_with(inner_outer_len, |payload| -> Result<(), sbe_rt::EncodeError> {
+                let mut inner = OuterEncoder::wrap_and_apply_header(payload, 0)?;
+                inner.trace_id(99);
+                let c = inner.app_name(b"").unwrap().payload(b"").unwrap();
+                assert_eq!(c.as_bytes().len(), inner_outer_len);
+                Ok(())
+            }).unwrap();
+        assert_eq!(complete.as_bytes().len(), outer_len);
+
+        // Decode: the nested payload is also an Outer message
+        let dec = OuterDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let (_name, after_name) = dec.into_app_name().unwrap();
+        let (frame, _c) = after_name.into_payload_as_message().unwrap();
+        // Recursive Outer appears as AnyMessage::Outer — app can reject it
+        assert!(matches!(frame.message, AnyMessage::Outer(_)),
+            "recursive Outer payload must be identifiable for rejection");
+    "#,
+    );
+}
+

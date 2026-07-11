@@ -26,6 +26,15 @@ path = "tests/allocation_test.rs"
 name = "clickhouse_e2e_test"
 path = "tests/clickhouse_e2e_test.rs"
 
+[[test]]
+name = "clickhouse_persist_test"
+path = "tests/clickhouse_persist_test.rs"
+
+[[test]]
+name = "dynamic_stream_test"
+path = "tests/dynamic_stream_test.rs"
+
 [dev-dependencies]
 tempfile = "3"
 ctrlc = "3"
+reqwest = { version = "0.12", features = ["blocking"] }
