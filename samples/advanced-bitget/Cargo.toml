@@ -18,6 +18,10 @@ ergosbe = { path = "../../sbe" }
 name = "ipc_roundtrip_test"
 path = "tests/ipc_roundtrip_test.rs"
 
+[[test]]
+name = "allocation_test"
+path = "tests/allocation_test.rs"
+
 [dev-dependencies]
 tempfile = "3"
 ctrlc = "3"
