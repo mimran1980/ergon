@@ -461,8 +461,6 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
 }
 
 fn bench_decode_skip_rewind(c: &mut Criterion) {
-    let car = CarDecoder::wrap_and_apply_header(BASELINE, 0).unwrap();
-
     let mut group = c.benchmark_group("parity/decode/skip_rewind");
     group.throughput(Throughput::Elements(1));
 
@@ -472,7 +470,10 @@ fn bench_decode_skip_rewind(c: &mut Criterion) {
     // tail out-of-order accessor.
 
     group.bench_function("rewind_then_scalar", |b| {
-        b.iter(|| black_box(car.rewind().serial_number()));
+        b.iter(|| {
+            let car = CarDecoder::wrap_and_apply_header(BASELINE, 0).unwrap();
+            black_box(car.serial_number())
+        });
     });
 
     group.finish();

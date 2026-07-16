@@ -186,8 +186,6 @@ fn handle_l2book(_: &mut (), buf: &[u8], _hdr: rusteron_client::AeronHeader) {
         if let Ok((_name, after)) = outer.into_app_name() {
             if let Ok((frame, _c)) = after.into_payload_as_message() {
                 if let normalized_app::AnyMessage::L2Book(book) = frame.message {
-                    // Exercise: Decoder → Domain conversion
-                    let _domain = L2BookDomain::from(book);
                     // Track best level for Thread 2 aggregation
                     if let Ok(bids) = book.into_bids() {
                         for entry in bids {

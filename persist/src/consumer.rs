@@ -170,7 +170,7 @@ impl SchemaRegistry {
     /// [`UnsupportedColumnType`]: RowDecodeError::UnsupportedColumnType
     /// [`InvalidUtf8`]: RowDecodeError::InvalidUtf8
     /// [`Sbe`]: RowDecodeError::Sbe
-    pub fn register(&mut self, schema: &DynamicSchemaDecoder<'_>) -> Result<(), RowDecodeError> {
+    pub fn register(&mut self, schema: DynamicSchemaDecoder<'_>) -> Result<(), RowDecodeError> {
         let schema_id = schema.schema_id();
 
         // Idempotent: skip if already registered.
@@ -179,8 +179,7 @@ impl SchemaRegistry {
         }
 
         // Consuming-stage wire order: metadata → columns → tableName → symbolTable.
-        // Collect lengths during groups; parse strings from symbolTable afterward.
-        let owned = *schema;
+        let owned = schema;
 
         // ── 1. Read metadata entries (collect key/val lengths) ──
         let mut meta_lens: Vec<(usize, usize)> = Vec::new();
@@ -330,7 +329,7 @@ impl RowDecoder {
     /// [`UnknownSchemaId`]: RowDecodeError::UnknownSchemaId
     /// [`InvalidUtf8`]: RowDecodeError::InvalidUtf8
     /// [`Sbe`]: RowDecodeError::Sbe
-    pub fn decode(&self, row: &DynamicRowDecoder<'_>) -> Result<DecodedRow, RowDecodeError> {
+    pub fn decode(&self, row: DynamicRowDecoder<'_>) -> Result<DecodedRow, RowDecodeError> {
         let schema_id = row.schema_id();
 
         // ── 1. Clone the registered schema (release borrow before mutating) ──
@@ -350,7 +349,7 @@ impl RowDecoder {
         // ── 2. Walk consuming stages in wire order ──
         // DynamicRow wire order: rowMetadata → int64Fields → uint64Fields →
         // float64Fields → boolFields → stringFields → nullFields → symbolTable.
-        let owned = *row;
+        let owned = row;
 
         // Collect metadata key/val lengths.
         let mut meta_lens: Vec<(usize, usize)> = Vec::new();

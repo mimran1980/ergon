@@ -1912,11 +1912,12 @@ fn framecursor_iterates_length_prefixed_frames() {
         let frames: Vec<_> = cursor.collect::<Result<Vec<_>, _>>().unwrap();
 
         assert_eq!(frames.len(), 2, "FrameCursor should yield 2 frames");
-        match frames[0].message {
+        let mut frames = frames.into_iter();
+        match frames.next().unwrap().message {
             AnyMessage::Car(d) => assert_eq!(d.serial_number(), 10),
             _ => panic!("frame 0 should be Car"),
         }
-        match frames[1].message {
+        match frames.next().unwrap().message {
             AnyMessage::Car(d) => assert_eq!(d.serial_number(), 20),
             _ => panic!("frame 1 should be Car"),
         }
@@ -2188,8 +2189,8 @@ fn generated_decoder_has_consuming_stages_and_rewind() {
         "decoder must have the consuming into_fuel_figures() stage"
     );
     assert!(
-        src.contains("pub fn rewind(&self) -> Self"),
-        "decoder must have rewind() returning Self"
+        src.contains("pub fn rewind(self) -> Self"),
+        "decoder must have consuming rewind(self) returning Self"
     );
 }
 

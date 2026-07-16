@@ -2455,8 +2455,16 @@ fn generate_message_decoder(
             #[doc = #desc_lit]
         });
     }
+    // Fixed-block-only decoders (no groups/var-data) are Copy: they have no
+    // tail cursor, so copying cannot weaken an ordering invariant. Tailed
+    // decoders are NOT Copy/Clone — consumption enforces wire order.
+    let derive_attr = if is_fixed {
+        quote::quote! { #[derive(Clone, Copy)] }
+    } else {
+        quote::quote! {}
+    };
     ts.extend(quote::quote! {
-        #[derive(Clone, Copy)]
+        #derive_attr
         pub struct #decoder_ident<'a> {
             buf: &'a [u8],
             pos: usize,
@@ -3144,20 +3152,16 @@ fn generate_message_decoder(
         vd_idx += 1;
     }
 
-    // 9b. rewind() — the legacy skip_to_<field>() out-of-order surface was
-    // REMOVED (DECISIONS.md §10 reject-table: "Raw decoder tail cursor or
-    // arbitrary skip_to_<later>()"). Use the concrete consuming into_* stages
-    // instead. rewind() stays for now (legacy, non-consuming); the consuming
-    // rewind(self) lands with the full migration.
+    // 9b. rewind() — consume any current stage and return a fresh initial
+    // decoder at the original message position. Enforces consumption: the
+    // old stage is moved and cannot be reused.
     if total_tail > 0 {
-        // rewind(): return a fresh decoder at the same position (decoder is Copy)
         impl_body.extend(quote::quote! {
-            /// Return a fresh copy of this decoder at the initial body position.
-            /// The decoder is a stateless flyweight (Copy), so rewind is a no-op
-            /// — it exists for API symmetry with cursor-based decoders.
+            /// Consume this stage and return a fresh decoder at the initial
+            /// message position. The consumed stage cannot be reused.
             #[inline]
-            pub fn rewind(&self) -> Self {
-                *self
+            pub fn rewind(self) -> Self {
+                self
             }
         });
     }
@@ -5820,7 +5824,6 @@ fn generate_any_message(
         }
         out.extend(quote::quote! {
             #[non_exhaustive]
-            #[derive(Clone, Copy)]
             pub enum AnyMessage<'a> {
                 #enum_variants
                 Unknown {
@@ -5833,7 +5836,6 @@ fn generate_any_message(
 
     // ── DecodedFrame struct ──────────────────────────────────────────────
     out.extend(quote::quote! {
-        #[derive(Clone)]
         pub struct DecodedFrame<'a> {
             pub message: AnyMessage<'a>,
             pub range: core::ops::Range<usize>,

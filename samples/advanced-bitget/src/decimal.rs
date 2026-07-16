@@ -148,7 +148,7 @@ mod tests {
     fn scale_up_mantissa() {
         // exponent = -8 → scale_diff = 10, multiply by 10^10
         let result = to_clickhouse_decimal(100_000_000, -8).unwrap(); // 1.00000000
-        assert_eq!(result, 10_000_000_000_000_000_000i128); // scaled to -18
+        assert_eq!(result, 1_000_000_000_000_000_000i128); // 10^8 * 10^10 = 10^18
     }
 
     #[test]
