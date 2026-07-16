@@ -1,5 +1,12 @@
 //! Aeron IPC direct-claim SBE roundtrip with Rusteron 0.2.1.
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
+#![allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    unused,
+    warnings
+)]
 //! Proves: try_claim_owned → direct encode AppMessage(L2Book) → commit → decode.
 #![allow(unused)]
 

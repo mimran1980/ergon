@@ -1,5 +1,12 @@
 //! Foreground ClickHouse persistence: insert L2Book via clickhouse-rs client,
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
+#![allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    unused,
+    warnings
+)]
 //! query back, and verify data integrity — including Decimal arrays.
 #![allow(unused)]
 

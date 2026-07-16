@@ -1,5 +1,12 @@
 //! Deterministic E2E test — covers 0/1/typical/large group counts.
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
+#![allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    unused,
+    warnings
+)]
 //! Pure SBE: AppMessage(L2Book) → Aeron IPC → decode → verify.
 #![allow(unused)]
 

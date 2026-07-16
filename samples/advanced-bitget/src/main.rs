@@ -7,7 +7,14 @@
 //!
 //! JSON only at WS edge. All inter-thread comms: Aeron IPC SBE.
 
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
+#![allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    unused,
+    warnings
+)]
 
 mod normalized_app {
     include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));

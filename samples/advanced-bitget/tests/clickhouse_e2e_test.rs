@@ -1,5 +1,12 @@
 //! ClickHouse E2E persistence test — proves end-to-end:
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
+#![allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    unused,
+    warnings
+)]
 //! encode AppMessage(L2Book) → Aeron IPC → decode → insert → query.
 #![allow(unused)]
 

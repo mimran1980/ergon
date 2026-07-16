@@ -1,5 +1,12 @@
 //! Allocation-count tests for direct-claim AppMessage encode/decode.
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
+#![allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    unused,
+    warnings
+)]
 //! Proves zero heap allocation on the hot path after warmup.
 #![allow(unused, unsafe_code)]
 

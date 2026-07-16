@@ -34,7 +34,12 @@ fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str, decimal: b
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    generate_schema(&out_dir, "schemas/normalized-app.xml", "normalized_app", true);
+    generate_schema(
+        &out_dir,
+        "schemas/normalized-app.xml",
+        "normalized_app",
+        true,
+    );
     generate_schema(&out_dir, "schemas/bitget-spot.xml", "bitget_spot", false);
     generate_schema(&out_dir, "schemas/binance-spot.xml", "binance_spot", false);
 }

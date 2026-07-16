@@ -1,5 +1,12 @@
 //! Roundtrip encode/decode tests for ErgoSBE-generated exchange orderbook codecs.
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
+#![allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    unused,
+    warnings
+)]
 #![allow(unused_must_use)] // ponytail: encoder builder calls return &mut Self in tests
 //!
 //! Tests that encoding a message and decoding the resulting bytes yields the

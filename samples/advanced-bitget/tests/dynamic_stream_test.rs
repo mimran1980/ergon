@@ -1,5 +1,12 @@
 //! Dynamic stream 1002 test — proves DynamicSchema + DynamicRow
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
+#![allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    unused,
+    warnings
+)]
 //! publish on separate stream from typed AppMessage (stream 1001).
 #![allow(unused)]
 
