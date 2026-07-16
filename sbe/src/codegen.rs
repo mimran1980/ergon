@@ -5455,6 +5455,25 @@ fn generate_group_encoder(
             {
                 #add_body
             }
+
+            /// Manual entry creation: returns a borrowed entry encoder.
+            /// The entry writes fixed fields directly into the group buffer.
+            /// Drop the entry or let it go out of scope to commit it.
+            /// The group position is pre-advanced, so fields are written
+            /// to the correct offset.
+            #[must_use]
+            pub fn start_entry(&mut self) -> Result<#entry_enc_ident<'_>, sbe_rt::EncodeError> {
+                if self.written as u32 >= self.count as u32 {
+                    return Err(sbe_rt::EncodeError::GroupFull {
+                        declared: self.count as u32,
+                        attempted: (self.written as u32) + 1,
+                    });
+                }
+                let entry_pos = self.pos;
+                self.pos += #block_len_lit;
+                self.written += 1;
+                Ok(#entry_enc_ident::wrap(&mut self.buf[entry_pos..], 0))
+            }
         }
     });
 
