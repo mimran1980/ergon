@@ -47,14 +47,7 @@ fn now_ns() -> u64 {
 }
 
 fn sbe_decimal(s: &str) -> (i64, i8) {
-    match s.split('.').collect::<Vec<_>>().as_slice() {
-        [int] => (int.parse().unwrap_or(0), 0),
-        [int, frac] => (
-            format!("{int}{frac}").parse().unwrap_or(0),
-            -(frac.len() as i8),
-        ),
-        _ => (0, 0),
-    }
+    advanced_bitget::decimal::parse_decimal_exact(s).unwrap_or((0, 0))
 }
 
 fn aeron_client(dir: &str) -> rusteron_client::Aeron {
