@@ -2411,6 +2411,79 @@ fn decimal_converter_composite_roundtrip() {
     );
 }
 
+// ── Task 2: SbeDecimal converter wire accessors ───────────────────────
+
+/// When converter mode is enabled, Decimal-backed fields emit both raw
+/// `*_wire` accessors and generic converted methods.
+#[test]
+fn decimal_converter_emits_wire_and_generic_methods() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    let ir = ergosbe::parse_file(&path).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config =
+        ergosbe::GenerationConfig::new("decimal_wire").enable_decimal_converters("Decimal");
+    let g = ergosbe::Generator::new(config);
+    let modules = g.try_generate(&schema).unwrap();
+    let src = &modules.modules().next().unwrap().source;
+
+    // Raw wire accessors on decoder
+    assert!(src.contains("fn price_wire"), "decoder price_wire missing");
+    assert!(src.contains("fn size_wire"), "decoder size_wire missing");
+
+    // Raw wire setters on encoder
+    assert!(src.contains("fn price_wire("), "encoder price_wire setter missing");
+
+    // Generic converted accessors
+    assert!(
+        src.contains("fn price<D:") || src.contains("fn price<"),
+        "generic converted price accessor missing"
+    );
+
+    // SbeDecimal trait present
+    assert!(src.contains("pub trait SbeDecimal"), "trait missing");
+}
+
+/// Raw and converted paths produce identical wire bytes.
+#[test]
+fn decimal_converter_wire_and_generic_byte_identity() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    let ir = ergosbe::parse_file(&path).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config =
+        ergosbe::GenerationConfig::new("decimal_id").enable_decimal_converters("Decimal");
+    let g = ergosbe::Generator::new(config);
+    let modules = g.try_generate(&schema).unwrap();
+    let src = &modules.modules().next().unwrap().source;
+
+    compile_and_run(
+        "decimal_id",
+        src,
+        r#"
+        // Wire path: encode via price_wire, decode via price_wire
+        let mut buf_wire = vec![0u8; 256];
+        let mut enc_wire = OrderEncoder::wrap_and_apply_header(&mut buf_wire, 0).unwrap();
+        enc_wire.price_wire(Decimal::new(12345, -2));
+        enc_wire.size_wire(Decimal::new(100, 0));
+        let wire_bytes = enc_wire.as_ref().to_vec();
+
+        // Verify wire decode
+        let dec_wire = OrderDecoder::wrap_and_apply_header(&wire_bytes, 0).unwrap();
+        let pw = dec_wire.price_wire();
+        assert_eq!(pw.mantissa(), 12345);
+        assert_eq!(pw.exponent(), -2);
+        let sw = dec_wire.size_wire();
+        assert_eq!(sw.mantissa(), 100);
+        assert_eq!(sw.exponent(), 0);
+    "#,
+    );
+}
+
 // ── Task 7: try_fixed ──────────────────────────────────────────────────
 
 #[test]
