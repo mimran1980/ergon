@@ -1,12 +1,12 @@
-//! er͏go-clickhouse-persist — debugging persistence for ClickHouse.
+//! ergo-clickhouse-persist — debugging persistence for ClickHouse.
 //!
 //! # Crate layout
 //!
-//! - [`sbe`] — generated SBE codecs for DynamicSchema / DynamicRow
+//! - [`sbe`] — generated SBE codecs for DynamicSchema / DynamicRow (V1 + V2)
 //! - [`persist`] — [`Persist`] and [`PersistAs`] traits
 //! - [`types`]  — [`ColumnType`] and default type mappings
 //! - [`sink`]   — [`ClickhouseSink`], [`PersistSender`]
-//! - [`dynamic`] — [`DynamicRecorder`], [`SchemaRegistry`], [`RowDecoder`]
+//! - [`dynamic`] — [`DynamicRecorder`], [`DynamicValueRef`], [`SchemaRegistry`], [`RowDecoder`]
 
 pub mod consumer;
 pub mod dynamic;

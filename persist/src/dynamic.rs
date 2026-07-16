@@ -35,7 +35,32 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-// ── DynamicValue ─────────────────────────────────────────────────────────
+// ── DynamicValueRef (borrowed, zero-allocation) ──────────────────────────
+
+/// A borrowed positional value for zero-allocation recording.
+///
+/// Like [`DynamicValue`] but holds borrowed references instead of owned data.
+/// Used by `record_into` to encode directly into a caller-provided buffer
+/// without allocating strings or arrays.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DynamicValueRef<'a> {
+    /// Signed integer.
+    Int64(i64),
+    /// Unsigned integer.
+    UInt64(u64),
+    /// Double-precision float.
+    Float64(f64),
+    /// Boolean.
+    Bool(bool),
+    /// UTF-8 string slice.
+    String(&'a str),
+    /// Explicit null.
+    Null,
+    /// Decimal array: borrowed slice of (mantissa, exponent) pairs.
+    DecimalArray(&'a [(i64, i8)]),
+}
+
+// ── DynamicValue (owned) ────────────────────────────────────────────────
 
 /// A positional value for [`DynamicRecorder::record`].
 ///
