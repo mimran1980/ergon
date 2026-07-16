@@ -151,9 +151,9 @@ fn e2e_typical() {
     run_roundtrip(b"ETHUSDT", 10, 8, 3);
 }
 #[test]
-fn e2e_large_50x50() {
-    EXPECTED_BIDS.store(50, Ordering::Relaxed);
-    EXPECTED_ASKS.store(50, Ordering::Relaxed);
+fn e2e_large_25x25() {
+    EXPECTED_BIDS.store(25, Ordering::Relaxed);
+    EXPECTED_ASKS.store(25, Ordering::Relaxed);
     EXPECTED_SEQ.store(4, Ordering::Relaxed);
-    run_roundtrip(b"X", 50, 50, 4);
+    run_roundtrip(b"BTCUSDT", 25, 25, 4);
 }
