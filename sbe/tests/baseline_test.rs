@@ -2326,10 +2326,14 @@ fn bounded_nested_payload_encode_via_with() {
 
 #[test]
 fn decimal_converter_enable_config() {
-    let config = ergosbe::GenerationConfig::new("decimal_test")
-        .enable_decimal_converters("Decimal");
+    let config =
+        ergosbe::GenerationConfig::new("decimal_test").enable_decimal_converters("Decimal");
     assert_eq!(config.decimal_composites, vec!["Decimal"]);
-    assert!(ergosbe::GenerationConfig::default().decimal_composites.is_empty());
+    assert!(
+        ergosbe::GenerationConfig::default()
+            .decimal_composites
+            .is_empty()
+    );
 }
 
 #[test]
@@ -2340,15 +2344,18 @@ fn decimal_converter_emits_sbe_decimal_trait() {
     ));
     let ir = ergosbe::parse_file(&path).unwrap();
     let schema = ergosbe::Schema::from_ir(ir);
-    let config = ergosbe::GenerationConfig::new("decimal_test")
-        .enable_decimal_converters("Decimal");
+    let config =
+        ergosbe::GenerationConfig::new("decimal_test").enable_decimal_converters("Decimal");
     let g = ergosbe::Generator::new(config);
     // try_generate validates the composite
     let modules = g.try_generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
     // SbeDecimal trait emitted
-    assert!(src.contains("pub trait SbeDecimal"), "SbeDecimal trait missing");
+    assert!(
+        src.contains("pub trait SbeDecimal"),
+        "SbeDecimal trait missing"
+    );
     assert!(src.contains("fn try_from_sbe"), "try_from_sbe missing");
     assert!(src.contains("fn try_into_sbe"), "try_into_sbe missing");
 }
@@ -2365,11 +2372,14 @@ fn decimal_converter_rejects_invalid_composite() {
 </sbe:messageSchema>"#;
     let ir = ergosbe::parse(xml).unwrap();
     let schema = ergosbe::Schema::from_ir(ir);
-    let config = ergosbe::GenerationConfig::new("bad_decimal")
-        .enable_decimal_converters("BadDecimal");
+    let config =
+        ergosbe::GenerationConfig::new("bad_decimal").enable_decimal_converters("BadDecimal");
     let g = ergosbe::Generator::new(config);
     let err = g.try_generate(&schema).unwrap_err();
-    assert!(matches!(err, ergosbe::GenerateError::InvalidDecimalComposite { .. }));
+    assert!(matches!(
+        err,
+        ergosbe::GenerateError::InvalidDecimalComposite { .. }
+    ));
 }
 
 #[test]
@@ -2586,4 +2596,3 @@ fn nested_message_identifies_recursive_payload() {
     "#,
     );
 }
-

@@ -40,10 +40,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros"] }
 
-# NOTE: no build-dependency on ergosbe — the generated SBE codecs are
-# checked into src/gen/persist_sbe.rs to avoid circular dependency when
-# ergosbe optionally depends on this crate via the `persist` feature.
-# Regenerate via: cargo build -p ergo-clickhouse-persist (without ergosbe's persist feature).
+[build-dependencies]
+ergosbe = { path = "../sbe" }
 
 # NOTE: inherited workspace lints are deliberately omitted here.
 # The generated SBE code contains unsafe blocks (opt-in _unchecked methods)

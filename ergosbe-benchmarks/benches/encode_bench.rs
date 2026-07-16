@@ -194,7 +194,8 @@ fn bench_encode_scalar_only(c: &mut Criterion) {
     group.bench_function("checked", |b| {
         let mut buf = [0u8; 1024];
         b.iter(|| {
-            let mut car: CarEncoder<'_> = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut car: CarEncoder<'_> =
+                CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
             car.serial_number(1234);
             car.model_year(2013);
             car.available(BooleanType::T);

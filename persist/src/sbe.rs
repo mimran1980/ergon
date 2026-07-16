@@ -1,35 +1,25 @@
-//! Generated SBE types for dynamic schema/row messages.
+//! Generated SBE types for dynamic schema/row messages (V1 + V2).
 //!
-//! This module includes the ErgoSBE-generated Rust codecs for DynamicSchema
-//! and DynamicRow. The generated file lives at `src/gen/persist_sbe.rs` and
-//! is checked into the repo (regenerate via `cargo build -p ergosbe --example gen-persist`).
-//!
-//! # Types
-//!
-//! - [`DynamicSchemaDecoder`] / [`DynamicSchemaEncoder`] — register a table schema
-//! - [`DynamicRowDecoder`] / [`DynamicRowEncoder`] — encode/decode a single row
-//!
-//! # Wire format
-//!
-//! Groups with variable-length string fields store their lengths in the
-//! group entries and the actual string data in the trailing `symbolTable`
-//! varData blob.  String fields in the symbolTable are packed sequentially:
-//! string N's bytes are at offset `sum(lengths[0..N])` into the blob.
-//!
-//! See `sbe_schema.xml` for the full field layout.
+//! V1 (`DynamicSchema`/`DynamicRow`, template IDs 1/2) is included at the
+//! module root, preserving the flat import paths existing code expects.
+//! V2 (`DynamicSchemaV2`/`DynamicRowV2`, template IDs 3/4, with Decimal
+//! array support) lives in the [`v2`] submodule. Both are generated at
+//! build time into `OUT_DIR` by `build.rs`; nothing is checked in.
 
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(dead_code)]
-#![allow(clippy::identity_op)]
-#![allow(clippy::eq_op)]
-#![allow(clippy::needless_borrow)]
-#![allow(clippy::manual_range_contains)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 #![allow(unused_mut)]
-// ponytail: generated SBE code triggers many clippy lints; suppress them all here rather than fighting per-line
+#![allow(clippy::duplicated_attributes)]
+// ponytail: generated SBE code triggers many clippy lints; suppress at the
+// module boundary rather than fighting per-line in generated output.
 #![allow(
+    clippy::identity_op,
+    clippy::eq_op,
+    clippy::needless_borrow,
+    clippy::manual_range_contains,
     clippy::missing_safety_doc,
     clippy::unnecessary_cast,
     clippy::redundant_closure,
@@ -53,4 +43,11 @@
     unused_comparisons
 )]
 
-include!("gen/persist_sbe.rs");
+// V1: DynamicSchema (template 1) + DynamicRow (template 2) — flat imports.
+include!(concat!(env!("OUT_DIR"), "/persist_sbe.rs"));
+
+/// V2 codecs: `DynamicSchemaV2` (template 3) and `DynamicRowV2` (template 4)
+/// with Decimal array support.
+pub mod v2 {
+    include!(concat!(env!("OUT_DIR"), "/persist_sbe_v2.rs"));
+}

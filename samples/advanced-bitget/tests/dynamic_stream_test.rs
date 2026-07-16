@@ -1,4 +1,5 @@
 //! Dynamic stream 1002 test — proves DynamicSchema + DynamicRow
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
 //! publish on separate stream from typed AppMessage (stream 1001).
 #![allow(unused)]
 
@@ -8,8 +9,8 @@ use std::time::Duration;
 /// Dynamic schema/row publish on stream 1002, independent of typed stream 1001.
 #[test]
 fn dynamic_stream_publishes_schema_and_row() {
-    let driver = rusteron_media_driver::testing::EmbeddedDriver::launch()
-        .expect("launch embedded driver");
+    let driver =
+        rusteron_media_driver::testing::EmbeddedDriver::launch().expect("launch embedded driver");
 
     let ctx = rusteron_client::AeronContext::new().expect("create context");
     let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
@@ -55,18 +56,21 @@ fn dynamic_stream_publishes_schema_and_row() {
         .expect("connect typed subscription");
 
     // Publish on dynamic stream
-    let mut claim = dynamic_pub.try_claim_owned(DYNAMIC_MSG.len()).expect("dynamic claim");
+    let mut claim = dynamic_pub
+        .try_claim_owned(DYNAMIC_MSG.len())
+        .expect("dynamic claim");
     claim.data().copy_from_slice(DYNAMIC_MSG);
     claim.commit().expect("dynamic commit");
 
     // Publish on typed stream
-    let mut tclaim = typed_pub.try_claim_owned(TYPED_MSG.len()).expect("typed claim");
+    let mut tclaim = typed_pub
+        .try_claim_owned(TYPED_MSG.len())
+        .expect("typed claim");
     tclaim.data().copy_from_slice(TYPED_MSG);
     tclaim.commit().expect("typed commit");
 
     // Receive on dynamic stream — only dynamic messages, no typed
-    let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new()
-        .expect("assembler");
+    let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new().expect("assembler");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let mut received_dynamic = false;
 
@@ -78,7 +82,10 @@ fn dynamic_stream_publishes_schema_and_row() {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    assert!(received_dynamic, "never received dynamic message on stream 1002");
+    assert!(
+        received_dynamic,
+        "never received dynamic message on stream 1002"
+    );
 
     // Receive on typed stream
     let mut received_typed = false;
@@ -90,7 +97,10 @@ fn dynamic_stream_publishes_schema_and_row() {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    assert!(received_typed, "never received typed message on stream 1001");
+    assert!(
+        received_typed,
+        "never received typed message on stream 1001"
+    );
 
     // Verify: dynamic sub only received dynamic, typed sub only received typed
     // (proven by the assert_eq! checks above with correct payloads)

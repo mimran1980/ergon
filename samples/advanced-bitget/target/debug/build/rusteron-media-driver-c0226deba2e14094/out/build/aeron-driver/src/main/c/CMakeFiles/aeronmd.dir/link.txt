@@ -1,1 +1,0 @@
-/usr/bin/cc -fcommon -g -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/aeronmd.dir/aeronmd.c.o -o ../../../../binaries/aeronmd  -Wl,-rpath,/Users/imran/RustroverProjects/ErgoSBE/samples/advanced-bitget/target/debug/build/rusteron-media-driver-c0226deba2e14094/out/build/lib ../../../../lib/libaeron_driver.dylib ../../../../lib/libaeron.dylib

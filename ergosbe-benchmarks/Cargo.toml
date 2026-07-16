@@ -12,6 +12,7 @@ path = "src/lib.rs"
 
 [dependencies]
 ergosbe = { path = "../sbe" }
+serde = { version = "1", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -38,7 +39,7 @@ harness = false
 [features]
 default = []
 bound-check-disabled = []
-serde = ["ergosbe/serde"]
+serde = ["dep:serde", "ergosbe/serde"]
 
 [lints]
 workspace = true

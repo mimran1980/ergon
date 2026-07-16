@@ -2127,10 +2127,7 @@ fn generate_owner_consuming_stages(
 
         // Nested-message decode convenience: into_<field>_as_message()
         // delegates to into_<field>() then AnyMessage::decode_frame.
-        let as_msg_ident = syn::Ident::new(
-            &format!("into_{}_as_message", vd.accessor_snake),
-            span,
-        );
+        let as_msg_ident = syn::Ident::new(&format!("into_{}_as_message", vd.accessor_snake), span);
         ts.extend(quote::quote! {
             impl<'a> #current_stage<'a> {
                 /// Consume this stage, decode the var-data field as a nested
@@ -2147,14 +2144,9 @@ fn generate_owner_consuming_stages(
 
         // Scoped fallible combinators: try_<data> and try_<data>_as_message
         // delegate to the manual consuming methods and propagate caller errors.
-        let try_data_ident = syn::Ident::new(
-            &format!("try_{}", vd.accessor_snake),
-            span,
-        );
-        let try_data_as_msg_ident = syn::Ident::new(
-            &format!("try_{}_as_message", vd.accessor_snake),
-            span,
-        );
+        let try_data_ident = syn::Ident::new(&format!("try_{}", vd.accessor_snake), span);
+        let try_data_as_msg_ident =
+            syn::Ident::new(&format!("try_{}_as_message", vd.accessor_snake), span);
         ts.extend(quote::quote! {
             impl<'a> #current_stage<'a> {
                 /// Fallible scoped var-data accessor. Calls the closure with
@@ -4943,10 +4935,7 @@ fn generate_message_encoder(
             let next_stage = &stage_idents[tail_idx + 1];
 
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
-            let try_g_snake = syn::Ident::new(
-                &format!("try_{}", to_snake_case(&g.name)),
-                span,
-            );
+            let try_g_snake = syn::Ident::new(&format!("try_{}", to_snake_case(&g.name)), span);
             let raw_enc_name = to_pascal_case(&g.name);
             let scoped_enc = if multi_message {
                 format!("{}{}", &name, raw_enc_name)
@@ -5036,8 +5025,7 @@ fn generate_message_encoder(
             let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
             let vd_snake_unchecked =
                 syn::Ident::new(&format!("{}_unchecked", to_snake_case(&vd.name)), span);
-            let vd_snake_with =
-                syn::Ident::new(&format!("{}_with", to_snake_case(&vd.name)), span);
+            let vd_snake_with = syn::Ident::new(&format!("{}_with", to_snake_case(&vd.name)), span);
             let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
             let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
             let len_rust_type: syn::Type = syn::parse_str(rust_type(len_type)).unwrap();

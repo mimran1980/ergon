@@ -133,6 +133,3 @@ pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::{Schema, SchemaSource};
 pub use xml::{ParseError, parse, parse_file};
-
-#[cfg(feature = "persist")]
-pub use ergo_clickhouse_persist;

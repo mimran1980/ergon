@@ -1,1 +1,0 @@
-/usr/bin/cc -fcommon -g -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/aeronmd_s.dir/aeronmd.c.o -o ../../../../binaries/aeronmd_s  ../../../../lib/libaeron_driver_static.a

@@ -2,9 +2,9 @@
 //! Pure SBE — no JSON, no REST, no external protocol translation.
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-fn generate_schema(out_dir: &PathBuf, xml_path: &str, module_name: &str, decimal: bool) {
+fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str, decimal: bool) {
     let path = PathBuf::from(xml_path);
     if !path.exists() {
         println!("cargo:warning=schema not found: {xml_path}");
@@ -14,8 +14,10 @@ fn generate_schema(out_dir: &PathBuf, xml_path: &str, module_name: &str, decimal
     let ir = ergosbe::parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path}: {e}"));
     let schema = ergosbe::Schema::from_ir(ir);
 
+    // ponytail: domain objects enabled for serde-deserialised JSON boundary
+    // conversion in Thread 1. Will be removed per remediation Task 7.
     let mut config = ergosbe::GenerationConfig::new(module_name);
-    config.domain_objects = true; // generate Serde-enabled domain structs
+    config.domain_objects = true;
     if decimal {
         config = config.enable_decimal_converters("Decimal");
     }
@@ -32,12 +34,7 @@ fn generate_schema(out_dir: &PathBuf, xml_path: &str, module_name: &str, decimal
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // AppMessage/L2Book/Trade — the normalized internal SBE schema
     generate_schema(&out_dir, "schemas/normalized-app.xml", "normalized_app", true);
-
-    // Bitget spot SBE schema — exchange-native format
     generate_schema(&out_dir, "schemas/bitget-spot.xml", "bitget_spot", false);
-
-    // Binance spot SBE schema — exchange-native format
     generate_schema(&out_dir, "schemas/binance-spot.xml", "binance_spot", false);
 }

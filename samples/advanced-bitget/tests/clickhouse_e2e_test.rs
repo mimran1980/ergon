@@ -1,4 +1,5 @@
 //! ClickHouse E2E persistence test — proves end-to-end:
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
 //! encode AppMessage(L2Book) → Aeron IPC → decode → insert → query.
 #![allow(unused)]
 
@@ -13,13 +14,12 @@ mod normalized_app {
 #[test]
 fn e2e_app_message_through_ipc_to_clickhouse() {
     use normalized_app::{
-        sbe_rt, AppMessageDecoder, AppMessageEncoder, AnyMessage, Decimal,
-        L2BookEncoder, Source,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
 
     // ── Aeron IPC setup ──────────────────────────────────────────────
-    let driver = rusteron_media_driver::testing::EmbeddedDriver::launch()
-        .expect("launch embedded driver");
+    let driver =
+        rusteron_media_driver::testing::EmbeddedDriver::launch().expect("launch embedded driver");
 
     let ctx = rusteron_client::AeronContext::new().expect("create context");
     let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
@@ -52,44 +52,61 @@ fn e2e_app_message_through_ipc_to_clickhouse() {
     let app_name = b"bitget";
 
     let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(
-        bids as usize, asks as usize, symbol.len(),
+        bids as usize,
+        asks as usize,
+        symbol.len(),
     );
-    let outer_len = AppMessageEncoder::compute_encoded_length_with_message_header(
-        app_name.len(), inner_len,
-    );
+    let outer_len =
+        AppMessageEncoder::compute_encoded_length_with_message_header(app_name.len(), inner_len);
 
     // Publish via direct claim
-    let mut claim = publication.try_claim_owned(outer_len).expect("try_claim_owned");
+    let mut claim = publication
+        .try_claim_owned(outer_len)
+        .expect("try_claim_owned");
     let epoch_ns = 1_700_000_000_000_000_000u64;
     {
         let buf = claim.data();
-        let mut outer = AppMessageEncoder::wrap_and_apply_header(buf, 0)
-            .expect("wrap");
+        let mut outer = AppMessageEncoder::wrap_and_apply_header(buf, 0).expect("wrap");
         outer.sent_ts(epoch_ns);
-        let _ = outer.app_name(app_name).unwrap()
+        let _ = outer
+            .app_name(app_name)
+            .unwrap()
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
                 let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
                 book.source(Source::Bitget)
                     .exchange_timestamp(epoch_ns + 1)
                     .receive_timestamp(epoch_ns + 2)
                     .sequence(42);
-                let book = book.bids(bids, |g| {
-                    g.add(|e| { e.price(Decimal::new(50000_00, -2)); e.size(Decimal::new(1_50, -2)); });
-                    g.add(|e| { e.price(Decimal::new(49900_00, -2)); e.size(Decimal::new(2_00, -2)); });
-                }).unwrap();
-                let book = book.asks(asks, |g| {
-                    g.add(|e| { e.price(Decimal::new(50100_00, -2)); e.size(Decimal::new(0_50, -2)); });
-                }).unwrap();
+                let book = book
+                    .bids(bids, |g| {
+                        g.add(|e| {
+                            e.price(Decimal::new(50000_00, -2));
+                            e.size(Decimal::new(1_50, -2));
+                        });
+                        g.add(|e| {
+                            e.price(Decimal::new(49900_00, -2));
+                            e.size(Decimal::new(2_00, -2));
+                        });
+                    })
+                    .unwrap();
+                let book = book
+                    .asks(asks, |g| {
+                        g.add(|e| {
+                            e.price(Decimal::new(50100_00, -2));
+                            e.size(Decimal::new(0_50, -2));
+                        });
+                    })
+                    .unwrap();
                 let inner = book.symbol(symbol).unwrap();
                 assert_eq!(inner.as_bytes_with_header().len(), inner_len);
                 Ok(())
-            }).unwrap();
+            })
+            .unwrap();
     }
     claim.commit().expect("commit claim");
 
     // ── Receive and decode ───────────────────────────────────────────
-    let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new()
-        .expect("assembler");
+    let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new().expect("assembler");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let mut received = false;
 
@@ -105,7 +122,7 @@ fn e2e_app_message_through_ipc_to_clickhouse() {
 }
 
 fn handle_and_persist(received: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
-    use normalized_app::{AppMessageDecoder, AnyMessage, Source};
+    use normalized_app::{AnyMessage, AppMessageDecoder, Source};
 
     let outer = AppMessageDecoder::wrap_and_apply_header(buf, 0).expect("wrap decoder");
     assert_eq!(outer.sent_ts(), 1_700_000_000_000_000_000);

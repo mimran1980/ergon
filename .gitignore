@@ -1,4 +1,5 @@
 /target/
+**/target/
 Cargo.lock
 .DS_Store
 *.swp
@@ -6,6 +7,5 @@ Cargo.lock
 CLAUDE.md
 .claude/
 tmp/
-samples/target/
-samples/target/
-samples/target/
+# Generated SBE codecs (built into OUT_DIR at compile time)
+persist/src/gen/

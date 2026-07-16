@@ -756,9 +756,18 @@ fn all_types_little_endian_roundtrip() {
         .rev()
         .find(|l| l.trim_start().starts_with("#[derive"))
         .unwrap_or("");
-    assert!(!asc_derive.contains(" Eq,"), "AllScalars with floats: no Eq");
-    assert!(!asc_derive.contains(" Ord,"), "AllScalars with floats: no Ord");
-    assert!(!asc_derive.contains("Hash"), "AllScalars with floats: no Hash");
+    assert!(
+        !asc_derive.contains(" Eq,"),
+        "AllScalars with floats: no Eq"
+    );
+    assert!(
+        !asc_derive.contains(" Ord,"),
+        "AllScalars with floats: no Ord"
+    );
+    assert!(
+        !asc_derive.contains("Hash"),
+        "AllScalars with floats: no Hash"
+    );
     // Float composite should NOT derive Eq/Ord/Hash
     let fp_idx = src.find("pub struct FloatPair").unwrap();
     let fp_pre = &src[fp_idx.saturating_sub(200)..fp_idx];
@@ -767,9 +776,18 @@ fn all_types_little_endian_roundtrip() {
         .rev()
         .find(|l| l.trim_start().starts_with("#[derive"))
         .unwrap_or("");
-    assert!(!fp_derive.contains(" Eq,"), "FloatPair should NOT derive Eq");
-    assert!(!fp_derive.contains(" Ord,"), "FloatPair should NOT derive Ord");
-    assert!(!fp_derive.contains("Hash"), "FloatPair should NOT derive Hash");
+    assert!(
+        !fp_derive.contains(" Eq,"),
+        "FloatPair should NOT derive Eq"
+    );
+    assert!(
+        !fp_derive.contains(" Ord,"),
+        "FloatPair should NOT derive Ord"
+    );
+    assert!(
+        !fp_derive.contains("Hash"),
+        "FloatPair should NOT derive Hash"
+    );
     // Compile check: types exist and are callable
     compile_and_run(
         "all_types_le",

@@ -22,7 +22,11 @@ pub enum DecimalConvertError {
     /// Scaling factor overflowed i128.
     Overflow { mantissa: i64, exponent: i8 },
     /// Non-zero digits would be discarded by rescaling.
-    PrecisionLoss { mantissa: i64, exponent: i8, lost_digits: u32 },
+    PrecisionLoss {
+        mantissa: i64,
+        exponent: i8,
+        lost_digits: u32,
+    },
     /// Value outside ClickHouse Decimal(38,18) range.
     OutOfRange { scaled: i128 },
 }
@@ -31,10 +35,20 @@ impl core::fmt::Display for DecimalConvertError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Overflow { mantissa, exponent } => {
-                write!(f, "overflow scaling {mantissa} × 10^{exponent} to Decimal(38,18)")
+                write!(
+                    f,
+                    "overflow scaling {mantissa} × 10^{exponent} to Decimal(38,18)"
+                )
             }
-            Self::PrecisionLoss { mantissa, exponent, lost_digits } => {
-                write!(f, "precision loss: {mantissa} × 10^{exponent} would discard {lost_digits} non-zero digits")
+            Self::PrecisionLoss {
+                mantissa,
+                exponent,
+                lost_digits,
+            } => {
+                write!(
+                    f,
+                    "precision loss: {mantissa} × 10^{exponent} would discard {lost_digits} non-zero digits"
+                )
             }
             Self::OutOfRange { scaled } => {
                 write!(f, "{scaled} outside Decimal(38,18) range")
@@ -76,7 +90,11 @@ pub fn to_clickhouse_decimal(mantissa: i64, exponent: i8) -> Result<i128, Decima
         if remainder != 0 {
             // Count non-zero digits in the discarded portion
             let lost = count_non_zero_digits(remainder.unsigned_abs());
-            return Err(DecimalConvertError::PrecisionLoss { mantissa, exponent, lost_digits: lost });
+            return Err(DecimalConvertError::PrecisionLoss {
+                mantissa,
+                exponent,
+                lost_digits: lost,
+            });
         }
         let scaled = mantissa_i128 / divisor;
         check_range(scaled)?;
@@ -85,7 +103,7 @@ pub fn to_clickhouse_decimal(mantissa: i64, exponent: i8) -> Result<i128, Decima
 }
 
 fn check_range(scaled: i128) -> Result<(), DecimalConvertError> {
-    if scaled < DECIMAL_38_18_MIN || scaled > DECIMAL_38_18_MAX {
+    if !(DECIMAL_38_18_MIN..=DECIMAL_38_18_MAX).contains(&scaled) {
         Err(DecimalConvertError::OutOfRange { scaled })
     } else {
         Ok(())
@@ -107,7 +125,7 @@ fn ten_pow(n: u32) -> Option<i128> {
 fn count_non_zero_digits(mut n: u128) -> u32 {
     let mut count = 0;
     while n > 0 {
-        if n % 10 != 0 {
+        if !n.is_multiple_of(10) {
             count += 1;
         }
         n /= 10;
@@ -122,15 +140,15 @@ mod tests {
     #[test]
     fn exact_conversion_no_scaling() {
         // exponent = -18 → scale_diff = 0, no scaling needed
-        let result = to_clickhouse_decimal(12345_6789_0123_4567, -18).unwrap();
-        assert_eq!(result, 12345_6789_0123_4567);
+        let result = to_clickhouse_decimal(1_2345_6789_0123_4567i64, -18).unwrap();
+        assert_eq!(result, 1_2345_6789_0123_4567i128);
     }
 
     #[test]
     fn scale_up_mantissa() {
         // exponent = -8 → scale_diff = 10, multiply by 10^10
-        let result = to_clickhouse_decimal(1_0000_0000, -8).unwrap(); // 1.00000000
-        assert_eq!(result, 1_0000_0000_0000_0000_00i128); // scaled to -18
+        let result = to_clickhouse_decimal(100_000_000, -8).unwrap(); // 1.00000000
+        assert_eq!(result, 10_000_000_000_000_000_000i128); // scaled to -18
     }
 
     #[test]
@@ -150,18 +168,22 @@ mod tests {
     #[test]
     fn exact_values_roundtrip() {
         let cases = [
-            (0, 0),                 // zero
-            (1, 0),                // 1
-            (-1, 0),               // -1
-            (12345, -2),           // 123.45
-            (50000_00, -2),        // 50000.00
-            (1_50, -2),            // 1.50
-            (i64::MAX, 0),         // max i64
-            (1, -18),              // 0.000000000000000001
+            (0, 0),         // zero
+            (1, 0),         // 1
+            (-1, 0),        // -1
+            (12345, -2),    // 123.45
+            (5_000_000, -2), // 50000.00
+            (150, -2),       // 1.50
+            (i64::MAX, 0),  // max i64
+            (1, -18),       // 0.000000000000000001
         ];
         for (mantissa, exponent) in &cases {
             let result = to_clickhouse_decimal(*mantissa, *exponent);
-            assert!(result.is_ok(), "failed: {mantissa} × 10^{exponent}: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "failed: {mantissa} × 10^{exponent}: {:?}",
+                result.err()
+            );
         }
     }
 

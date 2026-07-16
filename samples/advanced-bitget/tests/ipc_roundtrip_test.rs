@@ -1,4 +1,5 @@
 //! Aeron IPC direct-claim SBE roundtrip with Rusteron 0.2.1.
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
 //! Proves: try_claim_owned → direct encode AppMessage(L2Book) → commit → decode.
 #![allow(unused)]
 
@@ -12,8 +13,8 @@ use std::time::Duration;
 /// Embedded driver launches and pub+sub connect — basic smoke test.
 #[test]
 fn embedded_driver_launches_and_pub_sub_created() {
-    let driver = rusteron_media_driver::testing::EmbeddedDriver::launch()
-        .expect("launch embedded driver");
+    let driver =
+        rusteron_media_driver::testing::EmbeddedDriver::launch().expect("launch embedded driver");
     let ctx = rusteron_client::AeronContext::new().expect("create context");
     let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
     ctx.set_dir(&dir_cstr).expect("set dir");
@@ -35,13 +36,12 @@ fn embedded_driver_launches_and_pub_sub_created() {
 #[test]
 fn direct_claim_app_message_roundtrip() {
     use normalized_app::{
-        sbe_rt, AppMessageDecoder, AppMessageEncoder, AnyMessage, Decimal,
-        L2BookEncoder, Source,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
 
     // ── Aeron setup ──────────────────────────────────────────────────
-    let driver = rusteron_media_driver::testing::EmbeddedDriver::launch()
-        .expect("launch embedded driver");
+    let driver =
+        rusteron_media_driver::testing::EmbeddedDriver::launch().expect("launch embedded driver");
 
     let ctx = rusteron_client::AeronContext::new().expect("create context");
     let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
@@ -75,14 +75,17 @@ fn direct_claim_app_message_roundtrip() {
     let epoch_ns = 1_700_000_000_000_000_000u64;
 
     let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(
-        bids as usize, asks as usize, symbol.len(),
+        bids as usize,
+        asks as usize,
+        symbol.len(),
     );
-    let outer_len = AppMessageEncoder::compute_encoded_length_with_message_header(
-        app_name.len(), inner_len,
-    );
+    let outer_len =
+        AppMessageEncoder::compute_encoded_length_with_message_header(app_name.len(), inner_len);
 
     // try_claim_owned → direct encode → commit
-    let mut claim = publication.try_claim_owned(outer_len).expect("try_claim_owned");
+    let mut claim = publication
+        .try_claim_owned(outer_len)
+        .expect("try_claim_owned");
     {
         let buf = claim.data();
         assert_eq!(buf.len(), outer_len);
@@ -90,43 +93,41 @@ fn direct_claim_app_message_roundtrip() {
             AppMessageEncoder::wrap_and_apply_header(buf, 0).expect("wrap_and_apply_header");
         outer.sent_ts(epoch_ns);
         let complete = outer
-            .app_name(app_name).expect("app_name")
+            .app_name(app_name)
+            .expect("app_name")
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
                 let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
                 book.source(Source::Bitget);
                 book.exchange_timestamp(epoch_ns + 1);
                 book.receive_timestamp(epoch_ns + 2);
                 book.sequence(1);
-                let book = book.bids(bids, |g| {
-                    g.add(|e| {
-                        e.price(Decimal::new(50000_00, -2));
-                        e.size(Decimal::new(1_50, -2));
-                    });
-                }).expect("bids");
+                let book = book
+                    .bids(bids, |g| {
+                        g.add(|e| {
+                            e.price(Decimal::new(50000_00, -2));
+                            e.size(Decimal::new(1_50, -2));
+                        });
+                    })
+                    .expect("bids");
                 let book = book.asks(asks, |_| {}).expect("asks");
                 let inner_complete = book.symbol(symbol).expect("symbol");
                 assert_eq!(inner_complete.as_bytes_with_header().len(), inner_len);
                 Ok(())
-            }).expect("payload_with");
+            })
+            .expect("payload_with");
         let outer_bytes = complete.as_bytes_with_header();
         assert_eq!(outer_bytes.len(), outer_len);
     }
     claim.commit().expect("commit claim");
 
     // ── Poll and decode ──────────────────────────────────────────────
-    let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new()
-        .expect("assembler");
+    let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new().expect("assembler");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let mut received = false;
 
     while !received && std::time::Instant::now() < deadline {
         let fragments = assembler
-            .poll(
-                &subscription,
-                &mut received,
-                handle_fragment,
-                10,
-            )
+            .poll(&subscription, &mut received, handle_fragment, 10)
             .expect("poll");
         if fragments == 0 {
             std::thread::sleep(Duration::from_millis(1));
@@ -137,7 +138,7 @@ fn direct_claim_app_message_roundtrip() {
 
 // fn pointer — can't capture, state flows through ctx param
 fn handle_fragment(received: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
-    use normalized_app::{AppMessageDecoder, AnyMessage, Source};
+    use normalized_app::{AnyMessage, AppMessageDecoder, Source};
 
     let outer = AppMessageDecoder::wrap_and_apply_header(buf, 0).expect("wrap decoder");
     assert_eq!(outer.sent_ts(), 1_700_000_000_000_000_000);

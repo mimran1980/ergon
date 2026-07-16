@@ -1,4 +1,5 @@
 //! Allocation-count tests for direct-claim AppMessage encode/decode.
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
 //! Proves zero heap allocation on the hot path after warmup.
 #![allow(unused, unsafe_code)]
 
@@ -28,7 +29,7 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 
 fn warm_up() {
     use normalized_app::{
-        sbe_rt, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source,
+        AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
     let mut buf = vec![0u8; 256];
     // Encode + decode to settle lazy-inits
@@ -39,9 +40,7 @@ fn warm_up() {
 
 #[test]
 fn encode_app_message_zero_alloc() {
-    use normalized_app::{
-        sbe_rt, AppMessageEncoder, Decimal, L2BookEncoder, Source,
-    };
+    use normalized_app::{AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt};
 
     warm_up();
 
@@ -53,28 +52,43 @@ fn encode_app_message_zero_alloc() {
 
     let mut outer = AppMessageEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
     outer.sent_ts(1);
-    let _ = outer.app_name(b"x").unwrap()
+    let _ = outer
+        .app_name(b"x")
+        .unwrap()
         .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
             let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
-            enc.source(Source::Bitget).exchange_timestamp(1).receive_timestamp(2).sequence(1);
-            let enc = enc.bids(1, |g| {
-                g.add(|e| { e.price(Decimal::new(1, 0)); e.size(Decimal::new(1, 0)); });
-            }).unwrap();
+            enc.source(Source::Bitget)
+                .exchange_timestamp(1)
+                .receive_timestamp(2)
+                .sequence(1);
+            let enc = enc
+                .bids(1, |g| {
+                    g.add(|e| {
+                        e.price(Decimal::new(1, 0));
+                        e.size(Decimal::new(1, 0));
+                    });
+                })
+                .unwrap();
             let enc = enc.asks(0, |_| {}).unwrap();
             enc.symbol(b"X").unwrap();
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
     black_box(&buf);
 
     let after = ALLOC_COUNT.load(Ordering::Relaxed);
-    assert_eq!(after, before, "AppMessage encode allocated {} times", after - before);
+    assert_eq!(
+        after,
+        before,
+        "AppMessage encode allocated {} times",
+        after - before
+    );
 }
 
 #[test]
 fn decode_app_message_zero_alloc() {
     use normalized_app::{
-        sbe_rt, AppMessageDecoder, AppMessageEncoder, AnyMessage, Decimal,
-        L2BookEncoder, Source,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
 
     warm_up();
@@ -87,17 +101,28 @@ fn decode_app_message_zero_alloc() {
     {
         let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         outer.sent_ts(1);
-        let _ = outer.app_name(b"x").unwrap()
+        let _ = outer
+            .app_name(b"x")
+            .unwrap()
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
                 let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
-                enc.source(Source::Bitget).exchange_timestamp(1).receive_timestamp(2).sequence(1);
-                let enc = enc.bids(1, |g| {
-                    g.add(|e| { e.price(Decimal::new(1, 0)); e.size(Decimal::new(1, 0)); });
-                }).unwrap();
+                enc.source(Source::Bitget)
+                    .exchange_timestamp(1)
+                    .receive_timestamp(2)
+                    .sequence(1);
+                let enc = enc
+                    .bids(1, |g| {
+                        g.add(|e| {
+                            e.price(Decimal::new(1, 0));
+                            e.size(Decimal::new(1, 0));
+                        });
+                    })
+                    .unwrap();
                 let enc = enc.asks(0, |_| {}).unwrap();
                 enc.symbol(b"X").unwrap();
                 Ok(())
-            }).unwrap();
+            })
+            .unwrap();
     }
 
     let before = ALLOC_COUNT.load(Ordering::Relaxed);
@@ -111,5 +136,10 @@ fn decode_app_message_zero_alloc() {
     }
 
     let after = ALLOC_COUNT.load(Ordering::Relaxed);
-    assert_eq!(after, before, "AppMessage decode allocated {} times", after - before);
+    assert_eq!(
+        after,
+        before,
+        "AppMessage decode allocated {} times",
+        after - before
+    );
 }

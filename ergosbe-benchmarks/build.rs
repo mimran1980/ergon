@@ -28,8 +28,8 @@ fn generate_car_codec(out_dir: &Path) {
     let ir = ergosbe::parse(&xml).unwrap_or_else(|e| panic!("Failed to parse schema: {e}"));
 
     let schema = ergosbe::Schema::from_ir(ir);
-    let mut config = ergosbe::GenerationConfig::new("car_bench");
-    config.domain_objects = true;
+    // Benchmarks measure flyweights only — no domain objects.
+    let config = ergosbe::GenerationConfig::new("car_bench");
     let generator = ergosbe::Generator::new(config);
     let module_set = generator.generate(&schema);
     let src = &module_set

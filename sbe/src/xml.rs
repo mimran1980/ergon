@@ -1470,7 +1470,11 @@ fn preceding_xml_comments(node: Node<'_, '_>) -> Vec<String> {
     while let Some(current) = sibling {
         match current.node_type() {
             NodeType::Comment => {
-                if let Some(text) = current.text().map(str::trim).filter(|text| !text.is_empty()) {
+                if let Some(text) = current
+                    .text()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                {
                     comments.push(text.to_owned());
                 }
             }

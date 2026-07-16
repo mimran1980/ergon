@@ -1,4 +1,5 @@
 //! Foreground ClickHouse persistence: insert L2Book via clickhouse-rs client,
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused, warnings)]
 //! query back, and verify data integrity — including Decimal arrays.
 #![allow(unused)]
 
@@ -59,10 +60,12 @@ fn foreground_persist_l2book_with_decimal_arrays() {
         .body(insert_sql.clone())
         .send()
         .expect("INSERT request");
-    assert!(insert_resp.status().is_success(),
+    assert!(
+        insert_resp.status().is_success(),
         "INSERT failed: {} body: {}",
         insert_resp.status(),
-        insert_resp.text().unwrap_or_default());
+        insert_resp.text().unwrap_or_default()
+    );
 
     // ── Query back ──────────────────────────────────────────────────
     let query = "SELECT source, symbol, sequence, bid_prices, bid_sizes, ask_prices, ask_sizes \
@@ -77,13 +80,21 @@ fn foreground_persist_l2book_with_decimal_arrays() {
     let body = query_resp.text().expect("response body");
 
     // Verify row data returned
-    assert!(body.contains("BTCUSDT"), "symbol missing from result: {body}");
+    assert!(
+        body.contains("BTCUSDT"),
+        "symbol missing from result: {body}"
+    );
     assert!(body.contains("42"), "sequence missing from result: {body}");
-    assert!(body.contains("Bitget"), "source missing from result: {body}");
+    assert!(
+        body.contains("Bitget"),
+        "source missing from result: {body}"
+    );
 
     // Verify Decimal array values — ClickHouse returns them as [v1, v2, ...]
     for v in &bid_px_scaled {
-        assert!(body.contains(&v.to_string()),
-            "bid price {v} missing from result: {body}");
+        assert!(
+            body.contains(&v.to_string()),
+            "bid price {v} missing from result: {body}"
+        );
     }
 }
