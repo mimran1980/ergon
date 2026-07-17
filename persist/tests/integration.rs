@@ -51,8 +51,8 @@ where
 fn ch_client() -> clickhouse::Client {
     clickhouse::Client::default()
         .with_url("http://localhost:8123")
-        .with_user("default")
-        .with_password("test123")
+        .with_user(std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".into()))
+        .with_password(std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergosbe".into()))
         .with_database("default")
 }
 
@@ -63,8 +63,8 @@ fn ch_client() -> clickhouse::Client {
 /// test runtimes).
 fn test_sink() -> ClickhouseSink {
     ClickhouseSinkBuilder::new()
-        .user("default")
-        .password("test123")
+        .user(&std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".into()))
+        .password(&std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergosbe".into()))
         .build()
         .expect("failed to build ClickhouseSink")
 }
@@ -138,10 +138,9 @@ fn build_schema_message(
     fields: &[(u8, &str, ColumnType)],
     metadata: &[(&str, &str)],
 ) -> Vec<u8> {
-    use ergo_clickhouse_persist::sbe::{DynamicSchemaEncoder, dynamic_schema_encoder_state};
+    use ergo_clickhouse_persist::sbe::DynamicSchemaEncoder;
 
-    let max_len =
-        DynamicSchemaEncoder::<dynamic_schema_encoder_state::NeedsMetadata>::MAX_ENCODED_LENGTH;
+    let max_len = DynamicSchemaEncoder::MAX_ENCODED_LENGTH;
     let mut buf = vec![0u8; max_len];
     let mut enc =
         DynamicSchemaEncoder::wrap_and_apply_header(&mut buf, 0).expect("wrap schema header");
@@ -289,12 +288,12 @@ async fn test_dynamic_persist_roundtrip() {
                 0,
             )
             .expect("wrap schema header");
-        reg_mut.register(&schema_decoder).expect("register schema");
+        reg_mut.register(schema_decoder).expect("register schema");
     }
 
     // Decode to DecodedRow.
     let decoder = RowDecoder::new(std::rc::Rc::clone(&reg));
-    let decoded = decoder.decode(&row_decoder).expect("decode row");
+    let decoded = decoder.decode(row_decoder).expect("decode row");
 
     // Verify decoded fields have correct SQL literals.
     assert_eq!(decoded.get("price").unwrap(), &Some("150".to_string()));

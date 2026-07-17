@@ -65,7 +65,7 @@ fn test_dynamic_schema_metadata_only() {
     let decoder = DynamicSchemaDecoder::try_from(bytes).unwrap();
     assert_eq!(decoder.schema_id(), 42);
 
-    let mut md = decoder.metadata().unwrap();
+    let mut md = decoder.into_metadata().unwrap();
     assert_eq!(md.len(), 2);
 
     let e0 = md.next().unwrap();
@@ -75,12 +75,16 @@ fn test_dynamic_schema_metadata_only() {
     let e1 = md.next().unwrap();
     assert_eq!(e1.key_len(), 3);
     assert_eq!(e1.val_len(), 3);
+    let decoder = md.finish().unwrap();
 
-    let cols = decoder.columns().unwrap();
+    let cols = decoder.into_columns().unwrap();
     assert_eq!(cols.len(), 0);
+    let decoder = cols.finish().unwrap();
 
-    assert_eq!(decoder.table_name().unwrap(), b"sbe_test_tbl");
-    assert_eq!(decoder.symbol_table().unwrap(), sym.as_slice());
+    let (table_name, decoder) = decoder.into_table_name().unwrap();
+    assert_eq!(table_name, b"sbe_test_tbl");
+    let (symbols, _) = decoder.into_symbol_table().unwrap();
+    assert_eq!(symbols, sym.as_slice());
 }
 
 #[test]
@@ -129,7 +133,8 @@ fn test_dynamic_schema_with_columns() {
     let decoder = DynamicSchemaDecoder::try_from(bytes).unwrap();
     assert_eq!(decoder.schema_id(), 7);
 
-    let mut cols = decoder.columns().unwrap();
+    let decoder = decoder.into_metadata().unwrap().finish().unwrap();
+    let mut cols = decoder.into_columns().unwrap();
     assert_eq!(cols.len(), 3);
 
     let c0 = cols.next().unwrap();
@@ -146,9 +151,12 @@ fn test_dynamic_schema_with_columns() {
     assert_eq!(c2.field_id(), 3);
     assert_eq!(c2.name_len(), 8);
     assert_eq!(c2.type_tag(), 0);
+    let decoder = cols.finish().unwrap();
 
-    assert_eq!(decoder.table_name().unwrap(), b"price_feed");
-    assert_eq!(decoder.symbol_table().unwrap(), sym.as_slice());
+    let (table_name, decoder) = decoder.into_table_name().unwrap();
+    assert_eq!(table_name, b"price_feed");
+    let (symbols, _) = decoder.into_symbol_table().unwrap();
+    assert_eq!(symbols, sym.as_slice());
 }
 
 #[test]
@@ -169,10 +177,16 @@ fn test_dynamic_schema_empty_metadata() {
 
     let decoder = DynamicSchemaDecoder::try_from(bytes).unwrap();
     assert_eq!(decoder.schema_id(), 99);
-    assert_eq!(decoder.metadata().unwrap().len(), 0);
-    assert_eq!(decoder.columns().unwrap().len(), 0);
-    assert_eq!(decoder.table_name().unwrap(), b"");
-    assert_eq!(decoder.symbol_table().unwrap(), b"");
+    let md = decoder.into_metadata().unwrap();
+    assert_eq!(md.len(), 0);
+    let decoder = md.finish().unwrap();
+    let cols = decoder.into_columns().unwrap();
+    assert_eq!(cols.len(), 0);
+    let decoder = cols.finish().unwrap();
+    let (table_name, decoder) = decoder.into_table_name().unwrap();
+    assert_eq!(table_name, b"");
+    let (symbols, _) = decoder.into_symbol_table().unwrap();
+    assert_eq!(symbols, b"");
 }
 
 // ── DynamicRow tests ─────────────────────────────────────────────────────
@@ -197,14 +211,29 @@ fn test_dynamic_row_empty() {
 
     let decoder = DynamicRowDecoder::try_from(bytes).unwrap();
     assert_eq!(decoder.schema_id(), 100);
-    assert!(decoder.row_metadata().unwrap().is_empty());
-    assert!(decoder.int64_fields().unwrap().is_empty());
-    assert!(decoder.uint64_fields().unwrap().is_empty());
-    assert!(decoder.float64_fields().unwrap().is_empty());
-    assert!(decoder.bool_fields().unwrap().is_empty());
-    assert!(decoder.string_fields().unwrap().is_empty());
-    assert!(decoder.null_fields().unwrap().is_empty());
-    assert_eq!(decoder.symbol_table().unwrap(), b"");
+    let g = decoder.into_row_metadata().unwrap();
+    assert!(g.is_empty());
+    let decoder = g.finish().unwrap();
+    let g = decoder.into_int64_fields().unwrap();
+    assert!(g.is_empty());
+    let decoder = g.finish().unwrap();
+    let g = decoder.into_uint64_fields().unwrap();
+    assert!(g.is_empty());
+    let decoder = g.finish().unwrap();
+    let g = decoder.into_float64_fields().unwrap();
+    assert!(g.is_empty());
+    let decoder = g.finish().unwrap();
+    let g = decoder.into_bool_fields().unwrap();
+    assert!(g.is_empty());
+    let decoder = g.finish().unwrap();
+    let g = decoder.into_string_fields().unwrap();
+    assert!(g.is_empty());
+    let decoder = g.finish().unwrap();
+    let g = decoder.into_null_fields().unwrap();
+    assert!(g.is_empty());
+    let decoder = g.finish().unwrap();
+    let (symbols, _) = decoder.into_symbol_table().unwrap();
+    assert_eq!(symbols, b"");
 }
 
 #[test]
@@ -302,48 +331,56 @@ fn test_dynamic_row_all_field_types() {
     let decoder = DynamicRowDecoder::try_from(bytes).unwrap();
     assert_eq!(decoder.schema_id(), 200);
 
-    let mut md = decoder.row_metadata().unwrap();
+    let mut md = decoder.into_row_metadata().unwrap();
     assert_eq!(md.len(), 1);
     let e0 = md.next().unwrap();
     assert_eq!(e0.key_len(), 4);
     assert_eq!(e0.val_len(), 5);
+    let decoder = md.finish().unwrap();
 
-    let mut i64g = decoder.int64_fields().unwrap();
+    let mut i64g = decoder.into_int64_fields().unwrap();
     assert_eq!(i64g.len(), 1);
     let e = i64g.next().unwrap();
     assert_eq!(e.field_id(), 1);
     assert_eq!(e.value(), -42i64);
+    let decoder = i64g.finish().unwrap();
 
-    let mut u64g = decoder.uint64_fields().unwrap();
+    let mut u64g = decoder.into_uint64_fields().unwrap();
     assert_eq!(u64g.len(), 1);
     let e = u64g.next().unwrap();
     assert_eq!(e.field_id(), 2);
     assert_eq!(e.value(), 1234567890u64);
+    let decoder = u64g.finish().unwrap();
 
-    let mut f64g = decoder.float64_fields().unwrap();
+    let mut f64g = decoder.into_float64_fields().unwrap();
     assert_eq!(f64g.len(), 1);
     let e = f64g.next().unwrap();
     assert_eq!(e.field_id(), 3);
     assert!((e.value() - std::f64::consts::PI).abs() < 1e-10);
+    let decoder = f64g.finish().unwrap();
 
-    let mut bg = decoder.bool_fields().unwrap();
+    let mut bg = decoder.into_bool_fields().unwrap();
     assert_eq!(bg.len(), 1);
     let e = bg.next().unwrap();
     assert_eq!(e.field_id(), 4);
     assert_eq!(e.value(), 1u8);
+    let decoder = bg.finish().unwrap();
 
-    let mut sg = decoder.string_fields().unwrap();
+    let mut sg = decoder.into_string_fields().unwrap();
     assert_eq!(sg.len(), 1);
     let e = sg.next().unwrap();
     assert_eq!(e.field_id(), 5);
     assert_eq!(e.str_len(), 5);
+    let decoder = sg.finish().unwrap();
 
-    let mut ng = decoder.null_fields().unwrap();
+    let mut ng = decoder.into_null_fields().unwrap();
     assert_eq!(ng.len(), 1);
     let e = ng.next().unwrap();
     assert_eq!(e.field_id(), 6);
+    let decoder = ng.finish().unwrap();
 
-    assert_eq!(decoder.symbol_table().unwrap(), sym.as_slice());
+    let (symbols, _) = decoder.into_symbol_table().unwrap();
+    assert_eq!(symbols, sym.as_slice());
 }
 
 #[test]
@@ -406,7 +443,8 @@ fn test_dynamic_row_multiple_entries() {
     let decoder = DynamicRowDecoder::try_from(bytes).unwrap();
     assert_eq!(decoder.schema_id(), 300);
 
-    let mut i64s = decoder.int64_fields().unwrap();
+    let decoder = decoder.into_row_metadata().unwrap().finish().unwrap();
+    let mut i64s = decoder.into_int64_fields().unwrap();
     assert_eq!(i64s.len(), 3);
     let e0 = i64s.next().unwrap();
     assert_eq!(e0.field_id(), 10);
@@ -418,7 +456,8 @@ fn test_dynamic_row_multiple_entries() {
     assert_eq!(e2.field_id(), 30);
     assert_eq!(e2.value(), 300i64);
 
-    let mut u64s = decoder.uint64_fields().unwrap();
+    let decoder = i64s.finish().unwrap();
+    let mut u64s = decoder.into_uint64_fields().unwrap();
     assert_eq!(u64s.len(), 2);
     let e0 = u64s.next().unwrap();
     assert_eq!(e0.field_id(), 40);
@@ -473,7 +512,12 @@ fn test_dynamic_row_string_roundtrip() {
     // Decode
     let decoder = DynamicRowDecoder::try_from(bytes).unwrap();
 
-    let mut sg = decoder.string_fields().unwrap();
+    let decoder = decoder.into_row_metadata().unwrap().finish().unwrap();
+    let decoder = decoder.into_int64_fields().unwrap().finish().unwrap();
+    let decoder = decoder.into_uint64_fields().unwrap().finish().unwrap();
+    let decoder = decoder.into_float64_fields().unwrap().finish().unwrap();
+    let decoder = decoder.into_bool_fields().unwrap().finish().unwrap();
+    let mut sg = decoder.into_string_fields().unwrap();
     assert_eq!(sg.len(), 3);
     let e0 = sg.next().unwrap();
     assert_eq!(e0.str_len(), 3);
@@ -481,9 +525,11 @@ fn test_dynamic_row_string_roundtrip() {
     assert_eq!(e1.str_len(), 11);
     let e2 = sg.next().unwrap();
     assert_eq!(e2.str_len(), 3);
+    let decoder = sg.finish().unwrap();
 
     // Verify symbolTable contains the packed string data
-    let st = decoder.symbol_table().unwrap();
+    let decoder = decoder.into_null_fields().unwrap().finish().unwrap();
+    let (st, _) = decoder.into_symbol_table().unwrap();
     assert_eq!(st.len(), 3 + 11 + 3);
     assert_eq!(&st[0..3], b"abc");
     assert_eq!(&st[3..14], b"hello world");

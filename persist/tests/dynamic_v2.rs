@@ -260,3 +260,32 @@ fn schema_into_roundtrips_column_metadata() {
     let (symbols, _complete) = dec.into_symbol_table().unwrap();
     assert_eq!(symbols, b"sequencesymbolbid_pricesask_prices");
 }
+
+#[test]
+fn v2_row_decodes_under_newer_acting_version() {
+    // A frame stamped with a NEWER schema version (acting version 2) must
+    // still decode: all V2 row fields exist since version 0/1.
+    let rec = builder().build_v2().unwrap();
+    let bids = [(500005i64, -1i8)];
+    let values = [
+        DynamicValueRef::UInt64(42),
+        DynamicValueRef::String("BTCUSDT"),
+        DynamicValueRef::DecimalArray(&bids),
+        DynamicValueRef::DecimalArray(&bids),
+    ];
+    let len = rec.compute_encoded_length(&values).unwrap();
+    let mut buf = vec![0u8; len];
+    rec.record_into(&mut buf, &values).unwrap();
+
+    // Bump the header version field (offset 6..8, little-endian).
+    buf[6..8].copy_from_slice(&2u16.to_le_bytes());
+
+    let dec = DynamicRowV2Decoder::wrap_and_apply_header(&buf, 0).unwrap();
+    assert_eq!(dec.acting_version(), 2);
+    assert_eq!(dec.schema_id(), rec.schema_id());
+    let dec = dec.into_row_metadata().unwrap().finish().unwrap();
+    let dec = dec.into_int64_fields().unwrap().finish().unwrap();
+    let mut g = dec.into_uint64_fields().unwrap();
+    let e = g.next().unwrap();
+    assert_eq!((e.field_id(), e.value()), (0, 42));
+}
