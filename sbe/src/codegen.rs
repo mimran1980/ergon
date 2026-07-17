@@ -4316,7 +4316,13 @@ fn generate_group_decoder(
                     let offset = self.#tail_nvd_fn()?;
                     let data_offset = offset + #prefix_size_lit;
                     if let Some(end) = self.tail_end.get() {
-                        return Ok(&self.buf[data_offset .. end]);
+                        // SAFETY: `tail_end` is only ever set by
+                        // `encoded_length` from `tail_offset_N`, which
+                        // bounds-checked `end <= buf.len()` and
+                        // `data_offset <= end` before caching. Same
+                        // invariant class as the existing generated
+                        // `from_raw_parts` accessors.
+                        return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
                     }
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);

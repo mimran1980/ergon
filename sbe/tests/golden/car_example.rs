@@ -1454,7 +1454,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let offset = self.tail_offset_0()?;
         let data_offset = offset + 4;
         if let Some(end) = self.tail_end.get() {
-            return Ok(&self.buf[data_offset..end]);
+            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
