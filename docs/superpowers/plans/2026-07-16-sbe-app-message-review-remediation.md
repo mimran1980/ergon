@@ -213,7 +213,7 @@ pub fn price<D: SbeDecimal>(&mut self, value: D) -> Result<&mut Self, D::Error>;
 pub fn price_wire(&mut self, value: Decimal) -> &mut Self;
 ```
 
-- [ ] Add failing source-shape and temporary-crate tests for ordinary fields and
+- [x] Add failing source-shape and temporary-crate tests for ordinary fields and
       group-entry fields. Converter mode must emit the generic methods plus raw
       `*_wire`; default mode keeps the existing raw ordinary method.
 - [x] Strengthen structural validation to require exactly two fields in order:
@@ -583,11 +583,11 @@ Commit: `test(samples): prove the real pipeline end to end`
       input modes.
 - [ ] Include zero, one, typical, large, and asymmetric bids/asks. Aeron must do
       the same envelope and Decimal conversion work; compare like with like.
-- [ ] Run five warmed comparable runs for each case. Record every Criterion
+- [x] Run five warmed comparable runs for each case. Record every Criterion
       confidence interval plus hardware, OS, Rust/Java versions, profile,
       flags, date, raw samples, medians, and ErgoSBE/Aeron plus
       fallible/manual ratios.
-- [ ] A case is unfinished when either median ratio is greater than `1.00`, even
+- [x] A case is unfinished when either median ratio is greater than `1.00`, even
       if close or within ordinary noise. Optimise one failed case at a time;
       retain `#[inline(always)]` only with assembly and benchmark evidence.
 - [ ] Re-run official wire parity, allocation, formatting, Clippy, workspace,
