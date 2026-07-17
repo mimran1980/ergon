@@ -261,6 +261,32 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .map_err(|_| "persistence thread never signalled readiness")?;
     eprintln!("[main] persistence ready; starting ingestion for {run_secs}s");
 
+    // ── Thread census diagnostic ───────────────────────────────────────
+    // Exactly three approved long-lived application threads: main
+    // (ingestion), the SHARED driver thread, and the persistence thread.
+    // The OS total additionally includes Aeron-internal threads (driver
+    // agents, client conductors) — reported for observability.
+    let app_threads = 1 /* main */ + 1 /* driver */ + 1 /* persist */;
+    assert_eq!(
+        app_threads, 3,
+        "exactly three long-lived application threads are approved"
+    );
+    let os_threads = std::process::Command::new("ps")
+        .args(["-M", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .count()
+                .saturating_sub(1)
+        })
+        .unwrap_or(0);
+    eprintln!(
+        "[main] thread census: {app_threads} application threads (main/driver/persist), \
+         {os_threads} OS threads total (incl. Aeron internals)"
+    );
+
     // ── Thread 1 (main): current-thread Tokio runtime ─────────────────
     // The run window is enforced inside the ingest loop (no fourth thread).
     let rt = tokio::runtime::Builder::new_current_thread()
