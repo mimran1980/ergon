@@ -2118,7 +2118,13 @@ fn generate_owner_consuming_stages(
                             available: self.buf.len().saturating_sub(offset),
                         });
                     }
-                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
+                    // SAFETY: bounds verified by the preceding check
+                    // (offset + prefix_size <= buf.len()).
+                    let bytes: [u8; #prefix_size_lit] = unsafe {
+                        core::ptr::read_unaligned(
+                            self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit],
+                        )
+                    };
                     let header = #vd_type_ident(bytes);
                     let len = header.#len_field_ident() as usize;
                     #max_check

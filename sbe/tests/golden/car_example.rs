@@ -1556,7 +1556,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
                 available: self.buf.len().saturating_sub(offset),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         if len > 1073741824 {
@@ -2423,7 +2425,9 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
                 available: self.buf.len().saturating_sub(offset),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         if len > 1073741824 {
@@ -2516,7 +2520,9 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
                 available: self.buf.len().saturating_sub(offset),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
         let header = VarStringEncoding(bytes);
         let len = header.length() as usize;
         if len > 1073741824 {
@@ -2600,7 +2606,9 @@ impl<'a> CarDecoderAfterModel<'a> {
                 available: self.buf.len().saturating_sub(offset),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
         if len > 1073741824 {
