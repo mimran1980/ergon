@@ -343,10 +343,8 @@ impl Generator {
             // Decimal composite, emit raw *_wire aliases and generic converted
             // methods. Only emitted when converter mode is active.
             if !self.config.decimal_composites.is_empty() {
-                let converter_ts = generate_decimal_converter_impls(
-                    msg,
-                    &self.config.decimal_composites,
-                );
+                let converter_ts =
+                    generate_decimal_converter_impls(msg, &self.config.decimal_composites);
                 src.push_str(&converter_ts);
             }
             src.push('\n');
@@ -4495,7 +4493,10 @@ fn generate_nullification(
 /// Generate raw `*_wire` aliases and generic converted methods for fields
 /// whose type is a registered Decimal composite. Only emitted in converter
 /// mode. Generated code never mentions `rust_decimal`.
-fn generate_decimal_converter_impls(msg: &MessageStructure, decimal_composites: &[String]) -> String {
+fn generate_decimal_converter_impls(
+    msg: &MessageStructure,
+    decimal_composites: &[String],
+) -> String {
     let span = proc_macro2::Span::call_site();
     let msg_name = to_pascal_case(&msg.name);
     let decoder_ident = syn::Ident::new(&format!("{msg_name}Decoder"), span);

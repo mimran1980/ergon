@@ -144,4 +144,42 @@ mod tests {
         assert_eq!(config.compatibility, CompatibilityMode::Strict);
         assert!(config.checked_accessors);
     }
+
+    #[test]
+    fn enable_decimal_converters_adds_name() {
+        let config = GenerationConfig::new("test").enable_decimal_converters("Decimal");
+        assert_eq!(config.decimal_composites, vec!["Decimal"]);
+    }
+
+    #[test]
+    fn enable_decimal_converters_dedup() {
+        let config = GenerationConfig::new("test")
+            .enable_decimal_converters("Decimal")
+            .enable_decimal_converters("Decimal");
+        assert_eq!(config.decimal_composites.len(), 1);
+    }
+
+    #[test]
+    fn enable_decimal_converters_multiple() {
+        let config = GenerationConfig::new("test")
+            .enable_decimal_converters("Decimal")
+            .enable_decimal_converters("Price");
+        assert_eq!(config.decimal_composites, vec!["Decimal", "Price"]);
+    }
+
+    #[test]
+    fn new_config_has_empty_decimal_composites() {
+        let config = GenerationConfig::new("test");
+        assert!(config.decimal_composites.is_empty());
+    }
+
+    #[test]
+    fn new_config_has_correct_defaults() {
+        let config = GenerationConfig::new("mymod");
+        assert_eq!(config.module_name, "mymod");
+        assert_eq!(config.compatibility, CompatibilityMode::Strict);
+        assert!(config.checked_accessors);
+        assert!(config.shared_module.is_none());
+        assert!(!config.domain_objects);
+    }
 }

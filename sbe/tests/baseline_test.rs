@@ -2435,7 +2435,10 @@ fn decimal_converter_emits_wire_and_generic_methods() {
     assert!(src.contains("fn size_wire"), "decoder size_wire missing");
 
     // Raw wire setters on encoder
-    assert!(src.contains("fn price_wire("), "encoder price_wire setter missing");
+    assert!(
+        src.contains("fn price_wire("),
+        "encoder price_wire setter missing"
+    );
 
     // Generic converted accessors
     assert!(
@@ -2456,8 +2459,7 @@ fn decimal_converter_wire_and_generic_byte_identity() {
     ));
     let ir = ergosbe::parse_file(&path).unwrap();
     let schema = ergosbe::Schema::from_ir(ir);
-    let config =
-        ergosbe::GenerationConfig::new("decimal_id").enable_decimal_converters("Decimal");
+    let config = ergosbe::GenerationConfig::new("decimal_id").enable_decimal_converters("Decimal");
     let g = ergosbe::Generator::new(config);
     let modules = g.try_generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
