@@ -23,5 +23,6 @@ pub struct Counters {
     pub persisted_dynamic: u64,
     pub persisted_trades: u64,
     pub unmatched_dropped: u64,
+    pub compare_failures: u64,
     pub decode_failures: u64,
 }

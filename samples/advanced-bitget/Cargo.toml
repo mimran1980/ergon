@@ -56,6 +56,10 @@ path = "tests/bitget_state_test.rs"
 name = "publication_test"
 path = "tests/publication_test.rs"
 
+[[test]]
+name = "persistence_test"
+path = "tests/persistence_test.rs"
+
 [features]
 default = []
 bound-check-disabled = []
