@@ -289,3 +289,145 @@ fn v2_row_decodes_under_newer_acting_version() {
     let e = g.next().unwrap();
     assert_eq!((e.field_id(), e.value()), (0, 42));
 }
+
+#[test]
+fn record_into_covers_all_scalar_types_and_nullable() {
+    use ergo_clickhouse_persist::sbe::v2::DynamicSchemaV2Decoder;
+
+    let rec = DynamicRecorderBuilder::new("scalars")
+        .field("i", ColumnType::Int64)
+        .field("f", ColumnType::Float64)
+        .field("flag", ColumnType::Bool)
+        .field("maybe", ColumnType::Nullable(Box::new(decimal_array())))
+        .metadata("src", "test")
+        .ttl("ts", "1 DAY")
+        .build_v2()
+        .unwrap();
+    assert!(rec.ttl.is_some());
+
+    let values = [
+        DynamicValueRef::Int64(-7),
+        DynamicValueRef::Float64(1.5),
+        DynamicValueRef::Bool(true),
+        DynamicValueRef::Null,
+    ];
+    let len = rec.compute_encoded_length(&values).unwrap();
+    let mut buf = vec![0u8; len];
+    let encoded = rec.record_into(&mut buf, &values).unwrap();
+
+    let dec = DynamicRowV2Decoder::wrap_and_apply_header(encoded, 0).unwrap();
+    let mut g = dec.into_row_metadata().unwrap();
+    assert_eq!(g.by_ref().count(), 1, "one metadata entry");
+    let dec = g.finish().unwrap();
+    let mut g = dec.into_int64_fields().unwrap();
+    let i64s: Vec<_> = g.by_ref().map(|e| (e.field_id(), e.value())).collect();
+    assert_eq!(i64s, vec![(0, -7)]);
+    let dec = g.finish().unwrap();
+    let dec = dec.into_uint64_fields().unwrap().finish().unwrap();
+    let mut g = dec.into_float64_fields().unwrap();
+    let f64s: Vec<_> = g.by_ref().map(|e| e.value()).collect();
+    assert_eq!(f64s, vec![1.5]);
+    let dec = g.finish().unwrap();
+    let mut g = dec.into_bool_fields().unwrap();
+    let bools: Vec<_> = g.by_ref().map(|e| e.value()).collect();
+    assert_eq!(bools, vec![1]);
+    let dec = g.finish().unwrap();
+    let dec = dec.into_string_fields().unwrap().finish().unwrap();
+    let mut g = dec.into_null_fields().unwrap();
+    let nulls: Vec<_> = g.by_ref().map(|e| e.field_id()).collect();
+    assert_eq!(nulls, vec![3]);
+
+    // Schema message: Nullable(Array(Decimal)) → outer 2, inner 6, 38/18.
+    let slen = rec.schema_encoded_length();
+    let mut sbuf = vec![0u8; slen];
+    let sbytes = rec.schema_into(&mut sbuf).unwrap();
+    let sdec = DynamicSchemaV2Decoder::wrap_and_apply_header(sbytes, 0).unwrap();
+    let sdec = sdec.into_metadata().unwrap().finish().unwrap();
+    let mut g = sdec.into_columns().unwrap();
+    let cols: Vec<_> = g
+        .by_ref()
+        .map(|e| (e.outer_type(), e.inner_type(), e.precision(), e.scale()))
+        .collect();
+    assert_eq!(
+        cols,
+        vec![(0, 1, 0, 0), (0, 3, 0, 0), (0, 4, 0, 0), (2, 6, 38, 18)]
+    );
+}
+
+#[test]
+fn build_v2_rejects_empty_name_no_fields_and_unsupported_types() {
+    assert!(matches!(
+        DynamicRecorderBuilder::new("")
+            .field("a", ColumnType::Int64)
+            .build_v2(),
+        Err(DynamicRecorderError::EmptyTableName)
+    ));
+    assert!(matches!(
+        DynamicRecorderBuilder::new("t").build_v2(),
+        Err(DynamicRecorderError::NoFields)
+    ));
+    assert!(matches!(
+        DynamicRecorderBuilder::new("t")
+            .field("d", ColumnType::Date)
+            .build_v2(),
+        Err(DynamicRecorderError::UnsupportedColumnType { .. })
+    ));
+}
+
+#[test]
+fn v1_record_rejects_decimal_array_value_at_runtime() {
+    use ergo_clickhouse_persist::dynamic::DynamicValue;
+
+    let mut rec = DynamicRecorderBuilder::new("t")
+        .field("a", ColumnType::Int64)
+        .build()
+        .unwrap();
+    let err = rec
+        .record(&[DynamicValue::DecimalArray(vec![(1, 0)])])
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        DynamicRecorderError::UnsupportedColumnType { .. }
+    ));
+}
+
+#[test]
+fn recorder_error_display_strings() {
+    let cases = [
+        (
+            DynamicRecorderError::ValueCountMismatch {
+                expected: 2,
+                actual: 1,
+            },
+            "expected 2 values, got 1",
+        ),
+        (
+            DynamicRecorderError::ValueTypeMismatch {
+                position: 0,
+                expected: "Int64",
+                actual: "String",
+            },
+            "value at position 0: expected Int64, got String",
+        ),
+        (
+            DynamicRecorderError::Encode("boom".into()),
+            "encoding error: boom",
+        ),
+        (
+            DynamicRecorderError::EmptyTableName,
+            "table name must not be empty",
+        ),
+        (
+            DynamicRecorderError::NoFields,
+            "at least one field must be registered",
+        ),
+    ];
+    for (err, expected) in cases {
+        assert_eq!(err.to_string(), expected);
+    }
+    let unsupported = DynamicRecorderError::UnsupportedColumnType {
+        column_name: "d".into(),
+        column_type: ColumnType::Date,
+    };
+    assert!(unsupported.to_string().contains("unsupported column type"));
+}

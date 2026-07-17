@@ -1017,6 +1017,179 @@ mod tests {
 
     // ── format_sql_string ─────────────────────────────────────────────
 
+    // ── Tag mapping matrix + error/Default coverage ──────────────────
+
+    #[test]
+    fn test_type_tag_roundtrip_all_supported() {
+        let types = [
+            ColumnType::Int8,
+            ColumnType::Int16,
+            ColumnType::Int32,
+            ColumnType::Int64,
+            ColumnType::UInt8,
+            ColumnType::UInt16,
+            ColumnType::UInt32,
+            ColumnType::UInt64,
+            ColumnType::Float32,
+            ColumnType::Float64,
+            ColumnType::Bool,
+            ColumnType::String,
+        ];
+        for ct in types {
+            let tag = column_type_to_tag(&ct).unwrap();
+            assert_eq!(type_tag_to_column_type(tag), Some(ct));
+        }
+        // FixedString collapses to FixedString(0); Nullable delegates.
+        let fs_tag = column_type_to_tag(&ColumnType::FixedString(9)).unwrap();
+        assert_eq!(
+            type_tag_to_column_type(fs_tag),
+            Some(ColumnType::FixedString(0))
+        );
+        let n_tag = column_type_to_tag(&ColumnType::Nullable(Box::new(ColumnType::Int64))).unwrap();
+        assert_eq!(type_tag_to_column_type(n_tag), Some(ColumnType::Int64));
+        // Unsupported both ways.
+        assert_eq!(column_type_to_tag(&ColumnType::Date), None);
+        assert_eq!(type_tag_to_column_type(200), None);
+    }
+
+    #[test]
+    fn test_row_decode_error_display() {
+        assert_eq!(
+            RowDecodeError::UnknownSchemaId(7).to_string(),
+            "unknown schema_id: 7"
+        );
+        let invalid = RowDecodeError::InvalidUtf8("bad".into());
+        assert!(invalid.to_string().contains("bad"));
+        let unsupported = RowDecodeError::UnsupportedColumnType(99);
+        assert!(unsupported.to_string().contains("99"));
+    }
+
+    #[test]
+    fn test_schema_registry_default() {
+        let reg = SchemaRegistry::default();
+        assert_eq!(reg.table_name(1), None);
+    }
+
+    #[test]
+    fn test_truncated_symbol_table_is_out_of_bounds_error() {
+        // A row whose string entry claims more bytes than the symbol table
+        // holds must fail with the bounds error, not panic.
+        let rec = recorder_for("oob", &[("s", ColumnType::String)], &[]);
+        let schema_bytes =
+            encode_schema_with_id(rec.schema_id, "oob", &[(0, "s", ColumnType::String)], &[]);
+        let reg = register_schema(&schema_bytes);
+        let decoder = RowDecoder::new(reg);
+
+        let mut buf = vec![0u8; DynamicRowEncoder::MAX_ENCODED_LENGTH];
+        let mut enc = DynamicRowEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let _ = enc.schema_id(rec.schema_id);
+        let enc = enc
+            .row_metadata(0, |_| {})
+            .unwrap()
+            .int64_fields(0, |_| {})
+            .unwrap()
+            .uint64_fields(0, |_| {})
+            .unwrap()
+            .float64_fields(0, |_| {})
+            .unwrap()
+            .bool_fields(0, |_| {})
+            .unwrap()
+            .string_fields(1, |g| {
+                let _ = g.add(|e| {
+                    let _ = e.field_id(0).str_len(64); // claims 64 bytes
+                });
+            })
+            .unwrap()
+            .null_fields(0, |_| {})
+            .unwrap()
+            .symbol_table(b"tiny") // only 4 bytes present
+            .unwrap();
+        let len = enc.encoded_length_with_header();
+        let row_bytes = buf[..len].to_vec();
+
+        let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
+        let err = decoder.decode(row).unwrap_err();
+        assert!(matches!(err, RowDecodeError::InvalidUtf8(_)));
+    }
+
+    #[test]
+    fn test_truncated_metadata_symbols_is_out_of_bounds_error() {
+        let rec = recorder_for("oob2", &[("x", ColumnType::Int64)], &[]);
+        let schema_bytes =
+            encode_schema_with_id(rec.schema_id, "oob2", &[(0, "x", ColumnType::Int64)], &[]);
+        let reg = register_schema(&schema_bytes);
+        let decoder = RowDecoder::new(reg);
+
+        let mut buf = vec![0u8; DynamicRowEncoder::MAX_ENCODED_LENGTH];
+        let mut enc = DynamicRowEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let _ = enc.schema_id(rec.schema_id);
+        let enc = enc
+            .row_metadata(1, |g| {
+                let _ = g.add(|e| {
+                    let _ = e.key_len(10).val_len(10); // claims 20 bytes
+                });
+            })
+            .unwrap()
+            .int64_fields(0, |_| {})
+            .unwrap()
+            .uint64_fields(0, |_| {})
+            .unwrap()
+            .float64_fields(0, |_| {})
+            .unwrap()
+            .bool_fields(0, |_| {})
+            .unwrap()
+            .string_fields(0, |_| {})
+            .unwrap()
+            .null_fields(0, |_| {})
+            .unwrap()
+            .symbol_table(b"") // empty
+            .unwrap();
+        let len = enc.encoded_length_with_header();
+        let row_bytes = buf[..len].to_vec();
+
+        let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
+        let err = decoder.decode(row).unwrap_err();
+        assert!(matches!(err, RowDecodeError::InvalidUtf8(_)));
+    }
+
+    #[test]
+    fn test_field_absent_from_wire_decodes_as_null() {
+        // A schema column entirely absent from the row's typed and null
+        // groups still appears in the output as NULL.
+        let rec = recorder_for("absent", &[("x", ColumnType::Int64)], &[]);
+        let schema_bytes =
+            encode_schema_with_id(rec.schema_id, "absent", &[(0, "x", ColumnType::Int64)], &[]);
+        let reg = register_schema(&schema_bytes);
+        let decoder = RowDecoder::new(reg);
+
+        let mut buf = vec![0u8; DynamicRowEncoder::MAX_ENCODED_LENGTH];
+        let mut enc = DynamicRowEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let _ = enc.schema_id(rec.schema_id);
+        let enc = enc
+            .row_metadata(0, |_| {})
+            .unwrap()
+            .int64_fields(0, |_| {})
+            .unwrap()
+            .uint64_fields(0, |_| {})
+            .unwrap()
+            .float64_fields(0, |_| {})
+            .unwrap()
+            .bool_fields(0, |_| {})
+            .unwrap()
+            .string_fields(0, |_| {})
+            .unwrap()
+            .null_fields(0, |_| {})
+            .unwrap()
+            .symbol_table(b"")
+            .unwrap();
+        let len = enc.encoded_length_with_header();
+        let row_bytes = buf[..len].to_vec();
+
+        let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
+        let decoded = decoder.decode(row).unwrap();
+        assert_eq!(decoded.get("x").unwrap(), &None);
+    }
+
     #[test]
     fn test_format_sql_string_empty() {
         assert_eq!(format_sql_string(""), "''");
