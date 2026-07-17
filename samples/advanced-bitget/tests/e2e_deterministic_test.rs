@@ -1,32 +1,32 @@
-//! Deterministic E2E test — covers 0/1/typical/large group counts.
-#![allow(
-    clippy::all,
-    clippy::pedantic,
-    clippy::restriction,
-    clippy::nursery,
-    unused,
-    warnings
-)]
-//! Pure SBE: AppMessage(L2Book) → Aeron IPC → decode → verify.
-#![allow(unused)]
-
-mod normalized_app {
-    include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
-}
+//! Deterministic E2E — AppMessage(L2Book) → Aeron IPC → decode → verify.
+//!
+//! Covers 0/1/typical/large/asymmetric group counts. Expected values travel
+//! through the poll context (no shared statics), so tests are correct in any
+//! order; the embedded media driver is a real process-level singleton, so a
+//! mutex serialises the driver section.
 
 use std::ffi::CString;
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
-use normalized_app::{
+use advanced_bitget::normalized_app::{
     AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
 };
 
-static EXPECTED_BIDS: AtomicU16 = AtomicU16::new(0);
-static EXPECTED_ASKS: AtomicU16 = AtomicU16::new(0);
-static EXPECTED_SEQ: AtomicU64 = AtomicU64::new(0);
+/// The embedded media driver aborts when several launch concurrently in one
+/// process — serialise it (plan Task 11: real singleton resources only).
+static DRIVER_LOCK: Mutex<()> = Mutex::new(());
+
+/// Per-test expectations carried through the poll context.
+struct Expect {
+    bids: usize,
+    asks: usize,
+    seq: u64,
+    received: bool,
+}
 
 fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
+    let _guard = DRIVER_LOCK.lock().unwrap();
     let app_name = b"bitget";
     let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(
         bids as usize,
@@ -38,7 +38,7 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
 
     let driver = rusteron_media_driver::testing::EmbeddedDriver::launch().expect("driver");
     let ctx = rusteron_client::AeronContext::new().expect("ctx");
-    let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
+    let dir_cstr = CString::new(driver.dir()).unwrap();
     ctx.set_dir(&dir_cstr).expect("dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
     aeron.start().expect("start");
@@ -59,22 +59,24 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
     {
         let buf = claim.data();
         let mut outer = AppMessageEncoder::wrap_and_apply_header(buf, 0).expect("wrap");
-        outer.sent_ts(1);
+        let _ = outer.sent_ts(1);
         let _ = outer
             .app_name(app_name)
             .unwrap()
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
                 let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
-                book.source(Source::Bitget)
+                let _ = book
+                    .source(Source::Bitget)
                     .exchange_timestamp(1)
                     .receive_timestamp(2)
                     .sequence(seq);
                 let book = book
                     .bids(bids, |g| {
                         for i in 0..bids {
-                            g.add(|e| {
-                                e.price(Decimal::new((50000 - i as i64) * 100, -2));
-                                e.size(Decimal::new((1 + i as i64) * 50, -2));
+                            let _ = g.add(|e| {
+                                let _ = e
+                                    .price(Decimal::new((50000 - i as i64) * 100, -2))
+                                    .size(Decimal::new((1 + i as i64) * 50, -2));
                             });
                         }
                     })
@@ -82,9 +84,10 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
                 let book = book
                     .asks(asks, |g| {
                         for i in 0..asks {
-                            g.add(|e| {
-                                e.price(Decimal::new((50100 + i as i64) * 100, -2));
-                                e.size(Decimal::new((1 + i as i64) * 25, -2));
+                            let _ = g.add(|e| {
+                                let _ = e
+                                    .price(Decimal::new((50100 + i as i64) * 100, -2))
+                                    .size(Decimal::new((1 + i as i64) * 25, -2));
                             });
                         }
                     })
@@ -98,62 +101,62 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
     claim.commit().expect("commit");
 
     let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new().expect("asm");
+    let mut expect = Expect {
+        bids: bids as usize,
+        asks: asks as usize,
+        seq,
+        received: false,
+    };
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let mut received = false;
-    while !received && std::time::Instant::now() < deadline {
+    while !expect.received && std::time::Instant::now() < deadline {
         let fragments = assembler
-            .poll(&sub, &mut received, verify_counts, 10)
+            .poll(&sub, &mut expect, verify_counts, 10)
             .expect("poll");
         if fragments == 0 {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    assert!(received, "no message for bids={bids} asks={asks}");
+    assert!(expect.received, "no message for bids={bids} asks={asks}");
 }
 
-fn verify_counts(received: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
+fn verify_counts(expect: &mut Expect, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
     let outer = AppMessageDecoder::wrap_and_apply_header(buf, 0).expect("wrap");
     let (_name, after_name) = outer.into_app_name().expect("app");
     let (frame, _complete) = after_name.into_payload_as_message().expect("payload");
     if let AnyMessage::L2Book(book) = frame.message {
-        let exp_bids = EXPECTED_BIDS.load(Ordering::Relaxed) as usize;
-        let exp_asks = EXPECTED_ASKS.load(Ordering::Relaxed) as usize;
-        let exp_seq = EXPECTED_SEQ.load(Ordering::Relaxed);
-        assert_eq!(book.sequence(), exp_seq);
+        assert_eq!(book.sequence(), expect.seq);
         let bids_dec = book.into_bids().expect("bids");
-        assert_eq!(bids_dec.len(), exp_bids);
+        assert_eq!(bids_dec.len(), expect.bids);
         let after = bids_dec.finish().expect("finish");
         let asks_dec = after.into_asks().expect("asks");
-        assert_eq!(asks_dec.len(), exp_asks);
+        assert_eq!(asks_dec.len(), expect.asks);
+    } else {
+        panic!("expected an L2Book payload");
     }
-    *received = true;
+    expect.received = true;
 }
 
 #[test]
 fn e2e_zero_levels() {
-    EXPECTED_BIDS.store(0, Ordering::Relaxed);
-    EXPECTED_ASKS.store(0, Ordering::Relaxed);
-    EXPECTED_SEQ.store(1, Ordering::Relaxed);
     run_roundtrip(b"BTCUSDT", 0, 0, 1);
 }
+
 #[test]
 fn e2e_one_level() {
-    EXPECTED_BIDS.store(1, Ordering::Relaxed);
-    EXPECTED_ASKS.store(1, Ordering::Relaxed);
-    EXPECTED_SEQ.store(2, Ordering::Relaxed);
     run_roundtrip(b"BTCUSDT", 1, 1, 2);
 }
+
 #[test]
-fn e2e_typical() {
-    EXPECTED_BIDS.store(10, Ordering::Relaxed);
-    EXPECTED_ASKS.store(8, Ordering::Relaxed);
-    EXPECTED_SEQ.store(3, Ordering::Relaxed);
+fn e2e_typical_asymmetric() {
     run_roundtrip(b"ETHUSDT", 10, 8, 3);
 }
+
 #[test]
 fn e2e_large_25x25() {
-    EXPECTED_BIDS.store(25, Ordering::Relaxed);
-    EXPECTED_ASKS.store(25, Ordering::Relaxed);
-    EXPECTED_SEQ.store(4, Ordering::Relaxed);
     run_roundtrip(b"BTCUSDT", 25, 25, 4);
+}
+
+#[test]
+fn e2e_large_asymmetric_40x3() {
+    run_roundtrip(b"BTCUSDT", 40, 3, 5);
 }
