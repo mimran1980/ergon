@@ -172,11 +172,22 @@ impl BitgetIngestor {
         F: FnMut(NormalizedEventRef<'_>) -> Result<(), E>,
     {
         self.bid_scratch.clear();
-        // Bids best-first: descending price.
-        self.bid_scratch.extend(self.bids.values().rev().copied());
+        // Bids best-first: descending price, truncated to the maintained depth.
+        self.bid_scratch.extend(
+            self.bids
+                .values()
+                .rev()
+                .take(crate::config::MAX_BOOK_LEVELS)
+                .copied(),
+        );
         self.ask_scratch.clear();
-        // Asks best-first: ascending price.
-        self.ask_scratch.extend(self.asks.values().copied());
+        // Asks best-first: ascending price, truncated to the maintained depth.
+        self.ask_scratch.extend(
+            self.asks
+                .values()
+                .take(crate::config::MAX_BOOK_LEVELS)
+                .copied(),
+        );
         self.sequence += 1;
         self.counters.books_emitted += 1;
         emit(NormalizedEventRef::L2Book {

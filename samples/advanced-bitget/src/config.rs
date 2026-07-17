@@ -12,3 +12,7 @@ pub const APP_NAME: &[u8] = b"ergosbe";
 pub const SYMBOL: &str = "BTCUSDT";
 /// Bitget public WebSocket endpoint.
 pub const WS_URL: &str = "wss://ws.bitget.com/v2/ws/public";
+/// Maximum maintained levels per book side. Books deeper than this are
+/// truncated to the best N levels before publication; the IPC MTU is derived
+/// from this bound so every book fits one claim.
+pub const MAX_BOOK_LEVELS: usize = 128;

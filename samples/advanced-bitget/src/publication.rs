@@ -356,3 +356,28 @@ impl<P: Publication> ClaimPublisher<P> {
         }
     }
 }
+
+// ── MTU derivation ────────────────────────────────────────────────────
+
+/// Worst-case typed claim length: an `AppMessage(L2Book)` with
+/// [`MAX_BOOK_LEVELS`](crate::config::MAX_BOOK_LEVELS) levels per side and a
+/// 16-byte symbol.
+#[must_use]
+pub fn worst_case_typed_claim_len() -> usize {
+    let inner = L2BookEncoder::compute_encoded_length_with_message_header(
+        crate::config::MAX_BOOK_LEVELS,
+        crate::config::MAX_BOOK_LEVELS,
+        16,
+    );
+    AppMessageEncoder::compute_encoded_length_with_message_header(APP_NAME.len(), inner)
+}
+
+/// IPC MTU sized so the largest maintained message fits one claim
+/// (claim limit is MTU minus the 32-byte data frame header), rounded up to a
+/// power of two and never below Aeron's 1408-byte default.
+#[must_use]
+pub fn derive_ipc_mtu() -> usize {
+    (worst_case_typed_claim_len() + 32)
+        .next_power_of_two()
+        .max(1408)
+}

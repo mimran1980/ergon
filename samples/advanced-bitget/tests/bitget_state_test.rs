@@ -332,3 +332,25 @@ fn malformed_price_fixture_is_rejected_in_apply() {
 fn garbage_text_is_a_frame_error() {
     assert!(matches!(parse_frame("{not json"), Err(FrameError::Json(_))));
 }
+
+#[test]
+fn book_deeper_than_max_levels_is_truncated_to_best() {
+    use advanced_bitget::config::MAX_BOOK_LEVELS;
+
+    let deep: Vec<[String; 2]> = (0..MAX_BOOK_LEVELS + 10)
+        .map(|i| [format!("{}", 1000 + i), "1".to_string()])
+        .collect();
+    let refs: Vec<[&str; 2]> = deep
+        .iter()
+        .map(|l| [l[0].as_str(), l[1].as_str()])
+        .collect();
+
+    let mut ing = BitgetIngestor::new();
+    let mut out = Vec::new();
+    ing.apply(snapshot(&refs, &[]), collect_books(&mut out))
+        .unwrap();
+
+    assert_eq!(out[0].bids.len(), MAX_BOOK_LEVELS, "truncated to cap");
+    // Best (highest) bid retained.
+    assert_eq!(out[0].bids[0].0, (1000 + (MAX_BOOK_LEVELS as i64 + 9), 0));
+}
