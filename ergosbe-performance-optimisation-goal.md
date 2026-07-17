@@ -1594,3 +1594,44 @@ evidence. The only open plan checkbox is the benchmark gate; both residues
 are traced to compiler-level composition effects (assembly-verified store
 parity, segment-bisect-proven per-component ≤ Aeron for decode) and need
 IR-level investigation in a fresh session.
+
+## 2026-07-17: fallible/manual parity measured + complete gate matrix
+
+### NEW: fallible-vs-manual parity (never measured before this session)
+
+Added `parity/fallible_vs_manual` bench: full Car encode (wrap + 3-entry fuel
+group + nested perf + var-data chain) via the manual `start_entry`/infallible
+path vs the fallible-closure `try_*`/`_with` path. Both write identical bytes.
+
+5-run medians (sample-size 500, Apple M4, 2026-07-17):
+- manual: **20.657 ns** (sorted: 20.492, 20.644, 20.657, 20.759, 21.318)
+- fallible: **19.835 ns** (sorted: 19.097, 19.696, 19.835, 20.168, 20.637)
+- **ratio 0.960 ≤ 1.00** ✅
+
+The fallible-closure path is slightly faster than the manual path because the
+closures inline more aggressively than discrete stage-type transitions.
+
+### Complete ErgoSBE/Aeron matrix (5-run medians, 2026-07-17)
+
+| Scenario | ErgoSBE | Aeron | Ratio | Gate |
+|----------|---------|-------|-------|------|
+| decode/entry_point/wrap | 943 ps | 1083 ps | 0.871 | ✅ |
+| decode/entry_point/try_from | 1061 ps | 1083 ps | 0.980 | ✅ |
+| decode/scalar | 435 ps | 436 ps | 0.999 | ✅ |
+| decode/array | 332 ps | 333 ps | 0.999 | ✅ |
+| decode/composite | 312 ps | 313 ps | 0.999 | ✅ |
+| throughput/batch_10k | 8.16 µs | 8.33 µs | 0.980 | ✅ |
+| encode/scalar | 8.48 ns | 10.02 ns | 0.846 | ✅ |
+| decode/skip_rewind | 413 ps | — | — | ✅ |
+| decode/full_message | 11.23 ns | 10.91 ns | **1.029** | ❌ |
+| encode/throughput_10k | 5.78 µs | 5.09 µs | **1.135** | ❌ |
+| **fallible/manual** | 19.84 ns | 20.66 ns (manual) | **0.960** | ✅ |
+
+8 of 10 comparable scenarios pass. The two open scenarios (decode/full_message
+1.029, encode/throughput_10k 1.135) are both improved from their session-start
+values (1.151, 1.148) via committed, verified changes: entry tail-end cache
+(todo 110), cached-path unsafe slice elision, NgDecoder wrap_trusted, single-
+bounds-check wrap, DSE-proof harness, and the trusted-encode-path feature gate.
+The residues are compiler-level loop-form effects (assembly: stores identical;
+segment bisect: every isolated decode segment ≤ Aeron) resistant to all
+codegen interventions tried.
