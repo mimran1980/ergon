@@ -463,7 +463,8 @@ fn decode_dynamic_book(bytes: &[u8]) -> Result<WireBook, PersistError> {
 // ── ClickHouse adapter ────────────────────────────────────────────────
 
 /// Render a `Decimal(38,18)` scaled integer as an exact decimal literal.
-fn dec38_18(v: i128) -> String {
+#[must_use]
+pub fn dec38_18(v: i128) -> String {
     const SCALE: u128 = 1_000_000_000_000_000_000;
     let sign = if v < 0 { "-" } else { "" };
     let a = v.unsigned_abs();

@@ -227,3 +227,86 @@ fn publish_schema_emits_decodable_dynamic_schema_v2() {
     let (table, _) = dec.into_table_name().unwrap();
     assert_eq!(table, b"l2book_dynamic");
 }
+
+#[test]
+fn short_claims_classify_encode_failures_for_all_message_kinds() {
+    let bids = [lvl(1, 0, 1, 0)];
+
+    // Typed book claim comes up short → EncodeFailed before the dynamic leg.
+    let mut p =
+        ClaimPublisher::new(RecordingPublication::short(4), RecordingPublication::new()).unwrap();
+    assert_eq!(
+        p.publish(&book_event(&bids, &[])),
+        PublishOutcome::EncodeFailed
+    );
+    assert_eq!(p.counters().encode_failures, 1);
+
+    // Dynamic claim short → typed leg publishes, dynamic leg fails.
+    let mut p =
+        ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::short(4)).unwrap();
+    assert_eq!(
+        p.publish(&book_event(&bids, &[])),
+        PublishOutcome::EncodeFailed
+    );
+    assert_eq!(p.counters().published, 1, "typed leg still published");
+    assert_eq!(p.counters().encode_failures, 1);
+
+    // Trade claim short.
+    let mut p =
+        ClaimPublisher::new(RecordingPublication::short(4), RecordingPublication::new()).unwrap();
+    let trade = NormalizedEventRef::Trade {
+        symbol: "BTCUSDT",
+        exchange_ts_ns: 1,
+        receive_ts_ns: 2,
+        sequence: 3,
+        price: WireDec::new(1, 0),
+        size: WireDec::new(1, 0),
+        is_buy: false,
+    };
+    assert_eq!(p.publish(&trade), PublishOutcome::EncodeFailed);
+
+    // Short dynamic claim also fails the schema announcement.
+    let mut p =
+        ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::short(4)).unwrap();
+    assert_eq!(p.publish_schema(), PublishOutcome::EncodeFailed);
+}
+
+#[test]
+fn every_drop_reason_maps_to_its_counter() {
+    let bids = [lvl(1, 0, 1, 0)];
+    let cases = [
+        DropReason::Backpressured,
+        DropReason::NotConnected,
+        DropReason::AdminAction,
+        DropReason::Closed,
+        DropReason::MaxPosition,
+    ];
+    for reason in cases {
+        let mut p = ClaimPublisher::new(
+            RecordingPublication::failing(reason),
+            RecordingPublication::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            p.publish(&book_event(&bids, &[])),
+            PublishOutcome::Dropped(reason)
+        );
+        let c = p.counters();
+        let hit = c.dropped_backpressure
+            + c.dropped_not_connected
+            + c.dropped_admin_action
+            + c.dropped_closed
+            + c.dropped_max_position;
+        assert_eq!(hit, 1, "exactly one drop counter for {reason:?}");
+    }
+}
+
+#[test]
+fn derived_ipc_mtu_covers_the_largest_maintained_message() {
+    use advanced_bitget::publication::{derive_ipc_mtu, worst_case_typed_claim_len};
+    let worst = worst_case_typed_claim_len();
+    let mtu = derive_ipc_mtu();
+    assert!(mtu >= worst + 32, "claim + data header must fit one MTU");
+    assert!(mtu.is_power_of_two());
+    assert!(mtu >= 1408);
+}

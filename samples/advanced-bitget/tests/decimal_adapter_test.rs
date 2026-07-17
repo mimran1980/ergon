@@ -99,3 +99,48 @@ fn rust_decimal_generic_roundtrip_through_generated_methods() {
     let _ = AppMessageEncoder::compute_encoded_length_with_message_header(1, 1);
     let _ = std::any::type_name::<sbe_rt::EncodeError>();
 }
+
+#[test]
+fn convert_error_display_and_wire_decimal_new() {
+    use advanced_bitget::decimal::{DecimalConvertError, WireDecimal, to_clickhouse_decimal};
+
+    assert_eq!(
+        DecimalConvertError::Overflow.to_string(),
+        "decimal overflow"
+    );
+    assert_eq!(
+        DecimalConvertError::PrecisionLoss.to_string(),
+        "decimal precision loss"
+    );
+    assert_eq!(
+        DecimalConvertError::OutOfRange.to_string(),
+        "decimal out of range"
+    );
+
+    let w = WireDecimal::new(5, -1);
+    assert_eq!((w.mantissa, w.exponent), (5, -1));
+
+    // ten_pow(>38) → Overflow; huge scaled value → OutOfRange.
+    assert_eq!(
+        to_clickhouse_decimal(1, 21),
+        Err(DecimalConvertError::Overflow)
+    );
+    // 1.5e18 × 10^20 = 1.5e38: fits i128 but exceeds Decimal(38,18)'s range.
+    assert_eq!(
+        to_clickhouse_decimal(1_500_000_000_000_000_000, 2),
+        Err(DecimalConvertError::OutOfRange)
+    );
+}
+
+#[test]
+fn rust_decimal_adapter_positive_exponent_and_overflow() {
+    // Positive exponent scales up exactly.
+    let d: rust_decimal::Decimal = SbeDecimal::try_from_sbe(5, 2).unwrap();
+    assert_eq!(d, rust_decimal::Decimal::from(500));
+    let d: rust_decimal::Decimal = SbeDecimal::try_from_sbe(-5, 2).unwrap();
+    assert_eq!(d, rust_decimal::Decimal::from(-500));
+
+    // Overflow: mantissa * 10^30 exceeds the adapter's exact range.
+    let err = <rust_decimal::Decimal as SbeDecimal>::try_from_sbe(i64::MAX, 30).unwrap_err();
+    assert_eq!(err, advanced_bitget::decimal::DecimalConvertError::Overflow);
+}

@@ -354,3 +354,50 @@ fn book_deeper_than_max_levels_is_truncated_to_best() {
     // Best (highest) bid retained.
     assert_eq!(out[0].bids[0].0, (1000 + (MAX_BOOK_LEVELS as i64 + 9), 0));
 }
+
+#[test]
+fn heartbeat_is_a_no_op() {
+    let mut ing = BitgetIngestor::new();
+    ing.apply(
+        BitgetEventRef::Heartbeat,
+        |_| -> Result<(), std::convert::Infallible> { panic!("heartbeat must not emit") },
+    )
+    .unwrap();
+}
+
+#[test]
+fn frame_error_display_strings() {
+    let json_err = parse_frame("{bad").unwrap_err();
+    assert!(json_err.to_string().contains("not valid JSON"));
+    let shape_err = parse_frame(r#"{"action":"snapshot"}"#).unwrap_err();
+    assert!(shape_err.to_string().contains("unrecognised"));
+}
+
+#[test]
+fn trades_frame_with_malformed_price_bubbles_from_apply_to() {
+    let text = r#"{"action":"snapshot","arg":{"channel":"trade","instId":"BTCUSDT"},"data":[{"ts":"1","price":"oops","size":"1","side":"buy"}]}"#;
+    let mut ing = BitgetIngestor::new();
+    let err = parse_frame(text)
+        .unwrap()
+        .apply_to(&mut ing, |_| -> Result<(), std::convert::Infallible> {
+            panic!("must not emit")
+        })
+        .unwrap_err();
+    assert!(matches!(err, ApplyError::MalformedDecimal { .. }));
+}
+
+#[test]
+fn unknown_frame_shapes_are_rejected() {
+    // action present, arg/data missing.
+    assert!(parse_frame(r#"{"action":"snapshot"}"#).is_err());
+    // books channel with an empty data array.
+    assert!(
+        parse_frame(r#"{"action":"snapshot","arg":{"channel":"books","instId":"X"},"data":[]}"#)
+            .is_err()
+    );
+    // unknown channel.
+    assert!(
+        parse_frame(r#"{"action":"snapshot","arg":{"channel":"ticker","instId":"X"},"data":[{}]}"#)
+            .is_err()
+    );
+}

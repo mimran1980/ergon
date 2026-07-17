@@ -186,3 +186,34 @@ fn e2e_ipc_to_clickhouse_exact_rows() {
         "exact trade row mismatch"
     );
 }
+
+#[test]
+#[ignore = "requires live ClickHouse — run via just test-clickhouse-live"]
+fn batched_inserts_flush_on_threshold_and_shutdown() {
+    use advanced_bitget::persistence::{RowSink, TradeRow};
+
+    ch_query("DROP TABLE IF EXISTS trade");
+    let mut sink = ClickHouseRowSink::connect(ENDPOINT).expect("connect");
+
+    // 300 rows: crosses the 256-row automatic batch flush once; the rest
+    // drain on the explicit flush.
+    for i in 0..300u64 {
+        sink.insert_trade(&TradeRow {
+            trade_id: i,
+            exchange_ts_ns: i,
+            symbol: "BTCUSDT".into(),
+            price: 1_500_000_000_000_000_000,
+            size: 250_000_000_000_000_000,
+            is_buy: i % 2 == 0,
+        })
+        .expect("insert");
+    }
+    sink.flush().expect("flush");
+
+    let count = ch_query("SELECT count() FROM trade FORMAT TabSeparated");
+    assert_eq!(count.trim(), "300");
+    let extremes = ch_query(
+        "SELECT min(trade_id), max(trade_id), toString(any(price)) FROM trade FORMAT TabSeparated",
+    );
+    assert_eq!(extremes.trim(), "0\t299\t1.5");
+}

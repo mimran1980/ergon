@@ -55,6 +55,9 @@ pub struct RecordingPublication {
     pub claimed_lengths: Vec<usize>,
     pub claim_attempts: usize,
     pub fail_with: Option<DropReason>,
+    /// Hand the fill closure a buffer this many bytes SHORTER than the
+    /// claimed length, simulating an encode failure inside the claim.
+    pub short_by: usize,
 }
 
 impl RecordingPublication {
@@ -71,6 +74,16 @@ impl RecordingPublication {
             ..Self::default()
         }
     }
+
+    /// An adapter whose claims come up `n` bytes short, forcing the encoder
+    /// inside the claim to fail.
+    #[must_use]
+    pub fn short(n: usize) -> Self {
+        Self {
+            short_by: n,
+            ..Self::default()
+        }
+    }
 }
 
 impl Publication for RecordingPublication {
@@ -82,7 +95,7 @@ impl Publication for RecordingPublication {
         if let Some(reason) = self.fail_with {
             return PublishOutcome::Dropped(reason);
         }
-        let mut buf = vec![0u8; len];
+        let mut buf = vec![0u8; len.saturating_sub(self.short_by)];
         match fill(&mut buf) {
             Ok(()) => {
                 self.claimed_lengths.push(len);
