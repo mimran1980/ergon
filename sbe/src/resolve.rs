@@ -489,3 +489,479 @@ fn default_max(prim: PrimitiveType) -> Option<u64> {
         PrimitiveType::Double => Some(f64::MAX.to_bits()),       // max double
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_schema() -> Ir {
+        crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <sbe:message name="A" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#,
+        )
+        .unwrap()
+    }
+
+    // ── Error paths ──────────────────────────────────────────────────
+
+    #[test]
+    fn duplicate_template_id_rejected() {
+        let result = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="test" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <sbe:message name="A" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+  <sbe:message name="B" id="1"><field name="y" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn since_version_beyond_schema_rejected() {
+        let mut ir = minimal_schema();
+        // Bump a token's since_version above schema version 0
+        ir.tokens[5].encoding.since_version = 5;
+        let result = resolve_schema(&mut ir, None);
+        assert!(matches!(
+            result,
+            Err(ResolveError::SinceVersionBeyondSchema { .. })
+        ));
+    }
+
+    #[test]
+    fn resolve_schema_ok_on_valid_schema() {
+        let mut ir = minimal_schema();
+        assert!(resolve_schema(&mut ir, None).is_ok());
+    }
+
+    #[test]
+    fn resolve_schema_with_source_code() {
+        let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+<sbe:message name="A" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+        let mut ir = crate::parse(xml).unwrap();
+        assert!(resolve_schema(&mut ir, Some(xml)).is_ok());
+    }
+
+    // ── default_null / min / max ─────────────────────────────────────
+
+    #[test]
+    fn default_null_all_primitives() {
+        assert_eq!(default_null(PrimitiveType::Char), Some(0));
+        assert_eq!(default_null(PrimitiveType::Int8), Some(-128i8 as u64));
+        assert_eq!(default_null(PrimitiveType::UInt8), Some(255));
+        assert_eq!(default_null(PrimitiveType::Int16), Some(-32768i16 as u64));
+        assert_eq!(default_null(PrimitiveType::UInt16), Some(65535));
+        assert_eq!(
+            default_null(PrimitiveType::Int32),
+            Some(-2147483648i32 as u64)
+        );
+        assert_eq!(default_null(PrimitiveType::UInt32), Some(4294967295));
+        assert_eq!(
+            default_null(PrimitiveType::Int64),
+            Some(9223372036854775808u64)
+        ); // i64::MIN as u64
+        assert_eq!(default_null(PrimitiveType::UInt64), Some(u64::MAX));
+        assert!(default_null(PrimitiveType::Float).is_some());
+        assert!(default_null(PrimitiveType::Double).is_some());
+    }
+
+    #[test]
+    fn default_min_all_primitives() {
+        assert_eq!(default_min(PrimitiveType::Char), Some(0x20));
+        assert_eq!(default_min(PrimitiveType::UInt8), Some(0));
+        assert_eq!(default_min(PrimitiveType::UInt16), Some(0));
+        assert_eq!(default_min(PrimitiveType::UInt32), Some(0));
+        assert_eq!(default_min(PrimitiveType::UInt64), Some(0));
+        assert!(default_min(PrimitiveType::Int8).is_some());
+        assert!(default_min(PrimitiveType::Int16).is_some());
+        assert!(default_min(PrimitiveType::Int32).is_some());
+        assert!(default_min(PrimitiveType::Int64).is_some());
+        assert!(default_min(PrimitiveType::Float).is_some());
+        assert!(default_min(PrimitiveType::Double).is_some());
+    }
+
+    #[test]
+    fn default_max_all_primitives() {
+        assert_eq!(default_max(PrimitiveType::Char), Some(0x7E));
+        assert_eq!(default_max(PrimitiveType::Int8), Some(127));
+        assert_eq!(default_max(PrimitiveType::UInt8), Some(254));
+        assert_eq!(default_max(PrimitiveType::Int16), Some(32767));
+        assert_eq!(default_max(PrimitiveType::UInt16), Some(65534));
+        assert_eq!(default_max(PrimitiveType::Int32), Some(2147483647));
+        assert_eq!(default_max(PrimitiveType::UInt32), Some(4294967294));
+        assert_eq!(default_max(PrimitiveType::Int64), Some(9223372036854775807));
+        assert_eq!(
+            default_max(PrimitiveType::UInt64),
+            Some(18446744073709551614)
+        );
+        assert!(default_max(PrimitiveType::Float).is_some());
+        assert!(default_max(PrimitiveType::Double).is_some());
+    }
+
+    // ── Offset resolution ────────────────────────────────────────────
+
+    #[test]
+    fn composite_offsets_assigned_sequentially() {
+        let mut ir = minimal_schema();
+        resolve_schema(&mut ir, None).unwrap();
+        // Find the messageHeader composite
+        let hdr = ir
+            .tokens
+            .iter()
+            .find(|t| t.name == "messageHeader")
+            .unwrap();
+        // Should have a non-zero offset (block length)
+        assert!(hdr.encoding.offset.is_some());
+    }
+
+    #[test]
+    fn message_offsets_assigned_correctly() {
+        let mut ir = minimal_schema();
+        resolve_schema(&mut ir, None).unwrap();
+        // Find BeginMessage token for message A
+        let msg = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage)
+            .unwrap();
+        assert!(msg.encoding.offset.is_some());
+        // uint32 field should be at offset 0
+        let field = ir.tokens.iter().find(|t| t.name == "x").unwrap();
+        assert_eq!(field.encoding.offset, Some(0));
+    }
+
+    #[test]
+    fn explicit_offset_preserved() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+<sbe:message name="A" id="1"><field name="x" id="1" type="uint32" offset="0"/><field name="y" id="2" type="uint16" offset="4"/></sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        let x = ir.tokens.iter().find(|t| t.name == "x").unwrap();
+        assert_eq!(x.encoding.offset, Some(0));
+        let y = ir.tokens.iter().find(|t| t.name == "y").unwrap();
+        assert_eq!(y.encoding.offset, Some(4));
+    }
+
+    // ── Group/var-data offset resolution ─────────────────────────────
+
+    #[test]
+    fn group_offsets_resolved() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+</types>
+<sbe:message name="A" id="1">
+  <field name="x" id="1" type="uint32"/>
+  <group name="items" id="2" dimensionType="groupSizeEncoding">
+    <field name="a" id="1" type="uint32"/>
+    <field name="b" id="2" type="uint16"/>
+  </group>
+</sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        // Group entry fields should have sequential offsets
+        let a = ir.tokens.iter().find(|t| t.name == "a").unwrap();
+        assert_eq!(a.encoding.offset, Some(0));
+        let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
+        assert_eq!(b.encoding.offset, Some(4));
+    }
+
+    #[test]
+    fn vardata_offsets_resolved() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="varDataEncoding"><type name="length" primitiveType="uint32"/><type name="varData" primitiveType="uint8" length="0"/></composite>
+</types>
+<sbe:message name="A" id="1">
+  <field name="x" id="1" type="uint32"/>
+  <data name="payload" id="2" type="varDataEncoding"/>
+</sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        let msg = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage)
+            .unwrap();
+        assert!(msg.encoding.offset.is_some());
+    }
+
+    // ── Enum/set block sizes ─────────────────────────────────────────
+
+    #[test]
+    fn enum_block_size_calculated() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <enum name="Colour" encodingType="uint8"><validValue name="R">1</validValue></enum>
+</types>
+<sbe:message name="A" id="1"><field name="c" id="1" type="Colour"/></sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        let msg = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage)
+            .unwrap();
+        // Block length should be 1 (uint8 enum)
+        assert_eq!(msg.encoding.offset, Some(1));
+    }
+
+    #[test]
+    fn set_block_size_calculated() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <set name="Flags" encodingType="uint8"><choice name="A">0</choice></set>
+</types>
+<sbe:message name="A" id="1"><field name="f" id="1" type="Flags"/></sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        let msg = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage)
+            .unwrap();
+        assert_eq!(msg.encoding.offset, Some(1));
+    }
+
+    // ── Constant field handling ──────────────────────────────────────
+
+    #[test]
+    fn constant_field_does_not_affect_block_length() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <type name="ConstVal" primitiveType="char" presence="constant">X</type>
+</types>
+<sbe:message name="A" id="1"><field name="x" id="1" type="uint32"/><field name="c" id="2" type="ConstVal"/></sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        let msg = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage)
+            .unwrap();
+        // Block length should be 4 (uint32 only, constant doesn't occupy wire)
+        assert_eq!(msg.encoding.offset, Some(4));
+    }
+
+    // ── Nested composite in message ──────────────────────────────────
+
+    #[test]
+    fn nested_composite_offsets_resolved() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="Point"><type name="px" primitiveType="int32"/><type name="py" primitiveType="int32"/></composite>
+</types>
+<sbe:message name="A" id="1"><field name="p" id="1" type="Point"/></sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        let msg = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage)
+            .unwrap();
+        // Point composite = 2 × int32 = 8 bytes
+        assert_eq!(msg.encoding.offset, Some(8));
+    }
+
+    // ── Error Display and take_source_code ───────────────────────────
+
+    #[test]
+    fn take_source_code_from_duplicate_template_id() {
+        let mut err = ResolveError::DuplicateTemplateId {
+            id: 1,
+            name: "test".to_string(),
+            source_code: None,
+            first_label: None,
+            second_label: None,
+        };
+        assert!(err.take_source_code().is_none()); // was None
+    }
+
+    #[test]
+    fn take_source_code_from_unknown_type() {
+        let mut err = ResolveError::UnknownType {
+            name: "Foo".to_string(),
+            source_code: None,
+            span: None,
+        };
+        assert!(err.take_source_code().is_none());
+    }
+
+    #[test]
+    fn take_source_code_from_invalid_offset() {
+        let mut err = ResolveError::InvalidOffset {
+            offset: 99,
+            source_code: None,
+            span: None,
+        };
+        assert!(err.take_source_code().is_none());
+    }
+
+    #[test]
+    fn take_source_code_from_empty_composite() {
+        let mut err = ResolveError::EmptyComposite {
+            name: "Empty".to_string(),
+            source_code: None,
+            span: None,
+        };
+        assert!(err.take_source_code().is_none());
+    }
+
+    #[test]
+    fn take_source_code_from_since_version() {
+        let mut err = ResolveError::SinceVersionBeyondSchema {
+            version: 5,
+            schema_version: 0,
+            name: "field".to_string(),
+            source_code: None,
+            span: None,
+        };
+        assert!(err.take_source_code().is_none());
+    }
+
+    #[test]
+    fn resolve_error_displays() {
+        let err = ResolveError::DuplicateTemplateId {
+            id: 1,
+            name: "A".to_string(),
+            source_code: None,
+            first_label: None,
+            second_label: None,
+        };
+        assert!(format!("{err}").contains("duplicate template id 1"));
+
+        let err = ResolveError::UnknownType {
+            name: "Foo".to_string(),
+            source_code: None,
+            span: None,
+        };
+        assert!(format!("{err}").contains("unknown type reference Foo"));
+
+        let err = ResolveError::InvalidOffset {
+            offset: 42,
+            source_code: None,
+            span: None,
+        };
+        assert!(format!("{err}").contains("offset 42"));
+
+        let err = ResolveError::EmptyComposite {
+            name: "X".to_string(),
+            source_code: None,
+            span: None,
+        };
+        assert!(format!("{err}").contains("composite X"));
+
+        let err = ResolveError::SinceVersionBeyondSchema {
+            version: 3,
+            schema_version: 0,
+            name: "y".to_string(),
+            source_code: None,
+            span: None,
+        };
+        assert!(format!("{err}").contains("sinceVersion 3"));
+    }
+
+    // ── Fixed-size array in message ──────────────────────────────────
+
+    #[test]
+    fn fixed_array_field_offset() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <type name="int32array4" primitiveType="int32" length="4"/>
+</types>
+<sbe:message name="A" id="1"><field name="nums" id="1" type="int32array4"/></sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        let msg = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginMessage)
+            .unwrap();
+        // 4 × int32 = 16 bytes
+        assert_eq!(msg.encoding.offset, Some(16));
+    }
+
+    // ── Nested group within group ────────────────────────────────────
+
+    #[test]
+    fn nested_group_offsets_resolved() {
+        let ir = crate::parse(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+</types>
+<sbe:message name="A" id="1">
+  <group name="outer" id="2" dimensionType="groupSizeEncoding">
+    <field name="a" id="1" type="uint32"/>
+    <group name="inner" id="3" dimensionType="groupSizeEncoding">
+      <field name="b" id="1" type="uint16"/>
+    </group>
+  </group>
+</sbe:message>
+</sbe:messageSchema>"#,
+        ).unwrap();
+        let mut ir = ir;
+        resolve_schema(&mut ir, None).unwrap();
+        // Inner group field should be resolved
+        let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
+        assert_eq!(b.encoding.offset, Some(0));
+    }
+}
