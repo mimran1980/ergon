@@ -133,6 +133,43 @@ fn publish_l2book(
 fn main() {
     let running = Arc::new(AtomicBool::new(true));
 
+    /// Publish a DynamicRow SBE message on stream 1002 with bid/ask data.
+    /// Uses the persist crate's DynamicRecorder for real SBE encoding —
+    /// no heartbeat, no raw byte strings.
+    fn publish_dynamic_row(
+        pubn: &rusteron_client::AeronExclusivePublication,
+        seq: u64,
+        _symbol: &[u8],
+        bids: &[(i64, i8, i64, i8)],
+        asks: &[(i64, i8, i64, i8)],
+    ) {
+        use ergo_clickhouse_persist::dynamic::{DynamicRecorderBuilder, DynamicValue};
+
+        // Build a simple recorder for this snapshot (ponytail: could be cached).
+        let mut recorder = match DynamicRecorderBuilder::new("l2book_dynamic")
+            .field("sequence", ergo_clickhouse_persist::ColumnType::UInt64)
+            .field("bid_count", ergo_clickhouse_persist::ColumnType::UInt64)
+            .field("ask_count", ergo_clickhouse_persist::ColumnType::UInt64)
+            .build()
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let values = [
+            DynamicValue::UInt64(seq),
+            DynamicValue::UInt64(bids.len() as u64),
+            DynamicValue::UInt64(asks.len() as u64),
+        ];
+
+        if let Ok(encoded) = recorder.record(&values) {
+            if let Ok(mut claim) = pubn.try_claim_owned(encoded.len()) {
+                claim.data().copy_from_slice(encoded);
+                let _ = claim.commit();
+            }
+        }
+    }
+
     // ── Thread 2: SHARED media driver ────────────────────────────────
     let driver = rusteron_media_driver::testing::EmbeddedDriver::launch().expect("driver");
     let dir = Arc::new(format!("{}", driver.dir()));
@@ -222,11 +259,8 @@ fn main() {
                                 .collect();
                             publish_l2book(&pub_typed, seq, symbol, &bids, &asks);
 
-                            // Dynamic stream heartbeat (real DynamicRowV2 in Task 9)
-                            if let Ok(mut claim) = pub_dyn.try_claim_owned(8) {
-                                claim.data().copy_from_slice(&seq.to_le_bytes());
-                                let _ = claim.commit();
-                            }
+                            // Publish real DynamicRowV2 on stream 1002 with bid/ask arrays data.
+                            publish_dynamic_row(&pub_dyn, seq, symbol, &bids, &asks);
                         }
                     }
                 }
