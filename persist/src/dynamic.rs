@@ -1226,8 +1226,7 @@ const fn compute_encoded_size(
 
 // ── Tests ────────────────────────────────────────────────────────────────
 
-// TODO(Task 6): migrate to consuming-stage decoder API
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1252,50 +1251,56 @@ mod tests {
         ]
     }
 
-    fn validate_standard_fields(buf: &[u8], schema_id: u32) {
+    /// Fully-decoded row via the consuming-stage decoder chain.
+    struct RowParts {
+        schema_id: u32,
+        meta: Vec<(u16, u16)>,
+        i64s: Vec<(u8, i64)>,
+        u64s: Vec<(u8, u64)>,
+        f64s: Vec<(u8, f64)>,
+        bools: Vec<(u8, u8)>,
+        strs: Vec<(u8, u16)>,
+        nulls: Vec<u8>,
+        symbols: Vec<u8>,
+    }
+
+    fn decode_parts(buf: &[u8]) -> RowParts {
         use crate::sbe::DynamicRowDecoder;
-
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-        assert_eq!(decoder.schema_id(), schema_id);
-
-        // Check metadata group (empty for simple recorder).
-        let meta = decoder.row_metadata().unwrap();
-        assert!(meta.is_empty());
-        assert_eq!(meta.len(), 0);
-
-        // Check each field group.
-        let int64 = decoder.int64_fields().unwrap();
-        assert!(int64.is_empty());
-
-        let uint64 = decoder.uint64_fields().unwrap();
-        assert_eq!(uint64.len(), 1);
-        for entry in uint64 {
-            assert_eq!(entry.value(), 1000);
+        let dec = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
+        let schema_id = dec.schema_id();
+        let mut g = dec.into_row_metadata().unwrap();
+        let meta = g.by_ref().map(|e| (e.key_len(), e.val_len())).collect();
+        let dec = g.finish().unwrap();
+        let mut g = dec.into_int64_fields().unwrap();
+        let i64s = g.by_ref().map(|e| (e.field_id(), e.value())).collect();
+        let dec = g.finish().unwrap();
+        let mut g = dec.into_uint64_fields().unwrap();
+        let u64s = g.by_ref().map(|e| (e.field_id(), e.value())).collect();
+        let dec = g.finish().unwrap();
+        let mut g = dec.into_float64_fields().unwrap();
+        let f64s = g.by_ref().map(|e| (e.field_id(), e.value())).collect();
+        let dec = g.finish().unwrap();
+        let mut g = dec.into_bool_fields().unwrap();
+        let bools = g.by_ref().map(|e| (e.field_id(), e.value())).collect();
+        let dec = g.finish().unwrap();
+        let mut g = dec.into_string_fields().unwrap();
+        let strs = g.by_ref().map(|e| (e.field_id(), e.str_len())).collect();
+        let dec = g.finish().unwrap();
+        let mut g = dec.into_null_fields().unwrap();
+        let nulls = g.by_ref().map(|e| e.field_id()).collect();
+        let dec = g.finish().unwrap();
+        let (symbols, _) = dec.into_symbol_table().unwrap();
+        RowParts {
+            schema_id,
+            meta,
+            i64s,
+            u64s,
+            f64s,
+            bools,
+            strs,
+            nulls,
+            symbols: symbols.to_vec(),
         }
-
-        let float64 = decoder.float64_fields().unwrap();
-        assert_eq!(float64.len(), 1);
-        for entry in float64 {
-            assert_eq!(entry.value(), 100.50);
-        }
-
-        let bool_fields = decoder.bool_fields().unwrap();
-        assert_eq!(bool_fields.len(), 1);
-        for entry in bool_fields {
-            assert_eq!(entry.value(), 1);
-        }
-
-        let string_fields = decoder.string_fields().unwrap();
-        assert_eq!(string_fields.len(), 1);
-        for entry in string_fields {
-            assert_eq!(entry.str_len(), 4);
-        }
-
-        let null_fields = decoder.null_fields().unwrap();
-        assert!(null_fields.is_empty());
-
-        let sym = decoder.symbol_table().unwrap();
-        assert_eq!(sym, b"AAPL");
     }
 
     // ── build + record ───────────────────────────────────────────────
@@ -1306,10 +1311,19 @@ mod tests {
         let values = simple_values();
         let schema_id = rec.schema_id;
 
-        let buf = rec.record(&values).unwrap();
+        let buf = rec.record(&values).unwrap().to_vec();
         assert!(!buf.is_empty());
 
-        validate_standard_fields(buf, schema_id);
+        let parts = decode_parts(&buf);
+        assert_eq!(parts.schema_id, schema_id);
+        assert!(parts.meta.is_empty());
+        assert!(parts.i64s.is_empty());
+        assert_eq!(parts.u64s, vec![(1, 1000)]);
+        assert_eq!(parts.f64s, vec![(0, 100.50)]);
+        assert_eq!(parts.bools, vec![(3, 1)]);
+        assert_eq!(parts.strs, vec![(2, 4)]);
+        assert!(parts.nulls.is_empty());
+        assert_eq!(parts.symbols, b"AAPL");
     }
 
     // ── schema_id determinism ─────────────────────────────────────────
@@ -1371,23 +1385,13 @@ mod tests {
             .build()
             .unwrap();
 
-        let buf = rec.record(&[DynamicValue::Int64(42)]).unwrap();
+        let buf = rec.record(&[DynamicValue::Int64(42)]).unwrap().to_vec();
+        let parts = decode_parts(&buf);
 
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-
-        // Check metadata group.
-        let meta = decoder.row_metadata().unwrap();
-        assert_eq!(meta.len(), 2);
-
-        // The decoder only gives us key_len/val_len, not the actual keys.
-        // Verify the entries exist and have expected lengths.
-        let entries: Vec<_> = meta.collect();
-        assert_eq!(entries.len(), 2);
+        assert_eq!(parts.meta.len(), 2);
 
         // Verify symbol table contains metadata key+value strings.
-        let sym = decoder.symbol_table().unwrap();
-        // metadata symbols are: "source" + "exchange_a" + "env" + "prod"
+        let sym = &parts.symbols;
         assert!(sym.len() >= 6 + 10 + 3 + 4);
         assert!(sym.windows(6).any(|w| w == b"source"));
         assert!(sym.windows(10).any(|w| w == b"exchange_a"));
@@ -1407,19 +1411,10 @@ mod tests {
         let buf2 = rec.record(&[DynamicValue::Int64(2)]).unwrap().to_vec();
 
         // Metadata should be byte-identical across calls.
-        use crate::sbe::DynamicRowDecoder;
-        let dec1 = DynamicRowDecoder::wrap_and_apply_header(&buf1, 0).unwrap();
-        let dec2 = DynamicRowDecoder::wrap_and_apply_header(&buf2, 0).unwrap();
-
-        let meta1: Vec<_> = dec1.row_metadata().unwrap().collect();
-        let meta2: Vec<_> = dec2.row_metadata().unwrap().collect();
-        assert_eq!(meta1.len(), meta2.len());
-
-        let sym1 = dec1.symbol_table().unwrap();
-        let sym2 = dec2.symbol_table().unwrap();
-        // Both have same metadata (key1/val1) and same string data (none
-        // since x is Int64). Symbol tables should be identical.
-        assert_eq!(sym1, sym2);
+        let p1 = decode_parts(&buf1);
+        let p2 = decode_parts(&buf2);
+        assert_eq!(p1.meta.len(), p2.meta.len());
+        assert_eq!(p1.symbols, p2.symbols);
     }
 
     // ── String values ─────────────────────────────────────────────────
@@ -1437,22 +1432,12 @@ mod tests {
                 DynamicValue::String("hello".into()),
                 DynamicValue::String("abc".into()),
             ])
-            .unwrap();
+            .unwrap()
+            .to_vec();
 
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-
-        let string_fields = decoder.string_fields().unwrap();
-        assert_eq!(string_fields.len(), 2);
-
-        // Verify string lengths.
-        let entries: Vec<_> = string_fields.collect();
-        assert_eq!(entries[0].str_len(), 5);
-        assert_eq!(entries[1].str_len(), 3);
-
-        // Verify symbol table contains concatenated string data.
-        let sym = decoder.symbol_table().unwrap();
-        assert_eq!(sym, b"helloabc");
+        let parts = decode_parts(&buf);
+        assert_eq!(parts.strs, vec![(0, 5), (1, 3)]);
+        assert_eq!(parts.symbols, b"helloabc");
     }
 
     #[test]
@@ -1463,17 +1448,16 @@ mod tests {
             .build()
             .unwrap();
 
-        let buf = rec.record(&[DynamicValue::String("data".into())]).unwrap();
-
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-
-        let sym = decoder.symbol_table().unwrap();
+        let buf = rec
+            .record(&[DynamicValue::String("data".into())])
+            .unwrap()
+            .to_vec();
+        let parts = decode_parts(&buf);
         // Metadata first: "tag" (3) + "xyz" (3) = 6 bytes, then string
         // "data" (4) = 10 bytes total
-        assert_eq!(sym.len(), 3 + 3 + 4);
-        assert!(sym.starts_with(b"tagxyz"));
-        assert!(sym.ends_with(b"data"));
+        assert_eq!(parts.symbols.len(), 3 + 3 + 4);
+        assert!(parts.symbols.starts_with(b"tagxyz"));
+        assert!(parts.symbols.ends_with(b"data"));
     }
 
     // ── Null values ───────────────────────────────────────────────────
@@ -1488,25 +1472,13 @@ mod tests {
 
         let buf = rec
             .record(&[DynamicValue::Null, DynamicValue::Null])
-            .unwrap();
+            .unwrap()
+            .to_vec();
 
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-
-        // int64 group should be empty (value is null).
-        let int64 = decoder.int64_fields().unwrap();
-        assert!(int64.is_empty());
-
-        // string group should be empty.
-        let string_fields = decoder.string_fields().unwrap();
-        assert!(string_fields.is_empty());
-
-        // null group should have 2 entries.
-        let null_fields = decoder.null_fields().unwrap();
-        assert_eq!(null_fields.len(), 2);
-        let entries: Vec<_> = null_fields.collect();
-        assert_eq!(entries[0].field_id(), 0);
-        assert_eq!(entries[1].field_id(), 1);
+        let parts = decode_parts(&buf);
+        assert!(parts.i64s.is_empty());
+        assert!(parts.strs.is_empty());
+        assert_eq!(parts.nulls, vec![0, 1]);
     }
 
     // ── Empty metadata ────────────────────────────────────────────────
@@ -1518,16 +1490,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let buf = rec.record(&[DynamicValue::Float64(1.0)]).unwrap();
-
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-        let meta = decoder.row_metadata().unwrap();
-        assert!(meta.is_empty());
-        assert_eq!(meta.len(), 0);
-
-        let float64 = decoder.float64_fields().unwrap();
-        assert_eq!(float64.len(), 1);
+        let buf = rec.record(&[DynamicValue::Float64(1.0)]).unwrap().to_vec();
+        let parts = decode_parts(&buf);
+        assert!(parts.meta.is_empty());
+        assert_eq!(parts.f64s.len(), 1);
     }
 
     // ── Multi-key metadata ────────────────────────────────────────────
@@ -1542,12 +1508,8 @@ mod tests {
             .build()
             .unwrap();
 
-        let buf = rec.record(&[DynamicValue::Int64(0)]).unwrap();
-
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-        let meta = decoder.row_metadata().unwrap();
-        assert_eq!(meta.len(), 3);
+        let buf = rec.record(&[DynamicValue::Int64(0)]).unwrap().to_vec();
+        assert_eq!(decode_parts(&buf).meta.len(), 3);
     }
 
     // ── Wrong value count ─────────────────────────────────────────────
@@ -1666,66 +1628,23 @@ mod tests {
                 DynamicValue::String("hello".into()),
                 DynamicValue::Null,
             ])
-            .unwrap();
+            .unwrap()
+            .to_vec();
 
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-
-        assert_eq!(decoder.schema_id(), schema_id);
-
-        // Int64 field.
-        {
-            let mut fields = decoder.int64_fields().unwrap();
-            assert_eq!(fields.len(), 1);
-            let entry = fields.next().unwrap();
-            assert_eq!(entry.value(), -42);
-        }
-
-        // UInt64 field.
-        {
-            let mut fields = decoder.uint64_fields().unwrap();
-            assert_eq!(fields.len(), 1);
-            let entry = fields.next().unwrap();
-            assert_eq!(entry.value(), 99);
-        }
-
-        // Float64 field.
-        {
-            let mut fields = decoder.float64_fields().unwrap();
-            assert_eq!(fields.len(), 1);
-            let entry = fields.next().unwrap();
-            assert!((entry.value() - std::f64::consts::PI).abs() < 1e-10);
-        }
-
-        // Bool field.
-        {
-            let mut fields = decoder.bool_fields().unwrap();
-            assert_eq!(fields.len(), 1);
-            let entry = fields.next().unwrap();
-            assert_eq!(entry.value(), 0); // false
-        }
-
-        // String field.
-        {
-            let mut fields = decoder.string_fields().unwrap();
-            assert_eq!(fields.len(), 1);
-            let entry = fields.next().unwrap();
-            assert_eq!(entry.str_len(), 5);
-        }
-
-        // Null field.
-        {
-            let mut fields = decoder.null_fields().unwrap();
-            assert_eq!(fields.len(), 1);
-            let entry = fields.next().unwrap();
-            assert_eq!(entry.field_id(), 5); // 5th field (0-indexed)
-        }
+        let parts = decode_parts(&buf);
+        assert_eq!(parts.schema_id, schema_id);
+        assert_eq!(parts.i64s, vec![(0, -42)]);
+        assert_eq!(parts.u64s, vec![(1, 99)]);
+        assert_eq!(parts.f64s.len(), 1);
+        assert!((parts.f64s[0].1 - std::f64::consts::PI).abs() < 1e-10);
+        assert_eq!(parts.bools, vec![(3, 0)]); // false
+        assert_eq!(parts.strs, vec![(4, 5)]);
+        assert_eq!(parts.nulls, vec![5]);
 
         // Symbol table: metadata "rt"+"check" (2+5=7) + "hello" (5) = 12 bytes
-        let sym = decoder.symbol_table().unwrap();
-        assert_eq!(sym.len(), 2 + 5 + 5);
-        assert!(sym.starts_with(b"rtcheck"));
-        assert!(sym.ends_with(b"hello"));
+        assert_eq!(parts.symbols.len(), 2 + 5 + 5);
+        assert!(parts.symbols.starts_with(b"rtcheck"));
+        assert!(parts.symbols.ends_with(b"hello"));
     }
 
     // ── Nullable column type ──────────────────────────────────────────
@@ -1738,17 +1657,12 @@ mod tests {
             .unwrap();
 
         // Null value is accepted for nullable field.
-        let buf = rec.record(&[DynamicValue::Null]).unwrap();
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-        let null_fields = decoder.null_fields().unwrap();
-        assert_eq!(null_fields.len(), 1);
+        let buf = rec.record(&[DynamicValue::Null]).unwrap().to_vec();
+        assert_eq!(decode_parts(&buf).nulls.len(), 1);
 
         // Non-null value is also accepted.
-        let buf2 = rec.record(&[DynamicValue::Int64(42)]).unwrap();
-        let decoder2 = DynamicRowDecoder::wrap_and_apply_header(buf2, 0).unwrap();
-        let int64_fields = decoder2.int64_fields().unwrap();
-        assert_eq!(int64_fields.len(), 1);
+        let buf2 = rec.record(&[DynamicValue::Int64(42)]).unwrap().to_vec();
+        assert_eq!(decode_parts(&buf2).i64s.len(), 1);
     }
 
     // ── All-null values ─────────────────────────────────────────
@@ -1773,24 +1687,17 @@ mod tests {
                 DynamicValue::Null,
                 DynamicValue::Null,
             ])
-            .unwrap();
+            .unwrap()
+            .to_vec();
 
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-        assert_eq!(decoder.schema_id(), schema_id);
-
-        // All typed groups should be empty.
-        assert!(decoder.int64_fields().unwrap().is_empty());
-        assert!(decoder.uint64_fields().unwrap().is_empty());
-        assert!(decoder.float64_fields().unwrap().is_empty());
-        assert!(decoder.bool_fields().unwrap().is_empty());
-        assert!(decoder.string_fields().unwrap().is_empty());
-
-        // null group should have all 5 entries.
-        let null_fields = decoder.null_fields().unwrap();
-        assert_eq!(null_fields.len(), 5);
-        let ids: Vec<u8> = null_fields.map(|e| e.field_id()).collect();
-        assert_eq!(ids, vec![0, 1, 2, 3, 4]);
+        let parts = decode_parts(&buf);
+        assert_eq!(parts.schema_id, schema_id);
+        assert!(parts.i64s.is_empty());
+        assert!(parts.u64s.is_empty());
+        assert!(parts.f64s.is_empty());
+        assert!(parts.bools.is_empty());
+        assert!(parts.strs.is_empty());
+        assert_eq!(parts.nulls, vec![0, 1, 2, 3, 4]);
     }
 
     // ── Mixed null/non-null interleaved ─────────────────────────
@@ -1813,38 +1720,16 @@ mod tests {
                 DynamicValue::Bool(true), // not null (field 2)
                 DynamicValue::Null,       // null (field 3)
             ])
-            .unwrap();
+            .unwrap()
+            .to_vec();
 
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-        assert_eq!(decoder.schema_id(), schema_id);
-
-        // int64: 1 entry (field 0 = 10).
-        let mut i64g = decoder.int64_fields().unwrap();
-        assert_eq!(i64g.len(), 1);
-        let e = i64g.next().unwrap();
-        assert_eq!(e.field_id(), 0);
-        assert_eq!(e.value(), 10i64);
-
-        // bool: 1 entry (field 2 = true).
-        let mut bg = decoder.bool_fields().unwrap();
-        assert_eq!(bg.len(), 1);
-        let e = bg.next().unwrap();
-        assert_eq!(e.field_id(), 2);
-        assert_eq!(e.value(), 1u8);
-
-        // null: 2 entries (fields 1, 3).
-        let mut ng = decoder.null_fields().unwrap();
-        assert_eq!(ng.len(), 2);
-        let e0 = ng.next().unwrap();
-        assert_eq!(e0.field_id(), 1);
-        let e1 = ng.next().unwrap();
-        assert_eq!(e1.field_id(), 3);
-
-        // string group should be empty (field 1 was null).
-        assert!(decoder.string_fields().unwrap().is_empty());
-        // uint64 group should be empty (field 3 was null).
-        assert!(decoder.uint64_fields().unwrap().is_empty());
+        let parts = decode_parts(&buf);
+        assert_eq!(parts.schema_id, schema_id);
+        assert_eq!(parts.i64s, vec![(0, 10)]);
+        assert_eq!(parts.bools, vec![(2, 1)]);
+        assert_eq!(parts.nulls, vec![1, 3]);
+        assert!(parts.strs.is_empty());
+        assert!(parts.u64s.is_empty());
     }
 
     // ── Build with empty fields ─────────────────────────────────
@@ -1874,17 +1759,10 @@ mod tests {
 
         let buf = rec
             .record(&[DynamicValue::Int64(1), DynamicValue::Int64(2)])
-            .unwrap();
+            .unwrap()
+            .to_vec();
         assert!(!buf.is_empty());
-
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-        let mut i64g = decoder.int64_fields().unwrap();
-        assert_eq!(i64g.len(), 2);
-        let e0 = i64g.next().unwrap();
-        assert_eq!(e0.value(), 1i64);
-        let e1 = i64g.next().unwrap();
-        assert_eq!(e1.value(), 2i64);
+        assert_eq!(decode_parts(&buf).i64s, vec![(0, 1), (1, 2)]);
     }
 
     // ── Maximum columns (u8 field_id range 0..=255) ─────────────
@@ -1901,22 +1779,14 @@ mod tests {
             .map(|i| DynamicValue::Int64(i as i64))
             .collect();
 
-        let buf = rec.record(&values).unwrap();
-
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-
-        let mut i64g = decoder.int64_fields().unwrap();
-        assert_eq!(i64g.len(), 256);
-
-        // Verify every entry decodes and carries the expected value.
-        for expected in 0u16..256u16 {
-            let entry = i64g.next().unwrap();
-            assert_eq!(entry.field_id(), expected as u8);
-            assert_eq!(entry.value(), expected as i64);
+        let buf = rec.record(&values).unwrap().to_vec();
+        let parts = decode_parts(&buf);
+        assert_eq!(parts.i64s.len(), 256);
+        for (expected, &(fid, v)) in parts.i64s.iter().enumerate() {
+            assert_eq!(fid as usize, expected);
+            assert_eq!(v, expected as i64);
         }
-
-        assert!(decoder.null_fields().unwrap().is_empty());
+        assert!(parts.nulls.is_empty());
     }
 
     // ── Empty metadata + all-null values ────────────────────────
@@ -1928,16 +1798,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let buf = rec.record(&[DynamicValue::Null]).unwrap();
-
-        use crate::sbe::DynamicRowDecoder;
-        let decoder = DynamicRowDecoder::wrap_and_apply_header(buf, 0).unwrap();
-
-        assert!(decoder.row_metadata().unwrap().is_empty());
-        assert!(decoder.int64_fields().unwrap().is_empty());
-
-        let mut null_fields = decoder.null_fields().unwrap();
-        assert_eq!(null_fields.len(), 1);
-        assert_eq!(null_fields.next().unwrap().field_id(), 0);
+        let buf = rec.record(&[DynamicValue::Null]).unwrap().to_vec();
+        let parts = decode_parts(&buf);
+        assert!(parts.meta.is_empty());
+        assert!(parts.i64s.is_empty());
+        assert_eq!(parts.nulls, vec![0]);
     }
 }

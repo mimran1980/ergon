@@ -536,14 +536,12 @@ pub fn format_sql_string(s: &str) -> String {
 
 // ── Tests ────────────────────────────────────────────────────────────────
 
-// TODO(Task 6): migrate to consuming-stage decoder API
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::dynamic::{DynamicRecorder, DynamicRecorderBuilder, DynamicValue};
     use crate::sbe::{
         DynamicRowDecoder, DynamicRowEncoder, DynamicSchemaDecoder, DynamicSchemaEncoder,
-        dynamic_row_encoder_state, dynamic_schema_encoder_state,
     };
     use crate::types::ColumnType;
 
@@ -556,12 +554,7 @@ mod tests {
         fields: &[(u8, &str, ColumnType)],
         metadata: &[(&str, &str)],
     ) -> Vec<u8> {
-        let mut buf = vec![
-            0u8;
-            DynamicSchemaEncoder::<
-                dynamic_schema_encoder_state::NeedsMetadata,
-            >::MAX_ENCODED_LENGTH
-        ];
+        let mut buf = vec![0u8; DynamicSchemaEncoder::MAX_ENCODED_LENGTH];
         let mut enc = DynamicSchemaEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         let _ = enc.schema_id(schema_id);
 
@@ -639,7 +632,7 @@ mod tests {
     fn register_schema(schema_bytes: &[u8]) -> Rc<RefCell<SchemaRegistry>> {
         let schema = DynamicSchemaDecoder::wrap_and_apply_header(schema_bytes, 0).unwrap();
         let reg = Rc::new(RefCell::new(SchemaRegistry::new()));
-        reg.borrow_mut().register(&schema).unwrap();
+        reg.borrow_mut().register(schema).unwrap();
         reg
     }
 
@@ -661,7 +654,7 @@ mod tests {
         );
         let schema = DynamicSchemaDecoder::wrap_and_apply_header(&schema_bytes, 0).unwrap();
         let mut registry = SchemaRegistry::new();
-        registry.register(&schema).unwrap();
+        registry.register(schema).unwrap();
 
         assert_eq!(registry.table_name(sid), Some("test_table"));
         assert!(registry.table_name(sid + 1).is_none());
@@ -675,8 +668,9 @@ mod tests {
         let schema = DynamicSchemaDecoder::wrap_and_apply_header(&schema_bytes, 0).unwrap();
 
         let mut registry = SchemaRegistry::new();
-        registry.register(&schema).unwrap();
-        registry.register(&schema).unwrap(); // second call — no-op
+        registry.register(schema).unwrap();
+        let schema2 = DynamicSchemaDecoder::wrap_and_apply_header(&schema_bytes, 0).unwrap();
+        registry.register(schema2).unwrap(); // second call — no-op
 
         assert_eq!(registry.table_name(sid), Some("dup"));
     }
@@ -713,7 +707,7 @@ mod tests {
         let reg = register_schema(&schema_bytes);
         let decoder = RowDecoder::new(reg);
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
-        let decoded = decoder.decode(&row).unwrap();
+        let decoded = decoder.decode(row).unwrap();
 
         assert_eq!(decoded.get("price").unwrap(), &Some("100.5".to_string()));
         assert_eq!(decoded.get("qty").unwrap(), &Some("1000".to_string()));
@@ -735,7 +729,7 @@ mod tests {
         let reg = register_schema(&schema_bytes);
         let decoder = RowDecoder::new(reg);
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
-        let decoded = decoder.decode(&row).unwrap();
+        let decoded = decoder.decode(row).unwrap();
 
         assert_eq!(decoded.get("val").unwrap(), &Some("1".to_string()));
         assert_eq!(decoded.get("env").unwrap(), &Some("'prod'".to_string()));
@@ -762,7 +756,7 @@ mod tests {
         let reg = register_schema(&schema_bytes);
         let decoder = RowDecoder::new(reg);
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
-        let decoded = decoder.decode(&row).unwrap();
+        let decoded = decoder.decode(row).unwrap();
 
         assert_eq!(decoded.get("name").unwrap(), &Some("'hello'".to_string()));
         assert_eq!(decoded.get("code").unwrap(), &Some("'abc'".to_string()));
@@ -785,7 +779,7 @@ mod tests {
         let reg = register_schema(&schema_bytes);
         let decoder = RowDecoder::new(reg);
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
-        let decoded = decoder.decode(&row).unwrap();
+        let decoded = decoder.decode(row).unwrap();
 
         assert_eq!(decoded.get("val").unwrap(), &None);
         assert_eq!(decoded.get("name").unwrap(), &None);
@@ -810,7 +804,7 @@ mod tests {
         let reg = register_schema(&schema_bytes);
         let decoder = RowDecoder::new(reg);
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
-        let decoded = decoder.decode(&row).unwrap();
+        let decoded = decoder.decode(row).unwrap();
 
         assert_eq!(decoded.get("a").unwrap(), &Some("42".to_string()));
         assert_eq!(decoded.get("b").unwrap(), &None);
@@ -851,7 +845,7 @@ mod tests {
         let reg = register_schema(&schema_bytes);
         let decoder = RowDecoder::new(reg);
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
-        let decoded = decoder.decode(&row).unwrap();
+        let decoded = decoder.decode(row).unwrap();
 
         assert_eq!(decoded.get("i").unwrap(), &Some("-42".to_string()));
         assert_eq!(decoded.get("u").unwrap(), &Some("99".to_string()));
@@ -912,7 +906,7 @@ mod tests {
         .to_vec();
 
         let row1 = DynamicRowDecoder::wrap_and_apply_header(&row1_bytes, 0).unwrap();
-        let decoded1 = decoder.decode(&row1).unwrap();
+        let decoded1 = decoder.decode(row1).unwrap();
         assert_eq!(decoded1.get("price").unwrap(), &Some("100".to_string()));
         assert_eq!(decoded1.get("qty").unwrap(), &Some("10".to_string()));
 
@@ -927,7 +921,7 @@ mod tests {
         .to_vec();
 
         let row2 = DynamicRowDecoder::wrap_and_apply_header(&row2_bytes, 0).unwrap();
-        let decoded2 = decoder.decode(&row2).unwrap();
+        let decoded2 = decoder.decode(row2).unwrap();
         assert_eq!(decoded2.get("price").unwrap(), &Some("200".to_string()));
         assert_eq!(decoded2.get("qty").unwrap(), &Some("20".to_string()));
 
@@ -949,12 +943,7 @@ mod tests {
         meta_val: &str,
         int64_val: i64,
     ) -> Vec<u8> {
-        let mut buf = vec![
-            0u8;
-            DynamicRowEncoder::<
-                dynamic_row_encoder_state::NeedsRowMetadata,
-            >::MAX_ENCODED_LENGTH
-        ];
+        let mut buf = vec![0u8; DynamicRowEncoder::MAX_ENCODED_LENGTH];
         let mut enc = DynamicRowEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         let _ = enc.schema_id(schema_id);
 
@@ -1008,21 +997,21 @@ mod tests {
         // Row 1: no metadata — use the same recorder so schema_id matches.
         let r1 = rec.record(&[DynamicValue::Int64(1)]).unwrap().to_vec();
         let r1 = DynamicRowDecoder::wrap_and_apply_header(&r1, 0).unwrap();
-        let d1 = decoder.decode(&r1).unwrap();
+        let d1 = decoder.decode(r1).unwrap();
         assert_eq!(d1.get("x").unwrap(), &Some("1".to_string()));
         assert_eq!(d1.len(), 1);
 
         // Row 2: introduces "env" metadata key.
         let r2_bytes = encode_row_with_meta(rec.schema_id, "env", "prod", 2);
         let r2 = DynamicRowDecoder::wrap_and_apply_header(&r2_bytes, 0).unwrap();
-        let d2 = decoder.decode(&r2).unwrap();
+        let d2 = decoder.decode(r2).unwrap();
         assert_eq!(d2.get("x").unwrap(), &Some("2".to_string()));
         assert_eq!(d2.get("env").unwrap(), &Some("'prod'".to_string()));
 
         // Row 3: "env" should still be decoded.
         let r3_bytes = encode_row_with_meta(rec.schema_id, "env", "staging", 3);
         let r3 = DynamicRowDecoder::wrap_and_apply_header(&r3_bytes, 0).unwrap();
-        let d3 = decoder.decode(&r3).unwrap();
+        let d3 = decoder.decode(r3).unwrap();
         assert_eq!(d3.get("env").unwrap(), &Some("'staging'".to_string()));
     }
 
