@@ -233,3 +233,102 @@ fn disconnect_clears_state_and_resuppresses_until_snapshot() {
     assert_eq!(out[1].bids.len(), 1);
     assert_eq!(out[1].bids[0].0, (30, -1));
 }
+
+// ── WebSocket frame parsing (captured fixtures) ─────────────────────────
+
+use advanced_bitget::bitget::{FrameError, parse_frame};
+
+#[test]
+fn book_snapshot_fixture_drives_ingestor() {
+    let frame = parse_frame(include_str!("fixtures/bitget/book_snapshot.json")).unwrap();
+    let mut ing = BitgetIngestor::new();
+    let mut out = Vec::new();
+    frame.apply_to(&mut ing, collect_books(&mut out)).unwrap();
+
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].symbol, "BTCUSDT");
+    assert_eq!(out[0].bids.len(), 2);
+    assert_eq!(out[0].bids[0].0, (500010, -1), "best bid first");
+    assert_eq!(out[0].asks[0].0, (500015, -1), "best ask first");
+}
+
+#[test]
+fn book_update_fixture_applies_deletion() {
+    let mut ing = BitgetIngestor::new();
+    let mut out = Vec::new();
+    parse_frame(include_str!("fixtures/bitget/book_snapshot.json"))
+        .unwrap()
+        .apply_to(&mut ing, collect_books(&mut out))
+        .unwrap();
+    parse_frame(include_str!("fixtures/bitget/book_update.json"))
+        .unwrap()
+        .apply_to(&mut ing, collect_books(&mut out))
+        .unwrap();
+
+    assert_eq!(out.len(), 2);
+    // The 50002.0 ask was deleted (size 0); the 50000.5 bid was modified.
+    assert_eq!(out[1].asks.len(), 1);
+    assert_eq!(out[1].bids[1], ((500005, -1), (25, -1)));
+}
+
+#[test]
+fn trades_fixture_emits_each_trade() {
+    let mut ing = BitgetIngestor::new();
+    let mut trades = Vec::new();
+    parse_frame(include_str!("fixtures/bitget/trades.json"))
+        .unwrap()
+        .apply_to(&mut ing, |ev| -> Result<(), std::convert::Infallible> {
+            if let NormalizedEventRef::Trade {
+                exchange_ts_ns,
+                price,
+                is_buy,
+                ..
+            } = ev
+            {
+                trades.push((exchange_ts_ns, (price.mantissa, price.exponent), is_buy));
+            }
+            Ok(())
+        })
+        .unwrap();
+
+    assert_eq!(
+        trades,
+        vec![
+            (1_700_000_000_200_000_000, (500005, -1), true),
+            (1_700_000_000_201_000_000, (500000, -1), false),
+        ]
+    );
+}
+
+#[test]
+fn subscribe_ack_and_pong_are_control_frames() {
+    let mut ing = BitgetIngestor::new();
+    for text in [include_str!("fixtures/bitget/subscribe_ack.json"), "pong"] {
+        let mut emitted = false;
+        parse_frame(text)
+            .unwrap()
+            .apply_to(&mut ing, |_| -> Result<(), std::convert::Infallible> {
+                emitted = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!emitted, "control frames must not emit events: {text}");
+    }
+}
+
+#[test]
+fn malformed_price_fixture_is_rejected_in_apply() {
+    let mut ing = BitgetIngestor::new();
+    let err = parse_frame(include_str!("fixtures/bitget/malformed_price.json"))
+        .unwrap()
+        .apply_to(&mut ing, |_| -> Result<(), std::convert::Infallible> {
+            panic!("must not emit")
+        })
+        .unwrap_err();
+    assert!(matches!(err, ApplyError::MalformedDecimal { .. }));
+}
+
+#[test]
+fn garbage_text_is_a_frame_error() {
+    assert!(matches!(parse_frame("{not json"), Err(FrameError::Json(_))));
+}

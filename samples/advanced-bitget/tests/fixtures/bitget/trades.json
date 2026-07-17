@@ -1,0 +1,1 @@
+{"action":"snapshot","arg":{"instType":"SPOT","channel":"trade","instId":"BTCUSDT"},"data":[{"ts":"1700000000200","price":"50000.5","size":"0.25","side":"buy","tradeId":"1111"},{"ts":"1700000000201","price":"50000.0","size":"0.50","side":"sell","tradeId":"1112"}],"ts":1700000000202}

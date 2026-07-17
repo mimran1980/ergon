@@ -238,3 +238,222 @@ fn apply_levels(book: &mut BTreeMap<PriceKey, Level>, levels: Vec<Level>) {
         }
     }
 }
+
+// ── WebSocket frame parsing adapter ─────────────────────────────────────
+
+/// Frame-level parse failure (JSON shape, not market data values).
+#[derive(Debug)]
+pub enum FrameError {
+    /// The text is not valid JSON.
+    Json(serde_json::Error),
+    /// Valid JSON with an unrecognised shape.
+    UnknownShape,
+}
+
+impl core::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Json(e) => write!(f, "frame is not valid JSON: {e}"),
+            Self::UnknownShape => write!(f, "unrecognised frame shape"),
+        }
+    }
+}
+
+impl std::error::Error for FrameError {}
+
+/// Snapshot vs incremental update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BookAction {
+    Snapshot,
+    Update,
+}
+
+/// One parsed trade (owned strings from the JSON edge).
+#[derive(Debug)]
+pub struct ParsedTrade {
+    pub exchange_ts_ns: u64,
+    pub price: String,
+    pub size: String,
+    pub is_buy: bool,
+}
+
+/// An owned, parsed WebSocket frame. Convert to borrowed events and feed the
+/// ingestor with [`apply_to`](Self::apply_to).
+#[derive(Debug)]
+pub enum ParsedFrame {
+    Book {
+        action: BookAction,
+        symbol: String,
+        exchange_ts_ns: u64,
+        bids: Vec<[String; 2]>,
+        asks: Vec<[String; 2]>,
+    },
+    Trades {
+        symbol: String,
+        trades: Vec<ParsedTrade>,
+    },
+    /// Subscribe acks, pongs, and other non-market frames.
+    Control,
+}
+
+impl ParsedFrame {
+    /// Apply this frame's event(s) to the ingestor.
+    ///
+    /// # Errors
+    ///
+    /// Bubbles [`ApplyError`] from the ingestor unchanged.
+    pub fn apply_to<E, F>(&self, ing: &mut BitgetIngestor, mut emit: F) -> Result<(), ApplyError<E>>
+    where
+        F: FnMut(NormalizedEventRef<'_>) -> Result<(), E>,
+    {
+        match self {
+            Self::Control => Ok(()),
+            Self::Book {
+                action,
+                symbol,
+                exchange_ts_ns,
+                bids,
+                asks,
+            } => {
+                let bid_refs: Vec<[&str; 2]> = bids
+                    .iter()
+                    .map(|l| [l[0].as_str(), l[1].as_str()])
+                    .collect();
+                let ask_refs: Vec<[&str; 2]> = asks
+                    .iter()
+                    .map(|l| [l[0].as_str(), l[1].as_str()])
+                    .collect();
+                let event = match action {
+                    BookAction::Snapshot => BitgetEventRef::BookSnapshot {
+                        symbol,
+                        exchange_ts_ns: *exchange_ts_ns,
+                        bids: &bid_refs,
+                        asks: &ask_refs,
+                    },
+                    BookAction::Update => BitgetEventRef::BookUpdate {
+                        symbol,
+                        exchange_ts_ns: *exchange_ts_ns,
+                        bids: &bid_refs,
+                        asks: &ask_refs,
+                    },
+                };
+                ing.apply(event, &mut emit)
+            }
+            Self::Trades { symbol, trades } => {
+                for t in trades {
+                    ing.apply(
+                        BitgetEventRef::Trade {
+                            symbol,
+                            exchange_ts_ns: t.exchange_ts_ns,
+                            price: &t.price,
+                            size: &t.size,
+                            is_buy: t.is_buy,
+                        },
+                        &mut emit,
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Bitget v2 public WS wire shapes (JSON edge only).
+mod wire {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Frame {
+        pub event: Option<String>,
+        pub action: Option<String>,
+        pub arg: Option<Arg>,
+        pub data: Option<serde_json::Value>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Arg {
+        pub channel: Option<String>,
+        #[serde(rename = "instId")]
+        pub inst_id: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct BookData {
+        pub bids: Option<Vec<[String; 2]>>,
+        pub asks: Option<Vec<[String; 2]>>,
+        pub ts: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct TradeData {
+        pub ts: Option<String>,
+        pub price: String,
+        pub size: String,
+        pub side: String,
+    }
+}
+
+fn ms_str_to_ns(ts: Option<&str>) -> u64 {
+    ts.and_then(|s| s.parse::<u64>().ok())
+        .map_or(0, |ms| ms * 1_000_000)
+}
+
+/// Parse one Bitget public WebSocket text frame.
+///
+/// Market data values stay as exact strings; only the JSON envelope is
+/// interpreted here. `pong` and event acks parse as [`ParsedFrame::Control`].
+///
+/// # Errors
+///
+/// [`FrameError::Json`] for invalid JSON, [`FrameError::UnknownShape`] for
+/// valid JSON that is neither a control frame nor a known channel.
+pub fn parse_frame(text: &str) -> Result<ParsedFrame, FrameError> {
+    if text == "pong" || text == "ping" {
+        return Ok(ParsedFrame::Control);
+    }
+    let frame: wire::Frame = serde_json::from_str(text).map_err(FrameError::Json)?;
+    if frame.event.is_some() {
+        return Ok(ParsedFrame::Control);
+    }
+    let (Some(action), Some(arg), Some(data)) = (frame.action, frame.arg, frame.data) else {
+        return Err(FrameError::UnknownShape);
+    };
+    let symbol = arg.inst_id.unwrap_or_default();
+    match arg.channel.as_deref() {
+        Some("books") | Some("books1") | Some("books5") | Some("books15") => {
+            let mut books: Vec<wire::BookData> =
+                serde_json::from_value(data).map_err(FrameError::Json)?;
+            let Some(book) = books.pop() else {
+                return Err(FrameError::UnknownShape);
+            };
+            Ok(ParsedFrame::Book {
+                action: if action == "snapshot" {
+                    BookAction::Snapshot
+                } else {
+                    BookAction::Update
+                },
+                symbol,
+                exchange_ts_ns: ms_str_to_ns(book.ts.as_deref()),
+                bids: book.bids.unwrap_or_default(),
+                asks: book.asks.unwrap_or_default(),
+            })
+        }
+        Some("trade") => {
+            let trades: Vec<wire::TradeData> =
+                serde_json::from_value(data).map_err(FrameError::Json)?;
+            Ok(ParsedFrame::Trades {
+                symbol,
+                trades: trades
+                    .into_iter()
+                    .map(|t| ParsedTrade {
+                        exchange_ts_ns: ms_str_to_ns(t.ts.as_deref()),
+                        price: t.price,
+                        size: t.size,
+                        is_buy: t.side == "buy",
+                    })
+                    .collect(),
+            })
+        }
+        _ => Err(FrameError::UnknownShape),
+    }
+}
