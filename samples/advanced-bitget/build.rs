@@ -14,15 +14,15 @@ fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str, decimal: b
     let ir = ergosbe::parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path}: {e}"));
     let schema = ergosbe::Schema::from_ir(ir);
 
-    // ponytail: domain objects enabled for serde-deserialised JSON boundary
-    // conversion in Thread 1. Will be removed per remediation Task 7.
+    // Flyweight-only codecs: no generated domain objects (remediation Task 7).
     let mut config = ergosbe::GenerationConfig::new(module_name);
-    config.domain_objects = true;
     if decimal {
         config = config.enable_decimal_converters("Decimal");
     }
     let generator = ergosbe::Generator::new(config);
-    let modules = generator.generate(&schema);
+    let modules = generator
+        .try_generate(&schema)
+        .unwrap_or_else(|e| panic!("SBE generation failed for {xml_path}: {e}"));
     for m in modules.modules() {
         let dest = out_dir.join(&m.path);
         fs::create_dir_all(dest.parent().unwrap()).unwrap();

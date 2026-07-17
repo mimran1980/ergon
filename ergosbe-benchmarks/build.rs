@@ -31,7 +31,9 @@ fn generate_car_codec(out_dir: &Path) {
     // Benchmarks measure flyweights only — no domain objects.
     let config = ergosbe::GenerationConfig::new("car_bench");
     let generator = ergosbe::Generator::new(config);
-    let module_set = generator.generate(&schema);
+    let module_set = generator.try_generate(&schema).unwrap_or_else(|e| {
+        panic!("SBE generation failed for {}: {e}", schema_path.display())
+    });
     let src = &module_set
         .modules()
         .next()
