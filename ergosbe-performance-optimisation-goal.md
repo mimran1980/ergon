@@ -1471,3 +1471,27 @@ conclusion**: it holds for seven of nine maintained Aeron comparisons but is
 **unfinished** under the ≤ 1.00 gate. The final-checklist benchmark box is
 re-opened accordingly. All other maintained scenarios pass with fresh
 evidence.
+
+### 2026-07-17 addendum: dead-store-elimination hole closed; gap persists
+
+Assembly review revealed the batch encode benches observed only `buf[0]`,
+letting LLVM dead-store-eliminate a *different subset* of stores per codec
+(the offset-form probe lost its header stores entirely). Both
+`encode/throughput_10k` arms now escape the whole buffer (`black_box(&buf)`).
+Post-fix 5-run medians: ErgoSBE **5.7334 µs**, Aeron **5.0268 µs** — ratio
+**1.141**, unchanged in substance.
+
+Additional probes (all ~5.55–5.72 µs): a hand-written minimal encoder with
+ErgoSBE's exact struct shape, a hand-written replica of Aeron's
+WriteBuf/offset/limit composition, and a message_start-relative no-reslice
+candidate (rejects that refactor — no gain). The real Aeron codec
+reproduces ~4.96 µs even inside the probe binary, so its advantage is a
+consistent LLVM loop-form transform (6-instruction pointer loop) that
+neither our generated shape, our replicas, nor Aeron's own shape
+re-implemented by hand triggers. Store instructions remain identical.
+
+Open optimisation, precisely scoped: find the property of Aeron's generated
+composition that reliably unlocks LLVM's IndVar/pointer-form rewrite for the
+batch loop, or an ErgoSBE codegen shape with the same effect. Until then,
+`encode/throughput_10k` (1.141) and `decode/full_message` (1.151, not yet
+investigated) remain the two scenarios above the ≤ 1.00 gate.

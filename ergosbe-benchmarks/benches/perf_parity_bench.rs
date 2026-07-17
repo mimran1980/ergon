@@ -345,7 +345,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
                     car.serial_number(i as u64);
                     car.model_year(2013);
                 }
-                black_box(buf[0]);
+                black_box(&buf);
             },
             criterion::BatchSize::LargeInput,
         );
@@ -366,7 +366,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
                     car.serial_number(i as u64);
                     car.model_year(2013);
                 }
-                black_box(buf[0]);
+                black_box(&buf);
             },
             criterion::BatchSize::LargeInput,
         );
