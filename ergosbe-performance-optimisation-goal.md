@@ -1495,3 +1495,22 @@ composition that reliably unlocks LLVM's IndVar/pointer-form rewrite for the
 batch loop, or an ErgoSBE codegen shape with the same effect. Until then,
 `encode/throughput_10k` (1.141) and `decode/full_message` (1.151, not yet
 investigated) remain the two scenarios above the ≤ 1.00 gate.
+
+### 2026-07-17: decode/full_message (1.151) — root cause identified, fix scoped
+
+Per-entry double var-data walk: the group iterator's `next()` computes
+`entry.encoded_length()` (reads the `usageDescription` length header +
+bounds) to advance, then the caller's `usage_description()` reads the same
+header again. Aeron's stateful `advance()`/`limit` model reads it once.
+Fuel group = 3 entries × 1 var-data + nested performance tails → ~6
+duplicated header reads + bounds ≈ the observed 1.7 ns gap.
+
+Scoped fix: per-entry tail-offset caching. Todo 110 rejected
+`Cell<Option<usize>>` because it breaks `Copy` — that reason is obsolete:
+under the 2026-07-10 consuming-stage design, decoders whose consumption
+enforces order (including entries with tails) are deliberately NOT `Copy`.
+Re-opened as the next perf slice: cache `tail_offset_N` in entries with
+tail components (message-level too), let `usage_description()` derive its
+slice from the cached end, and re-run the 5-run pair. Alternative if the
+cache field bloats hot structs: have the iterator hand the entry its
+precomputed end.

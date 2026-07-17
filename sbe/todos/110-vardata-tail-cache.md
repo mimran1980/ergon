@@ -1,10 +1,20 @@
-# Var-data tail offset caching (avoid re-walking) — WON'T DO
+# Var-data tail offset caching (avoid re-walking) — RE-OPENED 2026-07-17
 
-**Status: CLOSED / SUPERSEDED**
-**Blocked by:** Rust language limitation
-**Ref:** Aeron perf audit (todo 105, gap #3)
+**Status: RE-OPENED** (was CLOSED/WON'T-DO)
+**Ref:** Aeron perf audit (todo 105, gap #3); parity/decode/full_message 1.151
 
-**Why rejected:** Cell<Option<usize>> is `!Copy` on Rust 1.95+. Adding it to decoder
+**Why re-opened:** the original rejection ("Cell<Option<usize>> breaks `Copy`")
+is obsolete under the 2026-07-10 consuming-stage design: decoders whose
+consumption enforces order — including group entries with tail components —
+are deliberately NOT `Copy` any more. The fresh 2026-07-17 5-run matrix shows
+`parity/decode/full_message` at median ratio 1.151 with the root cause being
+exactly this: the group iterator's `next()` walks each entry's var-data
+header to advance, then the caller's var-data accessor reads the same header
+again. Fix: per-entry (and message-level) tail-offset caching, or have the
+iterator hand the entry its precomputed end offset.
+
+**Original (obsolete) rejection text follows for the record:**
+Cell<Option<usize>> is `!Copy` on Rust 1.95+. Adding it to decoder
 structs breaks `Copy`, which is a critical property for zero-cost decoder passing in
 hot loops. Losing `Copy` is worse than the O(N²) tail walking it would fix. Tail
 offsets are typically N ≤ 5 sections, and sequential access means each is computed
