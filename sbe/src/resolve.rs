@@ -964,4 +964,136 @@ mod tests {
         let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
         assert_eq!(b.encoding.offset, Some(0));
     }
+
+    // ── Edge cases for 100% line/branch coverage ─────────────────────
+
+    #[test]
+    fn begin_message_without_id_skips_duplicate_check() {
+        // Construct a minimal IR with a BeginMessage that has no id.
+        // The duplicate check should skip it (the `if let Some(id)` false branch).
+        let mut ir = Ir {
+            package: "t".to_string(),
+            id: 1,
+            version: 0,
+            byte_order: crate::ir::ByteOrder::LittleEndian,
+            description: None,
+            semantic_version: None,
+            header_type: "messageHeader".to_string(),
+            tokens: vec![
+                Token {
+                    id: None,
+                    name: "A".to_string(),
+                    signal: Signal::BeginMessage,
+                    encoding: crate::ir::Encoding::default(),
+                },
+                Token {
+                    id: None,
+                    name: "A".to_string(),
+                    signal: Signal::EndMessage,
+                    encoding: crate::ir::Encoding::default(),
+                },
+            ],
+        };
+        // Should not panic or error — the message has no id to conflict
+        assert!(resolve_schema(&mut ir, None).is_ok());
+    }
+
+    #[test]
+    fn find_matching_end_fallback_on_no_match() {
+        // Construct tokens with an unclosed BeginComposite to trigger the fallback.
+        let tokens = vec![
+            Token {
+                id: None,
+                name: "X".to_string(),
+                signal: Signal::BeginComposite,
+                encoding: crate::ir::Encoding::default(),
+            },
+            Token {
+                id: None,
+                name: "Y".to_string(),
+                signal: Signal::BeginField,
+                encoding: crate::ir::Encoding::default(),
+            },
+        ];
+        // find_matching_end should return tokens.len() - 1 as fallback
+        let end = find_matching_end(&tokens, 0, Signal::BeginComposite, Signal::EndComposite);
+        assert_eq!(end, 1); // returns last index
+    }
+
+    #[test]
+    fn get_token_block_size_catch_all_signal() {
+        // An EndField or other non-Begin signal as a direct child hits the `_ =>` branch.
+        let tokens = vec![Token {
+            id: None,
+            name: "X".to_string(),
+            signal: Signal::EndField,
+            encoding: crate::ir::Encoding::default(),
+        }];
+        let (size, next) = get_token_block_size(&tokens, 0);
+        assert_eq!(size, 0);
+        assert_eq!(next, 1);
+    }
+
+    #[test]
+    fn group_without_dimension_composite() {
+        // A group whose second token is NOT BeginComposite (missing dimensionType).
+        let mut tokens = vec![
+            Token {
+                id: Some(1),
+                name: "grp".to_string(),
+                signal: Signal::BeginGroup,
+                encoding: crate::ir::Encoding::default(),
+            },
+            // No BeginComposite — jump straight to a field
+            Token {
+                id: None,
+                name: "field".to_string(),
+                signal: Signal::BeginField,
+                encoding: crate::ir::Encoding {
+                    primitive_type: Some(PrimitiveType::UInt32),
+                    ..crate::ir::Encoding::default()
+                },
+            },
+            Token {
+                id: None,
+                name: "field".to_string(),
+                signal: Signal::EndField,
+                encoding: crate::ir::Encoding::default(),
+            },
+            Token {
+                id: None,
+                name: "grp".to_string(),
+                signal: Signal::EndGroup,
+                encoding: crate::ir::Encoding::default(),
+            },
+        ];
+        let src: Option<miette::NamedSource<String>> = None;
+        let result = resolve_group_offsets(&mut tokens, &src);
+        assert!(result.is_ok());
+        // Field should still get an offset
+        assert_eq!(tokens[1].encoding.offset, Some(0));
+    }
+
+    #[test]
+    fn vardata_without_type_composite() {
+        // A var-data whose second token is NOT BeginComposite (missing type).
+        let mut tokens = vec![
+            Token {
+                id: Some(1),
+                name: "data".to_string(),
+                signal: Signal::BeginVarData,
+                encoding: crate::ir::Encoding::default(),
+            },
+            // No BeginComposite — just EndVarData
+            Token {
+                id: None,
+                name: "data".to_string(),
+                signal: Signal::EndVarData,
+                encoding: crate::ir::Encoding::default(),
+            },
+        ];
+        let src: Option<miette::NamedSource<String>> = None;
+        let result = resolve_vardata_offsets(&mut tokens, &src);
+        assert!(result.is_ok());
+    }
 }
