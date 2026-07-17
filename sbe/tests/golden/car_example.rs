@@ -640,7 +640,6 @@ impl<'a> EngineDecoder<'a> {
     }
 }
 ///Description of a basic Car
-#[derive(Clone, Copy)]
 pub struct CarDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -993,12 +992,11 @@ impl<'a> CarDecoder<'a> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
-    /// Return a fresh copy of this decoder at the initial body position.
-    /// The decoder is a stateless flyweight (Copy), so rewind is a no-op
-    /// — it exists for API symmetry with cursor-based decoders.
+    /// Consume this stage and return a fresh decoder at the initial
+    /// message position. The consumed stage cannot be reused.
     #[inline]
-    pub fn rewind(&self) -> Self {
-        *self
+    pub fn rewind(self) -> Self {
+        self
     }
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -3455,6 +3453,26 @@ impl<'a> FuelFiguresEncoder<'a> {
         self.written += 1;
         Ok(())
     }
+    /// Manual entry creation: returns a borrowed entry encoder.
+    /// The entry writes fixed fields directly into the group buffer.
+    /// Drop the entry or let it go out of scope to commit it.
+    /// The group position is pre-advanced, so fields are written
+    /// to the correct offset.
+    #[must_use]
+    pub fn start_entry(
+        &mut self,
+    ) -> Result<FuelFiguresEntryEncoder<'_>, sbe_rt::EncodeError> {
+        if self.written as u32 >= self.count as u32 {
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count as u32,
+                attempted: (self.written as u32) + 1,
+            });
+        }
+        let entry_pos = self.pos;
+        self.pos += 6;
+        self.written += 1;
+        Ok(FuelFiguresEntryEncoder::wrap(&mut self.buf[entry_pos..], 0))
+    }
 }
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct FuelFiguresEntryEncoder<'a> {
@@ -3550,6 +3568,26 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         }
         self.written += 1;
         Ok(())
+    }
+    /// Manual entry creation: returns a borrowed entry encoder.
+    /// The entry writes fixed fields directly into the group buffer.
+    /// Drop the entry or let it go out of scope to commit it.
+    /// The group position is pre-advanced, so fields are written
+    /// to the correct offset.
+    #[must_use]
+    pub fn start_entry(
+        &mut self,
+    ) -> Result<PerformanceFiguresEntryEncoder<'_>, sbe_rt::EncodeError> {
+        if self.written as u32 >= self.count as u32 {
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count as u32,
+                attempted: (self.written as u32) + 1,
+            });
+        }
+        let entry_pos = self.pos;
+        self.pos += 1;
+        self.written += 1;
+        Ok(PerformanceFiguresEntryEncoder::wrap(&mut self.buf[entry_pos..], 0))
     }
 }
 #[must_use = "entry encoder fields must be set before the next entry"]
@@ -3656,6 +3694,31 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         }
         self.written += 1;
         Ok(())
+    }
+    /// Manual entry creation: returns a borrowed entry encoder.
+    /// The entry writes fixed fields directly into the group buffer.
+    /// Drop the entry or let it go out of scope to commit it.
+    /// The group position is pre-advanced, so fields are written
+    /// to the correct offset.
+    #[must_use]
+    pub fn start_entry(
+        &mut self,
+    ) -> Result<PerformanceFiguresAccelerationEntryEncoder<'_>, sbe_rt::EncodeError> {
+        if self.written as u32 >= self.count as u32 {
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count as u32,
+                attempted: (self.written as u32) + 1,
+            });
+        }
+        let entry_pos = self.pos;
+        self.pos += 6;
+        self.written += 1;
+        Ok(
+            PerformanceFiguresAccelerationEntryEncoder::wrap(
+                &mut self.buf[entry_pos..],
+                0,
+            ),
+        )
     }
 }
 #[must_use = "entry encoder fields must be set before the next entry"]
@@ -3858,12 +3921,10 @@ pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes(bytes))
 }
 #[non_exhaustive]
-#[derive(Clone, Copy)]
 pub enum AnyMessage<'a> {
     Car(CarDecoder<'a>),
     Unknown { header: MessageHeader, payload: &'a [u8] },
 }
-#[derive(Clone)]
 pub struct DecodedFrame<'a> {
     pub message: AnyMessage<'a>,
     pub range: core::ops::Range<usize>,
