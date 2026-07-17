@@ -211,3 +211,52 @@ fn record_into_buffer_too_short_is_error() {
     let mut buf = vec![0u8; len - 1];
     assert!(rec.record_into(&mut buf, &values).is_err());
 }
+
+#[test]
+fn schema_into_roundtrips_column_metadata() {
+    use ergo_clickhouse_persist::sbe::v2::DynamicSchemaV2Decoder;
+
+    let rec = builder().build_v2().unwrap();
+    let len = rec.schema_encoded_length();
+    let mut buf = vec![0u8; len];
+    let encoded = rec.schema_into(&mut buf).unwrap();
+    assert_eq!(
+        encoded.len(),
+        len,
+        "schema_into must fill exactly len bytes"
+    );
+
+    let dec = DynamicSchemaV2Decoder::wrap_and_apply_header(encoded, 0).unwrap();
+    assert_eq!(dec.schema_id(), rec.schema_id());
+
+    let dec = dec.into_metadata().unwrap().finish().unwrap();
+
+    let mut cols = Vec::new();
+    let mut g = dec.into_columns().unwrap();
+    for e in g.by_ref() {
+        cols.push((
+            e.field_id(),
+            e.name_len() as usize,
+            e.outer_type(),
+            e.inner_type(),
+            e.precision(),
+            e.scale(),
+        ));
+    }
+    let dec = g.finish().unwrap();
+    // sequence UInt64, symbol String, bid_prices/ask_prices Array(Decimal(38,18))
+    assert_eq!(
+        cols,
+        vec![
+            (0, "sequence".len(), 0, 2, 0, 0),
+            (1, "symbol".len(), 0, 5, 0, 0),
+            (2, "bid_prices".len(), 1, 6, 38, 18),
+            (3, "ask_prices".len(), 1, 6, 38, 18),
+        ]
+    );
+
+    let (table_name, dec) = dec.into_table_name().unwrap();
+    assert_eq!(table_name, b"l2book_dynamic");
+    let (symbols, _complete) = dec.into_symbol_table().unwrap();
+    assert_eq!(symbols, b"sequencesymbolbid_pricesask_prices");
+}

@@ -757,11 +757,42 @@ impl DynamicRecorderBuilder {
 
         Ok(DynamicRecorderV2 {
             schema_id,
+            column_names: self.fields.iter().map(|(n, _)| n.clone()).collect(),
+            table_name: self.table_name,
             field_descriptors,
             metadata_entries,
             metadata_symbols,
             ttl: self.ttl,
         })
+    }
+}
+
+/// V2 schema wire type codes.
+///
+/// `outerType`: 0 = scalar, 1 = `Array(T)`, 2 = `Nullable(T)`.
+/// `innerType`: 1 = Int64, 2 = UInt64, 3 = Float64, 4 = Bool, 5 = String,
+/// 6 = Decimal (with `precision`/`scale` set). 0 = unknown.
+fn v2_type_codes(ct: &ColumnType) -> (u8, u8, u8, u8) {
+    match ct {
+        ColumnType::Nullable(inner) => {
+            let (_, i, p, s) = v2_type_codes(inner);
+            (2, i, p, s)
+        }
+        ColumnType::Array(inner) => {
+            let (_, i, p, s) = v2_type_codes(inner);
+            (1, i, p, s)
+        }
+        ColumnType::Decimal { precision, scale } => (0, 6, *precision, *scale),
+        ColumnType::Int8 | ColumnType::Int16 | ColumnType::Int32 | ColumnType::Int64 => {
+            (0, 1, 0, 0)
+        }
+        ColumnType::UInt8 | ColumnType::UInt16 | ColumnType::UInt32 | ColumnType::UInt64 => {
+            (0, 2, 0, 0)
+        }
+        ColumnType::Float32 | ColumnType::Float64 => (0, 3, 0, 0),
+        ColumnType::Bool => (0, 4, 0, 0),
+        ColumnType::String | ColumnType::FixedString(_) => (0, 5, 0, 0),
+        _ => (0, 0, 0, 0),
     }
 }
 
@@ -785,6 +816,8 @@ struct V2Counts {
 pub struct DynamicRecorderV2 {
     /// Deterministic schema identifier (same derivation as V1).
     schema_id: u32,
+    table_name: String,
+    column_names: Vec<String>,
     field_descriptors: Vec<FieldDesc>,
     metadata_entries: Vec<(u16, u16)>,
     metadata_symbols: Vec<u8>,
@@ -1003,6 +1036,86 @@ impl DynamicRecorderV2 {
                             out[w..w + s.len()].copy_from_slice(s.as_bytes());
                             w += s.len();
                         }
+                    }
+                    Ok(())
+                })
+                .map_err(enc_err)?;
+        }
+
+        Ok(&dst[..total])
+    }
+
+    /// Exact encoded length of this table's `DynamicSchemaV2` message.
+    #[must_use]
+    pub fn schema_encoded_length(&self) -> usize {
+        let names_len: usize = self.column_names.iter().map(String::len).sum();
+        crate::sbe::v2::DynamicSchemaV2Encoder::compute_encoded_length_with_message_header(
+            self.metadata_entries.len(),
+            self.column_names.len(),
+            self.table_name.len(),
+            self.metadata_symbols.len() + names_len,
+        )
+    }
+
+    /// Encode this table's `DynamicSchemaV2` (template 3) into `dst`.
+    /// Symbol layout: metadata key/value pairs, then column names in field
+    /// order.
+    ///
+    /// # Errors
+    ///
+    /// [`Encode`](DynamicRecorderError::Encode) when `dst` is too short.
+    pub fn schema_into<'a>(&self, dst: &'a mut [u8]) -> Result<&'a [u8], DynamicRecorderError> {
+        use crate::sbe::v2::DynamicSchemaV2Encoder;
+
+        let total = self.schema_encoded_length();
+        let enc_err =
+            |e: crate::sbe::v2::sbe_rt::EncodeError| DynamicRecorderError::Encode(e.to_string());
+
+        {
+            let mut enc =
+                DynamicSchemaV2Encoder::wrap_and_apply_header(&mut dst[..], 0).map_err(enc_err)?;
+            let _ = enc.schema_id(self.schema_id);
+
+            let after = enc
+                .metadata(self.metadata_entries.len() as u16, |g| {
+                    for &(kl, vl) in &self.metadata_entries {
+                        let _ = g.add(|e| {
+                            let _ = e.key_len(kl).val_len(vl);
+                        });
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .columns(self.column_names.len() as u16, |g| {
+                    for (name, fd) in self.column_names.iter().zip(&self.field_descriptors) {
+                        let (outer, inner, precision, scale) = v2_type_codes(&fd.col_type);
+                        let _ = g.add(|e| {
+                            let _ = e
+                                .field_id(fd.field_id)
+                                .name_len(name.len() as u16)
+                                .outer_type(outer)
+                                .inner_type(inner)
+                                .precision(precision)
+                                .scale(scale);
+                        });
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .table_name(self.table_name.as_bytes())
+                .map_err(enc_err)?;
+
+            let names_len: usize = self.column_names.iter().map(String::len).sum();
+            let sym_len = self.metadata_symbols.len() + names_len;
+            let _complete = after
+                .symbol_table_with::<crate::sbe::v2::sbe_rt::EncodeError, _>(sym_len, |out| {
+                    let mut w = self.metadata_symbols.len();
+                    out[..w].copy_from_slice(&self.metadata_symbols);
+                    for name in &self.column_names {
+                        out[w..w + name.len()].copy_from_slice(name.as_bytes());
+                        w += name.len();
                     }
                     Ok(())
                 })
