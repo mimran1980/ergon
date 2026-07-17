@@ -689,6 +689,357 @@ impl DynamicRecorder {
     }
 }
 
+// ── DynamicRecorderV2 ────────────────────────────────────────────────────
+
+impl DynamicValueType {
+    /// V2 mapping: like [`from_column_type`](Self::from_column_type) but
+    /// additionally supports `Array(Decimal(p, s))` columns.
+    fn from_column_type_v2(ct: &ColumnType) -> Option<Self> {
+        if let Some(vt) = Self::from_column_type(ct) {
+            return Some(vt);
+        }
+        let inner = match ct {
+            ColumnType::Nullable(inner) => inner.as_ref(),
+            other => other,
+        };
+        match inner {
+            ColumnType::Array(elem) if matches!(**elem, ColumnType::Decimal { .. }) => {
+                Some(Self::DecimalArray)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl DynamicRecorderBuilder {
+    /// Build a V2 recorder (`DynamicRowV2`, template ID 4) supporting
+    /// `Array(Decimal(p, s))` columns in addition to the V1 types.
+    ///
+    /// # Errors
+    ///
+    /// Same construction errors as [`build`](Self::build).
+    pub fn build_v2(self) -> Result<DynamicRecorderV2, DynamicRecorderError> {
+        if self.table_name.is_empty() {
+            return Err(DynamicRecorderError::EmptyTableName);
+        }
+        if self.fields.is_empty() {
+            return Err(DynamicRecorderError::NoFields);
+        }
+        for (name, ct) in &self.fields {
+            if DynamicValueType::from_column_type_v2(ct).is_none() {
+                return Err(DynamicRecorderError::UnsupportedColumnType {
+                    column_name: name.clone(),
+                    column_type: ct.clone(),
+                });
+            }
+        }
+
+        let schema_id = compute_schema_id(&self.table_name, &self.fields, &self.metadata);
+
+        let field_descriptors: Vec<FieldDesc> = self
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(i, (_name, ct))| FieldDesc {
+                field_id: i as u8,
+                col_type: ct.clone(),
+                value_type: DynamicValueType::from_column_type_v2(ct).expect("validated above"),
+            })
+            .collect();
+
+        let mut metadata_entries: Vec<(u16, u16)> = Vec::new();
+        let mut metadata_symbols: Vec<u8> = Vec::new();
+        for (k, v) in &self.metadata {
+            metadata_entries.push((k.len() as u16, v.len() as u16));
+            metadata_symbols.extend_from_slice(k.as_bytes());
+            metadata_symbols.extend_from_slice(v.as_bytes());
+        }
+
+        Ok(DynamicRecorderV2 {
+            schema_id,
+            field_descriptors,
+            metadata_entries,
+            metadata_symbols,
+            ttl: self.ttl,
+        })
+    }
+}
+
+/// Per-call value tallies used by both length computation and encoding.
+#[derive(Default)]
+struct V2Counts {
+    int64: u16,
+    uint64: u16,
+    float64: u16,
+    bools: u16,
+    strings: u16,
+    nulls: u16,
+    decimal_arrays: u16,
+    decimal_values: usize,
+    string_len: usize,
+}
+
+/// V2 recorder: borrowed values, caller-buffer encoding, `Array(Decimal)`
+/// support. Publication encodes with [`record_into`](Self::record_into)
+/// directly inside an Aeron claim — no owned intermediate buffer.
+pub struct DynamicRecorderV2 {
+    /// Deterministic schema identifier (same derivation as V1).
+    schema_id: u32,
+    field_descriptors: Vec<FieldDesc>,
+    metadata_entries: Vec<(u16, u16)>,
+    metadata_symbols: Vec<u8>,
+    /// Table-level TTL policy, if any.
+    pub ttl: Option<TtlConfig>,
+}
+
+impl DynamicRecorderV2 {
+    /// The deterministic schema identifier for this table definition.
+    #[must_use]
+    pub fn schema_id(&self) -> u32 {
+        self.schema_id
+    }
+
+    /// Validate positional values against the registered columns and tally
+    /// per-group counts.
+    fn validate(&self, values: &[DynamicValueRef<'_>]) -> Result<V2Counts, DynamicRecorderError> {
+        if values.len() != self.field_descriptors.len() {
+            return Err(DynamicRecorderError::ValueCountMismatch {
+                expected: self.field_descriptors.len(),
+                actual: values.len(),
+            });
+        }
+        let mut c = V2Counts::default();
+        for (i, (v, fd)) in values.iter().zip(&self.field_descriptors).enumerate() {
+            match (fd.value_type, v) {
+                (DynamicValueType::Int64, DynamicValueRef::Int64(_)) => c.int64 += 1,
+                (DynamicValueType::UInt64, DynamicValueRef::UInt64(_)) => c.uint64 += 1,
+                (DynamicValueType::Float64, DynamicValueRef::Float64(_)) => c.float64 += 1,
+                (DynamicValueType::Bool, DynamicValueRef::Bool(_)) => c.bools += 1,
+                (DynamicValueType::String, DynamicValueRef::String(s)) => {
+                    c.strings += 1;
+                    c.string_len += s.len();
+                }
+                (DynamicValueType::DecimalArray, DynamicValueRef::DecimalArray(arr)) => {
+                    c.decimal_arrays += 1;
+                    c.decimal_values += arr.len();
+                }
+                (_, DynamicValueRef::Null) => c.nulls += 1,
+                (expected, actual) => {
+                    return Err(DynamicRecorderError::ValueTypeMismatch {
+                        position: i,
+                        expected: expected.name(),
+                        actual: actual.name(),
+                    });
+                }
+            }
+        }
+        Ok(c)
+    }
+
+    fn encoded_len(&self, c: &V2Counts) -> usize {
+        // The generated helper covers every group's dim header and fixed
+        // entry bytes; nested decimal `values` groups (4-byte dim + 9 bytes
+        // per value) are dynamic per entry and added here.
+        crate::sbe::v2::DynamicRowV2Encoder::compute_encoded_length_with_message_header(
+            self.metadata_entries.len(),
+            c.int64 as usize,
+            c.uint64 as usize,
+            c.float64 as usize,
+            c.bools as usize,
+            c.strings as usize,
+            c.nulls as usize,
+            c.decimal_arrays as usize,
+            self.metadata_symbols.len() + c.string_len,
+        ) + c.decimal_arrays as usize * 4
+            + c.decimal_values * 9
+    }
+
+    /// Exact encoded length (header + body) for one row of values.
+    ///
+    /// # Errors
+    ///
+    /// [`ValueCountMismatch`](DynamicRecorderError::ValueCountMismatch) or
+    /// [`ValueTypeMismatch`](DynamicRecorderError::ValueTypeMismatch).
+    pub fn compute_encoded_length(
+        &self,
+        values: &[DynamicValueRef<'_>],
+    ) -> Result<usize, DynamicRecorderError> {
+        Ok(self.encoded_len(&self.validate(values)?))
+    }
+
+    /// Encode one `DynamicRowV2` message directly into `dst` and return the
+    /// encoded prefix. Zero-allocation: all values are borrowed and the
+    /// caller owns the buffer (typically an Aeron claim).
+    ///
+    /// # Errors
+    ///
+    /// Value count/type mismatches, or
+    /// [`Encode`](DynamicRecorderError::Encode) when `dst` is too short.
+    pub fn record_into<'a>(
+        &self,
+        dst: &'a mut [u8],
+        values: &[DynamicValueRef<'_>],
+    ) -> Result<&'a [u8], DynamicRecorderError> {
+        use crate::sbe::v2::DynamicRowV2Encoder;
+
+        let counts = self.validate(values)?;
+        let total = self.encoded_len(&counts);
+        let enc_err =
+            |e: crate::sbe::v2::sbe_rt::EncodeError| DynamicRecorderError::Encode(e.to_string());
+
+        {
+            let mut enc =
+                DynamicRowV2Encoder::wrap_and_apply_header(&mut dst[..], 0).map_err(enc_err)?;
+            let _ = enc.schema_id(self.schema_id);
+
+            let after = enc
+                .row_metadata(self.metadata_entries.len() as u16, |g| {
+                    for &(kl, vl) in &self.metadata_entries {
+                        let _ = g.add(|e| {
+                            let _ = e.key_len(kl).val_len(vl);
+                        });
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .int64_fields(counts.int64, |g| {
+                    for (v, fd) in values.iter().zip(&self.field_descriptors) {
+                        if let DynamicValueRef::Int64(x) = v {
+                            let _ = g.add(|e| {
+                                let _ = e.field_id(fd.field_id).value(*x);
+                            });
+                        }
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .uint64_fields(counts.uint64, |g| {
+                    for (v, fd) in values.iter().zip(&self.field_descriptors) {
+                        if let DynamicValueRef::UInt64(x) = v {
+                            let _ = g.add(|e| {
+                                let _ = e.field_id(fd.field_id).value(*x);
+                            });
+                        }
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .float64_fields(counts.float64, |g| {
+                    for (v, fd) in values.iter().zip(&self.field_descriptors) {
+                        if let DynamicValueRef::Float64(x) = v {
+                            let _ = g.add(|e| {
+                                let _ = e.field_id(fd.field_id).value(*x);
+                            });
+                        }
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .bool_fields(counts.bools, |g| {
+                    for (v, fd) in values.iter().zip(&self.field_descriptors) {
+                        if let DynamicValueRef::Bool(x) = v {
+                            let _ = g.add(|e| {
+                                let _ = e.field_id(fd.field_id).value(u8::from(*x));
+                            });
+                        }
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .string_fields(counts.strings, |g| {
+                    for (v, fd) in values.iter().zip(&self.field_descriptors) {
+                        if let DynamicValueRef::String(s) = v {
+                            let _ = g.add(|e| {
+                                let _ = e.field_id(fd.field_id).str_len(s.len() as u16);
+                            });
+                        }
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .null_fields(counts.nulls, |g| {
+                    for (v, fd) in values.iter().zip(&self.field_descriptors) {
+                        if let DynamicValueRef::Null = v {
+                            let _ = g.add(|e| {
+                                let _ = e.field_id(fd.field_id);
+                            });
+                        }
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let after = after
+                .decimal_array_fields(counts.decimal_arrays, |g| {
+                    for (v, fd) in values.iter().zip(&self.field_descriptors) {
+                        if let DynamicValueRef::DecimalArray(arr) = v {
+                            let _ = g.add(|e| {
+                                let _ = e.field_id(fd.field_id);
+                                let _ = e.values(arr.len() as u16, |vg| {
+                                    for &(m, x) in arr.iter() {
+                                        let _ = vg.add(|ve| {
+                                            let _ = ve.mantissa(m).exponent(x);
+                                        });
+                                    }
+                                });
+                            });
+                        }
+                    }
+                })
+                .map_err(enc_err)?;
+
+            let sym_len = self.metadata_symbols.len() + counts.string_len;
+            let _complete = after
+                .symbol_table_with::<crate::sbe::v2::sbe_rt::EncodeError, _>(sym_len, |out| {
+                    let mut w = self.metadata_symbols.len();
+                    out[..w].copy_from_slice(&self.metadata_symbols);
+                    for v in values {
+                        if let DynamicValueRef::String(s) = v {
+                            out[w..w + s.len()].copy_from_slice(s.as_bytes());
+                            w += s.len();
+                        }
+                    }
+                    Ok(())
+                })
+                .map_err(enc_err)?;
+        }
+
+        Ok(&dst[..total])
+    }
+}
+
+impl DynamicValueType {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Int64 => "Int64",
+            Self::UInt64 => "UInt64",
+            Self::Float64 => "Float64",
+            Self::Bool => "Bool",
+            Self::String => "String",
+            Self::DecimalArray => "DecimalArray",
+        }
+    }
+}
+
+impl DynamicValueRef<'_> {
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Int64(_) => "Int64",
+            Self::UInt64(_) => "UInt64",
+            Self::Float64(_) => "Float64",
+            Self::Bool(_) => "Bool",
+            Self::String(_) => "String",
+            Self::Null => "Null",
+            Self::DecimalArray(_) => "DecimalArray",
+        }
+    }
+}
+
 // ── Schema ID determinism ────────────────────────────────────────────────
 
 /// Compute a deterministic `schema_id` for the given table definition.
