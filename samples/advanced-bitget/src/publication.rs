@@ -191,6 +191,27 @@ impl<P: Publication> ClaimPublisher<P> {
         (self.typed, self.dynamic)
     }
 
+    /// Publish the `DynamicSchemaV2` message on the dynamic stream. Called
+    /// once after both subscribers are connected and before live ingestion.
+    pub fn publish_schema(&mut self) -> PublishOutcome {
+        let len = self.recorder.schema_encoded_length();
+        let recorder = &self.recorder;
+        let outcome = self.dynamic.try_claim_and_commit(len, |buf| {
+            recorder
+                .schema_into(buf)
+                .map(|_| ())
+                .map_err(|_| sbe_rt::EncodeError::BufferTooShort {
+                    needed: len,
+                    available: buf.len(),
+                })
+        });
+        if outcome == PublishOutcome::Published {
+            self.counters.schemas_published += 1;
+        }
+        self.count(outcome);
+        outcome
+    }
+
     /// Publish one normalized event. Never retries; every claim outcome is
     /// classified into `counters`.
     pub fn publish(&mut self, ev: &NormalizedEventRef<'_>) -> PublishOutcome {

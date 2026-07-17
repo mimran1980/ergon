@@ -18,6 +18,7 @@ pub struct Counters {
     pub dropped_max_position: u64,
     pub encode_failures: u64,
     pub commit_failures: u64,
+    pub schemas_published: u64,
     // Persistence
     pub persisted_typed: u64,
     pub persisted_dynamic: u64,
@@ -25,4 +26,5 @@ pub struct Counters {
     pub unmatched_dropped: u64,
     pub compare_failures: u64,
     pub decode_failures: u64,
+    pub schemas_seen: u64,
 }

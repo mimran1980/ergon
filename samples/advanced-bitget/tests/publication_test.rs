@@ -195,3 +195,35 @@ fn claim_length_is_exact() {
     assert_eq!(typed.committed[0].len(), typed.claimed_lengths[0]);
     assert_eq!(dynamic.committed[0].len(), dynamic.claimed_lengths[0]);
 }
+
+#[test]
+fn publish_schema_emits_decodable_dynamic_schema_v2() {
+    use ergo_clickhouse_persist::sbe::v2::DynamicSchemaV2Decoder;
+
+    let mut p =
+        ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
+    let outcome = p.publish_schema();
+    assert_eq!(outcome, PublishOutcome::Published);
+    let schema_id = p.dynamic_schema_id();
+
+    let (typed, dynamic) = p.into_adapters();
+    assert!(
+        typed.committed.is_empty(),
+        "schema goes to stream 1002 only"
+    );
+    assert_eq!(dynamic.committed.len(), 1);
+    assert_eq!(dynamic.committed[0].len(), dynamic.claimed_lengths[0]);
+
+    let dec = DynamicSchemaV2Decoder::wrap_and_apply_header(&dynamic.committed[0], 0).unwrap();
+    assert_eq!(dec.schema_id(), schema_id);
+    let dec = dec.into_metadata().unwrap().finish().unwrap();
+    let g = dec.into_columns().unwrap();
+    assert_eq!(
+        g.len(),
+        7,
+        "sequence, exchange_ts, symbol, 4 decimal arrays"
+    );
+    let dec = g.finish().unwrap();
+    let (table, _) = dec.into_table_name().unwrap();
+    assert_eq!(table, b"l2book_dynamic");
+}

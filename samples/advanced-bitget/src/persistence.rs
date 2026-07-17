@@ -212,10 +212,32 @@ impl<S: RowSink> ForegroundPersistor<S> {
     }
 
     fn decode_dynamic(&mut self, bytes: &[u8]) -> Result<(), PersistError> {
-        let wire = decode_dynamic_book(bytes)?;
-        self.dynamic_queue.push_back(wire);
-        self.bound_queues();
-        self.try_match()
+        // Dispatch by schema + template id: template 3 is the schema
+        // announcement, template 4 a row; anything else is rejected.
+        use ergo_clickhouse_persist::sbe::v2::{DynamicRowV2Decoder, DynamicSchemaV2Decoder};
+        if bytes.len() < 8 {
+            return Err(PersistError::Decode("short dynamic fragment".into()));
+        }
+        let template = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let schema = u16::from_le_bytes([bytes[4], bytes[5]]);
+        match (schema, template) {
+            (DynamicSchemaV2Decoder::SCHEMA_ID, DynamicSchemaV2Decoder::TEMPLATE_ID) => {
+                let dec = DynamicSchemaV2Decoder::wrap_and_apply_header(bytes, 0)
+                    .map_err(|e| PersistError::Decode(e.to_string()))?;
+                let _ = dec.schema_id();
+                self.counters.schemas_seen += 1;
+                Ok(())
+            }
+            (DynamicRowV2Decoder::SCHEMA_ID, DynamicRowV2Decoder::TEMPLATE_ID) => {
+                let wire = decode_dynamic_book(bytes)?;
+                self.dynamic_queue.push_back(wire);
+                self.bound_queues();
+                self.try_match()
+            }
+            (s, t) => Err(PersistError::Decode(format!(
+                "unknown schema/template combination {s}/{t} on dynamic stream"
+            ))),
+        }
     }
 
     /// Flush pending sink batches.

@@ -171,3 +171,28 @@ fn malformed_bytes_are_decode_failures() {
     assert!(p.on_dynamic(&[0u8; 4]).is_err());
     assert_eq!(p.counters().decode_failures, 2);
 }
+
+#[test]
+fn schema_message_on_dynamic_stream_is_recognised_not_a_row() {
+    let mut pubr =
+        ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
+    pubr.publish_schema();
+    let (_, dynamic) = pubr.into_adapters();
+
+    let mut p = ForegroundPersistor::new(InMemorySink::default());
+    p.on_dynamic(&dynamic.committed[0]).unwrap();
+    assert_eq!(p.counters().schemas_seen, 1);
+    assert!(p.sink().l2book_dynamic.is_empty());
+    assert_eq!(p.counters().decode_failures, 0);
+}
+
+#[test]
+fn wrong_template_on_dynamic_stream_is_rejected() {
+    // An AppMessage (typed schema/template) arriving on the dynamic stream.
+    let bids = [lvl(1, 0, 1, 0)];
+    let (typed, _, _) = published_book(1, &bids, &[]);
+
+    let mut p = ForegroundPersistor::new(InMemorySink::default());
+    assert!(p.on_dynamic(&typed).is_err());
+    assert_eq!(p.counters().decode_failures, 1);
+}

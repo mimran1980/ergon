@@ -133,6 +133,19 @@ async fn ingest(
     let typed = AeronPublication(add_pub(&aeron, STREAM_TYPED)?);
     let dynamic = AeronPublication(add_pub(&aeron, STREAM_DYNAMIC)?);
     let mut publisher = ClaimPublisher::new(typed, dynamic)?;
+    // Announce the dynamic schema after both subscribers are connected and
+    // before live ingestion (retry briefly while the image attaches).
+    let schema_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match publisher.publish_schema() {
+            advanced_bitget::publication::PublishOutcome::Published => break,
+            _ if std::time::Instant::now() < schema_deadline => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            other => return Err(format!("dynamic schema publish failed: {other:?}").into()),
+        }
+    }
+    eprintln!("[ingest] dynamic schema announced on stream {STREAM_DYNAMIC}");
     let mut ingestor = BitgetIngestor::new();
     let mut backoff = Duration::from_secs(1);
 

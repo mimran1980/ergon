@@ -1,127 +1,115 @@
-//! Dynamic stream 1002 test — proves DynamicSchema + DynamicRow
-#![allow(
-    clippy::all,
-    clippy::pedantic,
-    clippy::restriction,
-    clippy::nursery,
-    unused,
-    warnings
-)]
-//! publish on separate stream from typed AppMessage (stream 1001).
-#![allow(unused)]
+//! Dynamic stream 1002 — real `DynamicSchemaV2` + `DynamicRowV2` messages,
+//! isolated from typed AppMessage traffic on stream 1001.
+//!
+//! No literal byte strings: every payload is a real generated SBE message
+//! published through the `ClaimPublisher` and decoded by the
+//! `ForegroundPersistor` on the other side.
 
 use std::ffi::CString;
+use std::sync::Mutex;
 use std::time::Duration;
 
-/// Dynamic schema/row publish on stream 1002, independent of typed stream 1001.
+use advanced_bitget::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED};
+use advanced_bitget::market::{Level, NormalizedEventRef, WireDec};
+use advanced_bitget::persistence::{ForegroundPersistor, InMemorySink};
+use advanced_bitget::publication::{AeronPublication, ClaimPublisher, PublishOutcome};
+
+static DRIVER_LOCK: Mutex<()> = Mutex::new(());
+
 #[test]
-fn dynamic_stream_publishes_schema_and_row() {
-    let driver =
-        rusteron_media_driver::testing::EmbeddedDriver::launch().expect("launch embedded driver");
+fn dynamic_stream_carries_schema_then_rows_isolated_from_typed() {
+    let _guard = DRIVER_LOCK.lock().unwrap();
+    let driver = rusteron_media_driver::testing::EmbeddedDriver::launch().expect("driver");
+    let ctx = rusteron_client::AeronContext::new().expect("ctx");
+    ctx.set_dir(&CString::new(driver.dir()).unwrap())
+        .expect("dir");
+    let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
+    aeron.start().expect("start");
+    let ch = CString::new(CHANNEL).unwrap();
 
-    let ctx = rusteron_client::AeronContext::new().expect("create context");
-    let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
-    ctx.set_dir(&dir_cstr).expect("set dir");
-    let aeron = rusteron_client::Aeron::new(&ctx).expect("create aeron");
-    aeron.start().expect("start aeron");
-
-    let channel = CString::new("aeron:ipc").unwrap();
-
-    // Dynamic stream on 1002 (separate from typed 1001)
-    let dynamic_stream: i32 = 1002;
-
-    let dynamic_pub = aeron
-        .async_add_exclusive_publication(&channel, dynamic_stream)
-        .expect("add dynamic publication")
+    let pub_typed = aeron
+        .async_add_exclusive_publication(&ch, STREAM_TYPED)
+        .expect("pub")
         .poll_blocking(Duration::from_secs(5))
-        .expect("connect dynamic publication");
-
-    let dynamic_sub = aeron
-        .async_add_subscription::<
-            rusteron_client::AeronAvailableImageLogger,
-            rusteron_client::AeronUnavailableImageLogger,
-        >(&channel, dynamic_stream, None, None)
-        .expect("add dynamic subscription")
+        .expect("connect");
+    let pub_dyn = aeron
+        .async_add_exclusive_publication(&ch, STREAM_DYNAMIC)
+        .expect("pub")
         .poll_blocking(Duration::from_secs(5))
-        .expect("connect dynamic subscription");
-
-    // Also create typed stream 1001 to prove they coexist independently
-    let typed_stream: i32 = 1001;
-    let typed_pub = aeron
-        .async_add_exclusive_publication(&channel, typed_stream)
-        .expect("add typed publication")
+        .expect("connect");
+    let sub_typed = aeron
+        .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
+            &ch, STREAM_TYPED, None, None,
+        )
+        .expect("sub")
         .poll_blocking(Duration::from_secs(5))
-        .expect("connect typed publication");
-
-    let typed_sub = aeron
-        .async_add_subscription::<
-            rusteron_client::AeronAvailableImageLogger,
-            rusteron_client::AeronUnavailableImageLogger,
-        >(&channel, typed_stream, None, None)
-        .expect("add typed subscription")
+        .expect("connect");
+    let sub_dyn = aeron
+        .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
+            &ch, STREAM_DYNAMIC, None, None,
+        )
+        .expect("sub")
         .poll_blocking(Duration::from_secs(5))
-        .expect("connect typed subscription");
+        .expect("connect");
 
-    // Publish on dynamic stream
-    let mut claim = dynamic_pub
-        .try_claim_owned(DYNAMIC_MSG.len())
-        .expect("dynamic claim");
-    claim.data().copy_from_slice(DYNAMIC_MSG);
-    claim.commit().expect("dynamic commit");
+    let mut publisher = ClaimPublisher::new(AeronPublication(pub_typed), AeronPublication(pub_dyn))
+        .expect("publisher");
 
-    // Publish on typed stream
-    let mut tclaim = typed_pub
-        .try_claim_owned(TYPED_MSG.len())
-        .expect("typed claim");
-    tclaim.data().copy_from_slice(TYPED_MSG);
-    tclaim.commit().expect("typed commit");
+    // Schema first (after subscribers connect, before data).
+    assert_eq!(publisher.publish_schema(), PublishOutcome::Published);
 
-    // Receive on dynamic stream — only dynamic messages, no typed
-    let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new().expect("assembler");
+    // One book: typed AppMessage on 1001 + dynamic row on 1002.
+    let bids = [Level {
+        price: WireDec::new(500005, -1),
+        size: WireDec::new(15, -1),
+    }];
+    publisher.publish(&NormalizedEventRef::L2Book {
+        symbol: "BTCUSDT",
+        exchange_ts_ns: 1,
+        receive_ts_ns: 2,
+        sequence: 7,
+        bids: &bids,
+        asks: &[],
+    });
+
+    let mut persistor = ForegroundPersistor::new(InMemorySink::default());
+    let mut asm = rusteron_client::AeronFragmentClosureAssembler::new().expect("asm");
+
+    fn on_typed(
+        p: &mut ForegroundPersistor<InMemorySink>,
+        buf: &[u8],
+        _h: rusteron_client::AeronHeader,
+    ) {
+        p.on_typed(buf)
+            .expect("typed stream must carry only AppMessage");
+    }
+    fn on_dynamic(
+        p: &mut ForegroundPersistor<InMemorySink>,
+        buf: &[u8],
+        _h: rusteron_client::AeronHeader,
+    ) {
+        p.on_dynamic(buf)
+            .expect("dynamic stream must carry only V2 schema/rows");
+    }
+
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let mut received_dynamic = false;
-
-    while !received_dynamic && std::time::Instant::now() < deadline {
-        let fragments = assembler
-            .poll(&dynamic_sub, &mut received_dynamic, dynamic_handler, 10)
-            .expect("poll dynamic");
-        if fragments == 0 {
-            std::thread::sleep(Duration::from_millis(1));
-        }
+    while (persistor.counters().schemas_seen < 1 || persistor.counters().persisted_typed < 1)
+        && std::time::Instant::now() < deadline
+    {
+        asm.poll(&sub_typed, &mut persistor, on_typed, 16)
+            .expect("poll");
+        asm.poll(&sub_dyn, &mut persistor, on_dynamic, 16)
+            .expect("poll");
+        std::thread::sleep(Duration::from_millis(1));
     }
-    assert!(
-        received_dynamic,
-        "never received dynamic message on stream 1002"
+
+    let c = persistor.counters();
+    assert_eq!(c.schemas_seen, 1, "schema announcement decoded on 1002");
+    assert_eq!(
+        (c.persisted_typed, c.persisted_dynamic),
+        (1, 1),
+        "book matched across both streams"
     );
-
-    // Receive on typed stream
-    let mut received_typed = false;
-    while !received_typed && std::time::Instant::now() < deadline {
-        let fragments = assembler
-            .poll(&typed_sub, &mut received_typed, typed_handler, 10)
-            .expect("poll typed");
-        if fragments == 0 {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-    assert!(
-        received_typed,
-        "never received typed message on stream 1001"
-    );
-
-    // Verify: dynamic sub only received dynamic, typed sub only received typed
-    // (proven by the assert_eq! checks above with correct payloads)
-}
-
-const DYNAMIC_MSG: &[u8] = b"dynamic-schema-v1-data";
-const TYPED_MSG: &[u8] = b"typed-appmessage-data";
-
-fn dynamic_handler(flag: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
-    assert_eq!(buf, DYNAMIC_MSG, "dynamic stream payload mismatch");
-    *flag = true;
-}
-
-fn typed_handler(flag: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
-    assert_eq!(buf, TYPED_MSG, "typed stream payload mismatch");
-    *flag = true;
+    assert_eq!(c.decode_failures, 0, "no cross-stream contamination");
+    assert_eq!(persistor.sink().l2book_typed[0].sequence, 7);
 }
