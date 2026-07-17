@@ -4936,12 +4936,10 @@ fn generate_message_encoder(
     let wrap_apply_body = quote::quote! {
         // Optional-field nullification is NOT applied by default — call
         // `apply_nulls()` if you want null sentinels.
-        // Check buffer size before touching memory. Constructed directly
-        // rather than via `Self::wrap` so the bounds check runs once.
         let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
-        let available: usize = buf.len().saturating_sub(pos);
-        if available < needed {
-            return Err(sbe_rt::EncodeError::BufferTooShort { needed, available });
+        #[cfg(not(feature = "bound-check-disabled"))]
+        if buf.len().saturating_sub(pos) < needed {
+            return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: buf.len().saturating_sub(pos) });
         }
         buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
         Ok(Self { buf: &mut buf[pos..], message_start: 0, pos: needed })

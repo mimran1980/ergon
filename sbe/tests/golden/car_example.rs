@@ -2943,11 +2943,11 @@ impl<'a> CarEncoder<'a> {
         pos: usize,
     ) -> Result<Self, sbe_rt::EncodeError> {
         let needed: usize = 8 + Self::BLOCK_LENGTH;
-        let available: usize = buf.len().saturating_sub(pos);
-        if available < needed {
+        #[cfg(not(feature = "bound-check-disabled"))]
+        if buf.len().saturating_sub(pos) < needed {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available,
+                available: buf.len().saturating_sub(pos),
             });
         }
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
