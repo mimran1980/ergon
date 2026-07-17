@@ -147,4 +147,38 @@ mod tests {
             SchemaSource::Xml(cow) => assert!(matches!(cow, std::borrow::Cow::Owned(_))),
         }
     }
+
+    #[test]
+    fn schema_from_ir_preserves_metadata() {
+        use crate::ir::{ByteOrder, Ir};
+        let ir = Ir {
+            package: "test_pkg".to_string(),
+            id: 99,
+            version: 3,
+            byte_order: ByteOrder::BigEndian,
+            description: Some("test".to_string()),
+            semantic_version: Some("1.0".to_string()),
+            header_type: "customHeader".to_string(),
+            tokens: Vec::new(),
+        };
+        let schema = Schema::from_ir(ir);
+        assert_eq!(schema.package, "test_pkg");
+        assert_eq!(schema.id, 99);
+        assert_eq!(schema.version, 3);
+        assert_eq!(schema.ir.header_type, "customHeader");
+    }
+
+    #[test]
+    fn schema_new_has_correct_ir_defaults() {
+        use crate::ir::ByteOrder;
+        let schema = Schema::new("pkg", 1, 0);
+        assert_eq!(schema.ir.package, "pkg");
+        assert_eq!(schema.ir.id, 1);
+        assert_eq!(schema.ir.version, 0);
+        assert_eq!(schema.ir.byte_order, ByteOrder::LittleEndian);
+        assert!(schema.ir.description.is_none());
+        assert!(schema.ir.semantic_version.is_none());
+        assert_eq!(schema.ir.header_type, "messageHeader");
+        assert!(schema.ir.tokens.is_empty());
+    }
 }
