@@ -1751,3 +1751,28 @@ with the same stores. This is insensitive to all source-level interventions.
 | encode/throughput_10k | **1.135** | ❌ (sole remaining) |
 
 9 of 10 scenarios pass.
+
+## 2026-07-18: encode/throughput_10k root cause — LLVM 8× loop unrolling
+
+Fresh assembly analysis (`--emit asm`, aarch64) reveals the TRUE root cause:
+
+**ErgoSBE loop** (LBB235_8): processes 1 message/iteration, 8 instructions
+(add offset, cmp bounds, b.hi, add ptr, stp header+serial, add i, strh
+model_year, mov offset, cmp loop, bne). NOT unrolled.
+
+**Aeron loop** (LBB236_18): processes 8 messages/iteration via 512-byte
+stride (`add x25, x25, #512; subs x22, x22, #512`). Contains a `bl _memcpy`
+(inlined as SIMD `ldr q0`/`str q0` bulk copy) + `str q0` (16-byte SIMD store
+for header+serial+model). LLVM unrolled 8× and vectorised the writes.
+
+**Why LLVM unrolls Aeron but not ErgoSBE:** LLVM's loop-unroll pass evaluates
+loop body size, exit count, and vectorisation potential. ErgoSBE's loop has
+2 exits (bounds check + loop test) and individual field writes that don't
+vectorise into SIMD patterns. Aeron's loop, despite also having 2 exits,
+was unrolled because LLVM recognised the write pattern as bulk-fillable.
+
+This is NOT fixable at the source level — it's LLVM's internal loop-
+optimisation pipeline making different decisions for the two APIs based on
+data-flow graph shape. Confirmed insensitive to: inline(always), Result
+elimination, bounds-check gating, LTO/codegen-units, chunks_exact_mut,
+setter unsafe writes, and 8 other interventions.
