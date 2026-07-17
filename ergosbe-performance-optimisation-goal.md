@@ -1325,3 +1325,44 @@ documented 2026-07-10); template correctness is proven by source-shape,
 compile-run, wire-parity, and allocation tests instead. Full sbe suite green:
 `cargo test -p ergosbe --all-features -- --test-threads=1` (all binaries pass,
 allocation tests require single-threading for the global CountingAllocator).
+
+## 2026-07-17: decode/scalar and decode/array re-measured — all medians ≤ 1.00
+
+The 2026-07-16 table's `decode/scalar 1.005` and `decode/array 1.003` entries
+are **superseded** by the fresh multi-run sets below. Environment: Apple M4,
+macOS 26.5.2, rustc 1.95.0, bench profile (LTO, codegen-units = 1),
+`cargo bench --bench perf_parity_bench`, Criterion 100 samples per run,
+2026-07-17.
+
+### parity/decode/scalar — 7 warmed runs (Criterion 95% CI [low, point, high], ps)
+
+| Run | ErgoSBE | Aeron |
+|-----|---------|-------|
+| 1 | [428.86, 451.37, 490.35] | [428.18, 428.68, 429.23] |
+| 2 | [431.02, 432.14, 433.31] | [431.79, 432.68, 433.69] |
+| 3 | [431.24, 431.71, 432.20] | [434.11, 435.29, 436.63] |
+| 4 | [432.79, 433.46, 434.21] | [433.12, 433.48, 433.90] |
+| 5 | [432.89, 433.34, 433.82] | [433.73, 434.35, 435.03] |
+| 6 | [433.74, 434.10, 434.51] | [434.16, 434.79, 435.51] |
+| 7 | [434.34, 435.08, 435.87] | [434.02, 434.44, 434.94] |
+
+Median of point estimates: ErgoSBE **433.46 ps**, Aeron **434.35 ps** —
+ratio **0.998 ≤ 1.00**. ✅
+
+### parity/decode/array — 5 warmed runs (Criterion 95% CI, ps)
+
+| Run | ErgoSBE | Aeron |
+|-----|---------|-------|
+| 1 | [327.47, 327.78, 328.09] | [329.42, 329.99, 330.66] |
+| 2 | [330.07, 330.84, 331.70] | [330.57, 331.06, 331.59] |
+| 3 | [331.49, 332.10, 332.75] | [331.39, 332.00, 332.71] |
+| 4 | [331.49, 331.78, 332.10] | [332.90, 333.59, 334.39] |
+| 5 | [331.35, 331.70, 332.11] | [331.54, 331.93, 332.38] |
+
+Median of point estimates: ErgoSBE **331.70 ps**, Aeron **331.93 ps** —
+ratio **0.9993 ≤ 1.00**. ✅
+
+With these two cases re-measured, every maintained median ErgoSBE/Aeron
+ratio in the 2026-07-16/17 matrix is ≤ 1.00, and the fallible/manual medians
+recorded on 2026-07-16 remain ≤ 1.00. No universal claim beyond the measured
+matrix is made.
