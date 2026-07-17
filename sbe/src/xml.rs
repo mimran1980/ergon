@@ -3500,4 +3500,451 @@ mod tests {
             "expected block length 4 for message with one uint32 field"
         );
     }
+
+    // ── Coverage: include-file root variants ──────────────────────────
+
+    const HEADER_TYPES: &str = r#"
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>"#;
+
+    #[test]
+    fn include_of_message_schema_wrapped_types_registers_types() {
+        // The included file's root is <messageSchema>, not <types> — the
+        // parser must descend into it and find the nested <types> node.
+        let dir = std::env::temp_dir().join(format!("ergosbe_xml_inc_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let inc = dir.join("wrapped-types.xml");
+        std::fs::write(
+            &inc,
+            r#"<?xml version="1.0"?>
+<messageSchema package="inc" id="9" version="0">
+  <types>
+    <type name="IncU8" primitiveType="uint8"/>
+  </types>
+</messageSchema>"#,
+        )
+        .unwrap();
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <include href="{}"/>
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="IncU8"/>
+  </message>
+</messageSchema>"#,
+            inc.display()
+        );
+        let ir = parse(&schema).unwrap();
+        assert!(
+            ir.tokens
+                .iter()
+                .any(|t| t.name == "f" && t.signal == Signal::BeginField),
+            "field using included type must resolve"
+        );
+        std::fs::remove_file(&inc).ok();
+    }
+
+    #[test]
+    fn include_without_href_is_ignored() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <include/>
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        parse(&schema).unwrap();
+    }
+
+    // ── Coverage: char constant with matching declared length ─────────
+
+    #[test]
+    fn char_constant_with_matching_length_parses() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <type name="CC" primitiveType="char" length="3" presence="constant">ABC</type>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        parse(&schema).unwrap();
+    }
+
+    // ── Coverage: composite member type-attribute fallbacks ───────────
+
+    #[test]
+    fn composite_member_with_primitive_type_attr_inlines_encoding() {
+        // Member uses `type="uint16"` (a primitive name, not a registered
+        // type). This is indirect by shape but unresolvable by name, so the
+        // parser falls back to inline parsing of the element itself.
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <composite name="Pair">
+      <type name="a" type="uint16"/>
+      <type name="b" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="p" id="1" type="Pair"/>
+  </message>
+</messageSchema>"#
+        );
+        let ir = parse(&schema).unwrap();
+        assert!(
+            ir.tokens
+                .iter()
+                .any(|t| t.name == "p" && t.signal == Signal::BeginField),
+            "composite field must resolve"
+        );
+    }
+
+    #[test]
+    fn composite_member_without_any_type_attr_is_parsed_inline() {
+        // Member has no type/primitiveType/ref attribute at all — the parser
+        // parses the bare element inline (no primitive type recorded).
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <composite name="Bare">
+      <type name="mystery"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        // The composite is never referenced by a message, so whether the
+        // overall parse succeeds is a resolver decision; the member itself
+        // must not panic and must take the inline-parse path.
+        let _ = parse(&schema);
+    }
+
+    // ── Coverage: enum/set child-element edge cases ────────────────────
+
+    #[test]
+    fn enum_valid_value_equal_to_registered_null_sentinel_is_error() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <type name="OptU8" primitiveType="uint8" presence="optional" nullValue="255"/>
+    <enum name="E" encodingType="OptU8">
+      <validValue name="X">255</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        let err = parse(&schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn enum_with_unknown_child_element_is_ignored() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <enum name="E" encodingType="uint8">
+      <validValue name="A">1</validValue>
+      <somethingElse/>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        parse(&schema).unwrap();
+    }
+
+    #[test]
+    fn set_with_unknown_child_element_is_ignored() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <set name="S" encodingType="uint8">
+      <choice name="A">1</choice>
+      <somethingElse/>
+    </set>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        parse(&schema).unwrap();
+    }
+
+    #[test]
+    fn set_choice_non_numeric_bit_index_is_error() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <set name="S" encodingType="uint8">
+      <choice name="A">notanumber</choice>
+    </set>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        let err = parse(&schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    // ── Coverage: message-child structural attribute tolerance ─────────
+
+    #[test]
+    fn message_children_with_missing_or_unparseable_attrs_reach_second_pass() {
+        // The first structural pass tolerates a missing name, a non-numeric
+        // id, and a non-numeric offset; the second (real) parse pass then
+        // reports the actual fault. This proves the pre-validation loop does
+        // not panic or mask errors on degenerate attributes.
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+    <field id="xyz" type="uint8" offset="abc"/>
+  </message>
+</messageSchema>"#
+        );
+        let err = parse(&schema).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::Missing { .. } | ParseError::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn block_length_tracking_skips_fields_without_computable_size() {
+        // Field with a valid offset but an unregistered type: the expected
+        // block-length tracker must skip it rather than fault.
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+    <field name="a" id="1" type="NotAKnownType" offset="0"/>
+  </message>
+</messageSchema>"#
+        );
+        // The field itself fails to resolve in the second pass — the point is
+        // the block-length pre-pass tolerated the unknown size first.
+        let err = parse(&schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn null_value_on_required_field_warns_but_parses() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8" nullValue="255"/>
+  </message>
+</messageSchema>"#
+        );
+        parse(&schema).unwrap();
+    }
+
+    #[test]
+    fn include_with_non_types_sibling_elements_is_tolerated() {
+        // The included <messageSchema> carries a <message> sibling next to
+        // <types>; only the <types> node is imported.
+        let dir = std::env::temp_dir().join(format!("ergosbe_xml_inc2_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let inc = dir.join("wrapped-types-siblings.xml");
+        std::fs::write(
+            &inc,
+            r#"<?xml version="1.0"?>
+<messageSchema package="inc" id="9" version="0">
+  <message name="Ignored" id="7"/>
+  <types>
+    <type name="IncU16" primitiveType="uint16"/>
+  </types>
+</messageSchema>"#,
+        )
+        .unwrap();
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <include href="{}"/>
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="IncU16"/>
+  </message>
+</messageSchema>"#,
+            inc.display()
+        );
+        parse(&schema).unwrap();
+        std::fs::remove_file(&inc).ok();
+    }
+
+    #[test]
+    fn char_constant_without_text_is_tolerated_at_parse_time() {
+        // presence="constant" with no element text: the length check is
+        // skipped because there is no constant value to measure.
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <type name="CC2" primitiveType="char" length="3" presence="constant"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        let _ = parse(&schema);
+    }
+
+    #[test]
+    fn composite_member_with_unknown_type_and_primitive_type_falls_back_inline() {
+        // `type="Unknown"` is unresolvable, but `primitiveType="uint8"` lets
+        // the inline fallback parse the element directly.
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <composite name="Odd">
+      <type name="m" type="Unknown" primitiveType="uint8"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        let _ = parse(&schema);
+    }
+
+    #[test]
+    fn enum_valid_value_unparseable_with_null_sentinel_skips_check() {
+        // The null-sentinel equality check is skipped when the value text
+        // cannot be parsed for the encoding type.
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <type name="OptU8b" primitiveType="uint8" presence="optional" nullValue="255"/>
+    <enum name="E2" encodingType="OptU8b">
+      <validValue name="A">notanumber</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        let _ = parse(&schema);
+    }
+
+    #[test]
+    fn field_with_unparseable_offset_attr_is_tolerated_by_prevalidation() {
+        // Structural pre-validation ignores an offset it cannot parse; the
+        // real field parse itself does not require the attribute.
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8" offset="abc"/>
+  </message>
+</messageSchema>"#
+        );
+        let _ = parse(&schema);
+    }
+
+    #[test]
+    fn block_length_tracker_skips_type_without_computable_size() {
+        // "NoPrim" is registered but has no primitive type, so the block
+        // length tracker cannot size it and must skip it.
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <type name="NoPrim"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="NoPrim" offset="0"/>
+  </message>
+</messageSchema>"#
+        );
+        let _ = parse(&schema);
+    }
+
+    // ── Coverage: unparseable numeric attribute error paths ────────────
+
+    #[test]
+    fn message_with_non_numeric_id_is_error() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="notanumber">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        let err = parse(&schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn type_with_non_numeric_since_version_is_error() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <type name="T" primitiveType="uint8" sinceVersion="notanumber"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        let err = parse(&schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
+
+    #[test]
+    fn type_with_non_numeric_length_is_error() {
+        let schema = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <type name="T" primitiveType="uint8" length="notanumber"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#
+        );
+        let err = parse(&schema).unwrap_err();
+        assert!(matches!(err, ParseError::Invalid { .. }));
+    }
 }

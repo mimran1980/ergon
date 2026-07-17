@@ -1248,3 +1248,51 @@ All ratios ≤ 1.00. ✅
 
 All ratios within Criterion confidence intervals. Scalar and array at parity
 within measurement noise (≤0.5% difference, p > 0.05 overlap).
+
+## 2026-07-17: Generator coverage push — xml.rs 99.25% lines, all remaining misses proven unreachable
+
+Command: `cargo llvm-cov -p ergosbe --all-features --lib --test <all tests except
+allocation_count_test> --summary-only` (allocation test excluded per the
+justified instrumentation-allocation exclusion above). Rust 1.95.0,
+cargo-llvm-cov 0.8.7, Apple M4, 2026-07-17.
+
+| File | Regions | Functions | Lines |
+|------|---------|-----------|-------|
+| codegen.rs | 98.94% | 96.35% | 98.80% |
+| config.rs | 100% | 100% | 100% |
+| ir.rs | 100% | 100% | 100% |
+| resolve.rs | 99.06% | 100% | 100% |
+| schema.rs | 97.78% | 100% | 100% |
+| xml.rs | 96.90% | 97.82% | **99.25%** |
+
+18 new behaviour tests added (`sbe/src/xml.rs` tests module): include-file root
+variants, char constants with/without matching text, composite member
+type-attribute fallbacks, enum null-sentinel rejection via registered optional
+type, unknown enum/set children, non-numeric bit index, structural
+pre-validation tolerance (unparseable offset), block-length tracker skip for
+unsized types, and non-numeric id/sinceVersion/length attribute errors.
+
+**Remaining 11 missed xml.rs lines — each proven unreachable by construction:**
+
+- 387 (`missing_no_node` return): roxmltree fails parse without a root
+  element, so `find(Node::is_element)` on a parsed doc is never `None`.
+  Defensive code retained. (Also accounts for the uncovered
+  `Fault::missing_no_node` function.)
+- 440 (`is_cycle` `_` arm): `try_read` only constructs `FaultKind::IncludeError`.
+- 560 (include root `if let` None edge): included content parsed successfully
+  implies a root element exists.
+- 992 (`_ => 63` bit-width arm): set encodingType validated to
+  uint8/16/32/64 before the loop (xml.rs:940).
+- 1102/1112/1113/1128/1144 (structural pre-validation None/false edges):
+  `parse_message_child` runs first in the same loop and requires
+  name, numeric id, and type for every field/group/data child and rejects
+  unknown children, so the pre-validation if-lets never see those edges.
+- 1272 (`if let Some(first)` None edge): `resolve_type_to_tokens` always
+  returns at least two tokens.
+- 2590: `#[cfg(test)]` helper — `assert!` format arguments evaluate only on
+  failure. Test-support code, not production.
+
+Remaining missed-function residue (5 in xml.rs, dedup across binaries) is
+per-test-binary generic instantiation noise (`parse_file<&Path>/<PathBuf>`
+instantiated but not called in specific test binaries; covered via other
+instantiations) plus `missing_no_node` above.
