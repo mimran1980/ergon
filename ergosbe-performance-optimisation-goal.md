@@ -1420,3 +1420,54 @@ Residue justification:
   forced to produce, plus struct-literal attribution splits.
 - `decimal.rs` residue (3 lines): `scale > 127` guards that rust_decimal
   (max scale 28) can never trigger, and one lazily-evaluated assert message.
+
+## 2026-07-17: fresh full 5-run matrix — two encode/decode batch scenarios FAIL the ≤ 1.00 gate
+
+A complete fresh 5-run `perf_parity_bench` sweep (Apple M4, macOS 26.5.2,
+rustc 1.95.0, bench profile) **supersedes the earlier "all ratios ≤ 1.00"
+conclusion**: it holds for seven of nine maintained Aeron comparisons but is
+**falsified for two**.
+
+### Medians of the five point estimates
+
+| Scenario | ErgoSBE | Aeron | Ratio | Gate |
+|----------|---------|-------|-------|------|
+| decode/entry_point wrap | 943.17 ps | 1.0834 ns | 0.871 | ✅ |
+| decode/entry_point try_from | 1.0608 ns | 1.0834 ns | 0.979 | ✅ |
+| decode/scalar | 435.19 ps | 435.69 ps | 0.9989 | ✅ |
+| decode/array | 332.35 ps | 332.81 ps | 0.9986 | ✅ |
+| decode/composite (7-run re-measure) | 312.26 ps | 312.66 ps | 0.9987 | ✅ |
+| throughput/batch_10k decode | 8.1619 µs | 8.3294 µs | 0.980 | ✅ |
+| encode/scalar | 8.4773 ns | 10.024 ns | 0.846 | ✅ |
+| **encode/throughput_10k** | **5.8761 µs** | **5.1194 µs** | **1.148** | ❌ |
+| **decode/full_message** | **12.754 ns** | **11.078 ns** | **1.151** | ❌ |
+
+### encode/throughput_10k investigation (bisect + assembly)
+
+- Generated fix landed: `wrap_and_apply_header` now constructs the encoder
+  directly instead of delegating to `wrap` (one bounds check, not two);
+  golden file regenerated. Improvement: 5.88 → ~5.66 µs. Still > Aeron.
+- Assembly (`--emit asm`, aarch64): the ErgoSBE and Aeron inner loops issue
+  **identical stores** (`stp` header+serial pair, `strh` model). The entire
+  remaining gap is loop form: LLVM lowers the Aeron loop to 6-instruction
+  pointer form (bounds check hoisted into the trip count) but keeps the
+  ErgoSBE loop in 9–10-instruction index form with a per-iteration check.
+- Variant matrix (all ~5.53–5.72 µs vs Aeron 4.95–5.03 µs): index slicing,
+  `chunks_exact_mut`, `as_chunks_mut::<64>` const-length frames, `get_mut` +
+  let-else (panic-free), separate counter instead of `enumerate`,
+  `unwrap_unchecked` (diagnosis only), full-buffer offset form (6.64 µs;
+  Aeron's offset form is *worse* at 8.79 µs), and `#[inline(always)]` on
+  `wrap_and_apply_header` (no effect — reverted, not justified).
+- Conclusion: per-message codec work is at instruction parity; the residual
+  ~10% is LLVM loop-form selection sensitive to the encoder's
+  reslice-and-carry shape. Candidate structural fix (untried, sweeping):
+  store the original buffer + `message_start = pos` instead of reslicing,
+  making store addresses strength-reducible loop pointers — touches every
+  generated offset expression and needs its own verification cycle.
+
+### Status
+
+`encode/throughput_10k` (1.148) and `decode/full_message` (1.151) are
+**unfinished** under the ≤ 1.00 gate. The final-checklist benchmark box is
+re-opened accordingly. All other maintained scenarios pass with fresh
+evidence.

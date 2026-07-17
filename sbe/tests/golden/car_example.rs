@@ -2841,7 +2841,11 @@ impl<'a> CarEncoder<'a> {
             });
         }
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
-        Self::wrap(buf, pos)
+        Ok(Self {
+            buf: &mut buf[pos..],
+            message_start: 0,
+            pos: needed,
+        })
     }
     #[must_use]
     #[inline]

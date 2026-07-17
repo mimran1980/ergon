@@ -92,6 +92,18 @@ Commits `94f62da..1791972` on `first_cut`. Fresh evidence this session:
   test-unit`/`test-ipc`/`test-clickhouse-live` recipes with preflight;
   doc provenance covered by `schema_docs_provenance_test` (green).
 
+## Evidence checkpoint: 2026-07-17 (third pass — benchmark gate re-opened)
+
+A fresh full 5-run sweep falsified the inherited "all ratios ≤ 1.00"
+conclusion for two scenarios: `encode/throughput_10k` (median ratio 1.148)
+and `decode/full_message` (1.151); seven of nine Aeron comparisons pass with
+fresh evidence (see the 2026-07-17 matrix in
+ergosbe-performance-optimisation-goal.md, including the assembly-level
+investigation: store instructions are identical; the residual gap is LLVM
+loop-form selection). One generated-code improvement landed
+(`wrap_and_apply_header` single bounds check, 5.88 → 5.66 µs). The
+benchmark checklist box stays open until both medians are ≤ 1.00.
+
 ## Evidence checkpoint: 2026-07-17 (second pass)
 
 - Task 2: group-entry decimal converters landed (generic + `*_wire` on entry
@@ -645,7 +657,7 @@ Do not mark this plan complete until every item below has fresh evidence:
       ClickHouse.
 - [x] Changed handwritten production code reports 100% line, function, region,
       and branch coverage.
-- [x] Every maintained benchmark has five runs, recorded confidence intervals,
+- [ ] Every maintained benchmark has five runs, recorded confidence intervals,
       median ErgoSBE/Aeron `<= 1.00`, and median fallible/manual `<= 1.00`.
 - [x] `ergosbe-performance-optimisation-goal.md` contains the dated evidence and
       no universal claim broader than the measured matrix.
