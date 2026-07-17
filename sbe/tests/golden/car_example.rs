@@ -1284,7 +1284,6 @@ impl<'a> FuelFiguresDecoder<'a> {
     pub const fn remaining(&self) -> usize {
         self.count
     }
-    #[inline]
     /// Dimension wrap (trusted position): the caller has
     /// proven `pos` is within a validated extent.
     #[inline]
@@ -1311,6 +1310,7 @@ impl<'a> FuelFiguresDecoder<'a> {
             parent_block_length,
         }
     }
+    #[inline]
     pub fn rewind(&mut self) -> &mut Self {
         self.pos = self.start;
         self.count = self.total;
@@ -1715,7 +1715,6 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     pub const fn remaining(&self) -> usize {
         self.count
     }
-    #[inline]
     /// Dimension wrap (trusted position): the caller has
     /// proven `pos` is within a validated extent.
     #[inline]
@@ -1742,6 +1741,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
             parent_block_length,
         }
     }
+    #[inline]
     pub fn rewind(&mut self) -> &mut Self {
         self.pos = self.start;
         self.count = self.total;
@@ -2029,7 +2029,6 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     pub const fn remaining(&self) -> usize {
         self.count
     }
-    #[inline]
     /// Dimension wrap (trusted position): the caller has
     /// proven `pos` is within a validated extent.
     #[inline]
@@ -2056,6 +2055,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
             parent_block_length,
         }
     }
+    #[inline]
     pub fn rewind(&mut self) -> &mut Self {
         self.pos = self.start;
         self.count = self.total;

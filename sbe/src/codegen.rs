@@ -3795,7 +3795,6 @@ fn generate_group_decoder(
                 self.count
             }
 
-            #[inline]
             /// Dimension wrap (trusted position): the caller has
             /// proven `pos` is within a validated extent.
             #[inline]
@@ -3814,6 +3813,7 @@ fn generate_group_decoder(
                 }
             }
 
+            #[inline]
             pub fn rewind(&mut self) -> &mut Self {
                 self.pos = self.start;
                 self.count = self.total;
