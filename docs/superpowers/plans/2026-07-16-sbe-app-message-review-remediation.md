@@ -225,7 +225,7 @@ pub fn price_wire(&mut self, value: Decimal) -> &mut Self;
       use `try_generate` and report the schema path in failures.
 - [x] Emit the trait and methods with `quote`; format with `prettyplease`.
       Generated code must never mention `rust_decimal`.
-- [ ] In a temporary crate, implement the generated trait for
+- [x] In a temporary crate, implement the generated trait for
       `rust_decimal::Decimal` and for an independent `ExactDecimal` adapter.
       Test positive/negative values and exponents `0`, `-8`, `-15`, `-18`,
       overflow, and precision-loss rejection.
@@ -338,7 +338,7 @@ Commit: `feat(sbe): complete manual and fallible stage interfaces`
 - [x] Replace split/format/`unwrap_or(0)` parsing with
       `rust_decimal::Decimal::from_str_exact` and structured errors. Invalid or
       out-of-range Bitget values must be counted/rejected, never changed to zero.
-- [ ] Test mixed exponents including baby-token values with 15 decimal places,
+- [x] Test mixed exponents including baby-token values with 15 decimal places,
       negative values, zero, i64 boundaries, malformed text, and exact
       round-trip through generated generic methods.
 - [x] Test exact `Decimal(38,18)` rescaling. Reject overflow and every non-zero
