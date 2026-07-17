@@ -1551,3 +1551,18 @@ evidence and had no effect (reverted). Next session: diff the composed
 function's LLVM IR / machine code against the sum of segments to find what
 spills or fails to inline only in composition; the same investigation likely
 resolves encode/throughput_10k's loop-form question.
+
+### 2026-07-17: sentinel-cache probe (reverted)
+
+Shrinking the entry cache from `Cell<Option<usize>>` (16 B) to a 0-sentinel
+`Cell<usize>` (8 B) to reduce entry spill pressure REGRESSED
+decode/full_message to 12.32 ns (vs 11.98 ns) and was reverted; the
+Option-based cache stands. This further supports the composition/regalloc
+diagnosis being about the composed function, not entry size alone.
+
+**Open-state summary for the ≤ 1.00 gate (2026-07-17 end of session):**
+encode/throughput_10k median ratio **1.135**, decode/full_message **1.097** —
+both improved this session (from 1.148 / 1.151), both above the gate, both
+reduced to a single compiler-level question with recorded assembly and
+segment-bisect evidence. Everything else in the remediation plan carries
+fresh passing evidence.
