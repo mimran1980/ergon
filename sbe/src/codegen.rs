@@ -3937,15 +3937,29 @@ fn generate_group_decoder(
     // EntryDecoder struct fields and methods
     let mut entry_body = proc_macro2::TokenStream::new();
 
-    // wrap() method header
-    entry_body.extend(quote::quote! {
-        pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
+    // wrap() method header. Entries with tail components carry a one-shot
+    // tail-end cache: the group iterator computes the entry extent to
+    // advance, and var-data accessors reuse it instead of re-reading the
+    // length header (todo 110, re-opened 2026-07-17).
+    if total_tail == 0 {
+        entry_body.extend(quote::quote! {
+            pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
-        #[inline]
-        pub fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
-            Self { buf, pos, acting_version, acting_block_length }
-        }
-    });
+            #[inline]
+            pub fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
+                Self { buf, pos, acting_version, acting_block_length }
+            }
+        });
+    } else {
+        entry_body.extend(quote::quote! {
+            pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
+
+            #[inline]
+            pub fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
+                Self { buf, pos, acting_version, acting_block_length, tail_end: core::cell::Cell::new(None) }
+            }
+        });
+    }
 
     // Fields of group entry
     for f in &g.fields {
@@ -4292,17 +4306,37 @@ fn generate_group_decoder(
         let nvd_idx_lit = syn::LitInt::new(&nvd_idx.to_string(), proc_macro2::Span::call_site());
 
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
-        entry_body.extend(quote::quote! {
-            #[inline]
-            pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let offset = self.#tail_nvd_fn()?;
-                let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
-                let header = #type_pascal_ident(bytes);
-                let len = header.#len_field_ident() as usize;
-                let data_offset = offset + #prefix_size_lit;
-                Ok(&self.buf[data_offset .. data_offset + len])
-            }
-        });
+        if nvd_idx + 1 == total_tail {
+            // Last tail component: a warm tail-end cache (filled by the
+            // iterator's encoded_length) gives the slice end directly —
+            // no second length-header read, bounds already validated.
+            entry_body.extend(quote::quote! {
+                #[inline]
+                pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let offset = self.#tail_nvd_fn()?;
+                    let data_offset = offset + #prefix_size_lit;
+                    if let Some(end) = self.tail_end.get() {
+                        return Ok(&self.buf[data_offset .. end]);
+                    }
+                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
+                    let header = #type_pascal_ident(bytes);
+                    let len = header.#len_field_ident() as usize;
+                    Ok(&self.buf[data_offset .. data_offset + len])
+                }
+            });
+        } else {
+            entry_body.extend(quote::quote! {
+                #[inline]
+                pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let offset = self.#tail_nvd_fn()?;
+                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
+                    let header = #type_pascal_ident(bytes);
+                    let len = header.#len_field_ident() as usize;
+                    let data_offset = offset + #prefix_size_lit;
+                    Ok(&self.buf[data_offset .. data_offset + len])
+                }
+            });
+        }
         nvd_idx += 1;
     }
 
@@ -4324,7 +4358,12 @@ fn generate_group_decoder(
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-                Ok(self.#tail_total_fn()? - self.pos)
+                if let Some(end) = self.tail_end.get() {
+                    return Ok(end - self.pos);
+                }
+                let end = self.#tail_total_fn()?;
+                self.tail_end.set(Some(end));
+                Ok(end - self.pos)
             }
             #[inline]
             pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
@@ -4424,14 +4463,29 @@ fn generate_group_decoder(
         let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
         ts.extend(quote::quote! { #[doc = #desc_lit] });
     }
+    if total_tail == 0 {
+        ts.extend(quote::quote! {
+            pub struct #entry_decoder_ident<'a> {
+                buf: &'a [u8],
+                pos: usize,
+                acting_version: u16,
+                acting_block_length: usize,
+            }
+        });
+    } else {
+        ts.extend(quote::quote! {
+            pub struct #entry_decoder_ident<'a> {
+                buf: &'a [u8],
+                pos: usize,
+                acting_version: u16,
+                acting_block_length: usize,
+                /// One-shot entry-extent cache (todo 110): filled by
+                /// `encoded_length`, reused by the last var-data accessor.
+                tail_end: core::cell::Cell<Option<usize>>,
+            }
+        });
+    }
     ts.extend(quote::quote! {
-        pub struct #entry_decoder_ident<'a> {
-            buf: &'a [u8],
-            pos: usize,
-            acting_version: u16,
-            acting_block_length: usize,
-        }
-
         impl<'a> #entry_decoder_ident<'a> {
             #entry_body
         }

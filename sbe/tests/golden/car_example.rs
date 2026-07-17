@@ -1386,6 +1386,9 @@ pub struct FuelFiguresEntryDecoder<'a> {
     pos: usize,
     acting_version: u16,
     acting_block_length: usize,
+    /// One-shot entry-extent cache (todo 110): filled by
+    /// `encoded_length`, reused by the last var-data accessor.
+    tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
@@ -1401,6 +1404,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             pos,
             acting_version,
             acting_block_length,
+            tail_end: core::cell::Cell::new(None),
         }
     }
     #[inline]
@@ -1448,15 +1452,23 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
+        let data_offset = offset + 4;
+        if let Some(end) = self.tail_end.get() {
+            return Ok(&self.buf[data_offset..end]);
+        }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
         let len = header.length() as usize;
-        let data_offset = offset + 4;
         Ok(&self.buf[data_offset..data_offset + len])
     }
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-        Ok(self.tail_offset_1()? - self.pos)
+        if let Some(end) = self.tail_end.get() {
+            return Ok(end - self.pos);
+        }
+        let end = self.tail_offset_1()?;
+        self.tail_end.set(Some(end));
+        Ok(end - self.pos)
     }
     #[inline]
     pub fn skip(
@@ -1779,6 +1791,9 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     pos: usize,
     acting_version: u16,
     acting_block_length: usize,
+    /// One-shot entry-extent cache (todo 110): filled by
+    /// `encoded_length`, reused by the last var-data accessor.
+    tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
@@ -1794,6 +1809,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             pos,
             acting_version,
             acting_block_length,
+            tail_end: core::cell::Cell::new(None),
         }
     }
     #[inline]
@@ -1848,7 +1864,12 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     }
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-        Ok(self.tail_offset_1()? - self.pos)
+        if let Some(end) = self.tail_end.get() {
+            return Ok(end - self.pos);
+        }
+        let end = self.tail_offset_1()?;
+        self.tail_end.set(Some(end));
+        Ok(end - self.pos)
     }
     #[inline]
     pub fn skip(
