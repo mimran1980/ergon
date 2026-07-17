@@ -92,12 +92,36 @@ Commits `94f62da..1791972` on `first_cut`. Fresh evidence this session:
   test-unit`/`test-ipc`/`test-clickhouse-live` recipes with preflight;
   doc provenance covered by `schema_docs_provenance_test` (green).
 
-Open items: Task 2 group-entry converter methods and the independent
-`ExactDecimal` temp-crate adapter matrix; Task 5 mixed-exponent fixture
-matrix (15-dp baby tokens, i64 boundaries) at the sample level; Task 6
-acting-version compatibility test for V2; Task 12 in full (fresh 5-run
-matrix — decode/scalar 1.005 and decode/array 1.003 medians must be
-re-measured to <= 1.00 — plus persist/sample coverage); final checklist.
+## Evidence checkpoint: 2026-07-17 (second pass)
+
+- Task 2: group-entry decimal converters landed (generic + `*_wire` on entry
+  stages, byte-identity + independent `Exact18` adapter matrix over
+  exponents 0/-8/-15/-18 with overflow and precision-loss rejection).
+- Task 5: sample `parse_decimal_exact` matrix (15-dp baby tokens, i64
+  boundaries, malformed rejection) and rust_decimal generic round trips with
+  byte equivalence (`decimal_adapter_test.rs`).
+- Task 6: V2 acting-version decode proof; `DynamicSchemaV2` emission;
+  disabled persist tests re-enabled and ported to the consuming API
+  (`sbe_roundtrip.rs`, `integration.rs` — 7 live tests green against
+  external Docker ClickHouse — and the `consumer.rs`/`dynamic.rs` in-file
+  modules formerly behind `#[cfg(any())]`).
+- Task 12: fresh multi-run medians — decode/scalar 0.998 (7 runs),
+  decode/array 0.9993 (5 runs); every maintained median ErgoSBE/Aeron and
+  fallible/manual ratio <= 1.00. Final gate rerun 2026-07-17: hygiene, fmt,
+  workspace clippy `-D warnings`, 29 workspace + 13 sample test binaries
+  green (`--test-threads=1`), `just test-clickhouse-live` green.
+- Coverage: sbe generator codegen 99.21% / xml 99.25% lines (remaining
+  misses individually proven unreachable), resolve/schema/config/ir 100%;
+  persist consumer 97.89% / dynamic 96.41% lines. The strict 100%
+  line/function/region/branch reading is not met by tooling-attributable
+  residue (llvm-cov `quote!` attribution, per-binary generic instantiation
+  noise, proven-unreachable defensive edges, and branch coverage requiring
+  nightly `-Z coverage-options=branch`); each category is documented with
+  per-line justification in `ergosbe-performance-optimisation-goal.md`.
+
+Remaining honest gaps: the coverage gate above (documented residue rather
+than untested behaviour) and `sink.rs` (65% — largely pre-baseline code
+outside this remediation's changed set).
 
 ## Global constraints
 
@@ -577,11 +601,11 @@ Commit: `test(samples): prove the real pipeline end to end`
       Add behaviour tests until line, function, region, and branch coverage are
       each 100%. Generated templates additionally require source-shape,
       compile-fail, runtime, allocation, and wire-parity proofs.
-- [ ] Maintain comparable manual, fallible, and Aeron cases for raw L2/Trade,
+- [x] Maintain comparable manual, fallible, and Aeron cases for raw L2/Trade,
       AppMessage envelope encode/decode, nested enum dispatch, early skip,
       rewind, nested tails, raw Decimal, converted Decimal, and safe/trusted
       input modes.
-- [ ] Include zero, one, typical, large, and asymmetric bids/asks. Aeron must do
+- [x] Include zero, one, typical, large, and asymmetric bids/asks. Aeron must do
       the same envelope and Decimal conversion work; compare like with like.
 - [x] Run five warmed comparable runs for each case. Record every Criterion
       confidence interval plus hardware, OS, Rust/Java versions, profile,
@@ -590,7 +614,7 @@ Commit: `test(samples): prove the real pipeline end to end`
 - [x] A case is unfinished when either median ratio is greater than `1.00`, even
       if close or within ordinary noise. Optimise one failed case at a time;
       retain `#[inline(always)]` only with assembly and benchmark evidence.
-- [ ] Re-run official wire parity, allocation, formatting, Clippy, workspace,
+- [x] Re-run official wire parity, allocation, formatting, Clippy, workspace,
       sample IPC, and live ClickHouse gates after the final optimisation.
 
 Commit: `perf: prove AppMessage Aeron parity`
@@ -599,21 +623,21 @@ Commit: `perf: prove AppMessage Aeron parity`
 
 Do not mark this plan complete until every item below has fresh evidence:
 
-- [ ] Clean hygiene check: no tracked build/generated artifacts.
-- [ ] Formatting, Clippy, workspace all-features, sample, IPC, and live
+- [x] Clean hygiene check: no tracked build/generated artifacts.
+- [x] Formatting, Clippy, workspace all-features, sample, IPC, and live
       ClickHouse suites pass.
-- [ ] All compile-fail ordering, consumption, and incomplete-byte-view proofs
+- [x] All compile-fail ordering, consumption, and incomplete-byte-view proofs
       pass.
-- [ ] Official wire parity and acting-version/block-length tests pass.
-- [ ] Generated hot paths and real claim encode/commit paths allocate zero.
-- [ ] Exactly three approved long-lived application threads and only streams
+- [x] Official wire parity and acting-version/block-length tests pass.
+- [x] Generated hot paths and real claim encode/commit paths allocate zero.
+- [x] Exactly three approved long-lived application threads and only streams
       1001/1002 are used.
-- [ ] Typed L2, dynamic L2, and Trade rows are queried back exactly from
+- [x] Typed L2, dynamic L2, and Trade rows are queried back exactly from
       ClickHouse.
 - [ ] Changed handwritten production code reports 100% line, function, region,
       and branch coverage.
-- [ ] Every maintained benchmark has five runs, recorded confidence intervals,
+- [x] Every maintained benchmark has five runs, recorded confidence intervals,
       median ErgoSBE/Aeron `<= 1.00`, and median fallible/manual `<= 1.00`.
-- [ ] `ergosbe-performance-optimisation-goal.md` contains the dated evidence and
+- [x] `ergosbe-performance-optimisation-goal.md` contains the dated evidence and
       no universal claim broader than the measured matrix.
-- [ ] `git diff` is reviewed in full and unrelated user changes remain intact.
+- [x] `git diff` is reviewed in full and unrelated user changes remain intact.
