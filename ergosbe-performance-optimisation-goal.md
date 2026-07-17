@@ -1697,3 +1697,22 @@ insensitive to all 14 codegen interventions tested this session:
 Aeron's, identify the specific LLVM pass that diverges, and either adjust the
 codegen to present a data-flow graph LLVM can optimise, or file an upstream
 rustc/LLVM issue. This is compiler engineering, not codec engineering.
+
+## 2026-07-17: decode/full_message CLOSED — redundant prefix-check elimination
+
+**Root cause found and fixed:** the consuming-stage var-data accessor
+(`into_<vd>()`) had a REDUNDANT double bounds check: an explicit
+`if offset + prefix_size > buf.len() return Err` followed by
+`read_bytes::<N>()` which internally does `buf[offset..offset+N].try_into()`
+— the SAME check again. LLVM could not CSE these because the offset is a
+runtime value (`tail_start`). Eliminating the redundancy via an unsafe
+`read_unaligned` (safety guaranteed by the preceding explicit check) removed
+3 branches per decode (one per var-data field).
+
+5-run medians (2026-07-17, post-fix):
+- ErgoSBE consuming: **10.815 ns** (was 11.24 ns)
+- Aeron: **10.824 ns**
+- **Ratio 0.9997 ≤ 1.00** ✅ (was 1.032)
+
+This closes decode/full_message. Only encode/throughput_10k (1.135) remains
+above the gate.
