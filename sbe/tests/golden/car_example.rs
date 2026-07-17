@@ -1285,6 +1285,32 @@ impl<'a> FuelFiguresDecoder<'a> {
         self.count
     }
     #[inline]
+    /// Dimension wrap (trusted position): the caller has
+    /// proven `pos` is within a validated extent.
+    #[inline]
+    pub fn wrap_trusted(
+        buf: &'a [u8],
+        pos: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
+    ) -> Self {
+        let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
+        let header = GroupSizeEncoding(bytes);
+        let count = header.num_in_group() as usize;
+        let block_length = header.block_length() as usize;
+        Self {
+            buf,
+            pos: pos + 4,
+            count,
+            start: pos + 4,
+            total: count,
+            acting_version,
+            acting_block_length: block_length,
+            parent_pos,
+            parent_block_length,
+        }
+    }
     pub fn rewind(&mut self) -> &mut Self {
         self.pos = self.start;
         self.count = self.total;
@@ -1690,6 +1716,32 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         self.count
     }
     #[inline]
+    /// Dimension wrap (trusted position): the caller has
+    /// proven `pos` is within a validated extent.
+    #[inline]
+    pub fn wrap_trusted(
+        buf: &'a [u8],
+        pos: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
+    ) -> Self {
+        let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
+        let header = GroupSizeEncoding(bytes);
+        let count = header.num_in_group() as usize;
+        let block_length = header.block_length() as usize;
+        Self {
+            buf,
+            pos: pos + 4,
+            count,
+            start: pos + 4,
+            total: count,
+            acting_version,
+            acting_block_length: block_length,
+            parent_pos,
+            parent_block_length,
+        }
+    }
     pub fn rewind(&mut self) -> &mut Self {
         self.pos = self.start;
         self.count = self.total;
@@ -1856,6 +1908,17 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         &self,
     ) -> Result<PerformanceFiguresAccelerationDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
+        if self.tail_end.get().is_some() {
+            return Ok(
+                PerformanceFiguresAccelerationDecoder::wrap_trusted(
+                    self.buf,
+                    offset,
+                    self.acting_version,
+                    0,
+                    0,
+                ),
+            );
+        }
         PerformanceFiguresAccelerationDecoder::wrap(
             self.buf,
             offset,
@@ -1967,6 +2030,32 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         self.count
     }
     #[inline]
+    /// Dimension wrap (trusted position): the caller has
+    /// proven `pos` is within a validated extent.
+    #[inline]
+    pub fn wrap_trusted(
+        buf: &'a [u8],
+        pos: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
+    ) -> Self {
+        let bytes: [u8; 4] = read_bytes::<4>(buf, pos);
+        let header = GroupSizeEncoding(bytes);
+        let count = header.num_in_group() as usize;
+        let block_length = header.block_length() as usize;
+        Self {
+            buf,
+            pos: pos + 4,
+            count,
+            start: pos + 4,
+            total: count,
+            acting_version,
+            acting_block_length: block_length,
+            parent_pos,
+            parent_block_length,
+        }
+    }
     pub fn rewind(&mut self) -> &mut Self {
         self.pos = self.start;
         self.count = self.total;

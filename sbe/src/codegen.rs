@@ -3796,6 +3796,24 @@ fn generate_group_decoder(
             }
 
             #[inline]
+            /// Dimension wrap (trusted position): the caller has
+            /// proven `pos` is within a validated extent.
+            #[inline]
+            pub fn wrap_trusted(
+                buf: &'a [u8], pos: usize, acting_version: u16,
+                parent_pos: usize, parent_block_length: usize,
+            ) -> Self {
+                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(buf, pos);
+                let header = #dim_name_ident(bytes);
+                let count = header.#count_field_ident() as usize;
+                let block_length = header.#bl_field_ident() as usize;
+                Self {
+                    buf, pos: pos + #dim_size_lit, count, start: pos + #dim_size_lit,
+                    total: count, acting_version, acting_block_length: block_length,
+                    parent_pos, parent_block_length,
+                }
+            }
+
             pub fn rewind(&mut self) -> &mut Self {
                 self.pos = self.start;
                 self.count = self.total;
@@ -4287,6 +4305,11 @@ fn generate_group_decoder(
             #[inline]
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
                 let offset = self.#tail_ng_fn()?;
+                if self.tail_end.get().is_some() {
+                    return Ok(#ng_decoder_ident::wrap_trusted(
+                        self.buf, offset, self.acting_version, 0, 0,
+                    ));
+                }
                 #ng_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }
         });
