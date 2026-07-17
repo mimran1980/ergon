@@ -1514,3 +1514,20 @@ tail components (message-level too), let `usage_description()` derive its
 slice from the cached end, and re-run the 5-run pair. Alternative if the
 cache field bloats hot structs: have the iterator hand the entry its
 precomputed end.
+
+### 2026-07-17: post-fix 5-run refresh of the two open scenarios
+
+After the single-bounds-check wrap, the DSE-proof harness, and the entry
+tail-end cache (todo 110 implemented for group entries; golden regenerated;
+wire-parity/comprehensive/allocation/sample suites all green):
+
+| Scenario | ErgoSBE median | Aeron median | Ratio | Trend |
+|----------|---------------|--------------|-------|-------|
+| encode/throughput_10k | 5.7766 µs | 5.0894 µs | **1.135** | 1.148 → 1.135 |
+| decode/full_message | 11.975 ns | 10.916 ns | **1.097** | 1.151 → 1.097 |
+
+Both remain above the ≤ 1.00 gate. Remaining candidates: dedup of the
+nested-group dimension-header read between the outer entry's extent walk and
+the user's nested accessor (~one 4-byte read per perf entry), and the
+unresolved LLVM index-vs-pointer loop-form question documented above, which
+now accounts for the bulk of both residues (logical work is at parity).
