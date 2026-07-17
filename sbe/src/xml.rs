@@ -2073,13 +2073,20 @@ mod tests {
 
     #[test]
     fn parse_enum_null_sentinel_collision() {
+        // To trigger the null sentinel check, the enum's encodingType must
+        // reference a REGISTERED type (not a bare primitive), because the
+        // null_sentinel lookup goes through registry.encodings.
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
-<enum name="E" encodingType="uint8" nullValue="255"><validValue name="A">1</validValue><validValue name="Max">255</validValue></enum></types>
+<type name="enumBase" primitiveType="uint8" nullValue="255"/>
+<enum name="E" encodingType="enumBase"><validValue name="A">1</validValue><validValue name="Max">255</validValue></enum></types>
 <sbe:message name="M" id="1"><field name="e" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-        assert!(parse(xml).is_err());
+        assert!(
+            parse(xml).is_err(),
+            "validValue == null sentinel must error"
+        );
     }
 
     #[test]
@@ -2233,10 +2240,12 @@ mod tests {
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
 <types>
 <set name="S" encodingType="uint8"><choice name="BitZero">0</choice><choice name="BitMax">7</choice></set>
+<set name="S16" encodingType="uint16"><choice name="B">15</choice></set>
+<set name="S32" encodingType="uint32"><choice name="B">31</choice></set>
+<set name="S64" encodingType="uint64"><choice name="B">63</choice></set>
 </types>
 <message name="M" id="1"><field name="f" id="1" type="uint32"/></message>
 </sbe:messageSchema>"#;
-        // Exercise valid bit indices 0 and 7 for uint8
         let _ = parse(xml);
     }
 
@@ -2244,6 +2253,89 @@ mod tests {
     fn workspace_root_found() {
         let root = workspace_root();
         assert!(root.join("Cargo.toml").exists());
+    }
+
+    #[test]
+    fn parse_message_with_explicit_offsets_and_registered_types() {
+        // Triggers the offset tracking / compute_type_size path in parse_message
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="Point"><type name="x" primitiveType="int32"/><type name="y" primitiveType="int32"/></composite>
+</types>
+<sbe:message name="M" id="1">
+  <field name="p" id="1" type="Point" offset="0"/>
+  <field name="v" id="2" type="uint16" offset="8"/>
+</sbe:message>
+</sbe:messageSchema>"#;
+        let _ = parse(xml);
+    }
+
+    #[test]
+    fn parse_message_nullvalue_on_required_field() {
+        // Triggers the warning for nullValue on non-optional field
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+<sbe:message name="M" id="1"><field name="x" id="1" type="uint32" nullValue="0"/></sbe:message>
+</sbe:messageSchema>"#;
+        let _ = parse(xml);
+    }
+
+    #[test]
+    fn parse_char_constant_correct_length() {
+        // Triggers the char constant length check with correct length (length > 1)
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+<type name="code3" primitiveType="char" length="3" presence="constant">ABC</type></types>
+<sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+        let _ = parse(xml);
+    }
+
+    #[test]
+    fn parse_enum_with_description() {
+        // Triggers the enum description collection trailing brace
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+<enum name="Colour" encodingType="uint8" description="Colour enum">
+  <description>Colour description</description>
+  <validValue name="Red" description="Red">1</validValue>
+</enum></types>
+<sbe:message name="M" id="1"><field name="c" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+        let _ = parse(xml);
+    }
+
+    #[test]
+    fn parse_set_with_description() {
+        // Triggers the set description collection trailing brace
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+<set name="Flags" encodingType="uint8" description="Flag set">
+  <description>Flag description</description>
+  <choice name="A" description="First">0</choice>
+</set></types>
+<sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+        let _ = parse(xml);
+    }
+
+    #[test]
+    fn parse_composite_member_nonexistent_type() {
+        // Triggers the else branch at line 770 where resolve_type_to_tokens
+        // returns None for a type="X" that's not in the registry
+        let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+<composite name="C"><type name="f" type="NonExistent"/></composite></types>
+<sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+        let _ = parse(xml);
     }
 
     #[test]
