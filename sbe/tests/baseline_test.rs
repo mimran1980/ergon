@@ -2383,6 +2383,81 @@ fn decimal_converter_rejects_invalid_composite() {
     ));
 }
 
+/// Non-existent composite name is rejected with "not found in schema".
+#[test]
+fn decimal_converter_rejects_missing_composite() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="bad" id="99" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+</types>
+<sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config =
+        ergosbe::GenerationConfig::new("missing_dec").enable_decimal_converters("NonExistent");
+    let g = ergosbe::Generator::new(config);
+    let err = g.try_generate(&schema).unwrap_err();
+    assert!(matches!(
+        err,
+        ergosbe::GenerateError::InvalidDecimalComposite { .. }
+    ));
+}
+
+/// Manual group entry via start_entry produces identical bytes to closure API.
+#[test]
+fn manual_start_entry_matches_closure() {
+    let (_schema, src) = generate(&Paths::example_schema(), "start_entry_test");
+    compile_and_run(
+        "start_entry_test",
+        &src,
+        r#"
+        let mut buf_closure = vec![0u8; 512];
+        let mut buf_manual = vec![0u8; 512];
+
+        // Closure path
+        let mut car_c = CarEncoder::wrap_and_apply_header(&mut buf_closure, 0).unwrap();
+        car_c.serial_number(42); car_c.model_year(2020);
+        car_c.available(BooleanType::T); car_c.code(Model::A);
+        car_c.some_numbers([0u32;4]); car_c.vehicle_code([0u8;6]);
+        car_c.extras(OptionalExtras::default());
+        car_c.engine(Engine::new(1000, 4, [0,0,0]));
+        let car_c = car_c.fuel_figures(2, |g| {
+            g.add(|e| { e.speed(30).mpg(35.9); });
+            g.add(|e| { e.speed(55).mpg(23.7); });
+        }).unwrap();
+        let car_c = car_c.performance_figures(0, |_|{}).unwrap();
+        let car_c = car_c.manufacturer(b"").unwrap();
+        let car_c = car_c.model(b"").unwrap();
+        let closure_bytes = car_c.activation_code(b"").unwrap().as_bytes().to_vec();
+
+        // Manual path using start_entry
+        let mut car_m = CarEncoder::wrap_and_apply_header(&mut buf_manual, 0).unwrap();
+        car_m.serial_number(42); car_m.model_year(2020);
+        car_m.available(BooleanType::T); car_m.code(Model::A);
+        car_m.some_numbers([0u32;4]); car_m.vehicle_code([0u8;6]);
+        car_m.extras(OptionalExtras::default());
+        car_m.engine(Engine::new(1000, 4, [0,0,0]));
+        let car_m = car_m.fuel_figures(2, |g| {
+            // Manual entry creation
+            let mut e1 = g.start_entry().unwrap();
+            let _ = e1.speed(30).mpg(35.9);
+            drop(e1);
+            let mut e2 = g.start_entry().unwrap();
+            let _ = e2.speed(55).mpg(23.7);
+            drop(e2);
+        }).unwrap();
+        let car_m = car_m.performance_figures(0, |_|{}).unwrap();
+        let car_m = car_m.manufacturer(b"").unwrap();
+        let car_m = car_m.model(b"").unwrap();
+        let manual_bytes = car_m.activation_code(b"").unwrap().as_bytes().to_vec();
+
+        assert_eq!(closure_bytes, manual_bytes);
+    "#,
+    );
+}
+
 #[test]
 fn decimal_converter_composite_roundtrip() {
     let path = std::path::PathBuf::from(concat!(
