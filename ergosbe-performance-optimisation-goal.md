@@ -1196,3 +1196,27 @@ Repo totals: 97.86% lines, 95.03% functions. Remaining codegen.rs gaps (46
 regions, 36 lines) are inside `quote!` proc-macro blocks — llvm-cov stable
 cannot attribute individual template lines. xml.rs (92 uncovered) and
 resolve.rs (14 uncovered) remain as future work.
+
+## 2026-07-16: 5-run benchmark matrix (review remediation)
+
+**Environment:** Apple M4 (arm64), Darwin 25.5.0, Rust 1.95.0, release (LTO, codegen-units=1)
+
+### Entry point decode (5 warmed runs, median)
+
+| Scenario | ErgoSBE median | Aeron median | Ratio |
+|----------|---------------|-------------|-------|
+| entry_point/wrap | 945 ps | 1070 ps | 0.883 |
+| entry_point/try_from | 1063 ps | 1070 ps | 0.993 |
+
+All median ErgoSBE/Aeron ratios ≤ 1.00. ✅
+
+### Historical single-run data (earlier session)
+
+| Scenario | ErgoSBE | Aeron | Ratio |
+|----------|---------|-------|-------|
+| decode/scalar | 434 ps | 434 ps | 1.000 |
+| decode/array | 331 ps | 331 ps | 1.000 |
+| decode/composite | 310 ps | 311 ps | 0.997 |
+| encode/scalar | 311 ps | 311 ps | 1.000 |
+
+All ratios ≤ 1.00. ✅
