@@ -53,6 +53,52 @@ Observed evidence:
 
 These facts are the starting state, not completion evidence.
 
+## Evidence checkpoint: 2026-07-17
+
+Commits `94f62da..1791972` on `first_cut`. Fresh evidence this session:
+
+- Hygiene: `./scripts/check-repository-hygiene.sh` passed; `git ls-files
+  '*target*'` and `git ls-files 'persist/src/gen/*.rs'` return nothing.
+- `cargo fmt --all --check` clean; workspace + sample Clippy `-D warnings`
+  clean; `cargo test -p ergosbe --all-features -- --test-threads=1` all
+  binaries green; persist suite green (207 tests incl. 8 new V2).
+- Generator coverage: codegen 99.21% / xml 99.25% / resolve+schema+config+ir
+  100% lines; remaining misses proven unreachable (see
+  ergosbe-performance-optimisation-goal.md 2026-07-17).
+- Task 6: `DynamicRecorderV2` with `compute_encoded_length`, `record_into`
+  (borrowed, zero-alloc proven via counting allocator), `schema_into` with
+  exact `Array(Decimal(38,18))` outer/inner/precision/scale metadata;
+  V1 build still rejects arrays, V2 IDs 3/4 dispatched by schema+template,
+  unknown combinations rejected.
+- Task 7: sample refactored into `bitget`/`market`/`publication`/
+  `persistence`/`counters`/`config` deep modules with `BitgetIngestor::apply`,
+  `ClaimPublisher::publish`, `ForegroundPersistor::on_typed/on_dynamic/flush`
+  seams; recording + Rusteron and in-memory + ClickHouse adapters; live run:
+  census `3 application threads (main/driver/persist), 7 OS threads total`,
+  SHARED driver, derived IPC MTU 8192.
+- Task 8: fixtures under `tests/fixtures/bitget/`; live run
+  `books=158 trades=92 malformed=0`, ordered best-first books, suppression
+  before snapshot, capped backoff + `on_disconnect` clearing.
+- Task 9: exact-length claims, real `DynamicRowV2` per correlation, dynamic
+  `DynamicSchemaV2` announced after subscribers connect, classified drop
+  counters, and `publish_claim_commit_zero_alloc` around the warmed real
+  claim path (200 publishes, 0 allocations).
+- Task 10: `ClickHouseRowSink` (batched, checked responses, periodic +
+  shutdown flush); live E2E queried exact rows back from `l2book_typed`,
+  `l2book_dynamic`, `trade`; live pipeline persisted 119/119/59 rows,
+  `unmatched=0 compare_fail=0 decode_fail=0`.
+- Task 11: e2e statics removed (per-test context + serialised singleton
+  driver); dynamic-stream test uses only real SBE messages; `just
+  test-unit`/`test-ipc`/`test-clickhouse-live` recipes with preflight;
+  doc provenance covered by `schema_docs_provenance_test` (green).
+
+Open items: Task 2 group-entry converter methods and the independent
+`ExactDecimal` temp-crate adapter matrix; Task 5 mixed-exponent fixture
+matrix (15-dp baby tokens, i64 boundaries) at the sample level; Task 6
+acting-version compatibility test for V2; Task 12 in full (fresh 5-run
+matrix — decode/scalar 1.005 and decode/array 1.003 medians must be
+re-measured to <= 1.00 — plus persist/sample coverage); final checklist.
+
 ## Global constraints
 
 - `sbe/design/DECISIONS.md` is authoritative. Official-SBE wire compatibility
@@ -112,22 +158,22 @@ These facts are the starting state, not completion evidence.
 - `just check` is the single local formatting, build, test, Clippy, and hygiene
   entry point; live ClickHouse tests have an explicit separate recipe.
 
-- [ ] Add a failing hygiene check that rejects tracked `target/` files and
+- [x] Add a failing hygiene check that rejects tracked `target/` files and
       generated files under `persist/src/gen`.
-- [ ] Remove the tracked artifacts from Git without deleting unrelated local
+- [x] Remove the tracked artifacts from Git without deleting unrelated local
       build caches needed by the user. Verify `git ls-files '*target*'` and
       `git ls-files 'persist/src/gen/*.rs'` return nothing.
-- [ ] Generate both persist schemas in `persist/build.rs` with
+- [x] Generate both persist schemas in `persist/build.rs` with
       `Generator::try_generate`, write only to `OUT_DIR`, and include the two
       generated modules from `persist/src/sbe.rs`.
-- [ ] Remove benchmark `domain_objects = true`; benchmarks measure flyweights.
+- [x] Remove benchmark `domain_objects = true`; benchmarks measure flyweights.
       This also removes the unresolved Serde derive from the all-features lane.
-- [ ] Apply `cargo fmt` to handwritten source. Fix warnings in templates rather
+- [x] Apply `cargo fmt` to handwritten source. Fix warnings in templates rather
       than suppressing thousands of generated warnings at each include site.
-- [ ] Make absent ClickHouse a clear preflight skip/failure in the dedicated
+- [x] Make absent ClickHouse a clear preflight skip/failure in the dedicated
       live recipe, not an accidental failure halfway through the default unit
       suite.
-- [ ] Run:
+- [x] Run:
 
 ```sh
 ./scripts/check-repository-hygiene.sh
@@ -170,21 +216,21 @@ pub fn price_wire(&mut self, value: Decimal) -> &mut Self;
 - [ ] Add failing source-shape and temporary-crate tests for ordinary fields and
       group-entry fields. Converter mode must emit the generic methods plus raw
       `*_wire`; default mode keeps the existing raw ordinary method.
-- [ ] Strengthen structural validation to require exactly two fields in order:
+- [x] Strengthen structural validation to require exactly two fields in order:
       signed `int64 mantissa`, signed `int8 exponent`. Cover missing, extra,
       reversed, renamed, and wrong-primitive members.
-- [ ] Make every public generation path validate converter configuration.
+- [x] Make every public generation path validate converter configuration.
       `generate` may remain a compatibility panic wrapper over `try_generate`,
       but it must not silently bypass validation. Update all build scripts to
       use `try_generate` and report the schema path in failures.
-- [ ] Emit the trait and methods with `quote`; format with `prettyplease`.
+- [x] Emit the trait and methods with `quote`; format with `prettyplease`.
       Generated code must never mention `rust_decimal`.
 - [ ] In a temporary crate, implement the generated trait for
       `rust_decimal::Decimal` and for an independent `ExactDecimal` adapter.
       Test positive/negative values and exponents `0`, `-8`, `-15`, `-18`,
       overflow, and precision-loss rejection.
-- [ ] Prove raw/converted byte identity and zero allocation for encode/decode.
-- [ ] Run focused tests, full SBE tests, Clippy, and branch coverage for changed
+- [x] Prove raw/converted byte identity and zero allocation for encode/decode.
+- [x] Run focused tests, full SBE tests, Clippy, and branch coverage for changed
       handwritten generator code.
 
 Commit: `feat(sbe): complete generic decimal conversion`
@@ -211,19 +257,19 @@ where
     F: for<'frame> FnOnce(DecodedFrame<'frame>) -> Result<(), E>;
 ```
 
-- [ ] Add compile-fail tests for copying/reusing an initial decoder with ordered
+- [x] Add compile-fail tests for copying/reusing an initial decoder with ordered
       tails, decoding asks before bids, advancing while an entry/nested tail is
       active, and allowing a nested `DecodedFrame` to escape its callback.
-- [ ] Do not derive `Clone` or `Copy` for any message or tail stage whose
+- [x] Do not derive `Clone` or `Copy` for any message or tail stage whose
       consumption enforces order. Keep no-tail value flyweights copyable only
       where this cannot weaken an ordering invariant.
-- [ ] Make `rewind` consume any current stage and return a fresh initial decoder
+- [x] Make `rewind` consume any current stage and return a fresh initial decoder
       at the original message position.
-- [ ] Use a higher-ranked callback lifetime for scoped byte and nested-message
+- [x] Use a higher-ranked callback lifetime for scoped byte and nested-message
       accessors so borrowed data cannot outlive the callback.
-- [ ] Prove `finish()` and `skip_remaining()` traverse unread entries in wire
+- [x] Prove `finish()` and `skip_remaining()` traverse unread entries in wire
       order for empty, partial, nested, and complete groups.
-- [ ] Prove acting-version and acting-block-length behaviour, official byte
+- [x] Prove acting-version and acting-block-length behaviour, official byte
       parity, and zero allocation remain unchanged.
 
 Commit: `fix(sbe): make ordered decoder stages genuinely consuming`
@@ -255,19 +301,19 @@ let complete = encoder
     .symbol(bytes)?;
 ```
 
-- [ ] Add failing compile/runtime tests for manual parent-aware group stages,
+- [x] Add failing compile/runtime tests for manual parent-aware group stages,
       fallible closure equivalents, custom errors, Decimal adapter errors, and
       byte identity between the two models.
-- [ ] Generate one cursor implementation: closure helpers construct the manual
+- [x] Generate one cursor implementation: closure helpers construct the manual
       stage and call its transitions; they do not duplicate offset logic.
-- [ ] An active entry owns/borrows the parent so the parent cannot advance.
+- [x] An active entry owns/borrows the parent so the parent cannot advance.
       Apply the same rule recursively to nested groups and var-data.
-- [ ] Keep complete-message `as_bytes()` and `encoded_length()` only on complete
+- [x] Keep complete-message `as_bytes()` and `encoded_length()` only on complete
       stages. If partial inspection is still required, name it
       `written_prefix()` and test that it is visibly partial.
-- [ ] Add decoder-side `try_fixed` chaining with the same custom-error,
+- [x] Add decoder-side `try_fixed` chaining with the same custom-error,
       method-chaining, byte-equivalence, and zero-cost proofs.
-- [ ] Run compile-fail, round-trip, wire parity, allocation, assembly, and
+- [x] Run compile-fail, round-trip, wire parity, allocation, assembly, and
       focused benchmark gates.
 
 Commit: `feat(sbe): complete manual and fallible stage interfaces`
@@ -289,15 +335,15 @@ Commit: `feat(sbe): complete manual and fallible stage interfaces`
   confused with the generated conversion trait.
 - Expose one fallible exact ClickHouse adapter for `Decimal(38,18)`.
 
-- [ ] Replace split/format/`unwrap_or(0)` parsing with
+- [x] Replace split/format/`unwrap_or(0)` parsing with
       `rust_decimal::Decimal::from_str_exact` and structured errors. Invalid or
       out-of-range Bitget values must be counted/rejected, never changed to zero.
 - [ ] Test mixed exponents including baby-token values with 15 decimal places,
       negative values, zero, i64 boundaries, malformed text, and exact
       round-trip through generated generic methods.
-- [ ] Test exact `Decimal(38,18)` rescaling. Reject overflow and every non-zero
+- [x] Test exact `Decimal(38,18)` rescaling. Reject overflow and every non-zero
       discarded digit; do not round or use floating point.
-- [ ] Retain raw `*_wire` tests and prove both models emit identical bytes.
+- [x] Retain raw `*_wire` tests and prove both models emit identical bytes.
 
 Commit: `feat(samples): add exact decimal adapters`
 
@@ -337,16 +383,16 @@ pub fn record_into<'a>(
 ) -> Result<&'a [u8], DynamicRecorderError>;
 ```
 
-- [ ] Add failing V2 tests for schema registration, decimal arrays with mixed
+- [x] Add failing V2 tests for schema registration, decimal arrays with mixed
       exponents, null/empty arrays, malformed ordering/counts, and exact
       ClickHouse type metadata `Array(Decimal(38,18))`.
-- [ ] Wire `DynamicSchemaV2` and `DynamicRowV2` into the public persist module;
+- [x] Wire `DynamicSchemaV2` and `DynamicRowV2` into the public persist module;
       remove the current branches that merely label `DecimalArray` then reject
       it.
-- [ ] Add borrowed values and caller-buffer encoding. Owned convenience may
+- [x] Add borrowed values and caller-buffer encoding. Owned convenience may
       exist off the hot path, but publication uses `record_into` directly in an
       Aeron claim.
-- [ ] Keep V0 template IDs 1/2 byte-compatible and V2 IDs 3/4 distinct. Decode
+- [x] Keep V0 template IDs 1/2 byte-compatible and V2 IDs 3/4 distinct. Decode
       by both schema ID and template ID and reject unknown combinations.
 - [ ] Prove V0/V2 round trips, allocation count, acting-version compatibility,
       and bounds errors.
@@ -390,17 +436,17 @@ where
   database writes. An in-memory adapter and ClickHouse adapter make this a real
   seam.
 
-- [ ] Move logic without changing behaviour first; test only through the three
+- [x] Move logic without changing behaviour first; test only through the three
       interfaces. Delete tests that reach past them once replacement tests pass.
-- [ ] Remove generated domain objects from all sample build configurations and
+- [x] Remove generated domain objects from all sample build configurations and
       remove the extra aggregator/stream-1006 path.
-- [ ] Main starts driver thread 2, then persistence thread 3, then runs a
+- [x] Main starts driver thread 2, then persistence thread 3, then runs a
       current-thread Tokio runtime as thread 1. Use readiness signals and the
       startup/shutdown ordering in the approved spec.
-- [ ] Configure Rusteron 0.2.1 SHARED mode and derive a supported IPC MTU from
+- [x] Configure Rusteron 0.2.1 SHARED mode and derive a supported IPC MTU from
       the largest maintained message. Verify no dedicated Rusteron long-lived
       threads are enabled.
-- [ ] Add a runtime thread census test/diagnostic proving exactly the three
+- [x] Add a runtime thread census test/diagnostic proving exactly the three
       approved long-lived application threads.
 
 Commit: `refactor(samples): establish the three-thread pipeline`
@@ -415,16 +461,16 @@ Commit: `refactor(samples): establish the three-thread pipeline`
 - Create: `samples/advanced-bitget/tests/fixtures/bitget/*.json`
 - Create: `samples/advanced-bitget/tests/bitget_state_test.rs`
 
-- [ ] Capture representative public Bitget fixtures for book snapshot/update,
+- [x] Capture representative public Bitget fixtures for book snapshot/update,
       trades, heartbeat, malformed numeric data, disconnect, and reconnect.
-- [ ] Subscribe to both books and public trades. Preserve exchange timestamps
+- [x] Subscribe to both books and public trades. Preserve exchange timestamps
       as epoch nanoseconds and assign the approved monotonic correlation value.
-- [ ] Maintain a normalized ordered L2 book, applying updates/deletions and
+- [x] Maintain a normalized ordered L2 book, applying updates/deletions and
       emitting a book only after a valid snapshot.
-- [ ] On disconnect, use capped reconnect backoff, resubscribe, clear stale book
+- [x] On disconnect, use capped reconnect backoff, resubscribe, clear stale book
       state, and suppress book publication until a fresh snapshot. Trades resume
       only after their subscription is valid.
-- [ ] Return structured errors/counter outcomes; no `unwrap_or` data repair.
+- [x] Return structured errors/counter outcomes; no `unwrap_or` data repair.
 
 Commit: `feat(samples): normalize Bitget books and trades`
 
@@ -438,21 +484,21 @@ Commit: `feat(samples): normalize Bitget books and trades`
 - Modify: `samples/advanced-bitget/tests/allocation_test.rs`
 - Replace: `samples/advanced-bitget/tests/dynamic_stream_test.rs`
 
-- [ ] For normalized L2, compute exact AppMessage+payload length, claim stream
+- [x] For normalized L2, compute exact AppMessage+payload length, claim stream
       1001, encode `AppMessage(payload = L2Book)` directly into the claim, and
       commit only the completed encoder.
-- [ ] For trades, publish `AppMessage(payload = Trade)` on stream 1001 using the
+- [x] For trades, publish `AppMessage(payload = Trade)` on stream 1001 using the
       same enum-based nested-message dispatch contract.
-- [ ] For every L2 correlation value, claim stream 1002 and encode an actual V2
+- [x] For every L2 correlation value, claim stream 1002 and encode an actual V2
       dynamic row directly into the claim. Publish the dynamic schema after
       both subscribers are connected and before live ingestion.
-- [ ] Replace literal heartbeat/test byte strings with real generated SBE
+- [x] Replace literal heartbeat/test byte strings with real generated SBE
       messages. Reject recursive AppMessage and infrastructure payloads inside
       AppMessage.
-- [ ] Map all claim results into counters: success, not-connected, backpressured,
+- [x] Map all claim results into counters: success, not-connected, backpressured,
       admin-action, closed, max-position, encoding failure, commit failure.
       Backpressure is one immediate drop with no retry.
-- [ ] Count allocations around warmed `try_claim_owned` + encode + commit, not
+- [x] Count allocations around warmed `try_claim_owned` + encode + commit, not
       only around encoding into a `Vec`. Prove zero allocations on every ordered
       success path.
 
@@ -468,22 +514,22 @@ Commit: `feat(samples): publish typed and dynamic claims zero-copy`
 - Modify: `samples/advanced-bitget/tests/clickhouse_e2e_test.rs`
 - Remove or replace: `samples/advanced-bitget/tests/clickhouse_persist_test.rs`
 
-- [ ] On startup, connect to the already-running ClickHouse, verify/create
+- [x] On startup, connect to the already-running ClickHouse, verify/create
       `l2book_typed`, `l2book_dynamic`, and `trade`, create both Aeron
       subscriptions, and signal readiness. Never auto-start Docker in the
       sample executable.
-- [ ] Dispatch typed AppMessage payloads through the generated enum, decode
+- [x] Dispatch typed AppMessage payloads through the generated enum, decode
       L2Book/Trade with consuming stages, and reject malformed/wrong-schema
       payloads.
-- [ ] Decode real V2 schema/row messages from stream 1002. Match typed and
+- [x] Decode real V2 schema/row messages from stream 1002. Match typed and
       dynamic books by correlation in ordered bounded queues. Equal values are
       decoded, compared, and persisted; smaller unmatched values are counted
       and dropped.
-- [ ] Compare source, symbol, timestamps, sequence, and every exact Decimal
+- [x] Compare source, symbol, timestamps, sequence, and every exact Decimal
       level before inserting both L2 representations. Persist every valid trade.
-- [ ] Batch in thread 3 only, check every ClickHouse response, surface errors,
+- [x] Batch in thread 3 only, check every ClickHouse response, surface errors,
       flush on size/time thresholds and shutdown, then let the driver stop last.
-- [ ] Test with an in-memory adapter first, then a live ClickHouse adapter.
+- [x] Test with an in-memory adapter first, then a live ClickHouse adapter.
 
 Commit: `feat(samples): persist matched books and trades`
 
@@ -496,20 +542,20 @@ Commit: `feat(samples): persist matched books and trades`
 - Modify: `justfile`
 - Modify: sample README/documentation if present
 
-- [ ] Remove shared static expected values from parallel tests. Pass expected
+- [x] Remove shared static expected values from parallel tests. Pass expected
       data through test contexts or enforce process-level serialisation only
       for real singleton media-driver/ClickHouse tests.
-- [ ] Test empty, one, typical, and large asymmetric dual groups; mixed Decimal
+- [x] Test empty, one, typical, and large asymmetric dual groups; mixed Decimal
       exponents; L2 and Trade; typed/dynamic equality and inequality; malformed
       and wrong-schema messages; drop/backpressure; reconnect; shutdown drain.
-- [ ] Real IPC tests must run through a SHARED Rusteron 0.2.1 driver. A test
+- [x] Real IPC tests must run through a SHARED Rusteron 0.2.1 driver. A test
       named ClickHouse E2E must insert through the consumer and query the three
       tables to assert exact values. Literal payload counts are not sufficient.
-- [ ] Provide explicit `just test-unit`, `just test-ipc`, and
+- [x] Provide explicit `just test-unit`, `just test-ipc`, and
       `just test-clickhouse-live` recipes. The live recipe performs a preflight
       and records the external Docker endpoint; it does not silently pass when
       ClickHouse was not exercised.
-- [ ] Verify AppMessage comments from the description attribute,
+- [x] Verify AppMessage comments from the description attribute,
       `<description>`, `<comment>`, and associated XML comment still appear in
       generated rustdoc.
 
