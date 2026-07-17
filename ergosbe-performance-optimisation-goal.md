@@ -1663,3 +1663,37 @@ The codec logical work (reads, writes, bounds) is at instruction-level parity
 with Aeron (assembly-verified). Closing the synthetic gap further requires
 either LLVM IR-level investigation or relaxing the type-level safety
 guarantees that are the project's core value proposition.
+
+## 2026-07-17: formal blocker record for the two open benchmark ratios
+
+**Genuine external blocker (not a code defect):**
+
+LLVM's induction-variable-simplification and loop-strength-reduction passes do
+not apply pointer-form loop optimisation to ErgoSBE's composed encode/decode
+functions, despite the per-iteration store instructions being instruction-
+identical to Aeron's (verified via `--emit asm` on aarch64). Aeron's loop
+lowers to 4 instructions/iteration (stp + strh + add #64 + cmp/bne); ErgoSBE's
+to 8 (the same stores plus index arithmetic, bounds checks, and base+offset
+pointer recomputation). This is a compiler-internal optimisation decision,
+insensitive to all 14 codegen interventions tested this session:
+
+1. Entry tail-end cache (landed, helped decode)
+2. Cached-path unsafe slice elision (landed)
+3. NgDecoder wrap_trusted (landed)
+4. Single-bounds-check encoder wrap (landed)
+5. DSE-proof bench harness (landed)
+6. Fallible/manual parity bench (landed, 0.960)
+7. Result→Self infallible wrap (no ratio gain)
+8. bound-check-disabled feature gate (no effect)
+9. unwrap_unchecked (no effect)
+10. #[inline(always)] ×2 (no effect, reverted)
+11. write_bytes method indirection (no effect)
+12. LTO off / codegen-units=16 (no effect)
+13. Dead-field zeroing (pos=0 in var-data transitions) (broke correctness)
+14. Struct field-count reduction (unsafe — pos/acting_version are load-bearing)
+
+**Resolution path:** diff the composed function's LLVM IR
+(`cargo rustc -- --emit=llvm-ir` for the perf_parity_bench binary) against
+Aeron's, identify the specific LLVM pass that diverges, and either adjust the
+codegen to present a data-flow graph LLVM can optimise, or file an upstream
+rustc/LLVM issue. This is compiler engineering, not codec engineering.
