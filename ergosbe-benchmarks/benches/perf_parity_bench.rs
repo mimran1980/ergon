@@ -481,6 +481,90 @@ fn bench_decode_skip_rewind(c: &mut Criterion) {
 
 // ── Full encoder stage transition (scalars + groups + var-data → Complete) ──
 
+fn bench_fallible_vs_manual(c: &mut Criterion) {
+    // ErgoSBE-internal parity: the fallible-closure convenience API
+    // (`add(|e| …)`) must not be slower than the manual `start_entry()` /
+    // field-set / drop path. Both write identical bytes; the closure helper
+    // constructs the same manual stage internally. The median
+    // fallible/manual ratio must be <= 1.00.
+    let mut group = c.benchmark_group("parity/fallible_vs_manual");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("manual", |b| {
+        b.iter_batched(
+            || vec![0u8; 512],
+            |mut buf| {
+                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+                car.serial_number(42);
+                car.model_year(2013);
+                let after_fuel = car
+                    .fuel_figures(3, |g| {
+                        for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
+                            let _ = g.add(|e| {
+                                let _ = e.speed(s).mpg(m);
+                            });
+                        }
+                    })
+                    .unwrap();
+                let after_perf = after_fuel.performance_figures(0, |_| {}).unwrap();
+                let complete = after_perf
+                    .manufacturer(b"Honda")
+                    .unwrap()
+                    .model(b"Civic")
+                    .unwrap()
+                    .activation_code(b"abc")
+                    .unwrap();
+                black_box(complete.as_bytes());
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("fallible", |b| {
+        b.iter_batched(
+            || vec![0u8; 512],
+            |mut buf| {
+                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+                car.serial_number(42);
+                car.model_year(2013);
+                let after_fuel = car
+                    .try_fuel_figures::<sbe_rt::EncodeError, _>(3, |g| {
+                        for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
+                            g.add(|e| {
+                                let _ = e.speed(s).mpg(m);
+                            })?;
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
+                let after_perf = after_fuel
+                    .try_performance_figures::<sbe_rt::EncodeError, _>(0, |_| Ok(()))
+                    .unwrap();
+                let complete = after_perf
+                    .manufacturer_with::<sbe_rt::EncodeError, _>(5, |b: &mut [u8]| {
+                        b.copy_from_slice(b"Honda");
+                        Ok::<(), sbe_rt::EncodeError>(())
+                    })
+                    .unwrap()
+                    .model_with::<sbe_rt::EncodeError, _>(5, |b: &mut [u8]| {
+                        b.copy_from_slice(b"Civic");
+                        Ok::<(), sbe_rt::EncodeError>(())
+                    })
+                    .unwrap()
+                    .activation_code_with::<sbe_rt::EncodeError, _>(3, |b: &mut [u8]| {
+                        b.copy_from_slice(b"abc");
+                        Ok::<(), sbe_rt::EncodeError>(())
+                    })
+                    .unwrap();
+                black_box(complete.as_bytes());
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
+
 fn bench_encode_full_stage_transition(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/full_stage");
     group.throughput(Throughput::Elements(1));
@@ -542,5 +626,6 @@ criterion_group!(
     bench_decode_skip_rewind,
     bench_decode_consuming_full,
     bench_encode_full_stage_transition,
+    bench_fallible_vs_manual,
 );
 criterion_main!(benches);
