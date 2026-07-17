@@ -2405,6 +2405,176 @@ fn decimal_converter_rejects_missing_composite() {
     ));
 }
 
+/// GenerateError renders a readable message via Display.
+#[test]
+fn generate_error_display_formats() {
+    let err = ergosbe::GenerateError::InvalidDecimalComposite {
+        name: "Decimal".into(),
+        reason: "wrong layout".into(),
+    };
+    assert_eq!(
+        err.to_string(),
+        "invalid decimal composite 'Decimal': wrong layout"
+    );
+}
+
+/// A registered decimal composite with fewer than two members is rejected.
+#[test]
+fn decimal_converter_rejects_single_member_composite() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="bad" id="99" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="OneMember"><type name="mantissa" primitiveType="int64"/></composite>
+</types>
+<sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config =
+        ergosbe::GenerationConfig::new("one_member").enable_decimal_converters("OneMember");
+    let g = ergosbe::Generator::new(config);
+    let err = g.try_generate(&schema).unwrap_err();
+    assert!(
+        err.to_string().contains("at least 2 members"),
+        "unexpected error: {err}"
+    );
+}
+
+/// The panicking `generate` wrapper still validates converter configuration.
+#[test]
+#[should_panic(expected = "decimal composite validation failed")]
+fn generate_panics_on_invalid_decimal_composite() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="bad" id="99" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+</types>
+<sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config = ergosbe::GenerationConfig::new("panics").enable_decimal_converters("NonExistent");
+    let g = ergosbe::Generator::new(config);
+    let _ = g.generate(&schema);
+}
+
+/// Converter emission skips scalar fields, non-decimal composites, and
+/// messages without any decimal fields.
+#[test]
+fn decimal_converter_skips_non_decimal_fields_and_messages() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="mixed" id="98" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="Decimal"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+  <composite name="Point"><type name="x" primitiveType="int32"/><type name="y" primitiveType="int32"/></composite>
+</types>
+<sbe:message name="Mixed" id="1">
+  <field name="qty" id="1" type="uint32"/>
+  <field name="pos" id="2" type="Point"/>
+  <field name="price" id="3" type="Decimal"/>
+</sbe:message>
+<sbe:message name="NoDec" id="2">
+  <field name="qty" id="1" type="uint32"/>
+</sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config = ergosbe::GenerationConfig::new("mixed_dec").enable_decimal_converters("Decimal");
+    let g = ergosbe::Generator::new(config);
+    let modules = g.try_generate(&schema).unwrap();
+    let src = &modules.modules().next().unwrap().source;
+    // The decimal field has both generic and raw wire accessors.
+    assert!(src.contains("price_wire"), "raw wire accessor missing");
+    assert!(
+        src.contains("pub fn price<D: SbeDecimal>"),
+        "generic accessor missing"
+    );
+    // Non-decimal fields get no generic converter methods.
+    assert!(
+        !src.contains("pub fn qty<D: SbeDecimal>"),
+        "scalar field must not get a converter method"
+    );
+    assert!(
+        !src.contains("pub fn pos<D: SbeDecimal>"),
+        "non-decimal composite must not get a converter method"
+    );
+}
+
+/// A var-data composite whose `length` member is not the first member still
+/// resolves the length field's max value.
+#[test]
+fn vardata_composite_with_length_not_first_member_generates() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="revvar" id="97" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="oddVarEncoding">
+    <type name="varData" primitiveType="uint8" length="0"/>
+    <type name="length" primitiveType="uint32" maxValue="1024"/>
+  </composite>
+</types>
+<sbe:message name="M" id="1">
+  <field name="a" id="1" type="uint32"/>
+  <data name="blob" id="2" type="oddVarEncoding"/>
+</sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let g = ergosbe::Generator::new(ergosbe::GenerationConfig::new("revvar"));
+    let modules = g.try_generate(&schema).unwrap();
+    assert!(!modules.modules().next().unwrap().source.is_empty());
+}
+
+/// A group-entry constant field whose referenced constant type carries no
+/// value text generates no accessor (and must not panic).
+#[test]
+fn group_entry_constant_field_without_value_is_skipped() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="novalconst" id="96" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+  <type name="EmptyConst" primitiveType="uint8" presence="constant"/>
+</types>
+<sbe:message name="M" id="1">
+  <field name="a" id="1" type="uint32"/>
+  <group name="g" id="2" dimensionType="groupSizeEncoding">
+    <field name="c" id="3" type="EmptyConst"/>
+    <field name="v" id="4" type="uint16"/>
+  </group>
+</sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let g = ergosbe::Generator::new(ergosbe::GenerationConfig::new("novalconst"));
+    let modules = g.try_generate(&schema).unwrap();
+    assert!(!modules.modules().next().unwrap().source.is_empty());
+}
+
+/// A schema whose headerType composite is absent falls back to the default
+/// header member names during generation.
+#[test]
+fn schema_without_header_composite_uses_default_member_names() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="nohdr" id="95" version="0" byteOrder="littleEndian">
+<types>
+  <type name="u32x" primitiveType="uint32"/>
+</types>
+<sbe:message name="M" id="1"><field name="a" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+    match ergosbe::parse(xml) {
+        Ok(ir) => {
+            let schema = ergosbe::Schema::from_ir(ir);
+            let g = ergosbe::Generator::new(ergosbe::GenerationConfig::new("nohdr"));
+            let modules = g.try_generate(&schema).unwrap();
+            assert!(!modules.modules().next().unwrap().source.is_empty());
+        }
+        Err(e) => panic!("headerless schema rejected at parse: {e}"),
+    }
+}
+
 /// Manual group entry via start_entry produces identical bytes to closure API.
 #[test]
 fn manual_start_entry_matches_closure() {

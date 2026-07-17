@@ -1296,3 +1296,32 @@ Remaining missed-function residue (5 in xml.rs, dedup across binaries) is
 per-test-binary generic instantiation noise (`parse_file<&Path>/<PathBuf>`
 instantiated but not called in specific test binaries; covered via other
 instantiations) plus `missing_no_node` above.
+
+### 2026-07-17 addendum: codegen.rs push — 99.21% lines
+
+Seven further behaviour tests (`sbe/tests/baseline_test.rs`): GenerateError
+Display, single-member decimal composite rejection, panicking `generate`
+wrapper validation, converter skip of scalar/non-decimal-composite fields and
+decimal-free messages, var-data composite with `length` not first,
+group-entry constant field with no constant value, and headerless-schema
+default header member names.
+
+| File | Regions | Functions | Lines |
+|------|---------|-----------|-------|
+| codegen.rs | 99.27% | 97.08% | **99.21%** |
+| repo total | 98.48% | 97.96% | **99.31%** |
+
+**Remaining 3 attributable codegen.rs missed lines — proven unreachable:**
+
+- 1884/1912 (`get_dim_size`/`get_dim_num_layout` lookup None edges): the
+  parser rejects a group `dimensionType` that is not a registered composite
+  (xml.rs:1316), so codegen always finds it.
+- 1938 (`get_vardata_info` lookup None edge): the parser rejects a data type
+  that is not a registered var-data composite (xml.rs:1368-1378).
+
+The other ~30 uncovered lines are inside `quote!` proc-macro blocks —
+llvm-cov stable cannot attribute individual template lines (limitation
+documented 2026-07-10); template correctness is proven by source-shape,
+compile-run, wire-parity, and allocation tests instead. Full sbe suite green:
+`cargo test -p ergosbe --all-features -- --test-threads=1` (all binaries pass,
+allocation tests require single-threading for the global CountingAllocator).
