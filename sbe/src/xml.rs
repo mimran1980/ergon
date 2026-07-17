@@ -2247,6 +2247,74 @@ mod tests {
     }
 
     #[test]
+    fn compute_type_size_array_and_constant_members() {
+        let mut registry = TypeRegistry::new();
+        let ct = vec![
+            Token {
+                id: None,
+                name: "C".into(),
+                signal: Signal::BeginComposite,
+                encoding: Encoding::default(),
+            },
+            Token {
+                id: None,
+                name: "arr".into(),
+                signal: Signal::BeginField,
+                encoding: Encoding {
+                    primitive_type: Some(PrimitiveType::Int16),
+                    length: Some(3),
+                    presence: Presence::Required,
+                    ..Encoding::default()
+                },
+            },
+            Token {
+                id: None,
+                name: "arr".into(),
+                signal: Signal::EndField,
+                encoding: Encoding::default(),
+            },
+            Token {
+                id: None,
+                name: "c".into(),
+                signal: Signal::BeginField,
+                encoding: Encoding {
+                    primitive_type: Some(PrimitiveType::Char),
+                    length: Some(1),
+                    presence: Presence::Constant,
+                    ..Encoding::default()
+                },
+            },
+            Token {
+                id: None,
+                name: "c".into(),
+                signal: Signal::EndField,
+                encoding: Encoding::default(),
+            },
+            Token {
+                id: None,
+                name: "C".into(),
+                signal: Signal::EndComposite,
+                encoding: Encoding::default(),
+            },
+        ];
+        registry.registry.insert("C".into(), ct);
+        assert_eq!(compute_type_size("C", &registry), Some(6));
+    }
+
+    #[test]
+    fn compute_type_size_unknown_signal() {
+        let mut registry = TypeRegistry::new();
+        let tokens = vec![Token {
+            id: None,
+            name: "X".into(),
+            signal: Signal::Encoding,
+            encoding: Encoding::default(),
+        }];
+        registry.registry.insert("X".into(), tokens);
+        assert_eq!(compute_type_size("X", &registry), None);
+    }
+
+    #[test]
     fn parse_malformed_include_file_is_error() {
         // The include file is found but contains invalid XML — covers the
         // Document::parse error handler in parse_schema (xml.rs:544-548).
