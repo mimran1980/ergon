@@ -2917,3 +2917,92 @@ fn nested_message_identifies_recursive_payload() {
     "#,
     );
 }
+
+/// Group-entry Decimal fields get generic converted methods plus raw
+/// `*_wire`, exactly like ordinary fields (Task 2).
+#[test]
+fn decimal_converter_covers_group_entry_fields() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="entdec" id="94" version="0" byteOrder="littleEndian">
+<types>
+  <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+  <composite name="Decimal"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+</types>
+<sbe:message name="Book" id="1">
+  <field name="mid" id="1" type="Decimal"/>
+  <group name="levels" id="2" dimensionType="groupSizeEncoding">
+    <field name="price" id="3" type="Decimal"/>
+    <field name="qty" id="4" type="uint32"/>
+  </group>
+</sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config = ergosbe::GenerationConfig::new("entdec").enable_decimal_converters("Decimal");
+    let g = ergosbe::Generator::new(config);
+    let modules = g.try_generate(&schema).unwrap();
+    let src = &modules.modules().next().unwrap().source;
+
+    // Source shape: entry raw accessors renamed, generic methods emitted.
+    assert!(
+        src.contains("impl<'a> LevelsEntryDecoder"),
+        "entry decoder impl missing"
+    );
+    assert!(src.contains("price_wire"), "raw entry *_wire missing");
+    assert!(
+        src.contains("pub fn price<D: SbeDecimal>"),
+        "generic entry accessor missing"
+    );
+
+    // Runtime: generic entry round trip is byte-identical with raw wire.
+    compile_and_run(
+        "entdec",
+        src,
+        r#"
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        struct Fixed { m: i64, e: i8 }
+        impl SbeDecimal for Fixed {
+            type Error = ();
+            fn try_from_sbe(m: i64, e: i8) -> Result<Self, ()> { Ok(Fixed { m, e }) }
+            fn try_into_sbe(self) -> Result<(i64, i8), ()> { Ok((self.m, self.e)) }
+        }
+
+        // Raw wire model
+        let mut buf_wire = vec![0u8; 256];
+        let mut enc = BookEncoder::wrap_and_apply_header(&mut buf_wire, 0).unwrap();
+        enc.mid_wire(Decimal::new(5, -1));
+        let complete = enc.levels(1, |g| {
+            g.add(|e| {
+                e.price_wire(Decimal::new(500005, -1));
+                e.qty(7);
+            });
+        }).unwrap();
+        let wire_bytes = complete.as_bytes_with_header().to_vec();
+
+        // Generic converted model
+        let mut buf_gen = vec![0u8; 256];
+        let mut enc = BookEncoder::wrap_and_apply_header(&mut buf_gen, 0).unwrap();
+        enc.mid::<Fixed>(Fixed { m: 5, e: -1 }).unwrap();
+        let complete = enc.levels(1, |g| {
+            g.add(|e| {
+                e.price::<Fixed>(Fixed { m: 500005, e: -1 }).unwrap();
+                e.qty(7);
+            });
+        }).unwrap();
+        let gen_bytes = complete.as_bytes_with_header().to_vec();
+
+        assert_eq!(wire_bytes, gen_bytes, "generic and wire models must be byte-identical");
+
+        // Decode side: generic entry accessor returns the converted value.
+        let dec = BookDecoder::wrap_and_apply_header(&gen_bytes, 0).unwrap();
+        assert_eq!(dec.mid::<Fixed>().unwrap(), Fixed { m: 5, e: -1 });
+        let mut g = dec.into_levels().unwrap();
+        let entry = g.next().unwrap();
+        assert_eq!(entry.price::<Fixed>().unwrap(), Fixed { m: 500005, e: -1 });
+        let raw = entry.price_wire();
+        assert_eq!((raw.mantissa(), raw.exponent()), (500005, -1));
+        assert_eq!(entry.qty(), 7);
+    "#,
+    );
+}

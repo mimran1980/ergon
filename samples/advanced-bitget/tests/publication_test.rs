@@ -60,8 +60,8 @@ fn publish_l2book_encodes_app_message_on_typed_stream() {
     let mut g = book.into_bids().unwrap();
     for e in g.by_ref() {
         got_bids.push((
-            (e.price().mantissa(), e.price().exponent()),
-            (e.size().mantissa(), e.size().exponent()),
+            (e.price_wire().mantissa(), e.price_wire().exponent()),
+            (e.size_wire().mantissa(), e.size_wire().exponent()),
         ));
     }
     let after = g.finish().unwrap();
@@ -73,7 +73,7 @@ fn publish_l2book_encodes_app_message_on_typed_stream() {
     let mut got_asks = Vec::new();
     let mut g = after.into_asks().unwrap();
     for e in g.by_ref() {
-        got_asks.push((e.price().mantissa(), e.price().exponent()));
+        got_asks.push((e.price_wire().mantissa(), e.price_wire().exponent()));
     }
     let after = g.finish().unwrap();
     assert_eq!(got_asks, vec![(500015, -1)]);

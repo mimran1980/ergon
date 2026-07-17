@@ -344,7 +344,7 @@ impl Generator {
             // methods. Only emitted when converter mode is active.
             if !self.config.decimal_composites.is_empty() {
                 let converter_ts =
-                    generate_decimal_converter_impls(msg, &self.config.decimal_composites);
+                    generate_decimal_converter_impls(msg, &self.config.decimal_composites, multi);
                 src.push_str(&converter_ts);
             }
             src.push('\n');
@@ -3343,7 +3343,13 @@ fn generate_message_decoder(
     // 14. Repeating Group decoders — use pre-computed dedup names from section 8
     for (gi, g) in msg.groups.iter().enumerate() {
         let unique = &group_unique_names[gi];
-        ts.extend(generate_group_decoder(g, elements, byte_order, unique));
+        ts.extend(generate_group_decoder(
+            g,
+            elements,
+            byte_order,
+            unique,
+            decimal_composites,
+        ));
     }
 
     // 14b. Concrete consuming decoder tail stages (DECISIONS.md §3):
@@ -3688,6 +3694,7 @@ fn generate_group_decoder(
     elements: &SchemaElements,
     byte_order: ByteOrder,
     scoped_name: &str,
+    decimal_composites: &[String],
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
     let name = scoped_name.to_string();
@@ -3943,7 +3950,17 @@ fn generate_group_decoder(
     // Fields of group entry
     for f in &g.fields {
         let f_name = to_snake_case(&f.name);
-        let f_name_ident = syn::Ident::new(&f_name, proc_macro2::Span::call_site());
+        // In converter mode, Decimal-composite-backed raw entry accessors are
+        // suffixed _wire so the generic converted method takes the original
+        // name (same rule as message-level fields).
+        let is_decimal_field = matches!(&f.field_type,
+            FieldType::Composite { name, .. } if decimal_composites.iter().any(|d| d == name));
+        let accessor_name = if is_decimal_field {
+            format!("{f_name}_wire")
+        } else {
+            f_name.clone()
+        };
+        let f_name_ident = syn::Ident::new(&accessor_name, proc_macro2::Span::call_site());
         let raw_ident = syn::Ident::new(&format!("raw_{}", f_name), proc_macro2::Span::call_site());
         let offset_lit = syn::LitInt::new(&f.offset.to_string(), proc_macro2::Span::call_site());
         let f_name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
@@ -4437,6 +4454,7 @@ fn generate_group_decoder(
             elements,
             byte_order,
             &nested_name,
+            decimal_composites,
         ));
     }
 
@@ -4496,6 +4514,7 @@ fn generate_nullification(
 fn generate_decimal_converter_impls(
     msg: &MessageStructure,
     decimal_composites: &[String],
+    multi_message: bool,
 ) -> String {
     let span = proc_macro2::Span::call_site();
     let msg_name = to_pascal_case(&msg.name);
@@ -4543,19 +4562,96 @@ fn generate_decimal_converter_impls(
         });
     }
 
-    if decoder_methods.is_empty() {
+    // Group entries (recursively): same generic-plus-*_wire rule as
+    // ordinary fields, on the scoped entry decoder/encoder types.
+    fn emit_group_entry_impls(
+        scope: &str,
+        g: &MessageGroup,
+        decimal_composites: &[String],
+        out: &mut String,
+    ) {
+        let span = proc_macro2::Span::call_site();
+        let scoped = format!("{scope}{}", to_pascal_case(&g.name));
+        let entry_dec_ident = syn::Ident::new(&format!("{scoped}EntryDecoder"), span);
+        let entry_enc_ident = syn::Ident::new(&format!("{scoped}EntryEncoder"), span);
+        let mut dec_methods = proc_macro2::TokenStream::new();
+        let mut enc_methods = proc_macro2::TokenStream::new();
+        for f in &g.fields {
+            let comp_name = match &f.field_type {
+                FieldType::Composite { name, .. } => name,
+                _ => continue,
+            };
+            if !decimal_composites.iter().any(|d| d == comp_name) {
+                continue;
+            }
+            let field_snake = to_snake_case(&f.name);
+            let field_ident = syn::Ident::new(&field_snake, span);
+            let wire_ident = syn::Ident::new(&format!("{field_snake}_wire"), span);
+            let comp_type_ident = syn::Ident::new(&to_pascal_case(comp_name), span);
+            dec_methods.extend(quote::quote! {
+                /// Generic converted entry accessor. Calls
+                /// `SbeDecimal::try_from_sbe` on the raw wire values.
+                #[inline]
+                pub fn #field_ident<D: SbeDecimal>(&self) -> Result<D, D::Error> {
+                    let raw = self.#wire_ident();
+                    D::try_from_sbe(raw.mantissa(), raw.exponent())
+                }
+            });
+            enc_methods.extend(quote::quote! {
+                /// Generic converted entry setter. Calls
+                /// `SbeDecimal::try_into_sbe`.
+                pub fn #field_ident<D: SbeDecimal>(&mut self, val: D) -> Result<&mut Self, D::Error> {
+                    let (m, e) = val.try_into_sbe()?;
+                    let _ = self.#wire_ident(#comp_type_ident::new(m, e));
+                    Ok(self)
+                }
+            });
+        }
+        if !dec_methods.is_empty() {
+            let ts = quote::quote! {
+                impl<'a> #entry_dec_ident<'a> {
+                    #dec_methods
+                }
+                impl<'a> #entry_enc_ident<'a> {
+                    #enc_methods
+                }
+            };
+            out.push_str(&ts.to_string());
+        }
+        for ng in &g.groups {
+            emit_group_entry_impls(&scoped, ng, decimal_composites, out);
+        }
+    }
+
+    let mut entry_impls = String::new();
+    let group_scope = if multi_message {
+        msg_name.clone()
+    } else {
+        String::new()
+    };
+    for g in &msg.groups {
+        emit_group_entry_impls(&group_scope, g, decimal_composites, &mut entry_impls);
+    }
+
+    if decoder_methods.is_empty() && entry_impls.is_empty() {
         return String::new();
     }
 
-    let ts = quote::quote! {
-        impl<'a> #decoder_ident<'a> {
-            #decoder_methods
+    let mut out = if decoder_methods.is_empty() {
+        String::new()
+    } else {
+        quote::quote! {
+            impl<'a> #decoder_ident<'a> {
+                #decoder_methods
+            }
+            impl<'a> #encoder_ident<'a> {
+                #encoder_methods
+            }
         }
-        impl<'a> #encoder_ident<'a> {
-            #encoder_methods
-        }
+        .to_string()
     };
-    ts.to_string()
+    out.push_str(&entry_impls);
+    out
 }
 
 fn generate_message_encoder(
@@ -5336,6 +5432,7 @@ fn generate_message_encoder(
             elements,
             byte_order,
             &enc_group_names[gi],
+            decimal_composites,
         );
     }
     if !group_buf.is_empty() {
@@ -5354,6 +5451,7 @@ fn generate_group_encoder(
     elements: &SchemaElements,
     byte_order: ByteOrder,
     scoped_name: &str,
+    decimal_composites: &[String],
 ) {
     let name = scoped_name.to_string();
     let order_suffix = match byte_order {
@@ -5496,7 +5594,16 @@ fn generate_group_encoder(
 
     // Field setters
     for f in &g.fields {
-        let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
+        let f_snake = to_snake_case(&f.name);
+        // Converter mode: Decimal-composite raw entry setters become *_wire.
+        let is_decimal_field = matches!(&f.field_type,
+            FieldType::Composite { name, .. } if decimal_composites.iter().any(|d| d == name));
+        let setter_name = if is_decimal_field {
+            format!("{f_snake}_wire")
+        } else {
+            f_snake.clone()
+        };
+        let f_ident = syn::Ident::new(&setter_name, span);
         let f_offset = syn::Index::from(f.offset);
 
         match &f.field_type {
@@ -5668,7 +5775,14 @@ fn generate_group_encoder(
     // Recursively generate nested Repeating Groups encoders
     for ng in &g.groups {
         let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
-        generate_group_encoder(src, ng, elements, byte_order, &nested_name);
+        generate_group_encoder(
+            src,
+            ng,
+            elements,
+            byte_order,
+            &nested_name,
+            decimal_composites,
+        );
     }
 }
 

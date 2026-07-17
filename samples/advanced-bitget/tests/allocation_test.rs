@@ -71,8 +71,8 @@ fn encode_app_message_zero_alloc() {
             let enc = enc
                 .bids(1, |g| {
                     g.add(|e| {
-                        e.price(Decimal::new(1, 0));
-                        e.size(Decimal::new(1, 0));
+                        e.price_wire(Decimal::new(1, 0));
+                        e.size_wire(Decimal::new(1, 0));
                     });
                 })
                 .unwrap();
@@ -120,8 +120,8 @@ fn decode_app_message_zero_alloc() {
                 let enc = enc
                     .bids(1, |g| {
                         g.add(|e| {
-                            e.price(Decimal::new(1, 0));
-                            e.size(Decimal::new(1, 0));
+                            e.price_wire(Decimal::new(1, 0));
+                            e.size_wire(Decimal::new(1, 0));
                         });
                     })
                     .unwrap();

@@ -888,20 +888,20 @@ fn app_message_l2book_roundtrip() {
             let book = book
                 .bids(bids_count, |g| {
                     g.add(|e| {
-                        e.price(Decimal::new(50000_00, -2));
-                        e.size(Decimal::new(1_50, -2));
+                        e.price_wire(Decimal::new(50000_00, -2));
+                        e.size_wire(Decimal::new(1_50, -2));
                     });
                     g.add(|e| {
-                        e.price(Decimal::new(49900_00, -2));
-                        e.size(Decimal::new(2_00, -2));
+                        e.price_wire(Decimal::new(49900_00, -2));
+                        e.size_wire(Decimal::new(2_00, -2));
                     });
                 })
                 .unwrap();
             let book = book
                 .asks(asks_count, |g| {
                     g.add(|e| {
-                        e.price(Decimal::new(50100_00, -2));
-                        e.size(Decimal::new(0_50, -2));
+                        e.price_wire(Decimal::new(50100_00, -2));
+                        e.size_wire(Decimal::new(0_50, -2));
                     });
                 })
                 .unwrap();
@@ -927,10 +927,10 @@ fn app_message_l2book_roundtrip() {
             assert_eq!(bids.len(), 2);
             let mut iter = bids.into_iter();
             let b0 = iter.next().unwrap();
-            assert_eq!(b0.price().mantissa(), 50000_00);
-            assert_eq!(b0.price().exponent(), -2);
+            assert_eq!(b0.price_wire().mantissa(), 50000_00);
+            assert_eq!(b0.price_wire().exponent(), -2);
             let b1 = iter.next().unwrap();
-            assert_eq!(b1.price().mantissa(), 49900_00);
+            assert_eq!(b1.price_wire().mantissa(), 49900_00);
         }
         _ => panic!("expected L2Book"),
     }

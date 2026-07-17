@@ -111,8 +111,8 @@ fn direct_claim_app_message_roundtrip() {
                 let book = book
                     .bids(bids, |g| {
                         g.add(|e| {
-                            e.price(Decimal::new(50000_00, -2));
-                            e.size(Decimal::new(1_50, -2));
+                            e.price_wire(Decimal::new(50000_00, -2));
+                            e.size_wire(Decimal::new(1_50, -2));
                         });
                     })
                     .expect("bids");

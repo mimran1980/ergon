@@ -250,8 +250,14 @@ impl<P: Publication> ClaimPublisher<P> {
                                 for l in *bids {
                                     let _ = g.add(|e| {
                                         let _ = e
-                                            .price(Decimal::new(l.price.mantissa, l.price.exponent))
-                                            .size(Decimal::new(l.size.mantissa, l.size.exponent));
+                                            .price_wire(Decimal::new(
+                                                l.price.mantissa,
+                                                l.price.exponent,
+                                            ))
+                                            .size_wire(Decimal::new(
+                                                l.size.mantissa,
+                                                l.size.exponent,
+                                            ));
                                     });
                                 }
                             })?;
@@ -259,8 +265,14 @@ impl<P: Publication> ClaimPublisher<P> {
                                 for l in *asks {
                                     let _ = g.add(|e| {
                                         let _ = e
-                                            .price(Decimal::new(l.price.mantissa, l.price.exponent))
-                                            .size(Decimal::new(l.size.mantissa, l.size.exponent));
+                                            .price_wire(Decimal::new(
+                                                l.price.mantissa,
+                                                l.price.exponent,
+                                            ))
+                                            .size_wire(Decimal::new(
+                                                l.size.mantissa,
+                                                l.size.exponent,
+                                            ));
                                     });
                                 }
                             })?;

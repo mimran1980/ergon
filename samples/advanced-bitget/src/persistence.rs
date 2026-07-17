@@ -329,8 +329,8 @@ fn decode_l2book(
     let mut g = book.into_bids()?;
     for e in g.by_ref() {
         bids.push((
-            (e.price().mantissa(), e.price().exponent()),
-            (e.size().mantissa(), e.size().exponent()),
+            (e.price_wire().mantissa(), e.price_wire().exponent()),
+            (e.size_wire().mantissa(), e.size_wire().exponent()),
         ));
     }
     let after = g.finish()?;
@@ -338,8 +338,8 @@ fn decode_l2book(
     let mut g = after.into_asks()?;
     for e in g.by_ref() {
         asks.push((
-            (e.price().mantissa(), e.price().exponent()),
-            (e.size().mantissa(), e.size().exponent()),
+            (e.price_wire().mantissa(), e.price_wire().exponent()),
+            (e.size_wire().mantissa(), e.size_wire().exponent()),
         ));
     }
     let after = g.finish()?;
