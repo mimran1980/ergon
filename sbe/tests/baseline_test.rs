@@ -3006,3 +3006,95 @@ fn decimal_converter_covers_group_entry_fields() {
     "#,
     );
 }
+
+/// Independent exact fixed-scale adapter matrix (Task 2): positive/negative
+/// values, exponents 0/-8/-15/-18, overflow, and precision-loss rejection —
+/// implemented in a temporary crate against the generated trait only.
+#[test]
+fn decimal_converter_exact_adapter_matrix() {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    let ir = ergosbe::parse_file(&path).unwrap();
+    let schema = ergosbe::Schema::from_ir(ir);
+    let config =
+        ergosbe::GenerationConfig::new("exact_matrix").enable_decimal_converters("Decimal");
+    let g = ergosbe::Generator::new(config);
+    let modules = g.try_generate(&schema).unwrap();
+    let src = &modules.modules().next().unwrap().source;
+
+    compile_and_run(
+        "exact_matrix",
+        src,
+        r#"
+        /// Exact fixed-scale(18) adapter, independent of rust_decimal.
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        struct Exact18(i128); // value scaled by 10^18
+
+        #[derive(Debug, PartialEq)]
+        enum ExactErr { Overflow, PrecisionLoss }
+
+        impl SbeDecimal for Exact18 {
+            type Error = ExactErr;
+            fn try_from_sbe(m: i64, e: i8) -> Result<Self, ExactErr> {
+                let shift = i32::from(e) + 18;
+                if shift >= 0 {
+                    if shift > 38 { return Err(ExactErr::Overflow); }
+                    let f = 10i128.checked_pow(shift as u32).ok_or(ExactErr::Overflow)?;
+                    Ok(Exact18(i128::from(m).checked_mul(f).ok_or(ExactErr::Overflow)?))
+                } else {
+                    let d = 10i128.checked_pow((-shift) as u32).ok_or(ExactErr::Overflow)?;
+                    let v = i128::from(m);
+                    if v % d != 0 { return Err(ExactErr::PrecisionLoss); }
+                    Ok(Exact18(v / d))
+                }
+            }
+            fn try_into_sbe(self) -> Result<(i64, i8), ExactErr> {
+                let m: i64 = self.0.try_into().map_err(|_| ExactErr::Overflow)?;
+                Ok((m, -18))
+            }
+        }
+
+        // Positive/negative at exponents 0, -8, -15, -18.
+        let cases: &[(i64, i8, i128)] = &[
+            (5, 0, 5_000_000_000_000_000_000),
+            (-5, 0, -5_000_000_000_000_000_000),
+            (12345678, -8, 123_456_780_000_000_000),
+            (-12345678, -8, -123_456_780_000_000_000),
+            (123456789012345, -15, 123_456_789_012_345_000),
+            (-123456789012345, -15, -123_456_789_012_345_000),
+            (1, -18, 1),
+            (-1, -18, -1),
+        ];
+        let mut buf = vec![0u8; 256];
+        for &(m, e, scaled) in cases {
+            // Trait direction checks.
+            assert_eq!(Exact18::try_from_sbe(m, e), Ok(Exact18(scaled)), "m={m} e={e}");
+            // Wire round trip through generated generic methods.
+            let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+            let v = Exact18::try_from_sbe(m, e).unwrap();
+            enc.price::<Exact18>(v).unwrap();
+            enc.size_wire(Decimal::new(0, 0));
+            let dec = OrderDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+            assert_eq!(dec.price::<Exact18>().unwrap(), v);
+            // Raw wire carries the adapter's canonical scale.
+            let raw = dec.price_wire();
+            assert_eq!((raw.mantissa(), raw.exponent()), (scaled as i64, -18));
+        }
+
+        // Overflow: mantissa * 10^(e+18) exceeds i128/i64 range.
+        assert_eq!(Exact18::try_from_sbe(i64::MAX, 8), Err(ExactErr::Overflow));
+        // Precision loss: scaling down discards non-zero digits.
+        assert_eq!(Exact18::try_from_sbe(123, -20), Err(ExactErr::PrecisionLoss));
+        // Encode-side rejection bubbles through the generic setter.
+        let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let too_big = Exact18(i128::from(i64::MAX) * 10);
+        match enc.price::<Exact18>(too_big) {
+            Err(ExactErr::Overflow) => {}
+            Err(other) => panic!("expected Overflow, got {other:?}"),
+            Ok(_) => panic!("oversized adapter value must not encode"),
+        }
+    "#,
+    );
+}
