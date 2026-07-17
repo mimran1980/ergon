@@ -48,6 +48,10 @@ path = "tests/dynamic_stream_test.rs"
 name = "e2e_deterministic_test"
 path = "tests/e2e_deterministic_test.rs"
 
+[[test]]
+name = "bitget_state_test"
+path = "tests/bitget_state_test.rs"
+
 [features]
 default = []
 bound-check-disabled = []

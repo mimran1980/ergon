@@ -10,4 +10,7 @@
 //!
 //! No JSON. No REST. No external protocol translation. Pure SBE.
 
+pub mod bitget;
+pub mod counters;
 pub mod decimal;
+pub mod market;
