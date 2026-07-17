@@ -52,6 +52,10 @@ path = "tests/e2e_deterministic_test.rs"
 name = "bitget_state_test"
 path = "tests/bitget_state_test.rs"
 
+[[test]]
+name = "publication_test"
+path = "tests/publication_test.rs"
+
 [features]
 default = []
 bound-check-disabled = []

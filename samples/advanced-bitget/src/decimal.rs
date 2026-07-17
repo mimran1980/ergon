@@ -59,23 +59,20 @@ macro_rules! impl_sbe_decimal_for_rust_decimal {
             type Error = $crate::decimal::DecimalConvertError;
 
             fn try_from_sbe(mantissa: i64, exponent: i8) -> Result<Self, Self::Error> {
-                let d = rust_decimal::Decimal::from(mantissa);
-                if exponent < 0 {
-                    let scale: u32 = (-exponent) as u32;
-                    d.rescale(scale)
+                if exponent <= 0 {
+                    let scale = u32::from(exponent.unsigned_abs());
+                    rust_decimal::Decimal::try_new(mantissa, scale)
                         .map_err(|_| $crate::decimal::DecimalConvertError::Overflow)
-                } else if exponent > 0 {
-                    let factor = 10i128.pow(exponent as u32);
-                    let scaled = (d.mantissa() as i128)
+                } else {
+                    // Positive exponent: scale the mantissa up exactly.
+                    let factor = 10i128
+                        .checked_pow(u32::from(exponent.unsigned_abs()))
+                        .ok_or($crate::decimal::DecimalConvertError::Overflow)?;
+                    let scaled = i128::from(mantissa)
                         .checked_mul(factor)
                         .ok_or($crate::decimal::DecimalConvertError::Overflow)?;
-                    if scaled > i64::MAX as i128 || scaled < i64::MIN as i128 {
-                        return Err($crate::decimal::DecimalConvertError::Overflow);
-                    }
-                    Ok(rust_decimal::Decimal::from_i128_with_scale(scaled, 0)
-                        .map_err(|_| $crate::decimal::DecimalConvertError::Overflow)?)
-                } else {
-                    Ok(d)
+                    rust_decimal::Decimal::try_from_i128_with_scale(scaled, 0)
+                        .map_err(|_| $crate::decimal::DecimalConvertError::Overflow)
                 }
             }
 
