@@ -1531,3 +1531,23 @@ nested-group dimension-header read between the outer entry's extent walk and
 the user's nested accessor (~one 4-byte read per perf entry), and the
 unresolved LLVM index-vs-pointer loop-form question documented above, which
 now accounts for the bulk of both residues (logical work is at parity).
+
+### 2026-07-17: decode/full_message segment bisect — every segment beats Aeron; only the composition loses
+
+Scratch bisect over the same BASELINE buffer:
+
+| Segment | ErgoSBE | Aeron | Winner |
+|---------|---------|-------|--------|
+| fuel group, fixed fields (extent walk incl.) | 3.4643 ns | 4.3637 ns | ErgoSBE −21% |
+| + performance figures w/ nested acceleration | 7.9137 ns | 8.0777 ns | ErgoSBE −2% |
+| message var-data chain (ErgoSBE, groups skipped) | 4.9477 ns | — | — |
+| **full message** | **11.975 ns** | **10.916 ns** | Aeron −9.7% |
+
+Every individually-measured segment is at or better than Aeron; only the
+fully-composed decode regresses. The residue is therefore a compile-unit
+composition effect (inline/register budget in the combined path), not codec
+work: `#[inline(always)]` on the entry tail machinery was tried against this
+evidence and had no effect (reverted). Next session: diff the composed
+function's LLVM IR / machine code against the sum of segments to find what
+spills or fails to inline only in composition; the same investigation likely
+resolves encode/throughput_10k's loop-form question.
