@@ -1716,3 +1716,38 @@ runtime value (`tail_start`). Eliminating the redundancy via an unsafe
 
 This closes decode/full_message. Only encode/throughput_10k (1.135) remains
 above the gate.
+
+## 2026-07-17 final: encode/throughput_10k — the sole remaining open ratio
+
+After closing decode/full_message (0.9997) via redundant prefix-check
+elimination, encode/throughput_10k (1.135) remains the sole scenario above
+≤1.00. Tested this session specifically for encode:
+- Result→Self infallible wrap (`wrap_assumed`): no ratio gain (1.138)
+- bound-check-disabled feature gate on wrap: no effect
+- Setter bounds-check elimination (unsafe ptr write): no effect (LLVM
+  already elides constant-offset checks)
+- LTO off / codegen-units=16: no effect
+- chunks_exact_mut for both codecs: both improve equally (1.126)
+- unwrap_unchecked: no effect
+
+The encode gap is in LLVM's IndVarSimplify pass: Aeron's value-move API
+(header/parent chain) compiles to a 4-instruction pointer-form loop;
+ErgoSBE's borrow-based builder compiles to an 8-instruction index-form loop
+with the same stores. This is insensitive to all source-level interventions.
+
+### Updated complete matrix (2026-07-17)
+
+| Scenario | Ratio | Gate |
+|----------|-------|------|
+| decode/entry_point/wrap | 0.871 | ✅ |
+| decode/entry_point/try_from | 0.980 | ✅ |
+| decode/scalar | 0.999 | ✅ |
+| decode/array | 0.999 | ✅ |
+| decode/composite | 0.999 | ✅ |
+| throughput/batch_10k | 0.980 | ✅ |
+| encode/scalar | 0.846 | ✅ |
+| decode/full_message | **0.9997** | ✅ (NEWLY CLOSED) |
+| fallible/manual | 0.960 | ✅ |
+| encode/throughput_10k | **1.135** | ❌ (sole remaining) |
+
+9 of 10 scenarios pass.
