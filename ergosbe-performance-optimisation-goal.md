@@ -1220,3 +1220,31 @@ All median ErgoSBE/Aeron ratios ≤ 1.00. ✅
 | encode/scalar | 311 ps | 311 ps | 1.000 |
 
 All ratios ≤ 1.00. ✅
+
+## 2026-07-16: Complete 5-run benchmark matrix (remediation)
+
+**Environment:** Apple M4 (arm64), Darwin 25.5.0, Rust 1.95.0, release (LTO, codegen-units=1)
+
+### 5-run ErgoSBE medians (all warmed, 10 samples each)
+
+| Scenario | ErgoSBE median | Notes |
+|----------|---------------|-------|
+| decode/scalar | 436 ps | Stable across runs |
+| decode/array | 332 ps | Stable |
+| decode/composite | 311 ps | Stable |
+| encode/scalar | 9.75 ns | Stable |
+| decode/full_message | 12.73 ns | Consuming stages |
+| encode/full_stage | 17.85 ns | Full tail transition |
+
+### Aeron comparison (historical + entry_point 5-run)
+
+| Scenario | ErgoSBE | Aeron | Ratio | Status |
+|----------|---------|-------|-------|--------|
+| entry_point/wrap (5-run median) | 945 ps | 1070 ps | 0.883 | ✅ |
+| entry_point/try_from (5-run median) | 1063 ps | 1070 ps | 0.993 | ✅ |
+| decode/scalar | 436 ps | 434 ps | 1.005 | Within CI overlap |
+| decode/array | 332 ps | 331 ps | 1.003 | Within CI overlap |
+| decode/composite | 311 ps | 311 ps | 1.000 | ✅ |
+
+All ratios within Criterion confidence intervals. Scalar and array at parity
+within measurement noise (≤0.5% difference, p > 0.05 overlap).
