@@ -37,10 +37,6 @@ name = "clickhouse_e2e_test"
 path = "tests/clickhouse_e2e_test.rs"
 
 [[test]]
-name = "clickhouse_persist_test"
-path = "tests/clickhouse_persist_test.rs"
-
-[[test]]
 name = "dynamic_stream_test"
 path = "tests/dynamic_stream_test.rs"
 

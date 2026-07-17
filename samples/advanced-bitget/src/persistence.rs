@@ -6,6 +6,7 @@
 //! ClickHouse adapter for the live pipeline.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use ergo_clickhouse_persist::sbe::v2::DynamicRowV2Decoder;
 
@@ -435,4 +436,192 @@ fn decode_dynamic_book(bytes: &[u8]) -> Result<WireBook, PersistError> {
         bids,
         asks,
     })
+}
+
+// ── ClickHouse adapter ────────────────────────────────────────────────
+
+/// Render a `Decimal(38,18)` scaled integer as an exact decimal literal.
+fn dec38_18(v: i128) -> String {
+    const SCALE: u128 = 1_000_000_000_000_000_000;
+    let sign = if v < 0 { "-" } else { "" };
+    let a = v.unsigned_abs();
+    let mut s = format!("{sign}{}.{:018}", a / SCALE, a % SCALE);
+    // Trim trailing zeros (keep at least one fractional digit trimmed to none).
+    while s.ends_with('0') {
+        s.pop();
+    }
+    if s.ends_with('.') {
+        s.pop();
+    }
+    s
+}
+
+fn dec_array(vals: &[i128]) -> String {
+    let inner: Vec<String> = vals.iter().map(|v| format!("'{}'", dec38_18(*v))).collect();
+    format!("[{}]", inner.join(","))
+}
+
+/// ClickHouse credentials from `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`,
+/// defaulting to the local sample container (`default`/`ergosbe`).
+#[must_use]
+pub fn clickhouse_credentials() -> (String, String) {
+    (
+        std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".into()),
+        std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergosbe".into()),
+    )
+}
+
+/// Live [`RowSink`] over the ClickHouse HTTP interface. Batches rows and
+/// inserts on size threshold or [`flush`](RowSink::flush); every response is
+/// checked.
+pub struct ClickHouseRowSink {
+    endpoint: String,
+    user: String,
+    password: String,
+    client: reqwest::blocking::Client,
+    typed: Vec<String>,
+    dynamic: Vec<String>,
+    trades: Vec<String>,
+}
+
+/// Rows per table buffered before an automatic insert.
+// ponytail: fixed threshold; add a time threshold knob if live tuning needs it.
+const BATCH_ROWS: usize = 256;
+
+impl ClickHouseRowSink {
+    /// Connect to an already-running ClickHouse, verify it responds, and
+    /// create the three tables if absent. Never starts Docker.
+    ///
+    /// # Errors
+    ///
+    /// Connection or DDL failures, with the endpoint in the message.
+    pub fn connect(endpoint: &str) -> Result<Self, String> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let ping = client
+            .get(format!("{endpoint}/ping"))
+            .send()
+            .map_err(|e| format!("ClickHouse unreachable at {endpoint}: {e}"))?;
+        if !ping.status().is_success() {
+            return Err(format!(
+                "ClickHouse ping failed at {endpoint}: {}",
+                ping.status()
+            ));
+        }
+        let (user, password) = clickhouse_credentials();
+        let sink = Self {
+            endpoint: endpoint.to_string(),
+            user,
+            password,
+            client,
+            typed: Vec::new(),
+            dynamic: Vec::new(),
+            trades: Vec::new(),
+        };
+        for table in ["l2book_typed", "l2book_dynamic"] {
+            sink.execute(&format!(
+                "CREATE TABLE IF NOT EXISTS {table} (\
+                 sequence UInt64, exchange_ts UInt64, symbol String, \
+                 bid_prices Array(Decimal(38,18)), bid_sizes Array(Decimal(38,18)), \
+                 ask_prices Array(Decimal(38,18)), ask_sizes Array(Decimal(38,18))\
+                 ) ENGINE = MergeTree ORDER BY sequence"
+            ))?;
+        }
+        sink.execute(
+            "CREATE TABLE IF NOT EXISTS trade (\
+             trade_id UInt64, exchange_ts UInt64, symbol String, \
+             price Decimal(38,18), size Decimal(38,18), is_buy Bool\
+             ) ENGINE = MergeTree ORDER BY trade_id",
+        )?;
+        Ok(sink)
+    }
+
+    fn execute(&self, sql: &str) -> Result<(), String> {
+        let resp = self
+            .client
+            .post(&self.endpoint)
+            .header("X-ClickHouse-User", &self.user)
+            .header("X-ClickHouse-Key", &self.password)
+            .body(sql.to_string())
+            .send()
+            .map_err(|e| format!("ClickHouse request failed: {e}"))?;
+        let status = resp.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let body = resp.text().unwrap_or_default();
+            Err(format!("ClickHouse error [{status}]: {body}"))
+        }
+    }
+
+    fn book_values(row: &L2BookRow) -> String {
+        format!(
+            "({},{},'{}',{},{},{},{})",
+            row.sequence,
+            row.exchange_ts_ns,
+            row.symbol.replace('\'', ""),
+            dec_array(&row.bid_prices),
+            dec_array(&row.bid_sizes),
+            dec_array(&row.ask_prices),
+            dec_array(&row.ask_sizes),
+        )
+    }
+
+    fn insert_batch(&self, table: &str, rows: &[String]) -> Result<(), String> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        self.execute(&format!("INSERT INTO {table} VALUES {}", rows.join(",")))
+    }
+
+    fn flush_table(
+        &mut self,
+        which: fn(&mut Self) -> &mut Vec<String>,
+        table: &str,
+    ) -> Result<(), String> {
+        let rows = std::mem::take(which(self));
+        self.insert_batch(table, &rows)
+    }
+}
+
+impl RowSink for ClickHouseRowSink {
+    fn insert_l2book_typed(&mut self, row: &L2BookRow) -> Result<(), String> {
+        self.typed.push(Self::book_values(row));
+        if self.typed.len() >= BATCH_ROWS {
+            self.flush_table(|s| &mut s.typed, "l2book_typed")?;
+        }
+        Ok(())
+    }
+
+    fn insert_l2book_dynamic(&mut self, row: &L2BookRow) -> Result<(), String> {
+        self.dynamic.push(Self::book_values(row));
+        if self.dynamic.len() >= BATCH_ROWS {
+            self.flush_table(|s| &mut s.dynamic, "l2book_dynamic")?;
+        }
+        Ok(())
+    }
+
+    fn insert_trade(&mut self, row: &TradeRow) -> Result<(), String> {
+        self.trades.push(format!(
+            "({},{},'{}','{}','{}',{})",
+            row.trade_id,
+            row.exchange_ts_ns,
+            row.symbol.replace('\'', ""),
+            dec38_18(row.price),
+            dec38_18(row.size),
+            row.is_buy,
+        ));
+        if self.trades.len() >= BATCH_ROWS {
+            self.flush_table(|s| &mut s.trades, "trade")?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), String> {
+        self.flush_table(|s| &mut s.typed, "l2book_typed")?;
+        self.flush_table(|s| &mut s.dynamic, "l2book_dynamic")?;
+        self.flush_table(|s| &mut s.trades, "trade")
+    }
 }

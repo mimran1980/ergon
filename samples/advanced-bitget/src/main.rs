@@ -22,7 +22,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use advanced_bitget::bitget::{BitgetIngestor, parse_frame};
 use advanced_bitget::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED, SYMBOL, WS_URL};
-use advanced_bitget::persistence::{ForegroundPersistor, InMemorySink};
+use advanced_bitget::persistence::{ClickHouseRowSink, ForegroundPersistor};
 use advanced_bitget::publication::{AeronPublication, ClaimPublisher, derive_ipc_mtu};
 
 fn aeron_client(dir: &str) -> Result<rusteron_client::Aeron, Box<dyn Error + Send + Sync>> {
@@ -61,17 +61,21 @@ fn persistence_thread(
     running: Arc<AtomicBool>,
     ready: mpsc::Sender<()>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    // ponytail: endpoint fixed to the local sample container; env-driven
+    // credentials live in ClickHouseRowSink::connect.
     let aeron = aeron_client(&dir)?;
     let sub_typed = add_sub(&aeron, STREAM_TYPED)?;
     let sub_dynamic = add_sub(&aeron, STREAM_DYNAMIC)?;
-    // ponytail: in-memory sink until the ClickHouse RowSink adapter lands
-    // (remediation Task 10); the seam and matching logic are identical.
-    let mut persistor = ForegroundPersistor::new(InMemorySink::default());
+    // Connect to the already-running ClickHouse (never auto-starts Docker);
+    // table creation happens here. Readiness is signalled only after both
+    // subscriptions and the database are up.
+    let sink = ClickHouseRowSink::connect("http://127.0.0.1:8123")?;
+    let mut persistor = ForegroundPersistor::new(sink);
     let mut asm = rusteron_client::AeronFragmentClosureAssembler::new()?;
     ready.send(())?;
 
     fn handle_typed(
-        p: &mut ForegroundPersistor<InMemorySink>,
+        p: &mut ForegroundPersistor<ClickHouseRowSink>,
         buf: &[u8],
         _h: rusteron_client::AeronHeader,
     ) {
@@ -80,7 +84,7 @@ fn persistence_thread(
         }
     }
     fn handle_dynamic(
-        p: &mut ForegroundPersistor<InMemorySink>,
+        p: &mut ForegroundPersistor<ClickHouseRowSink>,
         buf: &[u8],
         _h: rusteron_client::AeronHeader,
     ) {
@@ -89,16 +93,22 @@ fn persistence_thread(
         }
     }
 
+    let mut last_flush = std::time::Instant::now();
     while running.load(Ordering::SeqCst) {
         let mut idle = true;
         let n = asm.poll(&sub_typed, &mut persistor, handle_typed, 16)?;
         idle &= n == 0;
         let n = asm.poll(&sub_dynamic, &mut persistor, handle_dynamic, 16)?;
         idle &= n == 0;
+        if last_flush.elapsed() >= Duration::from_secs(1) {
+            persistor.flush()?;
+            last_flush = std::time::Instant::now();
+        }
         if idle {
             thread::sleep(Duration::from_millis(1));
         }
     }
+    // Shutdown drain: flush remaining batches before the driver stops.
     persistor.flush()?;
     let c = persistor.counters();
     eprintln!(

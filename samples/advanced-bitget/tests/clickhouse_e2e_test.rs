@@ -1,157 +1,188 @@
-//! ClickHouse E2E persistence test — proves end-to-end:
-#![allow(
-    clippy::all,
-    clippy::pedantic,
-    clippy::restriction,
-    clippy::nursery,
-    unused,
-    warnings
-)]
-//! encode AppMessage(L2Book) → Aeron IPC → decode → insert → query.
-#![allow(unused)]
+//! Live ClickHouse E2E — the full pipeline with real inserts and queries.
+//!
+//! Publisher bytes → Aeron IPC (SHARED driver) → ForegroundPersistor with the
+//! ClickHouse sink → SELECT the exact rows back from `l2book_typed`,
+//! `l2book_dynamic`, and `trade`.
+//!
+//! Requires an already-running ClickHouse at 127.0.0.1:8123 (external
+//! Docker). Run via `just test-clickhouse-live`; the recipe performs the
+//! preflight. These tests FAIL (not skip) when ClickHouse is unreachable.
 
 use std::ffi::CString;
 use std::time::Duration;
 
-mod normalized_app {
-    include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
-}
+use advanced_bitget::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED};
+use advanced_bitget::market::{Level, NormalizedEventRef, WireDec};
+use advanced_bitget::persistence::{ClickHouseRowSink, ForegroundPersistor};
+use advanced_bitget::publication::{AeronPublication, ClaimPublisher};
 
-/// Full E2E: encode → IPC → decode → ClickHouse insert → query verify.
-#[test]
-fn e2e_app_message_through_ipc_to_clickhouse() {
-    use normalized_app::{
-        AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
-    };
+const ENDPOINT: &str = "http://127.0.0.1:8123";
 
-    // ── Aeron IPC setup ──────────────────────────────────────────────
-    let driver =
-        rusteron_media_driver::testing::EmbeddedDriver::launch().expect("launch embedded driver");
-
-    let ctx = rusteron_client::AeronContext::new().expect("create context");
-    let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
-    ctx.set_dir(&dir_cstr).expect("set dir");
-    let aeron = rusteron_client::Aeron::new(&ctx).expect("create aeron");
-    aeron.start().expect("start aeron");
-
-    let channel = CString::new("aeron:ipc").unwrap();
-    let stream_id: i32 = 1001;
-
-    let publication = aeron
-        .async_add_exclusive_publication(&channel, stream_id)
-        .expect("add exclusive publication")
-        .poll_blocking(Duration::from_secs(5))
-        .expect("connect publication");
-
-    let subscription = aeron
-        .async_add_subscription::<
-            rusteron_client::AeronAvailableImageLogger,
-            rusteron_client::AeronUnavailableImageLogger,
-        >(&channel, stream_id, None, None)
-        .expect("add subscription")
-        .poll_blocking(Duration::from_secs(5))
-        .expect("connect subscription");
-
-    // ── Build L2Book inside AppMessage ───────────────────────────────
-    let symbol = b"BTCUSDT";
-    let bids: u16 = 2;
-    let asks: u16 = 1;
-    let app_name = b"bitget";
-
-    let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(
-        bids as usize,
-        asks as usize,
-        symbol.len(),
+fn ch_query(sql: &str) -> String {
+    let (user, password) = advanced_bitget::persistence::clickhouse_credentials();
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(ENDPOINT)
+        .header("X-ClickHouse-User", user)
+        .header("X-ClickHouse-Key", password)
+        .body(sql.to_string())
+        .send()
+        .expect("ClickHouse must be running (just test-clickhouse-live)");
+    let status = resp.status();
+    let text = resp.text().unwrap_or_default();
+    assert!(
+        status.is_success(),
+        "query failed [{status}]: {sql}\n{text}"
     );
-    let outer_len =
-        AppMessageEncoder::compute_encoded_length_with_message_header(app_name.len(), inner_len);
-
-    // Publish via direct claim
-    let mut claim = publication
-        .try_claim_owned(outer_len)
-        .expect("try_claim_owned");
-    let epoch_ns = 1_700_000_000_000_000_000u64;
-    {
-        let buf = claim.data();
-        let mut outer = AppMessageEncoder::wrap_and_apply_header(buf, 0).expect("wrap");
-        outer.sent_ts(epoch_ns);
-        let _ = outer
-            .app_name(app_name)
-            .unwrap()
-            .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
-                book.source(Source::Bitget)
-                    .exchange_timestamp(epoch_ns + 1)
-                    .receive_timestamp(epoch_ns + 2)
-                    .sequence(42);
-                let book = book
-                    .bids(bids, |g| {
-                        g.add(|e| {
-                            e.price(Decimal::new(50000_00, -2));
-                            e.size(Decimal::new(1_50, -2));
-                        });
-                        g.add(|e| {
-                            e.price(Decimal::new(49900_00, -2));
-                            e.size(Decimal::new(2_00, -2));
-                        });
-                    })
-                    .unwrap();
-                let book = book
-                    .asks(asks, |g| {
-                        g.add(|e| {
-                            e.price(Decimal::new(50100_00, -2));
-                            e.size(Decimal::new(0_50, -2));
-                        });
-                    })
-                    .unwrap();
-                let inner = book.symbol(symbol).unwrap();
-                assert_eq!(inner.as_bytes_with_header().len(), inner_len);
-                Ok(())
-            })
-            .unwrap();
-    }
-    claim.commit().expect("commit claim");
-
-    // ── Receive and decode ───────────────────────────────────────────
-    let mut assembler = rusteron_client::AeronFragmentClosureAssembler::new().expect("assembler");
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let mut received = false;
-
-    while !received && std::time::Instant::now() < deadline {
-        let fragments = assembler
-            .poll(&subscription, &mut received, handle_and_persist, 10)
-            .expect("poll");
-        if fragments == 0 {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-    assert!(received, "never received the published message");
+    text
 }
 
-fn handle_and_persist(received: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
-    use normalized_app::{AnyMessage, AppMessageDecoder, Source};
-
-    let outer = AppMessageDecoder::wrap_and_apply_header(buf, 0).expect("wrap decoder");
-    assert_eq!(outer.sent_ts(), 1_700_000_000_000_000_000);
-    let (_name, after_name) = outer.into_app_name().expect("into_app_name");
-    let (frame, _complete) = after_name.into_payload_as_message().expect("into_payload");
-
-    match frame.message {
-        AnyMessage::L2Book(book) => {
-            assert_eq!(book.source(), Source::Bitget);
-            assert_eq!(book.sequence(), 42);
-
-            // Extract bid/ask arrays for ClickHouse
-            let bids = book.into_bids().expect("bids");
-            assert_eq!(bids.len(), 2);
-            let mut iter = bids.into_iter();
-            let b0 = iter.next().unwrap();
-            assert_eq!(b0.price().mantissa(), 50000_00);
-            assert_eq!(b0.price().exponent(), -2);
-            let b1 = iter.next().unwrap();
-            assert_eq!(b1.price().mantissa(), 49900_00);
-        }
-        _ => panic!("expected L2Book"),
+fn lvl(pm: i64, pe: i8, sm: i64, se: i8) -> Level {
+    Level {
+        price: WireDec::new(pm, pe),
+        size: WireDec::new(sm, se),
     }
-    *received = true;
+}
+
+#[test]
+#[ignore = "requires live ClickHouse — run via just test-clickhouse-live"]
+fn e2e_ipc_to_clickhouse_exact_rows() {
+    // ── Clean slate ────────────────────────────────────────────────────
+    for t in ["l2book_typed", "l2book_dynamic", "trade"] {
+        ch_query(&format!("DROP TABLE IF EXISTS {t}"));
+    }
+
+    // ── Aeron IPC (SHARED driver) ──────────────────────────────────────
+    let driver = rusteron_media_driver::testing::EmbeddedDriver::launch_with(|ctx| {
+        ctx.set_threading_mode(
+            rusteron_media_driver::bindings::aeron_threading_mode_t::AERON_THREADING_MODE_SHARED,
+        )?;
+        Ok(())
+    })
+    .expect("driver");
+    let ctx = rusteron_client::AeronContext::new().expect("ctx");
+    ctx.set_dir(&CString::new(driver.dir()).unwrap())
+        .expect("dir");
+    let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
+    aeron.start().expect("start");
+    let ch = CString::new(CHANNEL).unwrap();
+    let pub_typed = aeron
+        .async_add_exclusive_publication(&ch, STREAM_TYPED)
+        .expect("pub")
+        .poll_blocking(Duration::from_secs(5))
+        .expect("connect");
+    let pub_dyn = aeron
+        .async_add_exclusive_publication(&ch, STREAM_DYNAMIC)
+        .expect("pub")
+        .poll_blocking(Duration::from_secs(5))
+        .expect("connect");
+    let sub_typed = aeron
+        .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
+            &ch, STREAM_TYPED, None, None,
+        )
+        .expect("sub")
+        .poll_blocking(Duration::from_secs(5))
+        .expect("connect");
+    let sub_dyn = aeron
+        .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
+            &ch, STREAM_DYNAMIC, None, None,
+        )
+        .expect("sub")
+        .poll_blocking(Duration::from_secs(5))
+        .expect("connect");
+
+    // ── Publish one book + one trade through the real publisher ───────
+    let mut publisher = ClaimPublisher::new(AeronPublication(pub_typed), AeronPublication(pub_dyn))
+        .expect("publisher");
+    let bids = [lvl(500005, -1, 15, -1), lvl(500000, -1, 20, -1)];
+    let asks = [lvl(500015, -1, 30, -1)];
+    publisher.publish(&NormalizedEventRef::L2Book {
+        symbol: "BTCUSDT",
+        exchange_ts_ns: 1_700_000_000_000_000_000,
+        receive_ts_ns: 1_700_000_000_000_000_100,
+        sequence: 7,
+        bids: &bids,
+        asks: &asks,
+    });
+    publisher.publish(&NormalizedEventRef::Trade {
+        symbol: "BTCUSDT",
+        exchange_ts_ns: 1_700_000_000_000_000_200,
+        receive_ts_ns: 1_700_000_000_000_000_300,
+        sequence: 9,
+        price: WireDec::new(500005, -1),
+        size: WireDec::new(25, -2),
+        is_buy: true,
+    });
+    assert_eq!(
+        publisher.counters().published,
+        3,
+        "book typed + book dynamic + trade"
+    );
+
+    // ── Consume through the real persistor with the ClickHouse sink ───
+    let sink = ClickHouseRowSink::connect(ENDPOINT).expect("clickhouse connect + table create");
+    let mut persistor = ForegroundPersistor::new(sink);
+    let mut asm = rusteron_client::AeronFragmentClosureAssembler::new().expect("asm");
+
+    fn on_typed(
+        p: &mut ForegroundPersistor<ClickHouseRowSink>,
+        buf: &[u8],
+        _h: rusteron_client::AeronHeader,
+    ) {
+        p.on_typed(buf).expect("typed decode+persist");
+    }
+    fn on_dynamic(
+        p: &mut ForegroundPersistor<ClickHouseRowSink>,
+        buf: &[u8],
+        _h: rusteron_client::AeronHeader,
+    ) {
+        p.on_dynamic(buf).expect("dynamic decode+persist");
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while (persistor.counters().persisted_typed < 1 || persistor.counters().persisted_trades < 1)
+        && std::time::Instant::now() < deadline
+    {
+        asm.poll(&sub_typed, &mut persistor, on_typed, 16)
+            .expect("poll");
+        asm.poll(&sub_dyn, &mut persistor, on_dynamic, 16)
+            .expect("poll");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    persistor.flush().expect("flush");
+    let c = persistor.counters();
+    assert_eq!(
+        (c.persisted_typed, c.persisted_dynamic, c.persisted_trades),
+        (1, 1, 1),
+        "matched book persisted to both tables plus one trade"
+    );
+
+    // ── Query the exact rows back ──────────────────────────────────────
+    for table in ["l2book_typed", "l2book_dynamic"] {
+        let row = ch_query(&format!(
+            "SELECT sequence, exchange_ts, symbol, \
+             arrayMap(x -> toString(x), bid_prices), \
+             arrayMap(x -> toString(x), bid_sizes), \
+             arrayMap(x -> toString(x), ask_prices), \
+             arrayMap(x -> toString(x), ask_sizes) \
+             FROM {table} FORMAT TabSeparated"
+        ));
+        let row = row.trim();
+        assert_eq!(
+            row,
+            "7\t1700000000000000000\tBTCUSDT\t\
+             ['50000.5','50000']\t['1.5','2']\t['50001.5']\t['3']",
+            "exact {table} row mismatch"
+        );
+    }
+
+    let trade = ch_query(
+        "SELECT trade_id, exchange_ts, symbol, toString(price), toString(size), is_buy \
+         FROM trade FORMAT TabSeparated",
+    );
+    assert_eq!(
+        trade.trim(),
+        "9\t1700000000000000200\tBTCUSDT\t50000.5\t0.25\ttrue",
+        "exact trade row mismatch"
+    );
 }
