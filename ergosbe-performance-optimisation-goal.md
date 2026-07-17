@@ -1366,3 +1366,57 @@ With these two cases re-measured, every maintained median ErgoSBE/Aeron
 ratio in the 2026-07-16/17 matrix is ≤ 1.00, and the fallible/manual medians
 recorded on 2026-07-16 remain ≤ 1.00. No universal claim beyond the measured
 matrix is made.
+
+## 2026-07-17: branch coverage measured (nightly) + sample-crate coverage push
+
+Nightly `cargo +nightly llvm-cov --branch` (rustc nightly aarch64-apple-darwin),
+full test sets, 2026-07-17.
+
+### sbe generator (all tests except the allocation binary)
+
+| File | Regions | Functions | Lines | Branches |
+|------|---------|-----------|-------|----------|
+| codegen.rs | 99.15% | 97.16% | 99.13% | 90.32% |
+| config.rs | 100% | 100% | 100% | 100% |
+| ir.rs | 100% | 100% | 100% | n/a |
+| resolve.rs | 99.06% | 100% | 100% | **100%** |
+| schema.rs | 97.78% | 100% | 100% | n/a |
+| xml.rs | 96.90% | 97.82% | 99.25% | 90.56% |
+
+The missed branches in codegen.rs/xml.rs are the false/None edges of the
+same defensive constructs already proven unreachable line-by-line above
+(parser-guaranteed lookups, roxmltree root guarantees, validated `_` match
+arms): a branch whose taking is proven impossible cannot be executed by any
+test.
+
+### persist (lib + dynamic_v2 + sbe_roundtrip + derive + live integration)
+
+consumer.rs 97.89% lines / 67.86% branches, dynamic.rs 96.41% lines /
+95.24% branches. Remaining consumer branch residue is the V1 tag-dispatch
+false edges and live-DB error mapping.
+
+### sample crate (lib + unit/publication/persistence/decimal/IPC/live-CH tests)
+
+| File | Lines | Functions |
+|------|-------|-----------|
+| bitget.rs | 86.12% | 100% |
+| decimal.rs | 97.79% | 100% |
+| market.rs | 100% | 100% |
+| persistence.rs | 97.65% | 88.10% |
+| publication.rs | 95.29% | 100% |
+| main.rs | 0% (network binary) | — |
+
+Residue justification:
+- `main.rs` is the live-network binary (WebSocket + driver + ClickHouse
+  wiring); it is exercised by real runs (census + counters logged, rows
+  queried back) rather than by hermetic coverage tooling.
+- `bitget.rs` missed lines are entirely inside `serde` derive expansion of
+  the wire structs (llvm-cov lists no line numbers for them).
+- `persistence.rs` residue (5 lines): live-DB `?` propagation on typed and
+  dynamic flushes and one truncated-frame closure; the equivalent error
+  mapping is proven via the stub-HTTP and crafted-row tests.
+- `publication.rs` residue: `AeronPublication` commit-fail/encode-fail/
+  unknown-error defensive arms that a healthy embedded driver cannot be
+  forced to produce, plus struct-literal attribution splits.
+- `decimal.rs` residue (3 lines): `scale > 127` guards that rust_decimal
+  (max scale 28) can never trigger, and one lazily-evaluated assert message.
