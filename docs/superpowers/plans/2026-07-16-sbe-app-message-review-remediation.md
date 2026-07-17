@@ -394,7 +394,7 @@ pub fn record_into<'a>(
       Aeron claim.
 - [x] Keep V0 template IDs 1/2 byte-compatible and V2 IDs 3/4 distinct. Decode
       by both schema ID and template ID and reject unknown combinations.
-- [ ] Prove V0/V2 round trips, allocation count, acting-version compatibility,
+- [x] Prove V0/V2 round trips, allocation count, acting-version compatibility,
       and bounds errors.
 
 Commit: `feat(persist): implement dynamic decimal-array v2`
