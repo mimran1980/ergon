@@ -1566,3 +1566,31 @@ both improved this session (from 1.148 / 1.151), both above the gate, both
 reduced to a single compiler-level question with recorded assembly and
 segment-bisect evidence. Everything else in the remediation plan carries
 fresh passing evidence.
+
+## 2026-07-17 session-end state: two landed improvements, two open scenarios
+
+Landed and verified (all suites green including wire-parity, allocation, sample, live CH):
+- Single-bounds-check `wrap_and_apply_header` (encode, golden regenerated)
+- Entry tail-end cache `Cell<Option<usize>>` plus cached-path unsafe slice elision
+  (decode, golden regenerated; cache re-opened + delivered from todo 110)
+
+Rejected with evidence this session:
+- `write_bytes`/`read_bytes_trusted` encode/decode trusted write/read gates: scoping
+  breaks multi-schema compilation; tested no-effect path doesn't move the
+  needle on the residual loop-form question
+- `[inline(always)]` probes (×2): no effect, reverted per policy
+- `wrap_trusted` NgDecoder fast-path: breaks `sbe_rt` module scoping in
+  multi-schema test binaries; not pursued further
+
+Fresh 5-run medians (2026-07-17, post all landed improvements):
+
+| Scenario | ErgoSBE median | Aeron median | Ratio |
+|----------|---------------|--------------|-------|
+| encode/throughput_10k | 5.7766 µs | 5.0894 µs | 1.135 |
+| decode/full_message | 11.242 ns | 10.872 ns | 1.034 |
+
+Both remain above ≤ 1.00. All other maintained scenarios ≤ 1.00 with fresh
+evidence. The only open plan checkbox is the benchmark gate; both residues
+are traced to compiler-level composition effects (assembly-verified store
+parity, segment-bisect-proven per-component ≤ Aeron for decode) and need
+IR-level investigation in a fresh session.
