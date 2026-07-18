@@ -46,6 +46,11 @@ required-features = ["test-harness"]
 proptest = "1.11"
 rusteron-media-driver = "0.2.4"
 serial_test = { version = "3", features = ["file_locks"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [build-dependencies]
 ergosbe = { path = "../sbe" }
+
+[[bench]]
+name = "cluster_codec_bench"
+harness = false
