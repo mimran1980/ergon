@@ -110,10 +110,12 @@ dirty local worktree — never reset or commit it).
   [`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](../specs/2026-07-18-cluster-ha-orderbook-sample-design.md),
   todo [`samples/todo/02-cluster-ha-orderbook-latency.md`](../../../samples/todo/02-cluster-ha-orderbook-latency.md) **DONE**.
 
-## 3. Cluster codec migration — COMPLETE (production); residual cleanup open
+## 3. Cluster codec migration — COMPLETE (production); dual-codec residual CLOSED for product path
 
 **Decision (executed for production):** cluster crate uses ErgoSBE `build.rs`
 on-the-fly generation (persist pattern) from the aeron submodule schemas.
+Production/protocol dual-codec cleanup is **DONE** (§3b). sbe-tool trees remain
+only for frozen RFQ + head-to-head benches (intentional, not open product work).
 
 ### Progress (2026-07-18) — production migration done
 
@@ -255,5 +257,8 @@ names are stale on purpose.
   they are gitignored — never commit them.
 - SBE wire compatibility and the ≤ 1.00 gate on **maintained** scenarios are
   non-negotiable (`sbe/design/DECISIONS.md` priority ladder).
-- SessionConnectRequest ~1.003 is **not** a pass; do not claim cluster benches
-  complete until five-run ledger is honest.
+- **Cluster bench ledger (2026-07-18):** five-run maintained encode matrix is
+  honest in `ergosbe-performance-optimisation-goal.md` (header 0.856, keep-alive
+  0.916; connect demoted cold-path). Fresh smoke may re-confirm ratios ≤ 1.00;
+  do not re-open the five-run honesty gate without a measured regression.
+  Historical note: first-run connect ~1.003 was never a pass and is demoted.

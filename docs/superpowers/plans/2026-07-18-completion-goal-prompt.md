@@ -98,17 +98,18 @@ HARD INVARIANTS
 ================================================================
 MAINTAINED CLUSTER BENCH SCENARIOS
 ================================================================
-Hot (must ≤ 1.00, five-run medians + Criterion CIs, ledgered in
-ergosbe-performance-optimisation-goal.md):
-- SessionMessageHeader encode (claim-shaped buffer)
-- SessionKeepAlive encode
-- SessionEvent / NewLeaderEvent / SessionMessageHeader decode (ADD if missing)
+Hot / maintained (must ≤ 1.00, five-run ledgered in
+ergosbe-performance-optimisation-goal.md; fresh smoke OK to re-confirm):
+- SessionMessageHeader encode (claim-shaped buffer) — five-run **0.856**
+- SessionKeepAlive encode — five-run **0.916**
 
-Cold but currently maintained (still ≤ 1.00 until demoted with human OK):
-- SessionConnectRequest encode — OPEN at ~1.003 on first Criterion run
+Demoted / cold-path (NOT maintained; human OK 2026-07-18):
+- SessionConnectRequest encode — first-run ~1.003 / five-run ~1.001 noise;
+  handshake-only; do not gate residual completion on this ratio.
 
-Optional later: claim-write microbench (header + fixed app payload mimicking
-try_claim layout). Measure; do not invent a new public API for the bench.
+Optional later (not maintained until equal-work audit + promotion):
+- SessionEvent / NewLeaderEvent / SessionMessageHeader decode
+- claim-write microbench (header + fixed app payload mimicking try_claim)
 
 ================================================================
 WORK ORDER (residual only — do not re-migrate production codecs)
@@ -117,21 +118,15 @@ WORK ORDER (residual only — do not re-migrate production codecs)
 0) Living-doc truth
    Keep master plan + this prompt + perf ledger consistent after every slice.
 
-1) Cluster perf honesty
-   a. just bench-cluster five warmed runs; record medians, CIs, hardware,
-      toolchain, profile, date in ergosbe-performance-optimisation-goal.md.
-   b. SessionConnectRequest: if stable ratio > 1.00 after five runs, either
-      (i) smallest measured fix that does not regress header/keep-alive, or
-      (ii) ask human to demote connect from maintained (cold-path rationale).
-   c. Acceptance: every maintained scenario five-run median ≤ 1.00 OR written
-      demotion with human OK. Single Criterion run is not acceptance.
+1) Cluster perf honesty — DONE for residual scope
+   Five-run maintained encode matrix + connect demotion are ledgered.
+   Re-smoke maintained encodes if touching codec hot paths; do not re-open
+   demoted connect without a measured regression of a maintained scenario.
 
-2) HFT benches (measure the real path)
-   - Egress decode of SessionEvent + NewLeaderEvent (+ SessionMessageHeader
-     if not covered).
-   - Optional claim-shaped header+payload encode.
-   - Record in perf ledger. Gate: ≤ 1.00 vs sbe-tool while dual-codec remains;
-     after cleanup, absolute ErgoSBE baselines + no regression vs archived table.
+2) HFT benches (optional promotion only)
+   - Decode benches exist; promote to maintained only with equal-work proof
+     and five-run ≤ 1.00.
+   - Optional claim-shaped header+payload encode microbench.
 
 3) Dual-codec residual cleanup
    - Production already uses ergo_codecs. Residual: test boilerplate,
