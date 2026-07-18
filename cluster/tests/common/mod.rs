@@ -9,9 +9,7 @@ use std::error::Error;
 use std::ffi::CString;
 use std::time::{Duration, Instant};
 
-use ergo_aeron_cluster::codecs::cluster_codecs::{
-    admin_request_type::AdminRequestType, admin_response_code::AdminResponseCode, event_code::EventCode,
-};
+use ergo_aeron_cluster::codecs::ergo_codecs::{AdminRequestType, AdminResponseCode, EventCode};
 use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 
