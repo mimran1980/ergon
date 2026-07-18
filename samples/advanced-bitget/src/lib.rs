@@ -33,6 +33,8 @@ pub mod bitget;
 pub mod config;
 pub mod counters;
 pub mod decimal;
+pub mod ha_book;
+pub mod latency;
 pub mod market;
 pub mod persistence;
 pub mod publication;
