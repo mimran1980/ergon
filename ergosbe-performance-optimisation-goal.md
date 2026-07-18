@@ -1997,3 +1997,16 @@ Full 5-run maintained encode matrix (header 0.856, keep-alive 0.916; connect dem
 | SessionKeepAlive encode | 5.8490 µs | 6.4795 µs | **0.903** | ✅ |
 
 Connect remains demoted (cold path). Decode not in maintained set. Full 5-run matrix above remains the long-form ledger.
+
+## 2026-07-18 completion-goal re-verify: maintained encode still ≤ 1.00
+
+**Command:** `cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --warm-up-time 0.3 --measurement-time 1.0 --sample-size 20 'encode/session_message_header|encode/session_keep_alive'`  
+**Also:** `cargo bench -p ergosbe-benchmarks --no-run`  
+**Hardware/toolchain:** aarch64 macOS, rustc 1.95.0
+
+| Scenario | ErgoSBE | sbe-tool | Ratio | Gate |
+|----------|---------|----------|-------|------|
+| SessionMessageHeader encode | 4.3563 µs | 5.0545 µs | **0.862** | ✅ |
+| SessionKeepAlive encode | 5.9234 µs | 6.5246 µs | **0.908** | ✅ |
+
+Connect remains demoted. Full five-run ledger (0.856 / 0.916) unchanged authority.

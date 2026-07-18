@@ -72,7 +72,8 @@ DONE for current scope:
   connect 1.001 demoted (cold path). Decode benches present (f01e334).
 - Connect re-offer: DONE (sync + async PollResponse cadence).
 - Log-recovery restart test: DONE (ae6f4c9, #[ignore] destructive).
-- HA sample pure modules: ha_book + latency in advanced-bitget (unit-tested).
+- HA sample: `samples/cluster-ha-orderbook` + `just samples-cluster-ha` —
+  try_claim publish, never-stale book, LatencyPersistor → CH (H1–H8 residual).
 - RFQ codecs: frozen sbe-tool (no schema XML); keep compiling; do not unfreeze
   without human OK.
 
