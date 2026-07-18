@@ -94,3 +94,43 @@ fn test_cluster_restart_and_reconnect() -> Result<(), Box<dyn Error>> {
     let _ = client.close();
     Ok(())
 }
+
+/// Log-recovery restart: kill ALL nodes, restart at the SAME ports with
+/// `dirDeleteOnStart=false` so the consensus module replays the Raft log
+/// from the preserved aeron directories, then reconnect and verify the
+/// recovered cluster is operational.
+#[test]
+#[serial]
+#[ignore = "log-recovery restart, ~90s (needs Java 17 + just build-aeron-jars)"]
+fn test_log_recovery_restart() -> Result<(), Box<dyn Error>> {
+    // --- Lifecycle 1: fresh cluster A, write data ---
+    let mut cluster_a = ergo_aeron_cluster_test_support::TestCluster::three_node();
+    let base_port = cluster_a.base_port();
+    let driver_a = launch_own_driver("logrec-a");
+    let mut client_a = connect_own_driver(&cluster_a.ingress_channel, 19330, &driver_a.dir)?;
+    let mut adapter_a = EgressAdapter::new(Capture::new());
+    await_echo(&mut client_a, &mut adapter_a, b"PRE-RECOVERY", Duration::from_secs(15))?;
+    let _ = client_a.close();
+    // Kill every node of A. The aeron dirs persist (not cleaned on kill).
+    for i in 0..cluster_a.node_count() {
+        cluster_a.kill_node(i);
+    }
+    drop(cluster_a);
+    drop(driver_a);
+
+    // --- Lifecycle 2: restart with keep_dirs at the same base port ---
+    let restart = ergo_aeron_cluster_test_support::TestCluster {
+        processes: vec![],
+        ingress_channel: String::new(),
+        egress_channel: String::new(),
+        aeron_dir: std::path::PathBuf::new(),
+        base_port,
+    };
+    let cluster_b = restart.restart_keep_dirs();
+    let driver_b = launch_own_driver("logrec-b");
+    let mut client_b = connect_own_driver(&cluster_b.ingress_channel, 19331, &driver_b.dir)?;
+    let mut adapter_b = EgressAdapter::new(Capture::new());
+    await_echo(&mut client_b, &mut adapter_b, b"POST-RECOVERY", Duration::from_secs(15))?;
+    let _ = client_b.close();
+    Ok(())
+}

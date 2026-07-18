@@ -32,14 +32,17 @@ public class ClusterLauncher {
         List<String> hosts = new ArrayList<>();
         for (int i = 0; i < nodeCount; i++) hosts.add("localhost");
 
+        // When arg[3] == "keep", preserve the aeron/archive/consensus dirs
+        // across this launch — used by log-recovery restart tests.
+        boolean keep = args.length > 3 && args[3].equals("keep");
         ClusterConfig config = ClusterConfig.create(memberId, hosts, basePort, new Echo());
-        config.mediaDriverContext().dirDeleteOnStart(true);
-        config.archiveContext().deleteArchiveOnStart(true);
+        config.mediaDriverContext().dirDeleteOnStart(!keep);
+        config.archiveContext().deleteArchiveOnStart(!keep);
         // Per-node ingress port: portBase + memberId*100 + 2 (matches
         // ClusterConfig.calculatePort with PORTS_PER_NODE=100).
         int ingressPort = basePort + memberId * 100 + 2;
         config.consensusModuleContext()
-            .deleteDirOnStart(true)
+            .deleteDirOnStart(!keep)
             .ingressChannel("aeron:udp?endpoint=localhost:" + ingressPort);
 
         ClusteredMediaDriver.launch(config.mediaDriverContext(), config.archiveContext(), config.consensusModuleContext());
