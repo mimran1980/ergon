@@ -220,10 +220,11 @@ Residual product is COMPLETE. Quality track status:
 | Priority | Theme | Status |
 |----------|--------|--------|
 | **P0** | Per-module README + accurate rustdocs | **DONE** (`2d05440`) |
-| **P1** | Cluster API polish: `decode::*`, codec aliases `session`/`rfq`, crate re-exports | **DONE** |
+| **P1** | Cluster API polish: `decode::*`, egress wired to helpers, `session`/`rfq` aliases | **DONE** |
 | **P2** | LatencyPersistor canonical docs + sample failure-mode tables | **DONE** |
 | **P3** | SBE guide accuracy (fallible wrap, MSRV 1.95, consuming stages) | **DONE** (docs) |
 | **P4** | check-cfg serde, harness spawn docs, narrowed generated allows | **DONE** |
+| **opt** | NewLeaderEvent decode + claim-shaped write Criterion benches | **DONE** |
 
 Non-goals unchanged: no pillar renames, no Rust cluster service, no deleting
 sbe-tool residual bench trees, no promoting connect encode to maintained gate.

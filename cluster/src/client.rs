@@ -451,12 +451,28 @@ impl AeronCluster {
     }
 
     /// Zero-copy publish: claim a region of the ingress term buffer,
-    /// write the SessionMessageHeader into the first 32 bytes, and
-    /// expose the remaining `payload_len` bytes for the caller to fill
+    /// write the SessionMessageHeader into the first 32 bytes via ErgoSBE,
+    /// and expose the remaining `payload_len` bytes for the caller to fill
     /// directly. Mirrors Java `AeronCluster.tryClaim(length, claim)`.
     ///
-    /// Commit with `ClusterClaim::commit()`; abort with `abort()`
-    /// (aborted automatically on drop if neither is called).
+    /// # Errors
+    ///
+    /// - [`ClusterError::NotConnected`] if the session is not Connected
+    /// - [`ClusterError::Publication`] on claim failure / backpressure
+    /// - [`ClusterError::BufferTooSmall`] if the claim buffer is shorter than
+    ///   the 32-byte session header
+    ///
+    /// # Hot path
+    ///
+    /// This is the HFT publish path. On success there is no temp buffer copy of
+    /// the application payload — fill [`ClusterClaim::payload_mut`] then
+    /// [`ClusterClaim::commit`]. Abort with [`ClusterClaim::abort`] (or drop).
+    ///
+    /// ```rust,ignore
+    /// let mut claim = client.try_claim(app_len)?;
+    /// claim.payload_mut().copy_from_slice(&app_bytes);
+    /// claim.commit()?;
+    /// ```
     pub fn try_claim(&mut self, payload_len: usize) -> Result<ClusterClaim, ClusterError> {
         if self.state != SessionState::Connected {
             return Err(ClusterError::NotConnected);

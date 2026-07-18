@@ -306,6 +306,137 @@ fn bench_decode_session_event(c: &mut Criterion) {
     g.finish();
 }
 
+// ── Decode: NewLeaderEvent (var-data endpoints) ──────────────────────────
+
+const NEW_LEADER_TEMPLATE_ID: u16 = 3;
+const NEW_LEADER_SCHEMA_ID: u16 = 111;
+
+fn new_leader_fixture() -> Vec<u8> {
+    use ergo_aeron_cluster::codecs::ergo_codecs::NewLeaderEventEncoder;
+    let mut buf = vec![0u8; 256];
+    let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let _ = enc
+        .cluster_session_id(2)
+        .leadership_term_id(9)
+        .leader_member_id(1);
+    let complete = enc.ingress_endpoints(b"0=localhost:9000,1=localhost:9100").unwrap();
+    let len = complete.encoded_length_with_header();
+    buf.truncate(len);
+    buf
+}
+
+fn bench_decode_new_leader(c: &mut Criterion) {
+    let fixture = new_leader_fixture();
+    let mut g = c.benchmark_group("cluster/decode/new_leader_event");
+    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.bench_function("ergosbe", |b| {
+        b.iter(|| {
+            for _ in 0..HFT_BATCH {
+                use ergo_aeron_cluster::codecs::ergo_codecs::NewLeaderEventDecoder;
+                let dec =
+                    NewLeaderEventDecoder::wrap_and_apply_header(black_box(fixture.as_slice()), 0).unwrap();
+                let csid = dec.cluster_session_id();
+                let ltid = dec.leadership_term_id();
+                let lmid = dec.leader_member_id();
+                let (eps, _) = dec.into_ingress_endpoints().unwrap();
+                black_box((csid, ltid, lmid, eps));
+            }
+        });
+    });
+    g.bench_function("sbe-tool", |b| {
+        b.iter(|| {
+            use ergo_aeron_cluster::codecs::cluster_codecs::{
+                ReadBuf, message_header_codec::MessageHeaderDecoder,
+                new_leader_event_codec::NewLeaderEventDecoder,
+            };
+            for _ in 0..HFT_BATCH {
+                let buf = black_box(fixture.as_slice());
+                if buf.len() < 8 {
+                    continue;
+                }
+                let rb = ReadBuf::new(buf);
+                let hdr = MessageHeaderDecoder::default().wrap(rb, 0);
+                if !sbe_tool_header_ok(
+                    hdr.template_id(),
+                    hdr.schema_id(),
+                    NEW_LEADER_TEMPLATE_ID,
+                    NEW_LEADER_SCHEMA_ID,
+                ) {
+                    continue;
+                }
+                let mut dec = NewLeaderEventDecoder::default().header(hdr, 0);
+                let csid = dec.cluster_session_id();
+                let ltid = dec.leadership_term_id();
+                let lmid = dec.leader_member_id();
+                let coords = dec.ingress_endpoints_decoder();
+                let (off, len) = coords;
+                if len > 1_073_741_824 || off.saturating_add(len) > buf.len() {
+                    continue;
+                }
+                let eps = dec.ingress_endpoints_slice(coords);
+                black_box((csid, ltid, lmid, eps));
+            }
+        });
+    });
+    g.finish();
+}
+
+// ── Claim-shaped write: SessionMessageHeader + fixed 32-byte app payload ─
+
+const CLAIM_APP_PAYLOAD: [u8; 32] = [0xABu8; 32];
+
+fn bench_claim_shaped_write(c: &mut Criterion) {
+    let mut g = c.benchmark_group("cluster/encode/claim_shaped_header_plus_app");
+    let total = 32 + CLAIM_APP_PAYLOAD.len(); // MSG_HDR_TOTAL + app
+    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.bench_function("ergosbe", |b| {
+        b.iter_batched(
+            || vec![0u8; HFT_BATCH * total],
+            |mut buf| {
+                for i in 0..HFT_BATCH {
+                    let off = i * total;
+                    let slot = &mut buf[off..off + total];
+                    let _ = ergo_aeron_cluster::codecs::ergo_codecs::SessionMessageHeaderEncoder::wrap_and_apply_header(
+                        &mut slot[..32],
+                        0,
+                    )
+                    .unwrap()
+                    .leadership_term_id(5)
+                    .cluster_session_id(42)
+                    .timestamp(0);
+                    slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+                }
+                black_box(&buf);
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+    g.bench_function("sbe-tool", |b| {
+        b.iter_batched(
+            || vec![0u8; HFT_BATCH * total],
+            |mut buf| {
+                use ergo_aeron_cluster::codecs::cluster_codecs::{
+                    WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder,
+                };
+                for i in 0..HFT_BATCH {
+                    let off = i * total;
+                    let slot = &mut buf[off..off + total];
+                    let wb = WriteBuf::new(&mut slot[..32]);
+                    let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
+                    enc.leadership_term_id(5);
+                    enc.cluster_session_id(42);
+                    enc.timestamp(0);
+                    let _ = enc.header(0);
+                    slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+                }
+                black_box(&buf);
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+    g.finish();
+}
+
 criterion_group!(
     benches,
     bench_encode_msg_header_ergo,
@@ -313,5 +444,7 @@ criterion_group!(
     bench_encode_connect_request_ergo,
     bench_decode_msg_header,
     bench_decode_session_event,
+    bench_decode_new_leader,
+    bench_claim_shaped_write,
 );
 criterion_main!(benches);

@@ -1,3 +1,8 @@
+//! Async connect state machine and SessionConnectRequest re-offer cadence.
+//!
+//! Pre-election non-leader members may not answer the first connect; the client
+//! re-offers connect at [`connect_reoffer_interval_ms`] until timeout or OK.
+
 use std::time::{Duration, Instant};
 
 use crate::{ClusterError, SessionState};

@@ -1,12 +1,28 @@
+//! [`SessionBuilder`] — channel/stream/timeout configuration for connect.
+//!
+//! Mirrors Java `AeronCluster.Context`. Defaults: ingress stream 101, egress
+//! stream 102, 10s message timeout.
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{ClusterError, CredentialsSupplier};
 
-/// Builds and connects an AeronClusterSession.
+/// Builds and connects an [`crate::AeronCluster`].
 ///
 /// Mirrors `AeronCluster.Context` in the Java client. All channel and
 /// stream-ID defaults match the upstream Java defaults.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use ergo_aeron_cluster::SessionBuilder;
+/// let builder = SessionBuilder::builder()
+///     .ingress_channel("aeron:udp?endpoint=localhost:9002".into())
+///     .egress_channel("aeron:udp?endpoint=localhost:19002".into())
+///     .ingress_stream_id(101)
+///     .egress_stream_id(102);
+/// ```
 #[derive(Clone)]
 pub struct SessionBuilder {
     pub(crate) ingress_channel: String,

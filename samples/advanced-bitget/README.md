@@ -32,8 +32,17 @@ registration once; rows via `DynamicRecorder` + `PersistSender` flush.
 
 ## Failure modes
 
-- CH unreachable → live tests fail preflight (start Docker CH first)
-- Backpressure → batch drop policy on persist path (never block feed unboundedly)
+| Condition | Behaviour |
+|-----------|-----------|
+| ClickHouse unreachable | Live tests fail preflight — start Docker CH first |
+| Persist queue full | Drop / batch policy — never block the feed unboundedly |
+| WS disconnect | Reconnect path in the sample binary (see `main` / config) |
+| Need leadership failover | Use [`../cluster-ha-orderbook/`](../cluster-ha-orderbook/) instead |
+
+## When not to use
+
+Choose **cluster-ha-orderbook** if you need NewLeader / never-stale book across
+cluster leadership releases. This sample is IPC-only (no cluster term).
 
 ## Where truth lives
 

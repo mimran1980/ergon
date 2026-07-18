@@ -1,3 +1,8 @@
+//! Client-side session state machine ([`SessionState`]).
+//!
+//! Mirrors Java `AeronCluster` lifecycle: Connected → AwaitingNewLeader → …
+//! → Closed.
+
 /// Client-side session state. Mirrors the Java AeronCluster state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {

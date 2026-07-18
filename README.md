@@ -24,6 +24,12 @@ Cluster client, and end-to-end samples.
 | [`exchange-orderbook`](samples/exchange-orderbook/) | multi-exchange book + CH | `just samples-orderbook` |
 | [`cluster-ha-orderbook`](samples/cluster-ha-orderbook/) | rusteron **0.2.4**, Aeron Cluster | `just samples-cluster-ha` |
 
+```text
+IPC baseline (0.2.1):   exchange WS → AppMessage → local Aeron IPC → CH
+HA cluster (0.2.4):     feed → try_claim → Java cluster → egress follower
+                          → never-stale book + feed_latency DynamicRow → CH
+```
+
 Note: for the cluster pillar the **directory names differ from the crate
 names** on purpose — the dirs are `cluster/` and `cluster-test-support/`, the
 crates remain `ergo-aeron-cluster` and `ergo-aeron-cluster-test-support`.

@@ -1,11 +1,16 @@
+//! Egress fragment dispatch to an [`EgressListener`].
+//!
+//! SessionEvent / NewLeader / SessionMessageHeader decoding uses the same
+//! ErgoSBE equal-work path as [`crate::decode`].
+
 // Production decode uses ErgoSBE.
 use crate::codecs::ergo_codecs::{
     AdminRequestType, AdminResponseCode, AdminResponseDecoder, ChallengeDecoder, EventCode, MessageHeader,
-    NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderDecoder,
 };
 use crate::codecs::ergo_codecs::{
     AdminResponseEncoder, ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
 };
+use crate::decode::{decode_new_leader_event, decode_session_event, decode_session_message_header};
 
 /// SBE message frame header is always 8 bytes.
 const HEADER_LEN: usize = 8;
@@ -79,32 +84,34 @@ impl<L: EgressListener> EgressAdapter<L> {
                         reason: "session message too short".into(),
                     });
                 }
-                let body = SessionMessageHeaderDecoder::wrap_and_apply_header(data, 0)?;
+                let body = decode_session_message_header(data)?;
                 let payload = &data[HEADER_LEN + 24..];
                 self.listener
-                    .on_message(body.cluster_session_id(), body.timestamp(), payload);
+                    .on_message(body.cluster_session_id, body.timestamp, payload);
                 Ok(true)
             }
             SessionEventEncoder::TEMPLATE_ID => {
-                let decoder = SessionEventDecoder::wrap_and_apply_header(data, 0)?;
-                let cid = decoder.correlation_id();
-                let csid = decoder.cluster_session_id();
-                let ltid = decoder.leadership_term_id();
-                let lmid = decoder.leader_member_id();
-                let code = decoder.code();
-                let (detail_bytes, _after_detail) = decoder.into_detail()?;
-                let detail = std::str::from_utf8(detail_bytes).unwrap_or("<invalid utf-8>");
-                self.listener.on_session_event(cid, csid, ltid, lmid, code, detail);
+                let view = decode_session_event(data)?;
+                let detail = std::str::from_utf8(view.detail).unwrap_or("<invalid utf-8>");
+                self.listener.on_session_event(
+                    view.correlation_id,
+                    view.cluster_session_id,
+                    view.leadership_term_id,
+                    view.leader_member_id,
+                    view.code,
+                    detail,
+                );
                 Ok(true)
             }
             NewLeaderEventEncoder::TEMPLATE_ID => {
-                let decoder = NewLeaderEventDecoder::wrap_and_apply_header(data, 0)?;
-                let csid = decoder.cluster_session_id();
-                let ltid = decoder.leadership_term_id();
-                let lmid = decoder.leader_member_id();
-                let (endpoints_bytes, _after_endpoints) = decoder.into_ingress_endpoints()?;
-                let endpoints = std::str::from_utf8(endpoints_bytes).unwrap_or("<invalid utf-8>");
-                self.listener.on_new_leader(csid, ltid, lmid, endpoints);
+                let view = decode_new_leader_event(data)?;
+                let endpoints = std::str::from_utf8(view.ingress_endpoints).unwrap_or("<invalid utf-8>");
+                self.listener.on_new_leader(
+                    view.cluster_session_id,
+                    view.leadership_term_id,
+                    view.leader_member_id,
+                    endpoints,
+                );
                 Ok(true)
             }
             ChallengeEncoder::TEMPLATE_ID => {

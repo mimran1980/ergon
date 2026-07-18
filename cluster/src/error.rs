@@ -1,3 +1,5 @@
+//! Cluster client error type ([`ClusterError`]).
+
 /// All errors the cluster client can produce.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClusterError {

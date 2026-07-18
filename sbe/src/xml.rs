@@ -1,5 +1,9 @@
 //! SBE XML schema parsing into the token IR.
 //!
+//! # See also
+//!
+//! [`crate::schema`], [`crate::resolve`], [`crate::Generator`].
+//!
 //! Uses [`roxmltree`] (DOM) so SBE's mixed-order `<type>`/`<enum>`/`<set>`/
 //! `<composite>`/`<message>` and forward references resolve naturally, and XML
 //! comments are retained as nodes (a later slice maps them to rustdoc alongside

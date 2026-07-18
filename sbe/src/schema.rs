@@ -1,5 +1,9 @@
 //! SBE schema inputs and normalised schema metadata.
 //!
+//! # See also
+//!
+//! [`crate::parse`], [`crate::Generator`], [`crate::GenerationConfig`].
+//!
 //! Defines the [`Schema`] and [`SchemaSource`] types that represent
 //! a parsed SBE schema at the ergosbe boundary. A `Schema` holds the
 //! package identity (`package`, `id`, `version`) plus the resolved

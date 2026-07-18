@@ -1,5 +1,9 @@
 //! Token-based intermediate representation for an SBE schema.
 //!
+//! # See also
+//!
+//! [`crate::xml`], [`crate::resolve`], [`crate::Schema`].
+//!
 //! The IR is a flat stream of [`Token`]s modelled on the proven sbe-tool design:
 //! each token carries a [`Signal`] (its structural role) and an [`Encoding`]
 //! (wire layout). Codegen walks this stream. Later slices extend [`Signal`] and

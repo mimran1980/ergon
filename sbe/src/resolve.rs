@@ -1,5 +1,9 @@
 //! SBE schema validation and reference-resolution pass.
 //!
+//! # See also
+//!
+//! [`crate::ir`], [`crate::Schema`], [`crate::Generator`].
+//!
 //! This module runs after XML parsing to:
 //!
 //! - Assign default null, min, and max values to every primitive encoding.

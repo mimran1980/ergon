@@ -1,3 +1,8 @@
+//! Pure protocol session state (session id, leadership term, member id).
+//!
+//! Distinct from the transport-owning [`crate::AeronCluster`] client. Most
+//! application code only needs the high-level client.
+
 use crate::{ClusterError, SessionState};
 
 /// A connected cluster session — pure protocol state.

@@ -1,5 +1,10 @@
 //! Rust code generation from the resolved SBE IR.
 //!
+//! # See also
+//!
+//! [`crate::GenerationConfig`], [`crate::Schema`], design authority
+//! `sbe/design/DECISIONS.md` (consuming stages, wire compatibility).
+//!
 //! This module contains the [`Generator`] struct — the primary API for
 //! producing Rust source modules from a parsed [`Schema`].
 //!
