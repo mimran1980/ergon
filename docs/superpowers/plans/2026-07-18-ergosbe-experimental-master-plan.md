@@ -229,6 +229,10 @@ Residual product is COMPLETE. Quality track status:
 Non-goals unchanged: no pillar renames, no Rust cluster service, no deleting
 sbe-tool residual bench trees, no promoting connect encode to maintained gate.
 
+**Verified-open backlog (only):** [`../../LIVING_BACKLOG.md`](../../LIVING_BACKLOG.md)
+— do not treat historical rusteron plans or unchecked process boxes in the
+perf goal as the sprint board.
+
 **Pin decision (2026-07-18):** HA sample crate `samples/cluster-ha-orderbook` uses **rusteron 0.2.4** via `ergo-aeron-cluster`. IPC `advanced-bitget` stays **0.2.1**. Separate binaries — no dual-pin.
 
 **Location:** extend under `samples/` (feature/binary); no new top-level pillar

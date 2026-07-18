@@ -1,8 +1,18 @@
 # Rusteron Cluster — Current State & Gap-Closure (P0)
 
-> **Historical.** Written when the crate was `rusteron-cluster`; it is now crate `ergo-aeron-cluster` in `cluster/` (test harness: crate `ergo-aeron-cluster-test-support` in `cluster-test-support/`). Living doc: [2026-07-18-ergosbe-experimental-master-plan.md](2026-07-18-ergosbe-experimental-master-plan.md).
+> **SUPERSEDED (2026-07-19).** Historical session notes only. Do **not** treat the
+> residual list below as open work.
 >
-> **Residual still active (2026-07-18 evening):** (2) connect **re-offer** on pre-election non-leader; (3) log-recovery restart test (not only fresh-cluster). RFQ freeze unchanged. P0 codec/fmt/failover work in this file is done. **Production codec migration to ErgoSBE and first-run cluster benches** are recorded in the living master plan (supersede any “committed sbe-tool only” framing below for production paths). HA sample track is separate (design + `samples/todo/02-…`).
+> **Closed later on `first_cut`:** connect re-offer, log-recovery restart test,
+> ErgoSBE production codecs, RFQ **unfrozen**, maintained encode/decode benches,
+> HA sample + kill-leader. Living product truth:
+> [2026-07-18-ergosbe-experimental-master-plan.md](2026-07-18-ergosbe-experimental-master-plan.md),
+> [2026-07-18-completion-goal-prompt.md](2026-07-18-completion-goal-prompt.md),
+> verified-open backlog only: [`../../LIVING_BACKLOG.md`](../../LIVING_BACKLOG.md).
+>
+> **Original framing (stale):** Written when the crate was `rusteron-cluster`;
+> now `ergo-aeron-cluster` in `cluster/`. The “residual still active” paragraph
+> that once listed re-offer / log-recovery / RFQ freeze is **obsolete**.
 
 **Date:** 2026-07-18
 **Branch:** `cluster` (work later landed on `first_cut`)
@@ -126,6 +136,11 @@ default because they are destructive (kill cluster nodes) and unsuited to
 the normal CI lane.
 
 ## Unresolved Risks / Follow-ups
+
+> **Stamped 2026-07-19:** items 1–2 in the list below are **DONE** (RFQ schema
+> vendored + ErgoSBE path; connect re-offer implemented). Remaining bullets are
+> historical risk notes only — see [`../../LIVING_BACKLOG.md`](../../LIVING_BACKLOG.md)
+> for anything still open.
 
 1. **RFQ codec regeneration has no committed schema.** `rfq_codecs/` and
    `generated/com_aeroncookbook_cluster_rfq_sbe/` are committed and

@@ -295,60 +295,35 @@ an empty/skipped group consumes the group stage and returns the next message
 stage. An active entry prevents its parent group from advancing. Nested groups
 and var-data use the same ownership pattern.
 
-The canonical target puts `encoded_length()`, complete-message `as_bytes()`,
-and `AsRef<[u8]>` only on `OrderBookComplete`. A 2026-07-11 source audit found
-that the current generator still emits an incomplete-stage `as_bytes()` for
-partial inspection. Todo 157 tracks removing it or renaming a justified
-partial view to `written_prefix()`/`partial_bytes()`. Do not treat the current
-partial method as a publishable complete message.
+The canonical target puts complete-message `encoded_length()` / `as_bytes()` /
+`AsRef<[u8]>` only on complete encoder stages. Incomplete stages expose
+**explicitly partial** fallible length/bytes APIs (todo 157 — **DONE** 2026-07-18).
+Do not treat a partial encoder buffer as a publishable complete message.
 
-### Planned fallible chaining (not yet shipped)
+### Fallible chaining (shipped)
 
-The approved strict interface keeps the manual stages above and adds optional
-fallible helpers such as `try_fixed`, `try_<group>`, and bounded
-`<data>_with(exact_len, closure)`. Equivalent decoder helpers process var-data
-or nested `AnyMessage` values and return the same concrete next stage. The
-closure error is caller-selected so application code can use `?`; codec errors
-convert through `From<EncodeError>` or `From<DecodeError>`.
+Optional fallible helpers such as `try_fixed`, `try_<group>`, and related
+stage combinators are generated (todo **156** — **DONE** 2026-07-18). Nested
+var-data may expose `into_<field>_as_message` / `try_<field>_as_message` on
+some schemas; the full DECISIONS §3 bridge set (generic `as_decoder` /
+remaining acceptance for todo **81**) may still be incomplete — see
+[`docs/LIVING_BACKLOG.md`](../../../docs/LIVING_BACKLOG.md) item **SBE-81**.
 
-These helpers are tracked by todos 81 and 156. Do not depend on them until the
-generated source and golden tests contain them. They are accepted only after
-manual/closure byte equivalence, scoped-lifetime compile-fail tests, zero
-allocations, assembly inspection, and the five-run manual/Aeron performance
-gates pass.
-
-### Planned generic Decimal conversion (not yet shipped)
+### Generic Decimal conversion (shipped, opt-in)
 
 For a schema-defined composite whose members are exactly `mantissa: int64`
-followed by `exponent: int8`, the approved opt-in target is:
+followed by `exponent: int8`, enable converters:
 
 ```rust
 let config = GenerationConfig::new("market_data")
     .enable_decimal_converters("Decimal");
 ```
 
-The generated module then owns a dependency-free trait:
-
-```rust
-pub trait SbeDecimal: Sized {
-    type Error;
-
-    fn try_from_sbe(mantissa: i64, exponent: i8)
-        -> Result<Self, Self::Error>;
-    fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;
-}
-```
-
-Applications may implement this local trait for `rust_decimal::Decimal` or
-another exact decimal type. Generated output does not depend on
-`rust_decimal`. Converter mode gives Decimal-backed fields generic fallible
-ordinary methods and keeps infallible raw `*_wire` methods; without converter
-mode, the ordinary methods continue to expose the raw generated composite.
-Conversions must be exact, allocation-free, and reject overflow, rounding, or
-precision loss.
-
-This interface is tracked by todo 62. Do not depend on it until configuration,
-generated-source, adapter, allocation, assembly, and benchmark tests pass.
+The generated module owns a dependency-free `SbeDecimal` trait (todo **62** —
+**DONE** 2026-07-18). Applications implement it for `rust_decimal::Decimal`
+or another exact decimal type; generated code does not depend on
+`rust_decimal`. Converter mode adds fallible generic field methods and keeps
+infallible `*_wire` raw accessors.
 
 ## AnyMessage dispatch
 
@@ -380,8 +355,9 @@ pub trait SbeMessage {
 }
 ```
 
-The strict generic API planned in todo 135 extends this with associated codec
-types:
+Todo 135 (associated codec types on `SbeMessage`) is marked Phase-2 DONE in
+the todo tree; the minimal constants API above is what all codecs implement.
+Historical “planned associated types” sketch:
 
 ```rust
 pub trait SbeMessage {

@@ -70,8 +70,10 @@ crate names (`ergo-aeron-cluster`).
 
 Living plan:
 [`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md).  
-Residual goal prompt:
+Residual goal prompt (product scope COMPLETE):
 [`docs/superpowers/plans/2026-07-18-completion-goal-prompt.md`](docs/superpowers/plans/2026-07-18-completion-goal-prompt.md).  
+**Verified-open backlog only:**
+[`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md).  
 HA sample (shipped):
 [`samples/cluster-ha-orderbook/`](samples/cluster-ha-orderbook/) · design
 [`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md).

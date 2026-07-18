@@ -115,9 +115,15 @@ Demoted / cold-path (NOT maintained; human OK 2026-07-18):
 - SessionConnectRequest encode — first-run ~1.003 / five-run ~1.001 noise;
   handshake-only; do not gate residual completion on this ratio.
 
-Optional later:
-- claim-write microbench (header + fixed app payload mimicking try_claim)
-- NewLeaderEvent decode (same equal-work pattern as SessionEvent if needed)
+Optional later (benches **exist** as of 2026-07-19 quality track; not required
+in the maintained ≤1.00 set until equal-work smoke is ledgered as maintained):
+- ~~claim-write microbench~~ **DONE** as Criterion group
+  `cluster/encode/claim_shaped_header_plus_app` (diagnostic unless promoted)
+- ~~NewLeaderEvent decode~~ **DONE** as Criterion group
+  `cluster/decode/new_leader_event` (diagnostic unless promoted)
+
+Verified-open product/generator items only:
+[`../../LIVING_BACKLOG.md`](../../LIVING_BACKLOG.md).
 
 ================================================================
 WORK ORDER — residual product scope COMPLETE (2026-07-18)

@@ -3,6 +3,12 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Preserve official-SBE wire compatibility while implementing concrete,
+> **2026-07-19:** Unchecked `- [ ]` task boxes in the middle of this file are a
+> **historical process playbook**, not a live sprint. Residual product is
+> COMPLETE; verified-open items only:
+> [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md). Use the dated ledger tables
+> at the end of this file for bench evidence.
+
 compile-time ordered encoder and decoder stages, then make every maintained
 ErgoSBE scenario equal to or faster than Aeron SBE under the canonical
 five-run acceptance rule. The current active slice also adds bounded nested SBE
