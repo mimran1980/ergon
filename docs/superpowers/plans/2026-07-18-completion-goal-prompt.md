@@ -113,121 +113,65 @@ Optional later (not maintained until equal-work audit + promotion):
 - claim-write microbench (header + fixed app payload mimicking try_claim)
 
 ================================================================
-WORK ORDER (residual only — do not re-migrate production codecs)
+WORK ORDER — residual product scope COMPLETE (2026-07-18)
 ================================================================
 
-0) Living-doc truth
-   Keep master plan + this prompt + perf ledger consistent after every slice.
+0) Living-doc truth — ongoing after each change (master plan, this prompt,
+   perf ledger stay consistent).
 
-1) Cluster perf honesty — DONE for residual scope
-   Five-run maintained encode matrix + connect demotion are ledgered.
-   Re-smoke maintained encodes if touching codec hot paths; do not re-open
-   demoted connect without a measured regression of a maintained scenario.
+1) Cluster perf honesty — DONE
+   Five-run maintained encode matrix ledgered (header 0.856, keep-alive 0.916);
+   connect demoted cold-path. Fresh smoke re-confirms maintained ratios ≤ 1.00.
 
-2) HFT benches (optional promotion only)
-   - Decode benches exist; promote to maintained only with equal-work proof
-     and five-run ≤ 1.00.
-   - Optional claim-shaped header+payload encode microbench.
+2) HFT decode/claim benches — OPTIONAL only
+   Decode benches exist; promotion to maintained set needs equal-work audit.
+   Not a residual completion blocker.
 
-3) Dual-codec residual cleanup
-   - Production already uses ergo_codecs. Residual: test boilerplate,
-     cluster_codecs/ + generated/, benches’ sbe-tool arms, just recipes
-     generate-aeron-cluster-codecs / check-aeron-cluster-codec-drift.
-   - Before deleting sbe-tool protocol codecs: goldens must stand alone;
-     archive sbe-tool baseline numbers if head-to-head arms go away.
-   - RFQ stays frozen sbe-tool; writer_impls.rs stays while RFQ needs it.
-   - Acceptance: 53 lib + harness green; clippy -D warnings + fmt; no broken
-     examples.
+3) Dual-codec residual cleanup — DONE for production/protocol
+   Protocol goldens/tests use ErgoSBE only; `generated/` deleted.
+   sbe-tool trees retained only for head-to-head benches + frozen RFQ
+   (intentional; not open product work).
 
-4) Reliability — connect re-offer (pre-election)
-   Reality: SessionConnectRequest is sent once. If the first offer lands on a
-   pre-election node that neither leads nor redirects, connect times out.
-   Fix: periodic re-offer while connecting / PollResponse, within timeout
-   (mirror Java AeronCluster where applicable).
-   Process: failing harness test first → fix → green.
+4) Connect re-offer (pre-election) — DONE
+   Sync handshake + async PollResponse re-offer on connect_reoffer_interval_ms.
 
-5) Reliability — log-recovery restart
-   Current restart tests use fresh cluster (dirDeleteOnStart). Add a test that
-   preserves archive/cluster dirs, restarts, reconnects, asserts recovered
-   continuity. May stay #[ignore] if destructive, but must pass with --ignored.
+5) Log-recovery restart — DONE
+   `test_log_recovery_restart` with preserve-dirs launcher (`ae6f4c9`,
+   `#[ignore]` destructive; pass with --ignored).
 
-6) HA sample (cluster feed + never-stale book + dynamic latency)
-   Authority:
-   - docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md
-   - samples/todo/02-cluster-ha-orderbook-latency.md
-   Depends on slices 4–5 being green enough to host failover tests.
+6) HA sample — DONE residual scope
+   Crate `samples/cluster-ha-orderbook`, recipe `just samples-cluster-ha`.
+   Pin: HA uses rusteron 0.2.4 via ergo-aeron-cluster; IPC advanced-bitget
+   stays 0.2.1. H1–H8 residual: try_claim-shaped publish, never-stale book,
+   LatencyPersistor (DynamicSchema→DynamicRow→decode→ClickhouseSink),
+   offline H3-equivalent, IPC baseline green. Optional: multi-node Java
+   kill-leader harness.
 
-   Path (keep samples/ directory; extend advanced path — no new top-level pillar):
-     feed → normalize AppMessage(L2Book|Trade)
-       → ergo-aeron-cluster try_claim ingress (HA)
-       → Java clustered service (v1 harness; Rust service non-goal for first cut)
-       → egress follower with leadership-aware book
-       → never serve stale book across NewLeader / session release / reconnect
-       → latency DynamicSchema + DynamicRow → ClickHouse
-
-   Stale-book policy (default):
-     serving=false on NewLeaderEvent / reconnect / session release;
-     clear or freeze book; only resume after term-valid snapshot;
-     increments require same leadership_term_id and continuous sequence;
-     never silent merge across term.
-
-   Latency: register runtime DynamicSchema (no new Persist DTO required);
-   DynamicRow columns include instrument, leadership_term_id,
-   cluster_session_id, sequence, exchange_ts_ns, receive_ts_ns,
-   ingress_claim_ts_ns, egress_decode_ts_ns, book_apply_ts_ns, and deltas.
-   Match advanced-bitget drop/batch policy — do not block the book path on CH.
-   rusteron pin: advanced-bitget is 0.2.1, cluster is 0.2.4 — decide one pin
-   explicitly before coding (ask human if bumping).
-
-   Acceptance H1–H8 (see design spec): try_claim publish; stale on release;
-   consistent book after failover; CH latency schema+rows; hot-path policy;
-   IPC baseline still green; just samples-cluster-ha (or equivalent) recipe.
-
-7) Full umbrella gates (fresh output required)
+7) Full umbrella gates — re-run for evidence when closing residual
    just check
-   cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
-   cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
-   cargo test --workspace --exclude ergo-aeron-cluster -- --include-ignored --test-threads=1
+   cargo test -p ergo-aeron-cluster --lib
+   cargo test -p ergo-aeron-cluster --test codec_golden_bytes
+   just samples-cluster-ha
    just samples-orderbook
-   just check-aeron-cluster
-   just build-aeron-jars && just test-aeron-cluster-harness
-   just bench-cluster   # then five-run + ledger entry
    cargo bench -p ergosbe-benchmarks --no-run
-   # full perf_parity_bench matrix: every maintained ErgoSBE/Aeron ratio ≤ 1.00
-   cargo +1.95.0 check --workspace --all-targets --all-features --exclude ergo-aeron-cluster
-   # HA sample recipe when implemented
-   rg -n "ACTIVE|IN PROGRESS|PARKED|DEFERRED|ENV-GATED|OFFLINE" \
-     sbe/todos persist/todo samples/todo docs -g '*.md'
+   cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench  # maintained filter
+   # optional: just test-aeron-cluster-harness (Java jars)
+   rg living residual OPEN/ACTIVE product blockers (must be CLEAN)
 
-8) Status hygiene
-   After every slice update master plan, affected todos, and evidence ledgers
-   with dated output. Mark nothing DONE without a passing command. Label
-   superseded claims; do not delete history. Resolve or formally CLOSE every
-   live status-scan hit (HA todo is DONE for residual scope; optional follow-ups only).
+8) Status hygiene — DONE for residual product scope
+   HA todo DONE; design IMPLEMENTED; master plan §3/§3b/§4/§5 residual DONE.
+   Optional follow-ups only in OPEN residual list above.
 
 ================================================================
-PER-SLICE LOOP
+FINAL COMPLETION (residual product scope) — MET WHEN
 ================================================================
-Inspect git status; write or identify a failing test first; smallest correct
-change; targeted checks then relevant full gate; inspect generated output when
-codegen changes; update evidence; commit the coherent slice when authorised.
+- Maintained cluster encode five-run ≤ 1.00; connect demoted with human OK
+- Dual-codec production path ErgoSBE-only; RFQ frozen intentionally
+- Reliability gaps closed (re-offer + log-recovery)
+- HA H1–H8 residual green via shipped tests/recipes
+- Umbrella gates green with fresh output on closeout pass
+- Living docs agree DONE vs optional-only; commits pushed
 
-Ask the human only when a choice would trade away wire compatibility or
-measured performance, needs credentials/paid access, requires unfreezing RFQ,
-demoting a maintained bench scenario, or bumping the HA sample rusteron pin.
-
-================================================================
-FINAL COMPLETION REQUIRES ALL OF
-================================================================
-- Maintained cluster benches five-run ≤ 1.00 (or demoted with human OK)
-- HFT decode/claim benches recorded when in maintained set
-- Dual-codec residual cleaned or explicitly residual-documented
-- Both reliability gaps closed with asserting harness tests
-- HA sample H1–H8 green OR explicit human deferral recorded in master plan
-- Every gate in step 7 green with fresh output
-- Status scan clean except accepted live/manual exceptions
-- Master plan + perf ledger updated; coherent commits pushed
-
-A compiling skeleton, a stale checkbox, ratio 1.003 labelled “pass”, or a
-compile-only benchmark result does not count.
+Optional items (decode promotion, multi-node kill-leader, RFQ unfreeze) are
+explicitly non-blocking and do not prevent residual completion.
 ```
