@@ -95,44 +95,48 @@ dirty local worktree — never reset or commit it).
 generation** (persist pattern) from the aeron submodule schemas, replacing
 the ~54k LOC of committed sbe-tool output.
 
-### Progress (2026-07-18, session 2) — FOUNDATION PROVEN
+### Progress (2026-07-18, sessions 2–3) — FOUNDATION PROVEN, ENCODE DONE, CONSTANTS DONE
 
-Steps 1 and 2 are **DONE and committed**; step 3 (call sites) is the
-remaining work.
+**Commit trail:** `3a2f0a8` → `5d04fdb` → `1efb240` → `62fe43c`. Pushed.
 
-- **Step 1 DONE** (`3a2f0a8`): `cluster/tests/codec_golden_bytes.rs` —
-  `GOLDEN_*` constants for all 9 messages + `parity_*` (sbe-tool) tests.
+- **Step 1 DONE** (`3a2f0a8`): golden byte constants + 9 sbe-tool parity tests.
 - **Step 2 DONE** (`5d04fdb`): `cluster/build.rs` generates ErgoSBE codecs
-  into `OUT_DIR` from the aeron submodule; `src/codecs/mod.rs` exposes them
-  side-by-side as `ergo_codecs` + `ergo_codecs_mark` (with broad
-  `#![allow(...)]` for generated-code lints + `cargo::rustc-check-cfg` for
-  the `serde` feature). `ergosbe` is now a cluster build-dep. **All 18
-  parity tests pass** (9 sbe-tool `parity_*` + 9 ErgoSBE `parity_*_ergo`) —
-  ErgoSBE output is byte-identical to sbe-tool for every protocol message.
-- **Gotchas discovered (apply in step 3):**
-  - `SessionConnectRequest` v16 has a trailing `clientInfo` (`sinceVersion=14`)
-    var-data field. sbe-tool lets the client OMIT it (74-byte message); ErgoSBE's
-    consuming model FORCES writing it. The golden was updated to a COMPLETE
-    message with `client_info(b"")` (78 bytes). The live client must set
-    `client_info(b"")` post-migration — wire-COMPATIBLE (valid v16, Java accepts
-    it) but +4 bytes vs today.
-  - Encode offer: sbe-tool offers the whole pre-sized `buf` (512 B for var-data,
-    exact for fixed). ErgoSBE writes the message into the same `buf` start, so
-    offering the whole `buf` preserves the exact frame. Pattern:
-    `let mut e = Encoder::wrap_and_apply_header(&mut buf,0).map_err(..)?; let _ = e.field1(..).field2(..); let _c = e.var_data(..)?; ingress.offer_raw(&buf, NONE)`.
-    Setters are `#[must_use]` → swallow with `let _ =`.
-  - Decode side (egress.rs/controlled.rs) is the structurally-hard part: sbe-tool
-    flyweight `MessageHeaderDecoder::default().wrap(buf,0)` + `XDecoder::default().header(h,0)` +
-    `field()`/`_decoder()+(coords,_slice)` → ErgoSBE consuming `XDecoder::wrap_and_apply_header(buf,0)?`
-    + `field()` (same names) + `into_<vardata>()`. Header routing (read template_id
-    before decoding) needs a header-only read path — verify ErgoSBE exposes it.
-  - `writer_impls.rs` patches sbe-tool's missing `Writer` impl; `rfq_codecs`
-    (frozen) still needs it, so do NOT delete `writer_impls.rs` until rfq is
-    resolved — or scope the impl to rfq only.
-- **Step 3 remaining scope:** ~149 codec sites across `client.rs` (encode-only,
-  ~10 sites, cleanest), `egress.rs` (decode, ~34, hardest), `controlled.rs`
-  (decode, ~13), `protocol.rs` (constants/asserts, ~29 — mostly mechanical),
-  `codecs/tests.rs` (~36 — already mirrored by the golden parity test).
+  from the aeron submodule into OUT_DIR; side-by-side `ergo_codecs` +
+  `ergo_codecs_mark` modules. All 18 parity tests pass.
+- **Step 3 — call-site migration status:**
+  - **`client.rs` encode DONE** (`1efb240`): all 8 encode blocks migrated to
+    `ergo_codecs::wrap_and_apply_header` + consuming var-data chains. The
+    `SessionConnectRequest` now writes `client_info(b"")` (the forced +4-byte
+    completion, wire-compatible valid v16). The fast-path claim header uses
+    the ErgoSBE encoder. 53 lib tests + 18 golden parity + clippy green.
+  - **`protocol.rs` constants DONE** (`62fe43c`): template IDs, schema
+    ID/version, BLOCK_LENGTHs, EventCode enum values all sourced from
+    `ergo_codecs` encoder associated consts. Adapter-based tests unchanged
+    (they exercise egress.rs which still uses `cluster_codecs`). 14/14 tests
+    + clippy green.
+  - **`egress.rs` ~101 sites REMAINING** (MEDIUM complexity per workflow
+    inventory): the `on_fragment` decode dispatch (MessageHeader read +
+    template_id match + per-message `XxxDecoder::default().header(h,0)` +
+    `_decoder()`/`_slice()` var-data pairs) + test encode blocks. ErgoSBE
+    decode patterns are now known:
+    - Header-only read for dispatch: `MessageHeader(data[..8].try_into().unwrap()).template_id()`
+      (ErgoSBE's `MessageHeader` is `pub struct MessageHeader(pub [u8; 8])`).
+    - Body decode: `XxxDecoder::wrap_and_apply_header(data, 0)?` reads
+      header AND body in one call (no separate `.header(h,0)`).
+    - Fixed-field getters: same names, `&self` (no change).
+    - Var-data: sbe-tool `coords = dec.<field>_decoder()` then
+      `dec.<field>_slice(coords)` → ErgoSBE `let (bytes, next) = dec.into_<field>()?`
+      (consuming, returns `(&[u8], NextStage)`).
+  - **`controlled.rs` ~71 sites REMAINING** (MEDIUM): same patterns as
+    egress.rs (decode dispatch + var-data).
+  - **`codecs/tests.rs` KEEP** (workflow recommendation): has unique
+    decoder-side coverage not present in the encode-only golden parity
+    tests. Migrate to ErgoSBE API alongside egress/controlled, or
+    post-migration convert the encode half to the proven pattern and the
+    decode half to the ErgoSBE consuming-stage API.
+- **Gotchas (all still apply):** see the original entry above — client_info
+  forced completion, must_use setters, writer_impls.rs/rfq dependency, whole-
+  buf offer pattern.
 
 ### Steps (for a future session)
 
