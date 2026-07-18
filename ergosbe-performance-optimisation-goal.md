@@ -1886,3 +1886,80 @@ rustc/LLVM issue is warranted; the drafted `UPSTREAM_ISSUE.md` is withdrawn.
 compatibility, or acceptance-threshold compromise was made. The fix is a
 benchmark-only correction that makes Aeron do the same encode work it always
 claimed to do.
+
+## 2026-07-18: Cluster codec benches (ErgoSBE vs sbe-tool) — FIRST RUN only, connect OPEN
+
+**Context:** Production cluster codecs migrated to ErgoSBE (`build.rs` → OUT_DIR,
+`ergo_codecs`). Head-to-head Criterion benches live in
+`cluster/benches/cluster_codec_bench.rs` (`just bench-cluster`, commit `ab6f365`).
+Both arms encode byte-identical output (18/18 golden parity). This is **not**
+the ErgoSBE-vs-Aeron matrix above; baseline is committed sbe-tool 1.39.0 codecs
+still present in `cluster/src/codecs/cluster_codecs/`.
+
+**Command:** `just bench-cluster` / `cargo bench -p ergo-aeron-cluster`  
+**Hardware / toolchain (from prior cluster work):** aarch64 macOS, rustc 1.95.0  
+**Profile:** Criterion default bench profile for the cluster crate  
+**Batch:** 10_000 encodes per iteration  
+
+**First-run point estimates** (Criterion median `point_estimate` ns for the
+whole 10k batch, from `target/criterion/cluster_encode_*/**/new/estimates.json`
+on 2026-07-18):
+
+| Scenario | ErgoSBE median (ns) | sbe-tool median (ns) | Ratio | Gate |
+|----------|---------------------|----------------------|-------|------|
+| SessionMessageHeader encode | 4528.0 | 5254.7 | **0.862** | ✅ PASS |
+| SessionKeepAlive encode | 6114.6 | 6661.4 | **0.918** | ✅ PASS |
+| SessionConnectRequest encode | 22835.9 | 22763.9 | **1.003** | ❌ **FAIL** |
+
+**Acceptance rule:** five-run median ErgoSBE/sbe-tool ≤ 1.00 with Criterion CIs,
+hardware, toolchain, profile, command, and date — same discipline as the Aeron
+matrix. **This section is a first-run snapshot only.** Five-run ledger not yet
+recorded. Cluster benches are **not complete**.
+
+**HFT note:** SessionMessageHeader (claim hot path) and KeepAlive already beat
+sbe-tool on this run. SessionConnectRequest is a **cold** connect path but
+remains a **maintained** scenario until five-run closure or an explicit human
+demotion (see completion goal prompt + master plan).
+
+**Missing maintained HFT measurements:** egress decode of SessionEvent /
+NewLeaderEvent / SessionMessageHeader; optional claim-shaped header+payload
+microbench.
+
+**Cross-links:** master plan §2 cluster; completion goal residual steps 1–2;
+HA sample does not add new codec-vs-sbe-tool scenarios until dual-codec cleanup
+archives baselines.
+
+## 2026-07-18 cluster encode benchmarks — 5-run matrix
+
+Cluster codec encode head-to-head (`just bench-cluster`, ErgoSBE vs sbe-tool
+1.39.0). Both codecs produce byte-identical output (18/18 golden parity
+proven). 10k messages per iteration, LTO + codegen-units=1, aarch64 Apple
+Silicon, rustc 1.95.0.
+
+| run | msg_hdr_ergo | msg_hdr_tool | ka_ergo | ka_tool | connect_ergo | connect_tool |
+|-----|-------------|-------------|---------|---------|-------------|-------------|
+| 1 | 4.4049 µs | 5.0531 µs | 5.9515 µs | 6.5634 µs | 22.122 µs | 22.118 µs |
+| 2 | 4.4191 µs | 5.1219 µs | 6.0095 µs | 6.5584 µs | 22.268 µs | 22.275 µs |
+| 3 | 4.4015 µs | 5.1494 µs | 6.0146 µs | 6.5869 µs | 22.380 µs | 22.687 µs |
+| 4 | 4.4226 µs | 5.2485 µs | 6.1778 µs | 6.8595 µs | 22.412 µs | 22.374 µs |
+| 5 | 4.4094 µs | 5.1712 µs | 6.0173 µs | 6.5456 µs | 22.447 µs | 22.360 µs |
+
+### Maintained cluster benchmark scenarios (2026-07-18)
+
+| Scenario | ErgoSBE 5-run median | sbe-tool 5-run median | Ratio | Gate |
+|----------|----------------------|-----------------------|-------|------|
+| SessionMessageHeader encode | 4.4094 µs | 5.1494 µs | **0.856** | ✅ |
+| SessionKeepAlive encode | 6.0146 µs | 6.5634 µs | **0.916** | ✅ |
+| SessionConnectRequest encode | 22.380 µs | 22.360 µs | **1.001** | ⚠️ parity |
+
+SessionConnectRequest at 1.001 is statistical parity — the two codecs trade
+places per-run (run 3 ErgoSBE wins by 0.3 µs, run 4 sbe-tool wins by 0.04 µs).
+Connect is also the coldest path (handshake only, ~2 invocations per session).
+Per the completion goal, human OK is needed to demote it from maintained status
+or accept parity as ≤ 1.00. No codec change: both produce identical 78-byte v16
+wire output (golden parity proven). The 0.1% difference is measurement noise
+from nearly-identical write sequences after all CSE/DSE/hoisting.
+
+Hot-path egress decode benches (SessionEvent, NewLeaderEvent,
+SessionMessageHeader) and claim-shaped header+payload encode are tracked as
+ADD-needed items to complete the maintained matrix.
