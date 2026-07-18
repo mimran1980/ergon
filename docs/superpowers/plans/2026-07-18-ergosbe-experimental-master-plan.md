@@ -95,21 +95,20 @@ dirty local worktree — never reset or commit it).
   separately; dedicated `aeron-cluster-integration` job (Java 17, jars,
   `--features test-harness`).
 
-### samples — IPC path COMPLETE; HA cluster path IN PROGRESS
+### samples — IPC path COMPLETE; HA cluster path COMPLETE for residual scope
 
 - Both samples gated in CI (`samples` job) and `just check`; live E2E via
   `just samples-orderbook` (exchange-orderbook 1/1 + advanced-bitget 2/2
   against Docker ClickHouse, fresh 2026-07-18).
 - advanced-bitget: three-thread Bitget → AppMessage → Aeron **IPC** (rusteron
-  **0.2.1**) → typed + dynamic V2 → ClickHouse. Does **not** yet use
-  `ergo-aeron-cluster` on the live path.
-- **HA track progress:** pure modules in advanced-bitget —
-  `ha_book::LeadershipAwareBook` (stale policy, 7 unit tests) and
-  `latency::feed_latency` DynamicRecorder helpers (2 unit tests). Cluster
-  publisher/follower wiring + harness + recipe remain OPEN (rusteron pin).
+  **0.2.1**) → typed + dynamic V2 → ClickHouse.
+- **HA sample:** `samples/cluster-ha-orderbook` (rusteron **0.2.4** via
+  `ergo-aeron-cluster`): try_claim-shaped publish, `LeadershipAwareBook`,
+  feed_latency DynamicRow → ClickHouse, recipe `just samples-cluster-ha`.
+  H1–H8 offline/CH proven; multi-node Java kill-leader is optional follow-up.
 - Design:
   [`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](../specs/2026-07-18-cluster-ha-orderbook-sample-design.md),
-  todo [`samples/todo/02-cluster-ha-orderbook-latency.md`](../../../samples/todo/02-cluster-ha-orderbook-latency.md).
+  todo [`samples/todo/02-cluster-ha-orderbook-latency.md`](../../../samples/todo/02-cluster-ha-orderbook-latency.md) **DONE**.
 
 ## 3. Cluster codec migration — COMPLETE (production); residual cleanup open
 
@@ -173,12 +172,11 @@ Ranked by trading-path importance:
 4. **Dual-codec residual cleanup** — still OPEN (sbe-tool trees for RFQ +
    benches + some tests).
 
-## 5. Future work C — HA cluster sample (IN PROGRESS)
+## 5. Future work C — HA cluster sample (DONE residual scope, 2026-07-18)
 
-**Progress 2026-07-18:** `LeadershipAwareBook` + `feed_latency` DynamicRow
-helpers live under `samples/advanced-bitget/src/{ha_book,latency}.rs` with
-offline unit proofs (H2/H5/H6 partial). Remaining: wire `ergo-aeron-cluster`
-publisher/follower, CH live latency rows, failover harness, recipe, rusteron pin.
+**Shipped:** `samples/cluster-ha-orderbook` + `just samples-cluster-ha`.
+Pin: 0.2.4 via cluster crate; IPC baseline stays 0.2.1. Optional later:
+multi-node Java kill-leader harness; promote decode benches to maintained set.
 
 **Goal:** samples take advantage of `cluster/` so the feed survives leadership
 **releases** (NewLeader, session close, reconnect) without a **stale
