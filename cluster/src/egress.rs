@@ -151,10 +151,9 @@ impl EgressListener for NullListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codecs::cluster_codecs::{
-        WriteBuf, challenge_codec::ChallengeEncoder, event_code::EventCode as SbeEventCode,
-        new_leader_event_codec::NewLeaderEventEncoder, session_event_codec::SessionEventEncoder,
-        session_message_header_codec::SessionMessageHeaderEncoder,
+    use crate::codecs::ergo_codecs::{
+        ChallengeEncoder, EventCode as ErgoEventCode, NewLeaderEventEncoder, SessionEventEncoder,
+        SessionMessageHeaderEncoder,
     };
 
     #[derive(Default)]
@@ -205,23 +204,19 @@ mod tests {
     #[test]
     fn test_dispatch_session_event_ok() {
         let mut data = vec![0u8; 128];
-        {
-            let wb = WriteBuf::new(&mut data);
-            let mut enc = SessionEventEncoder::default().wrap(wb, 8);
-            enc.cluster_session_id(7);
-            enc.correlation_id(99);
-            enc.leadership_term_id(3);
-            enc.leader_member_id(0);
-            enc.code(SbeEventCode::OK);
-            enc.version(1);
-            enc.detail(b"ok");
-            let _h = enc.header(0);
-            // Encoder chain dropped here; data is written.
-        }
+        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let _ = enc
+            .cluster_session_id(7)
+            .correlation_id(99)
+            .leadership_term_id(3)
+            .leader_member_id(0)
+            .code(ErgoEventCode::OK)
+            .version(1);
+        let complete = enc.detail(b"ok").unwrap();
+        let bytes = complete.as_bytes_with_header().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        // Pass the full buffer; decoders bound themselves via SBE_BLOCK_LENGTH
-        assert!(adapter.on_fragment(&data).expect("decode failure"));
+        assert!(adapter.on_fragment(&bytes).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().session_code, Some(EventCode::OK));
         assert_eq!(adapter.listener().detail, "ok");
@@ -230,17 +225,13 @@ mod tests {
     #[test]
     fn test_dispatch_challenge() {
         let mut data = vec![0u8; 128];
-        {
-            let wb = WriteBuf::new(&mut data);
-            let mut enc = ChallengeEncoder::default().wrap(wb, 8);
-            enc.correlation_id(5);
-            enc.cluster_session_id(2);
-            enc.encoded_challenge(b"chal-token");
-            let _h = enc.header(0);
-        }
+        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let _ = enc.correlation_id(5).cluster_session_id(2);
+        let complete = enc.encoded_challenge(b"chal-token").unwrap();
+        let bytes = complete.as_bytes_with_header().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(adapter.on_fragment(&data).expect("decode failure"));
+        assert!(adapter.on_fragment(&bytes).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().challenge, b"chal-token");
     }
@@ -248,18 +239,13 @@ mod tests {
     #[test]
     fn test_dispatch_new_leader() {
         let mut data = vec![0u8; 256];
-        {
-            let wb = WriteBuf::new(&mut data);
-            let mut enc = NewLeaderEventEncoder::default().wrap(wb, 8);
-            enc.leadership_term_id(10);
-            enc.cluster_session_id(99);
-            enc.leader_member_id(1);
-            enc.ingress_endpoints(b"0=host:9000,1=host:9001");
-            let _h = enc.header(0);
-        }
+        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let _ = enc.leadership_term_id(10).cluster_session_id(99).leader_member_id(1);
+        let complete = enc.ingress_endpoints(b"0=host:9000,1=host:9001").unwrap();
+        let bytes = complete.as_bytes_with_header().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(adapter.on_fragment(&data).expect("decode failure"));
+        assert!(adapter.on_fragment(&bytes).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().leader_endpoints, "0=host:9000,1=host:9001");
     }
@@ -267,17 +253,12 @@ mod tests {
     #[test]
     fn test_dispatch_session_message_header() {
         let mut data = vec![0u8; 128];
-        {
-            let wb = WriteBuf::new(&mut data);
-            let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
-            enc.leadership_term_id(1);
-            enc.cluster_session_id(42);
-            enc.timestamp(999);
-            let _h = enc.header(0);
-        }
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let _ = enc.leadership_term_id(1).cluster_session_id(42).timestamp(999);
+        let bytes = enc.as_ref().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(adapter.on_fragment(&data).expect("decode failure"));
+        assert!(adapter.on_fragment(&bytes).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().msg_csid, 42);
         assert_eq!(adapter.listener().msg_ts, 999);
@@ -285,16 +266,9 @@ mod tests {
 
     #[test]
     fn test_unknown_template_id_returns_false() {
-        // Encode a valid SessionMessageHeader, then corrupt template_id
         let mut data = vec![0u8; 128];
-        {
-            let wb = WriteBuf::new(&mut data);
-            let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
-            enc.leadership_term_id(1);
-            enc.cluster_session_id(1);
-            enc.timestamp(1);
-            let _h = enc.header(0);
-        }
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let _ = enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
         // Overwrite template_id at bytes 2-3 with 0 (unknown)
         data[2] = 0u8;
         data[3] = 0u8;

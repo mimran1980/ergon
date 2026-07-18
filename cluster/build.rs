@@ -12,12 +12,9 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    // Keep the legacy committed-codec rerun hook while the sbe-tool codecs and
-    // the live client still coexist with the ErgoSBE-generated ones.
-    let legacy = std::path::Path::new("src/codecs/generated");
-    if legacy.exists() {
-        println!("cargo::rerun-if-changed=src/codecs/generated");
-    }
+    // Production codecs are ErgoSBE-only (OUT_DIR). Residual sbe-tool trees
+    // under src/codecs/{cluster_codecs,rfq_codecs} are compile-time sources
+    // for benches / RFQ only — no build.rs regeneration.
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let aeron = manifest_dir.join("..").join("aeron");

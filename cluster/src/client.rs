@@ -832,17 +832,11 @@ mod tests {
 
     #[test]
     fn test_session_constants() {
-        assert_eq!(
-            crate::codecs::cluster_codecs::session_message_header_codec::SBE_TEMPLATE_ID,
-            1
-        );
-        assert_eq!(
-            crate::codecs::cluster_codecs::session_keep_alive_codec::SBE_TEMPLATE_ID,
-            5
-        );
-        assert_eq!(
-            crate::codecs::cluster_codecs::session_close_request_codec::SBE_TEMPLATE_ID,
-            4
-        );
+        use crate::codecs::ergo_codecs::{
+            SessionCloseRequestEncoder, SessionKeepAliveEncoder, SessionMessageHeaderEncoder,
+        };
+        assert_eq!(SessionMessageHeaderEncoder::TEMPLATE_ID, 1);
+        assert_eq!(SessionKeepAliveEncoder::TEMPLATE_ID, 5);
+        assert_eq!(SessionCloseRequestEncoder::TEMPLATE_ID, 4);
     }
 }

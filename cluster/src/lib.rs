@@ -46,7 +46,7 @@ pub use state::SessionState;
 mod tests {
     #[test]
     fn scaffold_compiles() {
-        // Smoke-check the generated codecs are wired into the lib.
-        assert_eq!(crate::codecs::cluster_codecs::SBE_SCHEMA_ID, 111);
+        // Smoke-check ErgoSBE production codecs are wired into the lib.
+        assert_eq!(crate::codecs::ergo_codecs::SessionConnectRequestEncoder::SCHEMA_ID, 111);
     }
 }
