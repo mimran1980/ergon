@@ -1,17 +1,21 @@
 # ErgoSBE Experimental Umbrella — Master Plan
 
 **Status:** LIVING DOC (update after every substantial iteration).
-**Date:** 2026-07-18.
+**Date:** 2026-07-18 (evening docs-truth + HA sample track).
 **Branch:** `first_cut`.
 
 This is the cross-pillar orientation and forward plan for the ErgoSBE
 experimental project. It supersedes the seven historical `rusteron-cluster`
 docs (listed in §6) for anything forward-looking; those remain as history.
 
+Paste-ready residual goal:
+[`2026-07-18-completion-goal-prompt.md`](2026-07-18-completion-goal-prompt.md).
+
 ## 1. What this project is
 
-An experimental Rust workspace for low-latency trading infrastructure with
-four pillars:
+An experimental Rust workspace for **low-latency trading infrastructure**
+(HFT-shaped: official-SBE wire compatibility, zero-alloc hot paths,
+equal-or-faster than Aeron SBE on maintained scenarios) with four pillars:
 
 | Pillar | Dir | Crate | One line |
 |--------|-----|-------|----------|
@@ -20,17 +24,23 @@ four pillars:
 | cluster | `cluster/` (+`cluster-test-support/`, excluded) | `ergo-aeron-cluster` (+`ergo-aeron-cluster-test-support`) | Aeron Cluster client on `rusteron-client` 0.2.4 |
 | samples | `samples/` (excluded) | — | advanced-bitget, exchange-orderbook |
 
-**Naming invariant:** the cluster pillar's directory names (`cluster/`,
-`cluster-test-support/`) intentionally differ from its crate names
-(`ergo-aeron-cluster`, `ergo-aeron-cluster-test-support`). Rename directories,
-never the packages — every `cargo -p` / `--exclude` flag, CI job, and the
-crates.io-facing identity key on the crate name.
+### Naming invariant (permanent)
 
-Renames that already happened (decoder ring for old docs):
-`rusteron-cluster` → crate `ergo-aeron-cluster`; dir `ergo-aeron-cluster/` →
-`cluster/`; `rusteron-java-test-support` → crate
-`ergo-aeron-cluster-test-support`; dir `ergo-aeron-cluster-test-support/` →
-`cluster-test-support/`.
+**Never rename pillar directories or crate packages.** Keep forever:
+
+- dirs: `sbe/`, `persist/`, `cluster/`, `samples/`, `cluster-test-support/`
+- crates: `ergosbe`, `ergo-clickhouse-persist`, `ergo-aeron-cluster`,
+  `ergo-aeron-cluster-test-support`, …
+
+Directory names may differ from crate names (cluster pillar does on purpose).
+That is fine. Do not rename either side for cosmetic alignment. Every
+`cargo -p` / `--exclude` flag, CI job, and crates.io-facing identity keys on
+the **crate** name.
+
+Historical renames (decoder ring only — not a future workstream):
+`rusteron-cluster` → crate `ergo-aeron-cluster`; dir → `cluster/`;
+`rusteron-java-test-support` → crate `ergo-aeron-cluster-test-support`;
+dir → `cluster-test-support/`.
 
 Submodules: `aeron/` pinned **1.52.2 @ 5b62f21d91** (cluster schema source +
 test jars); `simple-binary-encoding/` (official SBE reference; often has a
@@ -39,190 +49,213 @@ dirty local worktree — never reset or commit it).
 ## 2. Current state per pillar (evidence 2026-07-18)
 
 ### sbe — COMPLETE for current scope
+
 - All 10 maintained ErgoSBE/Aeron benchmark ratios ≤ 1.00, including
   `encode/throughput_10k` at **0.917** (its old 1.13× "gap" was an Aeron
   header/body-overlap benchmark bug, fixed in `ba82368`; write-up in
   `ergosbe-performance-optimisation-goal.md` 2026-07-18 RESOLUTION).
-- MSRV 1.95 (bumped from 1.89 for the cluster pillar). Workspace gates green:
+- MSRV 1.95 (bumped for the cluster pillar). Workspace gates green:
   `just check`, `--include-ignored` workspace test, bound-check-disabled,
   bench compile, generated-stability golden.
-- **Cluster-schema construct coverage verified** (read-only audit of
-  `aeron-cluster-codecs.xml` id 111 v16 + mark id 110 v2 against generator
-  capabilities): composites, int32 enums, optional+nullValue typedefs,
-  `sinceVersion` 2–16 (field- and message-level), `deprecated`, groups
-  containing var-data, var-ascii/var-data, explicit `blockLength`. The
-  schemas use **no** xi:include, no `<ref>`, no nested groups. Existing
-  fixtures already exercise bigger schemas (141k binance XML builds through
-  `samples/advanced-bitget/build.rs`).
+- Cluster-schema construct coverage verified (read-only audit of
+  `aeron-cluster-codecs.xml` id 111 v16 + mark id 110 v2): composites, int32
+  enums, optional+nullValue typedefs, `sinceVersion`, `deprecated`, groups
+  containing var-data, var-ascii/var-data, explicit `blockLength`. No
+  xi:include, no `<ref>`, no nested groups in those schemas.
 
 ### persist — COMPLETE for current scope
+
 - 7/7 live ClickHouse integration tests green (Docker,
   `persist/tests/run-clickhouse.sh`, password `ergosbe`).
 - `persist/build.rs` is the **reference pattern** for on-the-fly generation:
-  `ergosbe::parse(&xml)` → `Schema::from_ir` → `GenerationConfig::new` →
-  `Generator::try_generate` → write modules to `OUT_DIR`, then
-  `include!(concat!(env!("OUT_DIR"), "/<module>.rs"))`.
+  `ergosbe::parse` → `Schema::from_ir` → `GenerationConfig::new` →
+  `Generator::try_generate` → `OUT_DIR` + `include!`.
+- Dynamic path: `DynamicRecorder` / `DynamicSchemaV2` / `DynamicRowV2` proven
+  in advanced-bitget (reuse for HA latency table).
 
-### cluster — WORKING PROTOTYPE, codec migration DONE, benchmarks DONE
+### cluster — WORKING PROTOTYPE; production codecs DONE; benches PARTIAL
+
 - 53 lib tests green; clippy `--all-targets -D warnings` + fmt clean.
-- **Codec migration complete** (14 commits, 2026-07-18): all production
-  encode/decode sites use ErgoSBE (`ergo_codecs`); `build.rs` generates
-  ErgoSBE codecs from the aeron submodule into `OUT_DIR`. Proven
-  wire-compatible: 18/18 golden parity tests, full harness suite green
-  against Java (archive 2/2, auth 3/3, connect 1/1, failover 2/2,
-  failover_own_driver 1/1, property 7/7, udp_pub_sub 1/1). sbe-tool codecs
-  (`cluster_codecs`) still coexist for test boilerplate + RFQ.
-- **Cluster benchmarks DONE** (`just bench-cluster`, `ab6f365`): 3 head-
-  to-head ErgoSBE vs sbe-tool encode ratios (first run, 10k batch):
-  SessionMessageHeader **0.864**, SessionKeepAlive **0.919**,
-  SessionConnectRequest **1.003** — all ≤ 1.00. `writer_impls.rs` still
-  needed by frozen `rfq_codecs`.
+- **Production codec migration complete** (2026-07-18): all production
+  encode/decode sites use ErgoSBE (`ergo_codecs`); `build.rs` generates from
+  the aeron submodule into `OUT_DIR`. Wire-compatible: 18/18 golden parity;
+  full harness suite previously green against Java. Committed sbe-tool
+  codecs (`cluster_codecs`) still coexist for test boilerplate, RFQ, and
+  head-to-head benches.
+- **Cluster encode benches present** (`just bench-cluster`, `ab6f365`), first
+  Criterion run (10k batch, not yet five-run ledgered):
+
+  | Scenario | ErgoSBE/sbe-tool ratio | Gate |
+  |----------|------------------------|------|
+  | SessionMessageHeader | ~0.862 | PASS |
+  | SessionKeepAlive | ~0.918 | PASS |
+  | SessionConnectRequest | **~1.003** | **FAIL (OPEN)** |
+
+  Five-run medians + Criterion CIs not yet recorded in the perf goal.
+  Decode benches and claim-shaped microbench: **missing**.
 - Deps: `rusteron-client = "0.2.4"`; criterion dev-dep for benches.
 - CI: lint/test/msrv exclude the cluster from `--all-features` and gate it
   separately; dedicated `aeron-cluster-integration` job (Java 17, jars,
   `--features test-harness`).
 
-### samples — COMPLETE for current scope
+### samples — IPC path COMPLETE; HA cluster path PLANNED
+
 - Both samples gated in CI (`samples` job) and `just check`; live E2E via
   `just samples-orderbook` (exchange-orderbook 1/1 + advanced-bitget 2/2
   against Docker ClickHouse, fresh 2026-07-18).
+- advanced-bitget: three-thread Bitget → AppMessage → Aeron **IPC** (rusteron
+  **0.2.1**) → typed + dynamic V2 → ClickHouse. Does **not** use
+  `ergo-aeron-cluster`.
+- **New track:** HA cluster orderbook sample — design
+  [`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](../specs/2026-07-18-cluster-ha-orderbook-sample-design.md),
+  todo [`samples/todo/02-cluster-ha-orderbook-latency.md`](../../../samples/todo/02-cluster-ha-orderbook-latency.md).
 
-## 3. Future work A — migrate cluster codecs to ErgoSBE generation (DECIDED, not executed)
+## 3. Cluster codec migration — COMPLETE (production); residual cleanup open
 
-**Decision:** the cluster crate should use **ErgoSBE build.rs on-the-fly
-generation** (persist pattern) from the aeron submodule schemas, replacing
-the ~54k LOC of committed sbe-tool output.
+**Decision (executed for production):** cluster crate uses ErgoSBE `build.rs`
+on-the-fly generation (persist pattern) from the aeron submodule schemas.
 
-### Progress (2026-07-18, sessions 2–3) — CODEC MIGRATION COMPLETE (all production sites)
+### Progress (2026-07-18) — production migration done
 
-**Commit trail:** `3a2f0a8` → `5d04fdb` → `1efb240` → `62fe43c` → `fc69c0c` → `bb7798d` → `eb6ce20`. Pushed.
+**Commit trail (excerpt):** `3a2f0a8` → `5d04fdb` → `1efb240` → `62fe43c` →
+`fc69c0c` → `bb7798d` → `eb6ce20` → benches `ab6f365`. Pushed on `first_cut`.
 
-- **Step 1 DONE** (`3a2f0a8`): golden byte constants + 9 sbe-tool parity tests.
-- **Step 2 DONE** (`5d04fdb`): `cluster/build.rs` generates ErgoSBE codecs
-  from the aeron submodule into OUT_DIR; side-by-side `ergo_codecs` +
-  `ergo_codecs_mark` modules. All 18 parity tests pass.
-- **Step 3 — call-site migration status:**
-  - **`client.rs` encode DONE** (`1efb240`): all 8 encode blocks migrated to
-    `ergo_codecs::wrap_and_apply_header` + consuming var-data chains. The
-    `SessionConnectRequest` now writes `client_info(b"")` (the forced +4-byte
-    completion, wire-compatible valid v16). The fast-path claim header uses
-    the ErgoSBE encoder. 53 lib tests + 18 golden parity + clippy green.
-  - **`protocol.rs` constants DONE** (`62fe43c`): template IDs, schema
-    ID/version, BLOCK_LENGTHs, EventCode enum values all sourced from
-    `ergo_codecs` encoder associated consts. Adapter-based tests unchanged
-    (they exercise egress.rs which still uses `cluster_codecs`). 14/14 tests
-    + clippy green.
-  - **`egress.rs` DONE** (`fc69c0c`): `on_fragment` + `EgressListener` trait
-    migrated. `From<DecodeError/EncodeError>` impls added to `ClusterError`.
-  - **`controlled.rs` DONE** (`bb7798d`): `on_fragment` + `ControlledEgressListener` trait migrated.
-  - **`poller.rs` DONE** (`eb6ce20`): `EgressEvent` + `parse_event` migrated.
-  - **PRODUCTION CODEC MIGRATION COMPLETE.** Remaining cluster_codecs refs:
-    test boilerplate (protocol.rs/egress.rs test blocks), `codecs/tests.rs`
-    (round-trip tests, covered by golden parity), `lib.rs` module declaration,
-    the sbe-tool `cluster_codecs/cluster_codecs_mark/rfq_codecs` modules
-    themselves (still compiled, needed by test boilerplate and rfq examples).
-- **Gotchas:** client_info forced completion (applied), must_use setters
-  (applied via `let _ =`), whole-buf offer (preserved), writer_impls.rs
-  (kept because rfq_codecs is frozen and still sbe-tool).
+- Golden wire baseline + parity harness.
+- `build.rs` generates `ergo_codecs` / mark modules into `OUT_DIR`.
+- Call sites: `client.rs`, `protocol.rs`, `egress.rs`, `controlled.rs`,
+  `poller.rs` on ErgoSBE. Fast-path `try_claim` SessionMessageHeader uses
+  ErgoSBE encoder.
+- Gotchas applied: forced empty `client_info` completion, `must_use` setters
+  via `let _ =`, whole-buf offer preserved, `writer_impls.rs` kept for RFQ.
 
-### Steps (for a future session)
+### §3b Residual dual-codec cleanup (OPEN)
 
-1. **Golden wire baseline first.** Before touching anything, capture
-   encode bytes for every protocol message the client uses
-   (SessionConnectRequest, SessionMessageHeader, SessionEvent, Challenge,
-   ChallengeResponse, NewLeaderEvent, AdminResponse, SessionKeepAlive,
-   SessionCloseRequest) using the CURRENT sbe-tool codecs, as fixture files
-   or inline test constants. These become the byte-parity acceptance tests.
-2. **build.rs generation.** Replace `cluster/build.rs` no-op with the
-   persist pattern: parse
-   `../aeron/aeron-cluster/src/main/resources/cluster/aeron-cluster-codecs.xml`
-   and `aeron-cluster-mark-codecs.xml` (path via `CARGO_MANIFEST_DIR`),
-   `GenerationConfig::new("cluster_codecs")` / `("cluster_codecs_mark")`,
-   `try_generate`, write to `OUT_DIR`. `include!` from a new slim
-   `src/codecs/mod.rs`. Needs the aeron submodule checked out to build —
-   document in README.
-3. **Migrate call sites** (API style changes everywhere):
-   `cluster/src/client.rs`, `egress.rs`, `controlled.rs`, `protocol.rs`,
-   `codecs/tests.rs`. Delete `writer_impls.rs` (ErgoSBE needs no shim).
-   API deltas:
-   | sbe-tool 1.39.0 (current) | ErgoSBE |
-   |---|---|
-   | sub-crate, one file per codec | one flat module per schema + inline `sbe_rt` |
-   | `Encoder::default().wrap(WriteBuf::new(buf), 8)` then `enc.header(0)` LAST | `Encoder::wrap_and_apply_header(buf, 0)?` up front |
-   | `MessageHeaderDecoder::default().wrap(...)` then `XDecoder::default().header(h, 0)` | `XDecoder::wrap_and_apply_header(buf, 0)?` or `try_from` |
-   | flyweight group cursor `.next()`, random re-entry | consuming type-state `into_<group>()` / `finish()` / `skip_remaining()` |
-   | flyweight var-data getters | consuming `into_<data>() -> (&[u8], NextStage)` |
-   | `Option<T>` for optional/sinceVersion | identical semantics (verified aligned) |
-   Note `client.rs:445-455` hand-writes a SessionMessageHeader directly into
-   a claim buffer as a fast path — re-verify those raw offsets against the
-   ErgoSBE layout or replace with the generated encoder + benchmark.
-4. **Acceptance:** byte-parity goldens from step 1 pass against ErgoSBE
-   encoders; `protocol.rs` ID/blockLength asserts unchanged; 53 lib tests +
-   full harness suite green; clippy/fmt clean.
-5. **Cleanup:** delete `src/codecs/generated/`, `.checksum`, `rfq` staging,
-   the `generate-aeron-cluster-codecs` and `check-aeron-cluster-codec-drift`
-   just recipes, and the sbe-tool jar dependency from the workflow.
+Still present and intentional until cleanup:
+
+- Committed sbe-tool trees: `cluster_codecs/`, `cluster_codecs_mark/`,
+  `generated/`, RFQ frozen output.
+- `writer_impls.rs` (RFQ / sbe-tool Writer gap).
+- just recipes: `generate-aeron-cluster-codecs`,
+  `check-aeron-cluster-codec-drift` (transitional).
+- Bench sbe-tool arms (needed for head-to-head until baseline archived).
+
+Cleanup acceptance: goldens standalone; archive sbe-tool numbers if arms go;
+53 lib + harness green; RFQ exception unchanged.
 
 ### RFQ exception (DECIDED: keep frozen)
 
-`rfq_codecs/` (schema 101, aeron-cookbook) has **no source XML in-repo** —
-only vendored generated Rust. It is used only by the `rfq_client` /
-`rfq_roundtrip` examples. Decision: keep it frozen as committed sbe-tool
-output, compile-tested but not regeneratable. Do not delete. The unfreeze
-option (if ever wanted): vendor the RFQ schema XML from the aeron-cookbook
-GitHub repo under `cluster/schemas/` and fold it into the ErgoSBE build.rs.
+`rfq_codecs/` (schema 101, aeron-cookbook) has **no source XML in-repo**.
+Used only by RFQ examples. Keep frozen sbe-tool output. Unfreeze only with
+human OK (vendor schema under `cluster/schemas/` into ErgoSBE build.rs).
 
-## 4. Future work B — open cluster risks (carried from the gap plan)
+### §3c HFT latency surfaces (cluster client)
 
-From `2026-07-18-rusteron-cluster-current-state-and-gap-plan.md` (historical
-but still accurate for these):
+Ranked by trading-path importance:
 
-1. **Challenge re-send pre-election robustness** — during a leader election
-   the connect handshake should re-send the connect request when challenged;
-   currently not covered.
-2. **Log-recovery restart test** — restart tests cover fresh-cluster starts;
-   a test that restarts nodes over an existing log (recovery path) is
-   missing (one variant currently `--ignored`).
-3. RFQ schema vendoring (see §3 exception).
+1. `try_claim` → SessionMessageHeader into claim (`client.rs`) — every app msg.
+2. Egress decode dispatch (`egress` / `controlled` / `poller`).
+3. SessionKeepAlive encode.
+4. Connect / auth / failover (cold; correctness over ns).
 
-## 5. Orient quickly (future sessions start here)
+## 4. Open cluster reliability risks
+
+From the historical gap plan (wording corrected):
+
+1. **Connect re-offer on pre-election non-leader** — Connect sends
+   `SessionConnectRequest` once. If the first offer lands on a node that
+   neither leads nor redirects, the handshake times out. Fix: periodic
+   re-offer while connecting / in `PollResponse`, within timeout. (Not
+   “re-send when challenged mid-election” — challenge-response already
+   exists.)
+2. **Log-recovery restart test** — **DONE** (`ae6f4c9`): Java launcher accepts
+   "keep" arg to preserve aeron/archive/consensus dirs; Rust TestCluster has
+   `restart_keep_dirs()` and `base_port()` for same-port re-launch; new
+   `test_log_recovery_restart` test (currently `#[ignore]`, needs re-run with
+   `just build-aeron-jars && cargo test --features test-harness -- --include-ignored`).
+3. **Connect re-offer pre-election** — PENDING (client.rs handshake change +
+   harness test).
+   May stay `#[ignore]` if destructive; must pass with `--ignored`.
+3. RFQ schema vendoring (optional; frozen is the decision).
+
+## 5. Future work C — HA cluster sample (PLANNED)
+
+**Goal:** samples take advantage of `cluster/` so the feed survives leadership
+**releases** (NewLeader, session close, reconnect) without a **stale
+orderbook**, and records **latencies to ClickHouse** via
+**DynamicSchema / DynamicRow**.
+
+```text
+feed → normalize AppMessage(L2Book|Trade)
+  → ergo-aeron-cluster try_claim (ingress, HA)
+  → Java clustered service (v1 harness; Rust service non-goal first cut)
+  → egress follower, leadership-aware book
+  → never serve across term without snapshot resync
+  → latency DynamicSchema + DynamicRow → ClickHouse
+```
+
+**Stale-book default:** `serving=false` on NewLeader / reconnect / session
+release; only resume after term-valid snapshot; increments require same
+`leadership_term_id` and continuous sequence; never silent merge across term.
+
+**Latency:** runtime DynamicSchema (no new Persist DTO); rows carry timestamps
+and deltas (exchange→receive, receive→claim, claim→egress, …). Do not block
+the book path on CH (match advanced-bitget drop/batch policy).
+
+**Depends on:** residual reliability (§4) green enough for failover harness.
+
+**Does not replace:** IPC advanced-bitget / `just samples-orderbook` baseline.
+
+**Pin tension:** advanced-bitget uses rusteron **0.2.1**; cluster uses **0.2.4**.
+Decide one pin explicitly before HA sample coding (ask human if bumping).
+
+**Location:** extend under `samples/` (feature/binary); no new top-level pillar
+and **no directory renames**.
+
+Authority: design spec + `samples/todo/02-cluster-ha-orderbook-latency.md`.
+Acceptance H1–H8 in the design spec.
+
+## 6. Orient quickly (future sessions start here)
 
 ```sh
 cd /Users/imran/RustroverProjects/ErgoSBE
 git log --oneline -10 && git status && git submodule status
-just check                          # full no-Java gate (hygiene/fmt/clippy/tests/samples/cluster-lib)
+just check                          # full no-Java gate
 cargo test -p ergo-aeron-cluster --lib          # 53 tests, fast
 just build-aeron-jars               # one-time, Java 17+
 just test-aeron-cluster-harness     # full cluster integration suite (slow)
-just check-aeron-cluster-codec-drift  # committed codecs match regenerated (Java)
+just bench-cluster                  # ErgoSBE vs sbe-tool encode head-to-head
 just samples-orderbook              # live ClickHouse E2E for both samples (Docker)
+# transitional until dual-codec cleanup:
+# just check-aeron-cluster-codec-drift
 ```
 
-Read next: `cluster/README.md` (crate-level detail), `sbe/design/DECISIONS.md`
-(SBE design authority), `phase2-completion-goal.md` (sbe/persist/samples
-ledger), `ergosbe-performance-optimisation-goal.md` (benchmark evidence).
+Read next: completion goal prompt (residual order), `cluster/README.md`,
+`sbe/design/DECISIONS.md`, `phase2-completion-goal.md` (IPC samples ledger),
+`ergosbe-performance-optimisation-goal.md`, HA design spec.
 
-## 6. Superseded historical docs
+## 7. Superseded historical docs
 
 `docs/superpowers/plans/`: `2026-07-17-rusteron-cluster-final-report.md`,
 `-master.md`, `-phase-1-scaffold.md`, `-phase-2-codecs.md`,
 `-phase-3-state-machine.md`, `2026-07-18-rusteron-cluster-current-state-and-gap-plan.md`;
 `docs/superpowers/specs/2026-07-17-rusteron-cluster-client-design.md`.
-Each carries a Historical banner; their internal `rusteron-cluster` paths and
-crate names are stale on purpose.
+Each carries a Historical banner; internal `rusteron-cluster` paths and crate
+names are stale on purpose.
 
-## 7. Invariants (do not break)
+## 8. Invariants (do not break)
 
-- Dir names ≠ crate names for the cluster pillar; rename dirs only.
+- **Never rename** `sbe` / `persist` / `cluster` / `samples` /
+  `cluster-test-support` or their crate packages.
 - Never run `cargo … --workspace --all-features` without
   `--exclude ergo-aeron-cluster` (test-harness pulls the Java-building crate).
 - Never commit or reset the dirty `simple-binary-encoding` submodule; stage
   files explicitly, never `git add -A`.
 - aeron submodule pinned @ 5b62f21d91 (1.52.2); jars sha256-pinned in
   `cluster-test-support/test-jars.sha256` (`just check-aeron-jars`).
-- Keep `cluster/rustfmt.toml` (edition 2024, max_width 120) — codec drift
-  checking depends on stable formatting.
+- Keep `cluster/rustfmt.toml` (edition 2024, max_width 120).
 - Test-harness runs write `aeron-cluster-[0-9]/` runtime dirs into crate CWDs;
   they are gitignored — never commit them.
-- SBE wire compatibility and the ≤ 1.00 Aeron benchmark gate are
-  non-negotiable (see `sbe/design/DECISIONS.md` priority ladder).
+- SBE wire compatibility and the ≤ 1.00 gate on **maintained** scenarios are
+  non-negotiable (`sbe/design/DECISIONS.md` priority ladder).
+- SessionConnectRequest ~1.003 is **not** a pass; do not claim cluster benches
+  complete until five-run ledger is honest.
