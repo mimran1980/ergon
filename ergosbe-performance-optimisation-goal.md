@@ -2042,3 +2042,21 @@ until a full five-run is ledgered.
 - Examples `rfq_client` / `rfq_roundtrip` migrated to ErgoSBE.
 - Codegen fix: entry-decoder `BooleanType` `*_bool` const helper uses
   `raw_*` (was calling non-const enum getter — broke RFQ generate).
+
+## 2026-07-18 completion-goal closeout — maintained cluster smoke (fresh)
+
+**Command:** `cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --warm-up-time 0.3 --measurement-time 1.0 --sample-size 20 'encode/session_message_header|encode/session_keep_alive|decode/session_message_header|decode/session_event'`  
+**Date:** 2026-07-18 · **Host:** arm64 macOS · rustc 1.95.0 · branch `3069ec6`  
+**Also green:** `just check`, cluster lib 54, codec_golden 9, RFQ wire parity,
+`just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`,
+`just samples-orderbook`, `cargo bench -p ergosbe-benchmarks --no-run`.
+
+| Scenario | ErgoSBE | sbe-tool | Ratio | Gate |
+|----------|---------|----------|-------|------|
+| SessionMessageHeader encode | 4.4097 µs | 5.1301 µs | **0.860** | ✅ maintained |
+| SessionKeepAlive encode | 6.0121 µs | 6.5622 µs | **0.916** | ✅ maintained |
+| SessionMessageHeader decode | 9.1188 µs | 10.451 µs | **0.873** | ✅ maintained |
+| SessionEvent decode | 15.324 µs | 18.051 µs | **0.849** | ✅ maintained |
+
+Encode five-run authority remains header **0.856** / keep-alive **0.916**.
+Connect demoted. Residual product scope COMPLETE with fresh closeout evidence.

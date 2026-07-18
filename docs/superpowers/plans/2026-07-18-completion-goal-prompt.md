@@ -154,16 +154,18 @@ WORK ORDER — residual product scope COMPLETE (2026-07-18)
    offline H3-equivalent, IPC baseline green. Multi-node Java kill-leader:
    `just samples-cluster-ha-kill-leader` DONE.
 
-7) Full umbrella gates — re-run for evidence when closing residual
+7) Full umbrella gates — **re-run 2026-07-18 closeout PASS** (fresh output)
    just check
-   cargo test -p ergo-aeron-cluster --lib
-   cargo test -p ergo-aeron-cluster --test codec_golden_bytes
+   cargo test -p ergo-aeron-cluster --lib   # 54 incl. RFQ wire parity
+   cargo test -p ergo-aeron-cluster --test codec_golden_bytes  # 9
    just samples-cluster-ha
+   just samples-cluster-ha-kill-leader
    just samples-orderbook
    cargo bench -p ergosbe-benchmarks --no-run
    cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench  # maintained filter
    # optional: just test-aeron-cluster-harness (Java jars)
    rg living residual OPEN/ACTIVE product blockers (must be CLEAN)
+   Maintained smoke ratios: enc hdr 0.860, ka 0.916, dec hdr 0.873, event 0.849
 
 8) Status hygiene — DONE for residual product scope
    HA todo DONE; design IMPLEMENTED; master plan §3/§3b/§4/§5 residual DONE.
