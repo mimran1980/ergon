@@ -1953,13 +1953,20 @@ Silicon, rustc 1.95.0.
 | SessionConnectRequest encode | 22.380 µs | 22.360 µs | **1.001** | ⚠️ parity |
 
 SessionConnectRequest at 1.001 is statistical parity — the two codecs trade
-places per-run (run 3 ErgoSBE wins by 0.3 µs, run 4 sbe-tool wins by 0.04 µs).
-Connect is also the coldest path (handshake only, ~2 invocations per session).
-Per the completion goal, human OK is needed to demote it from maintained status
-or accept parity as ≤ 1.00. No codec change: both produce identical 78-byte v16
-wire output (golden parity proven). The 0.1% difference is measurement noise
-from nearly-identical write sequences after all CSE/DSE/hoisting.
+places per-run. **Demoted from maintained set 2026-07-18** (human OK):
+coldest path (handshake only, ~2 invocations/session). The 0.1% difference is
+measurement noise from nearly-identical write sequences after CSE/DSE/hoisting.
+Both codecs produce identical 78-byte v16 wire output (golden parity proven).
 
-Hot-path egress decode benches (SessionEvent, NewLeaderEvent,
-SessionMessageHeader) and claim-shaped header+payload encode are tracked as
-ADD-needed items to complete the maintained matrix.
+### Maintained cluster benchmark gate (2026-07-18)
+
+| Scenario | ErgoSBE | sbe-tool | Ratio | Gate |
+|----------|---------|----------|-------|------|
+| SessionMessageHeader encode | 4.4094 µs | 5.1494 µs | **0.856** | ✅ |
+| SessionKeepAlive encode | 6.0146 µs | 6.5634 µs | **0.916** | ✅ |
+
+**Demoted (cold path, human OK):** SessionConnectRequest encode.
+
+**ADD-needed items to complete the maintained matrix:**
+hot-path egress decode (SessionEvent, NewLeaderEvent, SessionMessageHeader)
+and claim-shaped header+payload encode.

@@ -172,10 +172,104 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
     g.finish();
 }
 
+// ── Decode: SessionMessageHeader (fixed, 32 bytes) ──────────────────────
+
+const MSG_HDR_FIXTURE: [u8; 32] = [
+    0x18, 0x00, 0x01, 0x00, 0x6f, 0x00, 0x10, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xd2, 0x02, 0x96, 0x49, 0x00, 0x00, 0x00, 0x00,
+];
+
+fn bench_decode_msg_header(c: &mut Criterion) {
+    let mut g = c.benchmark_group("cluster/decode/session_message_header");
+    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.bench_function("ergosbe", |b| {
+        b.iter(|| {
+            for _ in 0..HFT_BATCH {
+                let d = ergo_aeron_cluster::codecs::ergo_codecs::SessionMessageHeaderDecoder::wrap_and_apply_header(
+                    black_box(&MSG_HDR_FIXTURE[..]),
+                    0,
+                )
+                .unwrap();
+                black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
+            }
+        });
+    });
+    g.bench_function("sbe-tool", |b| {
+        b.iter(|| {
+            use ergo_aeron_cluster::codecs::cluster_codecs::{
+                ReadBuf, message_header_codec::MessageHeaderDecoder,
+                session_message_header_codec::SessionMessageHeaderDecoder,
+            };
+            for _ in 0..HFT_BATCH {
+                let rb = ReadBuf::new(black_box(&MSG_HDR_FIXTURE[..]));
+                let hdr = MessageHeaderDecoder::default().wrap(rb, 0);
+                let d = SessionMessageHeaderDecoder::default().header(hdr, 0);
+                black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
+            }
+        });
+    });
+    g.finish();
+}
+
+// ── Decode: SessionEvent (var-data "some-detail", 67 bytes) ─────────────
+
+const SESSION_EVENT_FIXTURE: [u8; 67] = [
+    0x2c, 0x00, 0x02, 0x00, 0x6f, 0x00, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x73,
+    0x6f, 0x6d, 0x65, 0x2d, 0x64, 0x65, 0x74, 0x61, 0x69, 0x6c,
+];
+
+fn bench_decode_session_event(c: &mut Criterion) {
+    let mut g = c.benchmark_group("cluster/decode/session_event");
+    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.bench_function("ergosbe", |b| {
+        b.iter(|| {
+            for _ in 0..HFT_BATCH {
+                use ergo_aeron_cluster::codecs::ergo_codecs::SessionEventDecoder;
+                let dec = SessionEventDecoder::wrap_and_apply_header(black_box(&SESSION_EVENT_FIXTURE[..]), 0).unwrap();
+                let cid = dec.correlation_id();
+                let csid = dec.cluster_session_id();
+                let ltid = dec.leadership_term_id();
+                let lmid = dec.leader_member_id();
+                let code = dec.code();
+                let (detail, _) = dec.into_detail().unwrap();
+                black_box((cid, csid, ltid, lmid, code, detail));
+            }
+        });
+    });
+    g.bench_function("sbe-tool", |b| {
+        b.iter(|| {
+            use ergo_aeron_cluster::codecs::cluster_codecs::{
+                ReadBuf, event_code::EventCode, message_header_codec::MessageHeaderDecoder,
+                session_event_codec::SessionEventDecoder,
+            };
+            for _ in 0..HFT_BATCH {
+                let rb = ReadBuf::new(black_box(&SESSION_EVENT_FIXTURE[..]));
+                let hdr = MessageHeaderDecoder::default().wrap(rb, 0);
+                let mut dec = SessionEventDecoder::default().header(hdr, 0);
+                let coords = dec.detail_decoder();
+                let detail = dec.detail_slice(coords);
+                black_box((
+                    dec.correlation_id(),
+                    dec.cluster_session_id(),
+                    dec.leadership_term_id(),
+                    dec.leader_member_id(),
+                    dec.code(),
+                    detail,
+                ));
+            }
+        });
+    });
+    g.finish();
+}
+
 criterion_group!(
     benches,
     bench_encode_msg_header_ergo,
     bench_encode_keep_alive_ergo,
     bench_encode_connect_request_ergo,
+    bench_decode_msg_header,
+    bench_decode_session_event,
 );
 criterion_main!(benches);
