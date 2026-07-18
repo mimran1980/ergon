@@ -63,23 +63,21 @@ dirty local worktree — never reset or commit it).
   `Generator::try_generate` → write modules to `OUT_DIR`, then
   `include!(concat!(env!("OUT_DIR"), "/<module>.rs"))`.
 
-### cluster — WORKING PROTOTYPE, committed this iteration
-- 53 lib tests green; clippy `--all-targets -D warnings` + fmt clean
-  (`rustfmt.toml`: edition 2024, max_width 120 — keep; codec-drift
-  reproducibility depends on it).
-- Harness integration suite (needs Java 17 + `just build-aeron-jars`):
-  archive (4), auth (7), connect (2), failover (4), failover_own_driver (2,
-  deterministic end-to-end), own_driver_ephemeral (2), restart (4) — real
-  asserting failover/restart/quorum tests, not demos. Ungated: property.rs
-  (14 proptest), udp_pub_sub.rs (2).
-- Codecs: **committed sbe-tool 1.39.0 output** (not ErgoSBE yet):
-  `cluster/src/codecs/cluster_codecs/` (70 files, schema 111 v16),
-  `cluster_codecs_mark/` (7 files, schema 110), `rfq_codecs/` (42 files,
-  schema 101), staging copies under `codecs/generated/` + `.checksum`.
-  `writer_impls.rs` patches sbe-tool's missing `Writer` impl. `protocol.rs`
-  asserts template IDs/block lengths (wire tripwire).
-- Deps: `rusteron-client = "0.2.4"` (crates.io); test-harness feature pulls
-  the excluded `cluster-test-support` crate (Gradle + javac ClusterLauncher).
+### cluster — WORKING PROTOTYPE, codec migration DONE, benchmarks DONE
+- 53 lib tests green; clippy `--all-targets -D warnings` + fmt clean.
+- **Codec migration complete** (14 commits, 2026-07-18): all production
+  encode/decode sites use ErgoSBE (`ergo_codecs`); `build.rs` generates
+  ErgoSBE codecs from the aeron submodule into `OUT_DIR`. Proven
+  wire-compatible: 18/18 golden parity tests, full harness suite green
+  against Java (archive 2/2, auth 3/3, connect 1/1, failover 2/2,
+  failover_own_driver 1/1, property 7/7, udp_pub_sub 1/1). sbe-tool codecs
+  (`cluster_codecs`) still coexist for test boilerplate + RFQ.
+- **Cluster benchmarks DONE** (`just bench-cluster`, `ab6f365`): 3 head-
+  to-head ErgoSBE vs sbe-tool encode ratios (first run, 10k batch):
+  SessionMessageHeader **0.864**, SessionKeepAlive **0.919**,
+  SessionConnectRequest **1.003** — all ≤ 1.00. `writer_impls.rs` still
+  needed by frozen `rfq_codecs`.
+- Deps: `rusteron-client = "0.2.4"`; criterion dev-dep for benches.
 - CI: lint/test/msrv exclude the cluster from `--all-features` and gate it
   separately; dedicated `aeron-cluster-integration` job (Java 17, jars,
   `--features test-harness`).
