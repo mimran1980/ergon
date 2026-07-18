@@ -1811,3 +1811,78 @@ a borrow-based consuming-stage builder to a value-move chain, which would
 trade away the consuming-stage safety invariant (DECISIONS.md §3/§10) —
 disallowed by the priority ladder. encode/throughput_10k remains the sole
 open ratio (9 of 10 scenarios ≤ 1.00).
+
+## 2026-07-18 (RESOLUTION): encode/throughput_10k was a BENCHMARK FAIRNESS BUG — CLOSED at 0.917
+
+**The "compiler blocker" conclusion above is SUPERSEDED.** The real root
+cause was found and it is not an LLVM divergence at all: the Aeron arm of
+`bench_encode_throughput` wrapped the message body at offset **0** while
+writing the 8-byte message header at offset **0** — they overlapped, so
+`serial_number` (written at `self.offset = 0`) overwrote the header. The
+header became a dead store that LLVM eliminated, leaving Aeron writing only
+~10 bytes (`serial[0..8] + model_year[8..10]`) while ErgoSBE wrote the full
+18-byte message (`header[0..8] + serial[8..16] + model_year[16..18]`).
+
+Verified by encoding one message each way and printing the bytes:
+`ergosbe-benchmarks` (throwaway example, since removed):
+
+```
+ErgoSBE        [0..18]: 29 00 01 00 01 00 00 00 | aa 00 00 00 00 00 00 00 | dd 07   (header+serial+model_year)
+Aeron body@0   [0..10]: aa 00 00 00 00 00 00 00 | dd 07                            (serial+model_year, NO header)
+Aeron body@8   [0..18]: 2d 00 01 00 01 00 00 00 | aa 00 00 00 00 00 00 00 | dd 07   (header+serial+model_year)
+```
+
+The `body@0` invocation produced an **invalid, headerless** message; the
+`body@8` fix produces the same layout as ErgoSBE (byte 0 differs only in
+blockLength: ErgoSBE 41 vs Aeron 45 — the two Car schemas differ by 4 body
+bytes, but the explicit writes are identical).
+
+**Fix (one line):** `CarEncoder::default().wrap(buf, 8)` instead of
+`wrap(buf, 0)` in the Aeron arm, so the body starts after the 8-byte header.
+The header is written at offset 0 by `header(0)`. This makes Aeron do the
+same 18-byte work ErgoSBE does — a fair comparison of "encode a Car message."
+
+**5-run medians after the fix** (rustc 1.95.0, aarch64):
+
+| run | ErgoSBE µs | Aeron µs | ratio |
+|-----|-----------|---------|-------|
+| 1   | 5.4278    | 5.9148  | 0.918 |
+| 2   | 5.5395    | 6.0168  | 0.921 |
+| 3   | 5.6055    | 6.1099  | 0.918 |
+| 4   | 5.6681    | 6.1131  | 0.927 |
+| 5   | 5.6568    | 6.1214  | 0.924 |
+
+5-run median ratio **0.917** (ErgoSBE 5.6055 µs / Aeron 6.1099 µs). Every
+individual run ≤ 0.93. **ErgoSBE is ~8% faster than Aeron on equal work.**
+
+### Why the earlier investigation was misled
+
+The 14 source-level interventions and the "LLVM 8× unroll divergence"
+assembly analysis were all correct observations of *symptoms*, but they
+optimised ErgoSBE's encoder while Aeron was doing less work the entire time.
+The minimal reproducer at `docs/perf/encode-throughput-repro/repro.rs`
+remains valid as a negative result: it correctly disproved the index-vs-
+pointer / Result / extra-fields / bounds-branch hypotheses (all within 0.5%
+in isolation). It could not reproduce the "divergence" because there was no
+divergence to reproduce — only unequal benchmark workload. No upstream
+rustc/LLVM issue is warranted; the drafted `UPSTREAM_ISSUE.md` is withdrawn.
+
+### Updated complete matrix (2026-07-18, post-fix)
+
+| Scenario | Ratio | Gate |
+|----------|-------|------|
+| decode/entry_point/wrap | 0.871 | ✅ |
+| decode/entry_point/try_from | 0.980 | ✅ |
+| decode/scalar | 0.999 | ✅ |
+| decode/array | 0.999 | ✅ |
+| decode/composite | 0.999 | ✅ |
+| throughput/batch_10k | 0.980 | ✅ |
+| encode/scalar | 0.846 | ✅ |
+| decode/full_message | 0.9997 | ✅ |
+| fallible/manual | 0.960 | ✅ |
+| encode/throughput_10k | **0.917** | ✅ (NEWLY CLOSED) |
+
+**All 10 maintained ErgoSBE/Aeron ratios are ≤ 1.00.** No safety, wire-
+compatibility, or acceptance-threshold compromise was made. The fix is a
+benchmark-only correction that makes Aeron do the same encode work it always
+claimed to do.

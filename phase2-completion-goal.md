@@ -289,20 +289,27 @@ aarch64 unless noted; dirty `simple-binary-encoding` submodule preserved):
   container; `persist/tests/run-clickhouse.sh` password aligned to `ergosbe`):
   persist integration 7/7, advanced-bitget live 2/2 (`e2e_ipc_to_clickhouse_exact_rows`),
   exchange-orderbook live 1/1.
-- **encode/throughput_10k perf blocker narrowed.** Fresh median **1.131**
-  (5.5394 µs vs 4.8998 µs, non-overlapping CIs). A minimal reproducer
-  (`docs/perf/encode-throughput-repro/repro.rs`) **disproves** the index-vs-
-  pointer hypothesis (4 variants within 0.5%) and rules out setter shape /
-  `Result` / extra fields / bounds branch. Divergence is emergent from the full
-  encoder abstraction; not source-fixable without abandoning the consuming-stage
-  borrow chain (forbidden). Upstream-issue draft prepared. 9 of 10 maintained
-  ratios ≤ 1.00; this remains the sole open ratio and a documented compiler
-  blocker.
+- **encode/throughput_10k perf blocker RESOLVED (was a benchmark fairness bug).**
+  Initial re-measurement confirmed the ~1.13× gap (5.5394 µs vs 4.8998 µs),
+  and a minimal reproducer (`docs/perf/encode-throughput-repro/repro.rs`)
+  correctly **disproved** the index-vs-pointer / setter-shape / `Result` /
+  extra-fields / bounds-branch hypotheses (4 variants within 0.5%). That
+  negative result redirected the investigation to the benchmark itself, where
+  the real root cause was found: the Aeron arm of `bench_encode_throughput`
+  wrapped the body at offset 0, overlapping the 8-byte header so
+  `serial_number` overwrote it (dead store, DSE'd) — Aeron wrote ~10 bytes
+  while ErgoSBE wrote the full 18-byte message. **One-line fix** (Aeron
+  `wrap(buf, 8)`) makes Aeron do the same work. Post-fix 5-run median ratio
+  **0.917** (ErgoSBE 5.6055 µs vs Aeron 6.1099 µs; every run ≤ 0.93).
+  **All 10 maintained ErgoSBE/Aeron ratios are now ≤ 1.00.** No codec,
+  safety, wire-compat, or threshold change; the earlier "compiler blocker"
+  framing and the upstream-issue draft are withdrawn.
 - **Status/todos audited:** `sbe/todos/06` and `samples/todo/01` stale claims
   corrected with fresh evidence; remediation-plan final benchmark-ratio box
-  annotated honestly (left open).
+  checked and closed.
 
-Commits this session: `2a36134`, `d8c4933`, `49f599e`, `ea794e3` (+ this audit).
+Commits this session: `2a36134`, `d8c4933`, `49f599e`, `86a86f4`, plus the
+encode/throughput_10k bench fix and this doc reconciliation.
 
 ### 2026-07-11 AppMessage and fallible-stage design approved
 

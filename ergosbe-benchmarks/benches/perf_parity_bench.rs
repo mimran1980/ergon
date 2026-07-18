@@ -357,9 +357,13 @@ fn bench_encode_throughput(c: &mut Criterion) {
             |mut buf| {
                 for i in 0..HFT_BATCH {
                     let off = i * 64;
+                    // Body at offset 8 (after the 8-byte message header), header at 0.
+                    // Wrapping the body at 0 would overlap the header (serial_number
+                    // overwrites it), making Aeron write ~10 bytes while ErgoSBE writes
+                    // the full 18-byte header+serial+model_year — an unfair comparison.
                     let car = ergosbe_benchmarks::aeron_car::aeron::car_codec::encoder::CarEncoder::default().wrap(
                         ergosbe_benchmarks::aeron_car::aeron::WriteBuf::new(&mut buf[off..off + 64]),
-                        0,
+                        8,
                     );
                     let mut hdr = car.header(0);
                     let mut car = hdr.parent().unwrap();
@@ -374,8 +378,6 @@ fn bench_encode_throughput(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ── Decoder skip/rewind API benchmark ────────────────────────────────
 
 fn bench_decode_consuming_full(c: &mut Criterion) {
     // Fair three-way full-message decode over the same BASELINE buffer. All

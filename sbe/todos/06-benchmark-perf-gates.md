@@ -11,7 +11,7 @@
 Criterion benchmarks for encode, decode, round-trip, `Display`, `debug_wire`,
 and `skip` on realistic market-data-shaped messages. Allocation-count tests
 asserting zero heap allocation per operation.
-**Status: DONE (2026-07-09)** — all AC met: criterion benches, allocation-guard tests, CI gates, upstream benches ported. Head-to-head Aeron parity: 9 of 10 maintained median ratios ≤ 1.00 (freshly re-measured 2026-07-18); `encode/throughput_10k` is the sole open ratio at **1.131** (5.5394 µs vs 4.8998 µs, non-overlapping CIs) — a compiler-level blocker, not a source-level codec defect (see `ergosbe-performance-optimisation-goal.md` 2026-07-18 entries and `docs/perf/encode-throughput-repro/`).
+**Status: DONE (2026-07-09)** — all AC met: criterion benches, allocation-guard tests, CI gates, upstream benches ported. Head-to-head Aeron parity: **all 10 maintained median ratios ≤ 1.00** (freshly re-measured 2026-07-18). `encode/throughput_10k` was the last open ratio; **CLOSED at 0.917** (5-run median 5.6055 µs ErgoSBE vs 6.1099 µs Aeron) after fixing a benchmark fairness bug — the Aeron arm had wrapped the body at offset 0, overlapping and deadening the 8-byte header so it wrote ~10 bytes while ErgoSBE wrote the full 18. Fix: Aeron body at offset 8. No codec change, no safety/wire-compat/threshold compromise (see `ergosbe-performance-optimisation-goal.md` 2026-07-18 RESOLUTION entry).
 
 **Decision after deferred recheck (2026-07-08):** unpark. Zero allocation and
 Aeron-competitive performance are explicit project goals. JDK/Gradle-dependent
