@@ -1,6 +1,24 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{ClusterError, SessionState};
+
+/// Interval between `SessionConnectRequest` re-offers while waiting for a
+/// SessionEvent during connect. Mirrors Java `AeronCluster.AsyncConnect`
+/// periodic send under pre-election / silent non-leader peers.
+///
+/// Uses roughly `message_timeout / 4`, clamped to `[50, 1000]` ms so short
+/// test timeouts still re-offer and long production timeouts do not spam.
+#[must_use]
+pub fn connect_reoffer_interval_ms(message_timeout_ms: u64) -> u64 {
+    (message_timeout_ms / 4).clamp(50, 1_000)
+}
+
+/// True when a connect re-offer is due given the last successful (or attempted)
+/// offer time and the re-offer interval.
+#[must_use]
+pub fn should_reoffer_connect(last_offer: Instant, now: Instant, interval_ms: u64) -> bool {
+    now.saturating_duration_since(last_offer) >= Duration::from_millis(interval_ms)
+}
 
 /// Ordered connect steps. Mirrors the Java AsyncConnect sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -156,5 +174,23 @@ mod tests {
         while ac.advance().unwrap_or(false) {}
         assert_eq!(ac.current_step(), ConnectStep::Done);
         assert!(!ac.advance().unwrap());
+    }
+
+    #[test]
+    fn reoffer_interval_clamps() {
+        assert_eq!(connect_reoffer_interval_ms(10_000), 1_000); // 10000/4 = 2500 → clamp 1000
+        assert_eq!(connect_reoffer_interval_ms(2_000), 500);
+        assert_eq!(connect_reoffer_interval_ms(100), 50); // 25 → clamp 50
+        assert_eq!(connect_reoffer_interval_ms(0), 50);
+    }
+
+    #[test]
+    fn should_reoffer_after_interval() -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        assert!(!should_reoffer_connect(start, start, 200));
+        assert!(!should_reoffer_connect(start, start + Duration::from_millis(199), 200));
+        assert!(should_reoffer_connect(start, start + Duration::from_millis(200), 200));
+        assert!(should_reoffer_connect(start, start + Duration::from_millis(500), 200));
+        Ok(())
     }
 }

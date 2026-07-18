@@ -20,6 +20,7 @@ use crate::codecs::ergo_codecs::{
     ChallengeResponseEncoder, SessionCloseRequestEncoder, SessionConnectRequestEncoder, SessionKeepAliveEncoder,
     SessionMessageHeaderEncoder,
 };
+use crate::connect::{connect_reoffer_interval_ms, should_reoffer_connect};
 use crate::egress::{EgressAdapter, EgressListener};
 use crate::error::ClusterError;
 use crate::state::SessionState;
@@ -114,6 +115,10 @@ impl AeronCluster {
 
     /// Send the SessionConnectRequest and poll egress for the result,
     /// handling challenge-response and leader redirect along the way.
+    ///
+    /// While waiting, re-offers the connect request on a cadence of
+    /// [`connect_reoffer_interval_ms`] so a first offer that lands on a
+    /// pre-election / silent non-leader peer does not stall until timeout.
     fn handshake(&mut self, builder: &crate::SessionBuilder) -> Result<(), ClusterError> {
         let creds: Vec<u8> = builder
             .credentials
@@ -122,6 +127,8 @@ impl AeronCluster {
             .unwrap_or_default();
 
         self.send_connect_request(builder, &creds)?;
+        let mut last_offer = Instant::now();
+        let reoffer_ms = connect_reoffer_interval_ms(builder.message_timeout_ms);
 
         let deadline = Instant::now() + Duration::from_millis(builder.message_timeout_ms);
         let mut captured: Option<crate::poller::EgressEvent> = None;
@@ -164,6 +171,7 @@ impl AeronCluster {
                             if let Some(ep) = crate::poller::parse_leader_endpoint(&detail, leader_member_id) {
                                 self.reconnect_ingress(builder, &ep)?;
                                 self.send_connect_request(builder, &creds)?;
+                                last_offer = Instant::now();
                             }
                             // keep polling
                         }
@@ -184,7 +192,15 @@ impl AeronCluster {
                     self.send_challenge_response(correlation_id, cluster_session_id, &resp)?;
                     // keep polling for the resulting SessionEvent
                 }
-                _ => {}
+                _ => {
+                    // No event: re-offer connect if the interval elapsed so a
+                    // pre-election peer that neither leads nor redirects does
+                    // not burn the full timeout on a single silent offer.
+                    if should_reoffer_connect(last_offer, Instant::now(), reoffer_ms) {
+                        let _ = self.try_offer_connect_request(builder, &creds);
+                        last_offer = Instant::now();
+                    }
+                }
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -194,11 +210,36 @@ impl AeronCluster {
         })
     }
 
+    /// Encode SessionConnectRequest and retry offer until it lands or timeout.
     fn send_connect_request(
         &mut self,
         builder: &crate::SessionBuilder,
         credentials: &[u8],
     ) -> Result<(), ClusterError> {
+        let buf = Self::encode_connect_request(builder, credentials)?;
+        let deadline = Instant::now() + Duration::from_millis(builder.message_timeout_ms);
+        while Instant::now() < deadline {
+            if self.ingress.offer_raw(&buf, Handlers::NONE) > 0 {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Err(ClusterError::ConnectFailed {
+            reason: "connect request offer timed out".into(),
+        })
+    }
+
+    /// Best-effort single offer of a fresh SessionConnectRequest (re-offer path).
+    fn try_offer_connect_request(
+        &mut self,
+        builder: &crate::SessionBuilder,
+        credentials: &[u8],
+    ) -> Result<bool, ClusterError> {
+        let buf = Self::encode_connect_request(builder, credentials)?;
+        Ok(self.ingress.offer_raw(&buf, Handlers::NONE) > 0)
+    }
+
+    fn encode_connect_request(builder: &crate::SessionBuilder, credentials: &[u8]) -> Result<Vec<u8>, ClusterError> {
         let mut buf = vec![0u8; 512];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).map_err(enc_err)?;
         let _ = enc
@@ -212,16 +253,7 @@ impl AeronCluster {
             .map_err(enc_err)?
             .client_info(b"")
             .map_err(enc_err)?;
-        let deadline = Instant::now() + Duration::from_millis(builder.message_timeout_ms);
-        while Instant::now() < deadline {
-            if self.ingress.offer_raw(&buf, Handlers::NONE) > 0 {
-                return Ok(());
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Err(ClusterError::ConnectFailed {
-            reason: "connect request offer timed out".into(),
-        })
+        Ok(buf)
     }
 
     fn send_challenge_response(
@@ -503,6 +535,9 @@ pub struct AsyncClusterConnect {
     credentials: Vec<u8>,
     step: AsyncStep,
     connect_sent: bool,
+    /// Wall-clock of last SessionConnectRequest offer attempt (success or not).
+    last_connect_offer: Instant,
+    reoffer_interval_ms: u64,
     deadline: Instant,
     cluster_session_id: i64,
     leadership_term_id: i64,
@@ -525,6 +560,10 @@ impl AsyncClusterConnect {
             .as_ref()
             .and_then(|c| c.encoded_credentials())
             .unwrap_or_default();
+        // Epoch-like past so the first SendConnect is not blocked by re-offer gate.
+        let past = Instant::now()
+            .checked_sub(Duration::from_secs(3600))
+            .unwrap_or_else(Instant::now);
         Self {
             aeron: None,
             ingress: None,
@@ -534,6 +573,8 @@ impl AsyncClusterConnect {
             credentials: creds,
             step: AsyncStep::CreateTransport,
             connect_sent: false,
+            last_connect_offer: past,
+            reoffer_interval_ms: connect_reoffer_interval_ms(timeout_ms),
             deadline: Instant::now() + Duration::from_millis(timeout_ms),
             cluster_session_id: -1,
             leadership_term_id: -1,
@@ -688,6 +729,10 @@ impl AsyncClusterConnect {
                         }
                         _ => {}
                     }
+                } else if should_reoffer_connect(self.last_connect_offer, Instant::now(), self.reoffer_interval_ms) {
+                    // Pre-election / silent non-leader: re-offer connect.
+                    self.connect_sent = false;
+                    let _ = self.encode_and_send_connect()?;
                 }
                 Ok(true)
             }
@@ -731,6 +776,9 @@ impl AsyncClusterConnect {
             .map_err(enc_err)?
             .client_info(b"")
             .map_err(enc_err)?;
+        // Always stamp the attempt so re-offer cadence advances even under
+        // backpressure (avoids tight spin when publication is not connected).
+        self.last_connect_offer = Instant::now();
         if let Some(ingress) = &self.ingress
             && ingress.offer_raw(&buf, Handlers::NONE) > 0
         {

@@ -35,7 +35,7 @@ pub mod state;
 
 pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim};
 pub use config::SessionBuilder;
-pub use connect::AsyncConnect;
+pub use connect::{AsyncConnect, connect_reoffer_interval_ms, should_reoffer_connect};
 pub use controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 pub use credentials::{CredentialsSupplier, NullCredentialsSupplier};
 pub use error::ClusterError;
