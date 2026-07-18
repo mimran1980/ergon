@@ -1,0 +1,48 @@
+[package]
+name = "ergo-aeron-cluster"
+version = "0.1.0"
+edition = "2024"
+description = "Prototype handwritten Rust reimplementation of the Aeron Cluster client"
+license = "Apache-2.0"
+repository = "https://github.com/mimran1980/ErgoSBE"
+
+[dependencies]
+rusteron-client = "0.2.4"
+ergo-aeron-cluster-test-support = { path = "../cluster-test-support", optional = true }
+
+[features]
+default = []
+test-harness = ["ergo-aeron-cluster-test-support"]
+
+[lib]
+name = "ergo_aeron_cluster"
+path = "src/lib.rs"
+
+[[example]]
+name = "echo_client"
+required-features = ["test-harness"]
+
+[[example]]
+name = "auction_client"
+required-features = ["test-harness"]
+
+[[example]]
+name = "rfq_client"
+required-features = ["test-harness"]
+
+[[example]]
+name = "rfq_roundtrip"
+required-features = ["test-harness"]
+
+[[example]]
+name = "async_connect_demo"
+required-features = ["test-harness"]
+
+[[example]]
+name = "failover_demo"
+required-features = ["test-harness"]
+
+[dev-dependencies]
+proptest = "1.11"
+rusteron-media-driver = "0.2.4"
+serial_test = { version = "3", features = ["file_locks"] }

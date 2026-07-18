@@ -1,0 +1,10 @@
+[package]
+name = "io_aeron_cluster_codecs"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Message Codecs for communicating with, and within, an Aeron Cluster."
+edition = "2021"
+
+[lib]
+name = "io_aeron_cluster_codecs"
+path = "src/lib.rs"

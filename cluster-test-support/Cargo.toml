@@ -1,0 +1,18 @@
+[package]
+name = "ergo-aeron-cluster-test-support"
+version = "0.1.0"
+edition = "2024"
+description = "Java test harness for ergo-aeron-cluster integration tests"
+license = "Apache-2.0"
+repository = "https://github.com/mimran1980/ErgoSBE"
+
+[dependencies]
+rusteron-client = "0.2.4"
+rusteron-archive = "0.2.4"
+
+[lib]
+name = "ergo_aeron_cluster_test_support"
+path = "src/lib.rs"
+
+[dev-dependencies]
+serial_test = { version = "3", features = ["file_locks"] }

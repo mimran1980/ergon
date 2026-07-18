@@ -1,0 +1,4 @@
+# SHA-256 hashes of test jars
+f02b1cc8660ee24235f41000f3b4a7af90730cc467519f2344672208e7195a6f  aeron/aeron-all/build/libs/aeron-all-1.52.2.jar
+31df6b4dc6fbd862fab162a21ed2123d7ecc805cdee40a3c739d2f4eec00dedc  aeron/aeron-cluster/build/libs/aeron-cluster-1.52.2.jar
+20856c5bc98611aec1328a1b3a37ea2d608f9cb0d6528948468a6db46cf520e9  aeron/aeron-archive/build/libs/aeron-archive-1.52.2.jar

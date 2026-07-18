@@ -1,11 +1,16 @@
 # ErgoSBE — reproducible workspace gates
 
-# Full local check: hygiene, format, clippy, tests (no external services)
+# Full local check: hygiene, format, clippy, tests (no external services).
+# ergo-aeron-cluster's test-harness feature needs Java, so it is excluded from
+# the --all-features workspace gates below and checked at default features
+# (lib only). Run `just test-aeron-cluster-harness` for the Java integration tests.
 check:
     ./scripts/check-repository-hygiene.sh
     cargo fmt --all --check
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
-    cargo test --workspace --all-features -- --test-threads=1
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+    cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test -p ergo-aeron-cluster --lib
     cd samples/advanced-bitget && cargo fmt --check
     cd samples/advanced-bitget && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/advanced-bitget && cargo test -- --test-threads=1 --skip clickhouse
@@ -90,19 +95,20 @@ bench:
     cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench
 
 # =============================================================================
-# ergo-aeron-cluster (AI-driven Aeron Cluster client — excluded workspace crate)
+# cluster/ = crate ergo-aeron-cluster (AI-driven Aeron Cluster client — workspace
+# member; cluster-test-support/ = crate ergo-aeron-cluster-test-support, excluded)
 # =============================================================================
 
 # Check the cluster crate (lib: fmt + clippy + tests, no Java required)
 check-aeron-cluster:
-    cd ergo-aeron-cluster && cargo fmt --check
-    cd ergo-aeron-cluster && cargo clippy --all-targets -- -D warnings
-    cd ergo-aeron-cluster && cargo test --lib
+    cd cluster && cargo fmt --check
+    cd cluster && cargo clippy --all-targets -- -D warnings
+    cd cluster && cargo test --lib
 
 # Cluster integration tests (requires Java 17+ and built Aeron jars — run
 # `just build-aeron-jars` once first; slow).
 test-aeron-cluster-harness:
-    cd ergo-aeron-cluster && cargo test --features test-harness -- --test-threads=1
+    cd cluster && cargo test --features test-harness -- --test-threads=1
 
 # Generate cluster SBE codecs from pinned schemas.
 # Portable across macOS (BSD sed/shasum) and Linux (GNU sed/sha256sum).
@@ -121,10 +127,10 @@ generate-aeron-cluster-codecs:
     fi
     AGRONA_JAR=$(find ~/.gradle/caches -name 'agrona-2.5.0*.jar' 2>/dev/null | head -1)
     if [ -z "$AGRONA_JAR" ]; then echo "ERROR: agrona-2.5.0.jar not found" >&2; exit 1; fi
-    GEN_DIR="ergo-aeron-cluster/src/codecs/generated"
+    GEN_DIR="cluster/src/codecs/generated"
     SCHEMA_DIR="aeron/aeron-cluster/src/main/resources/cluster"
-    CLUSTER_CODECS="ergo-aeron-cluster/src/codecs/cluster_codecs"
-    MARK_CODECS="ergo-aeron-cluster/src/codecs/cluster_codecs_mark"
+    CLUSTER_CODECS="cluster/src/codecs/cluster_codecs"
+    MARK_CODECS="cluster/src/codecs/cluster_codecs_mark"
 
     rm -rf "$GEN_DIR/io_aeron_cluster_codecs" "$GEN_DIR/io_aeron_cluster_codecs_mark"
     java -Dsbe.target.language=Rust -Dsbe.output.dir="$GEN_DIR" -cp "$SBE_JAR:$AGRONA_JAR" \
@@ -144,7 +150,7 @@ generate-aeron-cluster-codecs:
         sed -i.bak 's/pub use crate::SBE_/pub use super::SBE_/g' "$f" && rm -f "$f.bak"
       done
     done
-    (cd ergo-aeron-cluster && cargo fmt)
+    (cd cluster && cargo fmt)
 
     echo "=== Codecs updated ==="
     if command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum); elif command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256); else echo "ERROR: neither sha256sum nor shasum available" >&2; exit 1; fi
@@ -157,9 +163,9 @@ check-aeron-cluster-codec-drift:
     set -euo pipefail
     just generate-aeron-cluster-codecs
     if ! git diff --exit-code \
-        ergo-aeron-cluster/src/codecs/generated/ \
-        ergo-aeron-cluster/src/codecs/cluster_codecs/ \
-        ergo-aeron-cluster/src/codecs/cluster_codecs_mark/; then
+        cluster/src/codecs/generated/ \
+        cluster/src/codecs/cluster_codecs/ \
+        cluster/src/codecs/cluster_codecs_mark/; then
       echo "ERROR: Codec drift detected! Run 'just generate-aeron-cluster-codecs' and commit." >&2
       exit 1
     fi
@@ -173,20 +179,20 @@ hash-aeron-jars:
     #!/usr/bin/env bash
     set -euo pipefail
     if command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum); elif command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256); else echo "ERROR: neither sha256sum nor shasum available" >&2; exit 1; fi
-    echo "# SHA-256 hashes of test jars" > ergo-aeron-cluster-test-support/test-jars.sha256
+    echo "# SHA-256 hashes of test jars" > cluster-test-support/test-jars.sha256
     for dir in aeron-all aeron-cluster aeron-archive; do
       jar=$(find aeron/$dir/build/libs -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)
       if [ -n "$jar" ]; then
-        "${SHA256[@]}" "$jar" | tee -a ergo-aeron-cluster-test-support/test-jars.sha256
+        "${SHA256[@]}" "$jar" | tee -a cluster-test-support/test-jars.sha256
       fi
     done
-    echo "=== SHA-256 hashes saved to ergo-aeron-cluster-test-support/test-jars.sha256 ==="
+    echo "=== SHA-256 hashes saved to cluster-test-support/test-jars.sha256 ==="
 
 check-aeron-jars:
     #!/usr/bin/env bash
     set -euo pipefail
     just hash-aeron-jars
-    if ! git diff --exit-code ergo-aeron-cluster-test-support/test-jars.sha256; then
+    if ! git diff --exit-code cluster-test-support/test-jars.sha256; then
       echo "ERROR: Jar SHA-256 mismatch. Run 'just hash-aeron-jars' and commit." >&2
       exit 1
     fi

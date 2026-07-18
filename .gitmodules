@@ -1,3 +1,6 @@
 [submodule "simple-binary-encoding"]
 	path = simple-binary-encoding
 	url = https://github.com/real-logic/simple-binary-encoding.git
+[submodule "aeron"]
+	path = aeron
+	url = https://github.com/real-logic/aeron.git
