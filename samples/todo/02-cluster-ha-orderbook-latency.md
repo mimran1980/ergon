@@ -22,9 +22,11 @@ harness follow-up; offline H3-equivalent proven in `ha_offline_pipeline`.
       `AeronClusterIngress` wraps `AeronCluster::try_claim`)
 - [x] **H2** Leadership release → stale; no silent cross-term apply (`ha_book` + offline tests)
 - [x] **H3** After release, resync snapshot matches reference (`failover_sequence_reference_equality`)
-- [x] **H4** Latency DynamicSchema + DynamicRow + CH exact rows (`ha_latency_clickhouse`, live)
-- [x] **H5** exchange→receive, receive→claim, claim→egress deltas in row + CH query
-- [x] **H6** `record_into` into caller buffer (no CH block in helper)
+- [x] **H4** `LatencyPersistor`: DynamicSchema → DynamicRow → SchemaRegistry
+      decode → ClickhouseSink → CH query (`feed_latency_via_latency_persistor_into_clickhouse`)
+- [x] **H5** exchange→receive, receive→claim, claim→egress deltas from **decoded**
+      DynamicRow (not raw SQL of sample fields)
+- [x] **H6** `DynamicRecorder::record` hot path; CH via PersistSender flush
 - [x] **H7** `just samples-orderbook` green (2026-07-18)
 - [x] **H8** `just samples-cluster-ha` recipe documented and run (2× green)
 

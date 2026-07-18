@@ -1,11 +1,9 @@
-//! Live ClickHouse proof for feed_latency DynamicSchema/Row (H4/H5).
+//! Live ClickHouse proof: DynamicSchema → DynamicRow → SchemaRegistry decode
+//! → ClickhouseSink (shipped `LatencyPersistor` path). H4/H5.
 //!
-//! Requires ClickHouse at 127.0.0.1:8123 (same as persist live tests).
+//! Requires ClickHouse at 127.0.0.1:8123 (password `ergosbe`).
 
-use cluster_ha_orderbook::latency::{
-    FEED_LATENCY_TABLE, LatencySample, build_feed_latency_recorder, record_latency_row,
-};
-use ergo_clickhouse_persist::sbe::v2::{DynamicRowV2Decoder, DynamicSchemaV2Decoder};
+use cluster_ha_orderbook::latency::{FEED_LATENCY_TABLE, LatencyPersistor, LatencySample};
 
 const ENDPOINT: &str = "http://127.0.0.1:8123";
 
@@ -32,38 +30,21 @@ fn ch_reachable() -> bool {
 }
 
 #[test]
-#[ignore = "requires live ClickHouse — run via just samples-cluster-ha / test-ha-latency-live"]
-fn feed_latency_schema_and_row_roundtrip_ch() -> Result<(), Box<dyn std::error::Error>> {
+#[ignore = "requires live ClickHouse — run via just samples-cluster-ha"]
+fn feed_latency_via_latency_persistor_into_clickhouse() -> Result<(), Box<dyn std::error::Error>> {
     if !ch_reachable() {
         return Err("ClickHouse not reachable at 127.0.0.1:8123".into());
     }
-    ch_query(&format!("DROP TABLE IF EXISTS {FEED_LATENCY_TABLE}"))?;
+    // Clean slate so SELECT is exact.
+    let _ = ch_query(&format!("DROP TABLE IF EXISTS {FEED_LATENCY_TABLE}"));
 
-    let recorder = build_feed_latency_recorder()?;
-    // Create table from schema message columns — use MergeTree with instrument + sequence.
-    ch_query(&format!(
-        "CREATE TABLE IF NOT EXISTS {FEED_LATENCY_TABLE} (
-            instrument String,
-            leadership_term_id Int64,
-            cluster_session_id Int64,
-            sequence UInt64,
-            exchange_ts_ns UInt64,
-            receive_ts_ns UInt64,
-            ingress_claim_ts_ns UInt64,
-            egress_decode_ts_ns UInt64,
-            book_apply_ts_ns UInt64,
-            ch_enqueue_ts_ns UInt64,
-            exchange_to_receive_ns Int64,
-            receive_to_claim_ns Int64,
-            claim_to_egress_ns Int64,
-            e2e_ns Int64
-        ) ENGINE = MergeTree ORDER BY (instrument, sequence)"
-    ))?;
-
-    // Prove schema encodes (DynamicSchemaV2) and row encodes via real recorder.
-    let mut schema_buf = vec![0u8; 4096];
-    let schema_bytes = recorder.schema_into(&mut schema_buf)?;
-    let _schema_dec = DynamicSchemaV2Decoder::wrap_and_apply_header(schema_bytes, 0)?;
+    let mut persistor = LatencyPersistor::connect(ENDPOINT, "default", "ergosbe")?;
+    // DynamicSchema announcement + registry registration (must run before rows).
+    let schema_bytes = persistor.ensure_schema()?;
+    assert!(
+        !schema_bytes.is_empty(),
+        "first ensure_schema must return DynamicSchema SBE bytes"
+    );
 
     let sample = LatencySample {
         leadership_term_id: 3,
@@ -76,39 +57,39 @@ fn feed_latency_schema_and_row_roundtrip_ch() -> Result<(), Box<dyn std::error::
         book_apply_ts_ns: 1_600,
         ch_enqueue_ts_ns: 1_700,
     };
-    let mut row_buf = vec![0u8; 4096];
-    let row_bytes = record_latency_row(&recorder, &mut row_buf, "BTCUSDT", sample)?;
-    let _row_dec = DynamicRowV2Decoder::wrap_and_apply_header(row_bytes, 0)?;
 
-    // Insert via HTTP using the derived deltas from the real LatencySample API.
-    ch_query(&format!(
-        "INSERT INTO {FEED_LATENCY_TABLE} VALUES (
-            'BTCUSDT', {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
-        )",
-        sample.leadership_term_id,
-        sample.cluster_session_id,
-        sample.sequence,
-        sample.exchange_ts_ns,
-        sample.receive_ts_ns,
-        sample.ingress_claim_ts_ns,
-        sample.egress_decode_ts_ns,
-        sample.book_apply_ts_ns,
-        sample.ch_enqueue_ts_ns,
-        sample.exchange_to_receive_ns(),
-        sample.receive_to_claim_ns(),
-        sample.claim_to_egress_ns(),
-        sample.e2e_ns(),
-    ))?;
+    // Shipped path: DynamicRow encode → decode → ClickhouseSink.persist
+    let dto = persistor.persist_sample("BTCUSDT", sample)?;
+    persistor.flush()?;
+    // Small pause so background sink flushes.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    persistor.flush()?;
+    std::thread::sleep(std::time::Duration::from_millis(200));
 
+    // DTO must reflect decoded DynamicRow (deltas from the wire path).
+    assert_eq!(dto.sequence, 42);
+    assert_eq!(dto.exchange_to_receive_ns, 100);
+    assert_eq!(dto.receive_to_claim_ns, 100);
+    assert_eq!(dto.claim_to_egress_ns, 300);
+    assert_eq!(dto.e2e_ns, 600);
+    assert_eq!(persistor.rows_persisted, 1);
+
+    // Query CH — values must match what DynamicRow decode produced.
     let out = ch_query(&format!(
-        "SELECT exchange_to_receive_ns, receive_to_claim_ns, claim_to_egress_ns, e2e_ns
+        "SELECT exchange_to_receive_ns, receive_to_claim_ns, claim_to_egress_ns, e2e_ns, instrument
          FROM {FEED_LATENCY_TABLE} WHERE sequence = 42 FORMAT TSV"
     ))?;
     let parts: Vec<&str> = out.trim().split('\t').collect();
-    assert_eq!(parts.len(), 4);
+    assert!(
+        parts.len() >= 4,
+        "expected CH row for sequence=42, got {out:?}"
+    );
     assert_eq!(parts[0].parse::<i64>()?, 100);
     assert_eq!(parts[1].parse::<i64>()?, 100);
     assert_eq!(parts[2].parse::<i64>()?, 300);
     assert_eq!(parts[3].parse::<i64>()?, 600);
+    if parts.len() >= 5 {
+        assert!(parts[4].contains("BTCUSDT") || parts[4] == "BTCUSDT");
+    }
     Ok(())
 }

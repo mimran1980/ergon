@@ -128,19 +128,19 @@ on-the-fly generation (persist pattern) from the aeron submodule schemas.
 - Gotchas applied: forced empty `client_info` completion, `must_use` setters
   via `let _ =`, whole-buf offer preserved, `writer_impls.rs` kept for RFQ.
 
-### §3b Residual dual-codec cleanup (OPEN)
+### §3b Residual dual-codec cleanup (DONE for production/protocol, 2026-07-18)
 
-Still present and intentional until cleanup:
+**Closed** (`edff653`+): protocol goldens and lib tests use **ErgoSBE only**;
+`src/codecs/generated/` **deleted**. Production encode/decode is `ergo_codecs`
+via `build.rs` → OUT_DIR.
 
-- Committed sbe-tool trees: `cluster_codecs/`, `cluster_codecs_mark/`,
-  `generated/`, RFQ frozen output.
+**Intentionally retained residual (RFQ + benches — not production):**
+
+- Committed sbe-tool trees: `cluster_codecs/`, `cluster_codecs_mark/` (bench
+  head-to-head baselines), `rfq_codecs/` (frozen, no schema XML).
 - `writer_impls.rs` (RFQ / sbe-tool Writer gap).
-- just recipes: `generate-aeron-cluster-codecs`,
-  `check-aeron-cluster-codec-drift` (transitional).
-- Bench sbe-tool arms (needed for head-to-head until baseline archived).
-
-Cleanup acceptance: goldens standalone; archive sbe-tool numbers if arms go;
-53 lib + harness green; RFQ exception unchanged.
+- just recipes: `generate-aeron-cluster-codecs` /
+  `check-aeron-cluster-codec-drift` check residual trees only (not production).
 
 ### RFQ exception (DECIDED: keep frozen)
 

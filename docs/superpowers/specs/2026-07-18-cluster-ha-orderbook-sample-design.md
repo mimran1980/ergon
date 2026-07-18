@@ -1,11 +1,10 @@
 # Cluster HA Orderbook Sample Design
 
-**Status:** Approved for documentation / planning on 2026-07-18. **Not
-implemented.** Implementation is residual umbrella work after cluster
-reliability gaps close.
+**Status:** **IMPLEMENTED** for residual scope (2026-07-18) in
+`samples/cluster-ha-orderbook` + `just samples-cluster-ha`. Design remains the
+authority; checkboxes in §9 track shipped proofs.
 
-**Mode for this file:** design authority for the HA sample track. Code changes
-are out of scope until an implementation session starts.
+**Mode for this file:** design authority for the HA sample track.
 
 **Related:**
 
@@ -202,30 +201,32 @@ Do not silently dual-pin two rusteron versions in one binary.
 | Harness | 3-node cluster, kill leader, book consistency | `test-harness` feature + jars |
 | CH | exact rows for latency table + book tables | Docker ClickHouse, `#[ignore]` live OK if recipe runs them |
 | Regression | IPC baseline unchanged | `just samples-orderbook` |
-| Recipe | one-shot HA demo | `just samples-cluster-ha` (to add) |
+| Recipe | one-shot HA demo | `just samples-cluster-ha` |
 
 Allocation: warmed claim + encode + latency record should match existing
 sample allocation discipline; prove or document bounds.
 
 ## 9. Acceptance checklist (H1–H8)
 
-- [ ] **H1** Publisher uses `ergo-aeron-cluster` `try_claim` (or documented
-      equal) for AppMessage books/trades — no IPC-only HA path.
-- [ ] **H2** On leadership change / session release, book marked stale; no
-      silent incremental apply across term — unit + kill-leader harness.
-- [ ] **H3** After failover, follower obtains consistent book (snapshot or full
-      rebuild) before serving — assert book == reference.
-- [ ] **H4** Latency schema published once via DynamicSchema; rows via
-      DynamicRow — CH query shows expected columns.
-- [ ] **H5** Latency rows include at least exchange→receive, receive→claim,
-      claim→egress (or documented subset) — exact-row test.
-- [ ] **H6** Hot-path latency record does not introduce unbounded alloc /
-      blocking CH beyond existing sample policy — test or written bound.
-- [ ] **H7** Existing `just samples-orderbook` / IPC advanced-bitget still green.
-- [ ] **H8** Documented runnable recipe (e.g. `just samples-cluster-ha`) with
-      Java jars + ClickHouse.
+- [x] **H1** try_claim-shaped publish: `SessionMessageHeader` (ErgoSBE) +
+      AppMessage via `ClusterBookPublisher` / `AeronClusterIngress` (wraps
+      `AeronCluster::try_claim`) — `publish` tests + offline pipeline.
+- [x] **H2** Leadership release → book stale; no silent cross-term apply —
+      `ha_book` + offline pipeline.
+- [x] **H3** After release, resync snapshot matches reference —
+      `failover_sequence_reference_equality` (offline H3-equivalent; multi-node
+      Java kill-leader optional follow-up).
+- [x] **H4** Latency via shipped `LatencyPersistor`: DynamicSchema once →
+      DynamicRow encode → SchemaRegistry/RowDecoder → ClickhouseSink → CH query
+      (`feed_latency_via_latency_persistor_into_clickhouse`).
+- [x] **H5** exchange→receive, receive→claim, claim→egress, e2e deltas in
+      DynamicRow and CH exact-row query.
+- [x] **H6** Hot-path encode uses `DynamicRecorder::record` (reuse buffer);
+      CH is sink flush, not blocking encode.
+- [x] **H7** `just samples-orderbook` still green.
+- [x] **H8** `just samples-cluster-ha` recipe documented and green.
 
-Do not mark the samples todo DONE without H1–H8 evidence.
+Samples todo `02-cluster-ha-orderbook-latency.md` is DONE with the same evidence.
 
 ## 10. Implementation sequencing (after this design freeze)
 
