@@ -2,13 +2,16 @@
 //! `ControlledEgressListener`. Callbacks return a `ControlledPollAction`
 //! so the application can apply backpressure (Abort) or stop (Break).
 
-use crate::codecs::cluster_codecs::{
-    ReadBuf, admin_request_type::AdminRequestType, admin_response_code::AdminResponseCode,
-    admin_response_codec::SBE_TEMPLATE_ID as ADMIN_RESPONSE_ID, challenge_codec::SBE_TEMPLATE_ID as CHALLENGE_ID,
-    event_code::EventCode, message_header_codec::ENCODED_LENGTH as HEADER_LEN,
-    new_leader_event_codec::SBE_TEMPLATE_ID as NEW_LEADER_ID, session_event_codec::SBE_TEMPLATE_ID as SESSION_EVENT_ID,
-    session_message_header_codec::SBE_TEMPLATE_ID as SESSION_MSG_HEADER_ID,
+use crate::codecs::ergo_codecs::{
+    AdminRequestType, AdminResponseCode, AdminResponseDecoder, ChallengeDecoder, EventCode, MessageHeader,
+    NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderDecoder,
 };
+use crate::codecs::ergo_codecs::{
+    AdminResponseEncoder, ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
+};
+
+/// SBE message frame header is always 8 bytes.
+const HEADER_LEN: usize = 8;
 
 /// Action returned by a `ControlledEgressListener`.
 ///
@@ -77,74 +80,77 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         if data.len() < HEADER_LEN {
             return ControlledPollAction::Continue;
         }
-        let read_buf = ReadBuf::new(data);
-        let header =
-            crate::codecs::cluster_codecs::message_header_codec::MessageHeaderDecoder::default().wrap(read_buf, 0);
+        let header = MessageHeader(data[..HEADER_LEN].try_into().unwrap());
         let template_id = header.template_id();
 
         match template_id {
-            SESSION_MSG_HEADER_ID => {
+            SessionMessageHeaderEncoder::TEMPLATE_ID => {
                 if data.len() < HEADER_LEN + 24 {
                     return ControlledPollAction::Continue;
                 }
-                let body =
-                    crate::codecs::cluster_codecs::session_message_header_codec::SessionMessageHeaderDecoder::default()
-                        .header(header, 0);
+                let Ok(body) = SessionMessageHeaderDecoder::wrap_and_apply_header(data, 0) else {
+                    return ControlledPollAction::Continue;
+                };
                 let payload = &data[HEADER_LEN + 24..];
                 self.listener
                     .on_message(body.cluster_session_id(), body.timestamp(), payload)
             }
-            SESSION_EVENT_ID => {
-                use crate::codecs::cluster_codecs::session_event_codec::SessionEventDecoder;
-                let mut dec = SessionEventDecoder::default().header(header, 0);
-                let coords = dec.detail_decoder();
-                let detail = std::str::from_utf8(dec.detail_slice(coords)).unwrap_or("<bad utf8>");
-                self.listener.on_session_event(
-                    dec.correlation_id(),
-                    dec.cluster_session_id(),
-                    dec.leadership_term_id(),
-                    dec.leader_member_id(),
-                    dec.code(),
-                    detail,
-                )
+            SessionEventEncoder::TEMPLATE_ID => {
+                let Ok(decoder) = SessionEventDecoder::wrap_and_apply_header(data, 0) else {
+                    return ControlledPollAction::Continue;
+                };
+                let cid = decoder.correlation_id();
+                let csid = decoder.cluster_session_id();
+                let ltid = decoder.leadership_term_id();
+                let lmid = decoder.leader_member_id();
+                let code = decoder.code();
+                let Ok((detail_bytes, _)) = decoder.into_detail() else {
+                    return ControlledPollAction::Continue;
+                };
+                let detail = std::str::from_utf8(detail_bytes).unwrap_or("<bad utf8>");
+                self.listener.on_session_event(cid, csid, ltid, lmid, code, detail)
             }
-            NEW_LEADER_ID => {
-                use crate::codecs::cluster_codecs::new_leader_event_codec::NewLeaderEventDecoder;
-                let mut dec = NewLeaderEventDecoder::default().header(header, 0);
-                let coords = dec.ingress_endpoints_decoder();
-                let eps = std::str::from_utf8(dec.ingress_endpoints_slice(coords)).unwrap_or("<bad utf8>");
-                self.listener.on_new_leader(
-                    dec.cluster_session_id(),
-                    dec.leadership_term_id(),
-                    dec.leader_member_id(),
-                    eps,
-                )
+            NewLeaderEventEncoder::TEMPLATE_ID => {
+                let Ok(decoder) = NewLeaderEventDecoder::wrap_and_apply_header(data, 0) else {
+                    return ControlledPollAction::Continue;
+                };
+                let csid = decoder.cluster_session_id();
+                let ltid = decoder.leadership_term_id();
+                let lmid = decoder.leader_member_id();
+                let Ok((eps_bytes, _)) = decoder.into_ingress_endpoints() else {
+                    return ControlledPollAction::Continue;
+                };
+                let eps = std::str::from_utf8(eps_bytes).unwrap_or("<bad utf8>");
+                self.listener.on_new_leader(csid, ltid, lmid, eps)
             }
-            CHALLENGE_ID => {
-                use crate::codecs::cluster_codecs::challenge_codec::ChallengeDecoder;
-                let mut dec = ChallengeDecoder::default().header(header, 0);
-                let coords = dec.encoded_challenge_decoder();
-                let chal = dec.encoded_challenge_slice(coords);
-                self.listener
-                    .on_challenge(dec.correlation_id(), dec.cluster_session_id(), chal)
+            ChallengeEncoder::TEMPLATE_ID => {
+                let Ok(decoder) = ChallengeDecoder::wrap_and_apply_header(data, 0) else {
+                    return ControlledPollAction::Continue;
+                };
+                let cid = decoder.correlation_id();
+                let csid = decoder.cluster_session_id();
+                let Ok((chal, _)) = decoder.into_encoded_challenge() else {
+                    return ControlledPollAction::Continue;
+                };
+                self.listener.on_challenge(cid, csid, chal)
             }
-            ADMIN_RESPONSE_ID => {
-                use crate::codecs::cluster_codecs::admin_response_codec::AdminResponseDecoder;
-                let mut dec = AdminResponseDecoder::default().header(header, 0);
-                let mc = dec.message_decoder();
-                let pc = dec.payload_decoder();
-                let msg = std::str::from_utf8(dec.message_slice(mc))
-                    .unwrap_or("<bad utf8>")
-                    .to_string();
-                let pl = dec.payload_slice(pc).to_vec();
-                self.listener.on_admin_response(
-                    dec.cluster_session_id(),
-                    dec.correlation_id(),
-                    dec.request_type(),
-                    dec.response_code(),
-                    &msg,
-                    &pl,
-                )
+            AdminResponseEncoder::TEMPLATE_ID => {
+                let Ok(decoder) = AdminResponseDecoder::wrap_and_apply_header(data, 0) else {
+                    return ControlledPollAction::Continue;
+                };
+                let csid = decoder.cluster_session_id();
+                let cid = decoder.correlation_id();
+                let rt = decoder.request_type();
+                let rc = decoder.response_code();
+                let Ok((msg_bytes, after_msg)) = decoder.into_message() else {
+                    return ControlledPollAction::Continue;
+                };
+                let Ok((pl, _)) = after_msg.into_payload() else {
+                    return ControlledPollAction::Continue;
+                };
+                let msg = std::str::from_utf8(msg_bytes).unwrap_or("<bad utf8>").to_string();
+                let pl = pl.to_vec();
+                self.listener.on_admin_response(csid, cid, rt, rc, &msg, &pl)
             }
             _ => ControlledPollAction::Continue,
         }
