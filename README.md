@@ -1,5 +1,61 @@
 # ErgoSBE
 
+> **Experimental.** This repository is an experimental umbrella project.
+> APIs, directory layout, and crate names may change without notice.
+
+An experimental Rust workspace for low-latency trading infrastructure, built
+around four pillars: SBE code generation, ClickHouse persistence, an Aeron
+Cluster client, and end-to-end samples.
+
+## Project layout
+
+| Directory | Crate | Purpose |
+|-----------|-------|---------|
+| `sbe/` | `ergosbe` | SBE XML → idiomatic Rust codec generator (the core pillar) |
+| `persist/` (+ `persist/derive/`) | `ergo-clickhouse-persist` | Auto-persist annotated structs to ClickHouse |
+| `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client prototype on `rusteron-client` |
+| `cluster-test-support/` (excluded) | `ergo-aeron-cluster-test-support` | Java test harness for the cluster crate (Gradle-built Aeron jars) |
+| `ergosbe-benchmarks/` | `ergosbe-benchmarks` | Criterion Aeron-parity benchmark matrix |
+| `samples/` (excluded) | — | End-to-end demos (`advanced-bitget`, `exchange-orderbook`) |
+
+Note: for the cluster pillar the **directory names differ from the crate
+names** on purpose — the dirs are `cluster/` and `cluster-test-support/`, the
+crates remain `ergo-aeron-cluster` and `ergo-aeron-cluster-test-support`.
+"Excluded" crates are not workspace members; each builds standalone.
+
+## Submodules
+
+- `simple-binary-encoding/` — the official SBE reference implementation
+  (wire-compatibility reference and Java tooling).
+- `aeron/` — Aeron pinned at 1.52.2 (`5b62f21d91`): the cluster SBE schema
+  source of truth and the Gradle build for test jars.
+
+```sh
+git submodule update --init --recursive
+```
+
+## Gates
+
+| Command | What it proves | Needs |
+|---------|----------------|-------|
+| `just check` | Hygiene, fmt, clippy, workspace tests, both samples, cluster lib | Rust only |
+| `just check-aeron-cluster` | Cluster fmt/clippy/53 lib tests | Rust only |
+| `just build-aeron-jars` then `just test-aeron-cluster-harness` | Full cluster integration suite (connect/auth/failover/restart/archive) | Java 17+ |
+| `just bench` | Aeron perf-parity matrix | Rust only |
+| `just test-clickhouse-live` / `just test-exchange-orderbook-live` / `just samples-orderbook` | Live ClickHouse E2E | Docker |
+| `just check-aeron-cluster-codec-drift` | Committed cluster codecs match regenerated output | Java (sbe-tool) |
+
+**Gotcha:** never run `cargo … --workspace --all-features` without
+`--exclude ergo-aeron-cluster` — the cluster's `test-harness` feature pulls the
+Java/Gradle-building test-support crate.
+
+The living cross-pillar plan is
+[`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md).
+
+---
+
+# Pillar: sbe (ErgoSBE codegen)
+
 Opinionated, idiomatic Rust code generation for [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/) (SBE).
 
 ErgoSBE reads SBE XML schemas and produces safe, fast, version-aware Rust codecs.
