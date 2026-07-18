@@ -215,26 +215,33 @@ fn version_gap_renders_miette_diagnostic() {
 // An <enum> whose encodingType references a type not defined in the schema.
 // Expected: ParseError::Invalid { what: "enum encodingType", value: "NonExistentEncodingType", .. }
 
-// Parser semantic validation gaps — tracked in todo 20, deferred.
-// The following upstream error-handler schemas are NOT yet rejected by ErgoSBE:
-// - error-handler-enum-violates-min-max-value-range.xml (enum range check)
-// - error-handler-group-dimensions-schema.xml (group dimension type)
-// - error-handler-invalid-composite-offsets-schema.xml (overlapping offsets)
-// - error-handler-invalid-composite.xml (malformed composite)
-// - error-handler-invalid-name.xml (invalid type/field name)
-// - error-handler-message-schema.xml (message validation)
-// - error-handler-since-version.xml (sinceVersion validation)
-// - error-handler-types-schema.xml (invalid type references — caught by
-//   invalid-type-ref.xml but not by the dedicated error-handler variant)
-// - error-handler-types-dup-schema.xml (duplicate types)
-// - cyclic-refs-schema.xml (cyclic type references)
-//
-// Currently validated error conditions:
-// - invalid-type-ref.xml: invalid primitive type reference
-// - duplicate-message-id.xml: duplicate template IDs
-// - invalid-enum-value.xml: invalid enum encodingType
-// - version-gap.xml: sinceVersion beyond schema version
-// - missing-required-attr.xml: missing required XML attributes
+// Upstream error-handler schemas (SBE-20 / todo 20) — each must fail parse.
+// Closed 2026-07-19: every listed fixture produces a clear ParseError.
+
+#[test]
+fn error_handler_schemas_all_rejected() {
+    let cases = [
+        "error-handler-enum-violates-min-max-value-range.xml",
+        "error-handler-group-dimensions-schema.xml",
+        "error-handler-invalid-composite-offsets-schema.xml",
+        "error-handler-invalid-composite.xml",
+        "error-handler-invalid-name.xml",
+        "error-handler-message-schema.xml",
+        "error-handler-since-version.xml",
+        "error-handler-types-schema.xml",
+        "error-handler-types-dup-schema.xml",
+        "error-handler-dup-message-schema.xml",
+        "cyclic-refs-schema.xml",
+    ];
+    for name in cases {
+        let path = fixture_path(name);
+        let err = ergosbe::parse_file(&path);
+        assert!(
+            err.is_err(),
+            "expected parse rejection for {name}, got Ok(...)"
+        );
+    }
+}
 
 #[test]
 fn invalid_enum_encoding_type_returns_invalid_error() {

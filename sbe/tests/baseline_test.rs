@@ -1140,48 +1140,41 @@ fn generated_code_has_vardata_maxlength() {
     );
 }
 
-// ── Codegen gap documentation: `<ref>` inside composites ───────────────
+// ── Composite `<ref>` members (SBE-REF) ──────────────────────────────────
 
 #[test]
-fn composite_ref_gaps_documented() {
+fn composite_ref_members_generated() {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
-    // Engine struct is currently [u8; 6] (capacity + numCylinders +
-    // manufacturerCode).  The schema also defines three <ref> members
-    // (efficiency, boosterEnabled, booster) that would add 4 more bytes
-    // for a correct total of 10 bytes, but the XML parser's parse_composite
-    // only handles <type> children — <ref> elements are silently skipped.
+    // Engine: three `<type>` fixed fields + three `<ref>` members
+    // (Percentage int8, BooleanType u8, Booster 1 byte) → 6+1+1+1 = 9.
     assert!(
-        src.contains("pub struct Engine(pub [u8; 6]);"),
-        "Engine should be [u8; 6] (3 <type> children, 3 <ref> children \
-         skipped — fix parse_composite to handle <ref> for a correct 10-byte struct)"
+        src.contains("pub struct Engine(pub [u8; 9]);"),
+        "Engine should be [u8; 9] with expanded <ref> members, got:\n{}",
+        src.lines()
+            .find(|l| l.contains("struct Engine"))
+            .unwrap_or("<missing Engine>")
     );
     assert!(
-        !src.contains("pub fn efficiency("),
-        "Engine::efficiency() should be generated from <ref name=\"efficiency\" type=\"Percentage\"/>, \
-         but <ref> is not yet handled inside composites"
+        src.contains("pub fn efficiency("),
+        "Engine::efficiency() from <ref name=\"efficiency\" type=\"Percentage\"/>"
     );
     assert!(
-        !src.contains("pub fn booster_enabled("),
-        "Engine::booster_enabled() should be generated from <ref name=\"boosterEnabled\" type=\"BooleanType\"/>, \
-         but <ref> is not yet handled inside composites"
+        src.contains("pub fn booster_enabled("),
+        "Engine::booster_enabled() from <ref name=\"boosterEnabled\" type=\"BooleanType\"/>"
     );
     assert!(
-        !src.contains("pub fn booster("),
-        "Engine::booster() should be generated from <ref name=\"booster\" type=\"Booster\"/>, \
-         but <ref> is not yet handled inside composites"
+        src.contains("pub fn booster("),
+        "Engine::booster() from <ref name=\"booster\" type=\"Booster\"/>"
     );
 
-    // Booster struct is [u8; 1] (just horsePower).  Schema also has an
-    // inline <enum name="BoostType"> that is skipped by parse_composite.
+    // Booster: horsePower only (inline nested enum still not a separate wire field).
     assert!(
         src.contains("pub struct Booster(pub [u8; 1]);"),
-        "Booster should be [u8; 1] (inline BoostType enum skipped)"
+        "Booster should be [u8; 1] (horsePower)"
     );
 
-    // Verify the referenced types do exist in the generated output
-    // (they are top-level types, just not inlined into Engine/Booster).
-    // Percentage is a <type primitiveType="int8"/> that gets inlined
+    // Referenced top-level types still exist.
     // as i8 at the use site -- no standalone type is generated for it.
     assert!(
         src.contains("pub enum BooleanType"),

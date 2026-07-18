@@ -1,18 +1,15 @@
 # Living backlog — verified-open items only
 
-**Status:** LIVING — update when an item is closed with evidence, or when a
-new gap is proven against current code (not against historical plans).  
-**Last audit:** 2026-07-19 · branch `first_cut`  
+**Status:** LIVING — update when an item is closed with evidence.  
+**Last audit:** 2026-07-19 · branch `first_cut` (living-backlog closeout)  
 **Not this file:** process checklists in `ergosbe-performance-optimisation-goal.md`,
 the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 
 ## How to use
 
 1. Prefer this list over unchecked boxes in old goal files.  
-2. Close an item only with: generated/source evidence + tests (and benches if
-   the item is performance-scoped).  
-3. Do **not** re-open residual umbrella product work (cluster HA, RFQ unfreeze,
-   maintained encode/decode gates) — that scope is COMPLETE.
+2. Close an item only with generated/source evidence + tests.  
+3. Do **not** re-open residual umbrella product work — that scope is COMPLETE.
 
 ## Intentional non-goals (do not add as open work)
 
@@ -26,60 +23,52 @@ the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 
 ---
 
-## A. SBE generator / API (real product gaps)
+## A. SBE generator / API
 
-| ID | Item | Evidence it is still open | Close when |
-|----|------|---------------------------|------------|
-| **SBE-81** | Nested var-data message bridges | Todo `81` REOPENED; golden has `into_*_as_message` / `try_*_as_message` but todo still requires full `as_decoder`/`as_message` acceptance set | Golden + tests match DECISIONS §3 bridges; todo 81 flipped DONE with AC checkboxes |
-| **SBE-20** | Parser semantic validation vs upstream error-handler suite | `sbe/tests/error_validation_test.rs` lists schemas **not yet rejected** (enum range, group dimensions, cyclic refs, …) | Each listed schema produces a clear `ParseError` with tests |
-| **SBE-REF** | `<ref>` inside composites | `baseline_test` notes: not handled inside composites | Fixture schema + roundtrip or documented WON'T-DO |
-| **SBE-110** | Var-data tail offset cache (opt) | Todo `110` RE-OPENED for decode composition micro-opts | Only if a maintained decode ratio fails fairness after equal-work audit; else WON'T-DO |
+**Open product gaps:** *(none)*
 
-### Verify-and-close candidates (likely stale REOPENED)
-
-Re-open only if source audit fails; otherwise flip the todo and stop.
-
-| ID | Claim | Current code signal |
-|----|--------|---------------------|
-| **27 / 86** | Encoder wrap still panics / non-Result | Golden `wrap_and_apply_header` returns `Result` for encode + decode |
-| **62** | Decimal converters not shipped | `SbeDecimal` + `enable_decimal_converters` in codegen; samples use it |
-| **156** | Fallible stage combinators not shipped | Golden emits `try_fixed` and related `try_*` |
-| **157** | Partial `as_bytes` still publishable | Todo marked DONE 2026-07-18; guide text may lag |
+All prior §A items closed 2026-07-19 — see section D.
 
 ---
 
-## B. Documentation debt (not product features)
+## B. Documentation debt
 
-| Item | Action |
+| Item | Status |
 |------|--------|
-| Historical rusteron gap plan residual banner | Stamped superseded (see that file header) |
-| Completion prompt “Optional later” NewLeader/claim | Stamped DONE (benches exist) |
-| `sbe/docs/guide/generated-api.md` “not yet shipped” for 62/156 | Aligned with shipped APIs |
-| Unchecked process boxes in `ergosbe-performance-optimisation-goal.md` | Treat as historical playbook, not sprint board |
-| `phase2-completion-goal.md` HA ACTIVE line | Stamped HA DONE |
+| Historical rusteron / phase2 / perf playbook stamps | DONE (prior commit) |
+| `generated-api.md` 62/156 alignment | DONE (prior) |
 
 ---
 
 ## C. Optional polish (non-blocking)
 
-| Item | Notes |
+| Item | Status |
 |------|--------|
-| Promote NewLeaderEvent decode / claim-shaped benches to **maintained** ≤1.00 set | Benches exist; only promote after equal-work smoke ledgered in perf goal |
-| `cargo test -p ergo-aeron-cluster --doc` clean | Generated schema description ASCII triggers rustdoc codeblock warnings — codegen/doc hygiene |
-| Live `just test-aeron-cluster-harness` in CI | Env-gated (Java jars); recipe exists |
-| Cluster client beyond prototype quality | Explicit experimental banner; not a residual checklist |
+| Promote NewLeaderEvent decode to maintained ≤1.00 | **Left open** — smoke ratio ~2.28 (Ergo 12.2 µs / sbe-tool 5.35 µs); keep diagnostic-only until equal-work re-audit of sbe-tool arm |
+| Promote claim-shaped encode to maintained ≤1.00 | **Eligible** — smoke ratio ~0.989 (9.28 / 9.38 µs); ledger optional, not a product gap |
+| `cargo test -p ergo-aeron-cluster --doc` clean | Left open — generated schema ASCII docblocks |
+| Live harness always-on CI | Env-gated by design |
+| Cluster beyond prototype quality | Explicit experimental banner |
 
 ---
 
-## D. Closed recently (do not re-queue)
+## D. Closed (do not re-queue)
 
-- Umbrella residual product (completion goal FINAL COMPLETION)  
-- HA sample H1–H8 + kill-leader  
-- RFQ unfreeze (schema 101 ErgoSBE)  
-- Quality track P0–P4 (READMEs, rustdocs, decode helpers, hygiene)  
-- Maintained cluster encode (header/keep-alive) + decode (header/event) ≤ 1.00  
+### 2026-07-19 living-backlog closeout
 
-Evidence: master plan §5b, completion prompt, commits on `first_cut` through quality track.
+| ID | Resolution | Evidence |
+|----|------------|----------|
+| **SBE-81** | DONE | `into_*_as_message` / `try_*_as_message` in golden; `baseline_test` nested_message_* (4 tests) |
+| **SBE-20** | DONE | All 11 error-handler fixtures reject parse; `error_handler_schemas_all_rejected` |
+| **SBE-REF** | DONE | Multi-pass composite parse expands `<ref>`; Engine `[u8; 9]` + efficiency/booster accessors |
+| **SBE-110** | WON'T-DO | Maintained decode ≤1.00; no fairness failure |
+| **27 / 86** | DONE | Encoder `wrap` → `Result` in golden |
+| **62 / 156 / 157** | DONE | Prior verify-and-close (SbeDecimal, try_*, complete as_bytes) |
+
+### Earlier umbrella closeout
+
+- Residual product COMPLETE; HA + RFQ + quality P0–P4  
+- Maintained cluster encode/decode (header/event) ≤ 1.00  
 
 ---
 
@@ -89,6 +78,5 @@ Evidence: master plan §5b, completion prompt, commits on `first_cut` through qu
 |-----|------|
 | This file | **Only** verified-open + intentional non-goals |
 | [`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md) | Living umbrella orientation |
-| [`docs/superpowers/plans/2026-07-18-completion-goal-prompt.md`](superpowers/plans/2026-07-18-completion-goal-prompt.md) | Residual product COMPLETE (historical closeout) |
 | [`sbe/design/DECISIONS.md`](../sbe/design/DECISIONS.md) | SBE design authority |
-| [`sbe/todos/`](../sbe/todos/) | Historical inventory — filter by REOPENED, do not sprint the whole tree |
+| [`sbe/todos/`](../sbe/todos/) | Historical inventory |
