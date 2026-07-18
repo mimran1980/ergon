@@ -79,11 +79,7 @@ impl LeadershipAwareBook {
 
     #[must_use]
     pub fn stale_reason(&self) -> Option<StaleReason> {
-        if self.serving {
-            None
-        } else {
-            Some(self.stale)
-        }
+        if self.serving { None } else { Some(self.stale) }
     }
 
     #[must_use]
@@ -175,10 +171,7 @@ impl LeadershipAwareBook {
         let expected = self.last_seq.saturating_add(1);
         if seq != expected {
             self.serving = false;
-            let reason = StaleReason::SequenceGap {
-                expected,
-                got: seq,
-            };
+            let reason = StaleReason::SequenceGap { expected, got: seq };
             self.stale = reason;
             return ApplyOutcome::ResyncRequired(reason);
         }

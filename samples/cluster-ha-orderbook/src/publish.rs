@@ -66,11 +66,13 @@ impl ClaimIngress for RecordingClaimIngress {
         let mut buf = vec![0u8; total];
         // Real ErgoSBE SessionMessageHeader (same encoder as AeronCluster::try_claim).
         {
-            let mut enc =
-                match SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf[..MSG_HDR_TOTAL], 0) {
-                    Ok(e) => e,
-                    Err(_) => return PublishOutcome::EncodeFailed,
-                };
+            let mut enc = match SessionMessageHeaderEncoder::wrap_and_apply_header(
+                &mut buf[..MSG_HDR_TOTAL],
+                0,
+            ) {
+                Ok(e) => e,
+                Err(_) => return PublishOutcome::EncodeFailed,
+            };
             let _ = enc
                 .leadership_term_id(self.leadership_term_id)
                 .cluster_session_id(self.cluster_session_id)
@@ -144,42 +146,48 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
         bids: &[Level],
         asks: &[Level],
     ) -> PublishOutcome {
-        let inner_len =
-            L2BookEncoder::compute_encoded_length_with_message_header(bids.len(), asks.len(), symbol.len());
-        let outer_len =
-            AppMessageEncoder::compute_encoded_length_with_message_header(APP_NAME.len(), inner_len);
+        let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(
+            bids.len(),
+            asks.len(),
+            symbol.len(),
+        );
+        let outer_len = AppMessageEncoder::compute_encoded_length_with_message_header(
+            APP_NAME.len(),
+            inner_len,
+        );
         self.ingress.try_claim_app(outer_len, |app_buf| {
             let mut app = AppMessageEncoder::wrap_and_apply_header(app_buf, 0)?;
             let _ = app.sent_ts(receive_ts_ns);
             let after = app.app_name(APP_NAME.as_bytes())?;
-            let _ = after.payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
-                let _ = enc
-                    .source(Source::Bitget)
-                    .exchange_timestamp(exchange_ts_ns)
-                    .receive_timestamp(receive_ts_ns)
-                    .sequence(sequence);
-                let after = enc.bids(bids.len() as u16, |g| {
-                    for l in bids {
-                        let _ = g.add(|e| {
-                            let _ = e
-                                .price_wire(Decimal::new(l.price.mantissa, l.price.exponent))
-                                .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));
-                        });
-                    }
+            let _ =
+                after.payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
+                    let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
+                    let _ = enc
+                        .source(Source::Bitget)
+                        .exchange_timestamp(exchange_ts_ns)
+                        .receive_timestamp(receive_ts_ns)
+                        .sequence(sequence);
+                    let after = enc.bids(bids.len() as u16, |g| {
+                        for l in bids {
+                            let _ = g.add(|e| {
+                                let _ = e
+                                    .price_wire(Decimal::new(l.price.mantissa, l.price.exponent))
+                                    .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));
+                            });
+                        }
+                    })?;
+                    let after = after.asks(asks.len() as u16, |g| {
+                        for l in asks {
+                            let _ = g.add(|e| {
+                                let _ = e
+                                    .price_wire(Decimal::new(l.price.mantissa, l.price.exponent))
+                                    .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));
+                            });
+                        }
+                    })?;
+                    let _complete = after.symbol(symbol.as_bytes())?;
+                    Ok(())
                 })?;
-                let after = after.asks(asks.len() as u16, |g| {
-                    for l in asks {
-                        let _ = g.add(|e| {
-                            let _ = e
-                                .price_wire(Decimal::new(l.price.mantissa, l.price.exponent))
-                                .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));
-                        });
-                    }
-                })?;
-                let _complete = after.symbol(symbol.as_bytes())?;
-                Ok(())
-            })?;
             Ok(())
         })
     }
@@ -214,16 +222,11 @@ mod tests {
     }
 
     #[test]
-    fn try_claim_publish_writes_session_header_and_app_payload() -> Result<(), Box<dyn std::error::Error>> {
+    fn try_claim_publish_writes_session_header_and_app_payload()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut pubr = ClusterBookPublisher::new(RecordingClaimIngress::new(7, 42));
-        let o = pubr.publish_l2_snapshot(
-            "BTCUSDT",
-            1,
-            1_000,
-            1_100,
-            &[lvl(100, 1)],
-            &[lvl(101, 2)],
-        );
+        let o =
+            pubr.publish_l2_snapshot("BTCUSDT", 1, 1_000, 1_100, &[lvl(100, 1)], &[lvl(101, 2)]);
         assert_eq!(o, PublishOutcome::Published);
         let frames = &pubr.ingress().committed;
         assert_eq!(frames.len(), 1);

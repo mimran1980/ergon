@@ -72,7 +72,9 @@ impl BookFollower {
         asks: Vec<Level>,
         exchange_ts_ns: u64,
     ) -> ApplyOutcome {
-        let o = self.book.apply_increment(term, seq, bids, asks, exchange_ts_ns);
+        let o = self
+            .book
+            .apply_increment(term, seq, bids, asks, exchange_ts_ns);
         match o {
             ApplyOutcome::IncrementApplied => self.applied_increments += 1,
             ApplyOutcome::DroppedNotServing => self.dropped += 1,

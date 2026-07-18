@@ -1970,3 +1970,17 @@ Both codecs produce identical 78-byte v16 wire output (golden parity proven).
 **ADD-needed items to complete the maintained matrix:**
 hot-path egress decode (SessionEvent, NewLeaderEvent, SessionMessageHeader)
 and claim-shaped header+payload encode.
+
+## 2026-07-18 evening: residual completion smoke (encode maintained still green)
+
+**Command:** `cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --warm-up-time 0.3 --measurement-time 1.0 --sample-size 20 session_message_header`  
+**Hardware/toolchain:** aarch64 macOS, rustc 1.95.0 (same host as 5-run matrix)
+
+| Scenario | ErgoSBE | sbe-tool | Ratio | Maintained? |
+|----------|---------|----------|-------|-------------|
+| SessionMessageHeader encode | 4.4322 µs | 5.0597 µs | **0.876** | ✅ yes |
+| SessionMessageHeader decode | 8.8987 µs | 7.6239 µs | 1.167 | diagnostic only (not yet in maintained set) |
+
+Full 5-run maintained encode matrix (header 0.856, keep-alive 0.916; connect demoted) remains the acceptance ledger above. Decode benches exist for HFT follow-up but are **not** promoted to the ≤1.00 gate until equal work is proven.
+
+**Dual-codec residual:** protocol goldens/tests use ErgoSBE only (`edff653`); `generated/` removed; sbe-tool trees retained for benches + frozen RFQ.

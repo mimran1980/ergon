@@ -187,14 +187,15 @@ check-aeron-cluster-codec-drift:
     #!/usr/bin/env bash
     set -euo pipefail
     just generate-aeron-cluster-codecs
+    # Residual sbe-tool trees (benches + RFQ). Production ErgoSBE codecs are OUT_DIR-only.
     if ! git diff --exit-code \
-        cluster/src/codecs/generated/ \
         cluster/src/codecs/cluster_codecs/ \
-        cluster/src/codecs/cluster_codecs_mark/; then
+        cluster/src/codecs/cluster_codecs_mark/ \
+        cluster/src/codecs/rfq_codecs/; then
       echo "ERROR: Codec drift detected! Run 'just generate-aeron-cluster-codecs' and commit." >&2
       exit 1
     fi
-    echo "OK: Generated codecs match committed."
+    echo "OK: Residual sbe-tool codecs match committed (RFQ/benches)."
 
 # Build Aeron cluster test jars (requires Java 17+; run once before test-harness tests)
 build-aeron-jars:

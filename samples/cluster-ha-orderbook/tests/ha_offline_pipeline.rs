@@ -7,8 +7,8 @@ use cluster_ha_orderbook::follower::BookFollower;
 use cluster_ha_orderbook::ha_book::ApplyOutcome;
 use cluster_ha_orderbook::market::{Level, WireDec};
 use cluster_ha_orderbook::publish::{
-    app_payload, session_header_template_id, ClusterBookPublisher, PublishOutcome, RecordingClaimIngress,
-    SESSION_MSG_HDR_TEMPLATE_ID,
+    ClusterBookPublisher, PublishOutcome, RecordingClaimIngress, SESSION_MSG_HDR_TEMPLATE_ID,
+    app_payload, session_header_template_id,
 };
 
 fn lvl(p: i64, s: i64) -> Level {
@@ -19,14 +19,18 @@ fn lvl(p: i64, s: i64) -> Level {
 }
 
 #[test]
-fn publish_try_claim_path_then_follower_serves_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+fn publish_try_claim_path_then_follower_serves_snapshot() -> Result<(), Box<dyn std::error::Error>>
+{
     let mut pubr = ClusterBookPublisher::new(RecordingClaimIngress::new(3, 99));
     assert_eq!(
         pubr.publish_l2_snapshot("BTCUSDT", 1, 100, 110, &[lvl(500, 1)], &[lvl(501, 2)]),
         PublishOutcome::Published
     );
     let frame = &pubr.ingress().committed[0];
-    assert_eq!(session_header_template_id(frame), Some(SESSION_MSG_HDR_TEMPLATE_ID));
+    assert_eq!(
+        session_header_template_id(frame),
+        Some(SESSION_MSG_HDR_TEMPLATE_ID)
+    );
     let payload = app_payload(frame).expect("payload");
 
     let mut follower = BookFollower::new();

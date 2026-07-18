@@ -3,7 +3,7 @@
 //! Requires ClickHouse at 127.0.0.1:8123 (same as persist live tests).
 
 use cluster_ha_orderbook::latency::{
-    build_feed_latency_recorder, record_latency_row, LatencySample, FEED_LATENCY_TABLE,
+    FEED_LATENCY_TABLE, LatencySample, build_feed_latency_recorder, record_latency_row,
 };
 use ergo_clickhouse_persist::sbe::v2::{DynamicRowV2Decoder, DynamicSchemaV2Decoder};
 
@@ -26,7 +26,9 @@ fn ch_query(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
 }
 
 fn ch_reachable() -> bool {
-    ch_query("SELECT 1").map(|t| t.trim() == "1").unwrap_or(false)
+    ch_query("SELECT 1")
+        .map(|t| t.trim() == "1")
+        .unwrap_or(false)
 }
 
 #[test]

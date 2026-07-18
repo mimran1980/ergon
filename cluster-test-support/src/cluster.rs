@@ -152,7 +152,9 @@ impl TestCluster {
         }
     }
 
-    pub fn base_port(&self) -> u16 { self.base_port }
+    pub fn base_port(&self) -> u16 {
+        self.base_port
+    }
 
     pub fn kill_node(&mut self, index: usize) {
         if index < self.processes.len() {

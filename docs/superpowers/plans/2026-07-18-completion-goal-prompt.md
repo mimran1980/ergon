@@ -76,11 +76,10 @@ DONE for current scope:
 - RFQ codecs: frozen sbe-tool (no schema XML); keep compiling; do not unfreeze
   without human OK.
 
-OPEN (do this work — in order):
-1. Dual-codec residual cleanup (sbe-tool still committed for tests/RFQ/benches).
-2. HA sample wire-up: ergo-aeron-cluster try_claim publisher/follower, CH live
-   latency rows, failover harness, just samples-cluster-ha — needs rusteron pin.
-3. Full umbrella gates + status hygiene.
+OPEN residual after 2026-07-18 completion pass (none blocking umbrella):
+1. Optional: promote decode benches into maintained ≤1.00 set after equal-work audit.
+2. Optional: multi-node Java kill-leader HA harness (offline H3 + connect harness green).
+3. sbe-tool trees still compile for benches + frozen RFQ only (intentional).
 
 ================================================================
 HARD INVARIANTS

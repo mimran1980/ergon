@@ -206,8 +206,7 @@ the book path on CH (match advanced-bitget drop/batch policy).
 
 **Does not replace:** IPC advanced-bitget / `just samples-orderbook` baseline.
 
-**Pin tension:** advanced-bitget uses rusteron **0.2.1**; cluster uses **0.2.4**.
-Decide one pin explicitly before HA sample coding (ask human if bumping).
+**Pin decision (2026-07-18):** HA sample crate `samples/cluster-ha-orderbook` uses **rusteron 0.2.4** via `ergo-aeron-cluster`. IPC `advanced-bitget` stays **0.2.1**. Separate binaries — no dual-pin.
 
 **Location:** extend under `samples/` (feature/binary); no new top-level pillar
 and **no directory renames**.
