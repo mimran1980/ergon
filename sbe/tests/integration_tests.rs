@@ -57,7 +57,7 @@ fn test_fixed_entry_group_access() {
             let mut extras = OptionalExtras::default();
             extras.set_cruise_control(true);
             car.extras(extras);
-            car.engine(Engine::new(2000, 4, [49, 0, 0]));
+            car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
 
             let car = car.fuel_figures(1, |g| {
                 g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();

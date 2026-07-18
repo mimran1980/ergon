@@ -42,7 +42,7 @@ fn car_domain_all_fields() {
         extras.set_cruise_control(true);
         extras.set_sports_pack(true);
         car.extras(extras);
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(2, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban").unwrap(); }).unwrap();
             g.add(|e| { e.speed(60).mpg(25.0); e.usage_description(b"Highway").unwrap(); }).unwrap();
@@ -108,7 +108,7 @@ fn car_domain_clone_eq_debug() {
         car.serial_number(42).model_year(2021).available(BooleanType::F).code(Model::B);
         car.some_numbers([5; 4]).vehicle_code([b'Z'; 6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(300, 6, [1; 3]));
+        car.engine(Engine::new(300, 6, [1; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let c = car.fuel_figures(0, |_| {}).unwrap()
             .performance_figures(0, |_| {}).unwrap()
             .manufacturer(b"X").unwrap()
@@ -140,7 +140,7 @@ fn car_domain_empty_groups() {
         car.serial_number(1).model_year(2000).available(BooleanType::T).code(Model::A);
         car.some_numbers([0; 4]).vehicle_code([0; 6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0, 0, [0; 3]));
+        car.engine(Engine::new(0, 0, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let c = car.fuel_figures(0, |_| {}).unwrap()
             .performance_figures(0, |_| {}).unwrap()
             .manufacturer(b"").unwrap()
@@ -349,7 +349,7 @@ fn car_serde_round_trip() {
         let mut extras = OptionalExtras::default();
         extras.set_cruise_control(true);
         car.extras(extras);
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(1, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban").unwrap(); }).unwrap();
         }).unwrap();

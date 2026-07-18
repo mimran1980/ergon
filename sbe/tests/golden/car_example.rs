@@ -249,6 +249,43 @@ impl From<u8> for Model {
         Self::from_raw(val)
     }
 }
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BoostType {
+    TURBO = b'T',
+    SUPERCHARGER = b'S',
+    NITROUS = b'N',
+    KERS = b'K',
+    /// Unknown enum value — the wire discriminant did not match any known variant.
+    NullVal,
+}
+impl BoostType {
+    pub fn raw(self) -> u8 {
+        self as u8
+    }
+    pub const fn from_raw(val: u8) -> Self {
+        match val {
+            b'T' => Self::TURBO,
+            b'S' => Self::SUPERCHARGER,
+            b'N' => Self::NITROUS,
+            b'K' => Self::KERS,
+            _ => Self::NullVal,
+        }
+    }
+}
+impl From<BoostType> for u8 {
+    #[inline]
+    fn from(val: BoostType) -> Self {
+        val as u8
+    }
+}
+impl From<u8> for BoostType {
+    #[inline]
+    fn from(val: u8) -> Self {
+        Self::from_raw(val)
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
@@ -529,20 +566,26 @@ impl<'a> VarDataEncodingDecoder<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
-pub struct Booster(pub [u8; 1]);
+pub struct Booster(pub [u8; 2]);
 impl Booster {
     #[inline]
-    pub fn horse_power(&self) -> u8 {
-        u8::from_le_bytes(read_bytes::<1>(&self.0, 0))
+    pub fn boost_type(&self) -> BoostType {
+        BoostType::from_raw(u8::from_le_bytes(read_bytes::<1>(&self.0, 0)))
     }
-    pub fn new(horse_power: u8) -> Self {
-        let mut bytes = [0u8; 1];
-        let val_bytes = horse_power.to_le_bytes();
+    #[inline]
+    pub fn horse_power(&self) -> u8 {
+        u8::from_le_bytes(read_bytes::<1>(&self.0, 1))
+    }
+    pub fn new(boost_type: BoostType, horse_power: u8) -> Self {
+        let mut bytes = [0u8; 2];
+        let val_bytes = (boost_type as u8).to_le_bytes();
         write_bytes::<1>(&mut bytes, 0, &val_bytes);
+        let val_bytes = horse_power.to_le_bytes();
+        write_bytes::<1>(&mut bytes, 1, &val_bytes);
         Self(bytes)
     }
 }
-const _: () = assert!(core::mem::size_of:: < Booster > () == 1);
+const _: () = assert!(core::mem::size_of:: < Booster > () == 2);
 #[derive(Clone, Copy)]
 pub struct BoosterDecoder<'a> {
     buf: &'a [u8],
@@ -550,15 +593,20 @@ pub struct BoosterDecoder<'a> {
 }
 impl<'a> BoosterDecoder<'a> {
     #[inline]
-    pub fn horse_power(&self) -> u8 {
+    pub fn boost_type(&self) -> BoostType {
         let offset = self.pos + 0;
+        BoostType::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
+    }
+    #[inline]
+    pub fn horse_power(&self) -> u8 {
+        let offset = self.pos + 1;
         u8::from_le_bytes(read_bytes::<1>(self.buf, offset))
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
-pub struct Engine(pub [u8; 6]);
+pub struct Engine(pub [u8; 10]);
 impl Engine {
     #[inline]
     pub fn capacity(&self) -> u16 {
@@ -587,8 +635,27 @@ impl Engine {
     pub const fn fuel(&self) -> &'static str {
         "Petrol"
     }
-    pub fn new(capacity: u16, num_cylinders: u8, manufacturer_code: [u8; 3]) -> Self {
-        let mut bytes = [0u8; 6];
+    #[inline]
+    pub fn efficiency(&self) -> i8 {
+        i8::from_le_bytes(read_bytes::<1>(&self.0, 6))
+    }
+    #[inline]
+    pub fn booster_enabled(&self) -> BooleanType {
+        BooleanType::from_raw(u8::from_le_bytes(read_bytes::<1>(&self.0, 7)))
+    }
+    #[inline]
+    pub fn booster(&self) -> Booster {
+        Booster(read_bytes::<2>(&self.0, 8))
+    }
+    pub fn new(
+        capacity: u16,
+        num_cylinders: u8,
+        manufacturer_code: [u8; 3],
+        efficiency: i8,
+        booster_enabled: BooleanType,
+        booster: Booster,
+    ) -> Self {
+        let mut bytes = [0u8; 10];
         let val_bytes = capacity.to_le_bytes();
         write_bytes::<2>(&mut bytes, 0, &val_bytes);
         let val_bytes = num_cylinders.to_le_bytes();
@@ -599,10 +666,15 @@ impl Engine {
             write_bytes::<1>(&mut bytes, 3 + idx * 1, &val_bytes);
             idx += 1;
         }
+        let val_bytes = efficiency.to_le_bytes();
+        write_bytes::<1>(&mut bytes, 6, &val_bytes);
+        let val_bytes = (booster_enabled as u8).to_le_bytes();
+        write_bytes::<1>(&mut bytes, 7, &val_bytes);
+        write_bytes::<2>(&mut bytes, 8, &booster.0);
         Self(bytes)
     }
 }
-const _: () = assert!(core::mem::size_of:: < Engine > () == 6);
+const _: () = assert!(core::mem::size_of:: < Engine > () == 10);
 #[derive(Clone, Copy)]
 pub struct EngineDecoder<'a> {
     buf: &'a [u8],
@@ -638,6 +710,21 @@ impl<'a> EngineDecoder<'a> {
     pub const fn fuel(&self) -> &'static str {
         "Petrol"
     }
+    #[inline]
+    pub fn efficiency(&self) -> i8 {
+        let offset = self.pos + 6;
+        i8::from_le_bytes(read_bytes::<1>(self.buf, offset))
+    }
+    #[inline]
+    pub fn booster_enabled(&self) -> BooleanType {
+        let offset = self.pos + 7;
+        BooleanType::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
+    }
+    #[inline]
+    pub fn booster(&self) -> Booster {
+        let offset = self.pos + 8;
+        Booster(read_bytes::<2>(self.buf, offset))
+    }
 }
 ///Description of a basic Car
 pub struct CarDecoder<'a> {
@@ -650,8 +737,8 @@ impl<'a> CarDecoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
-    pub const BLOCK_LENGTH: usize = 41;
-    const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 41);
+    pub const BLOCK_LENGTH: usize = 45;
+    const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
@@ -791,7 +878,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn engine_as_struct(&self) -> Engine {
         let offset = self.pos + 35;
-        Engine(read_bytes::<6>(self.buf, offset))
+        Engine(read_bytes::<10>(self.buf, offset))
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1149,7 +1236,7 @@ impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}
 impl<'a> sbe_rt::SbeMessage for CarDecoder<'a> {
     const TEMPLATE_ID: u16 = 1;
-    const BLOCK_LENGTH: usize = 41;
+    const BLOCK_LENGTH: usize = 45;
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
@@ -2918,12 +3005,12 @@ impl<'a> CarEncoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
-    pub const BLOCK_LENGTH: usize = 41;
-    const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 41);
+    pub const BLOCK_LENGTH: usize = 45;
+    const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
-    pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];
+    pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
     /// Wrap a mutable buffer for encoding. Returns an error if the buffer
     /// is too short for the header + fixed block.
@@ -3025,7 +3112,7 @@ impl<'a> CarEncoder<'a> {
     #[must_use]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = 43;
-        self.buf[offset..offset + 6].copy_from_slice(&val.0);
+        self.buf[offset..offset + 10].copy_from_slice(&val.0);
         self
     }
     /// Compute the exact SBE message body length before encoding.
@@ -3038,7 +3125,7 @@ impl<'a> CarEncoder<'a> {
         model_len: usize,
         activation_code_len: usize,
     ) -> usize {
-        let mut len = 41;
+        let mut len = 45;
         len += 4 + fuel_figures_count * 6;
         len += 4 + performance_figures_count * 1;
         len += 4 + manufacturer_len;
@@ -3524,7 +3611,7 @@ impl<'a> AsRef<[u8]> for CarComplete<'a> {
 impl<'a> sbe_rt::private::Sealed for CarEncoder<'a> {}
 impl<'a> sbe_rt::SbeMessage for CarEncoder<'a> {
     const TEMPLATE_ID: u16 = 1;
-    const BLOCK_LENGTH: usize = 41;
+    const BLOCK_LENGTH: usize = 45;
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
@@ -3989,11 +4076,11 @@ pub mod car_field_meta {
 pub const SEMANTIC_VERSION: &str = "5.2";
 pub const SCHEMA_HASH: u64 = 11133254787130522899;
 pub const SCHEMA_SHA256: [u8; 32] = [
-    0xad, 0xf6, 0x38, 0xad, 0x84, 0x97, 0xf8, 0x3b, 0x2b, 0x0b, 0x28, 0x50, 0x2e, 0xb2,
-    0xd2, 0x4f, 0xea, 0x41, 0xd7, 0xfa, 0x6d, 0x21, 0x55, 0x2e, 0xcd, 0xba, 0xc2, 0x4b,
-    0x35, 0x70, 0x74, 0x80,
+    0x1f, 0xc3, 0x3f, 0xa7, 0x62, 0x5c, 0xef, 0x15, 0x49, 0xc5, 0x38, 0x66, 0xec, 0x93,
+    0xfb, 0xfa, 0x74, 0xc0, 0xfa, 0x58, 0xb1, 0x70, 0xfb, 0xdc, 0x30, 0x02, 0x5b, 0x1b,
+    0xcf, 0xd2, 0xf1, 0xa4,
 ];
-pub const SCHEMA_SHA256_HEX: &str = "adf638ad8497f83b2b0b28502eb2d24fea41d7fa6d21552ecdbac24b35707480";
+pub const SCHEMA_SHA256_HEX: &str = "1fc33fa7625cef1549c53866ec93fbfa74c0fa58b170fbdc30025b1bcfd2f1a4";
 pub const SCHEMA_ID: u16 = 1;
 pub const SCHEMA_VERSION: u16 = 0;
 pub mod prelude {
@@ -4003,8 +4090,8 @@ pub mod prelude {
         MessageHeader, MessageHeaderDecoder, GroupSizeEncoding, GroupSizeEncodingDecoder,
         VarStringEncoding, VarStringEncodingDecoder, VarAsciiEncoding,
         VarAsciiEncodingDecoder, VarDataEncoding, VarDataEncodingDecoder, Booster,
-        BoosterDecoder, Engine, EngineDecoder, BooleanType, Model, OptionalExtras,
-        CarDecoder, CarEncoder,
+        BoosterDecoder, Engine, EngineDecoder, BooleanType, Model, BoostType,
+        OptionalExtras, CarDecoder, CarEncoder,
     };
 }
 /// Read `N` bytes from `buf` at `offset` into a fixed-size array.

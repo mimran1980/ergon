@@ -1148,7 +1148,52 @@ fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> {
             let member_type =
                 if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginComposite {
                     let comp_name = tokens[i + 1].name.clone();
-                    let size = tokens[i + 1].encoding.offset.unwrap_or(0);
+                    // Prefer resolved composite size on BeginComposite; fall back to
+                    // scanning nested field tokens (nested `<ref>` clones can lag).
+                    let size = tokens[i + 1].encoding.offset.filter(|&s| s > 0).unwrap_or_else(|| {
+                        let end = find_matching_end(
+                            tokens,
+                            i + 1,
+                            Signal::BeginComposite,
+                            Signal::EndComposite,
+                        );
+                        let mut sz = 0usize;
+                        let mut j = i + 2;
+                        while j < end {
+                            if tokens[j].signal == Signal::BeginField {
+                                if tokens[j].encoding.presence != Presence::Constant
+                                    && !tokens[j].encoding.is_variable_length
+                                {
+                                    let prim_sz = tokens[j]
+                                        .encoding
+                                        .primitive_type
+                                        .map_or(0, |p| p.size());
+                                    let len = tokens[j].encoding.length.unwrap_or(1);
+                                    // Nested type (enum/set/composite) size from encoding type.
+                                    let nested = if j + 1 < end {
+                                        match tokens[j + 1].signal {
+                                            Signal::BeginEnum | Signal::BeginSet => tokens[j + 1]
+                                                .encoding
+                                                .primitive_type
+                                                .map_or(0, |p| p.size()),
+                                            Signal::BeginComposite => {
+                                                tokens[j + 1].encoding.offset.unwrap_or(0)
+                                            }
+                                            _ => prim_sz * len,
+                                        }
+                                    } else {
+                                        prim_sz * len
+                                    };
+                                    sz += if nested > 0 { nested } else { prim_sz * len };
+                                }
+                                j = find_matching_end(tokens, j, Signal::BeginField, Signal::EndField)
+                                    + 1;
+                            } else {
+                                j += 1;
+                            }
+                        }
+                        sz
+                    });
                     MemberType::Composite {
                         name: comp_name,
                         size,

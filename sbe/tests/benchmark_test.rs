@@ -49,7 +49,7 @@ fn car_encode_decode_perf_smoke() {
             extras.set_cruise_control(true);
             extras.set_sports_pack(true);
             car.extras(extras);
-            car.engine(Engine::new(2000, 4, [49, 0, 0]));
+            car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
 
             let car = car.fuel_figures(1, |g| {
                 g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();

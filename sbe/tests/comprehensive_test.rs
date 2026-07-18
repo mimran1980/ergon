@@ -28,7 +28,7 @@ fn enum_all_variants_roundtrip() {
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0, 0, [0,0,0]));
+        car.engine(Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -71,7 +71,7 @@ fn set_fields_roundtrip() {
         extras.set_sports_pack(true);
         extras.set_sun_roof(false);
         car.extras(extras);
-        car.engine(Engine::new(0, 0, [0,0,0]));
+        car.engine(Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -104,7 +104,7 @@ fn group_with_vardata_entries_roundtrip() {
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         // Group with var-data entries (fuel_figures has usage_description)
         let car = car.fuel_figures(2, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban").unwrap(); }).unwrap();
@@ -162,7 +162,7 @@ fn vardata_empty_and_max_roundtrip() {
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();  // empty var-data
@@ -206,7 +206,7 @@ fn all_scalar_accessor_paths() {
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([1u32,2,3,4]); car.vehicle_code([97,98,99,100,101,102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49,0,0]));
+        car.engine(Engine::new(2000, 4, [49,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"Hon").unwrap();
@@ -308,7 +308,7 @@ fn schema_id_from_header_extracts_correctly() {
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -337,7 +337,7 @@ fn display_includes_scalar_fields() {
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([1u32,2,3,4]); car.vehicle_code([97,98,99,100,101,102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(3000, 6, [49,0,0]));
+        car.engine(Engine::new(3000, 6, [49,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"BMW").unwrap();
@@ -373,7 +373,7 @@ fn constant_fields_return_correct_values() {
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -424,7 +424,7 @@ fn encoder_roundtrip_with_groups_and_vardata() {
         car.some_numbers([10u32, 20, 30, 40]);
         car.vehicle_code([65, 66, 67, 68, 69, 70]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2500, 6, [50, 0, 0]));
+        car.engine(Engine::new(2500, 6, [50, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(2, |g| {
             g.add(|e| { e.speed(100).mpg(25.5); e.usage_description(b"City").unwrap(); }).unwrap();
             g.add(|e| { e.speed(200).mpg(15.0); e.usage_description(b"Track").unwrap(); }).unwrap();
@@ -492,7 +492,7 @@ fn fixed_entry_group_as_chunks_and_entries() {
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(1, |g| {
             g.add(|e| {
@@ -544,7 +544,7 @@ fn verify_function_detects_invalid_messages() {
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -598,7 +598,7 @@ fn buffer_too_short_truncated_field() {
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -629,7 +629,7 @@ fn vardata_truncated_length_detected() {
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         // Encode varData fields
@@ -681,7 +681,7 @@ fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::er
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -715,7 +715,7 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         extras.set_cruise_control(true);
         extras.set_sports_pack(true);
         car.extras(extras);
-        car.engine(Engine::new(0,0,[0,0,0]));
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_|{}).unwrap();
         let car = car.performance_figures(0, |_|{}).unwrap();
         let car = car.manufacturer(b"").unwrap();

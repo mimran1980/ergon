@@ -122,7 +122,7 @@ proptest! {
         mc in prop::array::uniform3(any::<u8>()),
     ) {
         let extras = OptionalExtras::from(extras_raw);
-        let engine = Engine::new(capacity, num_cylinders, mc);
+        let engine = Engine::new(capacity, num_cylinders, mc, 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0));
 
         let mut buf = vec![0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
@@ -193,7 +193,7 @@ proptest! {
         car.some_numbers([0u32; 4]);
         car.vehicle_code([0u8; 6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(1000, 4, [0, 0, 0]));
+        car.engine(Engine::new(1000, 4, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(&manufacturer).unwrap();
@@ -253,7 +253,7 @@ proptest! {
         car.some_numbers([0u32; 4]);
         car.vehicle_code([0u8; 6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(1000, 4, [0, 0, 0]));
+        car.engine(Engine::new(1000, 4, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
 
         let count = entries.len() as u16;
         let car = car.fuel_figures(count, |g| {
@@ -313,7 +313,7 @@ fn zero_length_roundtrip() {
     car.some_numbers([0u32; 4]);
     car.vehicle_code([0u8; 6]);
     car.extras(OptionalExtras::default());
-    car.engine(Engine::new(0, 0, [0, 0, 0]));
+    car.engine(Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
     let car = car.fuel_figures(0, |_| {}).unwrap();
     let car = car.performance_figures(0, |_| {}).unwrap();
     let car = car.manufacturer(b"").unwrap();
@@ -364,7 +364,7 @@ fn boundary_values() {
     extras.set_sports_pack(true);
     extras.set_cruise_control(true);
     car.extras(extras);
-    car.engine(Engine::new(u16::MAX, u8::MAX, [u8::MAX; 3]));
+    car.engine(Engine::new(u16::MAX, u8::MAX, [u8::MAX; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
 
     let car = car.fuel_figures(1, |g| {
         g.add(|e| { e.speed(u16::MAX); e.mpg(f32::MAX); e.usage_description(b"").unwrap(); }).unwrap();

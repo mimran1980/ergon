@@ -830,6 +830,81 @@ fn parse_composite(
             ));
         }
 
+        // Nested `<enum>` / `<set>` / `<composite>` inside a composite both
+        // define a named type (first definition wins) and occupy wire space
+        // as a member (Aeron Booster.BoostType, outer.inner, etc.).
+        if tag == "enum" {
+            let enum_name = string_attr(child, "name", "composite nested enum @name")?;
+            if !registry.registry.contains_key(&enum_name) {
+                parse_enum(child, registry, tokens)?;
+            }
+            let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+            if let Some(resolved) =
+                resolve_type_to_tokens(&enum_name, &enum_name, None, registry, since_val)
+            {
+                composite_tokens.extend(resolved);
+            }
+            continue;
+        }
+        if tag == "set" {
+            let set_name = string_attr(child, "name", "composite nested set @name")?;
+            if !registry.registry.contains_key(&set_name) {
+                parse_set(child, registry, tokens)?;
+            }
+            let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+            if let Some(resolved) =
+                resolve_type_to_tokens(&set_name, &set_name, None, registry, since_val)
+            {
+                composite_tokens.extend(resolved);
+            }
+            continue;
+        }
+        if tag == "composite" {
+            let nested_name = string_attr(child, "name", "composite nested composite @name")?;
+            if nested_name == name {
+                return Err(Fault::invalid(
+                    child,
+                    "cyclic composite ref",
+                    format!("{nested_name}: composite cannot nest itself"),
+                ));
+            }
+            if !registry.registry.contains_key(&nested_name) {
+                parse_composite(child, registry, tokens)?;
+            }
+            let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
+            if let Some(off) = opt_usize_attr(child, "offset", "offset")? {
+                let member_size = compute_type_size(&nested_name, registry).unwrap_or(1);
+                let end = off.saturating_add(member_size);
+                for &(s, e) in &occupied_offsets {
+                    if off < e && end > s {
+                        return Err(Fault::invalid(
+                            child,
+                            "composite member offset",
+                            format!(
+                                "{nested_name}: offset {off} overlaps existing member range [{s}, {e})"
+                            ),
+                        ));
+                    }
+                }
+                occupied_offsets.push((off, end));
+            }
+            if let Some(resolved) =
+                resolve_type_to_tokens(&nested_name, &nested_name, None, registry, since_val)
+            {
+                // Apply explicit member offset onto the BeginField wrapper.
+                if let Some(off) = opt_usize_attr(child, "offset", "offset")? {
+                    let mut resolved = resolved;
+                    if let Some(first) = resolved.first_mut() {
+                        first.encoding.offset = Some(off);
+                    }
+                    composite_tokens.extend(resolved);
+                } else {
+                    composite_tokens.extend(resolved);
+                }
+            }
+            continue;
+        }
+
         // SBE `<ref name="x" type="T"/>` — detect self-cycles; expand when T is
         // already registered (forward refs are resolved via later field use).
         if tag == "ref" {

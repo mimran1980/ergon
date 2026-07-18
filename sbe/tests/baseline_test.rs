@@ -4,15 +4,8 @@
 //! using ErgoSBE-generated code, then encodes from scratch and verifies
 //! round-trip decode produces the same logical values.
 //!
-//! # Known codegen gaps (not tested here)
-//!
-//! - `Engine::manufacturer_code()` returns `u8` instead of `[u8; 3]`
-//! - `Engine::fuel()` returns `u8` instead of `&[u8; 6]` / `&str`
-//! - `Engine` missing `efficiency`, `booster_enabled`, `booster` fields
-//! - `Booster` missing `BoostType` enum
-//!
-//! These gaps mean byte-exact wire match against the Java-generated fixture
-//! is impossible today.  We test what does work and document the gaps.
+//! Engine composite includes `<ref>` members and nested `BoostType` (SBE-REF):
+//! wire size 10 bytes, Car `BLOCK_LENGTH` 45 matching the Aeron fixture header.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -325,17 +318,17 @@ fn decode_baseline_fixture() {
         // discountedModel is presence="constant" valueRef="Model.C"
         assert_eq!(Model::C, car.discounted_model(), "discountedModel");
 
-        // Engine: capacity and numCylinders are at the correct wire offsets
-        // (35 and 37 in the Car message).  The remaining engine fields differ
-        // because the codegen emits a 7-byte Engine struct while the wire has
-        // a 10-byte engine (maxRpm/fuel constant gap, manufacturerCode char[3]
-        // vs u8, missing efficiency/booster/boosterEnabled).  Those gaps make
-        // byte-exact decode from the fixture impossible for those fields.
-        // The round-trip test (below) verifies self-consistent encode/decode
-        // for all engine fields.
+        // Engine is 10 bytes on the Aeron wire (capacity, numCylinders,
+        // manufacturerCode[3], efficiency, boosterEnabled, booster{BoostType,hp}).
         let engine = car.engine();
         assert_eq!(2000, engine.capacity(), "engine.capacity");
         assert_eq!(4, engine.num_cylinders(), "engine.numCylinders");
+        assert_eq!([b'1', b'2', b'3'], engine.manufacturer_code(), "engine.manufacturerCode");
+        assert_eq!(35, engine.efficiency(), "engine.efficiency");
+        assert_eq!(BooleanType::T, engine.booster_enabled(), "engine.boosterEnabled");
+        let booster = engine.booster();
+        assert_eq!(BoostType::NITROUS, booster.boost_type(), "engine.booster.boostType");
+        assert_eq!(200, booster.horse_power(), "engine.booster.horsePower");
 
         // Group: fuelFigures (3 entries) — consuming stages, wire order.
         let mut fuel = car.into_fuel_figures().unwrap();
@@ -444,7 +437,14 @@ fn encode_baseline_roundtrip() {
         extras.set_sports_pack(true);
         car.extras(extras);
 
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(
+            2000,
+            4,
+            [b'1', b'2', b'3'],
+            35,
+            BooleanType::T,
+            Booster::new(BoostType::NITROUS, 200),
+        ));
 
         let car = car.fuel_figures(3, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();
@@ -495,8 +495,12 @@ fn encode_baseline_roundtrip() {
         assert_eq!(2000, e2.capacity(), "rt.engine.capacity");
         assert_eq!(4, e2.num_cylinders(), "rt.engine.numCylinders");
         assert_eq!(9000, e2.max_rpm(), "rt.engine.maxRpm");
-        assert_eq!([49, 0, 0], e2.manufacturer_code(), "rt.engine.manufacturerCode");
+        assert_eq!([b'1', b'2', b'3'], e2.manufacturer_code(), "rt.engine.manufacturerCode");
         assert_eq!("Petrol", e2.fuel(), "rt.engine.fuel");
+        assert_eq!(35, e2.efficiency(), "rt.engine.efficiency");
+        assert_eq!(BooleanType::T, e2.booster_enabled(), "rt.engine.boosterEnabled");
+        assert_eq!(BoostType::NITROUS, e2.booster().boost_type(), "rt.engine.booster.boostType");
+        assert_eq!(200, e2.booster().horse_power(), "rt.engine.booster.horsePower");
 
         let mut fuel = car2.into_fuel_figures().unwrap();
         let ff2: Vec<_> = fuel.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
@@ -551,8 +555,15 @@ fn encode_byte_exact_scalar() {
         extras.set_sports_pack(true);
         car.extras(extras);
 
-        // Engine (composite) — same values as fixture
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        // Engine (composite) — same values as Aeron fixture
+        car.engine(Engine::new(
+            2000,
+            4,
+            [b'1', b'2', b'3'],
+            35,
+            BooleanType::T,
+            Booster::new(BoostType::NITROUS, 200),
+        ));
 
         // Write empty tails to reach the complete stage (as_bytes is
         // completion-only per DECISIONS.md §2).
@@ -563,17 +574,15 @@ fn encode_byte_exact_scalar() {
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
-        // Compare non-blockLength header bytes: templateId, schemaId, version
-        assert_eq!(&FIXTE[2..8], &encoded[2..8], "header metadata mismatch");
+        // Full 8-byte header including blockLength=45 matches Aeron fixture.
+        assert_eq!(&FIXTE[0..8], &encoded[0..8], "header mismatch");
 
-        // Compare scalar body: serialNumber through extras (body offsets 0..35)
-        // BlockLength changed from 45 to 41 (constants no longer occupy wire space),
-        // so header[0..2] differs from fixture. Scalar body at offsets 0..34 is identical.
+        // Scalar body through engine (offsets 0..45).
         let header_size = 8usize;
         assert_eq!(
-            &FIXTE[header_size .. header_size + 35],
-            &encoded[header_size .. header_size + 35],
-            "scalar body mismatch"
+            &FIXTE[header_size .. header_size + 45],
+            &encoded[header_size .. header_size + 45],
+            "fixed body (incl. engine) mismatch"
         );
         "#,
     );
@@ -588,18 +597,21 @@ fn composite_byte_exact_engine() {
         &Paths::example_schema(),
         &Paths::baseline_binary(),
         r#"
-        // Encode Engine with known values matching the fixture
-        let engine = Engine::new(2000, 4, [49, 50, 51]);
+        // Encode Engine with values matching the Aeron fixture (10-byte block).
+        let engine = Engine::new(
+            2000,
+            4,
+            [b'1', b'2', b'3'],
+            35,
+            BooleanType::T,
+            Booster::new(BoostType::NITROUS, 200),
+        );
 
-        // Verify Engine wire bytes match fixture at body_offset 35
         // Fixture engine starts at body_offset 35 (file position 43).
-        // Our Engine is 6 bytes (capacity + numCylinders + manufacturerCode),
-        // which matches the first 6 bytes of the fixture's 10-byte engine block.
-        // The remaining 4 bytes (maxRpm constant, efficiency, boosterEnabled, booster)
-        // are either constant or reference fields not yet generated.
         let header_size = 8usize;
         let engine_offset = 35usize;
-        let engine_size = 6usize;
+        let engine_size = 10usize;
+        assert_eq!(engine.0.len(), engine_size, "Engine wire size");
         assert_eq!(
             &FIXTE[header_size + engine_offset .. header_size + engine_offset + engine_size],
             &engine.0[..],
@@ -636,7 +648,8 @@ fn constants_match_upstream() {
     assert!(src.contains("pub const SCHEMA_ID: u16 = 1;"));
     assert!(src.contains("pub const SCHEMA_VERSION: u16 = 0;"));
     assert!(src.contains("pub const TEMPLATE_ID: u16 = 1;"));
-    assert!(src.contains("pub const BLOCK_LENGTH: usize = 41;"));
+    // 35 fixed scalars + 10-byte Engine (with <ref> + nested BoostType).
+    assert!(src.contains("pub const BLOCK_LENGTH: usize = 45;"));
 }
 
 // ── Group decoder is_empty() inherent method ──────────────────────
@@ -658,7 +671,7 @@ fn group_decoder_is_empty() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -678,7 +691,7 @@ fn group_decoder_is_empty() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(3, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();
             g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Combined Cycle").unwrap(); }).unwrap();
@@ -718,9 +731,9 @@ fn compute_encoded_length_matches_actual() {
         // Baseline: zero groups / zero var-data
         // Groups and var-data are always present (dim headers + length prefixes even at 0)
         let empty = <CarEncoder>::compute_encoded_length(0, 0, 0, 0, 0);
-        assert_eq!(empty, 61); // 41 (block) + 2×4 (group dims) + 3×4 (vardata prefixes)
+        assert_eq!(empty, 65); // 45 (block) + 2×4 (group dims) + 3×4 (vardata prefixes)
         let empty_full = <CarEncoder>::compute_encoded_length_with_message_header(0, 0, 0, 0, 0);
-        assert_eq!(empty_full, 69); // 61 + 8-byte header
+        assert_eq!(empty_full, 73); // 65 + 8-byte header
 
         // DECISIONS.md §2: header-inclusive length must use the dedicated helper.
         let body = <CarEncoder>::compute_encoded_length(1, 0, 5, 4, 6);
@@ -746,7 +759,7 @@ fn compute_encoded_length_matches_actual() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -776,7 +789,7 @@ fn fixed_entry_group_entries_iterator() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(1, |g| {
             g.add(|e| {
@@ -835,7 +848,7 @@ fn array_accessor_all_paths_return_same_values() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -874,7 +887,7 @@ fn display_shows_group_entry_fields_not_just_count() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(2, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban").unwrap(); }).unwrap();
             g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Comb").unwrap(); }).unwrap();
@@ -920,7 +933,7 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -973,7 +986,7 @@ fn bounds_checks_active_by_default_nth_always_checked() {
         car.some_numbers([0u32; 4]);
         car.vehicle_code([0u8; 6]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0, 0, [0, 0, 0]));
+        car.engine(Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -1007,7 +1020,7 @@ fn bounds_checks_disabled_with_feature_flag() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(1, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urb").unwrap(); }).unwrap();
         }).unwrap();
@@ -1146,11 +1159,11 @@ fn generated_code_has_vardata_maxlength() {
 fn composite_ref_members_generated() {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
-    // Engine: three `<type>` fixed fields + three `<ref>` members
-    // (Percentage int8, BooleanType u8, Booster 1 byte) → 6+1+1+1 = 9.
+    // Engine: capacity(2)+numCylinders(1)+manufacturerCode(3)+efficiency(1)
+    // +boosterEnabled(1)+booster(2) = 10 (constants maxRpm/fuel not on wire).
     assert!(
-        src.contains("pub struct Engine(pub [u8; 9]);"),
-        "Engine should be [u8; 9] with expanded <ref> members, got:\n{}",
+        src.contains("pub struct Engine(pub [u8; 10]);"),
+        "Engine should be [u8; 10] with expanded <ref> + nested BoostType, got:\n{}",
         src.lines()
             .find(|l| l.contains("struct Engine"))
             .unwrap_or("<missing Engine>")
@@ -1168,14 +1181,18 @@ fn composite_ref_members_generated() {
         "Engine::booster() from <ref name=\"booster\" type=\"Booster\"/>"
     );
 
-    // Booster: horsePower only (inline nested enum still not a separate wire field).
+    // Booster: nested BoostType (char) + horsePower (uint8).
     assert!(
-        src.contains("pub struct Booster(pub [u8; 1]);"),
-        "Booster should be [u8; 1] (horsePower)"
+        src.contains("pub struct Booster(pub [u8; 2]);"),
+        "Booster should be [u8; 2] (BoostType + horsePower), got:\n{}",
+        src.lines()
+            .find(|l| l.contains("struct Booster"))
+            .unwrap_or("<missing Booster>")
     );
-
-    // Referenced top-level types still exist.
-    // as i8 at the use site -- no standalone type is generated for it.
+    assert!(
+        src.contains("pub enum BoostType"),
+        "nested BoostType enum inside Booster must be generated"
+    );
     assert!(
         src.contains("pub enum BooleanType"),
         "BooleanType should exist as a top-level enum"
@@ -1184,12 +1201,62 @@ fn composite_ref_members_generated() {
         src.contains("pub struct Booster"),
         "Booster composite should exist as a top-level type"
     );
+}
 
-    // BoostType inline enum is defined inside the Booster <composite>
-    // but parse_composite only handles <type> children, so it is also skipped.
-    assert!(
-        !src.contains("BoostType"),
-        "BoostType inline enum inside Booster <composite> is also skipped by parse_composite"
+/// SBE-REF acceptance: parse → generate → compile → encode/decode Engine refs.
+#[test]
+fn composite_ref_engine_roundtrip_compile() {
+    let (_schema, src) = generate(&Paths::example_schema(), "engine_ref_rt");
+    compile_and_run(
+        "engine_ref_rt",
+        &src,
+        r#"
+        let eng = Engine::new(
+            2000,
+            4,
+            [b'1', b'2', b'3'],
+            35,
+            BooleanType::T,
+            Booster::new(BoostType::NITROUS, 200),
+        );
+        assert_eq!(eng.0.len(), 10);
+        assert_eq!(eng.capacity(), 2000);
+        assert_eq!(eng.num_cylinders(), 4);
+        assert_eq!(eng.manufacturer_code(), [b'1', b'2', b'3']);
+        assert_eq!(eng.efficiency(), 35);
+        assert_eq!(eng.booster_enabled(), BooleanType::T);
+        assert_eq!(eng.booster().boost_type(), BoostType::NITROUS);
+        assert_eq!(eng.booster().horse_power(), 200);
+
+        // Aeron car fixture engine block (body offset 35): capacity=2000,
+        // cylinders=4, mfr="123", efficiency=35, boostEnabled=T, NITROUS@200.
+        let fixture_engine: [u8; 10] =
+            [0xd0, 0x07, 0x04, b'1', b'2', b'3', 35, 1, b'N', 200];
+        assert_eq!(&fixture_engine[..], &eng.0[..]);
+
+        // Full message: encode + decode recovers ref members.
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([0u32; 4]);
+        car.vehicle_code([0u8; 6]);
+        car.extras(OptionalExtras::default());
+        car.engine(eng);
+        let car = car.fuel_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.manufacturer(b"X").unwrap();
+        let car = car.model(b"Y").unwrap();
+        let car = car.activation_code(b"Z").unwrap();
+        let encoded = car.as_bytes();
+        assert_eq!(CarDecoder::BLOCK_LENGTH, 45);
+        let dec = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let e2 = dec.engine();
+        assert_eq!(e2.efficiency(), 35);
+        assert_eq!(e2.booster().horse_power(), 200);
+        "#,
     );
 }
 
@@ -1212,7 +1279,7 @@ fn vardata_maxlength_runtime() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -1244,7 +1311,7 @@ fn boolean_roundtrip_runtime() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -1267,7 +1334,7 @@ fn boolean_roundtrip_runtime() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -1314,7 +1381,7 @@ fn bounds_checking_switch() {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(2, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"U").unwrap(); }).unwrap();
             g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"C").unwrap(); }).unwrap();
@@ -1523,9 +1590,9 @@ fn static_header_templates_exist() {
 
     // Source: verify const declarations
     assert!(
-        src.contains("pub const HEADER_TEMPLATE: [u8; 8] = [41, 0, 1, 0, 1, 0, 0, 0];"),
+        src.contains("pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];"),
         "HEADER_TEMPLATE must contain correct pre-computed header bytes \
-         (blockLength=41, templateId=1, schemaId=1, version=0, little-endian)"
+         (blockLength=45, templateId=1, schemaId=1, version=0, little-endian)"
     );
     assert!(
         src.contains("pub const GROUP_DIM_TEMPLATE: [u8; 4] ="),
@@ -1563,7 +1630,7 @@ fn static_header_templates_exist() {
         let template_id = u16::from_le_bytes([buf[2], buf[3]]);
         let schema_id = u16::from_le_bytes([buf[4], buf[5]]);
         let version = u16::from_le_bytes([buf[6], buf[7]]);
-        assert_eq!(block_len, 41, "header blockLength must be 41");
+        assert_eq!(block_len, 45, "header blockLength must be 45");
         assert_eq!(template_id, 1, "header templateId must be 1");
         assert_eq!(schema_id, 1, "header schemaId must be 1");
         assert_eq!(version, 0, "header version must be 0");
@@ -1754,7 +1821,7 @@ fn anymessage_decode_dispatches_by_template_id() {
         car.some_numbers([1, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0]));
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -1791,7 +1858,7 @@ fn anymessage_decode_frame_validates_length() {
         car.some_numbers([9, 8, 7, 6]);
         car.vehicle_code([49, 50, 51, 52, 53, 54]);
         car.extras(OptionalExtras::default());
-        car.engine(Engine::new(1500, 6, [50, 0, 0]));
+        car.engine(Engine::new(1500, 6, [50, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| {}).unwrap();
         let car = car.performance_figures(0, |_| {}).unwrap();
         let car = car.manufacturer(b"Toyo").unwrap();
@@ -1869,7 +1936,7 @@ fn framecursor_iterates_length_prefixed_frames() {
         car1.some_numbers([0, 0, 0, 0]);
         car1.vehicle_code([0; 6]);
         car1.extras(OptionalExtras::default());
-        car1.engine(Engine::new(1000, 3, [51, 0, 0]));
+        car1.engine(Engine::new(1000, 3, [51, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car1 = car1.fuel_figures(0, |_| {}).unwrap();
         let car1 = car1.performance_figures(0, |_| {}).unwrap();
         let car1 = car1.manufacturer(b"").unwrap();
@@ -1885,7 +1952,7 @@ fn framecursor_iterates_length_prefixed_frames() {
         car2.some_numbers([5, 6, 7, 8]);
         car2.vehicle_code([97; 6]);
         car2.extras(OptionalExtras::default());
-        car2.engine(Engine::new(2000, 4, [52, 0, 0]));
+        car2.engine(Engine::new(2000, 4, [52, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car2 = car2.fuel_figures(0, |_| {}).unwrap();
         let car2 = car2.performance_figures(0, |_| {}).unwrap();
         let car2 = car2.manufacturer(b"BMW").unwrap();
@@ -1928,7 +1995,7 @@ fn sbemessage_trait_provides_constants() {
         // Associated constants on decoder
         assert_eq!(CarDecoder::SCHEMA_ID, 1);
         assert_eq!(CarDecoder::TEMPLATE_ID, 1);
-        assert_eq!(CarDecoder::BLOCK_LENGTH, 41);
+        assert_eq!(CarDecoder::BLOCK_LENGTH, 45);
     "#,
     );
 }
@@ -2520,8 +2587,8 @@ fn vardata_composite_with_length_not_first_member_generates() {
     assert!(!modules.modules().next().unwrap().source.is_empty());
 }
 
-/// A group-entry constant field whose referenced constant type carries no
-/// value text generates no accessor (and must not panic).
+/// `presence=constant` without a text value is invalid SBE and must fail parse
+/// (not panic in codegen).
 #[test]
 fn group_entry_constant_field_without_value_is_skipped() {
     let xml = r#"<?xml version="1.0"?>
@@ -2539,11 +2606,12 @@ fn group_entry_constant_field_without_value_is_skipped() {
   </group>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
-    let g = ergosbe::Generator::new(ergosbe::GenerationConfig::new("novalconst"));
-    let modules = g.try_generate(&schema).unwrap();
-    assert!(!modules.modules().next().unwrap().source.is_empty());
+    let err = ergosbe::parse(xml).expect_err("constant without value text must fail parse");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("constant") || msg.contains("EmptyConst"),
+        "expected constant-value fault, got: {msg}"
+    );
 }
 
 /// A schema whose headerType composite is absent falls back to the default
@@ -2585,7 +2653,7 @@ fn manual_start_entry_matches_closure() {
         car_c.available(BooleanType::T); car_c.code(Model::A);
         car_c.some_numbers([0u32;4]); car_c.vehicle_code([0u8;6]);
         car_c.extras(OptionalExtras::default());
-        car_c.engine(Engine::new(1000, 4, [0,0,0]));
+        car_c.engine(Engine::new(1000, 4, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car_c = car_c.fuel_figures(2, |g| {
             g.add(|e| { e.speed(30).mpg(35.9); });
             g.add(|e| { e.speed(55).mpg(23.7); });
@@ -2601,7 +2669,7 @@ fn manual_start_entry_matches_closure() {
         car_m.available(BooleanType::T); car_m.code(Model::A);
         car_m.some_numbers([0u32;4]); car_m.vehicle_code([0u8;6]);
         car_m.extras(OptionalExtras::default());
-        car_m.engine(Engine::new(1000, 4, [0,0,0]));
+        car_m.engine(Engine::new(1000, 4, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car_m = car_m.fuel_figures(2, |g| {
             // Manual entry creation
             let mut e1 = g.start_entry().unwrap();
@@ -2741,7 +2809,7 @@ fn try_fixed_manual_equivalence() {
         d.available(BooleanType::T); d.code(Model::A);
         d.some_numbers([0u32;4]); d.vehicle_code([0u8;6]);
         d.extras(OptionalExtras::default());
-        d.engine(Engine::new(1000, 4, [0,0,0]));
+        d.engine(Engine::new(1000, 4, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let d = d.fuel_figures(0, |_|{}).unwrap();
         let d = d.performance_figures(0, |_|{}).unwrap();
         let d = d.manufacturer(b"H").unwrap();
@@ -2753,7 +2821,7 @@ fn try_fixed_manual_equivalence() {
             enc.available(BooleanType::T); enc.code(Model::A);
             enc.some_numbers([0u32;4]); enc.vehicle_code([0u8;6]);
             enc.extras(OptionalExtras::default());
-            enc.engine(Engine::new(1000, 4, [0,0,0]));
+            enc.engine(Engine::new(1000, 4, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
             Ok(())
         }).unwrap();
         let f = f.fuel_figures(0, |_|{}).unwrap();

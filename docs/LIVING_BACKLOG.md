@@ -69,7 +69,7 @@ All prior §C items closed 2026-07-19 — see section D.
 |----|------------|----------|
 | **SBE-81** | DONE | `into_*_as_message` / `try_*_as_message` in golden; `baseline_test` nested_message_* (4 tests) |
 | **SBE-20** | DONE | All 11 error-handler fixtures reject parse; `error_handler_schemas_all_rejected` |
-| **SBE-REF** | DONE | Multi-pass composite parse expands `<ref>`; Engine `[u8; 9]` + efficiency/booster accessors |
+| **SBE-REF** | DONE | Multi-pass `<ref>` + nested enum/set/composite; Engine `[u8; 10]` / Booster `[u8; 2]` / Car BLOCK_LENGTH 45; nested BeginComposite size resolve; `composite_ref_engine_roundtrip_compile` + full `baseline_test` (92) encode/decode vs Aeron fixture |
 | **SBE-110** | WON'T-DO | Maintained decode ≤1.00; no fairness failure |
 | **27 / 86** | DONE | Encoder `wrap` → `Result` in golden |
 | **62 / 156 / 157** | DONE | Prior verify-and-close (SbeDecimal, try_*, complete as_bytes) |

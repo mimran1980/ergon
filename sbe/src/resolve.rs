@@ -307,7 +307,7 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
 
 fn resolve_composite_offsets(
     tokens: &mut [Token],
-    _src: &Option<miette::NamedSource<String>>,
+    src: &Option<miette::NamedSource<String>>,
 ) -> Result<(), ResolveError> {
     let mut current_offset = 0;
     let mut i = 1; // skip BeginComposite
@@ -324,6 +324,23 @@ fn resolve_composite_offsets(
         };
 
         tokens[i].encoding.offset = Some(resolved_offset);
+
+        // Inlined nested composites (via `<ref type="Composite"/>` or
+        // nested type expansion) store their wire size on BeginComposite
+        // `encoding.offset`. Codegen reads that as `MemberType::Composite.size`.
+        // Cloned registry tokens often still have `offset: None` here — resolve
+        // the nested layout so size is never left as 0 (`read_bytes::<0>`).
+        if tokens[i].signal == Signal::BeginField && i + 1 < next_i {
+            if tokens[i + 1].signal == Signal::BeginComposite {
+                let nested_end = find_matching_end(
+                    tokens,
+                    i + 1,
+                    Signal::BeginComposite,
+                    Signal::EndComposite,
+                );
+                resolve_composite_offsets(&mut tokens[i + 1..=nested_end], src)?;
+            }
+        }
 
         // For nested composite tokens, we need to cascade offsets relative to parent if needed,
         // but inside SBE all member offsets are absolute or sequential.
