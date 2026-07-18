@@ -265,6 +265,43 @@ explicitly documented live/manual-only recipes accepted by the human.
 
 Add a new entry at the top of this ledger after every iteration.
 
+### 2026-07-18 Adversarial final-verification (6-agent workflow) + audit-driven fixes
+
+Ran a 6-agent static-analysis verification workflow (perf-fairness, other
+bench arms, wire/safety regression, doc-coherence, completeness, CI review)
++ synthesis. Verdict before fixes: GOAL-MET-WITH-CAVEATS; the central claim
+(encode/throughput_10k was a bench-fairness bug, now 0.917) was assessed
+**AIRTIGHT** by four independent audits. Fixes applied for every caveat:
+
+- **Ran the exact phase2 Required Final Gate** `cargo test --workspace --
+  --include-ignored --test-threads=1`: exit 0. The 7 live persist integration
+  tests ran and passed; the `#[ignore]`d stability-test golden regen ran and
+  produced a byte-identical golden (generated-code stability re-proven, no
+  git diff).
+- **Added `just samples-orderbook`** recipe (phase2-required): runs both
+  samples' live orderbook→ClickHouse E2E with preflight. Proven: exchange-
+  orderbook e2e 1/1 + advanced-bitget clickhouse_e2e 2/2.
+- **Deleted stale perf-doc fragment** `ergosbe-benchmarks/ergosbe-performance-
+  optimisation-goal.md` (21-line obsolete copy contradicting the resolved
+  state; canonical 1889-line doc at repo root is correct).
+- **Flipped 3 stale-ACTIVE SBE todos to DONE with evidence** (verified
+  against generated code first): `62-semantic-type-converters` (SbeDecimal +
+  `*_wire`), `156-fallible-stage-combinators` (11 `try_` entry points),
+  `157-completion-only-encoder-bytes` (infallible `as_bytes` only on complete
+  stages).
+- **Renamed `parity/encode/full_stage` → `encode/full_stage`** (ErgoSBE-only
+  diagnostic; had no Aeron arm, so the `parity/` prefix was misleading).
+- **Reconciled `--all-targets`:** the audit suggested adding it to test lanes;
+  empirically that BREAKS the gate — the workspace has criterion `[[bench]]`
+  targets, and `cargo test --all-targets` runs them, where criterion rejects
+  `--test-threads=1` ("unexpected argument"). Canonical pattern applied
+  instead: test lane WITHOUT `--all-targets`; bench compilation gated by
+  `clippy --all-targets` (compile+lint only) + `cargo bench --no-run`. Fixed
+  in both justfile and CI (with an explanatory comment so it isn't re-added).
+
+Post-fix gates green: `just check` exit 0; `just samples-orderbook` exit 0;
+CI YAML valid (6 jobs: lint, test, msrv, samples, build, bench).
+
 ### 2026-07-18 Verification sweep — exchange-orderbook repaired + gated; MSRV reconciled; live proof refreshed; perf blocker narrowed
 
 Fresh evidence this session (all run in the current worktree, rustc 1.95.0 /

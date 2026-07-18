@@ -568,7 +568,9 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
 }
 
 fn bench_encode_full_stage_transition(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parity/encode/full_stage");
+    // ErgoSBE-only stage-transition diagnostic (no Aeron equivalent) — not a
+    // parity scenario, so the group is not under parity/.
+    let mut group = c.benchmark_group("encode/full_stage");
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("ergosbe", |b| {

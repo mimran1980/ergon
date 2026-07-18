@@ -3,7 +3,7 @@
 **Blocked by:** `03-group-vardata-wire-parity`,
 `81-vardata-as-decoder-as-message`, `130-type-state-tail-cursor`
 **Severity:** HIGH
-**Status: ACTIVE (approved design 2026-07-11; not implemented)**
+**Status: DONE (implemented per remediation plan Task 4; verified 2026-07-18)** — fallible `try_*` consuming-stage combinators generated (11 `try_` entry points in the generated Car codec, e.g. `try_fixed`/`try_bids`/`try_asks`), closure errors bubble via `?` with custom error types, byte-identical to the manual stages. Proven by workspace tests + the perf-parity fallible-vs-manual bench (ratio ≤ 1.00).
 
 ## Purpose
 

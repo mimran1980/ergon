@@ -1,6 +1,6 @@
 [workspace]
 members = ["sbe", "persist", "persist/derive", "ergosbe-benchmarks"]
-exclude = ["samples"]
+exclude = ["samples", "ergo-aeron-cluster", "ergo-aeron-cluster-test-support"]
 resolver = "3"
 
 [workspace.package]

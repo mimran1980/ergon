@@ -46,7 +46,11 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - run: cargo test --workspace --all-targets --all-features
+      # NOTE: no --all-targets here — the workspace has criterion [[bench]]
+      # targets; `cargo test --all-targets` would run them and criterion
+      # rejects the test harness. Bench compilation is gated by the clippy
+      # step (--all-targets, compile+lint only) and the bench job.
+      - run: cargo test --workspace --all-features
       - run: cargo test --doc
       # Exercise the bound-check-disabled (unchecked fast-path) feature.
       - run: cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
@@ -91,14 +95,14 @@ jobs:
           cd samples/advanced-bitget
           cargo fmt --check
           cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --all-targets -- --test-threads=1 --skip clickhouse
+          cargo test -- --test-threads=1 --skip clickhouse
 
       - name: exchange-orderbook (fmt, clippy, test)
         run: |
           cd samples/exchange-orderbook
           cargo fmt --check
           cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --all-targets -- --test-threads=1
+          cargo test -- --test-threads=1
 
   build:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"

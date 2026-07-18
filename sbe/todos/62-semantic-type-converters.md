@@ -5,7 +5,7 @@
 > superseded. The active requirement is a dependency-free generic converter
 > seam for a structurally validated SBE Decimal composite.
 
-**Status: ACTIVE (approved generic Decimal seam 2026-07-11)**
+**Status: DONE (implemented per remediation plan Task 2; verified 2026-07-18)** — dependency-free generic `SbeDecimal` trait plus raw `*_wire` setters/getters emitted when `GenerationConfig::enable_decimal_converters("Decimal")` is set; structurally validated (int64 mantissa + int8 exponent). Proven by the normalized-app generated codec and the exchange-orderbook round-trip tests (slice 1, 19/19).
 
 ## Active Decimal converter design
 

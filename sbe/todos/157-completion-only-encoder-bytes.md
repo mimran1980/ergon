@@ -2,7 +2,7 @@
 
 **Blocked by:** `03-group-vardata-wire-parity`
 **Severity:** HIGH
-**Status: ACTIVE (reopened by source audit 2026-07-11)**
+**Status: DONE (implemented per remediation plan Task 4; verified 2026-07-18)** — infallible `as_bytes(&self) -> &'a [u8]` / `encoded_length() -> usize` exist only on complete encoder stages; partial/decoder stages return `Result<usize, DecodeError>` / `Result<&'a [u8], _>` (explicitly partial). Confirmed in the generated Car codec (complete stages at e.g. `as_bytes` returning `&'a [u8]`; incomplete at `encoded_length() -> Result<...>`).
 
 ## Problem
 
