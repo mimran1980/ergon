@@ -101,6 +101,14 @@ pub mod ergo_rfq_codecs {
     include!(concat!(env!("OUT_DIR"), "/aeron_rfq_codecs.rs"));
 }
 
+/// Production session codecs (schema 111). Prefer this alias in new code
+/// (`use ergo_aeron_cluster::codecs::session::…`).
+pub use ergo_codecs as session;
+
+/// Production RFQ codecs (schema 101). Prefer this alias in new code
+/// (`use ergo_aeron_cluster::codecs::rfq::…`).
+pub use ergo_rfq_codecs as rfq;
+
 // sbe-tool 1.39.0 omits `impl Writer for WriteBuf`; provided here so the
 // generated `mod.rs` files stay pure generator output. See writer_impls.rs.
 mod writer_impls;

@@ -1,5 +1,10 @@
 # Advanced topics
 
+For **ordered groups and var-data**, generated codecs use concrete consuming
+stages (`into_<group>` / `finish` / next stage). See
+[Process ordered tails through concrete stages](#process-ordered-tails-through-concrete-stages)
+and the design authority [`design/DECISIONS.md`](../../design/DECISIONS.md).
+
 ## Multi-schema generation
 
 When your project uses multiple SBE schemas that share type definitions (enums,

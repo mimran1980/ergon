@@ -24,7 +24,9 @@ just test-aeron-cluster-harness
 cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
 ```
 
-Jar integrity: see `test-jars.sha256` in this crate.
+Jar integrity: `test-jars.sha256` records expected digests after
+`just build-aeron-jars`. Re-run and update the hash file when Aeron pin or
+Gradle outputs change.
 
 ## Layout
 
@@ -34,11 +36,21 @@ Jar integrity: see `test-jars.sha256` in this crate.
 | `src/jar.rs` | Locate Aeron jars under `aeron/` build outputs |
 | `src/java/ClusterLauncher.java` | Node process launcher |
 | `tests/` | Spawn / harness failure smoke |
+| `test-jars.sha256` | Optional jar content digests |
 
 ## Public entry points
 
 - `TestCluster::single_node` / `three_node` / `restart_keep_dirs`
 - `TestCluster::kill_node` — used by failover + HA kill-leader tests
+
+## Spawn failure modes
+
+| Symptom | Fix |
+|---------|-----|
+| `java` not found | Install JDK 17+ and put it on `PATH` |
+| Jar not found | `just build-aeron-jars` (Aeron submodule init first) |
+| No `CLUSTER_READY` | Free ports; kill stale cluster Java processes; re-run |
+| Flaky connect after kill | Use own-driver UDP tests; wait for election; check `kill_node` index |
 
 ## Safety notes
 

@@ -70,4 +70,6 @@ fn main() {
     println!("cargo:rerun-if-changed=schemas/bitget-spot.xml");
     println!("cargo:rerun-if-changed=schemas/binance-spot.xml");
     println!("cargo:rerun-if-changed=schemas/normalized-app.xml");
+    // Generated codecs may reference cfg(feature = "serde").
+    println!("cargo::rustc-check-cfg=cfg(feature, values(\"serde\", \"bound-check-disabled\"))");
 }

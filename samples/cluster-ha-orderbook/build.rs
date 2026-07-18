@@ -24,7 +24,9 @@ fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str) {
 }
 
 fn main() {
-    println!("cargo::rustc-check-cfg=cfg(feature, values(\"bound-check-disabled\"))");
+    // Generated codecs gate serde behind cfg(feature = "serde"); declare so
+    // rustc check-cfg does not warn when the sample does not enable it.
+    println!("cargo::rustc-check-cfg=cfg(feature, values(\"bound-check-disabled\", \"serde\"))");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     generate_schema(&out_dir, "schemas/normalized-app.xml", "normalized_app");
 }

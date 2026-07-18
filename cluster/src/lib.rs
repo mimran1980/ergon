@@ -58,6 +58,8 @@ pub mod connect;
 pub mod controlled;
 /// Credential supplier traits for challenge-response auth.
 pub mod credentials;
+/// Equal-work ErgoSBE decode helpers for session / new-leader frames.
+pub mod decode;
 /// Egress adapter + listener dispatch for session and app messages.
 pub mod egress;
 /// Cluster client error type.
@@ -76,6 +78,11 @@ pub use config::SessionBuilder;
 pub use connect::{AsyncConnect, connect_reoffer_interval_ms, should_reoffer_connect};
 pub use controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 pub use credentials::{CredentialsSupplier, NullCredentialsSupplier};
+pub use decode::{
+    NewLeaderEventView, SessionEventView, SessionMessageHeaderView, decode_new_leader_event,
+    decode_session_event, decode_session_message_header,
+};
+pub use egress::{EgressAdapter, EgressListener, NullListener};
 pub use error::ClusterError;
 pub use poller::{EgressEvent, parse_event, parse_redirect_leader};
 pub use state::SessionState;

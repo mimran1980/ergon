@@ -1,15 +1,17 @@
-//! The `AeronCluster` client — owns the Aeron transport and drives the
-//! full SBE session handshake. This is the Java-parity entry point:
+//! The [`AeronCluster`] client — owns the Aeron transport and drives the
+//! full SBE session handshake. Java-parity entry point for the **Ergo Aeron
+//! Cluster** client (experimental prototype on `rusteron-client`):
 //!
 //! ```ignore
-//! let mut client = AeronCluster::connect(builder, cluster.aeron_dir())?;
+//! let mut client = AeronCluster::connect(builder, aeron_dir)?;
 //! client.offer(b"hello")?;
 //! client.poll_egress(&mut adapter, 10)?;
 //! client.send_keep_alive()?;
 //! client.close()?;
 //! ```
 //!
-//! ⚠️ TEMPORARY PROTOTYPE — handwritten reimplementation.
+//! Hot path: [`AeronCluster::try_claim`] writes SessionMessageHeader via ErgoSBE
+//! into the claim; fill app payload then [`ClusterClaim::commit`].
 
 use std::ffi::CString;
 use std::time::{Duration, Instant};

@@ -1,9 +1,19 @@
-//! Feed latency DynamicSchema / DynamicRow encode + persist to ClickHouse.
+//! Canonical HA feed-latency path: DynamicSchema → DynamicRow → ClickHouse.
 //!
-//! Hot path: [`DynamicRecorder::record`] (V1 SBE) → decode via
-//! [`SchemaRegistry`]/[`RowDecoder`] → insert through [`ClickhouseSink`].
-//! Values that land in CH must come from the decoded DynamicRow, not a
-//! parallel SQL string built from the in-memory sample.
+//! # Canonical pattern (shipped)
+//!
+//! 1. **Once:** build a [`DynamicRecorder`] for table `feed_latency` and announce
+//!    [`encode_latency_schema`] into a [`SchemaRegistry`].
+//! 2. **Hot path:** [`record_latency_row`] / [`DynamicRecorder::record`] encodes a
+//!    DynamicRow into a reuse buffer (no CH I/O).
+//! 3. **Consumer:** [`RowDecoder`] + registry decode → [`FeedLatencyRow`] DTO.
+//! 4. **Sink:** [`LatencyPersistor`] inserts via [`ClickhouseSink`] /
+//!    [`PersistSender`] (batch/flush; never block claim on CH).
+//!
+//! Values that land in ClickHouse **must** come from the decoded DynamicRow
+//! (see H4/H5), not a parallel SQL string built from the in-memory sample.
+//!
+//! See `samples/cluster-ha-orderbook/README.md` and the HA design spec.
 
 use std::cell::RefCell;
 use std::rc::Rc;

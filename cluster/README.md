@@ -56,14 +56,22 @@ Prefer `SessionBuilder` / `AeronCluster` over hand-rolled publications.
 ## Usage
 
 ```rust
-use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
+use ergo_aeron_cluster::{AeronCluster, EgressAdapter, SessionBuilder};
 // SessionBuilder: ingress/egress channels, stream ids, timeout
 // AeronCluster::connect / connect_async
 // AeronCluster::try_claim(payload_len) — SessionMessageHeader via ErgoSBE in claim
 // AeronCluster::poll_egress(adapter, limit)
+// decode_session_event / decode_new_leader_event — equal-work frame helpers
 ```
 
-RFQ: `codecs::ergo_rfq_codecs` + examples `rfq_client` / `rfq_roundtrip`.
+Production codec aliases:
+
+```rust
+use ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder;
+use ergo_aeron_cluster::codecs::rfq::CreateRfqCommandEncoder;
+```
+
+RFQ examples: `rfq_client` / `rfq_roundtrip`.
 
 ## Maintained benches (ErgoSBE / sbe-tool ≤ 1.00)
 

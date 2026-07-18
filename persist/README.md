@@ -17,7 +17,21 @@ Consumer:  SBE bytes -> [ErgoSBE decode] -> DTO -> [Persist trait] -> ClickHouse
 
 Also supports **dynamic** tables (`DynamicSchema` / `DynamicRow` V2 +
 `SchemaRegistry` / `RowDecoder`) used by samples for books and HA
-`feed_latency` rows (`LatencyPersistor` in `samples/cluster-ha-orderbook`).
+`feed_latency` rows.
+
+### Canonical HA latency pattern
+
+Shipped reference: `samples/cluster-ha-orderbook` → `LatencyPersistor`:
+
+```text
+DynamicSchema announce (once)
+  → DynamicRecorder::record (hot path, reuse buffer)
+  → SchemaRegistry + RowDecoder
+  → PersistSender / ClickhouseSink batch flush
+```
+
+Do not invent a second raw-SQL insert path for the same fields — CH values must
+come from decoded dynamic rows (sample tests assert this).
 
 Derive crate: [`derive/README.md`](derive/README.md).
 

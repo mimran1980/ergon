@@ -213,17 +213,17 @@ the book path on CH (match advanced-bitget drop/batch policy).
 
 **Does not replace:** IPC advanced-bitget / `just samples-orderbook` baseline.
 
-## 5b. Post-completion quality track (docs + improvements, 2026-07-19)
+## 5b. Post-completion quality track (docs + improvements)
 
-Residual product is COMPLETE. Next quality work (not completion blockers):
+Residual product is COMPLETE. Quality track status:
 
-| Priority | Theme |
-|----------|--------|
-| **P0** | Per-module README + accurate rustdocs (navigability) — **in progress** |
-| **P1** | Cluster client API polish / docs (zero-cost, off hot path) |
-| **P2** | Persist + sample ergonomics docs (LatencyPersistor canonical pattern) |
-| **P3** | Generator changes only with golden/parity benches |
-| **P4** | Opportunistic hygiene (clippy allows, check-cfg noise) |
+| Priority | Theme | Status |
+|----------|--------|--------|
+| **P0** | Per-module README + accurate rustdocs | **DONE** (`2d05440`) |
+| **P1** | Cluster API polish: `decode::*`, codec aliases `session`/`rfq`, crate re-exports | **DONE** |
+| **P2** | LatencyPersistor canonical docs + sample failure-mode tables | **DONE** |
+| **P3** | SBE guide accuracy (fallible wrap, MSRV 1.95, consuming stages) | **DONE** (docs) |
+| **P4** | check-cfg serde, harness spawn docs, narrowed generated allows | **DONE** |
 
 Non-goals unchanged: no pillar renames, no Rust cluster service, no deleting
 sbe-tool residual bench trees, no promoting connect encode to maintained gate.

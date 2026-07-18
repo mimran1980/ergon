@@ -7,6 +7,7 @@
 //! Recipes: `just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`.
 //! See `samples/cluster-ha-orderbook/README.md`.
 
+/// Generated AppMessage / L2Book codecs (ErgoSBE `build.rs` → OUT_DIR).
 #[allow(
     dead_code,
     unused_imports,
@@ -14,10 +15,24 @@
     unused_mut,
     unused_assignments,
     unused_must_use,
+    non_camel_case_types,
+    non_snake_case,
     clippy::all,
     clippy::pedantic
 )]
 pub mod normalized_app {
+    #![allow(
+        dead_code,
+        unused_imports,
+        unused_variables,
+        unused_mut,
+        unused_assignments,
+        unused_must_use,
+        non_camel_case_types,
+        non_snake_case,
+        clippy::all,
+        clippy::pedantic
+    )]
     include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
 }
 

@@ -24,7 +24,7 @@ fn pad36(s: &str) -> [u8; 36] {
 }
 
 fn main() {
-    println!("=== Rusteron RFQ Client (ErgoSBE codecs) ===\n");
+    println!("=== Ergo Aeron Cluster RFQ Client (ErgoSBE codecs) ===\n");
     println!("Schema: protocol-codecs.xml (schema 101, version 1)");
     println!("Source: aeron-io/aeron-cookbook-code (vendored)\n");
 

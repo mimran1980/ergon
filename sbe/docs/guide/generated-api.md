@@ -3,11 +3,11 @@
 This guide documents every type and trait that ErgoSBE generates from an SBE
 schema. The examples use a hypothetical `Quote` message from a market-data schema.
 
-> **Encoder-wrap status (2026-07-11):** examples show the approved fallible
-> `wrap`/`wrap_and_apply_header` target. Current generated encoders still return
-> `Self` and can panic on an undersized slice; todos 27 and 86 are reopened.
-> Do not treat the `?` examples as shipped until those todos and the golden/API
-> tests pass.
+> **Encoder/decoder entry (current):** generated `wrap` / `wrap_and_apply_header`
+> return `Result` (`EncodeError` / `DecodeError`). Prefer fallible `?` at the
+> trust boundary. Tail groups/var-data use **concrete consuming stages**
+> (`into_bids` → `finish` → next stage); see [DECISIONS.md](../../design/DECISIONS.md)
+> and [advanced.md](advanced.md).
 
 ## Module structure
 

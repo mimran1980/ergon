@@ -42,7 +42,7 @@ impl EgressListener for EchoListener {
 }
 
 fn main() {
-    println!("=== Rusteron Cluster Echo Client (library API) ===\n");
+    println!("=== Ergo Aeron Cluster Echo Client (library API) ===\n");
 
     let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
 

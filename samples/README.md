@@ -18,9 +18,19 @@ members set — each sample is a standalone crate.
 | Single-process feed + CH exact rows, no leadership | `advanced-bitget` |
 | Multi-venue schema roundtrip / local book | `exchange-orderbook` |
 | Leadership-aware book + cluster publish + failover | `cluster-ha-orderbook` |
+| Dynamic latency rows without a new Persist DTO schema | HA `LatencyPersistor` (or copy its pattern) |
 
 **Do not dual-pin** rusteron 0.2.1 and 0.2.4 in one binary — that is why HA and
 IPC samples stay separate crates.
+
+### Shared failure modes
+
+| Condition | advanced-bitget / exchange | cluster-ha-orderbook |
+|-----------|----------------------------|----------------------|
+| ClickHouse down | Live CH tests fail preflight | Offline book tests still pass; `just samples-cluster-ha` live stage fails |
+| Claim / offer backpressure | N/A (IPC) or drop policy | `PublishOutcome::Dropped`; never unbounded retry on hot path |
+| Leadership change | N/A | `serving=false`; `live_image() == None` until term-valid snapshot |
+| Sequence gap / term mismatch | N/A | Resync; no silent merge of old-term levels |
 
 ## Common preflight
 

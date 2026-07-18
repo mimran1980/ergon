@@ -22,7 +22,7 @@ const BID_MESSAGE_LENGTH: usize = 24;
 fn main() {
     let customer_id: u64 = 100;
     let num_bids: u64 = 5;
-    println!("=== Rusteron Auction Client ===\n");
+    println!("=== Ergo Aeron Cluster Auction Client ===\n");
     println!("Customer ID: {customer_id}, Bids to send: {num_bids}");
 
     let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
