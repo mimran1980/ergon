@@ -9,6 +9,9 @@ check:
     cd samples/advanced-bitget && cargo fmt --check
     cd samples/advanced-bitget && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/advanced-bitget && cargo test -- --test-threads=1 --skip clickhouse
+    cd samples/exchange-orderbook && cargo fmt --check
+    cd samples/exchange-orderbook && cargo clippy --all-targets --all-features -- -D warnings
+    cd samples/exchange-orderbook && cargo test -- --test-threads=1
 
 # Workspace unit tests only
 test-unit:
@@ -31,10 +34,25 @@ test-clickhouse-live:
     @echo "Preflight OK — endpoint http://127.0.0.1:8123 (external Docker)."
     cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test -- --include-ignored --test-threads=1 --nocapture
 
+# Live ClickHouse test for the exchange-orderbook sample (requires Docker
+# ClickHouse on 127.0.0.1:8123)
+test-exchange-orderbook-live:
+    @echo "Preflight: checking ClickHouse on 127.0.0.1:8123..."
+    @if ! curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
+        echo "ClickHouse not available. Start it:"; \
+        echo "  docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 \\"; \
+        echo "      -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=ergosbe \\"; \
+        echo "      clickhouse/clickhouse-server:latest"; \
+        exit 1; \
+    fi
+    @echo "Preflight OK — endpoint http://127.0.0.1:8123 (external Docker)."
+    cd samples/exchange-orderbook && cargo test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
+
 # Format all handwritten source
 fmt:
     cargo fmt --all
     cd samples/advanced-bitget && cargo fmt
+    cd samples/exchange-orderbook && cargo fmt
 
 # Coverage (requires nightly toolchain)
 cov:

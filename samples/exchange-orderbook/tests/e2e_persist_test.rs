@@ -1,3 +1,4 @@
+#[ignore = "requires live ClickHouse — run via just test-exchange-orderbook-live"]
 #[test]
 fn e2e_persist_orderbook_snapshot() {
     use chrono::Utc;

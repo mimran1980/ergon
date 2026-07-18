@@ -55,8 +55,8 @@ fn main() {
         .expect("normalized-app.xml not found");
     let norm_ir = ergosbe::parse(&norm_xml).expect("failed to parse normalized-app schema");
     let norm_schema = ergosbe::Schema::from_ir(norm_ir);
-    let norm_config = ergosbe::GenerationConfig::new("normalized_app")
-        .enable_decimal_converters("Decimal");
+    let norm_config =
+        ergosbe::GenerationConfig::new("normalized_app").enable_decimal_converters("Decimal");
     let norm_generator = ergosbe::Generator::new(norm_config);
     let norm_modules = norm_generator.generate(&norm_schema);
     for m in norm_modules.modules() {

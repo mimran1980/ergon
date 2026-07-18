@@ -465,7 +465,8 @@ fn binance_logon_response_roundtrip() {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder =
+        WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .authorized_since(1712345678000000i64)
         .connected_since(1712345679000000i64)
@@ -845,8 +846,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() {
 #[test]
 fn app_message_l2book_roundtrip() {
     use normalized_app::{
-        AppMessageDecoder, AppMessageEncoder, AnyMessage,
-        Decimal, L2BookEncoder, Source, sbe_rt,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
 
     let symbol = b"BTCUSDT";
@@ -860,10 +860,8 @@ fn app_message_l2book_roundtrip() {
         symbol.len(),
     );
     let app_name = b"bitget";
-    let outer_len = AppMessageEncoder::compute_encoded_length_with_message_header(
-        app_name.len(),
-        inner_len,
-    );
+    let outer_len =
+        AppMessageEncoder::compute_encoded_length_with_message_header(app_name.len(), inner_len);
 
     let mut buf = vec![0u8; outer_len];
     let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
@@ -871,33 +869,39 @@ fn app_message_l2book_roundtrip() {
 
     // Nested encode via payload_with
     let complete = outer
-        .app_name(app_name).unwrap()
+        .app_name(app_name)
+        .unwrap()
         .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
             let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
             book.source(Source::Bitget);
             book.exchange_timestamp(1_700_000_000_000_000_001);
             book.receive_timestamp(1_700_000_000_000_000_002);
             book.sequence(42);
-            let book = book.bids(bids_count, |g| {
-                g.add(|e| {
-                    e.price(Decimal::new(50000_00, -2));
-                    e.size(Decimal::new(1_50, -2));
-                });
-                g.add(|e| {
-                    e.price(Decimal::new(49900_00, -2));
-                    e.size(Decimal::new(2_00, -2));
-                });
-            }).unwrap();
-            let book = book.asks(asks_count, |g| {
-                g.add(|e| {
-                    e.price(Decimal::new(50100_00, -2));
-                    e.size(Decimal::new(0_50, -2));
-                });
-            }).unwrap();
+            let book = book
+                .bids(bids_count, |g| {
+                    g.add(|e| {
+                        e.price_wire(Decimal::new(50000_00, -2));
+                        e.size_wire(Decimal::new(1_50, -2));
+                    });
+                    g.add(|e| {
+                        e.price_wire(Decimal::new(49900_00, -2));
+                        e.size_wire(Decimal::new(2_00, -2));
+                    });
+                })
+                .unwrap();
+            let book = book
+                .asks(asks_count, |g| {
+                    g.add(|e| {
+                        e.price_wire(Decimal::new(50100_00, -2));
+                        e.size_wire(Decimal::new(0_50, -2));
+                    });
+                })
+                .unwrap();
             let book = book.symbol(symbol).unwrap();
             let _ = book.as_bytes_with_header();
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
     assert_eq!(complete.as_bytes().len(), outer_len);
 
     // Decode outer -> inner
@@ -915,10 +919,10 @@ fn app_message_l2book_roundtrip() {
             assert_eq!(bids.len(), 2);
             let mut iter = bids.into_iter();
             let b0 = iter.next().unwrap();
-            assert_eq!(b0.price().mantissa(), 50000_00);
-            assert_eq!(b0.price().exponent(), -2);
+            assert_eq!(b0.price_wire().mantissa(), 50000_00);
+            assert_eq!(b0.price_wire().exponent(), -2);
             let b1 = iter.next().unwrap();
-            assert_eq!(b1.price().mantissa(), 49900_00);
+            assert_eq!(b1.price_wire().mantissa(), 49900_00);
         }
         _ => panic!("expected L2Book"),
     }

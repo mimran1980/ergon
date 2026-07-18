@@ -49,6 +49,38 @@ jobs:
       - run: cargo test --workspace --all-targets
       - run: cargo test --doc
 
+  # Samples are excluded from the workspace (own Cargo.lock each), so the
+  # --workspace jobs above do not cover them. Gate them explicitly so API drift
+  # cannot hide outside the workspace again. Live ClickHouse tests stay #[ignore]
+  # and run via the dedicated just recipes locally.
+  samples:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+
+      - name: advanced-bitget (fmt, clippy, test)
+        run: |
+          cd samples/advanced-bitget
+          cargo fmt --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-targets -- --test-threads=1 --skip clickhouse
+
+      - name: exchange-orderbook (fmt, clippy, test)
+        run: |
+          cd samples/exchange-orderbook
+          cargo fmt --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-targets -- --test-threads=1
+
   build:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     runs-on: ubuntu-latest
