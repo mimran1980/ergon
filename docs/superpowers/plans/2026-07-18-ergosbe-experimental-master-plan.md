@@ -95,9 +95,9 @@ dirty local worktree — never reset or commit it).
 generation** (persist pattern) from the aeron submodule schemas, replacing
 the ~54k LOC of committed sbe-tool output.
 
-### Progress (2026-07-18, sessions 2–3) — FOUNDATION PROVEN, ENCODE DONE, CONSTANTS DONE
+### Progress (2026-07-18, sessions 2–3) — CODEC MIGRATION COMPLETE (all production sites)
 
-**Commit trail:** `3a2f0a8` → `5d04fdb` → `1efb240` → `62fe43c`. Pushed.
+**Commit trail:** `3a2f0a8` → `5d04fdb` → `1efb240` → `62fe43c` → `fc69c0c` → `bb7798d` → `eb6ce20`. Pushed.
 
 - **Step 1 DONE** (`3a2f0a8`): golden byte constants + 9 sbe-tool parity tests.
 - **Step 2 DONE** (`5d04fdb`): `cluster/build.rs` generates ErgoSBE codecs
@@ -114,29 +114,18 @@ the ~54k LOC of committed sbe-tool output.
     `ergo_codecs` encoder associated consts. Adapter-based tests unchanged
     (they exercise egress.rs which still uses `cluster_codecs`). 14/14 tests
     + clippy green.
-  - **`egress.rs` ~101 sites REMAINING** (MEDIUM complexity per workflow
-    inventory): the `on_fragment` decode dispatch (MessageHeader read +
-    template_id match + per-message `XxxDecoder::default().header(h,0)` +
-    `_decoder()`/`_slice()` var-data pairs) + test encode blocks. ErgoSBE
-    decode patterns are now known:
-    - Header-only read for dispatch: `MessageHeader(data[..8].try_into().unwrap()).template_id()`
-      (ErgoSBE's `MessageHeader` is `pub struct MessageHeader(pub [u8; 8])`).
-    - Body decode: `XxxDecoder::wrap_and_apply_header(data, 0)?` reads
-      header AND body in one call (no separate `.header(h,0)`).
-    - Fixed-field getters: same names, `&self` (no change).
-    - Var-data: sbe-tool `coords = dec.<field>_decoder()` then
-      `dec.<field>_slice(coords)` → ErgoSBE `let (bytes, next) = dec.into_<field>()?`
-      (consuming, returns `(&[u8], NextStage)`).
-  - **`controlled.rs` ~71 sites REMAINING** (MEDIUM): same patterns as
-    egress.rs (decode dispatch + var-data).
-  - **`codecs/tests.rs` KEEP** (workflow recommendation): has unique
-    decoder-side coverage not present in the encode-only golden parity
-    tests. Migrate to ErgoSBE API alongside egress/controlled, or
-    post-migration convert the encode half to the proven pattern and the
-    decode half to the ErgoSBE consuming-stage API.
-- **Gotchas (all still apply):** see the original entry above — client_info
-  forced completion, must_use setters, writer_impls.rs/rfq dependency, whole-
-  buf offer pattern.
+  - **`egress.rs` DONE** (`fc69c0c`): `on_fragment` + `EgressListener` trait
+    migrated. `From<DecodeError/EncodeError>` impls added to `ClusterError`.
+  - **`controlled.rs` DONE** (`bb7798d`): `on_fragment` + `ControlledEgressListener` trait migrated.
+  - **`poller.rs` DONE** (`eb6ce20`): `EgressEvent` + `parse_event` migrated.
+  - **PRODUCTION CODEC MIGRATION COMPLETE.** Remaining cluster_codecs refs:
+    test boilerplate (protocol.rs/egress.rs test blocks), `codecs/tests.rs`
+    (round-trip tests, covered by golden parity), `lib.rs` module declaration,
+    the sbe-tool `cluster_codecs/cluster_codecs_mark/rfq_codecs` modules
+    themselves (still compiled, needed by test boilerplate and rfq examples).
+- **Gotchas:** client_info forced completion (applied), must_use setters
+  (applied via `let _ =`), whole-buf offer (preserved), writer_impls.rs
+  (kept because rfq_codecs is frozen and still sbe-tool).
 
 ### Steps (for a future session)
 
