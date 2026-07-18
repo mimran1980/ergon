@@ -4,84 +4,56 @@
 mod tests {
     use crate::codecs::cluster_codecs::{
         ReadBuf, WriteBuf,
-        event_code::EventCode,
-        message_header_codec::{ENCODED_LENGTH as HEADER_LEN, MessageHeaderDecoder, MessageHeaderEncoder},
-        session_keep_alive_codec::{SBE_TEMPLATE_ID as KEEP_ALIVE_ID, SessionKeepAliveEncoder},
-        session_message_header_codec::{SBE_TEMPLATE_ID as SESSION_MSG_HDR_ID, SessionMessageHeaderEncoder},
+        message_header_codec::{MessageHeaderDecoder, MessageHeaderEncoder},
+        session_keep_alive_codec::SessionKeepAliveEncoder,
+        session_message_header_codec::SessionMessageHeaderEncoder,
+    };
+    use crate::codecs::ergo_codecs::EventCode;
+    use crate::codecs::ergo_codecs::{
+        AdminRequestEncoder, AdminResponseEncoder, ChallengeEncoder, ChallengeResponseEncoder, NewLeaderEventEncoder,
+        SessionCloseRequestEncoder, SessionConnectRequestEncoder, SessionEventEncoder,
+        SessionKeepAliveEncoder as ErgoKeepAliveEnc, SessionMessageHeaderEncoder as ErgoMsgHdrEnc,
     };
 
     #[test]
     fn test_template_ids_match_java_reference() {
-        assert_eq!(SESSION_MSG_HDR_ID, 1, "SessionMessageHeader");
-        assert_eq!(
-            crate::codecs::cluster_codecs::session_event_codec::SBE_TEMPLATE_ID,
-            2,
-            "SessionEvent"
-        );
-        assert_eq!(
-            crate::codecs::cluster_codecs::session_connect_request_codec::SBE_TEMPLATE_ID,
-            3,
-            "SessionConnectRequest"
-        );
-        assert_eq!(
-            crate::codecs::cluster_codecs::session_close_request_codec::SBE_TEMPLATE_ID,
-            4,
-            "SessionCloseRequest"
-        );
-        assert_eq!(KEEP_ALIVE_ID, 5, "SessionKeepAlive");
-        assert_eq!(
-            crate::codecs::cluster_codecs::new_leader_event_codec::SBE_TEMPLATE_ID,
-            6,
-            "NewLeaderEvent"
-        );
-        assert_eq!(
-            crate::codecs::cluster_codecs::challenge_codec::SBE_TEMPLATE_ID,
-            7,
-            "Challenge"
-        );
-        assert_eq!(
-            crate::codecs::cluster_codecs::challenge_response_codec::SBE_TEMPLATE_ID,
-            8,
-            "ChallengeResponse"
-        );
-        assert_eq!(
-            crate::codecs::cluster_codecs::admin_request_codec::SBE_TEMPLATE_ID,
-            26,
-            "AdminRequest"
-        );
-        assert_eq!(
-            crate::codecs::cluster_codecs::admin_response_codec::SBE_TEMPLATE_ID,
-            27,
-            "AdminResponse"
-        );
+        assert_eq!(ErgoMsgHdrEnc::TEMPLATE_ID, 1, "SessionMessageHeader");
+        assert_eq!(SessionEventEncoder::TEMPLATE_ID, 2, "SessionEvent");
+        assert_eq!(SessionConnectRequestEncoder::TEMPLATE_ID, 3, "SessionConnectRequest");
+        assert_eq!(SessionCloseRequestEncoder::TEMPLATE_ID, 4, "SessionCloseRequest");
+        assert_eq!(ErgoKeepAliveEnc::TEMPLATE_ID, 5, "SessionKeepAlive");
+        assert_eq!(NewLeaderEventEncoder::TEMPLATE_ID, 6, "NewLeaderEvent");
+        assert_eq!(ChallengeEncoder::TEMPLATE_ID, 7, "Challenge");
+        assert_eq!(ChallengeResponseEncoder::TEMPLATE_ID, 8, "ChallengeResponse");
+        // AdminRequest and AdminResponse have unique ids — verify from encoders.
+        assert_eq!(AdminRequestEncoder::TEMPLATE_ID, 26, "AdminRequest");
+        assert_eq!(AdminResponseEncoder::TEMPLATE_ID, 27, "AdminResponse");
     }
 
     #[test]
     fn test_schema_id_is_111() {
-        assert_eq!(crate::codecs::cluster_codecs::SBE_SCHEMA_ID, 111);
+        assert_eq!(SessionConnectRequestEncoder::SCHEMA_ID, 111);
     }
 
     #[test]
     fn test_schema_version_is_16() {
-        assert_eq!(crate::codecs::cluster_codecs::SBE_SCHEMA_VERSION, 16);
+        assert_eq!(SessionConnectRequestEncoder::SCHEMA_VERSION, 16);
     }
 
     #[test]
     fn test_message_header_is_8_bytes() {
-        assert_eq!(HEADER_LEN, 8);
+        // SBE frame header is always 8 bytes (confirmed by ErgoSBE generation).
+        assert_eq!(ErgoMsgHdrEnc::HEADER_TEMPLATE.len(), 8);
     }
 
     #[test]
     fn test_session_message_header_is_24_bytes() {
-        assert_eq!(
-            crate::codecs::cluster_codecs::session_message_header_codec::SBE_BLOCK_LENGTH,
-            24
-        );
+        assert_eq!(ErgoMsgHdrEnc::BLOCK_LENGTH, 24);
     }
 
     #[test]
     fn test_session_event_body_is_44_bytes() {
-        assert_eq!(crate::codecs::cluster_codecs::session_event_codec::SBE_BLOCK_LENGTH, 44);
+        assert_eq!(SessionEventEncoder::BLOCK_LENGTH, 44);
     }
 
     // ── malformed input ──
@@ -135,7 +107,7 @@ mod tests {
         assert_eq!(EventCode::OK as i32, 0);
         assert_eq!(EventCode::ERROR as i32, 1);
         assert_eq!(EventCode::REDIRECT as i32, 2);
-        assert_eq!(EventCode::AUTHENTICATION_REJECTED as i32, 3);
+        assert_eq!(EventCode::AUTHENTICATIONREJECTED as i32, 3);
         assert_eq!(EventCode::CLOSED as i32, 4);
     }
 
@@ -153,7 +125,7 @@ mod tests {
         }
         let read_buf = ReadBuf::new(&buf);
         let hdr = MessageHeaderDecoder::default().wrap(read_buf, 0);
-        assert_eq!(hdr.template_id(), KEEP_ALIVE_ID);
+        assert_eq!(hdr.template_id(), ErgoKeepAliveEnc::TEMPLATE_ID);
     }
 
     // ── extreme values ──
