@@ -659,6 +659,20 @@ Do not mark this plan complete until every item below has fresh evidence:
       and branch coverage.
 - [ ] Every maintained benchmark has five runs, recorded confidence intervals,
       median ErgoSBE/Aeron `<= 1.00`, and median fallible/manual `<= 1.00`.
+      **Partial (2026-07-18):** 9 of 10 maintained ErgoSBE/Aeron ratios and all
+      fallible/manual ratios are `<= 1.00`. The sole open case is
+      `encode/throughput_10k` at median **1.131** (5.5394 µs vs 4.8998 µs,
+      non-overlapping CIs, freshly re-measured). Root cause is an LLVM loop-
+      unroll + SLP-vectorisation divergence emergent from the full encoder
+      abstraction (a minimal reproducer at `docs/perf/encode-throughput-repro/`
+      *disproves* the index-vs-pointer hypothesis and rules out setter shape,
+      `Result`, extra fields, and the bounds branch). Closing it at the source
+      level would require reshaping the encoder from a borrow-based consuming-
+      stage builder to a value-move chain, trading away the consuming-stage
+      safety invariant — disallowed by the priority ladder. Upstream-issue
+      draft prepared at `docs/perf/encode-throughput-repro/UPSTREAM_ISSUE.md`.
+      This box stays open until either an upstream fix lands or the human
+      explicitly authorises the API re-architecture.
 - [x] `ergosbe-performance-optimisation-goal.md` contains the dated evidence and
       no universal claim broader than the measured matrix.
 - [x] `git diff` is reviewed in full and unrelated user changes remain intact.

@@ -4,7 +4,7 @@
 `sbe/todos/156-fallible-stage-combinators.md`, Decimal-array dynamic messages,
 and foreground ClickHouse persistence
 **Severity:** HIGH
-**Status: ACTIVE (approved design 2026-07-11; not implemented)**
+**Status: DONE (implemented 2026-07-17; live-verified 2026-07-18)** — three-thread pipeline (`BitgetIngestor`/`ClaimPublisher`/`ForegroundPersistor`), normalized `AppMessage(L2Book|Trade)`, dynamic V2 stream, exact-length claims. Offline E2E + live ClickHouse proven: `just test-clickhouse-live` → `e2e_ipc_to_clickhouse_exact_rows` + `batched_inserts_flush_on_threshold_and_shutdown` both pass (2/2) against Docker ClickHouse, exact rows queried back from `l2book_typed`/`l2book_dynamic`/`trade`. Live exchange WebSocket remains a manual recipe (TLS, environment-gated). See remediation plan Tasks 7–11 and `docs/superpowers/plans/2026-07-16-sbe-app-message-review-remediation.md`.
 
 ## Authority
 

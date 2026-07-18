@@ -265,6 +265,45 @@ explicitly documented live/manual-only recipes accepted by the human.
 
 Add a new entry at the top of this ledger after every iteration.
 
+### 2026-07-18 Verification sweep — exchange-orderbook repaired + gated; MSRV reconciled; live proof refreshed; perf blocker narrowed
+
+Fresh evidence this session (all run in the current worktree, rustc 1.95.0 /
+aarch64 unless noted; dirty `simple-binary-encoding` submodule preserved):
+
+- **samples/exchange-orderbook drift fixed + gated.** `app_message_l2book_roundtrip`
+  used the obsolete `Decimal` interface (E0277/E0599); switched the 6 entry setters
+  and 3 getters to the generated raw `*_wire` methods. `e2e_persist_test` marked
+  `#[ignore]` (live ClickHouse). The sample is now in `just check` / `just fmt`
+  and a new `just test-exchange-orderbook-live` recipe; CI gained a `samples` job
+  covering both samples. `cargo test` → 19 round-trip tests pass + 1 ignored live.
+- **MSRV reconciled.** Declared `rust-version = "1.88"` could not build
+  (`ergo-clickhouse-persist -> clickhouse 0.15.1` needs 1.89+). Bumped workspace
+  MSRV to **1.89** (user-approved) and verified `cargo +1.89.0 check --workspace
+  --all-targets --all-features`. CI gained an `msrv` job; clippy/test now run
+  `--all-features` and a `bound-check-disabled` step was added.
+- **Final local gates green:** `just check` (hygiene + workspace fmt/clippy/test
+  + both samples), `cargo test -p ergosbe --features bound-check-disabled`,
+  `cargo bench -p ergosbe-benchmarks --no-run` (5 executables), `cargo +1.89.0
+  check`.
+- **Live proof refreshed** against Docker ClickHouse (`ergo-persist-test`
+  container; `persist/tests/run-clickhouse.sh` password aligned to `ergosbe`):
+  persist integration 7/7, advanced-bitget live 2/2 (`e2e_ipc_to_clickhouse_exact_rows`),
+  exchange-orderbook live 1/1.
+- **encode/throughput_10k perf blocker narrowed.** Fresh median **1.131**
+  (5.5394 µs vs 4.8998 µs, non-overlapping CIs). A minimal reproducer
+  (`docs/perf/encode-throughput-repro/repro.rs`) **disproves** the index-vs-
+  pointer hypothesis (4 variants within 0.5%) and rules out setter shape /
+  `Result` / extra fields / bounds branch. Divergence is emergent from the full
+  encoder abstraction; not source-fixable without abandoning the consuming-stage
+  borrow chain (forbidden). Upstream-issue draft prepared. 9 of 10 maintained
+  ratios ≤ 1.00; this remains the sole open ratio and a documented compiler
+  blocker.
+- **Status/todos audited:** `sbe/todos/06` and `samples/todo/01` stale claims
+  corrected with fresh evidence; remediation-plan final benchmark-ratio box
+  annotated honestly (left open).
+
+Commits this session: `2a36134`, `d8c4933`, `49f599e`, `ea794e3` (+ this audit).
+
 ### 2026-07-11 AppMessage and fallible-stage design approved
 
 - Reopened nested var-data message dispatch after source inspection showed the
