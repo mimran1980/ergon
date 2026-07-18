@@ -67,11 +67,32 @@ samples-orderbook:
     cd samples/exchange-orderbook && cargo test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
     cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test -- --include-ignored --test-threads=1 --nocapture
 
+# HA cluster sample: offline try_claim + never-stale book proofs, then live
+# feed_latency ClickHouse rows (requires Docker CH on 127.0.0.1:8123).
+# Pin: this sample uses ergo-aeron-cluster / rusteron 0.2.4 (IPC advanced-bitget stays 0.2.1).
+samples-cluster-ha:
+    @echo "=== cluster-ha-orderbook offline pipeline (try_claim path + stale-book) ==="
+    cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
+    @echo "Preflight: ClickHouse on 127.0.0.1:8123..."
+    @if ! curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
+        echo "ClickHouse not available — starting via persist/tests/run-clickhouse.sh"; \
+        bash persist/tests/run-clickhouse.sh start || true; \
+        sleep 2; \
+    fi
+    @if curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
+        echo "=== feed_latency DynamicRow → ClickHouse ==="; \
+        cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture; \
+    else \
+        echo "WARNING: ClickHouse still unreachable; offline HA tests already ran."; \
+        exit 1; \
+    fi
+
 # Format all handwritten source
 fmt:
     cargo fmt --all
     cd samples/advanced-bitget && cargo fmt
     cd samples/exchange-orderbook && cargo fmt
+    cd samples/cluster-ha-orderbook && cargo fmt
 
 # Coverage (requires nightly toolchain)
 cov:
