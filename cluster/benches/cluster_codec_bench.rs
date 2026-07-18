@@ -5,7 +5,11 @@
 //! only for these benches.
 //!
 //! Acceptance: 5-run median ErgoSBE/sbe-tool ratio ≤ 1.00 on every **maintained**
-//! case (encode header/keep-alive; decode header/event after equal-work audit).
+//! case:
+//! - encode: session message header, keep-alive, **claim_shaped** (header + app)
+//! - decode: session message header, session event (equal-work audit)
+//!
+//! Diagnostic-only (not a ≤1.00 gate): NewLeaderEvent decode, connect request.
 #![allow(unused_must_use, unused_imports)]
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};

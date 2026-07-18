@@ -1,7 +1,7 @@
 # Living backlog — verified-open items only
 
 **Status:** LIVING — update when an item is closed with evidence.  
-**Last audit:** 2026-07-19 · branch `first_cut` (living-backlog closeout)  
+**Last audit:** 2026-07-19 · branch `first_cut` (§C optional polish closeout)  
 **Not this file:** process checklists in `ergosbe-performance-optimisation-goal.md`,
 the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 
@@ -17,9 +17,12 @@ the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 |------|-----|
 | Rust Aeron Cluster **service** | Explicit non-goal |
 | SessionConnectRequest encode ≤ 1.00 as a gate | Demoted cold path |
+| NewLeaderEvent decode ≤ 1.00 as a gate | Diagnostic-only; smoke ratio ≫ 1.00 after equal-work audit |
 | Delete residual sbe-tool codec trees | Needed for head-to-head benches |
 | Pillar directory renames | Permanent layout rule |
 | Live exchange WebSocket in CI | Manual recipe only (samples DONE offline/CH) |
+| Live harness always-on CI | Env-gated by design |
+| Cluster beyond prototype quality | Explicit experimental banner on crate |
 
 ---
 
@@ -42,17 +45,23 @@ All prior §A items closed 2026-07-19 — see section D.
 
 ## C. Optional polish (non-blocking)
 
-| Item | Status |
-|------|--------|
-| Promote NewLeaderEvent decode to maintained ≤1.00 | **Left open** — smoke ratio ~2.28 (Ergo 12.2 µs / sbe-tool 5.35 µs); keep diagnostic-only until equal-work re-audit of sbe-tool arm |
-| Promote claim-shaped encode to maintained ≤1.00 | **Eligible** — smoke ratio ~0.989 (9.28 / 9.38 µs); ledger optional, not a product gap |
-| `cargo test -p ergo-aeron-cluster --doc` clean | Left open — generated schema ASCII docblocks |
-| Live harness always-on CI | Env-gated by design |
-| Cluster beyond prototype quality | Explicit experimental banner |
+**Open optional items:** *(none)*
+
+All prior §C items closed 2026-07-19 — see section D.
 
 ---
 
 ## D. Closed (do not re-queue)
+
+### 2026-07-19 §C optional polish closeout
+
+| Item | Resolution | Evidence |
+|------|------------|----------|
+| claim_shaped encode maintained ≤1.00 | DONE | Bench acceptance lists claim_shaped; smoke 2026-07-19 Ergo 9.34 µs / sbe-tool 9.37 µs ≈ **0.997** |
+| NewLeaderEvent decode ≤1.00 gate | WON'T-DO | Smoke Ergo 12.3 µs / sbe-tool 5.46 µs ≈ **2.26**; diagnostic-only non-goal |
+| `cargo test -p ergo-aeron-cluster --doc` | DONE | Multi-line schema descriptions fenced as text code blocks in generator; `cargo test -p ergo-aeron-cluster --doc` green |
+| Live harness always-on CI | WON'T-DO | Intentional env gate |
+| Cluster beyond prototype | WON'T-DO | Experimental banner retained |
 
 ### 2026-07-19 living-backlog closeout
 
@@ -68,7 +77,7 @@ All prior §A items closed 2026-07-19 — see section D.
 ### Earlier umbrella closeout
 
 - Residual product COMPLETE; HA + RFQ + quality P0–P4  
-- Maintained cluster encode/decode (header/event) ≤ 1.00  
+- Maintained cluster encode/decode (header/event/claim_shaped) ≤ 1.00  
 
 ---
 

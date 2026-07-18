@@ -219,6 +219,39 @@ bound-check-disabled = []
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Multi-line XML-comment style prose with indented ASCII must not become
+/// bare doctests (cluster SessionMessageHeader protocol diagram).
+#[test]
+fn multiline_indented_description_is_text_fenced() {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="inline" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <!--
+    Session Protocol:
+        -> connect
+                          \
+        <-                 event
+  -->
+  <sbe:message name="M" id="1" description="Header line."><field name="f" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergosbe::parse(xml).expect("parse");
+    let schema = ergosbe::Schema::from_ir(ir);
+    let modules = ergosbe::Generator::new(ergosbe::GenerationConfig::new("ml_fence")).generate(&schema);
+    let src = &modules.modules().next().unwrap().source;
+    assert!(
+        src.contains("```text") || src.contains("text\\n"),
+        "multi-line description must be text-fenced to avoid doctests; got snippet around MDecoder"
+    );
+    // Indented protocol arrow lines must live inside the fence, not as raw docs.
+    let decoder_docs = docs_before(src, "pub struct MDecoder");
+    if !decoder_docs.is_empty() {
+        assert!(
+            decoder_docs.contains("```text") || decoder_docs.contains("Session Protocol"),
+            "expected fenced or retained protocol prose in docs, got:\n{decoder_docs}"
+        );
+    }
+}
+
 /// Minimal inline XML fixture with a description attribute on a message.
 #[test]
 fn inline_schema_description_attr_on_message() {

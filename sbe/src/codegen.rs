@@ -1307,9 +1307,7 @@ fn generate_enum(src: &mut String, tokens: &[Token]) {
 
     // Emit enum rustdoc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
-        for line in desc.lines() {
-            src.push_str(&format!("///{line}\n"));
-        }
+        push_description_doc(src, desc);
     }
 
     let tokens = quote::quote! {
@@ -1398,16 +1396,12 @@ fn generate_set(src: &mut String, tokens: &[Token]) {
 
     // Emit enum doc from the type's XML description (DECISIONS.md §9).
     if let Some(ref desc) = tokens[0].encoding.description {
-        for line in desc.lines() {
-            src.push_str(&format!("///{line}\n"));
-        }
+        push_description_doc(src, desc);
     }
 
     // Emit set doc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
-        for line in desc.lines() {
-            src.push_str(&format!("///{line}\n"));
-        }
+        push_description_doc(src, desc);
     }
 
     let tokens = quote::quote! {
@@ -1679,9 +1673,7 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
 
     // Emit composite doc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
-        for line in desc.lines() {
-            src.push_str(&format!("///{line}\n"));
-        }
+        push_description_doc(src, desc);
     }
 
     let ts = quote::quote! {
@@ -2459,10 +2451,7 @@ fn generate_message_decoder(
 
     // 1. Decoder Struct + optional doc comment
     if let Some(ref desc) = msg.description {
-        let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
-        ts.extend(quote::quote! {
-            #[doc = #desc_lit]
-        });
+        ts.extend(doc_attr_tokens(desc));
     }
     // Fixed-block-only decoders (no groups/var-data) are Copy: they have no
     // tail cursor, so copying cannot weaken an ordering invariant. Tailed
@@ -2625,11 +2614,7 @@ fn generate_message_decoder(
                             let expr = constant_value_expr(*prim, val);
                             let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                             if let Some(ref desc) = f.description {
-                                let desc_lit =
-                                    syn::LitStr::new(desc, proc_macro2::Span::call_site());
-                                impl_body.extend(quote::quote! {
-                                    #[doc = #desc_lit]
-                                });
+                                impl_body.extend(doc_attr_tokens(desc));
                             }
                             impl_body.extend(quote::quote! {
                                 #[inline]
@@ -2719,8 +2704,7 @@ fn generate_message_decoder(
                             proc_macro2::Span::call_site(),
                         );
                         if let Some(ref desc) = f.description {
-                            let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
-                            impl_body.extend(quote::quote! { #[doc = #desc_lit] });
+                            impl_body.extend(doc_attr_tokens(desc));
                         }
                         let accessor = format!(
                             "#[inline]\n\
@@ -2756,8 +2740,7 @@ fn generate_message_decoder(
                             proc_macro2::Span::call_site(),
                         );
                         if let Some(ref desc) = f.description {
-                            let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
-                            impl_body.extend(quote::quote! { #[doc = #desc_lit] });
+                            impl_body.extend(doc_attr_tokens(desc));
                         }
                         impl_body.extend(quote::quote! {
                             #[inline]
@@ -2771,8 +2754,7 @@ fn generate_message_decoder(
                         });
                     } else {
                         if let Some(ref desc) = f.description {
-                            let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
-                            impl_body.extend(quote::quote! { #[doc = #desc_lit] });
+                            impl_body.extend(doc_attr_tokens(desc));
                         }
                         impl_body.extend(quote::quote! {
                             #[inline]
@@ -3728,8 +3710,7 @@ fn generate_group_decoder(
 
     // Struct definition + wrap() + wrap_with_parent() + is_empty()
     if let Some(ref desc) = g.description {
-        let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
-        ts.extend(quote::quote! { #[doc = #desc_lit] });
+        ts.extend(doc_attr_tokens(desc));
     }
     ts.extend(quote::quote! {
         pub struct #decoder_ident<'a> {
@@ -4502,8 +4483,7 @@ fn generate_group_decoder(
 
     // Emit the EntryDecoder struct + its impl block + Display impl
     if let Some(ref desc) = g.description {
-        let desc_lit = syn::LitStr::new(desc, proc_macro2::Span::call_site());
-        ts.extend(quote::quote! { #[doc = #desc_lit] });
+        ts.extend(doc_attr_tokens(desc));
     }
     if total_tail == 0 {
         ts.extend(quote::quote! {
@@ -4867,8 +4847,7 @@ fn generate_message_encoder(
     // ── Generate all stage struct definitions (identical layout, non-generic) ──
     // Emit encoder struct doc from the message's XML description.
     if let Some(ref desc) = msg.description {
-        let desc_lit = syn::LitStr::new(desc, span);
-        ts.extend(quote::quote! { #[doc = #desc_lit] });
+        ts.extend(doc_attr_tokens(desc));
     }
     for stage in &stage_idents {
         ts.extend(quote::quote! {
@@ -6399,6 +6378,43 @@ fn generate_any_message(
     }
 
     out
+}
+
+/// Make schema XML descriptions safe for rustdoc doctests.
+///
+/// Multi-line descriptions often carry indented ASCII protocol diagrams or
+/// XML-comment prose (e.g. Aeron cluster codecs). Rustdoc treats 4-space
+/// indented blocks as Rust doctests, which then fail `cargo test --doc`.
+/// Fence multi-line content as `text` so it stays documentation only.
+fn sanitize_description_for_doc(desc: &str) -> String {
+    let desc = desc.trim_end_matches(['\r', '\n']);
+    if !desc.contains('\n') {
+        return desc.to_string();
+    }
+    let fence = if desc.contains("```") { "````" } else { "```" };
+    format!("{fence}text\n{desc}\n{fence}")
+}
+
+/// `#[doc = "..."]` token for a schema description (doctest-safe).
+fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
+    let lit = syn::LitStr::new(
+        &sanitize_description_for_doc(desc),
+        proc_macro2::Span::call_site(),
+    );
+    quote::quote! { #[doc = #lit] }
+}
+
+/// Append `///` rustdoc lines for a schema description (doctest-safe).
+///
+/// Single-line style is `///Text` (no forced space) so existing provenance
+/// tests that match `///Description…` keep passing. Multi-line content is
+/// first fenced as `text` by [`sanitize_description_for_doc`].
+fn push_description_doc(src: &mut String, desc: &str) {
+    for line in sanitize_description_for_doc(desc).lines() {
+        src.push_str("///");
+        src.push_str(line);
+        src.push('\n');
+    }
 }
 
 /// Compute a deterministic 64-bit hash of the schema identity.
