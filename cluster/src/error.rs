@@ -56,3 +56,19 @@ impl std::fmt::Display for ClusterError {
 }
 
 impl std::error::Error for ClusterError {}
+
+impl From<crate::codecs::ergo_codecs::sbe_rt::DecodeError> for ClusterError {
+    fn from(e: crate::codecs::ergo_codecs::sbe_rt::DecodeError) -> Self {
+        ClusterError::ProtocolError {
+            reason: format!("decode: {e:?}"),
+        }
+    }
+}
+
+impl From<crate::codecs::ergo_codecs::sbe_rt::EncodeError> for ClusterError {
+    fn from(e: crate::codecs::ergo_codecs::sbe_rt::EncodeError) -> Self {
+        ClusterError::Publication {
+            reason: format!("encode: {e:?}"),
+        }
+    }
+}
