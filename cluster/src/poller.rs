@@ -2,11 +2,13 @@
 //! handshake. Captures the next `SessionEvent`, `Challenge`, or
 //! `NewLeaderEvent` so the caller can react.
 
-use crate::codecs::cluster_codecs::{
-    ReadBuf,
-    event_code::EventCode,
-    message_header_codec::{ENCODED_LENGTH as HEADER_LEN, MessageHeaderDecoder},
+use crate::codecs::ergo_codecs::{
+    ChallengeDecoder, EventCode, MessageHeader, NewLeaderEventDecoder, SessionEventDecoder,
 };
+use crate::codecs::ergo_codecs::{ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder};
+
+/// SBE message frame header is always 8 bytes.
+const HEADER_LEN: usize = 8;
 
 /// One captured egress event from a poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,46 +44,50 @@ pub fn parse_event(data: &[u8]) -> Option<EgressEvent> {
     if data.len() < HEADER_LEN {
         return None;
     }
-    let read_buf = ReadBuf::new(data);
-    let header = MessageHeaderDecoder::default().wrap(read_buf, 0);
+    let header = MessageHeader(data[..HEADER_LEN].try_into().unwrap());
     let tid = header.template_id();
 
     match tid {
-        2 => {
-            use crate::codecs::cluster_codecs::session_event_codec::SessionEventDecoder;
-            let mut dec = SessionEventDecoder::default().header(header, 0);
-            let c = dec.detail_decoder();
-            let detail = std::str::from_utf8(dec.detail_slice(c)).unwrap_or("").to_string();
+        SessionEventEncoder::TEMPLATE_ID => {
+            let decoder = SessionEventDecoder::wrap_and_apply_header(data, 0).ok()?;
+            let cid = decoder.correlation_id();
+            let csid = decoder.cluster_session_id();
+            let ltid = decoder.leadership_term_id();
+            let lmid = decoder.leader_member_id();
+            let code = decoder.code();
+            let (detail_bytes, _) = decoder.into_detail().ok()?;
+            let detail = std::str::from_utf8(detail_bytes).unwrap_or("").to_string();
             Some(EgressEvent::SessionEvent {
-                correlation_id: dec.correlation_id(),
-                cluster_session_id: dec.cluster_session_id(),
-                leadership_term_id: dec.leadership_term_id(),
-                leader_member_id: dec.leader_member_id(),
-                code: dec.code(),
+                correlation_id: cid,
+                cluster_session_id: csid,
+                leadership_term_id: ltid,
+                leader_member_id: lmid,
+                code,
                 detail,
             })
         }
-        7 => {
-            use crate::codecs::cluster_codecs::challenge_codec::ChallengeDecoder;
-            let mut dec = ChallengeDecoder::default().header(header, 0);
-            let c = dec.encoded_challenge_decoder();
+        ChallengeEncoder::TEMPLATE_ID => {
+            let decoder = ChallengeDecoder::wrap_and_apply_header(data, 0).ok()?;
+            let cid = decoder.correlation_id();
+            let csid = decoder.cluster_session_id();
+            let (chal, _) = decoder.into_encoded_challenge().ok()?;
             Some(EgressEvent::Challenge {
-                correlation_id: dec.correlation_id(),
-                cluster_session_id: dec.cluster_session_id(),
-                encoded_challenge: dec.encoded_challenge_slice(c).to_vec(),
+                correlation_id: cid,
+                cluster_session_id: csid,
+                encoded_challenge: chal.to_vec(),
             })
         }
-        6 => {
-            use crate::codecs::cluster_codecs::new_leader_event_codec::NewLeaderEventDecoder;
-            let mut dec = NewLeaderEventDecoder::default().header(header, 0);
-            let c = dec.ingress_endpoints_decoder();
+        NewLeaderEventEncoder::TEMPLATE_ID => {
+            let decoder = NewLeaderEventDecoder::wrap_and_apply_header(data, 0).ok()?;
+            let csid = decoder.cluster_session_id();
+            let ltid = decoder.leadership_term_id();
+            let lmid = decoder.leader_member_id();
+            let (eps_bytes, _) = decoder.into_ingress_endpoints().ok()?;
             Some(EgressEvent::NewLeader {
-                cluster_session_id: dec.cluster_session_id(),
-                leadership_term_id: dec.leadership_term_id(),
-                leader_member_id: dec.leader_member_id(),
-                ingress_endpoints: std::str::from_utf8(dec.ingress_endpoints_slice(c))
-                    .unwrap_or("")
-                    .to_string(),
+                cluster_session_id: csid,
+                leadership_term_id: ltid,
+                leader_member_id: lmid,
+                ingress_endpoints: std::str::from_utf8(eps_bytes).unwrap_or("").to_string(),
             })
         }
         other => Some(EgressEvent::Other { template_id: other }),

@@ -144,7 +144,7 @@ impl AeronCluster {
                     detail,
                     ..
                 }) => {
-                    use crate::codecs::cluster_codecs::event_code::EventCode;
+                    use crate::codecs::ergo_codecs::EventCode;
                     match code {
                         EventCode::OK => {
                             self.cluster_session_id = cluster_session_id;
@@ -153,7 +153,7 @@ impl AeronCluster {
                             self.state = SessionState::Connected;
                             return Ok(());
                         }
-                        EventCode::AUTHENTICATION_REJECTED => {
+                        EventCode::AUTHENTICATIONREJECTED => {
                             return Err(ClusterError::AuthRejected);
                         }
                         EventCode::REDIRECT => {
@@ -633,7 +633,7 @@ impl AsyncClusterConnect {
                             detail,
                             ..
                         } => {
-                            use crate::codecs::cluster_codecs::event_code::EventCode;
+                            use crate::codecs::ergo_codecs::EventCode;
                             match code {
                                 EventCode::OK => {
                                     self.cluster_session_id = cluster_session_id;
@@ -642,7 +642,7 @@ impl AsyncClusterConnect {
                                     self.step = AsyncStep::Done;
                                     return Ok(false);
                                 }
-                                EventCode::AUTHENTICATION_REJECTED => {
+                                EventCode::AUTHENTICATIONREJECTED => {
                                     return Err(ClusterError::AuthRejected);
                                 }
                                 EventCode::REDIRECT => {
