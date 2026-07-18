@@ -46,3 +46,6 @@ required-features = ["test-harness"]
 proptest = "1.11"
 rusteron-media-driver = "0.2.4"
 serial_test = { version = "3", features = ["file_locks"] }
+
+[build-dependencies]
+ergosbe = { path = "../sbe" }

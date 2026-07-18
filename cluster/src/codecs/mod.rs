@@ -7,6 +7,66 @@ pub mod cluster_codecs;
 pub mod cluster_codecs_mark;
 pub mod rfq_codecs;
 
+/// ErgoSBE-generated cluster codecs (build.rs, side-by-side with the legacy
+/// sbe-tool `cluster_codecs` during the migration). Wire-parity proven against
+/// the sbe-tool output by the `parity_*_ergo` golden tests in
+/// `tests/codec_golden_bytes.rs`. Once the live client migrates to these, the
+/// sbe-tool `cluster_codecs` module is deleted and this replaces it.
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unused_comparisons,
+    unused_assignments,
+    non_camel_case_types,
+    non_snake_case,
+    unexpected_cfgs,
+    clippy::all
+)]
+pub mod ergo_codecs {
+    #![allow(
+        dead_code,
+        unused_imports,
+        unused_variables,
+        unused_mut,
+        unused_comparisons,
+        unused_assignments,
+        non_camel_case_types,
+        non_snake_case,
+        unexpected_cfgs,
+        clippy::all
+    )]
+    include!(concat!(env!("OUT_DIR"), "/aeron_cluster_codecs.rs"));
+}
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unused_comparisons,
+    unused_assignments,
+    non_camel_case_types,
+    non_snake_case,
+    unexpected_cfgs,
+    clippy::all
+)]
+pub mod ergo_codecs_mark {
+    #![allow(
+        dead_code,
+        unused_imports,
+        unused_variables,
+        unused_mut,
+        unused_comparisons,
+        unused_assignments,
+        non_camel_case_types,
+        non_snake_case,
+        unexpected_cfgs,
+        clippy::all
+    )]
+    include!(concat!(env!("OUT_DIR"), "/aeron_cluster_codecs_mark.rs"));
+}
+
 // sbe-tool 1.39.0 omits `impl Writer for WriteBuf`; provided here so the
 // generated `mod.rs` files stay pure generator output. See writer_impls.rs.
 mod writer_impls;
