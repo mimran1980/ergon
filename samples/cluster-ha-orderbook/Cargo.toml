@@ -13,11 +13,32 @@ ergo-aeron-cluster = { path = "../../cluster" }
 serde = { version = "1", features = ["derive"] }
 reqwest = { version = "0.12", features = ["blocking"] }
 
+[features]
+default = []
+# Multi-node Java kill-leader HA harness (needs built Aeron jars).
+test-harness = [
+    "ergo-aeron-cluster/test-harness",
+    "dep:ergo-aeron-cluster-test-support",
+    "dep:rusteron-media-driver",
+    "dep:serial_test",
+]
+
 [build-dependencies]
 ergosbe = { path = "../../sbe" }
 
-[dev-dependencies]
-# harness tests may enable cluster test-harness later
+# Optional harness deps (enabled by feature test-harness; used only by ha_kill_leader).
+[dependencies.ergo-aeron-cluster-test-support]
+path = "../../cluster-test-support"
+optional = true
+
+[dependencies.rusteron-media-driver]
+version = "0.2.4"
+optional = true
+
+[dependencies.serial_test]
+version = "3"
+features = ["file_locks"]
+optional = true
 
 [[test]]
 name = "ha_offline_pipeline"
@@ -26,3 +47,8 @@ path = "tests/ha_offline_pipeline.rs"
 [[test]]
 name = "ha_latency_clickhouse"
 path = "tests/ha_latency_clickhouse.rs"
+
+[[test]]
+name = "ha_kill_leader"
+path = "tests/ha_kill_leader.rs"
+required-features = ["test-harness"]

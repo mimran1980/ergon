@@ -38,7 +38,7 @@ The IPC sample remains the non-HA baseline and must stay green
 - Full exchange matching engine or multi-symbol OMS.
 - Rust Aeron Cluster **service** implementation (client only; Java harness v1).
 - Renaming `samples/`, `cluster/`, or any pillar directory.
-- Unfreezing RFQ codecs.
+- ~~Unfreezing RFQ codecs~~ (done separately on cluster crate, 2026-07-18).
 - Replacing typed book tables; latency uses **dynamic** table/row only.
 - Claiming “HFT-ready” release quality beyond measured gates.
 
@@ -214,8 +214,8 @@ sample allocation discipline; prove or document bounds.
 - [x] **H2** Leadership release → book stale; no silent cross-term apply —
       `ha_book` + offline pipeline.
 - [x] **H3** After release, resync snapshot matches reference —
-      `failover_sequence_reference_equality` (offline H3-equivalent; multi-node
-      Java kill-leader optional follow-up).
+      `failover_sequence_reference_equality` (offline) + multi-node Java
+      kill-leader `ha_kill_leader` / `just samples-cluster-ha-kill-leader`.
 - [x] **H4** Latency via shipped `LatencyPersistor`: DynamicSchema once →
       DynamicRow encode → SchemaRegistry/RowDecoder → ClickhouseSink → CH query
       (`feed_latency_via_latency_persistor_into_clickhouse`).

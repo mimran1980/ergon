@@ -3,8 +3,8 @@
 **Blocked by:** none for offline + CH latency path  
 **Severity:** HIGH  
 **Status: DONE (2026-07-18)** — crate `samples/cluster-ha-orderbook`; recipe
-`just samples-cluster-ha`. Live multi-node Java failover remains optional
-harness follow-up; offline H3-equivalent proven in `ha_offline_pipeline`.
+`just samples-cluster-ha`. Multi-node Java kill-leader never-stale book also
+**DONE** (`just samples-cluster-ha-kill-leader` / `ha_kill_leader`, 13s green).
 
 ## Authority
 

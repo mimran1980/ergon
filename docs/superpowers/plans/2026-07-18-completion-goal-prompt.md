@@ -69,18 +69,23 @@ DONE for current scope:
   ergo_codecs; 18/18 golden parity; harness suite previously green vs Java;
   53 lib tests.
 - cluster encode 5-run matrix ledgered: header 0.856, keep-alive 0.916 PASS;
-  connect 1.001 demoted (cold path). Decode benches present (f01e334).
+  connect 1.001 demoted (cold path). Decode equal-work promoted: header 0.918,
+  event 0.906 (maintained).
 - Connect re-offer: DONE (sync + async PollResponse cadence).
 - Log-recovery restart test: DONE (ae6f4c9, #[ignore] destructive).
 - HA sample: `samples/cluster-ha-orderbook` + `just samples-cluster-ha` —
-  try_claim publish, never-stale book, LatencyPersistor → CH (H1–H8 residual).
-- RFQ codecs: frozen sbe-tool (no schema XML); keep compiling; do not unfreeze
-  without human OK.
+  try_claim publish, never-stale book, LatencyPersistor → CH (H1–H8 residual);
+  multi-node kill-leader green (`just samples-cluster-ha-kill-leader`).
+- RFQ codecs: **unfrozen** — vendored `cluster/schemas/protocol-codecs.xml`
+  (cookbook schema 101); ErgoSBE `ergo_rfq_codecs` production path; sbe-tool
+  residual retained only for wire-parity tests + benches.
 
-OPEN residual after 2026-07-18 completion pass (none blocking umbrella):
-1. Optional: promote decode benches into maintained ≤1.00 set after equal-work audit.
-2. Optional: multi-node Java kill-leader HA harness (offline H3 + connect harness green).
-3. sbe-tool trees still compile for benches + frozen RFQ only (intentional).
+OPEN residual after 2026-07-18 optionals pass (none blocking; all 3 DONE):
+1. ~~Optional: promote decode benches~~ **DONE** — equal-work audit; header
+   0.918, event 0.906 promoted to maintained ≤1.00.
+2. ~~Optional: multi-node Java kill-leader HA harness~~ **DONE** —
+   `samples-cluster-ha-kill-leader` / `ha_kill_leader` green.
+3. sbe-tool trees still compile for head-to-head benches only (intentional).
 
 ================================================================
 HARD INVARIANTS
@@ -103,14 +108,16 @@ Hot / maintained (must ≤ 1.00, five-run ledgered in
 ergosbe-performance-optimisation-goal.md; fresh smoke OK to re-confirm):
 - SessionMessageHeader encode (claim-shaped buffer) — five-run **0.856**
 - SessionKeepAlive encode — five-run **0.916**
+- SessionMessageHeader decode — equal-work smoke **0.918** (promoted 2026-07-18)
+- SessionEvent decode — equal-work smoke **0.906** (promoted 2026-07-18)
 
 Demoted / cold-path (NOT maintained; human OK 2026-07-18):
 - SessionConnectRequest encode — first-run ~1.003 / five-run ~1.001 noise;
   handshake-only; do not gate residual completion on this ratio.
 
-Optional later (not maintained until equal-work audit + promotion):
-- SessionEvent / NewLeaderEvent / SessionMessageHeader decode
+Optional later:
 - claim-write microbench (header + fixed app payload mimicking try_claim)
+- NewLeaderEvent decode (same equal-work pattern as SessionEvent if needed)
 
 ================================================================
 WORK ORDER — residual product scope COMPLETE (2026-07-18)
@@ -123,14 +130,14 @@ WORK ORDER — residual product scope COMPLETE (2026-07-18)
    Five-run maintained encode matrix ledgered (header 0.856, keep-alive 0.916);
    connect demoted cold-path. Fresh smoke re-confirms maintained ratios ≤ 1.00.
 
-2) HFT decode/claim benches — OPTIONAL only
-   Decode benches exist; promotion to maintained set needs equal-work audit.
-   Not a residual completion blocker.
+2) HFT decode/claim benches — DONE (equal-work promote 2026-07-18)
+   sbe-tool arm now matches Ergo header/template/schema + var-data gates in
+   release. Smoke ratios header **0.918**, event **0.906** — maintained set.
 
-3) Dual-codec residual cleanup — DONE for production/protocol
+3) Dual-codec residual cleanup — DONE for production/protocol + RFQ
    Protocol goldens/tests use ErgoSBE only; `generated/` deleted.
-   sbe-tool trees retained only for head-to-head benches + frozen RFQ
-   (intentional; not open product work).
+   RFQ unfrozen: `schemas/protocol-codecs.xml` → `ergo_rfq_codecs`.
+   sbe-tool trees retained only for head-to-head benches.
 
 4) Connect re-offer (pre-election) — DONE
    Sync handshake + async PollResponse re-offer on connect_reoffer_interval_ms.
@@ -144,8 +151,8 @@ WORK ORDER — residual product scope COMPLETE (2026-07-18)
    Pin: HA uses rusteron 0.2.4 via ergo-aeron-cluster; IPC advanced-bitget
    stays 0.2.1. H1–H8 residual: try_claim-shaped publish, never-stale book,
    LatencyPersistor (DynamicSchema→DynamicRow→decode→ClickhouseSink),
-   offline H3-equivalent, IPC baseline green. Optional: multi-node Java
-   kill-leader harness.
+   offline H3-equivalent, IPC baseline green. Multi-node Java kill-leader:
+   `just samples-cluster-ha-kill-leader` DONE.
 
 7) Full umbrella gates — re-run for evidence when closing residual
    just check
@@ -166,12 +173,12 @@ WORK ORDER — residual product scope COMPLETE (2026-07-18)
 FINAL COMPLETION (residual product scope) — MET WHEN
 ================================================================
 - Maintained cluster encode five-run ≤ 1.00; connect demoted with human OK
-- Dual-codec production path ErgoSBE-only; RFQ frozen intentionally
+- Dual-codec production path ErgoSBE-only; RFQ ErgoSBE via vendored schema 101
 - Reliability gaps closed (re-offer + log-recovery)
-- HA H1–H8 residual green via shipped tests/recipes
+- HA H1–H8 residual green; multi-node kill-leader green
+- Decode benches equal-work + promoted ≤1.00
 - Umbrella gates green with fresh output on closeout pass
-- Living docs agree DONE vs optional-only; commits pushed
+- Living docs agree DONE; commits pushed
 
-Optional items (decode promotion, multi-node kill-leader, RFQ unfreeze) are
-explicitly non-blocking and do not prevent residual completion.
+All three former optionals (decode promote, kill-leader, RFQ unfreeze) DONE.
 ```

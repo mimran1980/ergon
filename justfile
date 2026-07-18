@@ -87,6 +87,10 @@ samples-cluster-ha:
         exit 1; \
     fi
 
+# Multi-node Java kill-leader never-stale book (needs Aeron jars + Java).
+samples-cluster-ha-kill-leader:
+    cd samples/cluster-ha-orderbook && cargo test --features test-harness --test ha_kill_leader -- --test-threads=1 --nocapture
+
 # Format all handwritten source
 fmt:
     cargo fmt --all

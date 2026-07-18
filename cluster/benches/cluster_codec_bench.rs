@@ -1,18 +1,14 @@
 //! Head-to-head cluster codec benchmarks: ErgoSBE vs sbe-tool 1.39.0.
 //!
 //! Both codecs encode byte-identical output (proved by 18/18 golden parity
-//! tests); this measures speed on equal work. The sbe-tool codecs are still
-//! committed in `cluster_codecs/` — these benchmarks provide the acceptance
-//! numbers before the sbe-tool codecs are deleted per the ErgoSBE migration.
+//! tests); this measures speed on **equal work**. The sbe-tool codecs remain
+//! only for these benches.
 //!
-//! Acceptance: 5-run median ErgoSBE/sbe-tool ratio ≤ 1.00 on every case.
+//! Acceptance: 5-run median ErgoSBE/sbe-tool ratio ≤ 1.00 on every **maintained**
+//! case (encode header/keep-alive; decode header/event after equal-work audit).
 #![allow(unused_must_use, unused_imports)]
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-
-// Use `ergo_aeron_cluster::codecs::ergo_codecs` for the ErgoSBE codecs and
-// `cluster_codecs` for the sbe-tool codecs. Both modules coexist in the crate
-// during the migration transition.
 
 const HFT_BATCH: usize = 10_000;
 
@@ -173,11 +169,26 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
 }
 
 // ── Decode: SessionMessageHeader (fixed, 32 bytes) ──────────────────────
+//
+// Equal-work audit (2026-07-18): production ErgoSBE `wrap_and_apply_header`
+// always checks buffer length + template_id + schema_id. sbe-tool's
+// `header()` only `debug_assert`s template_id (elided in release). Without
+// matching release checks the sbe-tool arm was under-worked (~1.17× unfair).
 
 const MSG_HDR_FIXTURE: [u8; 32] = [
     0x18, 0x00, 0x01, 0x00, 0x6f, 0x00, 0x10, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0xd2, 0x02, 0x96, 0x49, 0x00, 0x00, 0x00, 0x00,
 ];
+
+const MSG_HDR_TEMPLATE_ID: u16 = 1;
+const MSG_HDR_SCHEMA_ID: u16 = 111;
+
+#[inline(always)]
+fn sbe_tool_header_ok(template_id: u16, schema_id: u16, expected_tid: u16, expected_sid: u16) -> bool {
+    // Same two comparisons ErgoSBE performs in wrap_and_apply_header.
+    // Return value is black_box'd so LLVM cannot DCE the checks.
+    black_box(template_id == expected_tid && schema_id == expected_sid)
+}
 
 fn bench_decode_msg_header(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/decode/session_message_header");
@@ -201,8 +212,21 @@ fn bench_decode_msg_header(c: &mut Criterion) {
                 session_message_header_codec::SessionMessageHeaderDecoder,
             };
             for _ in 0..HFT_BATCH {
-                let rb = ReadBuf::new(black_box(&MSG_HDR_FIXTURE[..]));
+                let buf = black_box(&MSG_HDR_FIXTURE[..]);
+                // Equal bounds gate (Ergo checks pos+8 <= len before reading).
+                if buf.len() < 8 {
+                    continue;
+                }
+                let rb = ReadBuf::new(buf);
                 let hdr = MessageHeaderDecoder::default().wrap(rb, 0);
+                if !sbe_tool_header_ok(
+                    hdr.template_id(),
+                    hdr.schema_id(),
+                    MSG_HDR_TEMPLATE_ID,
+                    MSG_HDR_SCHEMA_ID,
+                ) {
+                    continue;
+                }
                 let d = SessionMessageHeaderDecoder::default().header(hdr, 0);
                 black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
             }
@@ -219,6 +243,9 @@ const SESSION_EVENT_FIXTURE: [u8; 67] = [
     0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x73,
     0x6f, 0x6d, 0x65, 0x2d, 0x64, 0x65, 0x74, 0x61, 0x69, 0x6c,
 ];
+
+const SESSION_EVENT_TEMPLATE_ID: u16 = 2;
+const SESSION_EVENT_SCHEMA_ID: u16 = 111;
 
 fn bench_decode_session_event(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/decode/session_event");
@@ -241,23 +268,38 @@ fn bench_decode_session_event(c: &mut Criterion) {
     g.bench_function("sbe-tool", |b| {
         b.iter(|| {
             use ergo_aeron_cluster::codecs::cluster_codecs::{
-                ReadBuf, event_code::EventCode, message_header_codec::MessageHeaderDecoder,
-                session_event_codec::SessionEventDecoder,
+                ReadBuf, message_header_codec::MessageHeaderDecoder, session_event_codec::SessionEventDecoder,
             };
             for _ in 0..HFT_BATCH {
-                let rb = ReadBuf::new(black_box(&SESSION_EVENT_FIXTURE[..]));
+                let buf = black_box(&SESSION_EVENT_FIXTURE[..]);
+                if buf.len() < 8 {
+                    continue;
+                }
+                let rb = ReadBuf::new(buf);
                 let hdr = MessageHeaderDecoder::default().wrap(rb, 0);
+                if !sbe_tool_header_ok(
+                    hdr.template_id(),
+                    hdr.schema_id(),
+                    SESSION_EVENT_TEMPLATE_ID,
+                    SESSION_EVENT_SCHEMA_ID,
+                ) {
+                    continue;
+                }
                 let mut dec = SessionEventDecoder::default().header(hdr, 0);
+                // Field reads first (matches Ergo order: scalars then detail).
+                let cid = dec.correlation_id();
+                let csid = dec.cluster_session_id();
+                let ltid = dec.leadership_term_id();
+                let lmid = dec.leader_member_id();
+                let code = dec.code();
                 let coords = dec.detail_decoder();
+                // Equal-work var-data gates: length cap + slice bounds (Ergo into_detail).
+                let (off, len) = coords;
+                if len > 1_073_741_824 || off.saturating_add(len) > buf.len() {
+                    continue;
+                }
                 let detail = dec.detail_slice(coords);
-                black_box((
-                    dec.correlation_id(),
-                    dec.cluster_session_id(),
-                    dec.leadership_term_id(),
-                    dec.leader_member_id(),
-                    dec.code(),
-                    detail,
-                ));
+                black_box((cid, csid, ltid, lmid, code, detail));
             }
         });
     });

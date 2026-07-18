@@ -4175,11 +4175,13 @@ fn generate_group_decoder(
                 });
 
                 if enum_name == "BooleanType" {
+                    // Use the const raw primitive accessor — the typed
+                    // enum getter is not const (from_raw is runtime).
                     let bool_ident = quote::format_ident!("{}_bool", f_name);
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub const fn #bool_ident(&self) -> bool {
-                            (self.#f_name_ident() as #r_type_ty) != 0
+                            self.#raw_ident() != 0
                         }
                     });
                 }

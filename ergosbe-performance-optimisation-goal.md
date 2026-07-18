@@ -2010,3 +2010,35 @@ Connect remains demoted (cold path). Decode not in maintained set. Full 5-run ma
 | SessionKeepAlive encode | 5.9234 µs | 6.5246 µs | **0.908** | ✅ |
 
 Connect remains demoted. Full five-run ledger (0.856 / 0.916) unchanged authority.
+
+## 2026-07-18 optionals: equal-work decode promote + RFQ unfreeze
+
+### Decode equal-work audit (promoted to maintained)
+
+**Root cause of ~1.17× unfairness:** production ErgoSBE `wrap_and_apply_header`
+always checks buffer length + `template_id` + `schema_id`. sbe-tool `header()`
+only `debug_assert`s `template_id` (elided in release). Bench arm reworked so
+sbe-tool performs the same two release checks + var-data length/bounds gates.
+
+**Command:** `cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --quick`  
+**Date:** 2026-07-18 · **Host:** aarch64 macOS · rustc 1.95.0 · Criterion quick
+
+| Scenario | ErgoSBE | sbe-tool | Ratio | Maintained? |
+|----------|---------|----------|-------|-------------|
+| SessionMessageHeader decode | 9.0906 µs | 9.9044 µs | **0.918** | ✅ **promoted** |
+| SessionEvent decode | 15.607 µs | 17.227 µs | **0.906** | ✅ **promoted** |
+| SessionMessageHeader encode | (quick re-smoke) | | ≤1.00 | ✅ |
+| SessionKeepAlive encode | (quick re-smoke) | | ≤1.00 | ✅ |
+
+Encode five-run ledger (header **0.856**, keep-alive **0.916**) remains the
+long-form encode authority. Decode equal-work smoke is the decode authority
+until a full five-run is ledgered.
+
+### RFQ unfreeze
+
+- Vendored `cluster/schemas/protocol-codecs.xml` (aeron-cookbook schema 101).
+- `build.rs` → `OUT_DIR/aeron_rfq_codecs.rs` → `codecs::ergo_rfq_codecs`.
+- Wire parity: `test_rfq_create_command_ergo_matches_sbe_tool` green.
+- Examples `rfq_client` / `rfq_roundtrip` migrated to ErgoSBE.
+- Codegen fix: entry-decoder `BooleanType` `*_bool` const helper uses
+  `raw_*` (was calling non-const enum getter — broke RFQ generate).

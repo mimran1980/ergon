@@ -105,7 +105,8 @@ dirty local worktree — never reset or commit it).
 - **HA sample:** `samples/cluster-ha-orderbook` (rusteron **0.2.4** via
   `ergo-aeron-cluster`): try_claim-shaped publish, `LeadershipAwareBook`,
   feed_latency DynamicRow → ClickHouse, recipe `just samples-cluster-ha`.
-  H1–H8 offline/CH proven; multi-node Java kill-leader is optional follow-up.
+  H1–H8 offline/CH proven; multi-node Java kill-leader **DONE**
+  (`just samples-cluster-ha-kill-leader`).
 - Design:
   [`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](../specs/2026-07-18-cluster-ha-orderbook-sample-design.md),
   todo [`samples/todo/02-cluster-ha-orderbook-latency.md`](../../../samples/todo/02-cluster-ha-orderbook-latency.md) **DONE**.
@@ -114,8 +115,9 @@ dirty local worktree — never reset or commit it).
 
 **Decision (executed for production):** cluster crate uses ErgoSBE `build.rs`
 on-the-fly generation (persist pattern) from the aeron submodule schemas.
-Production/protocol dual-codec cleanup is **DONE** (§3b). sbe-tool trees remain
-only for frozen RFQ + head-to-head benches (intentional, not open product work).
+Production/protocol dual-codec cleanup is **DONE** (§3b). RFQ **unfrozen** to
+ErgoSBE (`schemas/protocol-codecs.xml` → `ergo_rfq_codecs`). sbe-tool trees
+remain only for head-to-head benches (intentional).
 
 ### Progress (2026-07-18) — production migration done
 
@@ -144,11 +146,12 @@ via `build.rs` → OUT_DIR.
 - just recipes: `generate-aeron-cluster-codecs` /
   `check-aeron-cluster-codec-drift` check residual trees only (not production).
 
-### RFQ exception (DECIDED: keep frozen)
+### RFQ (UNFROZEN 2026-07-18)
 
-`rfq_codecs/` (schema 101, aeron-cookbook) has **no source XML in-repo**.
-Used only by RFQ examples. Keep frozen sbe-tool output. Unfreeze only with
-human OK (vendor schema under `cluster/schemas/` into ErgoSBE build.rs).
+Vendored cookbook `protocol-codecs.xml` (schema 101) under
+`cluster/schemas/`. Production: `ergo_rfq_codecs` via `build.rs`. Residual
+sbe-tool `rfq_codecs` retained for wire-parity tests only. Examples use
+ErgoSBE.
 
 ### §3c HFT latency surfaces (cluster client)
 
@@ -158,6 +161,9 @@ Ranked by trading-path importance:
 2. Egress decode dispatch (`egress` / `controlled` / `poller`).
 3. SessionKeepAlive encode.
 4. Connect / auth / failover (cold; correctness over ns).
+
+Maintained cluster benches (encode five-run + decode equal-work smoke):
+header/keep-alive encode; SessionMessageHeader + SessionEvent decode — all ≤1.00.
 
 ## 4. Cluster reliability risks
 
@@ -170,16 +176,16 @@ Ranked by trading-path importance:
    "keep" arg; `restart_keep_dirs()` / `base_port()`; `test_log_recovery_restart`
    is `#[ignore]` destructive — run with
    `just build-aeron-jars && cargo test --features test-harness -- --include-ignored`.
-3. RFQ schema vendoring (optional; frozen is the decision).
-4. **Dual-codec residual cleanup** — **DONE** for production/protocol (§3b).
-   sbe-tool trees remain only for frozen RFQ + head-to-head benches
-   (intentional residual, not open product work).
+3. RFQ schema vendoring — **DONE** (unfrozen ErgoSBE, 2026-07-18).
+4. **Dual-codec residual cleanup** — **DONE** for production/protocol + RFQ (§3b).
+   sbe-tool trees remain only for head-to-head benches.
+5. Decode benches equal-work promote — **DONE** (header 0.918, event 0.906).
 
-## 5. Future work C — HA cluster sample (DONE residual scope, 2026-07-18)
+## 5. Future work C — HA cluster sample (DONE residual + kill-leader, 2026-07-18)
 
-**Shipped:** `samples/cluster-ha-orderbook` + `just samples-cluster-ha`.
-Pin: 0.2.4 via cluster crate; IPC baseline stays 0.2.1. Optional later:
-multi-node Java kill-leader harness; promote decode benches to maintained set.
+**Shipped:** `samples/cluster-ha-orderbook` + `just samples-cluster-ha` +
+`just samples-cluster-ha-kill-leader`. Pin: 0.2.4 via cluster crate; IPC
+baseline stays 0.2.1. Multi-node Java kill-leader never-stale book **DONE**.
 
 **Goal:** samples take advantage of `cluster/` so the feed survives leadership
 **releases** (NewLeader, session close, reconnect) without a **stale
