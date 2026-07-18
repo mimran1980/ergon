@@ -1,9 +1,11 @@
 # Rusteron Cluster — Current State & Gap-Closure (P0)
 
 > **Historical.** Written when the crate was `rusteron-cluster`; it is now crate `ergo-aeron-cluster` in `cluster/` (test harness: crate `ergo-aeron-cluster-test-support` in `cluster-test-support/`). Living doc: [2026-07-18-ergosbe-experimental-master-plan.md](2026-07-18-ergosbe-experimental-master-plan.md).
+>
+> **Residual still active (2026-07-18 evening):** (2) connect **re-offer** on pre-election non-leader; (3) log-recovery restart test (not only fresh-cluster). RFQ freeze unchanged. P0 codec/fmt/failover work in this file is done. **Production codec migration to ErgoSBE and first-run cluster benches** are recorded in the living master plan (supersede any “committed sbe-tool only” framing below for production paths). HA sample track is separate (design + `samples/todo/02-…`).
 
 **Date:** 2026-07-18
-**Branch:** `cluster`
+**Branch:** `cluster` (work later landed on `first_cut`)
 **Supersedes (for the items below):** `2026-07-17-rusteron-cluster-final-report.md`
 
 This records the reliability-first gap-closure work done on top of the

@@ -73,40 +73,41 @@ dirty local worktree — never reset or commit it).
 - Dynamic path: `DynamicRecorder` / `DynamicSchemaV2` / `DynamicRowV2` proven
   in advanced-bitget (reuse for HA latency table).
 
-### cluster — WORKING PROTOTYPE; production codecs DONE; benches PARTIAL
+### cluster — WORKING PROTOTYPE; production codecs DONE; benches honest
 
-- 53 lib tests green; clippy `--all-targets -D warnings` + fmt clean.
+- 55 lib tests green (includes connect re-offer helpers); clippy
+  `--all-targets -D warnings` + fmt clean.
 - **Production codec migration complete** (2026-07-18): all production
   encode/decode sites use ErgoSBE (`ergo_codecs`); `build.rs` generates from
   the aeron submodule into `OUT_DIR`. Wire-compatible: 18/18 golden parity;
   full harness suite previously green against Java. Committed sbe-tool
   codecs (`cluster_codecs`) still coexist for test boilerplate, RFQ, and
   head-to-head benches.
-- **Cluster encode benches present** (`just bench-cluster`, `ab6f365`), first
-  Criterion run (10k batch, not yet five-run ledgered):
-
-  | Scenario | ErgoSBE/sbe-tool ratio | Gate |
-  |----------|------------------------|------|
-  | SessionMessageHeader | ~0.862 | PASS |
-  | SessionKeepAlive | ~0.918 | PASS |
-  | SessionConnectRequest | **~1.003** | **FAIL (OPEN)** |
-
-  Five-run medians + Criterion CIs not yet recorded in the perf goal.
-  Decode benches and claim-shaped microbench: **missing**.
+- **Cluster encode benches** (`just bench-cluster`): 5-run matrix in
+  `ergosbe-performance-optimisation-goal.md` — SessionMessageHeader **0.856**,
+  SessionKeepAlive **0.916** maintained PASS; SessionConnectRequest **1.001**
+  demoted (cold path, measurement noise). Decode benches added (`f01e334`).
+- **Connect re-offer** DONE: sync handshake + async `PollResponse` re-offer
+  SessionConnectRequest on `connect_reoffer_interval_ms` cadence.
+- **Log-recovery restart** DONE (`ae6f4c9`, `#[ignore]`d destructive test).
 - Deps: `rusteron-client = "0.2.4"`; criterion dev-dep for benches.
 - CI: lint/test/msrv exclude the cluster from `--all-features` and gate it
   separately; dedicated `aeron-cluster-integration` job (Java 17, jars,
   `--features test-harness`).
 
-### samples — IPC path COMPLETE; HA cluster path PLANNED
+### samples — IPC path COMPLETE; HA cluster path IN PROGRESS
 
 - Both samples gated in CI (`samples` job) and `just check`; live E2E via
   `just samples-orderbook` (exchange-orderbook 1/1 + advanced-bitget 2/2
   against Docker ClickHouse, fresh 2026-07-18).
 - advanced-bitget: three-thread Bitget → AppMessage → Aeron **IPC** (rusteron
-  **0.2.1**) → typed + dynamic V2 → ClickHouse. Does **not** use
-  `ergo-aeron-cluster`.
-- **New track:** HA cluster orderbook sample — design
+  **0.2.1**) → typed + dynamic V2 → ClickHouse. Does **not** yet use
+  `ergo-aeron-cluster` on the live path.
+- **HA track progress:** pure modules in advanced-bitget —
+  `ha_book::LeadershipAwareBook` (stale policy, 7 unit tests) and
+  `latency::feed_latency` DynamicRecorder helpers (2 unit tests). Cluster
+  publisher/follower wiring + harness + recipe remain OPEN (rusteron pin).
+- Design:
   [`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](../specs/2026-07-18-cluster-ha-orderbook-sample-design.md),
   todo [`samples/todo/02-cluster-ha-orderbook-latency.md`](../../../samples/todo/02-cluster-ha-orderbook-latency.md).
 
@@ -157,27 +158,27 @@ Ranked by trading-path importance:
 3. SessionKeepAlive encode.
 4. Connect / auth / failover (cold; correctness over ns).
 
-## 4. Open cluster reliability risks
+## 4. Cluster reliability risks
 
-From the historical gap plan (wording corrected):
-
-1. **Connect re-offer on pre-election non-leader** — Connect sends
-   `SessionConnectRequest` once. If the first offer lands on a node that
-   neither leads nor redirects, the handshake times out. Fix: periodic
-   re-offer while connecting / in `PollResponse`, within timeout. (Not
-   “re-send when challenged mid-election” — challenge-response already
-   exists.)
+1. **Connect re-offer on pre-election non-leader** — **DONE** (2026-07-18):
+   sync `handshake` and async `PollResponse` re-offer `SessionConnectRequest`
+   every `connect_reoffer_interval_ms(timeout)` (timeout/4 clamped to
+   [50, 1000] ms). Unit tests cover interval helpers; full harness coverage
+   remains opportunistic (existing connect/failover suite).
 2. **Log-recovery restart test** — **DONE** (`ae6f4c9`): Java launcher accepts
-   "keep" arg to preserve aeron/archive/consensus dirs; Rust TestCluster has
-   `restart_keep_dirs()` and `base_port()` for same-port re-launch; new
-   `test_log_recovery_restart` test (currently `#[ignore]`, needs re-run with
-   `just build-aeron-jars && cargo test --features test-harness -- --include-ignored`).
-3. **Connect re-offer pre-election** — PENDING (client.rs handshake change +
-   harness test).
-   May stay `#[ignore]` if destructive; must pass with `--ignored`.
+   "keep" arg; `restart_keep_dirs()` / `base_port()`; `test_log_recovery_restart`
+   is `#[ignore]` destructive — run with
+   `just build-aeron-jars && cargo test --features test-harness -- --include-ignored`.
 3. RFQ schema vendoring (optional; frozen is the decision).
+4. **Dual-codec residual cleanup** — still OPEN (sbe-tool trees for RFQ +
+   benches + some tests).
 
-## 5. Future work C — HA cluster sample (PLANNED)
+## 5. Future work C — HA cluster sample (IN PROGRESS)
+
+**Progress 2026-07-18:** `LeadershipAwareBook` + `feed_latency` DynamicRow
+helpers live under `samples/advanced-bitget/src/{ha_book,latency}.rs` with
+offline unit proofs (H2/H5/H6 partial). Remaining: wire `ergo-aeron-cluster`
+publisher/follower, CH live latency rows, failover harness, recipe, rusteron pin.
 
 **Goal:** samples take advantage of `cluster/` so the feed survives leadership
 **releases** (NewLeader, session close, reconnect) without a **stale

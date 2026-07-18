@@ -1,9 +1,20 @@
 # Phase 2 Completion Goal
 
 This file is the durable Claude Code `/goal` for finishing ErgoSBE, Persist, and
-Samples. Read it at the start of every turn and continue from the progress
-ledger. Do not treat one turn as the whole job; this goal is expected to span
-many small iterations.
+Samples **(IPC / historical path)**. Read it at the start of every turn and
+continue from the progress ledger. Do not treat one turn as the whole job; this
+goal is expected to span many small iterations.
+
+> **Scope note (2026-07-18):** Phase 2 covers `sbe` → `persist` → `samples`
+> offline/IPC completion. **Cluster residual work, cluster benches, and the HA
+> cluster orderbook sample** are tracked by:
+>
+> - [`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md)
+> - [`docs/superpowers/plans/2026-07-18-completion-goal-prompt.md`](docs/superpowers/plans/2026-07-18-completion-goal-prompt.md)
+> - [`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md)
+> - [`samples/todo/02-cluster-ha-orderbook-latency.md`](samples/todo/02-cluster-ha-orderbook-latency.md)
+>
+> Pillar directories stay `sbe` / `persist` / `cluster` / `samples` forever.
 
 ## Why this exists
 
@@ -219,10 +230,16 @@ Required Persist outcomes:
 
 After Persist is coherent and green, resolve Samples.
 
-Start with:
+Start with (historical IPC path — DONE for current scope as of 2026-07-18):
 
 - `samples/todo/00-e2e-orderbook-persist.md`
 - `samples/todo/01-bitget-aeron-app-message.md`
+
+**HA / cluster sample (new, not phase2-historical):**  
+
+- `samples/todo/02-cluster-ha-orderbook-latency.md` — ACTIVE; see design spec
+  and completion goal prompt. Implement only after cluster residual reliability
+  is green enough for failover harnesses.
 
 Required Samples outcomes:
 
@@ -264,6 +281,16 @@ explicitly documented live/manual-only recipes accepted by the human.
 ## Progress Ledger
 
 Add a new entry at the top of this ledger after every iteration.
+
+### 2026-07-18 Docs-truth + HA sample track (markdown only)
+
+- Cluster production codec migration and first-run encode benches are recorded
+  in the master plan / completion prompt (outside phase2 historical scope).
+- **New open samples track:** HA cluster orderbook + dynamic latency rows —
+  design frozen; todo `samples/todo/02-cluster-ha-orderbook-latency.md` ACTIVE.
+- Phase2 IPC path remains complete for current scope; do not re-open sbe/persist
+  IPC work unless evidence regresses.
+- No Rust code changes in this iteration.
 
 ### 2026-07-18 Adversarial final-verification (6-agent workflow) + audit-driven fixes
 

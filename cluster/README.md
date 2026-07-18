@@ -19,84 +19,67 @@ Pure-Rust Aeron Cluster client protocol implementation on top of
 - `test-harness` — enables `rusteron-java-test-support` dependency for
   integration tests (requires Java 17+).
 
+## Codecs
+
+**Production path:** ErgoSBE generates cluster session codecs at build time from
+the pinned `aeron/` submodule schemas (`build.rs` → `OUT_DIR`, included as
+`ergo_codecs` / mark modules). Call sites use
+`wrap_and_apply_header` and consuming tail stages.
+
+**Residual:** committed sbe-tool 1.39.0 trees (`cluster_codecs/`, RFQ,
+`generated/`) remain for golden head-to-head benches, some test boilerplate,
+and frozen RFQ examples. Prefer ErgoSBE APIs for new code. Prefer high-level
+`SessionBuilder` / `AeronCluster` over hand-rolled publications.
+
 ## Usage Example
 
+Prefer the high-level client (handles connect, challenge, redirect, keep-alive):
+
 ```rust
-use std::ffi::CString;
-use std::time::Duration;
-use ergo_aeron_cluster::codecs::cluster_codecs::{
-    WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
-};
-
-// The cluster must be running — either a Java `ClusteredMediaDriver` +
-// `ClusteredServiceContainer`, or use `rusteron_java_test_support::TestCluster`.
-
-// Connect the C Aeron client to the cluster's media driver via shared memory:
-let dir_cstr = CString::new("/path/to/cluster/aeron/dir").unwrap();
-let ctx = rusteron_client::AeronContext::new().unwrap();
-ctx.set_dir(&dir_cstr).unwrap();
-let aeron = rusteron_client::Aeron::new(&ctx).unwrap();
-aeron.start().unwrap();
-
-// Subscribe to egress (cluster → client) and publish to ingress (client → cluster)
-let egress = aeron.add_subscription(
-    &CString::new("aeron:udp?endpoint=localhost:9002").unwrap(), 102,
-    rusteron_client::Handlers::NONE, rusteron_client::Handlers::NONE,
-    Duration::from_secs(5),
-).unwrap();
-
-let ingress = aeron.add_publication(
-    &CString::new("aeron:udp?endpoint=localhost:9002").unwrap(), 101,
-    Duration::from_secs(5),
-).unwrap();
-
-// Encode and send SessionConnectRequest
-let mut buf = vec![0u8; 512];
-{
-    let wb = WriteBuf::new(&mut buf);
-    let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
-    enc.correlation_id(1);
-    enc.response_stream_id(102);
-    enc.version(0);
-    enc.response_channel(b"aeron:udp?endpoint=localhost:9002");
-    enc.encoded_credentials(b"");
-    let _h = enc.header(0); // must be called last — consumes encoder
-}
-
-// Send — retry until connected
-for _ in 0..20 {
-    if ingress.offer_raw(&buf, rusteron_client::Handlers::NONE) > 0 { break; }
-    std::thread::sleep(Duration::from_millis(200));
-}
-
-// Poll egress for SessionEvent (template_id 2 = SessionEvent)
-let mut received = false;
-loop {
-    egress.poll_fn(|data, _hdr| {
-        if data.len() >= 8 && u16::from_le_bytes([data[2], data[3]]) == 2 {
-            received = true;
-        }
-    }, 10).ok();
-    if received { break; }
-    std::thread::sleep(Duration::from_millis(100));
-}
+use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
+// Build SessionBuilder with cluster member endpoints + response channel,
+// then SessionBuilder::connect(...) or connect_async + poll until Connected.
+// Publish application payloads with AeronCluster::try_claim(payload_len)
+// (SessionMessageHeader is written into the claim via ErgoSBE) or send().
 ```
+
+Low-level ErgoSBE encode shape (production codecs — mirrors `client.rs`):
+
+```rust
+use ergo_aeron_cluster::codecs::ergo_codecs::SessionConnectRequestEncoder;
+
+let mut buf = vec![0u8; 512];
+let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
+let _ = enc.correlation_id(1).response_stream_id(102).version(0);
+let _ = enc
+    .response_channel(b"aeron:udp?endpoint=localhost:9002")?
+    .encoded_credentials(b"")?
+    .client_info(b"")?; // empty client_info completes the v16 tail
+// offer `buf` (or prefer AeronCluster::try_claim / send for app payloads)
+```
+
+The cluster must be running — Java `ClusteredMediaDriver` +
+`ClusteredServiceContainer`, or the test harness
+(`ergo-aeron-cluster-test-support` / `just test-aeron-cluster-harness`).
 
 ## Architecture
 
 ```
-cluster/          # crate: ergo-aeron-cluster
+cluster/          # crate: ergo-aeron-cluster (dir name permanent; not package name)
+├── build.rs            # ErgoSBE generate from aeron submodule → OUT_DIR
+├── benches/
+│   └── cluster_codec_bench.rs  # ErgoSBE vs sbe-tool encode head-to-head
 ├── src/
-│   ├── codecs/         # Generated SBE codecs (sbe-tool 1.39.0, Rust target)
-│   │                   # + writer_impls.rs (sbe-tool Writer gap)
-│   ├── client.rs       # AeronCluster + AsyncClusterConnect (Java-parity entry)
+│   ├── codecs/         # ergo_codecs (include! OUT_DIR) + residual sbe-tool trees
+│   │                   # + writer_impls.rs (needed while RFQ is sbe-tool)
+│   ├── client.rs       # AeronCluster + AsyncClusterConnect + try_claim
 │   ├── connect.rs      # AsyncConnect state machine
 │   ├── controlled.rs   # ControlledEgressAdapter
 │   ├── credentials.rs  # CredentialsSupplier trait
 │   ├── egress.rs       # EgressAdapter + EgressListener
 │   ├── error.rs        # ClusterError enum
 │   ├── poller.rs       # Egress event parser + leader-endpoint resolution
-│   ├── protocol.rs     # SessionMessageHeader encode/decode
+│   ├── protocol.rs     # Session constants from ErgoSBE encoders
 │   ├── session.rs      # AeronClusterSession
 │   ├── state.rs        # SessionState enum
 │   └── config.rs       # SessionBuilder
@@ -142,15 +125,17 @@ Session states: `Connected` → `AwaitingNewLeader` → `AwaitingNewLeaderConnec
 | `EgressAdapter` | `EgressAdapter` |
 | `CredentialsSupplier` | `CredentialsSupplier` (trait) |
 | `NullCredentialsSupplier` | `NullCredentialsSupplier` |
-| `IngressSessionDecorator` | `send()` auto-prepends header |
-| `ControlledEgressAdapter` | (Phase 5, pending) |
-| `ControlledFragmentHandler.Action` | (pending) |
+| `IngressSessionDecorator` | `send()` / `try_claim()` auto-prepends header |
+| `ControlledEgressAdapter` | `ControlledEgressAdapter` (`controlled.rs`) |
+| `ControlledFragmentHandler.Action` | controlled poll path (see `controlled.rs`) |
 
 ## Running Tests
 
 ```bash
 # Unit tests (no Java needed)
 cargo test -p ergo-aeron-cluster --lib                      # 53 tests
+just check-aeron-cluster
+just bench-cluster                                          # encode head-to-head
 
 # Integration tests (requires Java 17+)
 cargo test -p ergo-aeron-cluster --test connect_to_cluster --features test-harness

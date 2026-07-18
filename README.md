@@ -41,16 +41,25 @@ git submodule update --init --recursive
 | `just check` | Hygiene, fmt, clippy, workspace tests, both samples, cluster lib | Rust only |
 | `just check-aeron-cluster` | Cluster fmt/clippy/53 lib tests | Rust only |
 | `just build-aeron-jars` then `just test-aeron-cluster-harness` | Full cluster integration suite (connect/auth/failover/restart/archive) | Java 17+ |
-| `just bench` | Aeron perf-parity matrix | Rust only |
-| `just test-clickhouse-live` / `just test-exchange-orderbook-live` / `just samples-orderbook` | Live ClickHouse E2E | Docker |
-| `just check-aeron-cluster-codec-drift` | Committed cluster codecs match regenerated output | Java (sbe-tool) |
+| `just bench` | Aeron perf-parity matrix (ErgoSBE vs Aeron SBE) | Rust only |
+| `just bench-cluster` | Cluster codec encode head-to-head (ErgoSBE vs sbe-tool) | Rust only |
+| `just test-clickhouse-live` / `just test-exchange-orderbook-live` / `just samples-orderbook` | Live ClickHouse E2E (IPC samples) | Docker |
+| `just check-aeron-cluster-codec-drift` | Residual committed sbe-tool codecs match regenerate (transitional) | Java (sbe-tool) |
 
 **Gotcha:** never run `cargo … --workspace --all-features` without
 `--exclude ergo-aeron-cluster` — the cluster's `test-harness` feature pulls the
 Java/Gradle-building test-support crate.
 
-The living cross-pillar plan is
-[`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md).
+**Layout:** pillar directories `sbe/`, `persist/`, `cluster/`, `samples/` are
+permanent names (never rename). Cluster dir names intentionally differ from
+crate names (`ergo-aeron-cluster`).
+
+Living plan:
+[`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md).  
+Residual goal prompt:
+[`docs/superpowers/plans/2026-07-18-completion-goal-prompt.md`](docs/superpowers/plans/2026-07-18-completion-goal-prompt.md).  
+Planned HA sample (cluster feed, never-stale book, dynamic latency → CH):
+[`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md).
 
 ---
 
@@ -88,14 +97,18 @@ These are the implemented/generated capabilities. Release-quality claims such as
 
 - Local `ergosbe` tests, formatting, clippy, and generated-code stability checks
   are tracked in [`sbe/todos/TESTING_PLAN.md`](sbe/todos/TESTING_PLAN.md).
-- Universal Aeron parity is not claimed until the maintained five-run matrix in
-  [`ergosbe-performance-optimisation-goal.md`](ergosbe-performance-optimisation-goal.md)
-  passes, including sequential dual-group messages.
+- **Maintained ErgoSBE/Aeron five-run matrix:** all 10 scenarios ≤ 1.00 as of
+  2026-07-18 (see
+  [`ergosbe-performance-optimisation-goal.md`](ergosbe-performance-optimisation-goal.md)).
+  That is evidence for the maintained set — not a universal “HFT-ready” claim.
+- Persist live ClickHouse and both IPC samples (`just samples-orderbook`) are
+  green for current scope; live exchange WebSocket remains a manual recipe.
+- **Cluster:** production codecs are ErgoSBE-generated; SessionConnectRequest
+  encode vs sbe-tool is still **OPEN** at ~1.003 on a first Criterion run;
+  reliability gaps and HA sample track remain (master plan §4–5).
 - Advanced Rust proof APIs such as verified frames, typed frame policies,
-  scoped callbacks, and required-field proofs are roadmap items until their
+  scoped callbacks, and required-field proofs stay roadmap until their
   runtime, compile-fail, and benchmark gates pass.
-- The exchange-orderbook sample currently compiles, but generated warning volume
-  and live exchange/ClickHouse E2E verification remain tracked work.
 
 ## Stable Rust Advantage Roadmap
 
