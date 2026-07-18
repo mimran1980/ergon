@@ -1776,3 +1776,38 @@ optimisation pipeline making different decisions for the two APIs based on
 data-flow graph shape. Confirmed insensitive to: inline(always), Result
 elimination, bounds-check gating, LTO/codegen-units, chunks_exact_mut,
 setter unsafe writes, and 8 other interventions.
+
+## 2026-07-18 (second pass): fresh measurement + negative-result reproducer
+
+Fresh head-to-head (rustc 1.95.0, aarch64 Apple Silicon, this session):
+
+| codec   | median    | 95% CI              | ratio |
+|---------|-----------|---------------------|-------|
+| ErgoSBE | 5.5394 µs | [5.5238, 5.5570] µs | —     |
+| Aeron   | 4.8998 µs | [4.8720, 4.9358] µs | 1.131 |
+
+CIs do not overlap; gap confirmed real and stable (was 1.135).
+
+A standalone minimal reproducer was built at
+[`docs/perf/encode-throughput-repro/repro.rs`](docs/perf/encode-throughput-repro/repro.rs)
+with four variants: index-form (ErgoSBE shape), pointer-form (Aeron shape),
+bare `copy_from_slice`, and index-form plus `Result` + extra struct fields +
+bounds branch. **All four run within 0.5% of each other** — none reproduce
+the divergence.
+
+This is a negative result that *narrows* the root cause: it disproves the
+earlier hypothesis that the gap is index-form vs pointer-form loop
+selection (LLVM compiles both identically in isolation) and individually
+rules out the setter mechanism, the `Result`-returning wrap, the extra
+struct fields, and the bounds branch. The divergence is emergent from the
+full composed bench (complete generated encoder + `sbe_rt` + criterion
+`iter_batched`), not reducible to a minimal repro. A ready-to-post upstream
+rustc/LLVM issue draft is at
+[`docs/perf/encode-throughput-repro/UPSTREAM_ISSUE.md`](docs/perf/encode-throughput-repro/UPSTREAM_ISSUE.md).
+
+**Status:** genuine compiler-level external blocker. The ≤ 1.00 acceptance
+ratio cannot be met at the source level without reshaping the encoder from
+a borrow-based consuming-stage builder to a value-move chain, which would
+trade away the consuming-stage safety invariant (DECISIONS.md §3/§10) —
+disallowed by the priority ladder. encode/throughput_10k remains the sole
+open ratio (9 of 10 scenarios ≤ 1.00).
