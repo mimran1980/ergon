@@ -95,6 +95,45 @@ dirty local worktree — never reset or commit it).
 generation** (persist pattern) from the aeron submodule schemas, replacing
 the ~54k LOC of committed sbe-tool output.
 
+### Progress (2026-07-18, session 2) — FOUNDATION PROVEN
+
+Steps 1 and 2 are **DONE and committed**; step 3 (call sites) is the
+remaining work.
+
+- **Step 1 DONE** (`3a2f0a8`): `cluster/tests/codec_golden_bytes.rs` —
+  `GOLDEN_*` constants for all 9 messages + `parity_*` (sbe-tool) tests.
+- **Step 2 DONE** (`5d04fdb`): `cluster/build.rs` generates ErgoSBE codecs
+  into `OUT_DIR` from the aeron submodule; `src/codecs/mod.rs` exposes them
+  side-by-side as `ergo_codecs` + `ergo_codecs_mark` (with broad
+  `#![allow(...)]` for generated-code lints + `cargo::rustc-check-cfg` for
+  the `serde` feature). `ergosbe` is now a cluster build-dep. **All 18
+  parity tests pass** (9 sbe-tool `parity_*` + 9 ErgoSBE `parity_*_ergo`) —
+  ErgoSBE output is byte-identical to sbe-tool for every protocol message.
+- **Gotchas discovered (apply in step 3):**
+  - `SessionConnectRequest` v16 has a trailing `clientInfo` (`sinceVersion=14`)
+    var-data field. sbe-tool lets the client OMIT it (74-byte message); ErgoSBE's
+    consuming model FORCES writing it. The golden was updated to a COMPLETE
+    message with `client_info(b"")` (78 bytes). The live client must set
+    `client_info(b"")` post-migration — wire-COMPATIBLE (valid v16, Java accepts
+    it) but +4 bytes vs today.
+  - Encode offer: sbe-tool offers the whole pre-sized `buf` (512 B for var-data,
+    exact for fixed). ErgoSBE writes the message into the same `buf` start, so
+    offering the whole `buf` preserves the exact frame. Pattern:
+    `let mut e = Encoder::wrap_and_apply_header(&mut buf,0).map_err(..)?; let _ = e.field1(..).field2(..); let _c = e.var_data(..)?; ingress.offer_raw(&buf, NONE)`.
+    Setters are `#[must_use]` → swallow with `let _ =`.
+  - Decode side (egress.rs/controlled.rs) is the structurally-hard part: sbe-tool
+    flyweight `MessageHeaderDecoder::default().wrap(buf,0)` + `XDecoder::default().header(h,0)` +
+    `field()`/`_decoder()+(coords,_slice)` → ErgoSBE consuming `XDecoder::wrap_and_apply_header(buf,0)?`
+    + `field()` (same names) + `into_<vardata>()`. Header routing (read template_id
+    before decoding) needs a header-only read path — verify ErgoSBE exposes it.
+  - `writer_impls.rs` patches sbe-tool's missing `Writer` impl; `rfq_codecs`
+    (frozen) still needs it, so do NOT delete `writer_impls.rs` until rfq is
+    resolved — or scope the impl to rfq only.
+- **Step 3 remaining scope:** ~149 codec sites across `client.rs` (encode-only,
+  ~10 sites, cleanest), `egress.rs` (decode, ~34, hardest), `controlled.rs`
+  (decode, ~13), `protocol.rs` (constants/asserts, ~29 — mostly mechanical),
+  `codecs/tests.rs` (~36 — already mirrored by the golden parity test).
+
 ### Steps (for a future session)
 
 1. **Golden wire baseline first.** Before touching anything, capture
