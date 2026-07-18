@@ -9,14 +9,20 @@ Cluster client, and end-to-end samples.
 
 ## Project layout
 
-| Directory | Crate | Purpose |
-|-----------|-------|---------|
-| `sbe/` | `ergosbe` | SBE XML → idiomatic Rust codec generator (the core pillar) |
-| `persist/` (+ `persist/derive/`) | `ergo-clickhouse-persist` | Auto-persist annotated structs to ClickHouse |
-| `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client prototype on `rusteron-client` |
-| `cluster-test-support/` (excluded) | `ergo-aeron-cluster-test-support` | Java test harness for the cluster crate (Gradle-built Aeron jars) |
-| `ergosbe-benchmarks/` | `ergosbe-benchmarks` | Criterion Aeron-parity benchmark matrix |
-| `samples/` (excluded) | — | End-to-end demos (`advanced-bitget`, `exchange-orderbook`) |
+| Directory | Crate | Purpose | Docs |
+|-----------|-------|---------|------|
+| `sbe/` | `ergosbe` | SBE XML → idiomatic Rust codec generator | [`sbe/README.md`](sbe/README.md) |
+| `persist/` (+ `persist/derive/`) | `ergo-clickhouse-persist` | Auto-persist annotated structs to ClickHouse | [`persist/README.md`](persist/README.md), [`persist/derive/README.md`](persist/derive/README.md) |
+| `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client on `rusteron-client` 0.2.4 | [`cluster/README.md`](cluster/README.md) |
+| `cluster-test-support/` (excluded) | `ergo-aeron-cluster-test-support` | Java test harness (Gradle Aeron jars) | [`cluster-test-support/README.md`](cluster-test-support/README.md) |
+| `ergosbe-benchmarks/` | `ergosbe-benchmarks` | Criterion Aeron-parity matrix | [`ergosbe-benchmarks/README.md`](ergosbe-benchmarks/README.md) |
+| `samples/` (excluded) | — | End-to-end demos (IPC + HA) | [`samples/README.md`](samples/README.md) |
+
+| Sample | Pin / transport | Recipe |
+|--------|-----------------|--------|
+| [`advanced-bitget`](samples/advanced-bitget/) | rusteron **0.2.1**, Aeron IPC | `just samples-orderbook` |
+| [`exchange-orderbook`](samples/exchange-orderbook/) | multi-exchange book + CH | `just samples-orderbook` |
+| [`cluster-ha-orderbook`](samples/cluster-ha-orderbook/) | rusteron **0.2.4**, Aeron Cluster | `just samples-cluster-ha` |
 
 Note: for the cluster pillar the **directory names differ from the crate
 names** on purpose — the dirs are `cluster/` and `cluster-test-support/`, the
@@ -38,13 +44,15 @@ git submodule update --init --recursive
 
 | Command | What it proves | Needs |
 |---------|----------------|-------|
-| `just check` | Hygiene, fmt, clippy, workspace tests, both samples, cluster lib | Rust only |
-| `just check-aeron-cluster` | Cluster fmt/clippy/53 lib tests | Rust only |
-| `just build-aeron-jars` then `just test-aeron-cluster-harness` | Full cluster integration suite (connect/auth/failover/restart/archive) | Java 17+ |
+| `just check` | Hygiene, fmt, clippy, workspace tests, IPC samples, cluster lib | Rust only |
+| `just check-aeron-cluster` | Cluster fmt/clippy/lib tests | Rust only |
+| `just build-aeron-jars` then `just test-aeron-cluster-harness` | Full cluster integration suite | Java 17+ |
 | `just bench` | Aeron perf-parity matrix (ErgoSBE vs Aeron SBE) | Rust only |
-| `just bench-cluster` | Cluster codec encode head-to-head (ErgoSBE vs sbe-tool) | Rust only |
-| `just test-clickhouse-live` / `just test-exchange-orderbook-live` / `just samples-orderbook` | Live ClickHouse E2E (IPC samples) | Docker |
-| `just check-aeron-cluster-codec-drift` | Residual committed sbe-tool codecs match regenerate (transitional) | Java (sbe-tool) |
+| `just bench-cluster` | Cluster codec encode+decode head-to-head (ErgoSBE vs sbe-tool) | Rust only |
+| `just samples-orderbook` | Live ClickHouse E2E (IPC samples) | Docker |
+| `just samples-cluster-ha` | HA offline + feed_latency CH | Docker |
+| `just samples-cluster-ha-kill-leader` | Multi-node never-stale book | Java + jars |
+| `just check-aeron-cluster-codec-drift` | Residual sbe-tool trees match regenerate (benches only) | Java (sbe-tool) |
 
 **Gotcha:** never run `cargo … --workspace --all-features` without
 `--exclude ergo-aeron-cluster` — the cluster's `test-harness` feature pulls the
@@ -58,7 +66,8 @@ Living plan:
 [`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md).  
 Residual goal prompt:
 [`docs/superpowers/plans/2026-07-18-completion-goal-prompt.md`](docs/superpowers/plans/2026-07-18-completion-goal-prompt.md).  
-Planned HA sample (cluster feed, never-stale book, dynamic latency → CH):
+HA sample (shipped):
+[`samples/cluster-ha-orderbook/`](samples/cluster-ha-orderbook/) · design
 [`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md).
 
 ---
@@ -103,12 +112,11 @@ These are the implemented/generated capabilities. Release-quality claims such as
   That is evidence for the maintained set — not a universal “HFT-ready” claim.
 - Persist live ClickHouse and both IPC samples (`just samples-orderbook`) are
   green for current scope; live exchange WebSocket remains a manual recipe.
-- **Cluster:** production codecs are ErgoSBE-generated; SessionConnectRequest
-  encode vs sbe-tool is still **OPEN** at ~1.003 on a first Criterion run;
-  reliability gaps and HA sample track remain (master plan §4–5).
-- Advanced Rust proof APIs such as verified frames, typed frame policies,
-  scoped callbacks, and required-field proofs stay roadmap until their
-  runtime, compile-fail, and benchmark gates pass.
+- **Cluster:** residual product scope complete (2026-07-18): ErgoSBE production
+  codecs + RFQ, maintained encode/decode ≤ 1.00, connect re-offer, HA sample
+  + kill-leader. SessionConnectRequest encode is **demoted** (cold path).
+- Advanced Rust proof APIs (verified frames, typed frame policies, scoped
+  callbacks, required-field proofs) remain roadmap until their gates pass.
 
 ## Stable Rust Advantage Roadmap
 
@@ -226,11 +234,17 @@ See [`sbe/design/DECISIONS.md`](sbe/design/DECISIONS.md) for the complete design
 
 ## Development
 
+Prefer `just check` (matches CI hygiene). Equivalent manual gates:
+
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+cargo test -p ergo-aeron-cluster --lib
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

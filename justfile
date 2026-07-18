@@ -91,6 +91,12 @@ samples-cluster-ha:
 samples-cluster-ha-kill-leader:
     cd samples/cluster-ha-orderbook && cargo test --features test-harness --test ha_kill_leader -- --test-threads=1 --nocapture
 
+# Build rustdoc for the three main product crates (no deps)
+docs:
+    cargo doc -p ergosbe --no-deps
+    cargo doc -p ergo-clickhouse-persist --no-deps
+    cargo doc -p ergo-aeron-cluster --no-deps
+
 # Format all handwritten source
 fmt:
     cargo fmt --all

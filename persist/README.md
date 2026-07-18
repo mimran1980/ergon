@@ -10,8 +10,16 @@ automatic schema management.**
 
 Part of the [ErgoSBE] ecosystem. Sits on the *consumer* side — never on the hot path.
 
+```text
 Producer:  struct -> [ErgoSBE codegen] -> SBE bytes -> queue
 Consumer:  SBE bytes -> [ErgoSBE decode] -> DTO -> [Persist trait] -> ClickHouse
+```
+
+Also supports **dynamic** tables (`DynamicSchema` / `DynamicRow` V2 +
+`SchemaRegistry` / `RowDecoder`) used by samples for books and HA
+`feed_latency` rows (`LatencyPersistor` in `samples/cluster-ha-orderbook`).
+
+Derive crate: [`derive/README.md`](derive/README.md).
 
 ---
 

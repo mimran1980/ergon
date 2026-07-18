@@ -115,16 +115,22 @@
 //! - **Version-aware**: all accessors respect the wire message version.
 //! - **No `unsafe` by default**: `unsafe` is opt-in via `_unchecked` methods.
 //!
-//! See [`design/DECISIONS.md`](https://github.com/mimran1980/ErgoSBE/blob/main/design/DECISIONS.md)
-//! for the full design rationale.
+//! See [`design/DECISIONS.md`](https://github.com/mimran1980/ErgoSBE/blob/first_cut/sbe/design/DECISIONS.md)
+//! for the full design rationale. Pillar overview: crate README under `sbe/`.
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
 
+/// Rust source generation from a resolved [`Schema`].
 pub mod codegen;
+/// Generation options (module name, compatibility mode).
 pub mod config;
+/// Intermediate representation of SBE tokens and encodings.
 pub mod ir;
+/// Offset / block-length resolution pass over IR.
 pub mod resolve;
+/// High-level schema model built from IR.
 pub mod schema;
+/// SBE XML parse + XInclude resolution.
 pub mod xml;
 
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};

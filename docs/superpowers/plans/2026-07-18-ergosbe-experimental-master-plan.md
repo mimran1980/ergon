@@ -213,6 +213,21 @@ the book path on CH (match advanced-bitget drop/batch policy).
 
 **Does not replace:** IPC advanced-bitget / `just samples-orderbook` baseline.
 
+## 5b. Post-completion quality track (docs + improvements, 2026-07-19)
+
+Residual product is COMPLETE. Next quality work (not completion blockers):
+
+| Priority | Theme |
+|----------|--------|
+| **P0** | Per-module README + accurate rustdocs (navigability) — **in progress** |
+| **P1** | Cluster client API polish / docs (zero-cost, off hot path) |
+| **P2** | Persist + sample ergonomics docs (LatencyPersistor canonical pattern) |
+| **P3** | Generator changes only with golden/parity benches |
+| **P4** | Opportunistic hygiene (clippy allows, check-cfg noise) |
+
+Non-goals unchanged: no pillar renames, no Rust cluster service, no deleting
+sbe-tool residual bench trees, no promoting connect encode to maintained gate.
+
 **Pin decision (2026-07-18):** HA sample crate `samples/cluster-ha-orderbook` uses **rusteron 0.2.4** via `ergo-aeron-cluster`. IPC `advanced-bitget` stays **0.2.1**. Separate binaries — no dual-pin.
 
 **Location:** extend under `samples/` (feature/binary); no new top-level pillar

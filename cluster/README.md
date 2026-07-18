@@ -1,154 +1,107 @@
-# ergo-aeron-cluster
+# ergo-aeron-cluster (`cluster/`)
 
-⚠️ **TEMPORARY PROTOTYPE.** This is a handwritten Rust reimplementation of
-the Aeron Cluster *client* (no C bindings). It is heavily LLM-assisted,
-lightly human-reviewed, and less tested than the Java reference.
+Experimental pure-Rust **Aeron Cluster client** on `rusteron-client` **0.2.4**,
+with **ErgoSBE-generated** session (schema 111) and RFQ (schema 101) codecs.
 
-**Delete this crate when official Aeron Cluster C bindings become
-available.** Bugs in Rusteron's pub/sub layer OR in this reimplementation
-may cause undefined behaviour, segfaults, or data loss.
+⚠️ **Prototype.** LLM-assisted, less tested than the Java reference. Bugs in
+Rusteron pub/sub **or** this client may cause UB, segfaults, or data loss.
+Delete or replace when official Aeron Cluster C client bindings are suitable.
 
-## Overview
+## Status
 
-Pure-Rust Aeron Cluster client protocol implementation on top of
-`rusteron-client` transport. Mirrors the Java
-`io.aeron.cluster.client.AeronCluster` API and SBE session protocol.
+Residual product scope **COMPLETE** (2026-07-18): production codecs ErgoSBE-only,
+connect re-offer, log-recovery test, maintained encode+decode benches ≤ 1.00,
+RFQ unfrozen. See living completion prompt under `docs/superpowers/plans/`.
 
-## Features
+## Depends on
 
-- `test-harness` — enables `rusteron-java-test-support` dependency for
-  integration tests (requires Java 17+).
+- Path: `ergosbe` (via `build.rs`)
+- `rusteron-client` 0.2.4
+- Optional: `ergo-aeron-cluster-test-support` behind feature `test-harness`
+- Aeron submodule **1.52.2** for schemas + Java jars
+
+## Build / test
+
+```sh
+# Lib only (no Java)
+cargo test -p ergo-aeron-cluster --lib
+cargo test -p ergo-aeron-cluster --test codec_golden_bytes
+just check-aeron-cluster
+
+# Maintained codec benches (ErgoSBE vs residual sbe-tool, equal work)
+just bench-cluster
+# filter example:
+cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- \
+  'encode/session_message_header|encode/session_keep_alive|decode/session_message_header|decode/session_event'
+
+# Integration (Java 17+ + jars)
+just build-aeron-jars
+just test-aeron-cluster-harness
+```
+
+**Gotcha:** never `cargo … --workspace --all-features` without
+`--exclude ergo-aeron-cluster` (harness pulls Java).
 
 ## Codecs
 
-**Production path:** ErgoSBE generates cluster session codecs at build time from
-the pinned `aeron/` submodule schemas (`build.rs` → `OUT_DIR`, included as
-`ergo_codecs` / mark modules). Call sites use
-`wrap_and_apply_header` and consuming tail stages.
+| Module | Source | Use |
+|--------|--------|-----|
+| `codecs::ergo_codecs` | `build.rs` ← `aeron-cluster-codecs.xml` | **Production** session protocol |
+| `codecs::ergo_codecs_mark` | mark schema | Mark file codecs |
+| `codecs::ergo_rfq_codecs` | `schemas/protocol-codecs.xml` (cookbook 101) | **Production** RFQ examples |
+| `codecs::cluster_codecs` / `rfq_codecs` | residual sbe-tool 1.39.0 trees | Head-to-head benches + wire parity only |
 
-**Residual:** committed sbe-tool 1.39.0 trees (`cluster_codecs/`, RFQ,
-`generated/`) remain for golden head-to-head benches, some test boilerplate,
-and frozen RFQ examples. Prefer ErgoSBE APIs for new code. Prefer high-level
-`SessionBuilder` / `AeronCluster` over hand-rolled publications.
+Prefer `SessionBuilder` / `AeronCluster` over hand-rolled publications.
 
-## Usage Example
-
-Prefer the high-level client (handles connect, challenge, redirect, keep-alive):
+## Usage
 
 ```rust
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
-// Build SessionBuilder with cluster member endpoints + response channel,
-// then SessionBuilder::connect(...) or connect_async + poll until Connected.
-// Publish application payloads with AeronCluster::try_claim(payload_len)
-// (SessionMessageHeader is written into the claim via ErgoSBE) or send().
+// SessionBuilder: ingress/egress channels, stream ids, timeout
+// AeronCluster::connect / connect_async
+// AeronCluster::try_claim(payload_len) — SessionMessageHeader via ErgoSBE in claim
+// AeronCluster::poll_egress(adapter, limit)
 ```
 
-Low-level ErgoSBE encode shape (production codecs — mirrors `client.rs`):
+RFQ: `codecs::ergo_rfq_codecs` + examples `rfq_client` / `rfq_roundtrip`.
 
-```rust
-use ergo_aeron_cluster::codecs::ergo_codecs::SessionConnectRequestEncoder;
+## Maintained benches (ErgoSBE / sbe-tool ≤ 1.00)
 
-let mut buf = vec![0u8; 512];
-let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
-let _ = enc.correlation_id(1).response_stream_id(102).version(0);
-let _ = enc
-    .response_channel(b"aeron:udp?endpoint=localhost:9002")?
-    .encoded_credentials(b"")?
-    .client_info(b"")?; // empty client_info completes the v16 tail
-// offer `buf` (or prefer AeronCluster::try_claim / send for app payloads)
-```
+| Scenario | Role |
+|----------|------|
+| SessionMessageHeader encode | Claim hot path |
+| SessionKeepAlive encode | Periodic |
+| SessionMessageHeader decode | Egress |
+| SessionEvent decode | Egress |
 
-The cluster must be running — Java `ClusteredMediaDriver` +
-`ClusteredServiceContainer`, or the test harness
-(`ergo-aeron-cluster-test-support` / `just test-aeron-cluster-harness`).
+`SessionConnectRequest` encode is **demoted** (cold path). Ledger:
+[`../ergosbe-performance-optimisation-goal.md`](../ergosbe-performance-optimisation-goal.md).
 
-## Architecture
+## Layout
 
 ```
-cluster/          # crate: ergo-aeron-cluster (dir name permanent; not package name)
-├── build.rs            # ErgoSBE generate from aeron submodule → OUT_DIR
-├── benches/
-│   └── cluster_codec_bench.rs  # ErgoSBE vs sbe-tool encode head-to-head
+cluster/
+├── build.rs                 # ErgoSBE → OUT_DIR (session + mark + RFQ)
+├── schemas/protocol-codecs.xml
+├── benches/cluster_codec_bench.rs
+├── examples/                # echo, failover, rfq_*, …
 ├── src/
-│   ├── codecs/         # ergo_codecs (include! OUT_DIR) + residual sbe-tool trees
-│   │                   # + writer_impls.rs (needed while RFQ is sbe-tool)
-│   ├── client.rs       # AeronCluster + AsyncClusterConnect + try_claim
-│   ├── connect.rs      # AsyncConnect state machine
-│   ├── controlled.rs   # ControlledEgressAdapter
-│   ├── credentials.rs  # CredentialsSupplier trait
-│   ├── egress.rs       # EgressAdapter + EgressListener
-│   ├── error.rs        # ClusterError enum
-│   ├── poller.rs       # Egress event parser + leader-endpoint resolution
-│   ├── protocol.rs     # Session constants from ErgoSBE encoders
-│   ├── session.rs      # AeronClusterSession
-│   ├── state.rs        # SessionState enum
-│   └── config.rs       # SessionBuilder
-└── tests/
-    ├── common/                # Shared own-driver UDP test helpers
-    ├── connect_to_cluster.rs  # End-to-end connect test
-    ├── auth.rs                # Auth integration tests
-    ├── failover.rs            # 3-node cluster spawn + connect
-    ├── failover_own_driver.rs # Deterministic 3-node failover (own-driver UDP)
-    ├── restart.rs             # Privileged quorum-loss + restart tests
-    ├── property.rs            # Proptest property tests
-    ├── archive.rs             # Archive migration tests
-    └── udp_pub_sub.rs         # UDP loopback verification
+│   ├── client.rs            # AeronCluster, try_claim, AsyncClusterConnect
+│   ├── codecs/              # ergo_* production + residual sbe-tool
+│   ├── connect.rs           # connect re-offer helpers
+│   ├── egress.rs / controlled.rs / poller.rs
+│   ├── session.rs / state.rs / config.rs / error.rs
+└── tests/                   # goldens + test-harness integration
 ```
 
-## State Machine
+## HA sample
 
-Mirrors the Java `AeronCluster.AsyncConnect` sequence:
+Leadership-aware orderbook + latency → CH:
+[`../samples/cluster-ha-orderbook/`](../samples/cluster-ha-orderbook/)  
+(`just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`).
 
-```
-CreateEgressSubscription → CreateIngressPublication → AwaitPublicationConnected
-→ SendSessionConnectRequest → PollResponse → ConcludeConnect → Done
-```
+## Non-goals
 
-Session states: `Connected` → `AwaitingNewLeader` → `AwaitingNewLeaderConnection`
-→ `PendingClose` → `Closed`
-
-## Protocol
-
-- **Schema ID:** 111 (version 16), generated from `aeron-cluster-codecs.xml`
-- **Ingress:** stream 101, `ExclusivePublication` by default
-- **Egress:** stream 102, `Subscription` with `rejoin=false`
-- **SessionMessageHeader:** 24 bytes (leadershipTermId + clusterSessionId + timestamp)
-- **10 client-relevant message types** encoded/decoded via SBE
-
-## Java Parity
-
-| Java (`AeronCluster`) | Rust (`ergo-aeron-cluster`) |
-|---|---|
-| `AeronCluster.Context` | `SessionBuilder` |
-| `AeronCluster.AsyncConnect` | `AsyncConnect` |
-| `EgressListener` | `EgressListener` (trait) |
-| `EgressAdapter` | `EgressAdapter` |
-| `CredentialsSupplier` | `CredentialsSupplier` (trait) |
-| `NullCredentialsSupplier` | `NullCredentialsSupplier` |
-| `IngressSessionDecorator` | `send()` / `try_claim()` auto-prepends header |
-| `ControlledEgressAdapter` | `ControlledEgressAdapter` (`controlled.rs`) |
-| `ControlledFragmentHandler.Action` | controlled poll path (see `controlled.rs`) |
-
-## Running Tests
-
-```bash
-# Unit tests (no Java needed)
-cargo test -p ergo-aeron-cluster --lib                      # 53 tests
-just check-aeron-cluster
-just bench-cluster                                          # encode head-to-head
-
-# Integration tests (requires Java 17+)
-cargo test -p ergo-aeron-cluster --test connect_to_cluster --features test-harness
-cargo test -p ergo-aeron-cluster --test auth --features test-harness
-cargo test -p ergo-aeron-cluster --test failover --features test-harness
-cargo test -p ergo-aeron-cluster --test failover_own_driver --features test-harness  # deterministic 3-node failover
-cargo test -p ergo-aeron-cluster --test property
-cargo test -p ergo-aeron-cluster --test archive --features test-harness
-cargo test -p rusteron-java-test-support --test cluster_spawn
-cargo test -p rusteron-java-test-support --test harness_failure
-
-# Privileged tests (slow, requires cluster lifecycle control)
-cargo test -p ergo-aeron-cluster --test restart --features test-harness -- --ignored
-#   test_quorum_loss_stops_serving — asserts the cluster stops serving after quorum loss
-#   test_cluster_restart_and_reconnect — kill-all + fresh cluster + reconnect round trip
-```
+- Rust Aeron Cluster **service** implementation
+- Deleting residual sbe-tool trees used for benches
+- Promoting connect encode into the maintained ≤1.00 gate

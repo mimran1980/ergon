@@ -1,12 +1,16 @@
 //! Cluster SBE codecs.
 //!
-//! **Production path:** [`ergo_codecs`] / [`ergo_codecs_mark`] / [`ergo_rfq_codecs`]
-//! — ErgoSBE `build.rs` generation from pinned Aeron schemas + vendored RFQ
-//! `schemas/protocol-codecs.xml` (cookbook schema 101).
+//! # Production (ErgoSBE)
 //!
-//! **Residual sbe-tool trees:** [`cluster_codecs`] / [`cluster_codecs_mark`] /
-//! [`rfq_codecs`] remain only for head-to-head Criterion benches. Do not
-//! hand-edit generated trees.
+//! - [`ergo_codecs`] — Aeron cluster session schema 111 (`build.rs` → `OUT_DIR`)
+//! - [`ergo_codecs_mark`] — cluster mark schema
+//! - [`ergo_rfq_codecs`] — cookbook RFQ schema 101 from `schemas/protocol-codecs.xml`
+//!
+//! # Residual (sbe-tool 1.39.0)
+//!
+//! [`cluster_codecs`], [`cluster_codecs_mark`], and [`rfq_codecs`] remain only
+//! for head-to-head Criterion benches and wire-parity tests. Prefer ErgoSBE
+//! modules for all production call sites. Do not hand-edit residual trees.
 
 pub mod cluster_codecs;
 pub mod cluster_codecs_mark;
