@@ -94,6 +94,10 @@ run-sample:
 bench:
     cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench
 
+# Cluster codec benchmarks (ErgoSBE vs sbe-tool head-to-head)
+bench-cluster:
+    cargo bench -p ergo-aeron-cluster
+
 # =============================================================================
 # cluster/ = crate ergo-aeron-cluster (AI-driven Aeron Cluster client — workspace
 # member; cluster-test-support/ = crate ergo-aeron-cluster-test-support, excluded)
