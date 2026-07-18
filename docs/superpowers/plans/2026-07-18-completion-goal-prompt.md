@@ -207,7 +207,7 @@ WORK ORDER (residual only — do not re-migrate production codecs)
    After every slice update master plan, affected todos, and evidence ledgers
    with dated output. Mark nothing DONE without a passing command. Label
    superseded claims; do not delete history. Resolve or formally CLOSE every
-   live status-scan hit (HA todo may stay ACTIVE until H1–H8 pass).
+   live status-scan hit (HA todo is DONE for residual scope; optional follow-ups only).
 
 ================================================================
 PER-SLICE LOOP

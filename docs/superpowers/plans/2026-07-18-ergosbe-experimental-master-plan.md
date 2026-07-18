@@ -169,8 +169,9 @@ Ranked by trading-path importance:
    is `#[ignore]` destructive — run with
    `just build-aeron-jars && cargo test --features test-harness -- --include-ignored`.
 3. RFQ schema vendoring (optional; frozen is the decision).
-4. **Dual-codec residual cleanup** — still OPEN (sbe-tool trees for RFQ +
-   benches + some tests).
+4. **Dual-codec residual cleanup** — **DONE** for production/protocol (§3b).
+   sbe-tool trees remain only for frozen RFQ + head-to-head benches
+   (intentional residual, not open product work).
 
 ## 5. Future work C — HA cluster sample (DONE residual scope, 2026-07-18)
 
@@ -223,8 +224,7 @@ just build-aeron-jars               # one-time, Java 17+
 just test-aeron-cluster-harness     # full cluster integration suite (slow)
 just bench-cluster                  # ErgoSBE vs sbe-tool encode head-to-head
 just samples-orderbook              # live ClickHouse E2E for both samples (Docker)
-# transitional until dual-codec cleanup:
-# just check-aeron-cluster-codec-drift
+# residual sbe-tool trees only (RFQ/benches): just check-aeron-cluster-codec-drift
 ```
 
 Read next: completion goal prompt (residual order), `cluster/README.md`,
