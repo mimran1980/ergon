@@ -1135,6 +1135,141 @@ fn strict_and_extended_modes_produce_identical_output() -> Result<(), Box<dyn st
     Ok(())
 }
 
+// ── Display / Debug content assertions for complex types ──────────
+
+#[test]
+fn display_shows_field_values_for_every_single_type() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "disp_every");
+    compile_and_run(
+        "disp_every",
+        &src,
+        r#"
+    let mut buf = vec![0u8; 512];
+    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    car.serial_number(42);
+    car.model_year(2013);
+    car.available(BooleanType::T);
+    car.code(Model::A);
+    car.some_numbers([1u32, 2, 3, 4]);
+    car.vehicle_code([97u8, 98, 99, 100, 101, 102]);
+    let car = car.fuel_figures(0, |_| {}).unwrap();
+    let car = car.performance_figures(0, |_| {}).unwrap();
+    let car = car.manufacturer(b"ABC").unwrap();
+    let car = car.model(b"XYZ").unwrap();
+    let complete = car.activation_code(b"xyz").unwrap();
+    let encoded = complete.as_bytes().to_vec();
+
+    let dec = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+    let d = format!("{}", dec);
+    let dbg = format!("{:?}", dec);
+
+    // ---------- scalar (u64) ----------
+    assert!(d.contains("serial_number"), "missing scalar field name: {d}");
+    assert!(d.contains("42"), "missing scalar value: {d}");
+    // ---------- scalar (u16) ----------
+    assert!(d.contains("model_year"), "missing u16 field name: {d}");
+    assert!(d.contains("2013"), "missing u16 value: {d}");
+    // ---------- enum ----------
+    assert!(d.contains("available"), "missing enum field name: {d}");
+    assert!(d.contains("BooleanType"), "missing enum type in Display: {d}");
+    // ---------- enum (2nd) ----------
+    assert!(d.contains("code"), "missing second enum field name: {d}");
+    assert!(d.contains("Model"), "missing second enum type name: {d}");
+    // ---------- var-data field (shows byte count, not content) ----------
+    assert!(d.contains("manufacturer"), "missing var-data field name: {d}");
+    assert!(d.contains("bytes"), "var-data should show byte length: {d}");
+    assert!(d.contains("model"), "missing second var-data field name: {d}");
+
+    // ---------- Debug == Display ----------
+    assert_eq!(d, dbg, "Debug must delegate to Display (field values, not pos/buf_len)");
+
+    // ---------- No raw positions in decoder Display ----------
+    assert!(!d.contains("pos: "), "decoder Display must NOT show raw position: {d}");
+    assert!(!d.contains("buf_len"), "decoder Display must NOT show buf_len: {d}");
+    "#,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn display_on_group_entry_shows_field_values_not_positions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "disp_group");
+    compile_and_run(
+        "disp_group",
+        &src,
+        r#"
+    let mut buf = vec![0u8; 512];
+    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    car.serial_number(1); car.model_year(2000);
+    car.available(BooleanType::F); car.code(Model::A);
+    car.some_numbers([0u32; 4]); car.vehicle_code([0u8; 6]);
+    let car = car.fuel_figures(1, |g| { g.add(|e| { e.speed(30); e.mpg(35.9f32); }); }).unwrap();
+    let car = car.performance_figures(0, |_| {}).unwrap();
+    let car = car.manufacturer(b"AB").unwrap();
+    let car = car.model(b"CD").unwrap();
+    let complete = car.activation_code(b"xyz").unwrap();
+    let encoded = complete.as_bytes().to_vec();
+
+    let dec = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+    // Read fuel entry and check its Display shows field values
+    let fuel_group = dec.into_fuel_figures().unwrap();
+    let entry = fuel_group.nth(0).unwrap();
+    let d_entry = format!("{}", entry);
+    assert!(d_entry.contains("speed"), "group entry missing field name: {d_entry}");
+    assert!(d_entry.contains("30"), "group entry missing speed value 30: {d_entry}");
+    assert!(d_entry.contains("mpg"), "group entry missing mpg: {d_entry}");
+    assert!(d_entry.contains("35"), "group entry missing mpg value: {d_entry}");
+    assert!(!d_entry.contains("pos"), "group entry Display must not show raw pos");
+    assert!(!d_entry.contains("buf_len"), "group entry Display must not show buf_len");
+    "#,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn display_on_nested_group_entry_shows_field_values() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "disp_nested");
+    compile_and_run(
+        "disp_nested",
+        &src,
+        r#"
+    let mut buf = vec![0u8; 512];
+    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    car.serial_number(1); car.model_year(2000);
+    car.available(BooleanType::F); car.code(Model::A);
+    car.some_numbers([0u32; 4]); car.vehicle_code([0u8; 6]);
+    let car = car.fuel_figures(0, |_| {}).unwrap();
+    // performanceFigures has a nested acceleration group
+    let car = car.performance_figures(1, |g| {
+        g.add(|e| {
+            e.octane_rating(95);
+            e.acceleration(1, |a| {
+                a.add(|acc| { acc.mph(60); acc.seconds(5.0f32); });
+            });
+        });
+    }).unwrap();
+    let car = car.manufacturer(b"AB").unwrap();
+    let car = car.model(b"CD").unwrap();
+    let complete = car.activation_code(b"xyz").unwrap();
+    let encoded = complete.as_bytes().to_vec();
+
+    let dec = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+    let fuel_group = dec.into_fuel_figures().unwrap();
+    let after_fuel = fuel_group.finish().unwrap();
+    let pf_group = after_fuel.into_performance_figures().unwrap();
+    let pf_entry = pf_group.nth(0).unwrap();
+    let d_pf = format!("{}", pf_entry);
+    assert!(d_pf.contains("octaneRating"), "nested group entry missing octaneRating: {d_pf}");
+    assert!(d_pf.contains("95"), "nested group entry missing octane value: {d_pf}");
+    "#,
+    );
+
+    Ok(())
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 /// Strip `/// ...` doc-comment lines from a source snippet so substring
