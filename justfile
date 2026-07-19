@@ -1,5 +1,36 @@
 # ErgoSBE — reproducible workspace gates
 
+# Wipe Cargo build artifacts and reset git submodules to the commits pinned by
+# this repo (fetch origin, hard-reset + clean dirt, force-checkout).
+clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== cargo clean (workspace) ==="
+    cargo clean
+    for d in samples/advanced-bitget samples/cluster-ha-orderbook cluster-test-support; do
+      if [ -f "$d/Cargo.toml" ]; then
+        echo "=== cargo clean ($d) ==="
+        (cd "$d" && cargo clean)
+      fi
+    done
+    echo "=== git submodules → origin / pinned commits ==="
+    git submodule sync --recursive
+    git submodule foreach --recursive '
+      set -e
+      git fetch origin --tags 2>/dev/null || git fetch origin || true
+      git reset --hard
+      git clean -fdx
+    '
+    git submodule update --init --recursive --force
+    echo "clean: done (targets removed; submodules hard-reset to parent pins)"
+
+# Compile product workspace + sample harnesses (no tests, no Java jars).
+build:
+    cargo build --workspace --all-features --exclude ergo-aeron-cluster
+    cargo build -p ergo-aeron-cluster
+    cd samples/advanced-bitget && cargo build
+    cd samples/cluster-ha-orderbook && cargo build
+
 # Full local check: hygiene, format, clippy, tests (no external services).
 # ergo-aeron-cluster's test-harness feature needs Java, so it is excluded from
 # the --all-features workspace gates below and checked at default features
