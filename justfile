@@ -174,9 +174,10 @@ bench:
     @echo ""
     @echo "Gate: checked Ergo≤Aero, unchecked Ergo≤Aero, unchecked Ergo≤checked Ergo (all ≤ 1.00)"
 
-# Cluster codec benchmarks (ErgoSBE vs sbe-tool head-to-head)
+# Cluster codec benchmarks (ErgoSBE vs sbe-tool head-to-head).
+# With unchecked-companions feature for single-session checked vs unchecked comparison.
 bench-cluster:
-    cargo bench -p ergo-aeron-cluster
+    cargo bench -p ergo-aeron-cluster --features unchecked-companions
 
 # =============================================================================
 # cluster/ = crate ergo-aeron-cluster (client + optional in-crate test_support)

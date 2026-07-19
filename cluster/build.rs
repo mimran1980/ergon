@@ -25,7 +25,10 @@ fn generate_schema(schema_path: &std::path::Path, module: &str, out_dir: &std::p
     let xml_src = fs::read_to_string(schema_path).unwrap_or_else(|e| panic!("read {}: {e}", schema_path.display()));
     let ir = ergo_sbe::parse(&xml_src).unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let cfg = ergo_sbe::GenerationConfig::new(module);
+    let mut cfg = ergo_sbe::GenerationConfig::new(module);
+    if cfg!(feature = "unchecked-companions") {
+        cfg = cfg.with_unchecked_companions();
+    }
     let generator = ergo_sbe::Generator::new(cfg);
     let modules = generator
         .try_generate(&schema)
