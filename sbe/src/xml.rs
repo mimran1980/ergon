@@ -1113,6 +1113,7 @@ fn parse_enum(
     }
 
     let mut enum_tokens = Vec::new();
+    let semantic_type = node.attribute("semanticType").map(str::to_string);
     enum_tokens.push(Token {
         id: None,
         name: name.clone(),
@@ -1122,6 +1123,7 @@ fn parse_enum(
             since_version,
             deprecated: node.attribute("deprecated").is_some(),
             description: collect_description(node),
+            semantic_type,
             ..Encoding::default()
         },
     });

@@ -822,6 +822,16 @@ fn partition_tokens(tokens: &[Token]) -> SchemaElements {
     }
 }
 
+/// Shared bool detection: name convention OR semanticType="Boolean".
+/// Must match the predicate in generate_enum.
+fn is_bool_enum(elements: &SchemaElements, enum_name: &str) -> bool {
+    enum_name == "BooleanType"
+        || elements.enums.iter().any(|e| {
+            e[0].name == enum_name
+                && e[0].encoding.semantic_type.as_deref() == Some("Boolean")
+        })
+}
+
 struct MessageStructure {
     name: String,
     id: u16,
@@ -2991,6 +3001,15 @@ fn generate_message_decoder(
                             Some(#target_ident::from_raw(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))))
                         }
                     });
+                    if is_bool_enum(elements, enum_name) {
+                        let fname_bool = quote::format_ident!("{}_bool", fname_snake);
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #fname_bool(&self) -> Option<bool> {
+                                self.#fname_ident().map(bool::from)
+                            }
+                        });
+                    }
                 } else {
                     impl_body.extend(quote::quote! {
                         #[inline]
@@ -2999,6 +3018,15 @@ fn generate_message_decoder(
                             #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
                         }
                     });
+                    if is_bool_enum(elements, enum_name) {
+                        let fname_bool = quote::format_ident!("{}_bool", fname_snake);
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #fname_bool(&self) -> bool {
+                                bool::from(self.#fname_ident())
+                            }
+                        });
+                    }
                 }
             }
             FieldType::Set {
@@ -4295,7 +4323,7 @@ fn generate_group_decoder(
                     }
                 });
 
-                if enum_name == "BooleanType" {
+                if is_bool_enum(elements, enum_name) {
                     // Use the const raw primitive accessor — the typed
                     // enum getter is not const (from_raw is runtime).
                     let bool_ident = quote::format_ident!("{}_bool", f_name);
@@ -5245,7 +5273,7 @@ fn generate_message_encoder(
                     }
                 });
                 // Boolean fields get an additional setter that accepts bool directly
-                if enum_name == "BooleanType" {
+                if is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
                     impl_contents.extend(quote::quote! {
                         #[must_use]
@@ -5901,6 +5929,18 @@ fn generate_group_encoder(
                         self
                     }
                 });
+                if is_bool_enum(elements, enum_name) {
+                    let f_name_bool = syn::Ident::new(&format!("{}_bool", f_snake), span);
+                    entry_methods.extend(quote::quote! {
+                        #[must_use]
+                        pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
+                            let offset = self.entry_start + #f_offset;
+                            let enum_val: #target = val.into();
+                            self.buf[offset..offset + #sz].copy_from_slice(&(enum_val as #r_ty).#to_endian());
+                            self
+                        }
+                    });
+                }
             }
             FieldType::Set {
                 name: set_name,

@@ -101,6 +101,10 @@ impl Paths {
         Self::fixtures_dir().join("l3-orderbook-schema.xml")
     }
 
+    pub fn bool_semantic_schema() -> PathBuf {
+        Self::fixtures_dir().join("bool-semantic-schema.xml")
+    }
+
     pub fn baseline_binary() -> PathBuf {
         Self::sbe_dir()
             .join("tests")

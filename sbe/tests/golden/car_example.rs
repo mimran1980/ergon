@@ -842,6 +842,10 @@ impl<'a> CarDecoder<'a> {
         let offset = self.pos + 10;
         BooleanType::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
     }
+    #[inline]
+    pub fn available_bool(&self) -> bool {
+        bool::from(self.available())
+    }
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     #[inline]
     pub fn code(&self) -> Model {
