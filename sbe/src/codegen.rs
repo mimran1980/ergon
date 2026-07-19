@@ -3514,6 +3514,7 @@ fn generate_message_decoder(
             &name,
             multi_message,
             byte_order,
+            decimal_composites,
         ));
     }
 
@@ -3530,9 +3531,16 @@ fn generate_domain_objects(
     _parent_scope: &str,
     multi_message: bool,
     _byte_order: ByteOrder,
+    decimal_composites: &[String],
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
+    let _has_decimal = domain_has_decimal(&msg.fields, &msg.groups, decimal_composites);
+    // ponytail: generic Domain<D: SbeDecimal> scaffolded (detection, plumbing)
+    // but not yet emitted — the identity escape hatch (SbeDecimal for Decimal)
+    // is already emitted by generate_decimal_converter_impls; users get raw
+    // Decimal in DTOs today and can convert in app code. Full generic DTO
+    // emission is follow-up.
     generate_domain_recursive(
         msg_name,
         msg_name,
@@ -3542,11 +3550,34 @@ fn generate_domain_objects(
         elements,
         multi_message,
         msg_name,
+        decimal_composites,
         false, // is_entry — this is a message, not a group entry
         &mut ts,
         span,
     );
     ts
+}
+
+/// Check whether any field, group entry, or nested group under these
+/// fields/groups uses a registered decimal composite.
+fn domain_has_decimal(
+    fields: &[MessageField],
+    groups: &[MessageGroup],
+    decimal_composites: &[String],
+) -> bool {
+    for f in fields {
+        if let FieldType::Composite { name, .. } = &f.field_type {
+            if decimal_composites.iter().any(|d| d == name) {
+                return true;
+            }
+        }
+    }
+    for g in groups {
+        if domain_has_decimal(&g.fields, &g.groups, decimal_composites) {
+            return true;
+        }
+    }
+    false
 }
 
 #[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
@@ -3559,6 +3590,7 @@ fn generate_domain_recursive(
     elements: &SchemaElements,
     multi_message: bool,
     msg_name: &str,
+    decimal_composites: &[String],
     is_entry: bool,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
@@ -3725,6 +3757,7 @@ fn generate_domain_recursive(
             elements,
             multi_message,
             msg_name,
+            decimal_composites,
             true, // is_entry — group entries always return T for enums
             ts,
             span,
