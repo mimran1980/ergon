@@ -95,9 +95,10 @@ claim.commit()?;
 | `ClusterError::is_retryable` / `PublicationFailure` | Offer back-pressure classification |
 | `idle::{default_idle, poll_egress_idle, …}` | Aeron `IdleStrategy` poll helpers |
 
-Channels: public helpers return **`&str` / `String`** (`channel_uri`,
-`udp_endpoint_uri`, `ipc_uri` / `IPC`). `CString` is private at the rusteron
-FFI edge only.
+Channels: public helpers return **`CString` / `&CStr`** for rusteron
+(`channel_cstr`, `udp_endpoint_cstr`, `ipc_cstr` / `IPC`). Prefer those over
+`String`/`&str` when the next hop is Aeron C — avoid allocate-then-convert
+twice.
 
 Nested AppMessage recipe:
 [`../sbe/docs/guide/claim-nested-encode.md`](../sbe/docs/guide/claim-nested-encode.md).  

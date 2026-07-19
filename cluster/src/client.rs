@@ -79,7 +79,7 @@ impl AeronCluster {
         let aeron = Aeron::new(&ctx).map_err(|e| ClusterError::aeron("Aeron::new", e))?;
         aeron.start().map_err(|e| ClusterError::aeron("Aeron::start", e))?;
 
-        // Private FFI cache on builder; app code only sees &str channels.
+        // Builder already holds CString; pass &CStr to rusteron with no second alloc.
         let egress_c = builder.egress_for_aeron()?;
         let ingress_c = builder.resolve_initial_ingress_for_aeron()?;
 
@@ -246,7 +246,7 @@ impl AeronCluster {
             .response_stream_id(builder.egress_stream_id)
             .version(0);
         let _ = enc
-            .response_channel(builder.egress_channel.as_bytes())
+            .response_channel(builder.egress_channel_bytes())
             .map_err(enc_err)?
             .encoded_credentials(credentials)
             .map_err(enc_err)?
@@ -274,7 +274,7 @@ impl AeronCluster {
     /// Recreate the ingress publication pointed at a new leader endpoint.
     fn reconnect_ingress(&mut self, builder: &crate::SessionBuilder, endpoint: &str) -> Result<(), ClusterError> {
         // Close the old publication then open a new one to the leader.
-        let cstr = uri::udp_endpoint_c_string(endpoint)?;
+        let cstr = uri::udp_endpoint_cstr(endpoint)?;
         let new_pub = self
             ._aeron
             .add_exclusive_publication(&cstr, builder.ingress_stream_id, Duration::from_secs(5))
@@ -410,7 +410,7 @@ impl AeronCluster {
                     reason: format!("NewLeaderEvent listed no endpoint for leader member {member}: {endpoints}"),
                 }
             })?;
-            let cstr = uri::udp_endpoint_c_string(&ep)?;
+            let cstr = uri::udp_endpoint_cstr(&ep)?;
             let pub_ = self
                 ._aeron
                 .add_exclusive_publication(&cstr, self.ingress_stream_id, Duration::from_secs(5))
@@ -675,7 +675,7 @@ impl AsyncClusterConnect {
                                 }
                                 EventCode::REDIRECT => {
                                     if let Some((member_id, ep)) = crate::poller::parse_redirect_leader(&detail) {
-                                        let c = uri::udp_endpoint_c_string(&ep)?;
+                                        let c = uri::udp_endpoint_cstr(&ep)?;
                                         let aeron =
                                             self.aeron.as_ref().ok_or_else(|| ClusterError::ReconnectFailed {
                                                 reason: "no aeron client for redirect".into(),
@@ -766,7 +766,7 @@ impl AsyncClusterConnect {
             .response_stream_id(self.builder.egress_stream_id)
             .version(0);
         let _ = enc
-            .response_channel(self.builder.egress_channel.as_bytes())
+            .response_channel(self.builder.egress_channel_bytes())
             .map_err(enc_err)?
             .encoded_credentials(&self.credentials)
             .map_err(enc_err)?

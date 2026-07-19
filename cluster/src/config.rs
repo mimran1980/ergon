@@ -3,11 +3,10 @@
 //! Mirrors Java `AeronCluster.Context`. Defaults: ingress stream 101, egress
 //! stream 102, 10s message timeout.
 //!
-//! Public channel accessors return **`&str`** (zero-cost borrows of stored
-//! UTF-8). [`CString`] is kept only privately for rusteron FFI reuse on connect.
+//! Channels are stored as **[`CString`]** (rusteron-ready). Performance over
+//! convenience: do not convert to `String`/`&str` and back for FFI.
 
-use std::borrow::Cow;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,9 +15,9 @@ use crate::{ClusterError, CredentialsSupplier};
 
 /// Builds and connects an [`crate::AeronCluster`].
 ///
-/// Channel setters normalize URIs via
-/// [`AeronUriStringBuilder`](rusteron_client::AeronUriStringBuilder) into
-/// UTF-8 strings. FFI `CString`s are cached privately for connect.
+/// Channel setters normalize via
+/// [`AeronUriStringBuilder`](rusteron_client::AeronUriStringBuilder) and store
+/// **[`CString`]** so connect can pass `&CStr` to rusteron with no second alloc.
 ///
 /// # Example
 ///
@@ -31,13 +30,9 @@ use crate::{ClusterError, CredentialsSupplier};
 /// ```
 #[derive(Clone)]
 pub struct SessionBuilder {
-    /// Normalized ingress channel URI (UTF-8).
-    pub(crate) ingress_channel: String,
-    /// Normalized egress channel URI (UTF-8).
-    pub(crate) egress_channel: String,
-    /// Private FFI cache of ingress (rusteron only).
+    /// Normalized ingress channel (C string for rusteron).
     ingress_c: Option<CString>,
-    /// Private FFI cache of egress (rusteron only).
+    /// Normalized egress channel (C string for rusteron).
     egress_c: Option<CString>,
     pub(crate) ingress_stream_id: i32,
     pub(crate) egress_stream_id: i32,
@@ -50,8 +45,6 @@ pub struct SessionBuilder {
 impl Default for SessionBuilder {
     fn default() -> Self {
         Self {
-            ingress_channel: String::new(),
-            egress_channel: String::new(),
             ingress_c: None,
             egress_c: None,
             ingress_stream_id: 101,
@@ -68,35 +61,15 @@ impl SessionBuilder {
         Self::default()
     }
 
-    /// Set the ingress channel URI (normalized to UTF-8; FFI cache filled).
-    pub fn ingress_channel(mut self, channel: impl Into<String>) -> Self {
-        let raw = channel.into();
-        match uri::channel_uri(&raw) {
-            Ok(normalized) => {
-                self.ingress_c = Some(uri::to_c_string(&normalized));
-                self.ingress_channel = normalized;
-            }
-            Err(_) => {
-                self.ingress_channel = raw;
-                self.ingress_c = None;
-            }
-        }
+    /// Set the ingress channel URI (validated + stored as [`CString`]).
+    pub fn ingress_channel(mut self, channel: impl AsRef<str>) -> Self {
+        self.ingress_c = uri::channel_cstr(channel.as_ref()).ok();
         self
     }
 
-    /// Set the egress channel URI (normalized to UTF-8; FFI cache filled).
-    pub fn egress_channel(mut self, channel: impl Into<String>) -> Self {
-        let raw = channel.into();
-        match uri::channel_uri(&raw) {
-            Ok(normalized) => {
-                self.egress_c = Some(uri::to_c_string(&normalized));
-                self.egress_channel = normalized;
-            }
-            Err(_) => {
-                self.egress_channel = raw;
-                self.egress_c = None;
-            }
-        }
+    /// Set the egress channel URI (validated + stored as [`CString`]).
+    pub fn egress_channel(mut self, channel: impl AsRef<str>) -> Self {
+        self.egress_c = uri::channel_cstr(channel.as_ref()).ok();
         self
     }
 
@@ -122,26 +95,31 @@ impl SessionBuilder {
     }
 
     /// Set multi-member ingress endpoints (`"0=host:port,1=host:port"`).
-    ///
-    /// First-connect opens against the lowest member id, then follows REDIRECT
-    /// / NewLeader. An explicit [`Self::ingress_channel`] overrides the initial
-    /// publication URI.
     pub fn ingress_endpoints(mut self, endpoints: impl Into<String>) -> Self {
         self.ingress_endpoints = Some(endpoints.into());
         self
     }
 
-    /// Ingress channel as UTF-8 (empty if only `ingress_endpoints` was set).
-    /// Zero-cost borrow of the stored string.
+    /// Ingress channel as [`CStr`] for rusteron (after a successful set/validate).
     #[inline]
-    pub fn ingress_channel_str(&self) -> &str {
-        &self.ingress_channel
+    pub fn ingress_channel_c_str(&self) -> Option<&CStr> {
+        self.ingress_c.as_deref()
     }
 
-    /// Egress channel as UTF-8. Zero-cost borrow.
+    /// Egress channel as [`CStr`] for rusteron (after a successful set/validate).
     #[inline]
-    pub fn egress_channel_str(&self) -> &str {
-        &self.egress_channel
+    pub fn egress_channel_c_str(&self) -> Option<&CStr> {
+        self.egress_c.as_deref()
+    }
+
+    /// Egress channel bytes without trailing NUL (for SBE var-data fields).
+    /// Zero-cost slice of the cached [`CString`].
+    #[inline]
+    pub(crate) fn egress_channel_bytes(&self) -> &[u8] {
+        self.egress_c
+            .as_ref()
+            .map(|c| c.as_bytes())
+            .unwrap_or(b"")
     }
 
     /// Multi-member endpoints map as UTF-8, if set.
@@ -162,53 +140,28 @@ impl SessionBuilder {
 
     /// Validate required fields and that channel URIs are valid.
     pub fn validate(&self) -> Result<(), ClusterError> {
-        let has_ingress = !self.ingress_channel.is_empty();
-        let has_endpoints = self.ingress_endpoints.as_ref().is_some_and(|s| !s.is_empty());
+        let has_ingress = self.ingress_c.is_some();
+        let has_endpoints = self
+            .ingress_endpoints
+            .as_ref()
+            .is_some_and(|s| !s.is_empty());
         if !has_ingress && !has_endpoints {
             return Err(ClusterError::connect(
                 "ingress_channel or ingress_endpoints is required",
             ));
         }
-        if self.egress_channel.is_empty() {
+        if self.egress_c.is_none() {
             return Err(ClusterError::connect("egress_channel is required"));
         }
-        if has_ingress && self.ingress_c.is_none() {
-            // Re-run for a precise URI error.
-            let _ = uri::channel_uri(&self.ingress_channel)?;
-            return Err(ClusterError::connect(format!(
-                "invalid ingress_channel URI: {}",
-                self.ingress_channel
-            )));
-        }
         if has_endpoints {
-            let _ = crate::endpoints::parse_ingress_endpoints(self.ingress_endpoints.as_deref().unwrap_or(""))?;
-        }
-        if self.egress_c.is_none() {
-            let _ = uri::channel_uri(&self.egress_channel)?;
-            return Err(ClusterError::connect(format!(
-                "invalid egress_channel URI: {}",
-                self.egress_channel
-            )));
+            let _ = crate::endpoints::parse_ingress_endpoints(
+                self.ingress_endpoints.as_deref().unwrap_or(""),
+            )?;
         }
         Ok(())
     }
 
-    /// Initial ingress channel as UTF-8 (borrow when already stored).
-    pub fn resolve_initial_ingress_uri(&self) -> Result<Cow<'_, str>, ClusterError> {
-        if !self.ingress_channel.is_empty() {
-            return Ok(Cow::Borrowed(&self.ingress_channel));
-        }
-        if let Some(ref map) = self.ingress_endpoints {
-            let eps = crate::endpoints::parse_ingress_endpoints(map)?;
-            let owned = uri::udp_endpoint_uri(&eps[0].endpoint)?;
-            return Ok(Cow::Owned(owned));
-        }
-        Err(ClusterError::connect(
-            "no ingress_channel or ingress_endpoints to resolve",
-        ))
-    }
-
-    /// FFI form of egress channel (private cache; clones the `CString` handle).
+    /// FFI form of egress channel (cached).
     pub(crate) fn egress_for_aeron(&self) -> Result<&CString, ClusterError> {
         self.egress_c
             .as_ref()
@@ -220,8 +173,13 @@ impl SessionBuilder {
         if let Some(c) = self.ingress_c.as_ref() {
             return Ok(c.clone());
         }
-        let uri = self.resolve_initial_ingress_uri()?;
-        Ok(uri::to_c_string(uri.as_ref()))
+        if let Some(ref map) = self.ingress_endpoints {
+            let eps = crate::endpoints::parse_ingress_endpoints(map)?;
+            return uri::udp_endpoint_cstr(&eps[0].endpoint);
+        }
+        Err(ClusterError::connect(
+            "no ingress_channel or ingress_endpoints to resolve",
+        ))
     }
 }
 
@@ -251,24 +209,20 @@ mod tests {
             .ingress_channel("aeron:udp?endpoint=localhost:9010")
             .egress_channel("aeron:udp?endpoint=localhost:9020");
         b.validate()?;
-        assert!(!b.ingress_channel_str().is_empty());
-        assert!(!b.egress_channel_str().is_empty());
+        assert!(b.ingress_channel_c_str().is_some());
+        assert!(b.egress_channel_c_str().is_some());
         Ok(())
     }
 
     #[test]
-    fn str_accessors_are_zero_cost_borrows() -> Result<(), Box<dyn std::error::Error>> {
+    fn cstr_accessors_borrow_cached_storage() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::builder()
-            .ingress_channel(uri::IPC)
-            .egress_channel(uri::IPC);
+            .ingress_channel(uri::IPC.to_str()?)
+            .egress_channel(uri::IPC.to_str()?);
         b.validate()?;
-        // Same pointer as internal storage — no copy.
-        assert_eq!(b.ingress_channel_str(), "aeron:ipc");
-        assert_eq!(b.egress_channel_str(), "aeron:ipc");
-        assert!(std::ptr::eq(
-            b.ingress_channel_str().as_ptr(),
-            b.ingress_channel.as_ptr()
-        ));
+        let a = b.ingress_channel_c_str().ok_or("missing")?.as_ptr();
+        let a2 = b.ingress_channel_c_str().ok_or("missing")?.as_ptr();
+        assert_eq!(a, a2, "cached CString must be stable across calls");
         Ok(())
     }
 
@@ -278,8 +232,9 @@ mod tests {
             .ingress_endpoints("0=localhost:9002,1=localhost:9102")
             .egress_channel("aeron:udp?endpoint=localhost:19002");
         b.validate()?;
-        let uri = b.resolve_initial_ingress_uri()?;
-        assert!(uri.contains("localhost:9002"), "{uri}");
+        let c = b.resolve_initial_ingress_for_aeron()?;
+        let s = c.to_str()?;
+        assert!(s.contains("localhost:9002"), "{s}");
         Ok(())
     }
 }

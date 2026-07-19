@@ -101,7 +101,7 @@ pub use idle::{
 };
 pub use poller::{EgressEvent, parse_event, parse_redirect_leader};
 pub use state::SessionState;
-pub use uri::{IPC, channel_uri, ipc_uri, udp_endpoint_uri};
+pub use uri::{IPC, channel_cstr, ipc_cstr, udp_endpoint_cstr};
 
 /// Java Aeron Cluster spawn harness (integration tests / examples only).
 ///

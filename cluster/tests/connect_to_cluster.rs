@@ -19,22 +19,23 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ipc = rusteron_client::cformat!("{}", ergo_aeron_cluster::ipc_uri());
+    // Static &CStr — zero-cost; do not cformat!/CString for IPC.
+    let ipc = ergo_aeron_cluster::IPC;
 
     // Diagnostic
     let _ds = a.add_subscription(
-        &ipc,
+        ipc,
         999,
         rusteron_client::Handlers::NONE,
         rusteron_client::Handlers::NONE,
         Duration::from_secs(3),
     )?;
-    let dp = a.add_publication(&ipc, 999, Duration::from_secs(3))?;
+    let dp = a.add_publication(ipc, 999, Duration::from_secs(3))?;
     assert!(dp.offer_raw(b"t", rusteron_client::Handlers::NONE) > 0, "IPC diag");
 
     // Connect to cluster via its ingress channel
-    let ing_cstr = rusteron_client::cformat!("{}", ergo_aeron_cluster::channel_uri(&cluster.ingress_channel)?);
-    let egr_cstr = rusteron_client::cformat!("{}", ergo_aeron_cluster::channel_uri(&cluster.egress_channel)?);
+    let ing_cstr = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
+    let egr_cstr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
 
     let egress = a.add_subscription(
         &egr_cstr,

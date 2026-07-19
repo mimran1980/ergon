@@ -38,8 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = rusteron_client::cformat!("{}", ergo_aeron_cluster::channel_uri(INGRESS)?);
-    let egr = rusteron_client::cformat!("{}", ergo_aeron_cluster::channel_uri(INGRESS)?);
+    let ing = ergo_aeron_cluster::channel_cstr(INGRESS)?;
+    let egr = ergo_aeron_cluster::channel_cstr(INGRESS)?;
     let egress = a.add_subscription(
         &egr,
         102,

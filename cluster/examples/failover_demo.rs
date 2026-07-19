@@ -37,10 +37,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     a.start()?;
 
     let egress_port: u16 = 19199;
-    let egress_uri = rusteron_client::cformat!(
-        "{}",
-        ergo_aeron_cluster::udp_endpoint_uri(&format!("localhost:{}", egress_port))?
-    );
+    // Already CString — do not cformat! again (would re-allocate).
+    let egress_uri =
+        ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
     let egress = a.add_subscription(
         &egress_uri,
         102,
@@ -50,10 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
-        let uri = rusteron_client::cformat!(
-            "{}",
-            ergo_aeron_cluster::udp_endpoint_uri(&format!("localhost:{}", port))?
-        );
+        let uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{port}")).ok()?;
         let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
         let mut buf = vec![0u8; 512];
         {
@@ -76,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let resp = format!("aeron:udp?endpoint=localhost:{egress_port}");
-    let mut ingress = connect_to_leader(node0_port, &resp).expect("connect to node 0");
+    let _ingress = connect_to_leader(node0_port, &resp).expect("connect to node 0");
 
     // Wait for SessionEvent(OK).
     let mut connected = false;
@@ -152,8 +148,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // id order, so a first-entry parse would reconnect to the dead leader.
             match poller::parse_leader_endpoint(&eps, leader_member_id) {
                 Some(ep) => {
-                    ingress = connect_to_leader(parse_port(&format!("aeron:udp?endpoint={ep}")), &resp)
-                        .expect("reconnect to new leader");
+                    let _reconn = connect_to_leader(
+                        parse_port(&format!("aeron:udp?endpoint={ep}")),
+                        &resp,
+                    )
+                    .expect("reconnect to new leader");
                     println!("  Reconnected ingress to new leader (member {leader_member_id}): {ep}");
                     println!("\n=== Result: failover handled — client survived leader death ===");
                 }
@@ -168,6 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\n=== Result: no NewLeaderEvent within 30s ===");
             println!("(cluster election timing — the transport survived, but no new");
             println!(" leader event was observed in the window.)");
+            Ok(())
         }
     }
 }
