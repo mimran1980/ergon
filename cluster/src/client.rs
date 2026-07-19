@@ -27,7 +27,8 @@ use crate::egress::{EgressAdapter, EgressListener};
 use crate::error::ClusterError;
 use crate::state::SessionState;
 
-const MSG_HDR_TOTAL: usize = 8 + SessionMessageHeaderEncoder::BLOCK_LENGTH; // MessageHeader(8) + body(24) = 32
+/// Header-inclusive SessionMessageHeader (prefer generated `ENCODED_LENGTH`).
+const MSG_HDR_TOTAL: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
 
 /// Map an ErgoSBE encode error into the cluster error enum.
 fn enc_err<E: std::fmt::Debug>(e: E) -> ClusterError {

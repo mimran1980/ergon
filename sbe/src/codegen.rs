@@ -258,8 +258,19 @@ impl Generator {
             }
         }
 
-        // 1. Generate inline SBE runtime (only once)
-        if emit_sbe_rt {
+        // 1. SBE runtime: external re-export, or inline once per module set.
+        if let Some(ref ext) = self.config.external_sbe_rt_path {
+            let _ = writeln!(src, "pub use {ext} as sbe_rt;\n");
+            if !self.config.decimal_composites.is_empty() {
+                src.push_str(
+                    "pub trait SbeDecimal: Sized {\n\
+                         type Error;\n\
+                         fn try_from_sbe(mantissa: i64, exponent: i8) -> Result<Self, Self::Error>;\n\
+                         fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;\n\
+                     }\n",
+                );
+            }
+        } else if emit_sbe_rt {
             src.push_str(&generate_sbe_rt_src());
             // Decimal converter trait (opt-in, dependency-free).
             if !self.config.decimal_composites.is_empty() {
@@ -2525,9 +2536,22 @@ fn generate_message_decoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #bl_lit;
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #bl_lit);
+            /// Message header size in bytes (standard SBE header is 8).
+            pub const HEADER_LENGTH: usize = #hdr_size_lit;
             /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`
+            /// Header-inclusive fixed length (header + body). For session
+            /// framing, app payload starts at `frame[Self::ENCODED_LENGTH..]`.
             pub const ENCODED_LENGTH: usize = #encoded_len_lit;
             const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            /// Slice after one full header-inclusive message of this type
+            /// (e.g. SessionMessageHeader then application payload).
+            #[inline]
+            pub fn after_this_message(frame: &[u8]) -> Option<&[u8]> {
+                if frame.len() < Self::ENCODED_LENGTH {
+                    return None;
+                }
+                Some(&frame[Self::ENCODED_LENGTH..])
+            }
         });
     } else {
         const STACK_LIMIT: usize = 65536;
@@ -2549,6 +2573,8 @@ fn generate_message_decoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #bl_lit;
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #bl_lit);
+            /// Message header size in bytes (standard SBE header is 8).
+            pub const HEADER_LENGTH: usize = #hdr_size_lit;
             #[doc = #max_doc_lit]
             pub const MAX_ENCODED_LENGTH: usize = #max_encoded_lit;
             const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
@@ -4918,9 +4944,21 @@ fn generate_message_encoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #block_length_lit;
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #block_length_lit);
+            /// Message header size in bytes (standard SBE header is 8).
+            pub const HEADER_LENGTH: usize = #header_size_lit;
             /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`
+            /// Header-inclusive fixed length. Claim/app framing: payload starts
+            /// at `frame[Self::ENCODED_LENGTH..]`.
             pub const ENCODED_LENGTH: usize = #encoded_length_lit;
             const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            /// Slice after one full header-inclusive message of this type.
+            #[inline]
+            pub fn after_this_message(frame: &[u8]) -> Option<&[u8]> {
+                if frame.len() < Self::ENCODED_LENGTH {
+                    return None;
+                }
+                Some(&frame[Self::ENCODED_LENGTH..])
+            }
         });
     } else {
         let max_doc_attr = if is_capped {
@@ -4938,6 +4976,8 @@ fn generate_message_encoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #block_length_lit;
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #block_length_lit);
+            /// Message header size in bytes (standard SBE header is 8).
+            pub const HEADER_LENGTH: usize = #header_size_lit;
             #max_doc_attr
             pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
             const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
@@ -5425,6 +5465,16 @@ fn generate_message_encoder(
                     /// Lend exactly `exact_len` bytes of the var-data region
                     /// to a closure for nested-message encoding. Zero-copy:
                     /// the closure writes directly into the outer buffer.
+                    ///
+                    /// Canonical nested-SBE pattern (AppMessage → L2Book):
+                    /// ```ignore
+                    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
+                    /// after.payload_with(inner, |p| {
+                    ///     let mut enc = InnerEncoder::wrap_and_apply_header(p, 0)?;
+                    ///     // set fields / groups / var-data …
+                    ///     Ok(())
+                    /// })?;
+                    /// ```
                     /// Returns the next stage on success; on failure the
                     /// caller error propagates unchanged and no partial
                     /// data is published.
@@ -5630,7 +5680,7 @@ fn generate_group_encoder(
         }
     };
     if !null_stmts.is_empty() {
-        add_body.extend(null_stmts);
+        add_body.extend(null_stmts.clone());
     }
     add_body.extend(quote::quote! {
         // SAFETY: same borrow-split pattern as the group encoder method above.
@@ -5640,6 +5690,37 @@ fn generate_group_encoder(
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
             f(&mut __entry);
+            self.pos = __entry.pos;
+        }
+        self.written += 1;
+        Ok(())
+    });
+
+    let mut try_add_body = quote::quote! {
+        if self.written >= self.count {
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count as u32,
+                attempted: self.written as u32 + 1,
+            }
+            .into());
+        }
+        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        if self.pos + block_len > self.buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed: block_len,
+                available: self.buf.len() - self.pos,
+            }
+            .into());
+        }
+    };
+    if !null_stmts.is_empty() {
+        try_add_body.extend(null_stmts);
+    }
+    try_add_body.extend(quote::quote! {
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
+            f(&mut __entry)?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -5672,6 +5753,18 @@ fn generate_group_encoder(
                 F: FnOnce(&mut #entry_enc_ident<'b>),
             {
                 #add_body
+            }
+
+            /// Fallible group entry: propagates caller `?` from the closure
+            /// (e.g. nested encode errors). Prefer this over `add` + `let _ =`
+            /// so claim paths can abort cleanly.
+            #[must_use]
+            pub fn try_add<'b, E, F>(&'b mut self, f: F) -> Result<(), E>
+            where
+                E: From<sbe_rt::EncodeError>,
+                F: FnOnce(&mut #entry_enc_ident<'b>) -> Result<(), E>,
+            {
+                #try_add_body
             }
 
             /// Manual entry creation: returns a borrowed entry encoder.

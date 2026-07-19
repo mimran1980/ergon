@@ -1,7 +1,7 @@
 # Living backlog — verified-open items only
 
 **Status:** LIVING — update when an item is closed with evidence.  
-**Last audit:** 2026-07-19 · branch `first_cut` (§C optional polish closeout)  
+**Last audit:** 2026-07-19 · branch `first_cut` (README + claim/nested API polish)  
 **Not this file:** process checklists in `ergosbe-performance-optimisation-goal.md`,
 the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 
@@ -52,6 +52,16 @@ All prior §C items closed 2026-07-19 — see section D.
 ---
 
 ## D. Closed (do not re-queue)
+
+### 2026-07-19 README + ErgoSBE claim/nested API polish
+
+| Item | Resolution | Evidence |
+|------|------------|----------|
+| README start-here / claim recipe | DONE | Root, sbe, cluster, samples READMEs; `sbe/docs/guide/claim-nested-encode.md` |
+| `HEADER_LENGTH` / `after_this_message` | DONE | Fixed messages; samples + cluster use `ENCODED_LENGTH` |
+| Group `try_add` | DONE | Generated; HA + advanced-bitget publish paths |
+| `with_external_sbe_rt` | DONE | `GenerationConfig` |
+| Stale sample todos / root roadmap bloat | DONE | Historical stamps; compressed root status |
 
 ### 2026-07-19 §C optional polish closeout
 

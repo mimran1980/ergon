@@ -92,6 +92,13 @@ pub struct GenerationConfig {
     /// by these composites. Insertion order is preserved; duplicates are
     /// ignored. Default: empty (no converter emission).
     pub decimal_composites: Vec<String>,
+    /// When set, emit `pub use <path> as sbe_rt;` instead of inlining the
+    /// full runtime module. Use with multi-schema crates so every generated
+    /// module shares one `EncodeError` / `DecodeError` type (e.g.
+    /// `"crate::sbe_common::sbe_rt"` after generating a shared module first).
+    ///
+    /// Default: `None` (inline `sbe_rt` in this module).
+    pub external_sbe_rt_path: Option<String>,
 }
 
 impl GenerationConfig {
@@ -107,7 +114,17 @@ impl GenerationConfig {
             shared_module: None,
             domain_objects: false,
             decimal_composites: Vec::new(),
+            external_sbe_rt_path: None,
         }
+    }
+
+    /// Share one `sbe_rt` module across separately generated schema files.
+    ///
+    /// `path` must be a valid Rust path usable in `pub use <path> as sbe_rt`.
+    #[must_use]
+    pub fn with_external_sbe_rt(mut self, path: impl Into<String>) -> Self {
+        self.external_sbe_rt_path = Some(path.into());
+        self
     }
 
     /// Register a composite for generic decimal conversion.
@@ -157,6 +174,15 @@ mod tests {
             .enable_decimal_converters("Decimal")
             .enable_decimal_converters("Decimal");
         assert_eq!(config.decimal_composites.len(), 1);
+    }
+
+    #[test]
+    fn with_external_sbe_rt_sets_path() {
+        let config = GenerationConfig::new("m").with_external_sbe_rt("crate::rt::sbe_rt");
+        assert_eq!(
+            config.external_sbe_rt_path.as_deref(),
+            Some("crate::rt::sbe_rt")
+        );
     }
 
     #[test]

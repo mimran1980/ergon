@@ -1,3 +1,6 @@
+> **HISTORICAL / DONE** — residual sample work is complete. Do not re-open from this file.
+> Open items: [`docs/LIVING_BACKLOG.md`](../../docs/LIVING_BACKLOG.md).
+
 # HA cluster orderbook + dynamic latency sample
 
 **Blocked by:** none for offline + CH latency path  

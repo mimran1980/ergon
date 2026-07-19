@@ -1,3 +1,6 @@
+> **HISTORICAL / DONE** — residual sample work is complete. Do not re-open from this file.
+> Open items: [`docs/LIVING_BACKLOG.md`](../../docs/LIVING_BACKLOG.md).
+
 # Three-thread Bitget AppMessage to Aeron IPC to ClickHouse sample
 
 **Blocked by:** `sbe/todos/81-vardata-as-decoder-as-message.md`,

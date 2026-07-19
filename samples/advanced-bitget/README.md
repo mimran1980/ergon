@@ -30,6 +30,10 @@ cargo test -- --test-threads=1 --skip clickhouse
 Typical three-thread ownership: ingest / media-driver / persist. Dynamic schema
 registration once; rows via `DynamicRecorder` + `PersistSender` flush.
 
+**Canonical nested encode:** `src/publication.rs` (AppMessage → L2Book via
+`compute_encoded_length_with_message_header` + `payload_with` + `try_add`).  
+Guide: [`../../sbe/docs/guide/claim-nested-encode.md`](../../sbe/docs/guide/claim-nested-encode.md).
+
 ## Failure modes
 
 | Condition | Behaviour |

@@ -8,6 +8,9 @@ schema. The examples use a hypothetical `Quote` message from a market-data schem
 > trust boundary. Tail groups/var-data use **concrete consuming stages**
 > (`into_bids` → `finish` → next stage); see [DECISIONS.md](../../design/DECISIONS.md)
 > and [advanced.md](advanced.md).
+>
+> **Claim / nested SBE:** [claim-nested-encode.md](claim-nested-encode.md) —
+> `ENCODED_LENGTH`, `after_this_message`, `payload_with`, group `try_add`.
 
 ## Module structure
 

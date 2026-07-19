@@ -7,6 +7,20 @@ An experimental Rust workspace for low-latency trading infrastructure, built
 around four pillars: SBE code generation, ClickHouse persistence, an Aeron
 Cluster client, and end-to-end samples.
 
+## Start here
+
+| Goal | Go to |
+|------|--------|
+| Generate codecs / wire API | [`sbe/docs/guide/getting-started.md`](sbe/docs/guide/getting-started.md) |
+| Claim + nested AppMessage encode | [`sbe/docs/guide/claim-nested-encode.md`](sbe/docs/guide/claim-nested-encode.md) |
+| Verified-open work only | [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md) |
+| Full local gate | `just check` |
+| Cluster client | [`cluster/README.md`](cluster/README.md) |
+| Samples map | [`samples/README.md`](samples/README.md) |
+
+Path dependency in this monorepo (`ergosbe = { path = "sbe" }`); crates.io
+version numbers in guides are illustrative.
+
 ## Project layout
 
 | Directory | Crate | Purpose | Docs |
@@ -68,15 +82,11 @@ Java/Gradle-building test-support crate.
 permanent names (never rename). Cluster dir names intentionally differ from
 crate names (`ergo-aeron-cluster`).
 
-Living plan:
+**Verified-open backlog only:** [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md).  
+Umbrella orientation (historical):
 [`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md).  
-Residual goal prompt (product scope COMPLETE):
-[`docs/superpowers/plans/2026-07-18-completion-goal-prompt.md`](docs/superpowers/plans/2026-07-18-completion-goal-prompt.md).  
-**Verified-open backlog only:**
-[`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md).  
-HA sample (shipped):
-[`samples/cluster-ha-orderbook/`](samples/cluster-ha-orderbook/) · design
-[`docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md`](docs/superpowers/specs/2026-07-18-cluster-ha-orderbook-sample-design.md).
+HA sample:
+[`samples/cluster-ha-orderbook/`](samples/cluster-ha-orderbook/).
 
 ---
 
@@ -112,45 +122,23 @@ These are the implemented/generated capabilities. Release-quality claims such as
 
 ## Current Status
 
-- Local `ergosbe` tests, formatting, clippy, and generated-code stability checks
-  are tracked in [`sbe/todos/TESTING_PLAN.md`](sbe/todos/TESTING_PLAN.md).
 - **Maintained ErgoSBE/Aeron five-run matrix:** all 10 scenarios ≤ 1.00 as of
-  2026-07-18 (see
-  [`ergosbe-performance-optimisation-goal.md`](ergosbe-performance-optimisation-goal.md)).
-  That is evidence for the maintained set — not a universal “HFT-ready” claim.
-- Persist live ClickHouse and both IPC samples (`just samples-orderbook`) are
-  green for current scope; live exchange WebSocket remains a manual recipe.
-- **Cluster:** residual product scope complete (2026-07-18): ErgoSBE production
-  codecs + RFQ, maintained encode/decode ≤ 1.00, connect re-offer, HA sample
-  + kill-leader. SessionConnectRequest encode is **demoted** (cold path).
-- Advanced Rust proof APIs (verified frames, typed frame policies, scoped
-  callbacks, required-field proofs) remain roadmap until their gates pass.
-
-## Stable Rust Advantage Roadmap
-
-ErgoSBE uses stable Rust features to reduce the public interface while keeping
-the generated implementation zero-cost; every performance conclusion still
-requires the maintained Aeron comparison:
-
-- **Sealed proof tokens and marker types** for checked/verified/unchecked
-  decoder modes, schema identity, and frame policy.
-- **Associated codec types** on `SbeMessage` for monomorphised generic helpers.
-- **HRTB-scoped callbacks** so borrowed decoder views cannot escape a feed frame.
-- **Return-position `impl Trait`** to hide generated iterator/helper type names.
-- **Const/static templates** for header and group dimension setup.
-- **Optional `#[repr(transparent)]` semantic newtypes** for domain safety without
-  changing the wire representation.
-
-The stable-Rust roadmap is tracked in
-[`sbe/todos/144-stable-rust-advantage-roadmap.md`](sbe/todos/144-stable-rust-advantage-roadmap.md).
+  2026-07-18 ([`ergosbe-performance-optimisation-goal.md`](ergosbe-performance-optimisation-goal.md)).
+  Evidence for that set only — not a universal “HFT-ready” claim.
+- Persist + IPC samples (`just samples-orderbook`) green when CH is up; live
+  exchange WebSocket remains a **manual** recipe (not CI).
+- **Cluster:** residual product complete; claim_shaped encode maintained;
+  SessionConnectRequest encode and NewLeader decode are **not** ≤1.00 gates.
+- Open work: [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md) only
+  (`sbe/todos/` is a historical inventory).
 
 ## Quick start
 
-### 1. Add dependency
+### 1. Add dependency (monorepo path)
 
 ```toml
 [build-dependencies]
-ergosbe = "0.1"
+ergosbe = { path = "../sbe" }   # or crates.io "0.1" when published
 ```
 
 ### 2. Create `build.rs`

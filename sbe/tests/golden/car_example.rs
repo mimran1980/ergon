@@ -739,6 +739,8 @@ impl<'a> CarDecoder<'a> {
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
+    /// Message header size in bytes (standard SBE header is 8).
+    pub const HEADER_LENGTH: usize = 8;
     ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
@@ -3007,6 +3009,8 @@ impl<'a> CarEncoder<'a> {
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
+    /// Message header size in bytes (standard SBE header is 8).
+    pub const HEADER_LENGTH: usize = 8;
     ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
@@ -3339,6 +3343,16 @@ impl<'a> CarAfterPerformanceFigures<'a> {
     /// Lend exactly `exact_len` bytes of the var-data region
     /// to a closure for nested-message encoding. Zero-copy:
     /// the closure writes directly into the outer buffer.
+    ///
+    /// Canonical nested-SBE pattern (AppMessage → L2Book):
+    /// ```ignore
+    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
+    /// after.payload_with(inner, |p| {
+    ///     let mut enc = InnerEncoder::wrap_and_apply_header(p, 0)?;
+    ///     // set fields / groups / var-data …
+    ///     Ok(())
+    /// })?;
+    /// ```
     /// Returns the next stage on success; on failure the
     /// caller error propagates unchanged and no partial
     /// data is published.
@@ -3438,6 +3452,16 @@ impl<'a> CarAfterManufacturer<'a> {
     /// Lend exactly `exact_len` bytes of the var-data region
     /// to a closure for nested-message encoding. Zero-copy:
     /// the closure writes directly into the outer buffer.
+    ///
+    /// Canonical nested-SBE pattern (AppMessage → L2Book):
+    /// ```ignore
+    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
+    /// after.payload_with(inner, |p| {
+    ///     let mut enc = InnerEncoder::wrap_and_apply_header(p, 0)?;
+    ///     // set fields / groups / var-data …
+    ///     Ok(())
+    /// })?;
+    /// ```
     /// Returns the next stage on success; on failure the
     /// caller error propagates unchanged and no partial
     /// data is published.
@@ -3537,6 +3561,16 @@ impl<'a> CarAfterModel<'a> {
     /// Lend exactly `exact_len` bytes of the var-data region
     /// to a closure for nested-message encoding. Zero-copy:
     /// the closure writes directly into the outer buffer.
+    ///
+    /// Canonical nested-SBE pattern (AppMessage → L2Book):
+    /// ```ignore
+    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
+    /// after.payload_with(inner, |p| {
+    ///     let mut enc = InnerEncoder::wrap_and_apply_header(p, 0)?;
+    ///     // set fields / groups / var-data …
+    ///     Ok(())
+    /// })?;
+    /// ```
     /// Returns the next stage on success; on failure the
     /// caller error propagates unchanged and no partial
     /// data is published.
@@ -3662,6 +3696,43 @@ impl<'a> FuelFiguresEncoder<'a> {
         self.written += 1;
         Ok(())
     }
+    /// Fallible group entry: propagates caller `?` from the closure
+    /// (e.g. nested encode errors). Prefer this over `add` + `let _ =`
+    /// so claim paths can abort cleanly.
+    #[must_use]
+    pub fn try_add<'b, E, F>(&'b mut self, f: F) -> Result<(), E>
+    where
+        E: From<sbe_rt::EncodeError>,
+        F: FnOnce(&mut FuelFiguresEntryEncoder<'b>) -> Result<(), E>,
+    {
+        if self.written >= self.count {
+            return Err(
+                sbe_rt::EncodeError::GroupFull {
+                    declared: self.count as u32,
+                    attempted: self.written as u32 + 1,
+                }
+                    .into(),
+            );
+        }
+        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        if self.pos + block_len > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: block_len,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
+        }
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut __entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
+            f(&mut __entry)?;
+            self.pos = __entry.pos;
+        }
+        self.written += 1;
+        Ok(())
+    }
     /// Manual entry creation: returns a borrowed entry encoder.
     /// The entry writes fixed fields directly into the group buffer.
     /// Drop the entry or let it go out of scope to commit it.
@@ -3773,6 +3844,43 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
             f(&mut __entry);
+            self.pos = __entry.pos;
+        }
+        self.written += 1;
+        Ok(())
+    }
+    /// Fallible group entry: propagates caller `?` from the closure
+    /// (e.g. nested encode errors). Prefer this over `add` + `let _ =`
+    /// so claim paths can abort cleanly.
+    #[must_use]
+    pub fn try_add<'b, E, F>(&'b mut self, f: F) -> Result<(), E>
+    where
+        E: From<sbe_rt::EncodeError>,
+        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'b>) -> Result<(), E>,
+    {
+        if self.written >= self.count {
+            return Err(
+                sbe_rt::EncodeError::GroupFull {
+                    declared: self.count as u32,
+                    attempted: self.written as u32 + 1,
+                }
+                    .into(),
+            );
+        }
+        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        if self.pos + block_len > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: block_len,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
+        }
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut __entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
+            f(&mut __entry)?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -3899,6 +4007,46 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                 self.pos,
             );
             f(&mut __entry);
+            self.pos = __entry.pos;
+        }
+        self.written += 1;
+        Ok(())
+    }
+    /// Fallible group entry: propagates caller `?` from the closure
+    /// (e.g. nested encode errors). Prefer this over `add` + `let _ =`
+    /// so claim paths can abort cleanly.
+    #[must_use]
+    pub fn try_add<'b, E, F>(&'b mut self, f: F) -> Result<(), E>
+    where
+        E: From<sbe_rt::EncodeError>,
+        F: FnOnce(&mut PerformanceFiguresAccelerationEntryEncoder<'b>) -> Result<(), E>,
+    {
+        if self.written >= self.count {
+            return Err(
+                sbe_rt::EncodeError::GroupFull {
+                    declared: self.count as u32,
+                    attempted: self.written as u32 + 1,
+                }
+                    .into(),
+            );
+        }
+        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        if self.pos + block_len > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: block_len,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
+        }
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut __entry = PerformanceFiguresAccelerationEntryEncoder::wrap(
+                __buf,
+                self.pos,
+            );
+            f(&mut __entry)?;
             self.pos = __entry.pos;
         }
         self.written += 1;

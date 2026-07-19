@@ -1,3 +1,6 @@
+> **HISTORICAL / DONE** — residual sample work is complete. Do not re-open from this file.
+> Open items: [`docs/LIVING_BACKLOG.md`](../../docs/LIVING_BACKLOG.md).
+
 # End-to-end exchange orderbook → ClickHouse sample
 
 **Blocked by:** Wire parity completion (todos 0-3), multi-schema codegen (todo 32),

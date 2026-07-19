@@ -40,7 +40,8 @@ Library re-exports `orderbook` + `persist` for e2e tests; binary drives live WS.
 ## Where truth lives
 
 - Samples map: [`../README.md`](../README.md)
-- Phase2 ledger: [`../../phase2-completion-goal.md`](../../phase2-completion-goal.md)
+- Living backlog: [`../../docs/LIVING_BACKLOG.md`](../../docs/LIVING_BACKLOG.md)
+- Phase2 ledger (historical): [`../../phase2-completion-goal.md`](../../phase2-completion-goal.md)
 
 ## Non-goals
 

@@ -35,11 +35,13 @@ cargo test --features test-harness --test ha_kill_leader -- --test-threads=1
 
 | Module | Role |
 |--------|------|
-| `publish` | try_claim-shaped SessionMessageHeader + AppMessage |
+| `publish` | try_claim SessionMessageHeader + nested AppMessage/L2Book (**copy this**) |
 | `ha_book` | Serving flag; freeze on NewLeader / gap / term mismatch |
-| `follower` | Egress apply into leadership-aware book |
+| `follower` | Egress apply into leadership-aware book (`into_payload` stages) |
 | `latency` | `LatencyPersistor` DynamicRow path |
 | `market` | Wire decimals / levels |
+
+Nested SBE recipe: [`../../sbe/docs/guide/claim-nested-encode.md`](../../sbe/docs/guide/claim-nested-encode.md).
 
 ## Failure modes
 

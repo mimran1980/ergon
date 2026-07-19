@@ -19,6 +19,7 @@ members set — each sample is a standalone crate.
 | Multi-venue schema roundtrip / local book | `exchange-orderbook` |
 | Leadership-aware book + cluster publish + failover | `cluster-ha-orderbook` |
 | Dynamic latency rows without a new Persist DTO schema | HA `LatencyPersistor` (or copy its pattern) |
+| Copy-paste nested SBE encode | HA [`publish.rs`](cluster-ha-orderbook/src/publish.rs) + [claim-nested-encode guide](../sbe/docs/guide/claim-nested-encode.md) |
 
 **Do not dual-pin** rusteron 0.2.1 and 0.2.4 in one binary — that is why HA and
 IPC samples stay separate crates.
@@ -27,17 +28,30 @@ IPC samples stay separate crates.
 
 | Condition | advanced-bitget / exchange | cluster-ha-orderbook |
 |-----------|----------------------------|----------------------|
-| ClickHouse down | Live CH tests fail preflight | Offline book tests still pass; `just samples-cluster-ha` live stage fails |
-| Claim / offer backpressure | N/A (IPC) or drop policy | `PublishOutcome::Dropped`; never unbounded retry on hot path |
-| Leadership change | N/A | `serving=false`; `live_image() == None` until term-valid snapshot |
-| Sequence gap / term mismatch | N/A | Resync; no silent merge of old-term levels |
+| ClickHouse down | Live CH tests fail preflight | Offline book tests still pass; live stage fails |
+| Claim / offer backpressure | Drop policy | `PublishOutcome::Dropped`; no unbounded retry |
+| Leadership change | N/a | `serving=false`; `live_image() == None` until term-valid snapshot |
+| Sequence gap / term mismatch | N/a | Resync; no silent merge of old-term levels |
+
+### Stages (always vs live)
+
+| Stage | Needs | Command |
+|-------|-------|---------|
+| Offline unit / try_claim path | Rust only | `cargo test` in each sample; `just samples-cluster-ha` offline steps |
+| Live ClickHouse | Docker CH on `:8123` | `just samples-orderbook` / HA latency stage |
+| Kill-leader never-stale | Java 17+ + Aeron jars | `just samples-cluster-ha-kill-leader` |
 
 ## Common preflight
 
 ```sh
-# ClickHouse (Docker) for live latency / book rows
 curl -sf http://127.0.0.1:8123/ping || bash persist/tests/run-clickhouse.sh start
 ```
+
+## ErgoSBE API used here
+
+- Consuming decoder stages: [`sbe/docs/guide/generated-api.md`](../sbe/docs/guide/generated-api.md)
+- Claim + nested AppMessage: [`sbe/docs/guide/claim-nested-encode.md`](../sbe/docs/guide/claim-nested-encode.md)
+- Group `try_add`, `payload_with`, `ENCODED_LENGTH` / `after_this_message`
 
 ## Non-goals
 

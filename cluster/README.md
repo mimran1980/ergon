@@ -11,7 +11,7 @@ Delete or replace when official Aeron Cluster C client bindings are suitable.
 
 Residual product scope **COMPLETE** (2026-07-18): production codecs ErgoSBE-only,
 connect re-offer, log-recovery test, maintained encode+decode benches ≤ 1.00,
-RFQ unfrozen. See living completion prompt under `docs/superpowers/plans/`.
+RFQ unfrozen. Open items: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.md).
 
 ## Depends on
 
@@ -25,14 +25,14 @@ RFQ unfrozen. See living completion prompt under `docs/superpowers/plans/`.
 ```sh
 # Lib only (no Java)
 cargo test -p ergo-aeron-cluster --lib
+cargo test -p ergo-aeron-cluster --doc
 cargo test -p ergo-aeron-cluster --test codec_golden_bytes
 just check-aeron-cluster
 
 # Maintained codec benches (ErgoSBE vs residual sbe-tool, equal work)
 just bench-cluster
-# filter example:
 cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- \
-  'encode/session_message_header|encode/session_keep_alive|decode/session_message_header|decode/session_event'
+  'encode/session_message_header|encode/session_keep_alive|encode/claim_shaped|decode/session_message_header|decode/session_event'
 
 # Integration (Java 17+ + jars)
 just build-aeron-jars
@@ -46,32 +46,39 @@ just test-aeron-cluster-harness
 
 | Module | Source | Use |
 |--------|--------|-----|
-| `codecs::ergo_codecs` | `build.rs` ← `aeron-cluster-codecs.xml` | **Production** session protocol |
+| `codecs::session` (`ergo_codecs`) | `build.rs` ← `aeron-cluster-codecs.xml` | **Production** session protocol |
+| `codecs::rfq` (`ergo_rfq_codecs`) | `schemas/protocol-codecs.xml` | **Production** RFQ |
 | `codecs::ergo_codecs_mark` | mark schema | Mark file codecs |
-| `codecs::ergo_rfq_codecs` | `schemas/protocol-codecs.xml` (cookbook 101) | **Production** RFQ examples |
-| `codecs::cluster_codecs` / `rfq_codecs` | residual sbe-tool 1.39.0 trees | Head-to-head benches + wire parity only |
+| `codecs::cluster_codecs` / `rfq_codecs` | residual sbe-tool 1.39.0 | Benches + wire parity **only** |
 
-Prefer `SessionBuilder` / `AeronCluster` over hand-rolled publications.
+Prefer **`codecs::session` / `codecs::rfq`** in new code. Prefer
+`decode_session_event` / `decode_new_leader_event` for equal-work egress helpers.
 
-## Usage
-
-```rust
-use ergo_aeron_cluster::{AeronCluster, EgressAdapter, SessionBuilder};
-// SessionBuilder: ingress/egress channels, stream ids, timeout
-// AeronCluster::connect / connect_async
-// AeronCluster::try_claim(payload_len) — SessionMessageHeader via ErgoSBE in claim
-// AeronCluster::poll_egress(adapter, limit)
-// decode_session_event / decode_new_leader_event — equal-work frame helpers
-```
-
-Production codec aliases:
+## Usage (try_claim hot path)
 
 ```rust
 use ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder;
-use ergo_aeron_cluster::codecs::rfq::CreateRfqCommandEncoder;
+use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
+
+// SessionBuilder::builder().ingress_channel(...).egress_channel(...)
+// let mut client = AeronCluster::connect(&builder, aeron_dir)?;
+
+// Header-inclusive length is generated:
+const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH; // 32
+
+// Claim app payload; session header written into the claim automatically.
+let mut claim = client.try_claim(app_len)?;
+// claim.payload_mut() — encode AppMessage / nested SBE here
+claim.commit()?;
+
+// Egress
+// client.poll_egress(&mut adapter, limit)?;
+// client.send_keep_alive()?;
 ```
 
-RFQ examples: `rfq_client` / `rfq_roundtrip`.
+Nested AppMessage recipe:
+[`../sbe/docs/guide/claim-nested-encode.md`](../sbe/docs/guide/claim-nested-encode.md).  
+HA sample: [`../samples/cluster-ha-orderbook/`](../samples/cluster-ha-orderbook/).
 
 ## Maintained benches (ErgoSBE / sbe-tool ≤ 1.00)
 
@@ -79,11 +86,13 @@ RFQ examples: `rfq_client` / `rfq_roundtrip`.
 |----------|------|
 | SessionMessageHeader encode | Claim hot path |
 | SessionKeepAlive encode | Periodic |
+| **claim_shaped** (header + app copy) | Claim-shaped write |
 | SessionMessageHeader decode | Egress |
 | SessionEvent decode | Egress |
 
-`SessionConnectRequest` encode is **demoted** (cold path). Ledger:
-[`../ergosbe-performance-optimisation-goal.md`](../ergosbe-performance-optimisation-goal.md).
+**Diagnostic only (not a ≤1.00 gate):** NewLeaderEvent decode, SessionConnectRequest encode.
+
+Ledger: [`../ergosbe-performance-optimisation-goal.md`](../ergosbe-performance-optimisation-goal.md).
 
 ## Layout
 
@@ -95,21 +104,16 @@ cluster/
 ├── examples/                # echo, failover, rfq_*, …
 ├── src/
 │   ├── client.rs            # AeronCluster, try_claim, AsyncClusterConnect
-│   ├── codecs/              # ergo_* production + residual sbe-tool
-│   ├── connect.rs           # connect re-offer helpers
+│   ├── codecs/              # session/rfq aliases + residual sbe-tool
+│   ├── decode.rs            # equal-work frame helpers
 │   ├── egress.rs / controlled.rs / poller.rs
-│   ├── session.rs / state.rs / config.rs / error.rs
+│   └── session.rs / state.rs / config.rs / error.rs
 └── tests/                   # goldens + test-harness integration
 ```
-
-## HA sample
-
-Leadership-aware orderbook + latency → CH:
-[`../samples/cluster-ha-orderbook/`](../samples/cluster-ha-orderbook/)  
-(`just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`).
 
 ## Non-goals
 
 - Rust Aeron Cluster **service** implementation
 - Deleting residual sbe-tool trees used for benches
-- Promoting connect encode into the maintained ≤1.00 gate
+- Promoting connect encode or NewLeader decode into the maintained ≤1.00 gate
+- Production-grade quality beyond the experimental banner

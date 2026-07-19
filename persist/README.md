@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/ergo-clickhouse-persist.svg)](https://crates.io/crates/ergo-clickhouse-persist)
 [![docs.rs](https://img.shields.io/docsrs/ergo-clickhouse-persist)](https://docs.rs/ergo-clickhouse-persist)
 [![license](https://img.shields.io/crates/l/ergo-clickhouse-persist)](../../LICENSE)
-![MSRV](https://img.shields.io/badge/MSRV-1.85-blue)
+![MSRV](https://img.shields.io/badge/MSRV-1.95-blue)
 
 **Debugging persistence: auto-persist annotated Rust structs to ClickHouse with
 automatic schema management.**

@@ -9,6 +9,10 @@ SBE schema, generating code, and using the generated decoder and encoder.
 - An SBE XML schema (see [schema-authoring.md](schema-authoring.md) or use one
   from the [official SBE examples](../../simple-binary-encoding/sbe-samples/src/main/resources/))
 
+After the basics, read [claim-nested-encode.md](claim-nested-encode.md) for the
+IPC/cluster claim path and nested AppMessage → inner message pattern used by
+the samples.
+
 ## Adding ErgoSBE to your project
 
 ErgoSBE runs as a build dependency. It generates Rust source at compile time.

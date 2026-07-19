@@ -7,6 +7,8 @@ SBE XML → idiomatic Rust codec generator. Core pillar of the ErgoSBE umbrella.
 **Experimental product crate.** Maintained ErgoSBE vs Aeron SBE matrix is green
 (10/10 ≤ 1.00 as of 2026-07-18). Not a universal “HFT-ready” claim beyond that set.
 
+Verified-open items only: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.md).
+
 ## Depends on
 
 - Rust MSRV **1.95** (workspace)
@@ -21,6 +23,41 @@ cargo bench -p ergosbe-benchmarks --no-run   # from repo root
 just bench                                   # Aeron parity matrix
 ```
 
+## Public entry points
+
+- `parse` / `parse_file` → IR
+- `Schema::from_ir`
+- `GenerationConfig` + `Generator::try_generate` / `generate` / `generate_multi`
+- `GenerationConfig::enable_decimal_converters` / `with_external_sbe_rt`
+- Typical consumer: call from **your** `build.rs`, `include!` from `OUT_DIR`
+
+## Claim + nested encode (sample shape)
+
+```rust
+// Fixed session header framing
+let hdr = SessionMessageHeaderEncoder::ENCODED_LENGTH;
+let app = SessionMessageHeaderEncoder::after_this_message(frame)?;
+
+// Nested AppMessage → L2Book into a claimed buffer
+let inner = L2BookEncoder::compute_encoded_length_with_message_header(n_b, n_a, sym_len);
+let outer = AppMessageEncoder::compute_encoded_length_with_message_header(name_len, inner);
+// claim `outer` bytes, then:
+let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0)?;
+let after = app.app_name(name)?;
+after.payload_with(inner, |p| {
+    let mut book = L2BookEncoder::wrap_and_apply_header(p, 0)?;
+    book.try_bids(n_b as u16, |g| {
+        for level in bids {
+            g.try_add(|e| { let _ = e.price_wire(px).size_wire(sz); Ok(()) })?;
+        }
+        Ok(())
+    })?;
+    Ok(())
+})?;
+```
+
+Full recipe: [`docs/guide/claim-nested-encode.md`](docs/guide/claim-nested-encode.md).
+
 ## Layout
 
 | Path | Role |
@@ -30,20 +67,14 @@ just bench                                   # Aeron parity matrix
 | `src/config.rs` | Generation options |
 | `src/codegen.rs` | Rust source generation (`syn` / `quote` / `prettyplease`) |
 | `design/DECISIONS.md` | Canonical design authority |
-| `docs/guide/` | Getting started, schema authoring, generated API, migration |
+| `docs/guide/` | Getting started, schema authoring, generated API, claim/nested |
 | `tests/` | Wire, golden, compile-fail, allocation proofs |
-
-## Public entry points
-
-- `parse` / `parse_file` → IR
-- `Schema::from_ir`
-- `GenerationConfig` + `Generator::try_generate` / `generate`
-- Typical consumer: call from **your** `build.rs`, `include!` from `OUT_DIR`
 
 ## Where truth lives
 
 - Design: [`design/DECISIONS.md`](design/DECISIONS.md)
 - Guide: [`docs/guide/getting-started.md`](docs/guide/getting-started.md)
+- Claim / nested: [`docs/guide/claim-nested-encode.md`](docs/guide/claim-nested-encode.md)
 - Perf ledger: [`../ergosbe-performance-optimisation-goal.md`](../ergosbe-performance-optimisation-goal.md)
 - Crate rustdoc: `cargo doc -p ergosbe --open`
 
