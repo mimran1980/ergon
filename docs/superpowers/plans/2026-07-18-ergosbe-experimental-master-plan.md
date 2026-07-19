@@ -19,7 +19,7 @@ equal-or-faster than Aeron SBE on maintained scenarios) with four pillars:
 
 | Pillar | Dir | Crate | One line |
 |--------|-----|-------|----------|
-| sbe | `sbe/` | `ergosbe` | SBE XML → idiomatic Rust codec generator |
+| sbe | `sbe/` | `ergo-sbe` | SBE XML → idiomatic Rust codec generator |
 | persist | `persist/` (+`persist/derive/`) | `ergo-clickhouse-persist` | Auto-persist annotated structs to ClickHouse |
 | cluster | `cluster/` (+`cluster-test-support/`, excluded) | `ergo-aeron-cluster` (+`ergo-aeron-cluster-test-support`) | Aeron Cluster client on `rusteron-client` 0.2.4 |
 | samples | `samples/` (excluded) | — | advanced-bitget, exchange-orderbook |
@@ -29,7 +29,7 @@ equal-or-faster than Aeron SBE on maintained scenarios) with four pillars:
 **Never rename pillar directories or crate packages.** Keep forever:
 
 - dirs: `sbe/`, `persist/`, `cluster/`, `samples/`, `cluster-test-support/`
-- crates: `ergosbe`, `ergo-clickhouse-persist`, `ergo-aeron-cluster`,
+- crates: `ergo-sbe`, `ergo-clickhouse-persist`, `ergo-aeron-cluster`,
   `ergo-aeron-cluster-test-support`, …
 
 Directory names may differ from crate names (cluster pillar does on purpose).
@@ -66,9 +66,9 @@ dirty local worktree — never reset or commit it).
 ### persist — COMPLETE for current scope
 
 - 7/7 live ClickHouse integration tests green (Docker,
-  `persist/tests/run-clickhouse.sh`, password `ergosbe`).
+  `persist/tests/run-clickhouse.sh`, password `ergo-sbe`).
 - `persist/build.rs` is the **reference pattern** for on-the-fly generation:
-  `ergosbe::parse` → `Schema::from_ir` → `GenerationConfig::new` →
+  `ergo_sbe::parse` → `Schema::from_ir` → `GenerationConfig::new` →
   `Generator::try_generate` → `OUT_DIR` + `include!`.
 - Dynamic path: `DynamicRecorder` / `DynamicSchemaV2` / `DynamicRowV2` proven
   in advanced-bitget (reuse for HA latency table).

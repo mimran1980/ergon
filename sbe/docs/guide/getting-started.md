@@ -24,7 +24,7 @@ version = "0.1.0"
 edition = "2024"
 
 [build-dependencies]
-ergosbe = "0.1"
+ergo-sbe = "0.1"
 ```
 
 ## Writing build.rs
@@ -36,7 +36,7 @@ code generation.
 
 ```rust
 // build.rs
-use ergosbe::{parse_file, Generator, GenerationConfig, Schema};
+use ergo_sbe::{parse_file, Generator, GenerationConfig, Schema};
 use std::path::Path;
 
 fn main() {
@@ -76,7 +76,7 @@ When multiple SBE schemas share types (common enums, sets, composites), use
 `generate_multi` to avoid duplicating type definitions:
 
 ```rust
-use ergosbe::{parse_file, Generator, GenerationConfig, Schema};
+use ergo_sbe::{parse_file, Generator, GenerationConfig, Schema};
 
 fn main() {
     let ir_a = parse_file("schemas/common_types.xml").unwrap();

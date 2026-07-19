@@ -213,7 +213,7 @@ pub struct LatencyPersistor {
 }
 
 impl LatencyPersistor {
-    /// Connect to ClickHouse (default URL / env, password `ergosbe` in tests).
+    /// Connect to ClickHouse (default URL / env, password `ergo-sbe` in tests).
     pub fn connect(url: &str, user: &str, password: &str) -> Result<Self, LatencyPersistError> {
         let sink = ClickhouseSinkBuilder::new()
             .url(url)

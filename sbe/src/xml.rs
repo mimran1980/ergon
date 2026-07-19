@@ -27,7 +27,7 @@ use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token}
 pub enum ParseError {
     /// The XML document itself was malformed.
     #[error("malformed XML: {message}")]
-    #[diagnostic(code(ergosbe::schema_parse::malformed_xml))]
+    #[diagnostic(code(ergo_sbe::schema_parse::malformed_xml))]
     MalformedXml {
         /// What went wrong.
         message: String,
@@ -37,7 +37,7 @@ pub enum ParseError {
     },
     /// A required attribute or element was missing.
     #[error("missing {what}")]
-    #[diagnostic(code(ergosbe::schema_parse::missing))]
+    #[diagnostic(code(ergo_sbe::schema_parse::missing))]
     Missing {
         /// What was missing (element/attribute context).
         what: String,
@@ -50,7 +50,7 @@ pub enum ParseError {
     },
     /// An attribute value was invalid.
     #[error("invalid {what}: {value}")]
-    #[diagnostic(code(ergosbe::schema_parse::invalid))]
+    #[diagnostic(code(ergo_sbe::schema_parse::invalid))]
     Invalid {
         /// What was invalid.
         what: String,
@@ -65,7 +65,7 @@ pub enum ParseError {
     },
     /// A schema resolution or validation error occurred.
     #[error("resolution error: {error}")]
-    #[diagnostic(code(ergosbe::schema_parse::resolve))]
+    #[diagnostic(code(ergo_sbe::schema_parse::resolve))]
     Resolve {
         /// The source document, for span rendering.
         #[source_code]
@@ -79,7 +79,7 @@ pub enum ParseError {
     },
     /// An include (xi:include) resolution error occurred.
     #[error("include error: {message}")]
-    #[diagnostic(code(ergosbe::schema_parse::include))]
+    #[diagnostic(code(ergo_sbe::schema_parse::include))]
     IncludeError {
         /// What went wrong.
         message: String,

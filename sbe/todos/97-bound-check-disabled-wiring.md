@@ -15,7 +15,7 @@ typed buffer helpers or localized unsafe internals instead.
 
 ## Current verification status (2026-07-08)
 
-`RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
+`RUSTC_WRAPPER="" cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1`
 previously failed with generated `E0015` errors when generated const functions
 called non-const `read_bytes` / `write_bytes` helpers after the Aeron-style
 helper change. Rerun this command after codegen changes; do not reintroduce

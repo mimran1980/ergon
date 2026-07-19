@@ -185,7 +185,7 @@ fn generate_multi_message_schema() {
 
 #[test]
 fn generator_config_getter() {
-    use ergosbe::{GenerationConfig, Generator};
+    use ergo_sbe::{GenerationConfig, Generator};
     let generator = Generator::new(GenerationConfig::new("cfg_test"));
     // Exercises Generator::config() (the getter was previously uncovered).
     let _ = generator.config();
@@ -195,7 +195,7 @@ fn generator_config_getter() {
 fn generate_multi_schema_entry_point() {
     // generate_multi() generates multiple schemas into separate modules with
     // shared-type tracking. No other test exercises it.
-    use ergosbe::{GenerationConfig, Generator, Schema, parse_file};
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
     let ir1 = parse_file(&Paths::example_schema()).unwrap();
     let s1 = Schema::from_ir(ir1);
     let ir2 = parse_file(&Paths::l3_orderbook_schema()).unwrap();
@@ -2169,7 +2169,7 @@ fn upstream_issue_schemas_parse_or_error_gracefully() {
 
     for (name, expect_valid) in schemas {
         let path = Paths::sbe_tool_test_resource(name);
-        match ergosbe::parse_file(&path) {
+        match ergo_sbe::parse_file(&path) {
             Ok(_ir) => {
                 parsed += 1;
                 if !expect_valid {
@@ -2388,10 +2388,10 @@ fn bounded_nested_payload_encode_via_with() {
 #[test]
 fn decimal_converter_enable_config() {
     let config =
-        ergosbe::GenerationConfig::new("decimal_test").enable_decimal_converters("Decimal");
+        ergo_sbe::GenerationConfig::new("decimal_test").enable_decimal_converters("Decimal");
     assert_eq!(config.decimal_composites, vec!["Decimal"]);
     assert!(
-        ergosbe::GenerationConfig::default()
+        ergo_sbe::GenerationConfig::default()
             .decimal_composites
             .is_empty()
     );
@@ -2403,11 +2403,11 @@ fn decimal_converter_emits_sbe_decimal_trait() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergosbe::parse_file(&path).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
+    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
     let config =
-        ergosbe::GenerationConfig::new("decimal_test").enable_decimal_converters("Decimal");
-    let g = ergosbe::Generator::new(config);
+        ergo_sbe::GenerationConfig::new("decimal_test").enable_decimal_converters("Decimal");
+    let g = ergo_sbe::Generator::new(config);
     // try_generate validates the composite
     let modules = g.try_generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
@@ -2431,15 +2431,15 @@ fn decimal_converter_rejects_invalid_composite() {
 </types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
+    let ir = ergo_sbe::parse(xml).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
     let config =
-        ergosbe::GenerationConfig::new("bad_decimal").enable_decimal_converters("BadDecimal");
-    let g = ergosbe::Generator::new(config);
+        ergo_sbe::GenerationConfig::new("bad_decimal").enable_decimal_converters("BadDecimal");
+    let g = ergo_sbe::Generator::new(config);
     let err = g.try_generate(&schema).unwrap_err();
     assert!(matches!(
         err,
-        ergosbe::GenerateError::InvalidDecimalComposite { .. }
+        ergo_sbe::GenerateError::InvalidDecimalComposite { .. }
     ));
 }
 
@@ -2453,22 +2453,22 @@ fn decimal_converter_rejects_missing_composite() {
 </types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
+    let ir = ergo_sbe::parse(xml).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
     let config =
-        ergosbe::GenerationConfig::new("missing_dec").enable_decimal_converters("NonExistent");
-    let g = ergosbe::Generator::new(config);
+        ergo_sbe::GenerationConfig::new("missing_dec").enable_decimal_converters("NonExistent");
+    let g = ergo_sbe::Generator::new(config);
     let err = g.try_generate(&schema).unwrap_err();
     assert!(matches!(
         err,
-        ergosbe::GenerateError::InvalidDecimalComposite { .. }
+        ergo_sbe::GenerateError::InvalidDecimalComposite { .. }
     ));
 }
 
 /// GenerateError renders a readable message via Display.
 #[test]
 fn generate_error_display_formats() {
-    let err = ergosbe::GenerateError::InvalidDecimalComposite {
+    let err = ergo_sbe::GenerateError::InvalidDecimalComposite {
         name: "Decimal".into(),
         reason: "wrong layout".into(),
     };
@@ -2489,11 +2489,11 @@ fn decimal_converter_rejects_single_member_composite() {
 </types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
+    let ir = ergo_sbe::parse(xml).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
     let config =
-        ergosbe::GenerationConfig::new("one_member").enable_decimal_converters("OneMember");
-    let g = ergosbe::Generator::new(config);
+        ergo_sbe::GenerationConfig::new("one_member").enable_decimal_converters("OneMember");
+    let g = ergo_sbe::Generator::new(config);
     let err = g.try_generate(&schema).unwrap_err();
     assert!(
         err.to_string().contains("at least 2 members"),
@@ -2512,10 +2512,10 @@ fn generate_panics_on_invalid_decimal_composite() {
 </types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
-    let config = ergosbe::GenerationConfig::new("panics").enable_decimal_converters("NonExistent");
-    let g = ergosbe::Generator::new(config);
+    let ir = ergo_sbe::parse(xml).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("panics").enable_decimal_converters("NonExistent");
+    let g = ergo_sbe::Generator::new(config);
     let _ = g.generate(&schema);
 }
 
@@ -2539,10 +2539,10 @@ fn decimal_converter_skips_non_decimal_fields_and_messages() {
   <field name="qty" id="1" type="uint32"/>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
-    let config = ergosbe::GenerationConfig::new("mixed_dec").enable_decimal_converters("Decimal");
-    let g = ergosbe::Generator::new(config);
+    let ir = ergo_sbe::parse(xml).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("mixed_dec").enable_decimal_converters("Decimal");
+    let g = ergo_sbe::Generator::new(config);
     let modules = g.try_generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
     // The decimal field has both generic and raw wire accessors.
@@ -2580,9 +2580,9 @@ fn vardata_composite_with_length_not_first_member_generates() {
   <data name="blob" id="2" type="oddVarEncoding"/>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
-    let g = ergosbe::Generator::new(ergosbe::GenerationConfig::new("revvar"));
+    let ir = ergo_sbe::parse(xml).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("revvar"));
     let modules = g.try_generate(&schema).unwrap();
     assert!(!modules.modules().next().unwrap().source.is_empty());
 }
@@ -2606,7 +2606,7 @@ fn group_entry_constant_field_without_value_is_skipped() {
   </group>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let err = ergosbe::parse(xml).expect_err("constant without value text must fail parse");
+    let err = ergo_sbe::parse(xml).expect_err("constant without value text must fail parse");
     let msg = format!("{err}");
     assert!(
         msg.contains("constant") || msg.contains("EmptyConst"),
@@ -2625,10 +2625,10 @@ fn schema_without_header_composite_uses_default_member_names() {
 </types>
 <sbe:message name="M" id="1"><field name="a" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    match ergosbe::parse(xml) {
+    match ergo_sbe::parse(xml) {
         Ok(ir) => {
-            let schema = ergosbe::Schema::from_ir(ir);
-            let g = ergosbe::Generator::new(ergosbe::GenerationConfig::new("nohdr"));
+            let schema = ergo_sbe::Schema::from_ir(ir);
+            let g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("nohdr"));
             let modules = g.try_generate(&schema).unwrap();
             assert!(!modules.modules().next().unwrap().source.is_empty());
         }
@@ -2728,11 +2728,11 @@ fn decimal_converter_emits_wire_and_generic_methods() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergosbe::parse_file(&path).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
+    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
     let config =
-        ergosbe::GenerationConfig::new("decimal_wire").enable_decimal_converters("Decimal");
-    let g = ergosbe::Generator::new(config);
+        ergo_sbe::GenerationConfig::new("decimal_wire").enable_decimal_converters("Decimal");
+    let g = ergo_sbe::Generator::new(config);
     let modules = g.try_generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -2763,10 +2763,10 @@ fn decimal_converter_wire_and_generic_byte_identity() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergosbe::parse_file(&path).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
-    let config = ergosbe::GenerationConfig::new("decimal_id").enable_decimal_converters("Decimal");
-    let g = ergosbe::Generator::new(config);
+    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("decimal_id").enable_decimal_converters("Decimal");
+    let g = ergo_sbe::Generator::new(config);
     let modules = g.try_generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -2998,10 +2998,10 @@ fn decimal_converter_covers_group_entry_fields() {
   </group>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
-    let config = ergosbe::GenerationConfig::new("entdec").enable_decimal_converters("Decimal");
-    let g = ergosbe::Generator::new(config);
+    let ir = ergo_sbe::parse(xml).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("entdec").enable_decimal_converters("Decimal");
+    let g = ergo_sbe::Generator::new(config);
     let modules = g.try_generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -3077,11 +3077,11 @@ fn decimal_converter_exact_adapter_matrix() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergosbe::parse_file(&path).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
+    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
     let config =
-        ergosbe::GenerationConfig::new("exact_matrix").enable_decimal_converters("Decimal");
-    let g = ergosbe::Generator::new(config);
+        ergo_sbe::GenerationConfig::new("exact_matrix").enable_decimal_converters("Decimal");
+    let g = ergo_sbe::Generator::new(config);
     let modules = g.try_generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 

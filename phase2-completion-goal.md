@@ -186,7 +186,7 @@ Required SBE outcomes:
 
 Benchmark rule:
 
-- `cargo bench -p ergosbe --no-run` is only a compile gate.
+- `cargo bench -p ergo-sbe --no-run` is only a compile gate.
 - Real completion requires the repeatable head-to-head Aeron comparison and the
   five-run ratio/confidence-interval rule in the canonical decisions. If the
   recipe or a maintained scenario is missing, add it rather than deferring.
@@ -258,8 +258,8 @@ Before claiming the whole goal is complete, run:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace -- --include-ignored --test-threads=1
-cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
-cargo bench -p ergosbe --no-run
+cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1
+cargo bench -p ergo-sbe --no-run
 ```
 
 Also run:
@@ -342,11 +342,11 @@ aarch64 unless noted; dirty `simple-binary-encoding` submodule preserved):
   --all-targets --all-features`. CI gained an `msrv` job; clippy/test now run
   `--all-features` and a `bound-check-disabled` step was added.
 - **Final local gates green:** `just check` (hygiene + workspace fmt/clippy/test
-  + both samples), `cargo test -p ergosbe --features bound-check-disabled`,
-  `cargo bench -p ergosbe-benchmarks --no-run` (5 executables), `cargo +1.89.0
+  + both samples), `cargo test -p ergo-sbe --features bound-check-disabled`,
+  `cargo bench -p ergo-sbe-benchmarks --no-run` (5 executables), `cargo +1.89.0
   check`.
 - **Live proof refreshed** against Docker ClickHouse (`ergo-persist-test`
-  container; `persist/tests/run-clickhouse.sh` password aligned to `ergosbe`):
+  container; `persist/tests/run-clickhouse.sh` password aligned to `ergo-sbe`):
   persist integration 7/7, advanced-bitget live 2/2 (`e2e_ipc_to_clickhouse_exact_rows`),
   exchange-orderbook live 1/1.
 - **encode/throughput_10k perf blocker RESOLVED (was a benchmark fairness bug).**
@@ -450,7 +450,7 @@ encode/throughput_10k bench fix and this doc reconciliation.
   - `cargo fmt --all --check` — PASS
   - `cargo clippy --workspace --all-targets -- -D warnings` — PASS
   - `cargo test --workspace -- --include-ignored --test-threads=1` — PASS (0 failures)
-  - `cargo bench -p ergosbe --no-run` — PASS
+  - `cargo bench -p ergo-sbe --no-run` — PASS
 - **Status scan:** 2 "DONE (OFFLINE: needs live exchange feed)" markers remain as the
   allowed manual-recipe exceptions. 0 unresolved ACTIVE/IN PROGRESS/PARKED/DEFERRED/
   ENV-GATED/OFFLINE markers.
@@ -475,7 +475,7 @@ encode/throughput_10k bench fix and this doc reconciliation.
   - `cargo fmt --all --check` — PASS (one line-length fix in perf_parity_bench.rs)
   - `cargo clippy --workspace --all-targets -- -D warnings` — PASS
   - `cargo test --workspace -- --include-ignored --test-threads=1` — PASS (0 failures)
-  - `cargo bench -p ergosbe --no-run` — PASS (compiles)
+  - `cargo bench -p ergo-sbe --no-run` — PASS (compiles)
 - **Status scan result:** 0 unresolved ACTIVE/IN PROGRESS/PARKED/DEFERRED/ENV-GATED/OFFLINE
   markers. Two "DONE (OFFLINE: needs live exchange feed)" entries remain as the allowed
   live/manual-only recipe exceptions (samples 66 and 103).
@@ -496,6 +496,6 @@ encode/throughput_10k bench fix and this doc reconciliation.
   - `cargo fmt --all --check` passed.
   - `cargo clippy --workspace --all-targets -- -D warnings` passed.
   - `cargo test --workspace -- --include-ignored --test-threads=1` passed.
-  - `cargo bench -p ergosbe --no-run` passed.
+  - `cargo bench -p ergo-sbe --no-run` passed.
 - Next task: start SBE Phase 1 by resolving stale release-gate/status markers,
   beginning with benchmark/perf gates and quote-migration/null-constant statuses.

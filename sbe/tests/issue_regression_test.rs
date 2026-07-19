@@ -462,8 +462,8 @@ fn issue1066_optional_versioned_field() {
 fn issue435_codegen_pipeline() {
     let xml = fs::read_to_string(issue_schema("435")).unwrap();
     let meta = parse_xml_meta(&xml);
-    let schema = ergosbe::Schema::new(&meta.package, meta.id, meta.version);
-    let generator = ergosbe::Generator::new(ergosbe::GenerationConfig::new("issue435"));
+    let schema = ergo_sbe::Schema::new(&meta.package, meta.id, meta.version);
+    let generator = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("issue435"));
     let modules = generator.generate(&schema);
     let module = modules.modules().next().unwrap();
     assert_eq!(module.path, "issue435.rs");
@@ -548,9 +548,9 @@ fn all_issue_schemas_codegen() {
         let path = issue_schema(num);
         let xml = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read issue{num}.xml: {e}"));
         let meta = parse_xml_meta(&xml);
-        let schema = ergosbe::Schema::new(&meta.package, meta.id, meta.version);
+        let schema = ergo_sbe::Schema::new(&meta.package, meta.id, meta.version);
         let generator =
-            ergosbe::Generator::new(ergosbe::GenerationConfig::new(format!("issue{num}")));
+            ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(format!("issue{num}")));
         let modules = generator.generate(&schema);
         let module = modules
             .modules()

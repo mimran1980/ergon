@@ -19,7 +19,7 @@ runtime hot-path helpers, and generated methods that call them should not be
 `const fn`.
 
 Historical observed failures:
-- `RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1`
+- `RUSTC_WRAPPER="" cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1`
   failed with generated `E0015` errors.
 - `samples/exchange-orderbook` previously failed with the same generated
   `E0015` class; the current sample compile gate passes, so this is a
@@ -137,4 +137,4 @@ runtime path.
 - [x] All workspace tests pass
 - [x] `cargo test --features bound-check-disabled` passes
 - [x] `samples/exchange-orderbook` `cargo check` passes (0 errors, 960 warnings)
-- [x] Benchmark complete — Aeron comparison benchmarks run via `cargo bench -p ergosbe --bench perf_parity_bench` (JDK/Gradle now available, Aeron code included in `sbe/benches/generated/`)
+- [x] Benchmark complete — Aeron comparison benchmarks run via `cargo bench -p ergo-sbe --bench perf_parity_bench` (JDK/Gradle now available, Aeron code included in `sbe/benches/generated/`)

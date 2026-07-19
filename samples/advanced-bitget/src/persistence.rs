@@ -485,7 +485,7 @@ fn dec_array(vals: &[i128]) -> String {
 }
 
 /// ClickHouse credentials from `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`,
-/// defaulting to the local sample container (`default`/`ergosbe`).
+/// defaulting to the local sample container (`default`/`ergo-sbe`).
 #[must_use]
 pub fn clickhouse_credentials() -> (String, String) {
     (

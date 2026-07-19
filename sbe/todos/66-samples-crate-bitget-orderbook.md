@@ -85,7 +85,7 @@ Download `spot_prod_latest.xml` from GitHub. 87 messages including:
 - [x] Download Binance `spot_prod_latest.xml` → `samples/schemas/binance-spot.xml`
 - [x] Extract shared common types → `samples/schemas/common-types.xml`
 - [x] Scaffold `samples/exchange-orderbook/` crate with multi-schema `build.rs`
-- [x] `build.rs` calls `ergosbe::Generator::generate_multi()` with all 3 schemas
+- [x] `build.rs` calls `ergo_sbe::Generator::generate_multi()` with all 3 schemas
 - [x] Shared types (groupSizeEncoding, varStringEncoding, varAsciiEncoding) emitted once
 - [x] `common_types` module imported by both Bitget and Binance modules
 - [x] `rust_decimal::Decimal` conversion layer: `Price::from(Decimal)` and

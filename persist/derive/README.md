@@ -41,5 +41,5 @@ and schema migration behaviour.
 
 ## Non-goals
 
-- Hot-path market-data encode/decode (that is `ergosbe` + your feed path)
+- Hot-path market-data encode/decode (that is `ergo-sbe` + your feed path)
 - Standalone use without `ergo-clickhouse-persist`

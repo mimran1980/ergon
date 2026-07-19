@@ -33,7 +33,7 @@ Review range: `6237d98...831fcd0` on branch `first_cut`.
 
 Observed evidence:
 
-- `cargo test -p ergosbe --all-features -- --test-threads=1` passed.
+- `cargo test -p ergo-sbe --all-features -- --test-threads=1` passed.
 - `cargo test -p ergo-clickhouse-persist --all-features -- --test-threads=1`
   passed 217 unit tests, 18 derive tests, and 8 SBE round trips; seven live
   integration tests remained ignored.
@@ -60,7 +60,7 @@ Commits `94f62da..1791972` on `first_cut`. Fresh evidence this session:
 - Hygiene: `./scripts/check-repository-hygiene.sh` passed; `git ls-files
   '*target*'` and `git ls-files 'persist/src/gen/*.rs'` return nothing.
 - `cargo fmt --all --check` clean; workspace + sample Clippy `-D warnings`
-  clean; `cargo test -p ergosbe --all-features -- --test-threads=1` all
+  clean; `cargo test -p ergo-sbe --all-features -- --test-threads=1` all
   binaries green; persist suite green (207 tests incl. 8 new V2).
 - Generator coverage: codegen 99.21% / xml 99.25% / resolve+schema+config+ir
   100% lines; remaining misses proven unreachable (see
@@ -197,7 +197,7 @@ healthy-driver-unforceable error arms — not to untested behaviour.
 **Interfaces:**
 
 - Persist includes V1 and V2 codecs from `OUT_DIR`.
-- Persist build-depends on `ergosbe`; remove the shallow `ergosbe` `persist`
+- Persist build-depends on `ergo-sbe`; remove the shallow `ergo-sbe` `persist`
   re-export feature that creates the cycle. Consumers depend on the persist
   crate directly.
 - `just check` is the single local formatting, build, test, Clippy, and hygiene

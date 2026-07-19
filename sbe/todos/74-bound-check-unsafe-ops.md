@@ -22,7 +22,7 @@ path to preserve const evaluation. Do not claim the unsafe feature path is
 verified until:
 
 ```sh
-RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
+RUSTC_WRAPPER="" cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1
 ```
 
 passes again.

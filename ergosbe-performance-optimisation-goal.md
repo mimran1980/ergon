@@ -22,7 +22,7 @@ are regenerated into the golden stability target, and are measured through the
 on-the-fly `ergosbe-benchmarks` crate. Legacy `sbe/benches/` is superseded and
 must not be revived.
 
-**Tech Stack:** The workspace's current stable Rust toolchain, `ergosbe`,
+**Tech Stack:** The workspace's current stable Rust toolchain, `ergo-sbe`,
 `ergosbe-benchmarks`, Criterion, Aeron SBE reference code, and
 `syn`/`quote`/`prettyplease` codegen. LTO and `codegen-units = 1` may be used by
 the comparison profile but do not by themselves prove generated-code speed.
@@ -311,12 +311,12 @@ The following work is already done. Do not redo it unless a fresh benchmark or t
 Use these commands before claiming a performance change is complete:
 
 ```sh
-cargo test -p ergosbe update_golden -- --ignored
+cargo test -p ergo-sbe update_golden -- --ignored
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace -- --include-ignored --test-threads=1
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
-RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
 just bench-fast
 ```
 
@@ -385,7 +385,7 @@ Expected:
 Run:
 
 ```sh
-RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
 ```
 
 Record every ErgoSBE and Aeron median plus confidence interval in the Progress Ledger.
@@ -408,7 +408,7 @@ Run:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace -- --include-ignored --test-threads=1
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 ```
 
 Expected: all pass. If the count is not 412 because tests were added or removed, record the actual count instead of forcing the old number.
@@ -482,8 +482,8 @@ Use or create a local helper if an existing complete-car helper already exists.
 Run:
 
 ```sh
-cargo test -p ergosbe --test baseline_test
-cargo test -p ergosbe update_golden -- --ignored
+cargo test -p ergo-sbe --test baseline_test
+cargo test -p ergo-sbe update_golden -- --ignored
 ```
 
 - [ ] **Step 5: Run current verification commands**
@@ -561,8 +561,8 @@ Measure full tail encoding through the concrete stage structs, ending at `CarCom
 Run:
 
 ```sh
-RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --no-run
-RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe-benchmarks --no-run
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe-benchmarks
 ```
 
 - [ ] **Step 7: Commit**
@@ -618,10 +618,10 @@ Generate cached `entry_advance` or equivalent direct stride only when the entry 
 Run:
 
 ```sh
-cargo test -p ergosbe update_golden -- --ignored
+cargo test -p ergo-sbe update_golden -- --ignored
 cargo test --workspace -- --include-ignored --test-threads=1
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
-RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
 just bench-fast
 ```
 
@@ -651,7 +651,7 @@ git commit -m "perf: precompute fixed-tail group entry advance"
 Run:
 
 ```sh
-RUSTC_WRAPPER="" cargo rustc -p ergosbe-benchmarks --bench perf_parity_bench --profile bench -- --emit asm
+RUSTC_WRAPPER="" cargo rustc -p ergo-sbe-benchmarks --bench perf_parity_bench --profile bench -- --emit asm
 find target/release/deps -name 'perf_parity_bench-*.s' -print
 ```
 
@@ -709,7 +709,7 @@ git commit -m "perf: remove redundant generated hot-path work"
 Run:
 
 ```sh
-RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
 just bench-fast
 ```
 
@@ -755,8 +755,8 @@ Run:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace -- --include-ignored --test-threads=1
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
-RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
 just bench-fast
 ```
 
@@ -872,7 +872,7 @@ toolchain (1.95.0): "error: 1 nightly option were parsed." Branch coverage is
 The `allocation_count_test` binary uses a `CountingAllocator` as `#[global_allocator]`.
 Under `cargo llvm-cov`, the instrumented runtime allocates (profraw initialization),
 causing 4 of 7 zero-alloc assertions to see a false +1. The tests pass normally:
-`cargo test -p ergosbe --test allocation_count_test -- --test-threads=1` → 7 passed
+`cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1` → 7 passed
 (2026-07-10). **Justified: coverage instrumentation intrinsically allocates, making
 it incompatible with a counting global allocator's zero-alloc assertion.** The test
 binary is excluded from coverage runs (`cargo llvm-cov`) for this reason.
@@ -950,7 +950,7 @@ model that DECISIONS §3 / §10 reject.
 - Coverage tooling installed (`cargo-llvm-cov 0.8.7` + `llvm-tools-preview`),
   authorised by the implementation prompt's "install missing local tools".
   Generator coverage baseline measured
-  (`cargo llvm-cov -p ergosbe --lib --test {baseline,ordered_decoder_stages,
+  (`cargo llvm-cov -p ergo-sbe --lib --test {baseline,ordered_decoder_stages,
   l3_consuming_stages,comprehensive,integration,stability}_test --summary-only`,
   excluding the allocation test — see below): **codegen.rs 91.58% lines / 91.45%
   functions, xml.rs 89.90%, resolve.rs 87.87%, schema.rs 84.21% lines (60%
@@ -1257,7 +1257,7 @@ within measurement noise (≤0.5% difference, p > 0.05 overlap).
 
 ## 2026-07-17: Generator coverage push — xml.rs 99.25% lines, all remaining misses proven unreachable
 
-Command: `cargo llvm-cov -p ergosbe --all-features --lib --test <all tests except
+Command: `cargo llvm-cov -p ergo-sbe --all-features --lib --test <all tests except
 allocation_count_test> --summary-only` (allocation test excluded per the
 justified instrumentation-allocation exclusion above). Rust 1.95.0,
 cargo-llvm-cov 0.8.7, Apple M4, 2026-07-17.
@@ -1329,7 +1329,7 @@ The other ~30 uncovered lines are inside `quote!` proc-macro blocks —
 llvm-cov stable cannot attribute individual template lines (limitation
 documented 2026-07-10); template correctness is proven by source-shape,
 compile-run, wire-parity, and allocation tests instead. Full sbe suite green:
-`cargo test -p ergosbe --all-features -- --test-threads=1` (all binaries pass,
+`cargo test -p ergo-sbe --all-features -- --test-threads=1` (all binaries pass,
 allocation tests require single-threading for the global CountingAllocator).
 
 ## 2026-07-17: decode/scalar and decode/array re-measured — all medians ≤ 1.00
@@ -1994,7 +1994,7 @@ Full 5-run maintained encode matrix (header 0.856, keep-alive 0.916; connect dem
 ## 2026-07-18 verification pass (goal re-verify): maintained encode still ≤ 1.00
 
 **Command:** `cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --warm-up-time 0.3 --measurement-time 1.0 --sample-size 20 'encode/session_message_header|encode/session_keep_alive'`  
-**Also:** `cargo bench -p ergosbe-benchmarks --no-run` (compile gate)  
+**Also:** `cargo bench -p ergo-sbe-benchmarks --no-run` (compile gate)  
 **Hardware/toolchain:** aarch64 macOS, rustc 1.95.0
 
 | Scenario | ErgoSBE | sbe-tool | Ratio | Gate |
@@ -2007,7 +2007,7 @@ Connect remains demoted (cold path). Decode not in maintained set. Full 5-run ma
 ## 2026-07-18 completion-goal re-verify: maintained encode still ≤ 1.00
 
 **Command:** `cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --warm-up-time 0.3 --measurement-time 1.0 --sample-size 20 'encode/session_message_header|encode/session_keep_alive'`  
-**Also:** `cargo bench -p ergosbe-benchmarks --no-run`  
+**Also:** `cargo bench -p ergo-sbe-benchmarks --no-run`  
 **Hardware/toolchain:** aarch64 macOS, rustc 1.95.0
 
 | Scenario | ErgoSBE | sbe-tool | Ratio | Gate |
@@ -2055,7 +2055,7 @@ until a full five-run is ledgered.
 **Date:** 2026-07-18 · **Host:** arm64 macOS · rustc 1.95.0 · branch `3069ec6`  
 **Also green:** `just check`, cluster lib 54, codec_golden 9, RFQ wire parity,
 `just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`,
-`just samples-orderbook`, `cargo bench -p ergosbe-benchmarks --no-run`.
+`just samples-orderbook`, `cargo bench -p ergo-sbe-benchmarks --no-run`.
 
 | Scenario | ErgoSBE | sbe-tool | Ratio | Gate |
 |----------|---------|----------|-------|------|

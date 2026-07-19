@@ -44,10 +44,10 @@ fn docs_before(src: &str, item: &str) -> String {
 /// Generate schema, compile the generated code and assert the source
 /// contains the expected doc string on the expected item.
 fn assert_doc_on_item(schema_xml: &str, module_name: &str, expected: &str, item_prefix: &str) {
-    let ir = ergosbe::parse(schema_xml).expect("parse schema");
-    let schema = ergosbe::Schema::from_ir(ir);
+    let ir = ergo_sbe::parse(schema_xml).expect("parse schema");
+    let schema = ergo_sbe::Schema::from_ir(ir);
     let modules =
-        ergosbe::Generator::new(ergosbe::GenerationConfig::new(module_name)).generate(&schema);
+        ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name)).generate(&schema);
     let src = &modules.modules().next().unwrap().source;
     syn::parse_file(src).expect("generated code must be valid Rust");
 
@@ -234,9 +234,9 @@ fn multiline_indented_description_is_text_fenced() {
   -->
   <sbe:message name="M" id="1" description="Header line."><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergosbe::parse(xml).expect("parse");
-    let schema = ergosbe::Schema::from_ir(ir);
-    let modules = ergosbe::Generator::new(ergosbe::GenerationConfig::new("ml_fence")).generate(&schema);
+    let ir = ergo_sbe::parse(xml).expect("parse");
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("ml_fence")).generate(&schema);
     let src = &modules.modules().next().unwrap().source;
     assert!(
         src.contains("```text") || src.contains("text\\n"),

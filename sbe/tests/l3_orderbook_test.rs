@@ -48,11 +48,11 @@ fn l3_schema_generates_and_compiles() {
 
 #[test]
 fn l3_domain_objects_generated() {
-    let ir = ergosbe::parse_file(&l3_schema()).unwrap();
-    let schema = ergosbe::Schema::from_ir(ir);
-    let mut config = ergosbe::GenerationConfig::new("l3book");
+    let ir = ergo_sbe::parse_file(&l3_schema()).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let mut config = ergo_sbe::GenerationConfig::new("l3book");
     config.domain_objects = true;
-    let g = ergosbe::Generator::new(config);
+    let g = ergo_sbe::Generator::new(config);
     let src = g.generate(&schema).modules().next().unwrap().source.clone();
     assert!(
         src.contains("pub struct L3BookDomain"),

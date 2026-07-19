@@ -8,7 +8,7 @@
 
 mod common;
 use common::{Paths, compile_and_run, generate};
-use ergosbe::{GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
 use std::fs;
 
 #[test]

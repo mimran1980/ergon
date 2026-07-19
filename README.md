@@ -18,14 +18,14 @@ Cluster client, and end-to-end samples.
 | Cluster client | [`cluster/README.md`](cluster/README.md) |
 | Samples map | [`samples/README.md`](samples/README.md) |
 
-Path dependency in this monorepo (`ergosbe = { path = "sbe" }`); crates.io
+Path dependency in this monorepo (`ergo-sbe = { path = "sbe" }`); crates.io
 version numbers in guides are illustrative.
 
 ## Project layout
 
 | Directory | Crate | Purpose | Docs |
 |-----------|-------|---------|------|
-| `sbe/` | `ergosbe` | SBE XML → idiomatic Rust codec generator | [`sbe/README.md`](sbe/README.md) |
+| `sbe/` | `ergo-sbe` | SBE XML → idiomatic Rust codec generator | [`sbe/README.md`](sbe/README.md) |
 | `persist/` (+ `persist/derive/`) | `ergo-clickhouse-persist` | Auto-persist annotated structs to ClickHouse | [`persist/README.md`](persist/README.md), [`persist/derive/README.md`](persist/derive/README.md) |
 | `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client on `rusteron-client` 0.2 | [`cluster/README.md`](cluster/README.md) |
 | `cluster-test-support/` (excluded) | `ergo-aeron-cluster-test-support` | Java test harness (Gradle Aeron jars) | [`cluster-test-support/README.md`](cluster-test-support/README.md) |
@@ -96,7 +96,7 @@ crate names (`ergo-aeron-cluster`).
 Publish **product** crates one-by-one at **default features** (do not enable
 `test-harness` for a publish build):
 
-1. `ergosbe` (`sbe/`)
+1. `ergo-sbe` (`sbe/`)
 2. `ergo-clickhouse-persist-derive` then `ergo-clickhouse-persist`
 3. `ergo-aeron-cluster` — default features only; keep harness optional
 
@@ -161,13 +161,13 @@ These are the implemented/generated capabilities. Release-quality claims such as
 
 ```toml
 [build-dependencies]
-ergosbe = { path = "../sbe" }   # or crates.io "0.1" when published
+ergo-sbe = { path = "../sbe" }   # or crates.io "0.1" when published
 ```
 
 ### 2. Create `build.rs`
 
 ```rust
-use ergosbe::{parse_file, Generator, GenerationConfig, Schema};
+use ergo_sbe::{parse_file, Generator, GenerationConfig, Schema};
 
 fn main() {
     // Parse an SBE XML schema file (with XInclude resolution)

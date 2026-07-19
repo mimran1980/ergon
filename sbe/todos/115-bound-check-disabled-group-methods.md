@@ -13,7 +13,7 @@ generated `E0015` const/non-const helper errors recur, remove constness from
 runtime buffer accessors rather than weakening the fast helpers:
 
 ```sh
-RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
+RUSTC_WRAPPER="" cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1
 ```
 
 Keep the feature-enabled acceptance criterion unchecked until todo 122's runtime

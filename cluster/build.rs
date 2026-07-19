@@ -23,10 +23,10 @@ fn generate_schema(schema_path: &std::path::Path, module: &str, out_dir: &std::p
         );
     }
     let xml_src = fs::read_to_string(schema_path).unwrap_or_else(|e| panic!("read {}: {e}", schema_path.display()));
-    let ir = ergosbe::parse(&xml_src).unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
-    let schema = ergosbe::Schema::from_ir(ir);
-    let cfg = ergosbe::GenerationConfig::new(module);
-    let generator = ergosbe::Generator::new(cfg);
+    let ir = ergo_sbe::parse(&xml_src).unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let cfg = ergo_sbe::GenerationConfig::new(module);
+    let generator = ergo_sbe::Generator::new(cfg);
     let modules = generator
         .try_generate(&schema)
         .unwrap_or_else(|e| panic!("generate {}: {e}", schema_path.display()));

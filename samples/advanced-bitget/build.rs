@@ -11,15 +11,15 @@ fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str, decimal: b
         return;
     }
     let xml = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {xml_path}: {e}"));
-    let ir = ergosbe::parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path}: {e}"));
-    let schema = ergosbe::Schema::from_ir(ir);
+    let ir = ergo_sbe::parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path}: {e}"));
+    let schema = ergo_sbe::Schema::from_ir(ir);
 
     // Flyweight-only codecs: no generated domain objects (remediation Task 7).
-    let mut config = ergosbe::GenerationConfig::new(module_name);
+    let mut config = ergo_sbe::GenerationConfig::new(module_name);
     if decimal {
         config = config.enable_decimal_converters("Decimal");
     }
-    let generator = ergosbe::Generator::new(config);
+    let generator = ergo_sbe::Generator::new(config);
     let modules = generator
         .try_generate(&schema)
         .unwrap_or_else(|e| panic!("SBE generation failed for {xml_path}: {e}"));

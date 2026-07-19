@@ -16,7 +16,7 @@ RFQ unfrozen. Open items: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.m
 
 ## Depends on
 
-- Path: `ergosbe` (via `build.rs`)
+- Path: `ergo-sbe` (via `build.rs`)
 - `rusteron-client` **0.2** (workspace; latest 0.2.x)
 - Optional: `ergo-aeron-cluster-test-support` behind feature `test-harness`
 - Aeron submodule **1.52.2** for schemas + Java jars

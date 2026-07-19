@@ -20,7 +20,7 @@ Earlier verification runs failed at generated-code stability and the
 feature-enabled test command:
 
 ```sh
-RUSTC_WRAPPER="" cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
+RUSTC_WRAPPER="" cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1
 ```
 
 Historical root cause observed in generated test crates: non-const
@@ -28,7 +28,7 @@ Historical root cause observed in generated test crates: non-const
 paths. The policy is now to remove constness from runtime buffer accessors
 rather than constrain the fast read/write helpers.
 
-Current release-gate docs record the default and feature-enabled `ergosbe`
+Current release-gate docs record the default and feature-enabled `ergo-sbe`
 test commands as passing. Keep this todo open for the remaining unchecked-path
 routing and generated lint policy work below.
 

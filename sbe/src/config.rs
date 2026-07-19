@@ -9,7 +9,7 @@
 //! to customise:
 //!
 //! ```rust
-//! use ergosbe::GenerationConfig;
+//! use ergo_sbe::GenerationConfig;
 //!
 //! let mut config = GenerationConfig::new("market_data");
 //! config.checked_accessors = false;
@@ -33,14 +33,14 @@ pub enum CompatibilityMode {
 /// Basic usage — equivalent to the default:
 ///
 /// ```rust
-/// use ergosbe::GenerationConfig;
+/// use ergo_sbe::GenerationConfig;
 /// let config = GenerationConfig::new("messages");
 /// ```
 ///
 /// Multi-schema setup with shared types:
 ///
 /// ```rust
-/// use ergosbe::GenerationConfig;
+/// use ergo_sbe::GenerationConfig;
 /// let mut config = GenerationConfig::new("common_types");
 /// config.shared_module = Some("common_types".into());
 /// assert!(config.shared_module.is_some());

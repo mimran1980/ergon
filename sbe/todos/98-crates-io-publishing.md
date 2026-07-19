@@ -15,7 +15,7 @@ the CI/release automation tracked in todo 45, but deserves its own checklist.
 - [x] Version bump workflow (manual or `cargo-release`)
 - [x] README badges: crates.io version, docs.rs, CI status
 - [x] docs.rs build configuration (`all-features = true` added)
-- [x] Crate name `ergosbe` appears available on crates.io (no search hits)
+- [x] Crate name `ergo-sbe` appears available on crates.io (no search hits)
 - [x] `.gitignore` excludes `target/` and other build artifacts
 
 ## Dependencies

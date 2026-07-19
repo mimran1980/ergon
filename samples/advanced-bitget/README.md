@@ -11,7 +11,7 @@ typed + dynamic ClickHouse. Absorbs the former `exchange-orderbook` sample
 
 ## Depends on
 
-- `ergosbe`, `ergo-clickhouse-persist` (+ derive)
+- `ergo-sbe`, `ergo-clickhouse-persist` (+ derive)
 - `rusteron-client` / media-driver **`0.2`**
 - Docker ClickHouse on `127.0.0.1:8123` for live CH tests
 

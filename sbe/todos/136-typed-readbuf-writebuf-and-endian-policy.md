@@ -65,7 +65,7 @@ Endian controls `from_le_bytes` vs `from_be_bytes` without branchy runtime check
 - [x] Generated field accessors delegate to buffer policy methods instead of
       duplicating `#[cfg]` blocks
 - [x] LE and BE schemas are covered by todo 121 fixtures
-- [x] `cargo test -p ergosbe --features bound-check-disabled` passes
+- [x] `cargo test -p ergo-sbe --features bound-check-disabled` passes
 - [x] Benchmarks show no regression versus direct hand-written reads and Aeron
       `ReadBuf`
 

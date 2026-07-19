@@ -367,7 +367,7 @@ ErgoSBE implementation status. Use this to identify gaps.
 ## 8. Smoke Test Verification
 
 A smoke test (`sbe/tests/smoke_test.rs`) iterates over all 19 XML files in the
-fixtures directory and parses each one via `ergosbe::parse_file()`. The test:
+fixtures directory and parses each one via `ergo_sbe::parse_file()`. The test:
 
 - **Parses** 11 schemas successfully (5 intentionally-invalid + 3 include-only fragments
   are skipped).

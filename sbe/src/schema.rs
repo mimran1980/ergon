@@ -5,14 +5,14 @@
 //! [`crate::parse`], [`crate::Generator`], [`crate::GenerationConfig`].
 //!
 //! Defines the [`Schema`] and [`SchemaSource`] types that represent
-//! a parsed SBE schema at the ergosbe boundary. A `Schema` holds the
+//! a parsed SBE schema at the ergo-sbe boundary. A `Schema` holds the
 //! package identity (`package`, `id`, `version`) plus the resolved
 //! token [`Ir`].
 //!
 //! # Usage
 //!
 //! ```rust
-//! use ergosbe::{parse, Schema};
+//! use ergo_sbe::{parse, Schema};
 //!
 //! let ir = parse(r#"<?xml version="1.0"?>
 //! <messageSchema package="example" id="1" version="0"
@@ -112,7 +112,7 @@ impl Schema {
     /// Typically the output of [`parse`](crate::parse):
     ///
     /// ```ignore
-    /// use ergosbe::{parse, Schema};
+    /// use ergo_sbe::{parse, Schema};
     /// let ir = parse(schema_xml).unwrap();
     /// let schema = Schema::from_ir(ir);
     /// ```

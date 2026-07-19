@@ -49,7 +49,7 @@ serial_test = { version = "3", features = ["file_locks"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [build-dependencies]
-ergosbe = { path = "../sbe" }
+ergo-sbe = { path = "../sbe" }
 
 [[bench]]
 name = "cluster_codec_bench"

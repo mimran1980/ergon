@@ -10,7 +10,7 @@ use std::fs;
 
 mod common;
 use common::Paths;
-use ergosbe::{GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
 
 fn generate_with_domain(xml_path: &std::path::Path, module_name: &str) -> String {
     let ir = parse_file(xml_path).unwrap();

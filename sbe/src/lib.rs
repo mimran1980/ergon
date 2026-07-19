@@ -65,7 +65,7 @@
 //! Parse a schema, configure generation, and produce Rust source modules:
 //!
 //! ```rust
-//! use ergosbe::{parse, Generator, GenerationConfig, Schema};
+//! use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
 //!
 //! let schema_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 //! <messageSchema package="example.sbe" id="1" version="0"

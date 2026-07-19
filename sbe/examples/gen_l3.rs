@@ -1,6 +1,6 @@
 //! Generate L3 orderbook code for inspection.
 #![allow(clippy::expect_used, clippy::unwrap_used, missing_docs)]
-use ergosbe::{GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
 use std::path::PathBuf;
 fn main() {
     let path = PathBuf::from("sbe/tests/fixtures/schemas/l3-orderbook-schema.xml");

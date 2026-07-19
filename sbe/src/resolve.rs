@@ -42,7 +42,7 @@ use crate::ir::{Ir, PrimitiveType, Signal, Token};
 pub enum ResolveError {
     /// Two messages share the same template ID.
     #[error("duplicate template id {id} for message {name}")]
-    #[diagnostic(code(ergosbe::resolve::duplicate_template_id))]
+    #[diagnostic(code(ergo_sbe::resolve::duplicate_template_id))]
     #[diagnostic(help("each message must have a unique template id"))]
     DuplicateTemplateId {
         /// The duplicate ID.
@@ -61,7 +61,7 @@ pub enum ResolveError {
     },
     /// A referenced type was not found in the registry.
     #[error("unknown type reference {name}")]
-    #[diagnostic(code(ergosbe::resolve::unknown_type))]
+    #[diagnostic(code(ergo_sbe::resolve::unknown_type))]
     #[diagnostic(help("ensure the type is defined in the schema or an include"))]
     UnknownType {
         /// Type name.
@@ -75,7 +75,7 @@ pub enum ResolveError {
     },
     /// Field offsets are overlapping or unaligned.
     #[error("overlapping offsets or invalid alignment at offset {offset}")]
-    #[diagnostic(code(ergosbe::resolve::invalid_offset))]
+    #[diagnostic(code(ergo_sbe::resolve::invalid_offset))]
     #[diagnostic(help("check explicit offset attributes for clashes"))]
     InvalidOffset {
         /// The invalid offset.
@@ -89,7 +89,7 @@ pub enum ResolveError {
     },
     /// A composite type definition is empty.
     #[error("composite {name} has no fields")]
-    #[diagnostic(code(ergosbe::resolve::empty_composite))]
+    #[diagnostic(code(ergo_sbe::resolve::empty_composite))]
     #[diagnostic(help("add at least one <type> member to the composite"))]
     EmptyComposite {
         /// Composite name.
@@ -103,7 +103,7 @@ pub enum ResolveError {
     },
     /// A field or message has a sinceVersion greater than the schema version.
     #[error("sinceVersion {version} exceeds schema version {schema_version} for {name}")]
-    #[diagnostic(code(ergosbe::resolve::since_version_beyond))]
+    #[diagnostic(code(ergo_sbe::resolve::since_version_beyond))]
     #[diagnostic(help("the sinceVersion must be <= the schema version"))]
     SinceVersionBeyondSchema {
         /// The sinceVersion value found.

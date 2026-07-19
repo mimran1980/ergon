@@ -167,7 +167,7 @@ WORK ORDER — residual product scope COMPLETE (2026-07-18)
    just samples-cluster-ha
    just samples-cluster-ha-kill-leader
    just samples-orderbook
-   cargo bench -p ergosbe-benchmarks --no-run
+   cargo bench -p ergo-sbe-benchmarks --no-run
    cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench  # maintained filter
    # optional: just test-aeron-cluster-harness (Java jars)
    rg living residual OPEN/ACTIVE product blockers (must be CLEAN)

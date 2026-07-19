@@ -12,7 +12,7 @@ error codes, and rich label annotations.
 ## Checklist
 
 - [x] ErgoSBE errors include source span (line/column pointing at XML)
-- [x] ErgoSBE errors include error codes (e.g., `ergosbe::schema_parse::missing`)
+- [x] ErgoSBE errors include error codes (e.g., `ergo_sbe::schema_parse::missing`)
 - [x] ErgoSBE errors use miette for rendered output (colored, underlined)
 - [x] Aeron errors (from Java code inspection): plain text, no source spans, no codes
 - [x] Count of error types: ErgoSBE has 5 ParseError variants + 5 ResolveError variants; Aeron has 0 structured types
@@ -31,21 +31,21 @@ Two error enums with `miette::Diagnostic` derive:
 
 | Variant | Error Code | Span? | Label |
 |---------|-----------|-------|-------|
-| `MalformedXml` | `ergosbe::schema_parse::malformed_xml` | No (whole doc) | -- |
-| `Missing` | `ergosbe::schema_parse::missing` | Yes | `"missing here"` |
-| `Invalid` | `ergosbe::schema_parse::invalid` | Yes | `"invalid here"` |
-| `Resolve` | `ergosbe::schema_parse::resolve` | Yes | `"resolution error"` |
-| `IncludeError` | `ergosbe::schema_parse::include` | Yes | `"include error here"` |
+| `MalformedXml` | `ergo_sbe::schema_parse::malformed_xml` | No (whole doc) | -- |
+| `Missing` | `ergo_sbe::schema_parse::missing` | Yes | `"missing here"` |
+| `Invalid` | `ergo_sbe::schema_parse::invalid` | Yes | `"invalid here"` |
+| `Resolve` | `ergo_sbe::schema_parse::resolve` | Yes | `"resolution error"` |
+| `IncludeError` | `ergo_sbe::schema_parse::include` | Yes | `"include error here"` |
 
 **`ResolveError`** (5 variants):
 
 | Variant | Error Code | Help |
 |---------|-----------|------|
-| `DuplicateTemplateId` | `ergosbe::resolve::duplicate_template_id` | `"each message must have a unique template id"` |
-| `UnknownType` | `ergosbe::resolve::unknown_type` | `"ensure the type is defined in the schema"` |
-| `InvalidOffset` | `ergosbe::resolve::invalid_offset` | `"check explicit offset attributes"` |
-| `EmptyComposite` | `ergosbe::resolve::empty_composite` | `"add at least one <type> member"` |
-| `SinceVersionBeyondSchema` | `ergosbe::resolve::since_version_beyond` | `"sinceVersion must be <= schema version"` |
+| `DuplicateTemplateId` | `ergo_sbe::resolve::duplicate_template_id` | `"each message must have a unique template id"` |
+| `UnknownType` | `ergo_sbe::resolve::unknown_type` | `"ensure the type is defined in the schema"` |
+| `InvalidOffset` | `ergo_sbe::resolve::invalid_offset` | `"check explicit offset attributes"` |
+| `EmptyComposite` | `ergo_sbe::resolve::empty_composite` | `"add at least one <type> member"` |
+| `SinceVersionBeyondSchema` | `ergo_sbe::resolve::since_version_beyond` | `"sinceVersion must be <= schema version"` |
 
 ### Key features
 
@@ -71,7 +71,7 @@ Two error enums with `miette::Diagnostic` derive:
 
 ```
 Diagnostic { message: "resolution error: duplicate template id 1 for message AnotherMessageWithId1",
-              code: "ergosbe::schema_parse::resolve",
+              code: "ergo_sbe::schema_parse::resolve",
               labels: "[]" }
 ```
 
@@ -158,7 +158,7 @@ WARNING: name is not valid for C++: invalid field name
 |-----------|---------|----------------|
 | Error types | 10 structured variants (5 Parse + 5 Resolve) | 0 — unstructured strings |
 | Source location | Byte-range span → line/col from roxmltree | Element name + `name` attribute only |
-| Error codes | Every variant: `ergosbe::schema_parse::*` | None |
+| Error codes | Every variant: `ergo_sbe::schema_parse::*` | None |
 | Actionable help | `ResolveError` variants carry `help` text | None |
 | Label annotations | Point at offending XML element | None |
 | Visual rendering | `miette` (colored underline with `fancy`) | Plain `err.println("ERROR: ...")` |
@@ -173,7 +173,7 @@ WARNING: name is not valid for C++: invalid field name
 
 1. **Source precision**: ErgoSBE points at the exact byte range in the XML;
    Aeron only says which element name.
-2. **Machine-readability**: Error codes like `ergosbe::schema_parse::missing`
+2. **Machine-readability**: Error codes like `ergo_sbe::schema_parse::missing`
    enable tooling (IDE plugins, CI filters, test assertions). Aeron has nothing
    comparable.
 3. **Actionability**: Labels like `"missing here"` and help text like `"add at

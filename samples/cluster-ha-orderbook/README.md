@@ -11,7 +11,7 @@ DynamicSchema → DynamicRow → ClickHouse.
 ## Depends on
 
 - `ergo-aeron-cluster` → rusteron-client **`0.2`** (workspace-aligned)
-- `ergosbe`, `ergo-clickhouse-persist`
+- `ergo-sbe`, `ergo-clickhouse-persist`
 - Java + Aeron jars for kill-leader (`test-harness` feature)
 - Docker ClickHouse for live latency recipe
 

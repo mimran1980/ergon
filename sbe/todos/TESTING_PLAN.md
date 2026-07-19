@@ -8,10 +8,10 @@
 Core local quality gates are green, but release gates are still open:
 
 - ✅ PASS: `cargo test --workspace -- --test-threads=1` — 0 failures
-- ✅ PASS: `cargo bench -p ergosbe --no-run` — 3 benches compile
+- ✅ PASS: `cargo bench -p ergo-sbe --no-run` — 3 benches compile
 - ✅ PASS: `cargo fmt --all --check` — clean
 - ✅ PASS: `cargo clippy --workspace --all-targets -- -D warnings` — clean
-- ✅ PASS: `cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1` — 0 failures
+- ✅ PASS: `cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1` — 0 failures
 - ✅ PASS: `cd samples/exchange-orderbook && cargo check` — compiles (warnings ok)
 - ✅ DONE: Aeron `sbe-tool` schema parser parity achieved (todos 125 and 126 — all 25 AC items verified). 100+ schema fixtures parse correctly with miette diagnostics.
 - OPEN: Rust type-system API proof work is tracked by todos 130-134. Do not

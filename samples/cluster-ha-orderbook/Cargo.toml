@@ -6,7 +6,7 @@ description = "HA sample: AppMessage books via ergo-aeron-cluster try_claim + ne
 publish = false
 
 [dependencies]
-ergosbe = { path = "../../sbe" }
+ergo-sbe = { path = "../../sbe" }
 ergo-clickhouse-persist = { path = "../../persist" }
 ergo-clickhouse-persist-derive = { path = "../../persist/derive" }
 ergo-aeron-cluster = { path = "../../cluster" }
@@ -24,7 +24,7 @@ test-harness = [
 ]
 
 [build-dependencies]
-ergosbe = { path = "../../sbe" }
+ergo-sbe = { path = "../../sbe" }
 
 # Optional harness deps (enabled by feature test-harness; used only by ha_kill_leader).
 [dependencies.ergo-aeron-cluster-test-support]

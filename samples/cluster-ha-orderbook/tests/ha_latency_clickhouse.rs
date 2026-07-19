@@ -1,7 +1,7 @@
 //! Live ClickHouse proof: DynamicSchema → DynamicRow → SchemaRegistry decode
 //! → ClickhouseSink (shipped `LatencyPersistor` path). H4/H5.
 //!
-//! Requires ClickHouse at 127.0.0.1:8123 (password `ergosbe`).
+//! Requires ClickHouse at 127.0.0.1:8123 (password `ergo-sbe`).
 
 use cluster_ha_orderbook::latency::{FEED_LATENCY_TABLE, LatencyPersistor, LatencySample};
 

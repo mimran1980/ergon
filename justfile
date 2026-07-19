@@ -21,7 +21,7 @@
 # ── Release (crates.io) ─────────────────────────────────────────────────
 # Publish product crates individually; do NOT `--all-features` for release.
 # Suggested order (path deps first):
-#   1. ergosbe              (sbe/)
+#   1. ergo-sbe             (sbe/)
 #   2. ergo-clickhouse-persist-derive  then  ergo-clickhouse-persist
 #   3. ergo-aeron-cluster   with default features only (never publish test-harness
 #      as required; keep test-support optional / unpublished)
@@ -127,7 +127,7 @@ samples-cluster-ha-kill-leader:
 
 # Build rustdoc for the three main product crates (no deps)
 docs:
-    cargo doc -p ergosbe --no-deps
+    cargo doc -p ergo-sbe --no-deps
     cargo doc -p ergo-clickhouse-persist --no-deps
     cargo doc -p ergo-aeron-cluster --no-deps
 
@@ -139,7 +139,7 @@ fmt:
 
 # Coverage (requires nightly toolchain)
 cov:
-    RUSTC_WRAPPER="" cargo +nightly llvm-cov -p ergosbe --lib --branch --summary-only
+    RUSTC_WRAPPER="" cargo +nightly llvm-cov -p ergo-sbe --lib --branch --summary-only
 
 # Start ClickHouse Docker and run the advanced sample
 run-sample:

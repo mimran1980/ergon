@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergosbe::{GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
 
 // ── Schema & fixture path resolution ──────────────────────────────────
 

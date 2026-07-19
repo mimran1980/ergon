@@ -10,7 +10,7 @@ Criterion head-to-head matrix: **ErgoSBE vs Aeron SBE** generated codecs
 
 ## Depends on
 
-- Path dep on `ergosbe` (generates codecs in `build.rs`)
+- Path dep on `ergo-sbe` (generates codecs in `build.rs`)
 - Aeron SBE reference codecs built into the bench crate for comparison
 
 ## Build / test
@@ -19,8 +19,8 @@ Criterion head-to-head matrix: **ErgoSBE vs Aeron SBE** generated codecs
 # From repo root
 just bench
 # or
-cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
-cargo bench -p ergosbe-benchmarks --no-run   # compile gate only
+cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
+cargo bench -p ergo-sbe-benchmarks --no-run   # compile gate only
 ```
 
 ## Fair-bench rules

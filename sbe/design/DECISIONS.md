@@ -562,7 +562,7 @@ SBE XML --roxmltree(DOM)--> resolved Token IR --codegen--> Rust source --prettyp
   dependency-local. Output is reviewable text — the point for audit.
 - **Driver: `build.rs` in v1** via an `ergosbe-build` crate (no CLI). The generator
   library is the single source of truth; a proc-macro annotation
-  (`#[ergosbe::schema("car.xml")] mod messages;`) is the v1.1 ergonomic front-end.
+  (`#[ergo_sbe::schema("car.xml")] mod messages;`) is the v1.1 ergonomic front-end.
 - **Generated code is a module in the user's crate** — not a separate crate. This is
   load-bearing: it lets users add inherent methods and impl foreign traits (serde,
   rust_decimal) on generated types despite the orphan rule (trap 4).

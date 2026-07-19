@@ -35,7 +35,7 @@ and `<data>` type system.
 | Scalar setters | Setter returns nothing | `encoder.field(val)` returns `&mut Self` for chaining |
 | Tail fields (groups, var-data) | Manual offset management | Concrete by-value stages; later components do not exist on earlier stages |
 | Error handling | Panics on buffer overflow, silent defaults | `Result<T, DecodeError/EncodeError>` throughout |
-| Build integration | External `sbe-tool` Java process | `build.rs` calling `ergosbe::Generator::generate()` |
+| Build integration | External `sbe-tool` Java process | `build.rs` calling `ergo_sbe::Generator::generate()` |
 | Trusted input | Raw indexing is caller-managed | Safe by default; one explicit trusted-input mode keeps accessor names stable |
 
 ## Decoder: before and after
@@ -295,12 +295,12 @@ Generation is entirely in Rust, in `build.rs`:
 ```toml
 # Cargo.toml
 [build-dependencies]
-ergosbe = "0.1"
+ergo-sbe = "0.1"
 ```
 
 ```rust
 // build.rs
-use ergosbe::{parse_file, Generator, GenerationConfig, Schema};
+use ergo_sbe::{parse_file, Generator, GenerationConfig, Schema};
 
 fn main() {
     let ir = parse_file("schemas/my_schema.xml").unwrap();

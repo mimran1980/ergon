@@ -34,10 +34,10 @@
 **Evidence 2026-07-11:**
 - `preceding_xml_comments()` walks previous siblings, collecting comments nearest-element.
 - `collect_description()` order: attr → <description> → <comment> → preceding XML comments.
-- `cargo test -p ergosbe --test schema_docs_provenance_test` — 7/7 pass including real cargo-doc.
-- `cargo test -p ergosbe` — 276/276 pass, 0 failures.
-- `cargo test -p ergosbe --test baseline_test` — 64/64 pass.
-- `cargo test -p ergosbe --test comprehensive_test` — 23/23 pass.
+- `cargo test -p ergo-sbe --test schema_docs_provenance_test` — 7/7 pass including real cargo-doc.
+- `cargo test -p ergo-sbe` — 276/276 pass, 0 failures.
+- `cargo test -p ergo-sbe --test baseline_test` — 64/64 pass.
+- `cargo test -p ergo-sbe --test comprehensive_test` — 23/23 pass.
 - llvm-cov blocked by toolchain nightly-feature issue (pre-existing, not a regression).
 
 > **REOPENED 2026-07-10:** the 2026-07-09 DONE record below is historical.

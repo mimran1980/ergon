@@ -10,8 +10,8 @@
 use std::fs;
 use std::path::Path;
 
-use ergosbe::ir::Signal;
-use ergosbe::parse_file;
+use ergo_sbe::ir::Signal;
+use ergo_sbe::parse_file;
 
 /// Schemas that are intentionally invalid — tested separately.
 const EXPECTED_PARSE_ERRORS: &[&str] = &[

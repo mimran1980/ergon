@@ -94,7 +94,7 @@ assert!(offsets.windows(2).all(|pair| pair[0] < pair[1]));
 
 - [ ] **Step 2: Run the narrow test and confirm the preceding XML-comment assertion fails**
 
-Run: `cargo test -p ergosbe --test schema_docs_provenance_test -- --nocapture`
+Run: `cargo test -p ergo-sbe --test schema_docs_provenance_test -- --nocapture`
 
 Expected: failure because the immediately preceding sibling XML comment is not attached to the intended item.
 
@@ -144,10 +144,10 @@ assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 Run:
 
 ```sh
-cargo test -p ergosbe xml::tests::parse_collects_all_documentation_sources -- --exact
-cargo test -p ergosbe --test schema_docs_provenance_test -- --nocapture
-cargo test -p ergosbe --test baseline_test
-cargo llvm-cov -p ergosbe --tests --branch --summary-only
+cargo test -p ergo-sbe xml::tests::parse_collects_all_documentation_sources -- --exact
+cargo test -p ergo-sbe --test schema_docs_provenance_test -- --nocapture
+cargo test -p ergo-sbe --test baseline_test
+cargo llvm-cov -p ergo-sbe --tests --branch --summary-only
 ```
 
 Expected: all tests pass; new/changed documentation code reports 100 percent line/function/region/branch coverage; encoded bytes remain unchanged.
@@ -190,7 +190,7 @@ assert!(matches!(
 
 - [ ] **Step 2: Confirm failure**
 
-Run: `cargo test -p ergosbe --test baseline_test encoder_wrap_short_buffer -- --exact --nocapture`
+Run: `cargo test -p ergo-sbe --test baseline_test encoder_wrap_short_buffer -- --exact --nocapture`
 
 Expected: generated signatures return `Self`, so the test does not compile or match `Err`.
 
@@ -227,10 +227,10 @@ Change construction sites to use `?`, `.unwrap()`, or explicit matching accordin
 - [ ] **Step 5: Regenerate and run focused gates**
 
 ```sh
-cargo test -p ergosbe update_golden -- --ignored
-cargo test -p ergosbe --test baseline_test
-cargo test -p ergosbe --test l3_consuming_stages_test
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe update_golden -- --ignored
+cargo test -p ergo-sbe --test baseline_test
+cargo test -p ergo-sbe --test l3_consuming_stages_test
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 ```
 
 Expected: all pass, exact header bytes unchanged, short buffers return errors, allocations remain zero.
@@ -267,7 +267,7 @@ compile_fails("incomplete_bytes", &src, r#"
 
 - [ ] **Step 2: Confirm it currently fails as a test because the snippet compiles**
 
-Run: `cargo test -p ergosbe --test baseline_test incomplete_encoder_has_no_complete_bytes -- --exact --nocapture`
+Run: `cargo test -p ergo-sbe --test baseline_test incomplete_encoder_has_no_complete_bytes -- --exact --nocapture`
 
 - [ ] **Step 3: Remove the initial-stage partial `as_bytes` emission**
 
@@ -276,9 +276,9 @@ Delete the `impl_contents.extend` block labelled `Partial as_bytes for scalar-on
 - [ ] **Step 4: Regenerate and verify**
 
 ```sh
-cargo test -p ergosbe update_golden -- --ignored
-cargo test -p ergosbe --test baseline_test
-cargo test -p ergosbe --test l3_consuming_stages_test
+cargo test -p ergo-sbe update_golden -- --ignored
+cargo test -p ergo-sbe --test baseline_test
+cargo test -p ergo-sbe --test l3_consuming_stages_test
 ```
 
 - [ ] **Step 5: Commit**
@@ -366,9 +366,9 @@ Implement helpers by calling the existing consuming `into_<field>()`, reborrowin
 Run:
 
 ```sh
-cargo test -p ergosbe --test l3_consuming_stages_test -- --nocapture
-cargo test -p ergosbe --test baseline_test any_message -- --nocapture
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe --test l3_consuming_stages_test -- --nocapture
+cargo test -p ergo-sbe --test baseline_test any_message -- --nocapture
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 ```
 
 - [ ] **Step 6: Commit**
@@ -416,7 +416,7 @@ Also return `Err(AppError::Rejected)` and assert the exact variant reaches the c
 
 - [ ] **Step 2: Confirm tests fail because `<field>_with` is absent**
 
-Run: `cargo test -p ergosbe --test baseline_test bounded_nested_payload -- --exact --nocapture`
+Run: `cargo test -p ergo-sbe --test baseline_test bounded_nested_payload -- --exact --nocapture`
 
 - [ ] **Step 3: Generate checked bounded lending**
 
@@ -429,8 +429,8 @@ Add a counting-allocator case and a source-shape assertion that the helper conta
 - [ ] **Step 5: Run focused gates and commit**
 
 ```sh
-cargo test -p ergosbe --test baseline_test bounded_nested_payload -- --nocapture
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe --test baseline_test bounded_nested_payload -- --nocapture
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 git add sbe/src/codegen.rs sbe/tests sbe/todos/156-fallible-stage-combinators.md
 git commit -m "feat(sbe): encode nested payloads into exact var-data slices"
 ```
@@ -557,10 +557,10 @@ by Tasks 7 and 8. Their tasks own the corresponding `?` integration proofs.
 - [ ] **Step 8: Run focused gates and commit**
 
 ```sh
-cargo test -p ergosbe config::tests -- --nocapture
-cargo test -p ergosbe --test baseline_test decimal_converter -- --nocapture
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
-cargo llvm-cov -p ergosbe --tests --branch --summary-only
+cargo test -p ergo-sbe config::tests -- --nocapture
+cargo test -p ergo-sbe --test baseline_test decimal_converter -- --nocapture
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
+cargo llvm-cov -p ergo-sbe --tests --branch --summary-only
 git add sbe/src/config.rs sbe/src/codegen.rs sbe/src/lib.rs sbe/tests sbe/todos/62-semantic-type-converters.md
 git commit -m "feat(sbe): add generic decimal converter seam"
 ```
@@ -606,9 +606,9 @@ If exposing `&mut Self` permits a forbidden tail move, generate a concrete fixed
 - [ ] **Step 4: Run runtime, compile-fail, allocation, and assembly checks**
 
 ```sh
-cargo test -p ergosbe --test baseline_test try_fixed -- --nocapture
-cargo test -p ergosbe --test l3_consuming_stages_test try_fixed -- --nocapture
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe --test baseline_test try_fixed -- --nocapture
+cargo test -p ergo-sbe --test l3_consuming_stages_test try_fixed -- --nocapture
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 ```
 
 Inspect optimized assembly for direct and `try_fixed` functions before benchmarking.
@@ -668,10 +668,10 @@ Use `try_<group>` where application errors are needed and the manual interface e
 - [ ] **Step 5: Run ordered, allocation, and all-feature tests**
 
 ```sh
-cargo test -p ergosbe --test l3_consuming_stages_test -- --nocapture
-cargo test -p ergosbe --test comprehensive_test
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
-cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
+cargo test -p ergo-sbe --test l3_consuming_stages_test -- --nocapture
+cargo test -p ergo-sbe --test comprehensive_test
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1
 ```
 
 - [ ] **Step 6: Commit**
@@ -713,9 +713,9 @@ Shorten the payload borrow to the callback lifetime, call the closure, then retu
 Run:
 
 ```sh
-cargo test -p ergosbe --test baseline_test nested_message -- --nocapture
-cargo test -p ergosbe --test l3_consuming_stages_test -- --nocapture
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe --test baseline_test nested_message -- --nocapture
+cargo test -p ergo-sbe --test l3_consuming_stages_test -- --nocapture
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 ```
 
 - [ ] **Step 4: Commit**
@@ -854,7 +854,7 @@ Use the repository's official Java/Aeron bootstrap recipe. Store tool-independen
 
 ```sh
 cargo test -p exchange-orderbook --test roundtrip_test -- --nocapture
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 cargo test --workspace -- --include-ignored --test-threads=1
 ```
 
@@ -888,9 +888,9 @@ For each scenario register `manual`, `fallible`, and `aeron` functions over the 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features -- --include-ignored --test-threads=1
-cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
-cargo test -p ergosbe --test allocation_count_test -- --test-threads=1
-cargo test -p ergosbe update_golden -- --ignored
+cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1
+cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
+cargo test -p ergo-sbe update_golden -- --ignored
 cargo llvm-cov --workspace --all-features --branch --summary-only
 ```
 
@@ -903,7 +903,7 @@ Compare manual and fallible success-path instruction sequences for fixed fields,
 - [ ] **Step 4: Run five comparable warmed-up benchmark passes**
 
 ```sh
-RUSTC_WRAPPER="" cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
 just bench-fast
 ```
 

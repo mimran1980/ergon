@@ -12,10 +12,10 @@ fn generate(out_dir: &Path, xml: &str, module: &str) {
     let path = schema_dir.join(xml);
     let xml_src = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read {xml}: {e} (at {})", path.display()));
-    let ir = ergosbe::parse(&xml_src).unwrap_or_else(|e| panic!("parse {xml}: {e}"));
-    let schema = ergosbe::Schema::from_ir(ir);
-    let config = ergosbe::GenerationConfig::new(module);
-    let generator = ergosbe::Generator::new(config);
+    let ir = ergo_sbe::parse(&xml_src).unwrap_or_else(|e| panic!("parse {xml}: {e}"));
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new(module);
+    let generator = ergo_sbe::Generator::new(config);
     let modules = generator
         .try_generate(&schema)
         .unwrap_or_else(|e| panic!("generate {xml}: {e}"));

@@ -47,8 +47,8 @@ samples while one of the hard blockers is still red.
 - [x] `cargo test --workspace -- --test-threads=1` — 0 failures
 - [x] `cargo fmt --all --check` — clean
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` — clean
-- [x] `cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1` — 0 failures
-- [x] `cargo bench -p ergosbe --no-run` — 3 benches compile
+- [x] `cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1` — 0 failures
+- [x] `cargo bench -p ergo-sbe --no-run` — 3 benches compile
 - [x] Head-to-head Aeron parity benchmarks pass with no Aeron-faster scenario.
 - [x] Parser parity todos 125 and 126 pass — all AC items verified. 100+ schemas parse correctly.
       Remaining gaps (inline composite children, custom min/max ranges) are deferred — no existing schemas exercise them.

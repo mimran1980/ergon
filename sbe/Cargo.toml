@@ -1,5 +1,5 @@
 [package]
-name = "ergosbe"
+name = "ergo-sbe"
 description = "Opinionated, idiomatic Rust code generation for Simple Binary Encoding."
 keywords = ["sbe", "codegen", "binary", "protocol", "trading"]
 categories = ["encoding", "parser-implementations", "development-tools"]

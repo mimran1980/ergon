@@ -17,7 +17,7 @@ is faster than ErgoSBE. If such a scenario exists, it must be fixed before v1.
 Do **not** claim Aeron parity yet. The current benchmark harness compiles with:
 
 ```sh
-RUSTC_WRAPPER="" cargo bench -p ergosbe --no-run
+RUSTC_WRAPPER="" cargo bench -p ergo-sbe --no-run
 ```
 
 That only proves the benches build. The current checked-in benches compare

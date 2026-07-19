@@ -967,7 +967,7 @@ fn strict_and_extended_modes_produce_identical_output() {
     // Phase 2: prove CompatibilityMode plumbing works. Same schema →
     // same output when no extensions exist. When extensions are added,
     // they gate on WireCompatibleExtensions.
-    use ergosbe::{CompatibilityMode, GenerationConfig, Generator, Schema, parse_file};
+    use ergo_sbe::{CompatibilityMode, GenerationConfig, Generator, Schema, parse_file};
 
     let ir = parse_file(&common::Paths::example_schema()).expect("parse car schema");
     let schema = Schema::from_ir(ir);

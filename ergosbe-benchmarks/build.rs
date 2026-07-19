@@ -25,12 +25,12 @@ fn generate_car_codec(out_dir: &Path) {
     let xml = fs::read_to_string(&schema_path)
         .unwrap_or_else(|e| panic!("Failed to read schema at {}: {e}", schema_path.display()));
 
-    let ir = ergosbe::parse(&xml).unwrap_or_else(|e| panic!("Failed to parse schema: {e}"));
+    let ir = ergo_sbe::parse(&xml).unwrap_or_else(|e| panic!("Failed to parse schema: {e}"));
 
-    let schema = ergosbe::Schema::from_ir(ir);
+    let schema = ergo_sbe::Schema::from_ir(ir);
     // Benchmarks measure flyweights only — no domain objects.
-    let config = ergosbe::GenerationConfig::new("car_bench");
-    let generator = ergosbe::Generator::new(config);
+    let config = ergo_sbe::GenerationConfig::new("car_bench");
+    let generator = ergo_sbe::Generator::new(config);
     let module_set = generator
         .try_generate(&schema)
         .unwrap_or_else(|e| panic!("SBE generation failed for {}: {e}", schema_path.display()));

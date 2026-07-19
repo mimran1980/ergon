@@ -36,7 +36,7 @@ just test-aeron-cluster-harness
 Docs compile (main crates):
 
 ```sh
-cargo doc -p ergosbe --no-deps
+cargo doc -p ergo-sbe --no-deps
 cargo doc -p ergo-clickhouse-persist --no-deps
 cargo doc -p ergo-aeron-cluster --no-deps
 ```

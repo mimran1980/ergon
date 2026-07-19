@@ -57,9 +57,9 @@ fn fixture_path(name: &str) -> PathBuf {
 #[test]
 fn missing_required_attr_returns_missing_error() {
     let path = fixture_path("missing-required-attr.xml");
-    let err = ergosbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
-        matches!(&err, ergosbe::ParseError::Missing { what, .. } if what == "field @name"),
+        matches!(&err, ergo_sbe::ParseError::Missing { what, .. } if what == "field @name"),
         "expected Missing(field @name), got {err:?}"
     );
     // The error message should mention "field @name"
@@ -78,9 +78,9 @@ fn missing_required_attr_returns_missing_error() {
 #[test]
 fn invalid_type_ref_returns_invalid_error() {
     let path = fixture_path("invalid-type-ref.xml");
-    let err = ergosbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
-        matches!(&err, ergosbe::ParseError::Invalid { what, value, .. }
+        matches!(&err, ergo_sbe::ParseError::Invalid { what, value, .. }
             if what == "primitive type" && value == "NonExistentType"),
         "expected Invalid(primitive type, NonExistentType), got {err:?}"
     );
@@ -99,10 +99,10 @@ fn invalid_type_ref_returns_invalid_error() {
 #[test]
 fn duplicate_message_id_returns_duplicate_template_id() {
     let path = fixture_path("duplicate-message-id.xml");
-    let err = ergosbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
-        matches!(&err, ergosbe::ParseError::Resolve { error, .. }
-            if matches!(error.as_ref(), ergosbe::ResolveError::DuplicateTemplateId { id: 1, name, .. } if name == "AnotherMessageWithId1")),
+        matches!(&err, ergo_sbe::ParseError::Resolve { error, .. }
+            if matches!(error.as_ref(), ergo_sbe::ResolveError::DuplicateTemplateId { id: 1, name, .. } if name == "AnotherMessageWithId1")),
         "expected Resolve(DuplicateTemplateId), got {err:?}"
     );
     let msg = format!("{err}");
@@ -123,7 +123,7 @@ fn duplicate_message_id_returns_duplicate_template_id() {
 #[test]
 fn duplicate_message_id_renders_miette_diagnostic() {
     let path = fixture_path("duplicate-message-id.xml");
-    let err = ergosbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
 
     // Verify the error carries source_code via the Diagnostic trait.
     use miette::Diagnostic;
@@ -149,7 +149,7 @@ fn duplicate_message_id_renders_miette_diagnostic() {
 
     // The error code should be present in the rendered output.
     assert!(
-        rendered.contains("ergosbe::schema_parse::resolve"),
+        rendered.contains("ergo_sbe::schema_parse::resolve"),
         "rendered output should include error code, got:\n{rendered}"
     );
 }
@@ -162,10 +162,10 @@ fn duplicate_message_id_renders_miette_diagnostic() {
 #[test]
 fn version_gap_returns_since_version_beyond_schema() {
     let path = fixture_path("version-gap.xml");
-    let err = ergosbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
-        matches!(&err, ergosbe::ParseError::Resolve { error, .. }
-            if matches!(error.as_ref(), ergosbe::ResolveError::SinceVersionBeyondSchema { version: 5, schema_version: 1, .. })),
+        matches!(&err, ergo_sbe::ParseError::Resolve { error, .. }
+            if matches!(error.as_ref(), ergo_sbe::ResolveError::SinceVersionBeyondSchema { version: 5, schema_version: 1, .. })),
         "expected Resolve(SinceVersionBeyondSchema), got {err:?}"
     );
     let msg = format!("{err}");
@@ -187,7 +187,7 @@ fn version_gap_returns_since_version_beyond_schema() {
 #[test]
 fn version_gap_renders_miette_diagnostic() {
     let path = fixture_path("version-gap.xml");
-    let err = ergosbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
 
     use miette::Diagnostic;
     assert!(
@@ -205,7 +205,7 @@ fn version_gap_renders_miette_diagnostic() {
 
     // The error code should be present in the rendered output.
     assert!(
-        rendered.contains("ergosbe::schema_parse::resolve"),
+        rendered.contains("ergo_sbe::schema_parse::resolve"),
         "rendered output should include error code, got:\n{rendered}"
     );
 }
@@ -235,7 +235,7 @@ fn error_handler_schemas_all_rejected() {
     ];
     for name in cases {
         let path = fixture_path(name);
-        let err = ergosbe::parse_file(&path);
+        let err = ergo_sbe::parse_file(&path);
         assert!(
             err.is_err(),
             "expected parse rejection for {name}, got Ok(...)"
@@ -246,9 +246,9 @@ fn error_handler_schemas_all_rejected() {
 #[test]
 fn invalid_enum_encoding_type_returns_invalid_error() {
     let path = fixture_path("invalid-enum-value.xml");
-    let err = ergosbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
-        matches!(&err, ergosbe::ParseError::Invalid { what, value, .. }
+        matches!(&err, ergo_sbe::ParseError::Invalid { what, value, .. }
             if what == "enum encodingType" && value == "NonExistentEncodingType"),
         "expected Invalid(enum encodingType, NonExistentEncodingType), got {err:?}"
     );

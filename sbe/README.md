@@ -1,4 +1,4 @@
-# ergosbe (`sbe/`)
+# ergo-sbe (`sbe/`)
 
 SBE XML → idiomatic Rust codec generator. Core pillar of the ErgoSBE umbrella.
 
@@ -17,9 +17,9 @@ Verified-open items only: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.m
 ## Build / test
 
 ```sh
-cargo test -p ergosbe --lib
-cargo test -p ergosbe --test baseline_test
-cargo bench -p ergosbe-benchmarks --no-run   # from repo root
+cargo test -p ergo-sbe --lib
+cargo test -p ergo-sbe --test baseline_test
+cargo bench -p ergo-sbe-benchmarks --no-run   # from repo root
 just bench                                   # Aeron parity matrix
 ```
 
@@ -76,7 +76,7 @@ Full recipe: [`docs/guide/claim-nested-encode.md`](docs/guide/claim-nested-encod
 - Guide: [`docs/guide/getting-started.md`](docs/guide/getting-started.md)
 - Claim / nested: [`docs/guide/claim-nested-encode.md`](docs/guide/claim-nested-encode.md)
 - Perf ledger: [`../ergosbe-performance-optimisation-goal.md`](../ergosbe-performance-optimisation-goal.md)
-- Crate rustdoc: `cargo doc -p ergosbe --open`
+- Crate rustdoc: `cargo doc -p ergo-sbe --open`
 
 ## Non-goals
 

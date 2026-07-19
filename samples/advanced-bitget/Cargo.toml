@@ -6,7 +6,7 @@ description = "IPC sample: AppMessage claims → Aeron IPC → ClickHouse (+ mul
 publish = false
 
 [dependencies]
-ergosbe = { path = "../../sbe", features = ["serde"] }
+ergo-sbe = { path = "../../sbe", features = ["serde"] }
 ergo-clickhouse-persist = { path = "../../persist", features = ["rust_decimal", "chrono"] }
 ergo-clickhouse-persist-derive = { path = "../../persist/derive" }
 # Same ^0.2 line as cluster / workspace (latest 0.2.x).
@@ -22,7 +22,7 @@ futures-util = "0.3"
 reqwest = { version = "0.12", features = ["blocking"] }
 
 [build-dependencies]
-ergosbe = { path = "../../sbe" }
+ergo-sbe = { path = "../../sbe" }
 
 [[test]]
 name = "roundtrip_test"
@@ -71,7 +71,7 @@ path = "tests/e2e_persist_test.rs"
 [features]
 default = []
 bound-check-disabled = []
-serde = ["ergosbe/serde"]
+serde = ["ergo-sbe/serde"]
 
 [dev-dependencies]
 tempfile = "3"
