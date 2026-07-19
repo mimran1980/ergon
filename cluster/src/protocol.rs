@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn test_decode_empty_buffer_returns_false_not_panic() -> Result<(), Box<dyn std::error::Error>> {
         let mut adapter = crate::egress::EgressAdapter::new(crate::egress::NullListener);
-        assert!(!adapter.on_fragment(&[]).expect("should not error"));
+        assert!(!adapter.on_fragment(&[])?);
 
         Ok(())
     }
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn test_decode_truncated_header_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut adapter = crate::egress::EgressAdapter::new(crate::egress::NullListener);
-        assert!(!adapter.on_fragment(&[0u8; 4]).expect("should not error"));
+        assert!(!adapter.on_fragment(&[0u8; 4])?);
 
         Ok(())
     }
@@ -85,7 +85,7 @@ mod tests {
         buf[2] = 0xFF;
         buf[3] = 0xFF;
         let mut adapter = crate::egress::EgressAdapter::new(crate::egress::NullListener);
-        assert!(!adapter.on_fragment(&buf).expect("should not error"));
+        assert!(!adapter.on_fragment(&buf)?);
         Ok(())
     }
 
@@ -96,7 +96,7 @@ mod tests {
         let _ = enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
         let bytes = enc.as_ref().to_vec();
         let mut adapter = crate::egress::EgressAdapter::new(crate::egress::NullListener);
-        assert!(adapter.on_fragment(&bytes).expect("should not error"));
+        assert!(adapter.on_fragment(&bytes)?);
         Ok(())
     }
 

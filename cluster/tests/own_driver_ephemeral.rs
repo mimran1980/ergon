@@ -34,18 +34,14 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
     let egress_uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{}", egress_port))?;
     let ingress_uri = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
 
-    let egress = a
-        .add_subscription(
-            &egress_uri,
-            102,
-            rusteron_client::Handlers::NONE,
-            rusteron_client::Handlers::NONE,
-            Duration::from_secs(5),
-        )
-        .expect("egress sub");
-    let ingress = a
-        .add_publication(&ingress_uri, 101, Duration::from_secs(5))
-        .expect("ingress pub");
+    let egress = a.add_subscription(
+        &egress_uri,
+        102,
+        rusteron_client::Handlers::NONE,
+        rusteron_client::Handlers::NONE,
+        Duration::from_secs(5),
+    )?;
+    let ingress = a.add_publication(&ingress_uri, 101, Duration::from_secs(5))?;
 
     // SessionConnectRequest with response_channel = client's egress URI
     let resp = format!("aeron:udp?endpoint=localhost:{egress_port}");

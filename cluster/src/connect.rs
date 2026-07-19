@@ -184,7 +184,7 @@ mod tests {
         let mut ac = AsyncConnect::new(5_000);
         while ac.advance().unwrap_or(false) {}
         assert_eq!(ac.current_step(), ConnectStep::Done);
-        assert!(!ac.advance().unwrap());
+        assert!(!ac.advance()?);
 
         Ok(())
     }

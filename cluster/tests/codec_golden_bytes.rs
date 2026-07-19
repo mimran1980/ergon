@@ -72,7 +72,7 @@ use ergo_aeron_cluster::codecs::ergo_codecs::{
 #[test]
 fn parity_ergo_session_message_header() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = vec![0u8; 64];
-    let mut e = EsmSessionMessageHeaderEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = EsmSessionMessageHeaderEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.leadership_term_id(42);
     e.cluster_session_id(99);
     e.timestamp(1234567890);
@@ -84,7 +84,7 @@ fn parity_ergo_session_message_header() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn parity_ergo_session_keep_alive() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = vec![0u8; 64];
-    let mut e = EsmSessionKeepAliveEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = EsmSessionKeepAliveEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.leadership_term_id(5);
     e.cluster_session_id(10);
     assert_eq!(e.as_ref(), &GOLDEN_SESSION_KEEP_ALIVE[..]);
@@ -95,7 +95,7 @@ fn parity_ergo_session_keep_alive() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn parity_ergo_session_close_request() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = vec![0u8; 64];
-    let mut e = EsmSessionCloseRequestEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = EsmSessionCloseRequestEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.leadership_term_id(7);
     e.cluster_session_id(42);
     assert_eq!(e.as_ref(), &GOLDEN_SESSION_CLOSE_REQUEST[..]);
@@ -107,14 +107,14 @@ fn parity_ergo_session_close_request() -> Result<(), Box<dyn std::error::Error>>
 fn parity_ergo_session_event() -> Result<(), Box<dyn std::error::Error>> {
     let detail: &[u8] = b"some-detail";
     let mut b = vec![0u8; 128];
-    let mut e = ErgoSessionEventEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = ErgoSessionEventEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.cluster_session_id(1);
     e.correlation_id(100);
     e.leadership_term_id(5);
     e.leader_member_id(0);
     e.code(ErgoEventCode::OK);
     e.version(1);
-    let complete = e.detail(detail).unwrap();
+    let complete = e.detail(detail)?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_SESSION_EVENT[..]);
 
     Ok(())
@@ -125,13 +125,13 @@ fn parity_ergo_session_connect_request() -> Result<(), Box<dyn std::error::Error
     let channel = "aeron:udp?endpoint=localhost:9999";
     let creds = b"user:pass";
     let mut b = vec![0u8; 256];
-    let mut e = ErgoSessionConnectRequestEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = ErgoSessionConnectRequestEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.correlation_id(42);
     e.response_stream_id(102);
     e.version(1);
-    let after_ch = e.response_channel(channel.as_bytes()).unwrap();
-    let after_cred = after_ch.encoded_credentials(creds).unwrap();
-    let complete = after_cred.client_info(b"").unwrap();
+    let after_ch = e.response_channel(channel.as_bytes())?;
+    let after_cred = after_ch.encoded_credentials(creds)?;
+    let complete = after_cred.client_info(b"")?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_SESSION_CONNECT_REQUEST[..]);
 
     Ok(())
@@ -141,10 +141,10 @@ fn parity_ergo_session_connect_request() -> Result<(), Box<dyn std::error::Error
 fn parity_ergo_challenge() -> Result<(), Box<dyn std::error::Error>> {
     let tok = b"challenge-token-12345";
     let mut b = vec![0u8; 128];
-    let mut e = ErgoChallengeEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = ErgoChallengeEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.correlation_id(200);
     e.cluster_session_id(5);
-    let complete = e.encoded_challenge(tok).unwrap();
+    let complete = e.encoded_challenge(tok)?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_CHALLENGE[..]);
 
     Ok(())
@@ -154,10 +154,10 @@ fn parity_ergo_challenge() -> Result<(), Box<dyn std::error::Error>> {
 fn parity_ergo_challenge_response() -> Result<(), Box<dyn std::error::Error>> {
     let rcreds = b"response-creds";
     let mut b = vec![0u8; 128];
-    let mut e = ErgoChallengeResponseEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = ErgoChallengeResponseEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.correlation_id(300);
     e.cluster_session_id(8);
-    let complete = e.encoded_credentials(rcreds).unwrap();
+    let complete = e.encoded_credentials(rcreds)?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_CHALLENGE_RESPONSE[..]);
 
     Ok(())
@@ -167,11 +167,11 @@ fn parity_ergo_challenge_response() -> Result<(), Box<dyn std::error::Error>> {
 fn parity_ergo_new_leader_event() -> Result<(), Box<dyn std::error::Error>> {
     let endpoints = "0=localhost:9010,1=localhost:9011,2=localhost:9012";
     let mut b = vec![0u8; 256];
-    let mut e = ErgoNewLeaderEventEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = ErgoNewLeaderEventEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.leadership_term_id(10);
     e.cluster_session_id(99);
     e.leader_member_id(1);
-    let complete = e.ingress_endpoints(endpoints.as_bytes()).unwrap();
+    let complete = e.ingress_endpoints(endpoints.as_bytes())?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_NEW_LEADER_EVENT[..]);
 
     Ok(())
@@ -182,13 +182,13 @@ fn parity_ergo_admin_response() -> Result<(), Box<dyn std::error::Error>> {
     let msg = b"ok";
     let payload: &[u8] = b"";
     let mut b = vec![0u8; 128];
-    let mut e = ErgoAdminResponseEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
+    let mut e = ErgoAdminResponseEncoder::wrap_and_apply_header(&mut b, 0)?;
     e.cluster_session_id(1);
     e.correlation_id(2);
     e.request_type(ErgoAdminRequestType::SNAPSHOT);
     e.response_code(ErgoAdminResponseCode::OK);
-    let after_msg = e.message(msg).unwrap();
-    let complete = after_msg.payload(payload).unwrap();
+    let after_msg = e.message(msg)?;
+    let complete = after_msg.payload(payload)?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_ADMIN_RESPONSE[..]);
 
     Ok(())

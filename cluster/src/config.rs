@@ -117,6 +117,30 @@ impl SessionBuilder {
         self
     }
 
+    /// Configured ingress channel as UTF-8 (empty if only `ingress_endpoints` was set).
+    #[inline]
+    pub fn ingress_channel_str(&self) -> &str {
+        &self.ingress_channel
+    }
+
+    /// Configured egress channel as UTF-8.
+    #[inline]
+    pub fn egress_channel_str(&self) -> &str {
+        &self.egress_channel
+    }
+
+    /// Multi-member endpoints map as UTF-8, if set.
+    #[inline]
+    pub fn ingress_endpoints_str(&self) -> Option<&str> {
+        self.ingress_endpoints.as_deref()
+    }
+
+    /// Cached egress channel as [`std::ffi::CStr`] for rusteron (after validate).
+    #[inline]
+    pub fn egress_channel_cstr(&self) -> Result<&std::ffi::CStr, ClusterError> {
+        self.egress_cstr().map(|c| c.as_c_str())
+    }
+
     /// Synchronous connect — equivalent to [`crate::AeronCluster::connect`].
     pub fn connect(self, aeron_dir: &str) -> Result<crate::AeronCluster, ClusterError> {
         crate::AeronCluster::connect(&self, aeron_dir)

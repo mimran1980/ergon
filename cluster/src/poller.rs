@@ -44,7 +44,10 @@ pub fn parse_event(data: &[u8]) -> Option<EgressEvent> {
     if data.len() < HEADER_LEN {
         return None;
     }
-    let header = MessageHeader(data[..HEADER_LEN].try_into().unwrap());
+    // Length already checked — copy avoids unwrap on try_into.
+    let mut hdr = [0u8; HEADER_LEN];
+    hdr.copy_from_slice(&data[..HEADER_LEN]);
+    let header = MessageHeader(hdr);
     let tid = header.template_id();
 
     match tid {
@@ -133,7 +136,7 @@ mod tests {
     #[test]
     fn test_parse_redirect_leader() -> Result<(), Box<dyn std::error::Error>> {
         let d = "0=localhost:9010,1=localhost:9011,2=localhost:9012";
-        let (id, ep) = parse_redirect_leader(d).unwrap();
+        let (id, ep) = parse_redirect_leader(d).ok_or("parse")?;
         assert_eq!(id, 0);
         assert_eq!(ep, "localhost:9010");
 
@@ -142,7 +145,7 @@ mod tests {
 
     #[test]
     fn test_parse_redirect_leader_single() -> Result<(), Box<dyn std::error::Error>> {
-        let (id, ep) = parse_redirect_leader("3=host:9999").unwrap();
+        let (id, ep) = parse_redirect_leader("3=host:9999").ok_or("parse")?;
         assert_eq!(id, 3);
         assert_eq!(ep, "host:9999");
 
@@ -168,10 +171,10 @@ mod tests {
     fn test_parse_leader_endpoint_picks_by_id_not_position() -> Result<(), Box<dyn std::error::Error>> {
         // Node 0 (the dead leader) is listed first; the new leader is member 1.
         let eps = "0=localhost:9012,1=localhost:9112,2=localhost:9212";
-        assert_eq!(parse_leader_endpoint(eps, 1).unwrap(), "localhost:9112");
-        assert_eq!(parse_leader_endpoint(eps, 2).unwrap(), "localhost:9212");
+        assert_eq!(parse_leader_endpoint(eps, 1).ok_or("ep")?, "localhost:9112");
+        assert_eq!(parse_leader_endpoint(eps, 2).ok_or("ep")?, "localhost:9212");
         // A position-based parse would wrongly return localhost:9012 here.
-        assert_ne!(parse_leader_endpoint(eps, 1).unwrap(), "localhost:9012");
+        assert_ne!(parse_leader_endpoint(eps, 1).ok_or("ep")?, "localhost:9012");
         Ok(())
     }
 

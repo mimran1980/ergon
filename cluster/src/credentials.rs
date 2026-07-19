@@ -114,15 +114,15 @@ mod tests {
     #[test]
     fn test_static_credentials() -> Result<(), Box<dyn std::error::Error>> {
         let supplier = StaticCredentials::new(b"user:pass".as_slice()).with_challenge_response(b"response".as_slice());
-        assert_eq!(supplier.encoded_credentials().unwrap(), b"user:pass");
-        assert_eq!(supplier.on_challenge(b"challenge").unwrap(), b"response");
+        assert_eq!(supplier.encoded_credentials(), Some(b"user:pass".to_vec()));
+        assert_eq!(supplier.on_challenge(b"challenge"), Some(b"response".to_vec()));
         Ok(())
     }
 
     #[test]
     fn test_echo_challenge() -> Result<(), Box<dyn std::error::Error>> {
         let supplier = EchoChallengeCredentials::new(b"u:p".as_slice());
-        assert_eq!(supplier.on_challenge(b"xyz").unwrap(), b"xyz");
+        assert_eq!(supplier.on_challenge(b"xyz"), Some(b"xyz".to_vec()));
         Ok(())
     }
 }

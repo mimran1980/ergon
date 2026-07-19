@@ -731,15 +731,27 @@ impl AsyncClusterConnect {
                 reason: "connect not complete".into(),
             });
         }
+        let Self {
+            aeron,
+            ingress,
+            egress,
+            builder,
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            ..
+        } = self;
         Ok(AeronCluster {
-            _aeron: self.aeron.unwrap(),
-            ingress: self.ingress.unwrap(),
-            egress: self.egress.unwrap(),
-            cluster_session_id: self.cluster_session_id,
-            leadership_term_id: self.leadership_term_id,
-            leader_member_id: self.leader_member_id,
+            _aeron: aeron.ok_or_else(|| ClusterError::connect("async connect finished without Aeron client"))?,
+            ingress: ingress
+                .ok_or_else(|| ClusterError::connect("async connect finished without ingress publication"))?,
+            egress: egress
+                .ok_or_else(|| ClusterError::connect("async connect finished without egress subscription"))?,
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
             state: SessionState::Connected,
-            ingress_stream_id: self.builder.ingress_stream_id,
+            ingress_stream_id: builder.ingress_stream_id,
         })
     }
 

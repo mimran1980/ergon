@@ -80,7 +80,9 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         if data.len() < HEADER_LEN {
             return ControlledPollAction::Continue;
         }
-        let header = MessageHeader(data[..HEADER_LEN].try_into().unwrap());
+        let mut hdr = [0u8; HEADER_LEN];
+        hdr.copy_from_slice(&data[..HEADER_LEN]);
+        let header = MessageHeader(hdr);
         let template_id = header.template_id();
 
         match template_id {

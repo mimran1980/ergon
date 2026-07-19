@@ -74,7 +74,9 @@ impl<L: EgressListener> EgressAdapter<L> {
         }
 
         // ErgoSBE header read: MessageHeader is `pub struct MessageHeader(pub [u8; 8])`.
-        let header = MessageHeader(data[..HEADER_LEN].try_into().unwrap());
+        let mut hdr = [0u8; HEADER_LEN];
+        hdr.copy_from_slice(&data[..HEADER_LEN]);
+        let header = MessageHeader(hdr);
         let template_id = header.template_id();
 
         match template_id {
@@ -211,7 +213,7 @@ mod tests {
     #[test]
     fn test_dispatch_session_event_ok() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
-        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0)?;
         let _ = enc
             .cluster_session_id(7)
             .correlation_id(99)
@@ -219,11 +221,11 @@ mod tests {
             .leader_member_id(0)
             .code(ErgoEventCode::OK)
             .version(1);
-        let complete = enc.detail(b"ok").unwrap();
+        let complete = enc.detail(b"ok")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(adapter.on_fragment(&bytes).expect("decode failure"));
+        assert!(adapter.on_fragment(&bytes)?);
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().session_code, Some(EventCode::OK));
         assert_eq!(adapter.listener().detail, "ok");
@@ -234,13 +236,13 @@ mod tests {
     #[test]
     fn test_dispatch_challenge() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
-        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut data, 0)?;
         let _ = enc.correlation_id(5).cluster_session_id(2);
-        let complete = enc.encoded_challenge(b"chal-token").unwrap();
+        let complete = enc.encoded_challenge(b"chal-token")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(adapter.on_fragment(&bytes).expect("decode failure"));
+        assert!(adapter.on_fragment(&bytes)?);
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().challenge, b"chal-token");
 
@@ -250,13 +252,13 @@ mod tests {
     #[test]
     fn test_dispatch_new_leader() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 256];
-        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut data, 0)?;
         let _ = enc.leadership_term_id(10).cluster_session_id(99).leader_member_id(1);
-        let complete = enc.ingress_endpoints(b"0=host:9000,1=host:9001").unwrap();
+        let complete = enc.ingress_endpoints(b"0=host:9000,1=host:9001")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(adapter.on_fragment(&bytes).expect("decode failure"));
+        assert!(adapter.on_fragment(&bytes)?);
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().leader_endpoints, "0=host:9000,1=host:9001");
 
@@ -266,12 +268,12 @@ mod tests {
     #[test]
     fn test_dispatch_session_message_header() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
-        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
         let _ = enc.leadership_term_id(1).cluster_session_id(42).timestamp(999);
         let bytes = enc.as_ref().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(adapter.on_fragment(&bytes).expect("decode failure"));
+        assert!(adapter.on_fragment(&bytes)?);
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().msg_csid, 42);
         assert_eq!(adapter.listener().msg_ts, 999);
@@ -282,14 +284,14 @@ mod tests {
     #[test]
     fn test_unknown_template_id_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
-        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
         let _ = enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
         // Overwrite template_id at bytes 2-3 with 0 (unknown)
         data[2] = 0u8;
         data[3] = 0u8;
 
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(!adapter.on_fragment(&data).expect("decode failure"));
+        assert!(!adapter.on_fragment(&data)?);
         assert_eq!(adapter.listener().calls, 0);
 
         Ok(())
@@ -298,7 +300,7 @@ mod tests {
     #[test]
     fn test_short_fragment_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut adapter = EgressAdapter::new(Rec::default());
-        assert!(!adapter.on_fragment(&[0u8; 4]).expect("decode failure"));
+        assert!(!adapter.on_fragment(&[0u8; 4])?);
         assert_eq!(adapter.listener().calls, 0);
 
         Ok(())

@@ -80,9 +80,13 @@ checklist (`just check`, package lists, no `test-harness` on published cluster).
   library function. Application code converts into its own type with `?` /
   `From`.
 - **Unit/integration tests:** `Result<(), Box<dyn std::error::Error>>` so bodies
-  use `?` instead of `.unwrap()` / `.expect()`.
+  use `?` instead of `.unwrap()` / `.expect()` on fallible calls (keep
+  `assert!` / `assert_eq!` for assertions).
 - **`fn main()`** (binaries, examples): same `Box<dyn Error>` return (or app
   error). Prefer `?` over unwrap.
+- **Channels:** app logic uses `&str` / `channel_uri`; rusteron FFI uses
+  `CString` / `&CStr` (`channel_cstr`). Converting `&str` → C string is not
+  free (NUL terminator + no interior NUL).
 - `build.rs` may stay panic-oriented (Cargo convention).
 - `#[should_panic]` tests must return `()` (Rust forbids `Result` there).
 - `proptest!` strategy-parameter tests may stay as `()` when `Result` confuses
