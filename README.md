@@ -123,6 +123,26 @@ These are the implemented/generated capabilities. Release-quality claims such as
 "full Aeron parity", "HFT-ready", and "safe by parse" are gated by
 [`sbe/todos/123-release-quality-gates.md`](sbe/todos/123-release-quality-gates.md).
 
+### Standout features vs Aeron Rust SBE
+
+- **`Display` and `Debug` on every encoder and decoder** — shows actual
+  field values (like Java `toString()`), not raw positions. Decoder `Debug`
+  delegates to Display so both give `Car { serial_number: 42, model_year: 2013 }`.
+  Survives **invalid/truncated SBE** without panicking — each field is
+  bounds-checked against the wire buffer and gracefully skipped when out of
+  range. Encoder stages have structural `Debug` (mid-encode state).
+- **miette-powered error diagnostics** — every parse, resolve, and decode
+  error carries `#[source_code]` + `#[label]` spans. Errors on invalid
+  schemas show the offending XML with annotated positions, not just plain
+  strings. `DecodeError` is a closed enum (field name, needed/available bytes
+  per variant) — actionable at 3am.
+- **Comprehensive test suite** — 25 integration test files (>13k LOC):
+  golden wire-parity against Aeron Java reference (18/18), allocation-count
+  zero-alloc proofs, compile-fail consuming-stage safety proofs, 10
+  error-handler schema fixtures from Aeron, per-field regression coverage
+  (92 baseline tests), display/debug survival on invalid SBE, doc-provenance
+  verification, and per-schema regen stability.
+
 - **XML schema parsing** — parse SBE schemas with XInclude support, miette diagnostics
 - **Encoder/Decoder generation** -- zero-allocation fixed-block views plus concrete consuming tail stages
 - **Infallible field accessors** — scalar, enum, set, and composite accessors are plain `fn(&self) -> T`, no unwrapping

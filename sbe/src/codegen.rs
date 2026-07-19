@@ -3120,7 +3120,7 @@ fn generate_message_decoder(
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #gn_lit,
                         needed: #dim_size_lit,
-                        available: self.buf.len() - start,
+                        available: self.buf.len().saturating_sub(start),
                     });
                 }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
@@ -3152,13 +3152,13 @@ fn generate_message_decoder(
              fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
                  let start = self.tail_offset_{k}()?;\n\
                  if start + {ps} > self.buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps}, available: self.buf.len() - start }});\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps}, available: self.buf.len().saturating_sub(start) }});\n\
                  }}\n\
                  let bytes: [u8; {ps}] = read_bytes::<{ps}>(self.buf, start);\n\
                  let header = {tp}(bytes);\n\
                  let len = header.{lf}() as usize;\n\
                  if start + {ps} + len > self.buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps} + len, available: self.buf.len() - start }});\n\
+                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps} + len, available: self.buf.len().saturating_sub(start) }});\n\
                  }}\n\
                  Ok(start + {ps} + len)\n\
              }}",
@@ -3681,6 +3681,8 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
     let name = to_pascal_case(&msg.name);
     let decoder_ident =
         syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    let type_name_lit =
+        syn::LitStr::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
     let mut body = proc_macro2::TokenStream::new();
     let display_header = format!("{} {{{{ ", name);
     body.extend(quote::quote! {
@@ -3691,6 +3693,14 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
         let snake = to_snake_case(&f.name);
         let f_ident = syn::Ident::new(&snake, proc_macro2::Span::call_site());
         let sep = if out_idx == 0 { "" } else { ", " };
+        let end_off = f.offset + f.field_type.size();
+        let end_off_lit = syn::LitInt::new(&end_off.to_string(), proc_macro2::Span::call_site());
+        // Only touch wire when the field's full range is in-buffer — Display must
+        // not panic on truncated / invalid SBE (todo 73 + ops 3am debugging).
+        let in_bounds = quote::quote! {
+            self.pos.saturating_add(#end_off_lit) <= self.buf.len()
+                && #end_off_lit <= self.acting_block_length
+        };
         match &f.field_type {
             FieldType::Primitive(_prim, length) => {
                 if f.presence == Presence::Constant || length.is_some() {
@@ -3699,7 +3709,10 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                 let fmt_str = format!("{sep}{snake}: {{:?}}");
                 // ponytail: use {:?} so Option<T> always renders regardless of T: Display
                 body.extend(quote::quote! {
-                    { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                    if #in_bounds {
+                        let v = self.#f_ident();
+                        write!(f, #fmt_str, v)?;
+                    }
                 });
                 out_idx += 1;
             }
@@ -3714,13 +3727,18 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                 // (NullVal sentinel), only since_version > 0 produces Option<T>
                 if f.since_version > 0 {
                     body.extend(quote::quote! {
-                        if let Some(e) = self.#f_ident() {
-                            write!(f, #fmt_str)?;
+                        if #in_bounds {
+                            if let Some(e) = self.#f_ident() {
+                                write!(f, #fmt_str)?;
+                            }
                         }
                     });
                 } else {
                     body.extend(quote::quote! {
-                        { let e = self.#f_ident(); write!(f, #fmt_str)?; }
+                        if #in_bounds {
+                            let e = self.#f_ident();
+                            write!(f, #fmt_str)?;
+                        }
                     });
                 }
                 out_idx += 1;
@@ -3779,10 +3797,20 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
     body.extend(quote::quote! {
         write!(f, " }}")
     });
+    // Structural Debug never reads wire bytes — safe for truncated / invalid buffers.
     let ts = quote::quote! {
         impl<'a> core::fmt::Display for #decoder_ident<'a> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 #body
+            }
+        }
+
+        impl<'a> core::fmt::Debug for #decoder_ident<'a> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                // Delegate to Display so Debug shows actual field values
+                // (like Java toString), not raw positions. Display has the
+                // in_bounds guards for invalid/truncated SBE.
+                core::fmt::Display::fmt(self, f)
             }
         }
     };
@@ -3986,7 +4014,7 @@ fn generate_group_decoder(
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #g_name_lit,
                         needed: self.acting_block_length,
-                        available: self.buf.len() - offset,
+                        available: self.buf.len().saturating_sub(offset),
                     });
                 }
                 Ok(#entry_decoder_ident::wrap(self.buf, offset, self.acting_block_length, self.acting_version))
@@ -4343,7 +4371,7 @@ fn generate_group_decoder(
             fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
                 let start = self.#tail_k_fn()?;
                 if start + #dim_size_lit > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #ng_name_lit, needed: #dim_size_lit, available: self.buf.len() - start });
+                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #ng_name_lit, needed: #dim_size_lit, available: self.buf.len().saturating_sub(start) });
                 }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
                 let header = #dim_name_ident(bytes);
@@ -4378,13 +4406,13 @@ fn generate_group_decoder(
             fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
                 let start = self.#tail_k_fn()?;
                 if start + #prefix_size_lit > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit, available: self.buf.len() - start });
+                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit, available: self.buf.len().saturating_sub(start) });
                 }
                 let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, start);
                 let header = #type_pascal_ident(bytes);
                 let len = header.#len_field_ident() as usize;
                 if start + #prefix_size_lit + len > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit + len, available: self.buf.len() - start });
+                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit + len, available: self.buf.len().saturating_sub(start) });
                 }
                 Ok(start + #prefix_size_lit + len)
             }
@@ -4957,12 +4985,27 @@ fn generate_message_encoder(
         ts.extend(doc_attr_tokens(desc));
     }
     for stage in &stage_idents {
+        let stage_name = stage.to_string();
+        let stage_name_lit = syn::LitStr::new(&stage_name, span);
         ts.extend(quote::quote! {
             #[must_use = "encoder must be consumed to write the message"]
             pub struct #stage<'a> {
                 buf: &'a mut [u8],
                 message_start: usize,
                 pos: usize,
+            }
+
+            // Structural Debug only — encoder stages are mid-encode (no wire
+            // field data to read). Decoder Debug delegates to Display for
+            // field-value output; encoder stages show structural positions.
+            impl<'a> core::fmt::Debug for #stage<'a> {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    f.debug_struct(#stage_name_lit)
+                        .field("message_start", &self.message_start)
+                        .field("pos", &self.pos)
+                        .field("buf_len", &self.buf.len())
+                        .finish()
+                }
             }
         });
     }
@@ -5370,7 +5413,7 @@ fn generate_message_encoder(
                         if self.pos + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 needed: #dim_size_lit,
-                                available: self.buf.len() - self.pos,
+                                available: self.buf.len().saturating_sub(self.pos),
                             }
                             .into());
                         }
@@ -5437,7 +5480,7 @@ fn generate_message_encoder(
                 if self.pos + needed > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         needed,
-                        available: self.buf.len() - self.pos,
+                        available: self.buf.len().saturating_sub(self.pos),
                     });
                 }
                 let len_bytes = (data.len() as #len_rust_type).#to_endian();
@@ -5502,7 +5545,7 @@ fn generate_message_encoder(
                         if self.pos + needed > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 needed,
-                                available: self.buf.len() - self.pos,
+                                available: self.buf.len().saturating_sub(self.pos),
                             }.into());
                         }
                         let len_bytes = (exact_len as #len_rust_type).#to_endian();
@@ -5691,7 +5734,7 @@ fn generate_group_encoder(
         if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed: block_len,
-                available: self.buf.len() - self.pos,
+                available: self.buf.len().saturating_sub(self.pos),
             }
             .into());
         }
@@ -5899,7 +5942,7 @@ fn generate_group_encoder(
                 if self.pos + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         needed: #ng_dim,
-                        available: self.buf.len() - self.pos,
+                        available: self.buf.len().saturating_sub(self.pos),
                     }
                     .into());
                 }
@@ -5937,7 +5980,7 @@ fn generate_group_encoder(
             pub fn #vd_snake(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {
                 let needed = #pfx + data.len();
                 if self.pos + needed > self.buf.len() {
-                    return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: self.buf.len() - self.pos });
+                    return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: self.buf.len().saturating_sub(self.pos) });
                 }
                 let len_bytes = (data.len() as #len_ty).#to_endian();
                 self.buf[self.pos..self.pos + #pfx].copy_from_slice(&len_bytes);
@@ -6209,7 +6252,7 @@ fn generate_any_message(
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 4,
-                                available: self.buf.len() - self.pos,
+                                available: self.buf.len().saturating_sub(self.pos),
                             }));
                         }
                         let bytes: [u8; 4] = read_bytes::<4>(self.buf, self.pos);
@@ -6221,7 +6264,7 @@ fn generate_any_message(
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 2,
-                                available: self.buf.len() - self.pos,
+                                available: self.buf.len().saturating_sub(self.pos),
                             }));
                         }
                         let bytes: [u8; 2] = read_bytes::<2>(self.buf, self.pos);
@@ -6235,7 +6278,7 @@ fn generate_any_message(
                     return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "frame bounds",
                         needed: header_len + frame_len,
-                        available: self.buf.len() - self.pos,
+                        available: self.buf.len().saturating_sub(self.pos),
                     }));
                 }
                 let off = self.pos + header_len;
@@ -6271,7 +6314,7 @@ fn generate_any_message(
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
-                            available: buf.len() - pos,
+                            available: buf.len().saturating_sub(pos),
                         });
                     }
                     let header_bytes = read_bytes::<#header_size_lit>(buf, pos);
@@ -6362,7 +6405,7 @@ fn generate_any_message(
                                 return Err(sbe_rt::DecodeError::BufferTooShort {
                                     field: "template body",
                                     needed: frame_len,
-                                    available: buf.len() - pos,
+                                    available: buf.len().saturating_sub(pos),
                                 });
                             }
                             let payload = &buf[pos .. pos + frame_len];

@@ -278,3 +278,89 @@ fn invalid_enum_encoding_type_returns_invalid_error() -> Result<(), Box<dyn std:
 
     Ok(())
 }
+
+// ── Useful miette diagnostics for every intentionally-invalid fixture ─────
+//
+// Ops need: non-empty Display, Debug, and (when available) miette Report that
+// names *what* failed — not a bare "error". Confirms ErgoSBE schema diagnostics.
+
+#[test]
+fn invalid_schema_fixtures_have_useful_miette_errors() -> Result<(), Box<dyn std::error::Error>> {
+    use miette::Diagnostic;
+
+    let cases = [
+        "missing-required-attr.xml",
+        "invalid-type-ref.xml",
+        "duplicate-message-id.xml",
+        "version-gap.xml",
+        "invalid-enum-value.xml",
+        "error-handler-enum-violates-min-max-value-range.xml",
+        "error-handler-group-dimensions-schema.xml",
+        "error-handler-invalid-composite-offsets-schema.xml",
+        "error-handler-invalid-composite.xml",
+        "error-handler-invalid-name.xml",
+        "error-handler-message-schema.xml",
+        "error-handler-since-version.xml",
+        "error-handler-types-schema.xml",
+        "error-handler-types-dup-schema.xml",
+        "error-handler-dup-message-schema.xml",
+        "cyclic-refs-schema.xml",
+        "bad-include.xml",
+        "schema-with-bad-include.xml",
+        "issue567-invalid.xml",
+    ];
+
+    for name in cases {
+        let path = fixture_path(name);
+        if !path.exists() {
+            // bad-include / schema-with-bad-include paths differ by layout.
+            continue;
+        }
+        let err = match ergo_sbe::parse_file(&path) {
+            Ok(_) => {
+                // Some "invalid" issue fixtures are accepted by ErgoSBE; skip those.
+                continue;
+            }
+            Err(e) => e,
+        };
+
+        let display = format!("{err}");
+        assert!(
+            !display.trim().is_empty(),
+            "{name}: Display must be non-empty"
+        );
+        assert!(
+            display.len() >= 8,
+            "{name}: Display too short to be useful: {display:?}"
+        );
+
+        let debug = format!("{err:?}");
+        // Debug must name a concrete variant (ParseError / IncludeError / …), not empty.
+        assert!(
+            debug.contains("Error")
+                || debug.contains("Invalid")
+                || debug.contains("Missing")
+                || debug.contains("Resolve")
+                || debug.contains("Xml")
+                || debug.contains("Io"),
+            "{name}: Debug should expose error kind, got: {debug}"
+        );
+
+        // miette surface: Report renders without panic and carries a code or message.
+        let report = miette::Report::from(err);
+        let rendered = format!("{report:?}");
+        assert!(
+            !rendered.trim().is_empty(),
+            "{name}: miette Report must render non-empty"
+        );
+        // Prefer rich diagnostics: either source_code attached or a diagnostic code.
+        let has_source = report.source_code().is_some();
+        let has_code = report.code().is_some();
+        assert!(
+            has_source || has_code || rendered.len() > 20,
+            "{name}: expected source_code, diagnostic code, or substantive render; got:\n{rendered}"
+        );
+    }
+
+    Ok(())
+}

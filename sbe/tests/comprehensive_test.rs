@@ -3,6 +3,7 @@
 //! Tests A+B: correctness + edge cases for every todo item.
 
 #![allow(clippy::all)]
+#![allow(clippy::literal_string_with_formatting_args)]
 #![allow(clippy::pedantic)]
 #![allow(clippy::restriction)]
 #![allow(unused)]
@@ -609,6 +610,111 @@ fn float_composite_skips_eq_ord_hash() -> Result<(), Box<dyn std::error::Error>>
     assert!(ip_pre.contains(" Eq,"), "IntPair should derive Eq");
     assert!(ip_pre.contains(" Ord,"), "IntPair should derive Ord");
     assert!(ip_pre.contains("Hash"), "IntPair should derive Hash");
+
+    Ok(())
+}
+
+// ── Display / Debug on invalid / truncated SBE (must not panic) ───────
+//
+// Logging `{}` / `{:?}` on codecs is an ops path. Truncated buffers, trusted
+// wrap with short body, and mid-encode encoders must never panic.
+
+#[test]
+fn decoder_display_and_debug_survive_invalid_sizes() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "disp_invalid");
+    compile_and_run(
+        "disp_invalid",
+        &src,
+        r#"
+        // 1) Valid encode → Display / Debug work
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(42); car.model_year(2020);
+        car.available(BooleanType::T); car.code(Model::A);
+        car.some_numbers([1u32,2,3,4]); car.vehicle_code([97,98,99,100,101,102]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [49,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = car.fuel_figures(0, |_|{}).unwrap();
+        let car = car.performance_figures(0, |_|{}).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let car = car.activation_code(b"xyz").unwrap();
+        let encoded = car.as_bytes().to_vec();
+
+        let ok = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+        let d = format!("{}", ok);
+        assert!(d.contains("serial_number"), "valid Display: {d}");
+        assert!(d.contains("42"), "valid Display value: {d}");
+        // Debug delegates to Display — shows field values like Java toString.
+        let dbg = format!("{:?}", ok);
+        assert!(dbg.contains("serial_number"), "valid Debug (fields): {dbg}");
+        assert!(dbg.contains("42"), "valid Debug value: {dbg}");
+        assert!(dbg == d, "Debug == Display for valid message");
+
+        // 2) Trusted wrap with buffer shorter than body — Display/Debug must not panic
+        let tiny = [0u8; 4];
+        let short = CarDecoder::wrap(&tiny, 0, 45, 0);
+        let d_short = format!("{}", short);
+        assert!(d_short.starts_with("Car {"), "short Display: {d_short}");
+        let dbg_short = format!("{:?}", short);
+        assert!(dbg_short == d_short, "Debug == Display for short buffer");
+
+        // 3) Full header + body, zero groups/var-data tail truncated mid-stream
+        //    (block present so fixed fields render; tail accessors return Err → skipped)
+        let mut partial = encoded.clone();
+        // Keep header(8)+block(45)=53, drop rest so groups fail gracefully
+        if partial.len() > 53 {
+            partial.truncate(53);
+        }
+        let part = CarDecoder::wrap_and_apply_header(&partial, 0).unwrap();
+        let d_part = format!("{}", part);
+        assert!(d_part.contains("serial_number"), "partial Display: {d_part}");
+        let _ = format!("{:?}", part); // no panic
+
+        // 4) Empty buffer trusted wrap — Debug == Display on decoders
+        let empty = CarDecoder::wrap(&[], 0, 45, 0);
+        let d_empty = format!("{}", empty);
+        assert!(d_empty.contains("Car {"), "empty Display: {d_empty}");
+        let dbg_empty = format!("{:?}", empty);
+        assert!(dbg_empty == d_empty, "empty Debug == Display");
+    "#,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn encoder_debug_survives_incomplete_and_short_buffers() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "enc_debug");
+    compile_and_run(
+        "enc_debug",
+        &src,
+        r#"
+        // Mid-encode encoder Debug (type-state stage) must not panic
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1);
+        let dbg = format!("{:?}", car);
+        assert!(dbg.contains("CarEncoder"), "encoder Debug: {dbg}");
+        assert!(dbg.contains("message_start"), "encoder Debug fields: {dbg}");
+        assert!(dbg.contains("buf_len"), "encoder Debug buf_len: {dbg}");
+
+        // After first group transition, later stage also implements Debug
+        car.model_year(2000);
+        car.available(BooleanType::F); car.code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let after = car.fuel_figures(0, |_|{}).unwrap();
+        let dbg2 = format!("{:?}", after);
+        assert!(dbg2.contains("message_start") || dbg2.contains("After"), "stage Debug: {dbg2}");
+
+        // wrap on a buffer that is too short for a full header must return Err
+        // (encode path); Debug on a successful partial stage is covered above.
+        let mut tiny = [0u8; 2];
+        assert!(CarEncoder::wrap_and_apply_header(&mut tiny, 0).is_err());
+    "#,
+    );
 
     Ok(())
 }
