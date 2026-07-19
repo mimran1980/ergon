@@ -1,14 +1,13 @@
-//! ErgoSBE advanced sample — pure SBE end-to-end.
+//! ErgoSBE IPC sample — exercise codegen + Aeron IPC + ClickHouse (not a prod app).
 //!
 //! Demonstrates:
-//! - SBE message generation (AppMessage, L2Book, Trade) via generated encoders
-//! - Direct-claim encoding into Aeron IPC via Rusteron 0.2
-//! - SBE message consumption, decoding, and dispatch via AnyMessage
-//! - Typed stream 1001 and dynamic stream 1002 over Aeron IPC
-//! - Foreground ClickHouse persistence with Decimal(38,18) arrays
+//! - Multi-schema generate (normalized AppMessage + Bitget/Binance spot fixtures)
+//! - Nested AppMessage → L2Book/Trade, exact claim encode into Aeron IPC
+//! - Typed + dynamic streams, foreground ClickHouse persistence
+//! - Local L2 book + `#[derive(Persist)]` top-of-book snapshot DTO
 //! - Three-thread architecture: producer, SHARED driver, consumer/persister
 //!
-//! No JSON. No REST. No external protocol translation. Pure SBE.
+//! Cluster / NewLeader / kill-leader live in `samples/cluster-ha-orderbook`.
 
 /// Generated SBE codecs for the normalized application schema
 /// (AppMessage/L2Book/Trade). Generated at build time into `OUT_DIR`.
@@ -33,11 +32,11 @@ pub mod bitget;
 pub mod config;
 pub mod counters;
 pub mod decimal;
-pub mod ha_book;
-pub mod latency;
 pub mod market;
+pub mod orderbook;
 pub mod persistence;
 pub mod publication;
+pub mod snapshot_persist;
 
 // Application-side SbeDecimal adapter for rust_decimal (generated code never
 // mentions rust_decimal).

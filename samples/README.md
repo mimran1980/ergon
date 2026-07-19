@@ -1,46 +1,35 @@
 # samples/
 
-End-to-end demos for the ErgoSBE umbrella. **Excluded** from the workspace
-members set — each sample is a standalone crate.
+End-to-end **test harnesses** for the ErgoSBE umbrella (not production apps).
+**Excluded** from the workspace members set — each sample is a standalone crate.
 
-## Map
+## Map (two samples)
 
-| Sample | Transport | Recipe | Purpose |
-|--------|-----------|--------|---------|
-| [`advanced-bitget`](advanced-bitget/) | Aeron **IPC** (local) | `just samples-orderbook` | WS → AppMessage + dynamic V2 → ClickHouse |
-| [`exchange-orderbook`](exchange-orderbook/) | In-process / optional CH | `just samples-orderbook` | Multi-exchange normalize → local book → CH |
-| [`cluster-ha-orderbook`](cluster-ha-orderbook/) | Aeron **Cluster** | `just samples-cluster-ha` | try_claim publish, never-stale book, feed_latency CH |
+| Sample | Transport | Recipe | What it exercises |
+|--------|-----------|--------|-------------------|
+| [`advanced-bitget`](advanced-bitget/) | Aeron **IPC** | `just samples-orderbook` / `just test-ipc` | Nested AppMessage, claims, multi-schema roundtrips, Persist DTO, typed+dynamic CH |
+| [`cluster-ha-orderbook`](cluster-ha-orderbook/) | Aeron **Cluster** | `just samples-cluster-ha` | `ergo-aeron-cluster` try_claim, NewLeader/never-stale book, kill-leader, feed_latency CH |
 
-**Rusteron:** every sample and pillar uses **`rusteron-* = "0.2"`** (latest 0.2.x).
+`exchange-orderbook` was **merged into advanced-bitget** (LocalBook + `OrderbookSnapshot` Persist + multi-schema roundtrips). Historical sample todos under `samples/todo/` were removed (all DONE).
 
 ### When to use which
 
 | Need | Sample |
 |------|--------|
-| Single-process feed + CH exact rows, no leadership | `advanced-bitget` |
-| Multi-venue schema roundtrip / local book | `exchange-orderbook` |
-| Leadership-aware book + cluster publish + failover | `cluster-ha-orderbook` |
-| Dynamic latency rows without a new Persist DTO schema | HA `LatencyPersistor` (or copy its pattern) |
-| Copy-paste nested SBE encode | HA [`publish.rs`](cluster-ha-orderbook/src/publish.rs) + [claim-nested-encode guide](../sbe/docs/guide/claim-nested-encode.md) |
+| IPC claims + nested SBE + ClickHouse | `advanced-bitget` |
+| Cluster session header, leadership freeze, HA | `cluster-ha-orderbook` |
+| Nested encode recipe to copy | HA [`publish.rs`](cluster-ha-orderbook/src/publish.rs) or IPC [`publication.rs`](advanced-bitget/src/publication.rs) |
 
-Samples stay separate crates for IPC vs Cluster demos (not for rusteron pins).
+Both use **`rusteron-* = "0.2"`** (latest 0.2.x).
 
-### Shared failure modes
-
-| Condition | advanced-bitget / exchange | cluster-ha-orderbook |
-|-----------|----------------------------|----------------------|
-| ClickHouse down | Live CH tests fail preflight | Offline book tests still pass; live stage fails |
-| Claim / offer backpressure | Drop policy | `PublishOutcome::Dropped`; no unbounded retry |
-| Leadership change | N/a | `serving=false`; `live_image() == None` until term-valid snapshot |
-| Sequence gap / term mismatch | N/a | Resync; no silent merge of old-term levels |
-
-### Stages (always vs live)
+### Stages
 
 | Stage | Needs | Command |
 |-------|-------|---------|
-| Offline unit / try_claim path | Rust only | `cargo test` in each sample; `just samples-cluster-ha` offline steps |
-| Live ClickHouse | Docker CH on `:8123` | `just samples-orderbook` / HA latency stage |
-| Kill-leader never-stale | Java 17+ + Aeron jars | `just samples-cluster-ha-kill-leader` |
+| Offline unit / IPC (skip live CH) | Rust only | `just test-ipc` / `just check` sample steps |
+| Live ClickHouse | Docker CH on `:8123` | `just samples-orderbook` |
+| HA offline + latency CH | Docker CH | `just samples-cluster-ha` |
+| Kill-leader never-stale | Java + Aeron jars | `just samples-cluster-ha-kill-leader` |
 
 ## Common preflight
 
@@ -48,14 +37,13 @@ Samples stay separate crates for IPC vs Cluster demos (not for rusteron pins).
 curl -sf http://127.0.0.1:8123/ping || bash persist/tests/run-clickhouse.sh start
 ```
 
-## ErgoSBE API used here
+## ErgoSBE guides
 
-- Consuming decoder stages: [`sbe/docs/guide/generated-api.md`](../sbe/docs/guide/generated-api.md)
-- Claim + nested AppMessage: [`sbe/docs/guide/claim-nested-encode.md`](../sbe/docs/guide/claim-nested-encode.md)
-- Group `add` / `bids` (unit or `Result` closures), `payload_with`, framing consts
+- [claim-nested-encode.md](../sbe/docs/guide/claim-nested-encode.md)
+- [generated-api.md](../sbe/docs/guide/generated-api.md)
 
 ## Non-goals
 
-- Production exchange matching engines
-- Renaming `samples/` or pillar dirs
-- Rust Aeron Cluster **service** (Java harness owns v1 clustered service)
+- Production matching engines or exchange connectors
+- Rust Aeron Cluster **service** (Java harness owns v1)
+- A third sample crate (IPC + Cluster is enough)

@@ -14,9 +14,9 @@ check:
     cd samples/advanced-bitget && cargo fmt --check
     cd samples/advanced-bitget && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/advanced-bitget && cargo test -- --test-threads=1 --skip clickhouse
-    cd samples/exchange-orderbook && cargo fmt --check
-    cd samples/exchange-orderbook && cargo clippy --all-targets --all-features -- -D warnings
-    cd samples/exchange-orderbook && cargo test -- --test-threads=1
+    cd samples/cluster-ha-orderbook && cargo fmt --check
+    cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
+    cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
 
 # Workspace unit tests only
 test-unit:
@@ -26,50 +26,22 @@ test-unit:
 test-ipc:
     cd samples/advanced-bitget && cargo test -- --test-threads=1 --skip clickhouse
 
-# Live ClickHouse tests (requires Docker ClickHouse on 127.0.0.1:8123)
+# Live ClickHouse tests for the IPC sample (requires Docker CH on 127.0.0.1:8123)
 test-clickhouse-live:
     @echo "Preflight: checking ClickHouse on 127.0.0.1:8123..."
     @if ! curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
         echo "ClickHouse not available. Start it:"; \
-        echo "  docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 \\"; \
-        echo "      -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=ergosbe \\"; \
-        echo "      clickhouse/clickhouse-server:latest"; \
+        echo "  bash persist/tests/run-clickhouse.sh start"; \
         exit 1; \
     fi
     @echo "Preflight OK — endpoint http://127.0.0.1:8123 (external Docker)."
-    cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test -- --include-ignored --test-threads=1 --nocapture
+    cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
 
-# Live ClickHouse test for the exchange-orderbook sample (requires Docker
-# ClickHouse on 127.0.0.1:8123)
-test-exchange-orderbook-live:
-    @echo "Preflight: checking ClickHouse on 127.0.0.1:8123..."
-    @if ! curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
-        echo "ClickHouse not available. Start it:"; \
-        echo "  docker run -d --name ergo-clickhouse -p 8123:8123 -p 9000:9000 \\"; \
-        echo "      -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=ergosbe \\"; \
-        echo "      clickhouse/clickhouse-server:latest"; \
-        exit 1; \
-    fi
-    @echo "Preflight OK — endpoint http://127.0.0.1:8123 (external Docker)."
-    cd samples/exchange-orderbook && cargo test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
-
-# Run both samples' live orderbook→ClickHouse E2E tests in one command
-# (requires Docker ClickHouse on 127.0.0.1:8123). Offline E2E proof:
-# SBE decode → order book → Persist DTO/native insert → ClickHouse query.
-samples-orderbook:
-    @echo "Preflight: checking ClickHouse on 127.0.0.1:8123..."
-    @if ! curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
-        echo "ClickHouse not available. Start it:"; \
-        echo "  bash persist/tests/run-clickhouse.sh start   (or  just run-sample)"; \
-        exit 1; \
-    fi
-    @echo "Preflight OK — endpoint http://127.0.0.1:8123 (external Docker)."
-    cd samples/exchange-orderbook && cargo test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
-    cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test -- --include-ignored --test-threads=1 --nocapture
+# Alias: IPC sample live CH E2E (typed + Persist DTO snapshot)
+samples-orderbook: test-clickhouse-live
 
 # HA cluster sample: offline try_claim + never-stale book proofs, then live
 # feed_latency ClickHouse rows (requires Docker CH on 127.0.0.1:8123).
-# Pin: this sample uses ergo-aeron-cluster / rusteron 0.2.4 (IPC advanced-bitget stays 0.2.1).
 samples-cluster-ha:
     @echo "=== cluster-ha-orderbook offline pipeline (try_claim path + stale-book) ==="
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
@@ -101,7 +73,6 @@ docs:
 fmt:
     cargo fmt --all
     cd samples/advanced-bitget && cargo fmt
-    cd samples/exchange-orderbook && cargo fmt
     cd samples/cluster-ha-orderbook && cargo fmt
 
 # Coverage (requires nightly toolchain)

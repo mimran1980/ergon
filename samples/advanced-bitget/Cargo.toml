@@ -2,14 +2,17 @@
 name = "advanced-bitget"
 version = "0.1.0"
 edition = "2024"
-description = "Advanced sample: Bitget WS → AppMessage → Aeron IPC → ClickHouse"
+description = "IPC sample: AppMessage claims → Aeron IPC → ClickHouse (+ multi-schema / Persist DTO)"
+publish = false
 
 [dependencies]
 ergosbe = { path = "../../sbe", features = ["serde"] }
-ergo-clickhouse-persist = { path = "../../persist" }
+ergo-clickhouse-persist = { path = "../../persist", features = ["rust_decimal", "chrono"] }
+ergo-clickhouse-persist-derive = { path = "../../persist/derive" }
 # Same ^0.2 line as cluster / workspace (latest 0.2.x).
 rusteron-client = "0.2"
 rusteron-media-driver = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -60,6 +63,10 @@ path = "tests/persistence_test.rs"
 [[test]]
 name = "decimal_adapter_test"
 path = "tests/decimal_adapter_test.rs"
+
+[[test]]
+name = "e2e_persist_test"
+path = "tests/e2e_persist_test.rs"
 
 [features]
 default = []

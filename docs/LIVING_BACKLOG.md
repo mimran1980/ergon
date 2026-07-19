@@ -20,7 +20,8 @@ the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 | NewLeaderEvent decode ≤ 1.00 as a gate | Diagnostic-only; smoke ratio ≫ 1.00 after equal-work audit |
 | Delete residual sbe-tool codec trees | Needed for head-to-head benches |
 | Pillar directory renames | Permanent layout rule |
-| Live exchange WebSocket in CI | Manual recipe only (samples DONE offline/CH) |
+| Live exchange WebSocket in CI | Manual recipe only (IPC + HA samples offline/CH) |
+| Third sample crate (exchange-orderbook) | Merged into advanced-bitget |
 | Live harness always-on CI | Env-gated by design |
 | Cluster beyond prototype quality | Explicit experimental banner on crate |
 

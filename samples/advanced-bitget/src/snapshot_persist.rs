@@ -1,10 +1,6 @@
-//! ClickHouse persistence for orderbook snapshots.
+//! `#[derive(Persist)]` top-of-book snapshot (absorbed from former exchange-orderbook sample).
 //!
-//! Demonstrates `#[derive(Persist)]` alongside ErgoSBE-generated `SbeMessage`
-//! types. The pattern:
-//! 1. Decode SBE bytes → generated type (implements `SbeMessage`)
-//! 2. Populate `OrderbookSnapshot` from decoded fields
-//! 3. `sender.persist(&snapshot)` → ClickHouse with auto-batching
+//! Pattern: decode SBE → fill [`OrderbookSnapshot`] → `sender.persist` → ClickHouse.
 
 use chrono::{DateTime, Utc};
 use ergo_clickhouse_persist_derive::Persist;

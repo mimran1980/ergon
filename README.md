@@ -34,17 +34,15 @@ version numbers in guides are illustrative.
 
 | Sample | Transport | Recipe |
 |--------|-----------|--------|
-| [`advanced-bitget`](samples/advanced-bitget/) | Aeron IPC | `just samples-orderbook` |
-| [`exchange-orderbook`](samples/exchange-orderbook/) | multi-exchange book + CH | `just samples-orderbook` |
-| [`cluster-ha-orderbook`](samples/cluster-ha-orderbook/) | Aeron Cluster | `just samples-cluster-ha` |
+| [`advanced-bitget`](samples/advanced-bitget/) | Aeron **IPC** (+ multi-schema / Persist DTO) | `just samples-orderbook` / `just test-ipc` |
+| [`cluster-ha-orderbook`](samples/cluster-ha-orderbook/) | Aeron **Cluster** | `just samples-cluster-ha` |
 
-All rusteron crates use **`0.2`** (^0.2 → latest 0.2.x). See root
-`[workspace.dependencies]`.
+Two harnesses only (former `exchange-orderbook` merged into advanced-bitget).
+All rusteron crates use **`0.2`** (^0.2 → latest 0.2.x).
 
 ```text
-IPC baseline:   exchange WS → AppMessage → local Aeron IPC → CH
-HA cluster:     feed → try_claim → Java cluster → egress follower
-                  → never-stale book + feed_latency DynamicRow → CH
+IPC:      AppMessage claims → Aeron IPC → typed/dynamic CH + Persist snapshot DTO
+Cluster:  try_claim → Java cluster → never-stale book + feed_latency DynamicRow
 ```
 
 Note: for the cluster pillar the **directory names differ from the crate
@@ -72,7 +70,7 @@ git submodule update --init --recursive
 | `just build-aeron-jars` then `just test-aeron-cluster-harness` | Full cluster integration suite | Java 17+ |
 | `just bench` | Aeron perf-parity matrix (ErgoSBE vs Aeron SBE) | Rust only |
 | `just bench-cluster` | Cluster codec encode+decode head-to-head (ErgoSBE vs sbe-tool) | Rust only |
-| `just samples-orderbook` | Live ClickHouse E2E (IPC samples) | Docker |
+| `just samples-orderbook` | Live ClickHouse E2E (IPC sample) | Docker |
 | `just samples-cluster-ha` | HA offline + feed_latency CH | Docker |
 | `just samples-cluster-ha-kill-leader` | Multi-node never-stale book | Java + jars |
 | `just check-aeron-cluster-codec-drift` | Residual sbe-tool trees match regenerate (benches only) | Java (sbe-tool) |
