@@ -105,6 +105,10 @@ impl Paths {
         Self::fixtures_dir().join("bool-semantic-schema.xml")
     }
 
+    pub fn versioned_domain_schema() -> PathBuf {
+        Self::fixtures_dir().join("versioned-domain-schema.xml")
+    }
+
     pub fn baseline_binary() -> PathBuf {
         Self::sbe_dir()
             .join("tests")

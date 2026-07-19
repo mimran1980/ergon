@@ -3598,18 +3598,41 @@ fn generate_domain_recursive(
                 let comp_pascal = to_pascal_case(comp_name);
                 let comp_ident = syn::Ident::new(&comp_pascal, span);
                 let as_struct_ident = syn::Ident::new(&format!("{f_snake}_as_struct"), span);
-                struct_fields.push(quote::quote! { pub #f_ident: #comp_ident });
+                // Drive-by fix: versioned composites return Option<T> on decoders,
+                // so the DTO field must also be optional.
+                if !is_entry && f.since_version > 0 {
+                    struct_fields.push(quote::quote! { pub #f_ident: Option<#comp_ident> });
+                } else {
+                    struct_fields.push(quote::quote! { pub #f_ident: #comp_ident });
+                }
                 from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
             }
             FieldType::Enum {
                 name: enum_name, ..
+            } => {
+                if is_bool_enum(elements, enum_name) {
+                    // bool enums → plain bool in DTO
+                    if !is_entry && f.since_version > 0 {
+                        struct_fields.push(quote::quote! { pub #f_ident: Option<bool> });
+                    } else {
+                        struct_fields.push(quote::quote! { pub #f_ident: bool });
+                    }
+                    let bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
+                    from_exprs.push(quote::quote! { #f_ident: dec.#bool_ident() });
+                } else {
+                    let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
+                    if !is_entry && f.since_version > 0 {
+                        struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
+                    } else {
+                        struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
+                    }
+                    from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                }
             }
-            | FieldType::Set {
+            FieldType::Set {
                 name: enum_name, ..
             } => {
                 let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
-                // Message-level sinceVersion > 0 enums return Option<T>.
-                // Group entries and optional enums always return T.
                 if !is_entry && f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
                 } else {

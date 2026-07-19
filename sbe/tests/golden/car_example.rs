@@ -2961,7 +2961,7 @@ impl<'a> From<PerformanceFiguresEntryDecoder<'a>> for CarPerformanceFiguresEntry
 pub struct CarDomain {
     pub serial_number: u64,
     pub model_year: u16,
-    pub available: BooleanType,
+    pub available: bool,
     pub code: Model,
     pub some_numbers: [u32; 4],
     pub vehicle_code: [u8; 6],
@@ -2978,7 +2978,7 @@ impl<'a> From<CarDecoder<'a>> for CarDomain {
         Self {
             serial_number: dec.serial_number(),
             model_year: dec.model_year(),
-            available: dec.available(),
+            available: dec.available_bool(),
             code: dec.code(),
             some_numbers: dec.some_numbers(),
             vehicle_code: dec.vehicle_code(),

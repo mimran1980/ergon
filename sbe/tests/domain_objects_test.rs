@@ -66,7 +66,7 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
 
         assert_eq!(d.serial_number, 1234);
         assert_eq!(d.model_year, 2013);
-        assert_eq!(d.available, BooleanType::T);
+        assert!(d.available);
         assert_eq!(d.code, Model::A);
         assert_eq!(d.some_numbers, [10, 20, 30, 40]);
         assert_eq!(d.vehicle_code, [b'A', b'B', b'C', b'D', b'E', b'F']);
@@ -381,6 +381,41 @@ fn car_serde_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         assert!(json.contains("\"serial_number\":1234"), "json missing serial_number: {json}");
         assert!(json.contains("\"model_year\":2013"), "json missing model_year: {json}");
         println!("car_serde_round_trip: PASSED json_len={}", json.len());
+    "#,
+    );
+    Ok(())
+}
+
+/// Versioned fields: since>0 bool enum → `Option<bool>`, since>0 composite → `Option<T>`.
+#[test]
+fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::versioned_domain_schema(), "ver_dom");
+    // Source assertions: DTO struct has correct optional types
+    assert!(
+        src.contains("pub active: Option<bool>"),
+        "sinceVersion=1 bool enum should be Option<bool> in DTO: {src}"
+    );
+    assert!(
+        src.contains("pub extra: Option<Extra>"),
+        "sinceVersion=2 composite should be Option<Extra> in DTO: {src}"
+    );
+    assert!(
+        src.contains("pub count: u32"),
+        "sinceVersion=0 field should be plain u32"
+    );
+    compile_and_run(
+        "ver_dom",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut enc = VersionedEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        enc.active_bool(true).extra(Extra::new(7, 99)).count(42);
+        let dec = VersionedDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let d: VersionedDomain = dec.into();
+        assert_eq!(d.active, Some(true));
+        assert!(d.extra.is_some());
+        assert_eq!(d.extra.as_ref().unwrap().flags(), 7);
+        assert_eq!(d.count, 42);
     "#,
     );
     Ok(())
