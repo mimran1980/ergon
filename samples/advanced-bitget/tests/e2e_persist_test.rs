@@ -2,7 +2,7 @@
 
 #[ignore = "requires live ClickHouse — run via just samples-orderbook"]
 #[test]
-fn e2e_persist_orderbook_snapshot() {
+fn e2e_persist_orderbook_snapshot() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::snapshot_persist::OrderbookSnapshot;
     use chrono::Utc;
     use ergo_clickhouse_persist::ClickhouseSinkBuilder;
@@ -31,4 +31,6 @@ fn e2e_persist_orderbook_snapshot() {
 
     sender.persist(&snap).expect("persist");
     sink.flush().expect("flush");
+
+    Ok(())
 }

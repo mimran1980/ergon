@@ -4,30 +4,32 @@ use ergo_aeron_cluster::codecs::cluster_codecs::{
     WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
 };
 use serial_test::serial;
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::Duration;
 
 #[test]
 #[serial]
-fn test_three_node_cluster_spawns() {
+fn test_three_node_cluster_spawns() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster::TestCluster::three_node();
     assert!(cluster.ingress_channel.contains("aeron:udp"));
     assert!(cluster.egress_channel.contains("aeron:udp"));
+
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_connect_to_three_node_cluster() {
+fn test_connect_to_three_node_cluster() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster::TestCluster::three_node();
-    let dir_cstr = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
+    let dir_cstr = cformat!("{}", cluster.aeron_dir().display());
 
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir_cstr).unwrap();
     let a = rusteron_client::Aeron::new(&ctx).unwrap();
     a.start().unwrap();
 
-    let ing = CString::new(&cluster.ingress_channel[..]).unwrap();
-    let egr = CString::new(&cluster.egress_channel[..]).unwrap();
+    let ing = cformat!("{}", cluster.ingress_channel);
+    let egr = cformat!("{}", cluster.egress_channel);
 
     let egress = a
         .add_subscription(
@@ -83,4 +85,6 @@ fn test_connect_to_three_node_cluster() {
         sent || received,
         "3-node connect failed: sent={sent} received={received}"
     );
+
+    Ok(())
 }

@@ -1,7 +1,9 @@
 //! Approved runtime configuration constants.
 
-/// Aeron IPC channel used for both streams.
-pub const CHANNEL: &str = "aeron:ipc";
+use std::ffi::CStr;
+
+/// Aeron IPC channel used for both streams (compile-time `&CStr`, rusteron 0.2 style).
+pub const CHANNEL: &CStr = c"aeron:ipc";
 /// AppMessage-wrapped L2Book/Trade stream.
 pub const STREAM_TYPED: i32 = 1001;
 /// Unwrapped DynamicSchemaV2/DynamicRowV2 stream.

@@ -2,15 +2,15 @@
 //! This gates whether cross-driver communication is possible at all.
 
 use serial_test::serial;
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::Duration;
 
 #[test]
 #[serial]
-fn test_udp_pub_sub_loopback_same_driver() {
+fn test_udp_pub_sub_loopback_same_driver() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::temp_dir().join("udp-loopback");
     let _ = std::fs::create_dir_all(&dir);
-    let dir_cstr = CString::new(dir.to_str().unwrap()).unwrap();
+    let dir_cstr = cformat!("{}", dir.display());
 
     let dc = rusteron_media_driver::AeronDriverContext::new().unwrap();
     dc.set_dir(&dir_cstr).unwrap();
@@ -23,7 +23,7 @@ fn test_udp_pub_sub_loopback_same_driver() {
     let a = rusteron_client::Aeron::new(&ctx).unwrap();
     a.start().unwrap();
 
-    let uri = CString::new("aeron:udp?endpoint=localhost:19999").unwrap();
+    let uri = c"aeron:udp?endpoint=localhost:19999";
 
     // Sub first, then pub. The subscription is held only so a receiver
     // exists on the channel for the publication to connect to.
@@ -52,4 +52,6 @@ fn test_udp_pub_sub_loopback_same_driver() {
         std::thread::sleep(Duration::from_millis(100));
     }
     assert!(sent, "UDP pub/sub loopback failed — offer_raw never connected");
+
+    Ok(())
 }

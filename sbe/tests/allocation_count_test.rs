@@ -174,7 +174,7 @@ fn warm_up_consuming() {
 }
 
 #[test]
-fn consuming_stage_decode_zero_alloc() {
+fn consuming_stage_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_consuming();
     let guard = AllocGuard::after_warmup();
 
@@ -212,12 +212,14 @@ fn consuming_stage_decode_zero_alloc() {
         "consuming stage decode allocated {} times",
         guard.diff()
     );
+
+    Ok(())
 }
 
 // ── Decode entrypoint ───────────────────────────────────────────────
 
 #[test]
-fn decode_entrypoint_zero_alloc() {
+fn decode_entrypoint_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_all();
     let guard = AllocGuard::after_warmup();
     let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
@@ -228,12 +230,14 @@ fn decode_entrypoint_zero_alloc() {
         "decode entrypoint allocated {} times",
         guard.diff()
     );
+
+    Ok(())
 }
 
 // ── Raw scalar accessor ─────────────────────────────────────────────
 
 #[test]
-fn raw_scalar_accessor_zero_alloc() {
+fn raw_scalar_accessor_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_all();
     let car = CarDecoder::try_from(BASELINE).unwrap();
 
@@ -249,12 +253,14 @@ fn raw_scalar_accessor_zero_alloc() {
         "scalar accessors allocated {} times",
         guard.diff()
     );
+
+    Ok(())
 }
 
 // ── Group iteration ─────────────────────────────────────────────────
 
 #[test]
-fn group_iteration_zero_alloc() {
+fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_all();
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let ff = car.into_fuel_figures().unwrap();
@@ -271,12 +277,14 @@ fn group_iteration_zero_alloc() {
         "group iteration allocated {} times",
         guard.diff()
     );
+
+    Ok(())
 }
 
 // ── Frame cursor decode ─────────────────────────────────────────────
 
 #[test]
-fn frame_cursor_decode_zero_alloc() {
+fn frame_cursor_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_all();
     let guard = AllocGuard::after_warmup();
     let msg = AnyMessage::decode_frame(black_box(BASELINE), 0, BASELINE.len()).unwrap();
@@ -287,12 +295,14 @@ fn frame_cursor_decode_zero_alloc() {
         "frame cursor decode allocated {} times",
         guard.diff()
     );
+
+    Ok(())
 }
 
 // ── Encode into caller buffer ───────────────────────────────────────
 
 #[test]
-fn encode_into_caller_buffer_zero_alloc() {
+fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_all();
     let mut buf = [0u8; 512];
 
@@ -318,12 +328,14 @@ fn encode_into_caller_buffer_zero_alloc() {
         "encode into caller buffer allocated {} times",
         guard.diff()
     );
+
+    Ok(())
 }
 
 // ── Var-data decode ─────────────────────────────────────────────────
 
 #[test]
-fn vardata_decode_zero_alloc() {
+fn vardata_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_all();
     let car = CarDecoder::try_from(BASELINE).unwrap();
 
@@ -347,4 +359,6 @@ fn vardata_decode_zero_alloc() {
         "var-data decode allocated {} times",
         guard.diff()
     );
+
+    Ok(())
 }

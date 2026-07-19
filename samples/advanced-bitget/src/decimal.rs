@@ -162,31 +162,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exact_conversion_no_scaling() {
+    fn exact_conversion_no_scaling() -> Result<(), Box<dyn std::error::Error>> {
         let result = to_clickhouse_decimal(1_2345_6789_0123_4567i64, -18).unwrap();
         assert_eq!(result, 1_2345_6789_0123_4567i128);
+    
+        Ok(())
     }
 
     #[test]
-    fn scale_up_mantissa() {
+    fn scale_up_mantissa() -> Result<(), Box<dyn std::error::Error>> {
         let result = to_clickhouse_decimal(100_000_000, -8).unwrap();
         assert_eq!(result, 1_000_000_000_000_000_000i128);
+    
+        Ok(())
     }
 
     #[test]
-    fn scale_down_mantissa_exact() {
+    fn scale_down_mantissa_exact() -> Result<(), Box<dyn std::error::Error>> {
         let result = to_clickhouse_decimal(12300, -20).unwrap();
         assert_eq!(result, 123);
+    
+        Ok(())
     }
 
     #[test]
-    fn precision_loss_rejected() {
+    fn precision_loss_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let err = to_clickhouse_decimal(123, -20).unwrap_err();
         assert!(matches!(err, DecimalConvertError::PrecisionLoss));
+    
+        Ok(())
     }
 
     #[test]
-    fn exact_values_roundtrip() {
+    fn exact_values_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let cases = [
             (0, 0i8),
             (1, 0),
@@ -205,35 +213,45 @@ mod tests {
                 result.err()
             );
         }
+    
+        Ok(())
     }
 
     #[test]
-    fn overflow_rejected() {
+    fn overflow_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let err = to_clickhouse_decimal(i64::MAX, 20).unwrap_err();
         assert!(matches!(err, DecimalConvertError::Overflow));
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_exact_valid() {
+    fn parse_exact_valid() -> Result<(), Box<dyn std::error::Error>> {
         let (m, e) = parse_decimal_exact("50000.00").unwrap();
         assert_eq!(m, 5000000);
         assert_eq!(e, -2);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_exact_invalid_rejected() {
+    fn parse_exact_invalid_rejected() -> Result<(), Box<dyn std::error::Error>> {
         assert!(parse_decimal_exact("not_a_number").is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_exact_small_value() {
+    fn parse_exact_small_value() -> Result<(), Box<dyn std::error::Error>> {
         let (m, e) = parse_decimal_exact("0.0015").unwrap();
         assert_eq!(m, 15);
         assert_eq!(e, -4);
+    
+        Ok(())
     }
 
     #[test]
-    fn rust_decimal_sbe_roundtrip() {
+    fn rust_decimal_sbe_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         // Test the try_into_sbe direction (mantissa/scale extraction).
         let d = rust_decimal::Decimal::new(5000000, 2); // 50000.00
         let mantissa: i128 = d.mantissa();
@@ -241,5 +259,7 @@ mod tests {
         assert_eq!(mantissa, 5000000);
         assert_eq!(scale, 2);
         assert_eq!(-(scale as i8), -2);
+    
+        Ok(())
     }
 }

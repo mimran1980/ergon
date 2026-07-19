@@ -377,30 +377,38 @@ mod tests {
     }
 
     #[test]
-    fn test_price_column_type() {
+    fn test_price_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(Price::column_type().to_string(), "Decimal(18, 8)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_price_default_column_name() {
+    fn test_price_default_column_name() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(<Price as PersistAs>::column_name("ask_price"), "ask_price");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_price_encode_value() {
+    fn test_price_encode_value() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(Price(42).encode_value(), vec![42, 0, 0, 0, 0, 0, 0, 0]);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_option_price_column_type() {
+    fn test_option_price_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <Option<Price> as PersistAs>::column_type().to_string(),
             "Nullable(Decimal(18, 8))"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn test_option_price_encode_some() {
+    fn test_option_price_encode_some() -> Result<(), Box<dyn std::error::Error>> {
         let val: Option<Price> = Some(Price(42));
         let expected = {
             let mut buf = vec![0];
@@ -408,37 +416,49 @@ mod tests {
             buf
         };
         assert_eq!(val.encode_value(), expected);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_option_price_encode_none() {
+    fn test_option_price_encode_none() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(Option::<Price>::None.encode_value(), vec![1]);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_option_option_price_column_type() {
+    fn test_option_option_price_column_type() -> Result<(), Box<dyn std::error::Error>> {
         let col_type = <Option<Option<Price>> as PersistAs>::column_type();
         assert_eq!(col_type.to_string(), "Nullable(Decimal(18, 8))");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_option_option_price_encode_some_some() {
+    fn test_option_option_price_encode_some_some() -> Result<(), Box<dyn std::error::Error>> {
         let val: Option<Option<Price>> = Some(Some(Price(42)));
         assert_eq!(
             val.encode_value().as_slice(),
             &[0, 0, 42, 0, 0, 0, 0, 0, 0, 0]
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn test_option_option_price_encode_none() {
+    fn test_option_option_price_encode_none() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(Option::<Option<Price>>::None.encode_value(), vec![1]);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_option_option_price_encode_some_none() {
+    fn test_option_option_price_encode_some_none() -> Result<(), Box<dyn std::error::Error>> {
         let val: Option<Option<Price>> = Some(None);
         assert_eq!(val.encode_value(), vec![0, 1]);
+    
+        Ok(())
     }
 }
 
@@ -454,14 +474,16 @@ mod table_schema_tests {
     }
 
     #[test]
-    fn identical_schemas_empty_diff() {
+    fn identical_schemas_empty_diff() -> Result<(), Box<dyn std::error::Error>> {
         let a = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         let b = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         assert!(a.diff(&b).is_empty());
+    
+        Ok(())
     }
 
     #[test]
-    fn new_column_added() {
+    fn new_column_added() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         let new = TableSchema::new(
             vec![
@@ -473,51 +495,63 @@ mod table_schema_tests {
         let diff = new.diff(&old);
         assert_eq!(diff.new_columns.len(), 1);
         assert_eq!(diff.new_columns[0].name, "qty");
+    
+        Ok(())
     }
 
     #[test]
-    fn widen_u32_to_u64_compatible() {
+    fn widen_u32_to_u64_compatible() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("qty", ColumnType::UInt32)], vec![]);
         let new = TableSchema::new(vec![col("qty", ColumnType::UInt64)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.compatible_widens.len(), 1);
         assert_eq!(diff.compatible_widens[0].column, "qty");
+    
+        Ok(())
     }
 
     #[test]
-    fn narrow_u64_to_u32_conflict() {
+    fn narrow_u64_to_u32_conflict() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("qty", ColumnType::UInt64)], vec![]);
         let new = TableSchema::new(vec![col("qty", ColumnType::UInt32)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.type_conflicts.len(), 1);
+    
+        Ok(())
     }
 
     #[test]
-    fn i32_to_string_conflict() {
+    fn i32_to_string_conflict() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("tag", ColumnType::Int32)], vec![]);
         let new = TableSchema::new(vec![col("tag", ColumnType::String)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.type_conflicts.len(), 1);
+    
+        Ok(())
     }
 
     #[test]
-    fn u32_to_i64_compatible_widen() {
+    fn u32_to_i64_compatible_widen() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("x", ColumnType::UInt32)], vec![]);
         let new = TableSchema::new(vec![col("x", ColumnType::Int64)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.compatible_widens.len(), 1);
+    
+        Ok(())
     }
 
     #[test]
-    fn i32_to_u32_conflict() {
+    fn i32_to_u32_conflict() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("x", ColumnType::Int32)], vec![]);
         let new = TableSchema::new(vec![col("x", ColumnType::UInt32)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.type_conflicts.len(), 1);
+    
+        Ok(())
     }
 
     #[test]
-    fn removed_column_ignored() {
+    fn removed_column_ignored() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(
             vec![
                 col("price", ColumnType::UInt64),
@@ -527,17 +561,21 @@ mod table_schema_tests {
         );
         let new = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         assert!(new.diff(&old).is_empty());
+    
+        Ok(())
     }
 
     #[test]
-    fn persist_time_auto_added() {
+    fn persist_time_auto_added() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema::new(vec![], vec![]);
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
         assert_eq!(schema.order_by, vec!["_persist_time"]);
+    
+        Ok(())
     }
 
     #[test]
-    fn persist_time_not_duplicated() {
+    fn persist_time_not_duplicated() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema::new(
             vec![col("_persist_time", ColumnType::DateTime64(9))],
             vec!["_persist_time".into()],
@@ -550,22 +588,28 @@ mod table_schema_tests {
                 .count(),
             1
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn default_order_by() {
+    fn default_order_by() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         assert_eq!(schema.order_by, vec!["_persist_time"]);
+    
+        Ok(())
     }
 
     #[test]
-    fn custom_order_by() {
+    fn custom_order_by() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec!["price".into()]);
         assert_eq!(schema.order_by, vec!["price"]);
+    
+        Ok(())
     }
 
     #[test]
-    fn alter_table_ddl_generation() {
+    fn alter_table_ddl_generation() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         let new = TableSchema::new(
             vec![
@@ -577,10 +621,12 @@ mod table_schema_tests {
         let ddl = new.diff(&old).alter_table_ddl("trades");
         assert_eq!(ddl.len(), 1);
         assert!(ddl[0].contains("ADD COLUMN IF NOT EXISTS qty UInt32"));
+    
+        Ok(())
     }
 
     #[test]
-    fn full_migration() {
+    fn full_migration() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(
             vec![
                 col("price", ColumnType::UInt64),
@@ -602,12 +648,14 @@ mod table_schema_tests {
         assert_eq!(diff.new_columns.len(), 1); // side
         assert_eq!(diff.compatible_widens.len(), 1); // qty
         assert_eq!(diff.type_conflicts.len(), 1); // bad
+    
+        Ok(())
     }
 
     // ── Schema with many columns ────────────────────────────────
 
     #[test]
-    fn schema_with_many_columns() {
+    fn schema_with_many_columns() -> Result<(), Box<dyn std::error::Error>> {
         let mut columns = Vec::new();
         for i in 0..1000 {
             columns.push(ColumnDef {
@@ -620,12 +668,14 @@ mod table_schema_tests {
         assert_eq!(schema.columns.len(), 1001);
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
         assert_eq!(schema.order_by, vec!["_persist_time"]);
+    
+        Ok(())
     }
 
     // ── Column with very long name ──────────────────────────────
 
     #[test]
-    fn schema_with_long_column_name() {
+    fn schema_with_long_column_name() -> Result<(), Box<dyn std::error::Error>> {
         let long_name = "a".repeat(1000);
         let schema = TableSchema::new(
             vec![ColumnDef {
@@ -639,12 +689,14 @@ mod table_schema_tests {
             .alter_table_ddl("test_table");
         assert_eq!(ddl.len(), 1);
         assert!(ddl[0].contains(&long_name));
+    
+        Ok(())
     }
 
     // ── Identical schemas via with_ttl ──────────────────────────
 
     #[test]
-    fn identical_schemas_with_ttl_empty_diff() {
+    fn identical_schemas_with_ttl_empty_diff() -> Result<(), Box<dyn std::error::Error>> {
         let ttl = TtlConfig::new("ts", "24 HOURS");
         let a = TableSchema::with_ttl(
             vec![col("price", ColumnType::UInt64)],
@@ -658,12 +710,14 @@ mod table_schema_tests {
         );
         assert!(a.diff(&b).is_empty());
         assert!(b.diff(&a).is_empty());
+    
+        Ok(())
     }
 
     // ── SchemaDiff DDL for compatible widen + new column ────────
 
     #[test]
-    fn alter_table_ddl_widen_and_add() {
+    fn alter_table_ddl_widen_and_add() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("qty", ColumnType::UInt32)], vec![]);
         let new = TableSchema::new(
             vec![
@@ -676,21 +730,25 @@ mod table_schema_tests {
         assert_eq!(ddl.len(), 2);
         assert!(ddl[0].contains("ADD COLUMN IF NOT EXISTS side String"));
         assert!(ddl[1].contains("MODIFY COLUMN qty UInt64"));
+    
+        Ok(())
     }
 
     // ── Empty diff DDL produces no statements ───────────────────
 
     #[test]
-    fn empty_diff_produces_no_ddl() {
+    fn empty_diff_produces_no_ddl() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema::new(vec![col("x", ColumnType::Int32)], vec![]);
         let ddl = schema.diff(&schema).alter_table_ddl("t");
         assert!(ddl.is_empty());
+    
+        Ok(())
     }
 
     // ── Schema with only _persist_time ──────────────────────────
 
     #[test]
-    fn schema_only_persist_time() {
+    fn schema_only_persist_time() -> Result<(), Box<dyn std::error::Error>> {
         let a = TableSchema::new(vec![], vec![]);
         let b = TableSchema::new(vec![], vec![]);
         assert!(a.diff(&b).is_empty());
@@ -699,12 +757,14 @@ mod table_schema_tests {
         // (both have only _persist_time).
         let ddl = a.diff(&b).alter_table_ddl("t");
         assert!(ddl.is_empty());
+    
+        Ok(())
     }
 
     // ── Schema with TTL but no custom columns ───────────────────
 
     #[test]
-    fn schema_with_ttl_default_column() {
+    fn schema_with_ttl_default_column() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema::with_ttl(
             vec![],
             vec!["_persist_time".into()],
@@ -713,6 +773,8 @@ mod table_schema_tests {
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
         assert_eq!(schema.ttl.as_ref().unwrap().column, "_persist_time");
         assert_eq!(schema.ttl.as_ref().unwrap().interval, "7 DAY");
+    
+        Ok(())
     }
 }
 
@@ -757,7 +819,7 @@ mod persist_trait_tests {
     }
 
     #[test]
-    fn table_schema_returns_expected_columns() {
+    fn table_schema_returns_expected_columns() -> Result<(), Box<dyn std::error::Error>> {
         let schema = <TradeRow as Persist>::table_schema();
         // 3 custom columns + _persist_time auto-added = 4
         assert_eq!(schema.columns.len(), 4);
@@ -766,10 +828,12 @@ mod persist_trait_tests {
         assert!(schema.columns.iter().any(|c| c.name == "symbol"));
         // _persist_time auto-added
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
+    
+        Ok(())
     }
 
     #[test]
-    fn encode_row_populates_row() {
+    fn encode_row_populates_row() -> Result<(), Box<dyn std::error::Error>> {
         let src = TradeRow {
             price: 100.50,
             qty: 10,
@@ -784,10 +848,12 @@ mod persist_trait_tests {
         assert_eq!(dst.price, 100.50);
         assert_eq!(dst.qty, 10);
         assert_eq!(dst.symbol, "AAPL");
+    
+        Ok(())
     }
 
     #[test]
-    fn serde_roundtrip() {
+    fn serde_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let original = TradeRow {
             price: 99.99,
             qty: 25,
@@ -796,13 +862,17 @@ mod persist_trait_tests {
         let json = serde_json::to_string(&original).unwrap();
         let decoded: TradeRow = serde_json::from_str(&json).unwrap();
         assert_eq!(original, decoded);
+    
+        Ok(())
     }
 
     /// Compile-time check: TradeRow satisfies bounds needed by
     /// `clickhouse::Client::insert`.
     #[test]
-    fn row_bounds_for_client_insert() {
+    fn row_bounds_for_client_insert() -> Result<(), Box<dyn std::error::Error>> {
         fn assert_row_write<T: clickhouse::Row + serde::Serialize>() {}
         assert_row_write::<TradeRow>();
+    
+        Ok(())
     }
 }

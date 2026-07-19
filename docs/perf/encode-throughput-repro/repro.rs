@@ -170,7 +170,7 @@ fn time_it<F: FnMut(&mut [u8])>(mut f: F) -> u128 {
     best
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ti = time_it(encode_index);
     let tp = time_it(encode_pointer);
     let tb = time_it(encode_bare);
@@ -181,4 +181,6 @@ fn main() {
     println!("encode_faithful (Result+fields+bounds)  : {tf} ns  ({:.0} ps/msg)", tf as f64 / N as f64);
     println!("index/pointer ratio                      : {:.3}", ti as f64 / tp as f64);
     println!("faithful/index ratio                     : {:.3}", tf as f64 / ti as f64);
+
+    Ok(())
 }

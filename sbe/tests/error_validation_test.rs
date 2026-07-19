@@ -55,7 +55,7 @@ fn fixture_path(name: &str) -> PathBuf {
 // Expected: ParseError::Missing { what: "field @name", .. }
 
 #[test]
-fn missing_required_attr_returns_missing_error() {
+fn missing_required_attr_returns_missing_error() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("missing-required-attr.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
@@ -68,6 +68,8 @@ fn missing_required_attr_returns_missing_error() {
         msg.contains("field @name"),
         "error message should mention the missing attribute: {msg}"
     );
+
+    Ok(())
 }
 
 // ── invalid-type-ref.xml ───────────────────────────────────────────────────
@@ -76,7 +78,7 @@ fn missing_required_attr_returns_missing_error() {
 // Expected: ParseError::Invalid { what: "primitive type", value: "NonExistentType", .. }
 
 #[test]
-fn invalid_type_ref_returns_invalid_error() {
+fn invalid_type_ref_returns_invalid_error() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("invalid-type-ref.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
@@ -89,6 +91,8 @@ fn invalid_type_ref_returns_invalid_error() {
         msg.contains("NonExistentType"),
         "error message should name the bad type: {msg}"
     );
+
+    Ok(())
 }
 
 // ── duplicate-message-id.xml ───────────────────────────────────────────────
@@ -97,7 +101,7 @@ fn invalid_type_ref_returns_invalid_error() {
 // Expected: ResolveError::DuplicateTemplateId { id: 1, name: "AnotherMessageWithId1" }
 
 #[test]
-fn duplicate_message_id_returns_duplicate_template_id() {
+fn duplicate_message_id_returns_duplicate_template_id() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("duplicate-message-id.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
@@ -114,6 +118,8 @@ fn duplicate_message_id_returns_duplicate_template_id() {
         msg.contains("AnotherMessageWithId1"),
         "error message should name the duplicate message: {msg}"
     );
+
+    Ok(())
 }
 
 // ── duplicate-message-id miette rendering ─────────────────────────────────────
@@ -121,7 +127,7 @@ fn duplicate_message_id_returns_duplicate_template_id() {
 // Verify that a ResolveError rendered through miette includes source context.
 
 #[test]
-fn duplicate_message_id_renders_miette_diagnostic() {
+fn duplicate_message_id_renders_miette_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("duplicate-message-id.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
 
@@ -152,6 +158,8 @@ fn duplicate_message_id_renders_miette_diagnostic() {
         rendered.contains("ergo_sbe::schema_parse::resolve"),
         "rendered output should include error code, got:\n{rendered}"
     );
+
+    Ok(())
 }
 
 // ── version-gap.xml ────────────────────────────────────────────────────────
@@ -160,7 +168,7 @@ fn duplicate_message_id_renders_miette_diagnostic() {
 // Expected: ResolveError::SinceVersionBeyondSchema { version: 5, schema_version: 1, .. }
 
 #[test]
-fn version_gap_returns_since_version_beyond_schema() {
+fn version_gap_returns_since_version_beyond_schema() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("version-gap.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
@@ -177,6 +185,8 @@ fn version_gap_returns_since_version_beyond_schema() {
         msg.contains("schema version 1"),
         "error message should mention schema version 1: {msg}"
     );
+
+    Ok(())
 }
 
 // ── version-gap miette rendering ──────────────────────────────────────────────
@@ -185,7 +195,7 @@ fn version_gap_returns_since_version_beyond_schema() {
 // source context.
 
 #[test]
-fn version_gap_renders_miette_diagnostic() {
+fn version_gap_renders_miette_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("version-gap.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
 
@@ -208,6 +218,8 @@ fn version_gap_renders_miette_diagnostic() {
         rendered.contains("ergo_sbe::schema_parse::resolve"),
         "rendered output should include error code, got:\n{rendered}"
     );
+
+    Ok(())
 }
 
 // ── invalid-enum-value.xml ─────────────────────────────────────────────────
@@ -219,7 +231,7 @@ fn version_gap_renders_miette_diagnostic() {
 // Closed 2026-07-19: every listed fixture produces a clear ParseError.
 
 #[test]
-fn error_handler_schemas_all_rejected() {
+fn error_handler_schemas_all_rejected() -> Result<(), Box<dyn std::error::Error>> {
     let cases = [
         "error-handler-enum-violates-min-max-value-range.xml",
         "error-handler-group-dimensions-schema.xml",
@@ -241,10 +253,12 @@ fn error_handler_schemas_all_rejected() {
             "expected parse rejection for {name}, got Ok(...)"
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn invalid_enum_encoding_type_returns_invalid_error() {
+fn invalid_enum_encoding_type_returns_invalid_error() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("invalid-enum-value.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
@@ -261,4 +275,6 @@ fn invalid_enum_encoding_type_returns_invalid_error() {
         msg.contains("NonExistentEncodingType"),
         "error message should name the bad type: {msg}"
     );
+
+    Ok(())
 }

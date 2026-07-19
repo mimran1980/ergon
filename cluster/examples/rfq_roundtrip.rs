@@ -13,7 +13,7 @@
 
 use ergo_aeron_cluster::codecs::ergo_codecs::{SessionConnectRequestEncoder, SessionMessageHeaderEncoder};
 use ergo_aeron_cluster::codecs::ergo_rfq_codecs::{AddInstrumentEncoder, BooleanType, CreateRfqCommandEncoder, Side};
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::{Duration, Instant};
 
 const AERON_DIR_DEFAULT: &str = "/tmp/aeron-rfq-driver";
@@ -26,20 +26,20 @@ fn pad36(s: &str) -> [u8; 36] {
     b
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::var("RFQ_AERON_DIR").unwrap_or_else(|_| AERON_DIR_DEFAULT.to_string());
     println!("=== RFQ round-trip vs cookbook cluster (ErgoSBE) ===");
     println!("aeron.dir = {dir}");
     println!("ingress   = {INGRESS}\n");
 
-    let dir_cstr = CString::new(dir.as_str()).unwrap();
+    let dir_cstr = cformat!("{dir}");
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir_cstr).unwrap();
     let a = rusteron_client::Aeron::new(&ctx).unwrap();
     a.start().unwrap();
 
-    let ing = CString::new(INGRESS).unwrap();
-    let egr = CString::new(INGRESS).unwrap();
+    let ing = cformat!("{INGRESS}");
+    let egr = cformat!("{INGRESS}");
     let egress = a
         .add_subscription(
             &egr,
@@ -93,7 +93,7 @@ fn main() {
     println!("Session: id={csid} term={ltid}");
     if csid < 0 {
         println!("FAIL: no session");
-        return;
+        return Ok(());
     }
 
     let mut cusip = [b' '; 9];
@@ -194,4 +194,6 @@ fn main() {
             "no RFQ response"
         }
     );
+
+    Ok(())
 }

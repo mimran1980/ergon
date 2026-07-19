@@ -13,7 +13,7 @@ use ergo_aeron_cluster::codecs::ergo_codecs::{SessionConnectRequestEncoder, Sess
 use ergo_aeron_cluster::codecs::ergo_rfq_codecs::{
     AcceptRfqCommandEncoder, CreateRfqCommandEncoder, QuoteRfqCommandEncoder, Side,
 };
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::Duration;
 
 fn pad36(s: &str) -> [u8; 36] {
@@ -23,20 +23,20 @@ fn pad36(s: &str) -> [u8; 36] {
     b
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Ergo Aeron Cluster RFQ Client (ErgoSBE codecs) ===\n");
     println!("Schema: protocol-codecs.xml (schema 101, version 1)");
     println!("Source: aeron-io/aeron-cookbook-code (vendored)\n");
 
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
-    let dir = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
+    let dir = cformat!("{}", cluster.aeron_dir().display());
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir).unwrap();
     let a = rusteron_client::Aeron::new(&ctx).unwrap();
     a.start().unwrap();
 
-    let ing = CString::new(&cluster.ingress_channel[..]).unwrap();
-    let egr = CString::new(&cluster.egress_channel[..]).unwrap();
+    let ing = cformat!("{}", cluster.ingress_channel);
+    let egr = cformat!("{}", cluster.egress_channel);
     let egress = a
         .add_subscription(
             &egr,
@@ -189,6 +189,8 @@ fn main() {
         CreateRfqCommandEncoder::SCHEMA_ID,
         CreateRfqCommandEncoder::SCHEMA_VERSION
     );
+
+    Ok(())
 }
 
 fn drain_egress(egress: &rusteron_client::AeronSubscription) {

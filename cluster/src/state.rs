@@ -23,18 +23,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_state_is_copy() {
+    fn test_state_is_copy() -> Result<(), Box<dyn std::error::Error>> {
         let s = SessionState::Connected;
         let s2 = s;
         assert_eq!(s, s2);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_states_are_distinct() {
+    fn test_states_are_distinct() -> Result<(), Box<dyn std::error::Error>> {
         assert_ne!(SessionState::Connected, SessionState::Closed);
         assert_ne!(
             SessionState::AwaitingNewLeader,
             SessionState::AwaitingNewLeaderConnection
         );
+    
+        Ok(())
     }
 }

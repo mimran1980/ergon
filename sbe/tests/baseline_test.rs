@@ -23,7 +23,7 @@ const MODULE: &str = "car_example";
 // ── Structural verification ──────────────────────────────────────────
 
 #[test]
-fn generated_code_has_lint_suppressions() {
+fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     // Item-level allow attributes — NOT expect, because the exact set of
     // lints that fire depends on the schema.  Using #[expect] would produce
@@ -71,10 +71,11 @@ fn generated_code_has_lint_suppressions() {
     );
     // ponytail: #[allow(unused_unsafe)] removed along with scalar raw_* methods —
     // enum/set/composite raw_* return the underlying repr directly without wrapping unsafe
+    Ok(())
 }
 
 #[test]
-fn generated_code_contains_expected_types() {
+fn generated_code_contains_expected_types() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     assert_source_ok(
         &src,
@@ -102,10 +103,11 @@ fn generated_code_contains_expected_types() {
             "VarDataEncoding",
         ],
     );
+    Ok(())
 }
 
 #[test]
-fn generate_composite_with_enum_set_and_nested_composite() {
+fn generate_composite_with_enum_set_and_nested_composite() -> Result<(), Box<dyn std::error::Error>> {
     // composite-elements-schema.xml has a composite ("outer") containing an
     // enum, a set, and a nested composite ("inner"); the rc4 variant adds
     // explicit offsets. Generating these exercises the composite field-type
@@ -122,10 +124,11 @@ fn generate_composite_with_enum_set_and_nested_composite() {
         src2.contains("OuterWithOffsets"),
         "rc4 composite must generate"
     );
+    Ok(())
 }
 
 #[test]
-fn generate_composite_with_named_type_member_refs() {
+fn generate_composite_with_named_type_member_refs() -> Result<(), Box<dyn std::error::Error>> {
     // composite-field-refs.xml defines a composite "Widget" whose members
     // reference a named enum (Colour), set (Flags), and composite (Inner).
     // Generating it exercises the composite field-type codegen arms that handle
@@ -135,10 +138,11 @@ fn generate_composite_with_named_type_member_refs() {
         .join("tests/fixtures/schemas/composite-field-refs.xml");
     let (_s, src) = generate(&path, "comp_field_refs");
     assert_source_ok(&src, &["Widget", "Colour", "Flags", "Inner"]);
+    Ok(())
 }
 
 #[test]
-fn generate_versioned_set_enum_composite_fields() {
+fn generate_versioned_set_enum_composite_fields() -> Result<(), Box<dyn std::error::Error>> {
     // extension-schema.xml has message fields with sinceVersion > 0 of set
     // (ASet), enum (AEnum), and composite (AComposite) types. Generating it
     // exercises the versioned-field codegen branches (Option<T> accessor shape).
@@ -147,10 +151,11 @@ fn generate_versioned_set_enum_composite_fields() {
         .join("tests/fixtures/schemas/extension-schema.xml");
     let (_s, src) = generate(&path, "ext_versioned");
     syn::parse_file(&src).expect("extension-schema generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generate_enums_over_every_integer_encoding_type() {
+fn generate_enums_over_every_integer_encoding_type() -> Result<(), Box<dyn std::error::Error>> {
     // enum-encoding-types.xml has one enum per int/uint encoding type. Generating
     // it exercises max_encoding_value for every integer primitive (the enum NULL
     // const = encodingType.maxValue()) and the enum codegen for each width.
@@ -159,10 +164,11 @@ fn generate_enums_over_every_integer_encoding_type() {
         .join("tests/fixtures/schemas/enum-encoding-types.xml");
     let (_s, src) = generate(&path, "enum_enc");
     syn::parse_file(&src).expect("enum-encoding-types generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generate_big_endian_and_unbounded_var_data_schemas() {
+fn generate_big_endian_and_unbounded_var_data_schemas() -> Result<(), Box<dyn std::error::Error>> {
     // Big-endian schema exercises the BE byte-order codegen branches; the
     // unbounded-var-data schema (no maxLength attr) exercises the var-data
     // accessor's else branch.
@@ -171,28 +177,31 @@ fn generate_big_endian_and_unbounded_var_data_schemas() {
 
     let (_s2, src2) = generate(&Paths::basic_variable_length_schema(), "unbounded_vd");
     syn::parse_file(&src2).expect("unbounded var-data schema generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generate_multi_message_schema() {
+fn generate_multi_message_schema() -> Result<(), Box<dyn std::error::Error>> {
     // binance_spot_3_5.xml has 92 messages with shared types (enums, sets,
     // composites). Generating it exercises the multi-message codegen branches
     // (shared_types collection, header-type dispatch, multi-message paths).
     let path = Paths::sbe_tool_test_resource("binance_spot_3_5.xml");
     let (_s, src) = generate(&path, "binance_mm");
     syn::parse_file(&src).expect("binance multi-message schema generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generator_config_getter() {
+fn generator_config_getter() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_sbe::{GenerationConfig, Generator};
     let generator = Generator::new(GenerationConfig::new("cfg_test"));
     // Exercises Generator::config() (the getter was previously uncovered).
     let _ = generator.config();
+    Ok(())
 }
 
 #[test]
-fn generate_multi_schema_entry_point() {
+fn generate_multi_schema_entry_point() -> Result<(), Box<dyn std::error::Error>> {
     // generate_multi() generates multiple schemas into separate modules with
     // shared-type tracking. No other test exercises it.
     use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
@@ -204,10 +213,11 @@ fn generate_multi_schema_entry_point() {
     let ms = g.generate_multi(&[(&s1, "mod1"), (&s2, "mod2")]);
     let count = ms.modules().count();
     assert!(count >= 2, "expected >=2 modules, got {count}");
+    Ok(())
 }
 
 #[test]
-fn generate_coverage_edges_schema() {
+fn generate_coverage_edges_schema() -> Result<(), Box<dyn std::error::Error>> {
     // coverage-edges.xml exercises: group-name dedup, constant set field,
     // and BooleanType in a group entry (the _bool accessor).
     use std::path::PathBuf;
@@ -215,10 +225,11 @@ fn generate_coverage_edges_schema() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schemas/coverage-edges.xml");
     let (_s, src) = generate(&path, "covedges");
     syn::parse_file(&src).expect("coverage-edges generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generate_custom_header_type_schema() {
+fn generate_custom_header_type_schema() -> Result<(), Box<dyn std::error::Error>> {
     // custom-header-type.xml uses headerType="foo" (not "messageHeader"). This
     // exercises the MessageHeader type-alias codegen branch (line 217).
     use std::path::PathBuf;
@@ -229,10 +240,11 @@ fn generate_custom_header_type_schema() {
         src.contains("pub type MessageHeader = Foo"),
         "custom header type alias"
     );
+    Ok(())
 }
 
 #[test]
-fn generate_constant_value_schema() {
+fn generate_constant_value_schema() -> Result<(), Box<dyn std::error::Error>> {
     // constant-value-types.xml has message fields of presence="constant" with
     // float, double, and int64 types. Generating it covers the constant_value_expr
     // formatting branches (f32/f64/i64 format strings, 537/541/544).
@@ -241,20 +253,22 @@ fn generate_constant_value_schema() {
         .join("tests/fixtures/schemas/constant-value-types.xml");
     let (_s, src) = generate(&path, "const_vals");
     syn::parse_file(&src).expect("constant-value-types generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generate_constant_set_field() {
+fn generate_constant_set_field() -> Result<(), Box<dyn std::error::Error>> {
     // constant-set-field.xml has a SET field with presence="constant".
     use std::path::PathBuf;
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/schemas/constant-set-field.xml");
     let (_s, src) = generate(&path, "const_set");
     syn::parse_file(&src).expect("constant-set-field generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generate_vardata_without_max_length() {
+fn generate_vardata_without_max_length() -> Result<(), Box<dyn std::error::Error>> {
     // vardata-no-maxlength.xml has a custom var-data encoding whose length
     // field (uint8, no maxValue) gives max_length=None, triggering the
     // else branch of the var-data accessor generation.
@@ -263,10 +277,11 @@ fn generate_vardata_without_max_length() {
         .join("tests/fixtures/schemas/vardata-no-maxlength.xml");
     let (_s, src) = generate(&path, "vd_nomax");
     syn::parse_file(&src).expect("vardata-no-maxlength generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generate_schema_with_include_file() {
+fn generate_schema_with_include_file() -> Result<(), Box<dyn std::error::Error>> {
     // Exercises the include processing code path in read_include_file +
     // parse_schema (lines 540-564 in xml.rs). types-include.xml defines
     // types referenced by schema-with-include.xml.
@@ -275,10 +290,11 @@ fn generate_schema_with_include_file() {
         .join("tests/fixtures/schemas/schema-with-include.xml");
     let (_s, src) = generate(&path, "schema_with_inc");
     syn::parse_file(&src).expect("schema-with-include generates valid Rust");
+    Ok(())
 }
 
 #[test]
-fn generate_group_entry_with_composite_enum_set_fields() {
+fn generate_group_entry_with_composite_enum_set_fields() -> Result<(), Box<dyn std::error::Error>> {
     // group-entry-field-types.xml has a group whose entry has fields of type
     // Composite (Inner), Enum (Colour), and Set (Flags). Covers the
     // FieldType::Composite/Enum/Set size arms in group encoder/decoder.
@@ -287,12 +303,13 @@ fn generate_group_entry_with_composite_enum_set_fields() {
         .join("tests/fixtures/schemas/group-entry-field-types.xml");
     let (_s, src) = generate(&path, "gentry");
     syn::parse_file(&src).expect("group-entry-field-types generates valid Rust");
+    Ok(())
 }
 
 // ── Wire decode (binary fixture) ─────────────────────────────────────
 
 #[test]
-fn decode_baseline_fixture() {
+fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
     run_fixture_test(
         "baseline_decode",
         &Paths::example_schema(),
@@ -384,12 +401,13 @@ fn decode_baseline_fixture() {
         assert_eq!(b"abcdef", activation_code, "activationCode");
         "#,
     );
+    Ok(())
 }
 
 // ── Display output verification ───────────────────────────────────────
 
 #[test]
-fn decoder_display() {
+fn decoder_display() -> Result<(), Box<dyn std::error::Error>> {
     run_fixture_test(
         "display_test",
         &Paths::example_schema(),
@@ -410,12 +428,13 @@ fn decoder_display() {
         assert!(s.ends_with(" }"), "display ends with }}");
         "#,
     );
+    Ok(())
 }
 
 // ── Encode from scratch and verify round-trip decode ─────────────────
 
 #[test]
-fn encode_baseline_roundtrip() {
+fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     run_fixture_test(
         "baseline_encode",
         &Paths::example_schema(),
@@ -529,12 +548,13 @@ fn encode_baseline_roundtrip() {
         assert_eq!(b"abcdef", activation_code, "rt.activationCode");
         "#,
     );
+    Ok(())
 }
 
 // ── Byte-exact encode (scalar header fields, full message) ───────────
 
 #[test]
-fn encode_byte_exact_scalar() {
+fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
     run_fixture_test(
         "scalar_byte_exact",
         &Paths::example_schema(),
@@ -586,12 +606,13 @@ fn encode_byte_exact_scalar() {
         );
         "#,
     );
+    Ok(())
 }
 
 // ── Composite byte-exact encode (Engine) ──────────────────────────────
 
 #[test]
-fn composite_byte_exact_engine() {
+fn composite_byte_exact_engine() -> Result<(), Box<dyn std::error::Error>> {
     run_fixture_test(
         "engine_byte_exact",
         &Paths::example_schema(),
@@ -619,12 +640,13 @@ fn composite_byte_exact_engine() {
         );
         "#,
     );
+    Ok(())
 }
 
 // ── Zero-parse schemaId extraction ───────────────────────────────────
 
 #[test]
-fn schema_id_from_header_car_example() {
+fn schema_id_from_header_car_example() -> Result<(), Box<dyn std::error::Error>> {
     run_fixture_test(
         "schema_id_from_header",
         &Paths::example_schema(),
@@ -637,12 +659,13 @@ fn schema_id_from_header_car_example() {
         assert_eq!(None, schema_id_from_header(&[0u8; 1]), "too short buffer");
         "#,
     );
+    Ok(())
 }
 
 // ── Constants verification ───────────────────────────────────────────
 
 #[test]
-fn constants_match_upstream() {
+fn constants_match_upstream() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
     assert!(src.contains("pub const SCHEMA_ID: u16 = 1;"));
@@ -650,12 +673,13 @@ fn constants_match_upstream() {
     assert!(src.contains("pub const TEMPLATE_ID: u16 = 1;"));
     // 35 fixed scalars + 10-byte Engine (with <ref> + nested BoostType).
     assert!(src.contains("pub const BLOCK_LENGTH: usize = 45;"));
+    Ok(())
 }
 
 // ── Group decoder is_empty() inherent method ──────────────────────
 
 #[test]
-fn group_decoder_is_empty() {
+fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "is_empty_group");
     compile_and_run(
         "is_empty_group",
@@ -706,6 +730,7 @@ fn group_decoder_is_empty() {
         assert!(!car2.into_fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
     "#,
     );
+    Ok(())
 }
 
 // ── iter_fast (todo 109) — DELETED ─────────────────────────────────
@@ -722,7 +747,7 @@ fn group_decoder_is_empty() {
 // ── compute_encoded_length (todo 116) ────────────────────────────────
 
 #[test]
-fn compute_encoded_length_matches_actual() {
+fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "pre_encode_len");
     compile_and_run(
         "pre_encode_len",
@@ -769,12 +794,13 @@ fn compute_encoded_length_matches_actual() {
         assert_eq!(full_len, car.encoded_length_with_header(), "full_len mismatch");
     "#,
     );
+    Ok(())
 }
 
 // ── entries() iterator for fixed-entry groups (todo 114) ─────────────
 
 #[test]
-fn fixed_entry_group_entries_iterator() {
+fn fixed_entry_group_entries_iterator() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "entries_iter");
     compile_and_run(
         "entries_iter",
@@ -828,12 +854,13 @@ fn fixed_entry_group_entries_iterator() {
         assert!(accel.next().is_none());
     "#,
     );
+    Ok(())
 }
 
 // ── array accessor fast path (todo 108) ─────────────────────────────
 
 #[test]
-fn array_accessor_all_paths_return_same_values() {
+fn array_accessor_all_paths_return_same_values() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "array_paths");
     compile_and_run(
         "array_paths",
@@ -867,12 +894,13 @@ fn array_accessor_all_paths_return_same_values() {
         assert_eq!(vs, [97, 98, 99, 100, 101, 102]);
     "#,
     );
+    Ok(())
 }
 
 // ── Display group entries (todo 113) ──────────────────────────────────
 
 #[test]
-fn display_shows_group_entry_fields_not_just_count() {
+fn display_shows_group_entry_fields_not_just_count() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "display_entries");
     compile_and_run(
         "display_entries",
@@ -913,12 +941,13 @@ fn display_shows_group_entry_fields_not_just_count() {
         assert!(display.contains("1234"), "Display missing serial_number value: {display}");
     "#,
     );
+    Ok(())
 }
 
 // ── composite flyweight default (todo 112) ───────────────────────────
 
 #[test]
-fn composite_default_is_flyweight_as_struct_is_eager_copy() {
+fn composite_default_is_flyweight_as_struct_is_eager_copy() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "composite_api");
     compile_and_run(
         "composite_api",
@@ -965,12 +994,13 @@ fn composite_default_is_flyweight_as_struct_is_eager_copy() {
         }
     "#,
     );
+    Ok(())
 }
 
 // ── bound-check-disabled gates (todo 115) ────────────────────────────
 
 #[test]
-fn bounds_checks_active_by_default_nth_always_checked() {
+fn bounds_checks_active_by_default_nth_always_checked() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "bounds_default");
     compile_and_run(
         "bounds_default",
@@ -1001,10 +1031,11 @@ fn bounds_checks_active_by_default_nth_always_checked() {
         assert!(result.is_err(), "nth(999) on 0-entry group must return Err");
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn bounds_checks_disabled_with_feature_flag() {
+fn bounds_checks_disabled_with_feature_flag() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "bounds_disabled");
     compile_and_run_with_feature(
         "bounds_disabled",
@@ -1042,12 +1073,13 @@ fn bounds_checks_disabled_with_feature_flag() {
     "#,
         "bound-check-disabled",
     );
+    Ok(())
 }
 
 // ── #[cold] on error Display impls (todo 54) ──────────────────────────
 
 #[test]
-fn generated_code_has_cold_annotations() {
+fn generated_code_has_cold_annotations() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     // sbe_rt emits #[cold] on all three error Display impls
     let cold_count = src.matches("#[cold]").count();
@@ -1055,12 +1087,13 @@ fn generated_code_has_cold_annotations() {
         cold_count >= 3,
         "expected >=3 #[cold] annotations (DecodeError, EncodeError, VerifyError Display impls), found {cold_count}"
     );
+    Ok(())
 }
 
 // ── Const assertions in generated code (todo 56) ──────────────────────
 
 #[test]
-fn generated_code_has_const_assertions() {
+fn generated_code_has_const_assertions() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     assert!(
         src.contains(
@@ -1084,12 +1117,13 @@ fn generated_code_has_const_assertions() {
         src.contains("const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == "),
         "generated code must have a compile-time assertion for BLOCK_LENGTH == N"
     );
+    Ok(())
 }
 
 // ── BooleanType support (todo 58) ─────────────────────────────────────
 
 #[test]
-fn generated_code_has_boolean_from_impls() {
+fn generated_code_has_boolean_from_impls() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
     // BooleanType implements From<u8> (the underlying encoding type).
@@ -1129,12 +1163,13 @@ fn generated_code_has_boolean_from_impls() {
         src.contains("available_bool"),
         "Car decoder must have available_bool"
     );
+    Ok(())
 }
 
 // ── VarData maxLength enforcement (todo 30) ───────────────────────────
 
 #[test]
-fn generated_code_has_vardata_maxlength() {
+fn generated_code_has_vardata_maxlength() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     // EncodeError must have VarDataTooLong variant
     assert!(
@@ -1151,12 +1186,13 @@ fn generated_code_has_vardata_maxlength() {
         src.contains("var data too long for field"),
         "EncodeError Display must describe VarDataTooLong"
     );
+    Ok(())
 }
 
 // ── Composite `<ref>` members (SBE-REF) ──────────────────────────────────
 
 #[test]
-fn composite_ref_members_generated() {
+fn composite_ref_members_generated() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
     // Engine: capacity(2)+numCylinders(1)+manufacturerCode(3)+efficiency(1)
@@ -1201,11 +1237,12 @@ fn composite_ref_members_generated() {
         src.contains("pub struct Booster"),
         "Booster composite should exist as a top-level type"
     );
+    Ok(())
 }
 
 /// SBE-REF acceptance: parse → generate → compile → encode/decode Engine refs.
 #[test]
-fn composite_ref_engine_roundtrip_compile() {
+fn composite_ref_engine_roundtrip_compile() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "engine_ref_rt");
     compile_and_run(
         "engine_ref_rt",
@@ -1258,12 +1295,13 @@ fn composite_ref_engine_roundtrip_compile() {
         assert_eq!(e2.booster().horse_power(), 200);
         "#,
     );
+    Ok(())
 }
 
 // ── VarData maxLength runtime check (todo 30) ───────────────────────────
 
 #[test]
-fn vardata_maxlength_runtime() {
+fn vardata_maxlength_runtime() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "vardata_max_len");
     compile_and_run(
         "vardata_max_len",
@@ -1290,12 +1328,13 @@ fn vardata_maxlength_runtime() {
         // (unchecked paths removed — checked path is canonical)
         "#,
     );
+    Ok(())
 }
 
 // ── Boolean round-trip via bool setter/getter (todo 58) ──────────────────
 
 #[test]
-fn boolean_roundtrip_runtime() {
+fn boolean_roundtrip_runtime() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "bool_rt");
     compile_and_run(
         "bool_rt",
@@ -1352,12 +1391,13 @@ fn boolean_roundtrip_runtime() {
     // Also verify From<bool> conversion compiles and works
     assert!(src.contains("impl From<bool> for BooleanType"));
     assert!(src.contains("impl From<BooleanType> for bool"));
+    Ok(())
 }
 
 // ── Bound-check-disabled feature toggle (todo 07) ───────────────────────
 
 #[test]
-fn bounds_checking_switch() {
+fn bounds_checking_switch() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "bndchk");
 
     // Verify cfg gates exist in generated source
@@ -1426,12 +1466,13 @@ fn bounds_checking_switch() {
 
     compile_and_run("bndchk_off", &src, test_body);
     compile_and_run_with_feature("bndchk_on", &src, test_body, "bound-check-disabled");
+    Ok(())
 }
 
 // ── #[inline] on generated methods (todo 28) ────────────────────────────
 
 #[test]
-fn generated_code_has_inline_annotations() {
+fn generated_code_has_inline_annotations() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
     // Count total #[inline] annotations across all generated methods.
@@ -1505,12 +1546,13 @@ fn generated_code_has_inline_annotations() {
                 || s.starts_with("pub fn encoded_length_with_header(")),
         "encoder `encoded_length` missing #[inline]"
     );
+    Ok(())
 }
 
 // ── #[must_use] on encoder types and methods (todo 28) ──────────────────
 
 #[test]
-fn generated_code_has_must_use_annotations() {
+fn generated_code_has_must_use_annotations() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
     let count_plain = src.matches("#[must_use]").count();
@@ -1580,12 +1622,13 @@ fn generated_code_has_must_use_annotations() {
             .any(|s| s.starts_with("pub fn add<") && s.contains("Result")),
         "group encoder `add()` missing #[must_use]"
     );
+    Ok(())
 }
 
 // ── Static HEADER_TEMPLATE and GROUP_DIM_TEMPLATE (todo 39) ──────────
 
 #[test]
-fn static_header_templates_exist() {
+fn static_header_templates_exist() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "static_tpl");
 
     // Source: verify const declarations
@@ -1636,10 +1679,11 @@ fn static_header_templates_exist() {
         assert_eq!(version, 0, "header version must be 0");
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn encoder_wrap_short_buffer_returns_error() {
+fn encoder_wrap_short_buffer_returns_error() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "short_buf");
     compile_and_run(
         "short_buf",
@@ -1667,10 +1711,11 @@ fn encoder_wrap_short_buffer_returns_error() {
         let _encoder = CarEncoder::wrap_and_apply_header(&mut exact, 0).unwrap();
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn incomplete_encoder_has_no_complete_bytes() {
+fn incomplete_encoder_has_no_complete_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "incomplete_bytes");
     compile_fails(
         "incomplete_bytes",
@@ -1682,10 +1727,11 @@ fn incomplete_encoder_has_no_complete_bytes() {
         let _ = encoder.as_bytes();
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn u8_dimension_type_generates_correctly() {
+fn u8_dimension_type_generates_correctly() -> Result<(), Box<dyn std::error::Error>> {
     let schema_path = Paths::sbe_tool_test_resource("u8-dimension-schema.xml");
     let (_schema, src) = generate(&schema_path, "u8dim");
 
@@ -1697,10 +1743,11 @@ fn u8_dimension_type_generates_correctly() {
 
     // Verify the generated code compiles
     syn::parse_file(&src).expect("generated code for u8 schema is not valid Rust");
+    Ok(())
 }
 
 #[test]
-fn constant_field_in_message_header_does_not_affect_offsets() {
+fn constant_field_in_message_header_does_not_affect_offsets() -> Result<(), Box<dyn std::error::Error>> {
     let schema_path = Paths::sbe_tool_test_resource("constant-header-field.xml");
     let (_schema, src) = generate(&schema_path, "consthdr");
 
@@ -1718,12 +1765,13 @@ fn constant_field_in_message_header_does_not_affect_offsets() {
 
     // Verify the generated code is valid Rust
     syn::parse_file(&src).expect("generated code is not valid Rust");
+    Ok(())
 }
 
 // ── Versioning forward/backward compatibility (todo 04) ────────────────
 
 #[test]
-fn forward_compat_v2_decoder_reads_v1_bytes() {
+fn forward_compat_v2_decoder_reads_v1_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let v1_path = Paths::sbe_tool_test_resource("versioned-message-v1.xml");
     let v2_path = Paths::sbe_tool_test_resource("versioned-message-v2.xml");
     let (_s1, v1_src) = generate(&v1_path, "versmsg_v1");
@@ -1761,10 +1809,11 @@ fn forward_compat_v2_decoder_reads_v1_bytes() {
         assert_eq!(s1, b"v1data", "String1 should survive forward compat");
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn backward_compat_v1_decoder_reads_v2_bytes() {
+fn backward_compat_v1_decoder_reads_v2_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let v1_path = Paths::sbe_tool_test_resource("versioned-message-v1.xml");
     let v2_path = Paths::sbe_tool_test_resource("versioned-message-v2.xml");
     let (_s1, v1_src) = generate(&v1_path, "versmsg_v1");
@@ -1801,12 +1850,13 @@ fn backward_compat_v1_decoder_reads_v2_bytes() {
         assert_eq!(s1, b"v2extra", "String1 should be at correct tail offset after V2 fixed fields");
     "#,
     );
+    Ok(())
 }
 
 // ── AnyMessage dispatch + FrameCursor (todo 05) ──────────────────────
 
 #[test]
-fn anymessage_decode_dispatches_by_template_id() {
+fn anymessage_decode_dispatches_by_template_id() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "am_decode");
     compile_and_run(
         "am_decode",
@@ -1840,10 +1890,11 @@ fn anymessage_decode_dispatches_by_template_id() {
         }
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn anymessage_decode_frame_validates_length() {
+fn anymessage_decode_frame_validates_length() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "am_frame");
     compile_and_run(
         "am_frame",
@@ -1882,10 +1933,11 @@ fn anymessage_decode_frame_validates_length() {
         assert!(result.is_err(), "decode_frame with insufficient frame_len must error");
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn anymessage_unknown_template_forwards_payload() {
+fn anymessage_unknown_template_forwards_payload() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "am_unknown");
     compile_and_run(
         "am_unknown",
@@ -1917,10 +1969,11 @@ fn anymessage_unknown_template_forwards_payload() {
         }
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn framecursor_iterates_length_prefixed_frames() {
+fn framecursor_iterates_length_prefixed_frames() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fc_iter");
     compile_and_run(
         "fc_iter",
@@ -1983,10 +2036,11 @@ fn framecursor_iterates_length_prefixed_frames() {
         }
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn sbemessage_trait_provides_constants() {
+fn sbemessage_trait_provides_constants() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "sbe_trait");
     compile_and_run(
         "sbe_trait",
@@ -1998,45 +2052,50 @@ fn sbemessage_trait_provides_constants() {
         assert_eq!(CarDecoder::BLOCK_LENGTH, 45);
     "#,
     );
+    Ok(())
 }
 
 // ── Real-world schema compilation (todo 19) ──────────────────────────
 
 #[test]
-fn binance_spot_schema_compiles() {
+fn binance_spot_schema_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let schema_path = Paths::sbe_tool_test_resource("binance_spot_3_5.xml");
     let (_schema, src) = generate(&schema_path, "binance_spot");
     syn::parse_file(&src).expect("Binance spot schema must generate valid Rust");
     assert!(src.contains("pub mod prelude"));
+    Ok(())
 }
 
 #[test]
-fn cme_fix_binary_schema_compiles() {
+fn cme_fix_binary_schema_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let schema_path = Paths::sbe_tool_test_resource("cme_templates_FixBinary.xml");
     let (_schema, src) = generate(&schema_path, "cme_fix");
     syn::parse_file(&src).expect("CME FIX Binary schema must generate valid Rust");
     assert!(src.contains("pub mod prelude"));
+    Ok(())
 }
 
 #[test]
-fn fix_message_samples_schema_compiles() {
+fn fix_message_samples_schema_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let schema_path = Paths::sbe_tool_test_resource("fix-message-samples.xml");
     let (_schema, src) = generate(&schema_path, "fix_samples");
     syn::parse_file(&src).expect("FIX message samples schema must generate valid Rust");
+    Ok(())
 }
 
 #[test]
-fn ilink_binary_schema_compiles() {
+fn ilink_binary_schema_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let schema_path = Paths::sbe_tool_test_resource("ilinkbinary.xml");
     let (_schema, src) = generate(&schema_path, "ilink");
     syn::parse_file(&src).expect("iLink Binary schema must generate valid Rust");
     assert!(src.contains("pub mod prelude"));
+    Ok(())
 }
 
 // ── Group entry wire blockLength versioning (todo 145) ────────────────
 
 #[test]
-fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() {
+fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() -> Result<(), Box<dyn std::error::Error>> {
     let v1_path = Paths::sbe_tool_test_resource("group-versioning-v1.xml");
     let v2_path = Paths::sbe_tool_test_resource("group-versioning-v2.xml");
     let (_s1, v1_src) = generate(&v1_path, "grpvers_v1");
@@ -2080,10 +2139,11 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() {
             "trailer must be at correct offset after V1-size group entries");
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn var_data_after_version_mismatched_group_at_correct_offset() {
+fn var_data_after_version_mismatched_group_at_correct_offset() -> Result<(), Box<dyn std::error::Error>> {
     let v2_path = Paths::sbe_tool_test_resource("group-versioning-v2.xml");
     let v1_path = Paths::sbe_tool_test_resource("group-versioning-v1.xml");
     let (_s1, v2_src) = generate(&v2_path, "grpvers_v2b");
@@ -2127,6 +2187,7 @@ fn var_data_after_version_mismatched_group_at_correct_offset() {
             "trailer must be at correct offset after V2-size group entries");
     "#,
     );
+    Ok(())
 }
 
 // ── Regression: upstream issue schemas (todo 21) ─────────────────────────
@@ -2134,7 +2195,7 @@ fn var_data_after_version_mismatched_group_at_correct_offset() {
 /// Every upstream issue-*.xml schema must either parse cleanly or produce
 /// a structured error (never panic). Phase 2 regression gate.
 #[test]
-fn upstream_issue_schemas_parse_or_error_gracefully() {
+fn upstream_issue_schemas_parse_or_error_gracefully() -> Result<(), Box<dyn std::error::Error>> {
     let schemas: &[(&str, bool)] = &[
         ("issue435.xml", true),
         ("issue472.xml", true),
@@ -2192,12 +2253,13 @@ fn upstream_issue_schemas_parse_or_error_gracefully() {
         "issue schemas: {parsed} parsed, {errored} errored ({} total)",
         parsed + errored
     );
+    Ok(())
 }
 
 // ── Performance regression locks (prevent reintroduction of slow shapes) ──
 
 #[test]
-fn generated_encoder_has_no_phantomdata_or_state_generic() {
+fn generated_encoder_has_no_phantomdata_or_state_generic() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     assert!(
         !src.contains("core::marker::PhantomData"),
@@ -2211,10 +2273,11 @@ fn generated_encoder_has_no_phantomdata_or_state_generic() {
         !src.contains("State ="),
         "encoder struct must not have a State generic parameter"
     );
+    Ok(())
 }
 
 #[test]
-fn generated_encoder_has_concrete_stage_structs() {
+fn generated_encoder_has_concrete_stage_structs() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     assert!(
         src.contains("pub struct CarAfterFuelFigures"),
@@ -2224,19 +2287,21 @@ fn generated_encoder_has_concrete_stage_structs() {
         src.contains("pub struct CarComplete"),
         "encoder must generate CarComplete terminal struct"
     );
+    Ok(())
 }
 
 #[test]
-fn generated_code_uses_one_slice_indexing() {
+fn generated_code_uses_one_slice_indexing() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     assert!(
         !src.contains("[offset..][.."),
         "generated code must use one-slice indexing [offset..offset+N], not [offset..][..N]"
     );
+    Ok(())
 }
 
 #[test]
-fn generated_decoder_has_consuming_stages_and_rewind() {
+fn generated_decoder_has_consuming_stages_and_rewind() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     // DECISIONS.md §10: the out-of-order skip_to_<later>() surface is removed.
     assert!(
@@ -2252,21 +2317,23 @@ fn generated_decoder_has_consuming_stages_and_rewind() {
         src.contains("pub fn rewind(self) -> Self"),
         "decoder must have consuming rewind(self) returning Self"
     );
+    Ok(())
 }
 
 #[test]
-fn generated_decoder_validates_template_and_schema_id() {
+fn generated_decoder_validates_template_and_schema_id() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     assert!(
         src.contains("TEMPLATE_ID") && src.contains("SCHEMA_ID"),
         "decoder wrap_and_apply_header must check both template_id and schema_id"
     );
+    Ok(())
 }
 
 // ── Task 4: nested-message decode via var-data ──────────────────────────
 
 #[test]
-fn nested_message_decode_via_vardata() {
+fn nested_message_decode_via_vardata() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/nested-message-payload.xml"
@@ -2313,11 +2380,12 @@ fn nested_message_decode_via_vardata() {
         assert_eq!(complete.encoded_length_with_header(), outer_len);
     "#,
     );
+    Ok(())
 }
 
 /// `into_payload_as_message` only exists after preceding fields are consumed.
 #[test]
-fn nested_message_as_message_requires_ordered_consumption() {
+fn nested_message_as_message_requires_ordered_consumption() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/nested-message-payload.xml"
@@ -2335,10 +2403,11 @@ fn nested_message_as_message_requires_ordered_consumption() {
         let _ = dec.into_payload_as_message();
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn bounded_nested_payload_encode_via_with() {
+fn bounded_nested_payload_encode_via_with() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/nested-message-payload.xml"
@@ -2381,12 +2450,13 @@ fn bounded_nested_payload_encode_via_with() {
         }
     "#,
     );
+    Ok(())
 }
 
 // ── Task 6: SbeDecimal converter seam ──────────────────────────────────
 
 #[test]
-fn decimal_converter_enable_config() {
+fn decimal_converter_enable_config() -> Result<(), Box<dyn std::error::Error>> {
     let config =
         ergo_sbe::GenerationConfig::new("decimal_test").enable_decimal_converters("Decimal");
     assert_eq!(config.decimal_composites, vec!["Decimal"]);
@@ -2395,10 +2465,11 @@ fn decimal_converter_enable_config() {
             .decimal_composites
             .is_empty()
     );
+    Ok(())
 }
 
 #[test]
-fn decimal_converter_emits_sbe_decimal_trait() {
+fn decimal_converter_emits_sbe_decimal_trait() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
@@ -2419,10 +2490,11 @@ fn decimal_converter_emits_sbe_decimal_trait() {
     );
     assert!(src.contains("fn try_from_sbe"), "try_from_sbe missing");
     assert!(src.contains("fn try_into_sbe"), "try_into_sbe missing");
+    Ok(())
 }
 
 #[test]
-fn decimal_converter_rejects_invalid_composite() {
+fn decimal_converter_rejects_invalid_composite() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="bad" id="99" version="0" byteOrder="littleEndian">
 <types>
@@ -2441,11 +2513,12 @@ fn decimal_converter_rejects_invalid_composite() {
         err,
         ergo_sbe::GenerateError::InvalidDecimalComposite { .. }
     ));
+    Ok(())
 }
 
 /// Non-existent composite name is rejected with "not found in schema".
 #[test]
-fn decimal_converter_rejects_missing_composite() {
+fn decimal_converter_rejects_missing_composite() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="bad" id="99" version="0" byteOrder="littleEndian">
 <types>
@@ -2463,11 +2536,12 @@ fn decimal_converter_rejects_missing_composite() {
         err,
         ergo_sbe::GenerateError::InvalidDecimalComposite { .. }
     ));
+    Ok(())
 }
 
 /// GenerateError renders a readable message via Display.
 #[test]
-fn generate_error_display_formats() {
+fn generate_error_display_formats() -> Result<(), Box<dyn std::error::Error>> {
     let err = ergo_sbe::GenerateError::InvalidDecimalComposite {
         name: "Decimal".into(),
         reason: "wrong layout".into(),
@@ -2476,11 +2550,12 @@ fn generate_error_display_formats() {
         err.to_string(),
         "invalid decimal composite 'Decimal': wrong layout"
     );
+    Ok(())
 }
 
 /// A registered decimal composite with fewer than two members is rejected.
 #[test]
-fn decimal_converter_rejects_single_member_composite() {
+fn decimal_converter_rejects_single_member_composite() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="bad" id="99" version="0" byteOrder="littleEndian">
 <types>
@@ -2499,6 +2574,7 @@ fn decimal_converter_rejects_single_member_composite() {
         err.to_string().contains("at least 2 members"),
         "unexpected error: {err}"
     );
+    Ok(())
 }
 
 /// The panicking `generate` wrapper still validates converter configuration.
@@ -2522,7 +2598,7 @@ fn generate_panics_on_invalid_decimal_composite() {
 /// Converter emission skips scalar fields, non-decimal composites, and
 /// messages without any decimal fields.
 #[test]
-fn decimal_converter_skips_non_decimal_fields_and_messages() {
+fn decimal_converter_skips_non_decimal_fields_and_messages() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="mixed" id="98" version="0" byteOrder="littleEndian">
 <types>
@@ -2560,12 +2636,13 @@ fn decimal_converter_skips_non_decimal_fields_and_messages() {
         !src.contains("pub fn pos<D: SbeDecimal>"),
         "non-decimal composite must not get a converter method"
     );
+    Ok(())
 }
 
 /// A var-data composite whose `length` member is not the first member still
 /// resolves the length field's max value.
 #[test]
-fn vardata_composite_with_length_not_first_member_generates() {
+fn vardata_composite_with_length_not_first_member_generates() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="revvar" id="97" version="0" byteOrder="littleEndian">
 <types>
@@ -2585,12 +2662,13 @@ fn vardata_composite_with_length_not_first_member_generates() {
     let g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("revvar"));
     let modules = g.try_generate(&schema).unwrap();
     assert!(!modules.modules().next().unwrap().source.is_empty());
+    Ok(())
 }
 
 /// `presence=constant` without a text value is invalid SBE and must fail parse
 /// (not panic in codegen).
 #[test]
-fn group_entry_constant_field_without_value_is_skipped() {
+fn group_entry_constant_field_without_value_is_skipped() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="novalconst" id="96" version="0" byteOrder="littleEndian">
 <types>
@@ -2612,12 +2690,13 @@ fn group_entry_constant_field_without_value_is_skipped() {
         msg.contains("constant") || msg.contains("EmptyConst"),
         "expected constant-value fault, got: {msg}"
     );
+    Ok(())
 }
 
 /// A schema whose headerType composite is absent falls back to the default
 /// header member names during generation.
 #[test]
-fn schema_without_header_composite_uses_default_member_names() {
+fn schema_without_header_composite_uses_default_member_names() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="nohdr" id="95" version="0" byteOrder="littleEndian">
 <types>
@@ -2631,6 +2710,7 @@ fn schema_without_header_composite_uses_default_member_names() {
             let g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("nohdr"));
             let modules = g.try_generate(&schema).unwrap();
             assert!(!modules.modules().next().unwrap().source.is_empty());
+            Ok(())
         }
         Err(e) => panic!("headerless schema rejected at parse: {e}"),
     }
@@ -2638,7 +2718,7 @@ fn schema_without_header_composite_uses_default_member_names() {
 
 /// Manual group entry via start_entry produces identical bytes to closure API.
 #[test]
-fn manual_start_entry_matches_closure() {
+fn manual_start_entry_matches_closure() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "start_entry_test");
     compile_and_run(
         "start_entry_test",
@@ -2687,10 +2767,11 @@ fn manual_start_entry_matches_closure() {
         assert_eq!(closure_bytes, manual_bytes);
     "#,
     );
+    Ok(())
 }
 
 #[test]
-fn decimal_converter_composite_roundtrip() {
+fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
@@ -2716,6 +2797,7 @@ fn decimal_converter_composite_roundtrip() {
         assert_eq!(size.exponent(), 0);
     "#,
     );
+    Ok(())
 }
 
 // ── Task 2: SbeDecimal converter wire accessors ───────────────────────
@@ -2723,7 +2805,7 @@ fn decimal_converter_composite_roundtrip() {
 /// When converter mode is enabled, Decimal-backed fields emit both raw
 /// `*_wire` accessors and generic converted methods.
 #[test]
-fn decimal_converter_emits_wire_and_generic_methods() {
+fn decimal_converter_emits_wire_and_generic_methods() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
@@ -2754,11 +2836,12 @@ fn decimal_converter_emits_wire_and_generic_methods() {
 
     // SbeDecimal trait present
     assert!(src.contains("pub trait SbeDecimal"), "trait missing");
+    Ok(())
 }
 
 /// Raw and converted paths produce identical wire bytes.
 #[test]
-fn decimal_converter_wire_and_generic_byte_identity() {
+fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
@@ -2791,12 +2874,13 @@ fn decimal_converter_wire_and_generic_byte_identity() {
         assert_eq!(sw.exponent(), 0);
     "#,
     );
+    Ok(())
 }
 
 // ── Task 7: try_fixed ──────────────────────────────────────────────────
 
 #[test]
-fn try_fixed_manual_equivalence() {
+fn try_fixed_manual_equivalence() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "try_fixed_eq");
     compile_and_run(
         "try_fixed_eq",
@@ -2832,13 +2916,14 @@ fn try_fixed_manual_equivalence() {
         assert_eq!(direct, fallible);
     "#,
     );
+    Ok(())
 }
 
 // ── Task 7/8/9 extended: compile-fail proofs ──────────────────────────
 
 /// Borrowed var-data slice must not escape a try_<data> callback (HRTB).
 #[test]
-fn callback_escape_try_data_is_compile_fail() {
+fn callback_escape_try_data_is_compile_fail() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/nested-message-payload.xml"
@@ -2862,11 +2947,12 @@ fn callback_escape_try_data_is_compile_fail() {
         });
     "#,
     );
+    Ok(())
 }
 
 /// A consumed encoder stage cannot be reused after a tail transition.
 #[test]
-fn consumed_encoder_stage_cannot_be_reused() {
+fn consumed_encoder_stage_cannot_be_reused() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/nested-message-payload.xml"
@@ -2883,13 +2969,14 @@ fn consumed_encoder_stage_cannot_be_reused() {
         outer.trace_id(8); // outer consumed by app_name(), cannot reuse
     "#,
     );
+    Ok(())
 }
 
 // ── Nested-message rejection proofs ───────────────────────────────────
 
 /// Unknown template in nested payload is forwarded as AnyMessage::Unknown.
 #[test]
-fn nested_message_rejects_malformed_payload() {
+fn nested_message_rejects_malformed_payload() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/nested-message-payload.xml"
@@ -2937,12 +3024,13 @@ fn nested_message_rejects_malformed_payload() {
         assert!(bad_result.is_err(), "wrong-schema payload must be rejected");
     "#,
     );
+    Ok(())
 }
 
 /// Recursive AppMessage payloads (same template as outer) are dispatched
 /// as AnyMessage::Outer, enabling explicit rejection by the application.
 #[test]
-fn nested_message_identifies_recursive_payload() {
+fn nested_message_identifies_recursive_payload() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/nested-message-payload.xml"
@@ -2977,12 +3065,13 @@ fn nested_message_identifies_recursive_payload() {
             "recursive Outer payload must be identifiable for rejection");
     "#,
     );
+    Ok(())
 }
 
 /// Group-entry Decimal fields get generic converted methods plus raw
 /// `*_wire`, exactly like ordinary fields (Task 2).
 #[test]
-fn decimal_converter_covers_group_entry_fields() {
+fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="entdec" id="94" version="0" byteOrder="littleEndian">
 <types>
@@ -3066,13 +3155,14 @@ fn decimal_converter_covers_group_entry_fields() {
         assert_eq!(entry.qty(), 7);
     "#,
     );
+    Ok(())
 }
 
 /// Independent exact fixed-scale adapter matrix (Task 2): positive/negative
 /// values, exponents 0/-8/-15/-18, overflow, and precision-loss rejection —
 /// implemented in a temporary crate against the generated trait only.
 #[test]
-fn decimal_converter_exact_adapter_matrix() {
+fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
@@ -3158,4 +3248,5 @@ fn decimal_converter_exact_adapter_matrix() {
         }
     "#,
     );
+    Ok(())
 }

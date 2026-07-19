@@ -27,7 +27,7 @@ fn builder() -> DynamicRecorderBuilder {
 }
 
 #[test]
-fn v1_build_rejects_decimal_array_column() {
+fn v1_build_rejects_decimal_array_column() -> Result<(), Box<dyn std::error::Error>> {
     let err = match DynamicRecorderBuilder::new("t")
         .field("bids", decimal_array())
         .build()
@@ -39,16 +39,20 @@ fn v1_build_rejects_decimal_array_column() {
         err,
         DynamicRecorderError::UnsupportedColumnType { .. }
     ));
+
+    Ok(())
 }
 
 #[test]
-fn v2_build_accepts_decimal_array_column() {
+fn v2_build_accepts_decimal_array_column() -> Result<(), Box<dyn std::error::Error>> {
     let rec = builder().build_v2().unwrap();
     assert_ne!(rec.schema_id(), 0);
+
+    Ok(())
 }
 
 #[test]
-fn record_into_roundtrips_mixed_exponent_arrays() {
+fn record_into_roundtrips_mixed_exponent_arrays() -> Result<(), Box<dyn std::error::Error>> {
     let rec = builder().build_v2().unwrap();
     let bids = [(500005i64, -1i8), (49_999_000_000i64, -6i8)];
     let asks = [(500015i64, -1i8)];
@@ -127,10 +131,12 @@ fn record_into_roundtrips_mixed_exponent_arrays() {
     // Symbol table carries the string bytes.
     let (symbols, _complete) = dec.into_symbol_table().unwrap();
     assert_eq!(&symbols[symbols.len() - 7..], b"BTCUSDT");
+
+    Ok(())
 }
 
 #[test]
-fn record_into_empty_array_and_null() {
+fn record_into_empty_array_and_null() -> Result<(), Box<dyn std::error::Error>> {
     let rec = builder().build_v2().unwrap();
     let empty: [(i64, i8); 0] = [];
     let values = [
@@ -163,10 +169,12 @@ fn record_into_empty_array_and_null() {
         n_vals += e.values().unwrap().count();
     }
     assert_eq!((n_arrays, n_vals), (1, 0), "one empty array entry");
+
+    Ok(())
 }
 
 #[test]
-fn record_into_value_count_mismatch() {
+fn record_into_value_count_mismatch() -> Result<(), Box<dyn std::error::Error>> {
     let rec = builder().build_v2().unwrap();
     let values = [DynamicValueRef::UInt64(1)];
     assert!(matches!(
@@ -178,10 +186,12 @@ fn record_into_value_count_mismatch() {
         rec.record_into(&mut buf, &values),
         Err(DynamicRecorderError::ValueCountMismatch { .. })
     ));
+
+    Ok(())
 }
 
 #[test]
-fn record_into_value_type_mismatch() {
+fn record_into_value_type_mismatch() -> Result<(), Box<dyn std::error::Error>> {
     let rec = builder().build_v2().unwrap();
     let bids = [(1i64, 0i8)];
     let values = [
@@ -195,10 +205,12 @@ fn record_into_value_type_mismatch() {
         rec.record_into(&mut buf, &values),
         Err(DynamicRecorderError::ValueTypeMismatch { .. })
     ));
+
+    Ok(())
 }
 
 #[test]
-fn record_into_buffer_too_short_is_error() {
+fn record_into_buffer_too_short_is_error() -> Result<(), Box<dyn std::error::Error>> {
     let rec = builder().build_v2().unwrap();
     let bids = [(500005i64, -1i8)];
     let values = [
@@ -210,10 +222,12 @@ fn record_into_buffer_too_short_is_error() {
     let len = rec.compute_encoded_length(&values).unwrap();
     let mut buf = vec![0u8; len - 1];
     assert!(rec.record_into(&mut buf, &values).is_err());
+
+    Ok(())
 }
 
 #[test]
-fn schema_into_roundtrips_column_metadata() {
+fn schema_into_roundtrips_column_metadata() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_clickhouse_persist::sbe::v2::DynamicSchemaV2Decoder;
 
     let rec = builder().build_v2().unwrap();
@@ -259,10 +273,12 @@ fn schema_into_roundtrips_column_metadata() {
     assert_eq!(table_name, b"l2book_dynamic");
     let (symbols, _complete) = dec.into_symbol_table().unwrap();
     assert_eq!(symbols, b"sequencesymbolbid_pricesask_prices");
+
+    Ok(())
 }
 
 #[test]
-fn v2_row_decodes_under_newer_acting_version() {
+fn v2_row_decodes_under_newer_acting_version() -> Result<(), Box<dyn std::error::Error>> {
     // A frame stamped with a NEWER schema version (acting version 2) must
     // still decode: all V2 row fields exist since version 0/1.
     let rec = builder().build_v2().unwrap();
@@ -288,10 +304,12 @@ fn v2_row_decodes_under_newer_acting_version() {
     let mut g = dec.into_uint64_fields().unwrap();
     let e = g.next().unwrap();
     assert_eq!((e.field_id(), e.value()), (0, 42));
+
+    Ok(())
 }
 
 #[test]
-fn record_into_covers_all_scalar_types_and_nullable() {
+fn record_into_covers_all_scalar_types_and_nullable() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_clickhouse_persist::sbe::v2::DynamicSchemaV2Decoder;
 
     let rec = DynamicRecorderBuilder::new("scalars")
@@ -352,10 +370,12 @@ fn record_into_covers_all_scalar_types_and_nullable() {
         cols,
         vec![(0, 1, 0, 0), (0, 3, 0, 0), (0, 4, 0, 0), (2, 6, 38, 18)]
     );
+
+    Ok(())
 }
 
 #[test]
-fn build_v2_rejects_empty_name_no_fields_and_unsupported_types() {
+fn build_v2_rejects_empty_name_no_fields_and_unsupported_types() -> Result<(), Box<dyn std::error::Error>> {
     assert!(matches!(
         DynamicRecorderBuilder::new("")
             .field("a", ColumnType::Int64)
@@ -372,10 +392,12 @@ fn build_v2_rejects_empty_name_no_fields_and_unsupported_types() {
             .build_v2(),
         Err(DynamicRecorderError::UnsupportedColumnType { .. })
     ));
+
+    Ok(())
 }
 
 #[test]
-fn v1_record_rejects_decimal_array_value_at_runtime() {
+fn v1_record_rejects_decimal_array_value_at_runtime() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_clickhouse_persist::dynamic::DynamicValue;
 
     let mut rec = DynamicRecorderBuilder::new("t")
@@ -389,10 +411,12 @@ fn v1_record_rejects_decimal_array_value_at_runtime() {
         err,
         DynamicRecorderError::UnsupportedColumnType { .. }
     ));
+
+    Ok(())
 }
 
 #[test]
-fn recorder_error_display_strings() {
+fn recorder_error_display_strings() -> Result<(), Box<dyn std::error::Error>> {
     let cases = [
         (
             DynamicRecorderError::ValueCountMismatch {
@@ -430,4 +454,6 @@ fn recorder_error_display_strings() {
         column_type: ColumnType::Date,
     };
     assert!(unsupported.to_string().contains("unsupported column type"));
+
+    Ok(())
 }

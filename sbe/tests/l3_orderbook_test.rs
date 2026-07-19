@@ -14,7 +14,7 @@ fn l3_schema() -> PathBuf {
 }
 
 #[test]
-fn l3_schema_generates_and_compiles() {
+fn l3_schema_generates_and_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3book");
     assert!(src.contains("L3BookDecoder"), "missing L3BookDecoder");
     assert!(src.contains("BidsDecoder"), "missing bids group decoder");
@@ -44,10 +44,12 @@ fn l3_schema_generates_and_compiles() {
         src.contains("compute_encoded_length"),
         "missing compute_encoded_length"
     );
+
+    Ok(())
 }
 
 #[test]
-fn l3_domain_objects_generated() {
+fn l3_domain_objects_generated() -> Result<(), Box<dyn std::error::Error>> {
     let ir = ergo_sbe::parse_file(&l3_schema()).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let mut config = ergo_sbe::GenerationConfig::new("l3book");
@@ -74,10 +76,12 @@ fn l3_domain_objects_generated() {
         src.contains("impl<'a> From<L3BookDecoder<'a>> for L3BookDomain"),
         "missing From impl"
     );
+
+    Ok(())
 }
 
 #[test]
-fn l3_roundtrip_encode_decode() {
+fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3book");
     compile_and_run(
         "l3_roundtrip",
@@ -135,10 +139,12 @@ fn l3_roundtrip_encode_decode() {
         println!("L3 orderbook roundtrip: PASSED");
         "#,
     );
+
+    Ok(())
 }
 
 #[test]
-fn l3_compute_encoded_length_positive() {
+fn l3_compute_encoded_length_positive() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3book");
     compile_and_run(
         "l3_len",
@@ -149,10 +155,12 @@ fn l3_compute_encoded_length_positive() {
         println!("compute_encoded_length(2 bids, 1 ask): {} bytes", body_len);
         "#,
     );
+
+    Ok(())
 }
 
 #[test]
-fn l3_roundtrip_3_orders_per_level() {
+fn l3_roundtrip_3_orders_per_level() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3book");
     compile_and_run(
         "l3_three",
@@ -191,10 +199,12 @@ fn l3_roundtrip_3_orders_per_level() {
         println!("3 orders per level: PASSED");
         "#,
     );
+
+    Ok(())
 }
 
 #[test]
-fn l3_roundtrip_12_orders_per_level() {
+fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3book");
     compile_and_run(
         "l3_twelve",
@@ -268,4 +278,6 @@ fn l3_roundtrip_12_orders_per_level() {
         println!("12 orders per level (bids + asks): PASSED");
         "#,
     );
+
+    Ok(())
 }

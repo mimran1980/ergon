@@ -16,7 +16,7 @@ struct Trade {
 }
 
 #[test]
-fn test_basic_schema() {
+fn test_basic_schema() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <Trade as Persist>::table_schema();
     // _persist_time auto-added by TableSchema::new
     assert_eq!(schema.columns.len(), 3);
@@ -41,10 +41,12 @@ fn test_basic_schema() {
             .col_type,
         ColumnType::UInt32
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_basic_encode_row() {
+fn test_basic_encode_row() -> Result<(), Box<dyn std::error::Error>> {
     let src = Trade {
         price: 100,
         qty: 10,
@@ -53,6 +55,8 @@ fn test_basic_encode_row() {
     src.encode_row(&mut dst);
     assert_eq!(dst.price, 100);
     assert_eq!(dst.qty, 10);
+
+    Ok(())
 }
 
 // ── Custom name ──────────────────────────────────────────────────────────────
@@ -64,10 +68,12 @@ struct Renamed {
 }
 
 #[test]
-fn test_custom_name() {
+fn test_custom_name() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <Renamed as Persist>::table_schema();
     assert!(schema.columns.iter().any(|c| c.name == "custom_name"));
     assert!(!schema.columns.iter().any(|c| c.name == "field"));
+
+    Ok(())
 }
 
 // ── Skip ─────────────────────────────────────────────────────────────────────
@@ -81,10 +87,12 @@ struct WithSkip {
 }
 
 #[test]
-fn test_skip() {
+fn test_skip() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithSkip as Persist>::table_schema();
     assert!(schema.columns.iter().any(|c| c.name == "included"));
     assert!(!schema.columns.iter().any(|c| c.name == "excluded"));
+
+    Ok(())
 }
 
 // ── Json annotation ──────────────────────────────────────────────────────────
@@ -97,7 +105,7 @@ struct WithJson {
 }
 
 #[test]
-fn test_json_column_type() {
+fn test_json_column_type() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithJson as Persist>::table_schema();
     let json_col = schema
         .columns
@@ -105,6 +113,8 @@ fn test_json_column_type() {
         .find(|c| c.name == "metadata")
         .unwrap();
     assert_eq!(json_col.col_type, ColumnType::Json);
+
+    Ok(())
 }
 
 // ── Type override ────────────────────────────────────────────────────────────
@@ -116,7 +126,7 @@ struct WithTypeOverride {
 }
 
 #[test]
-fn test_type_override() {
+fn test_type_override() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithTypeOverride as Persist>::table_schema();
     let col = schema.columns.iter().find(|c| c.name == "price").unwrap();
     assert_eq!(
@@ -126,6 +136,8 @@ fn test_type_override() {
             scale: 2
         }
     );
+
+    Ok(())
 }
 
 // ── Order by ─────────────────────────────────────────────────────────────────
@@ -138,12 +150,14 @@ struct WithOrderBy {
 }
 
 #[test]
-fn test_custom_order_by() {
+fn test_custom_order_by() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithOrderBy as Persist>::table_schema();
     assert_eq!(
         schema.order_by,
         vec!["price".to_string(), "qty".to_string()]
     );
+
+    Ok(())
 }
 
 // ── TTL ──────────────────────────────────────────────────────────────────────
@@ -156,11 +170,13 @@ struct WithTtl {
 }
 
 #[test]
-fn test_ttl_attribute() {
+fn test_ttl_attribute() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithTtl as Persist>::table_schema();
     let ttl = schema.ttl.expect("ttl should be Some");
     assert_eq!(ttl.column, "ts");
     assert_eq!(ttl.interval, "24 HOURS");
+
+    Ok(())
 }
 
 // ── Option<T> → Nullable ─────────────────────────────────────────────────────
@@ -172,7 +188,7 @@ struct WithOption {
 }
 
 #[test]
-fn test_option_nullable() {
+fn test_option_nullable() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithOption as Persist>::table_schema();
     let col = schema
         .columns
@@ -183,6 +199,8 @@ fn test_option_nullable() {
         col.col_type,
         ColumnType::Nullable(Box::new(ColumnType::UInt64))
     );
+
+    Ok(())
 }
 
 // ── Vec<u8> → String ─────────────────────────────────────────────────────────
@@ -193,10 +211,12 @@ struct WithBinary {
 }
 
 #[test]
-fn test_vec_u8_string() {
+fn test_vec_u8_string() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithBinary as Persist>::table_schema();
     let col = schema.columns.iter().find(|c| c.name == "blob").unwrap();
     assert_eq!(col.col_type, ColumnType::String);
+
+    Ok(())
 }
 
 // ── Vec<T> with array annotation (scalar element) ────────────────────────────
@@ -208,13 +228,15 @@ struct WithArray {
 }
 
 #[test]
-fn test_array_primitive() {
+fn test_array_primitive() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithArray as Persist>::table_schema();
     let col = schema.columns.iter().find(|c| c.name == "prices").unwrap();
     assert_eq!(
         col.col_type,
         ColumnType::Array(Box::new(ColumnType::UInt64))
     );
+
+    Ok(())
 }
 
 // ── Flatten nested struct ────────────────────────────────────────────────────
@@ -233,7 +255,7 @@ struct WithFlatten {
 }
 
 #[test]
-fn test_flatten_schema() {
+fn test_flatten_schema() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <WithFlatten as Persist>::table_schema();
     assert!(schema.columns.iter().any(|c| c.name == "inner_x"));
     assert!(schema.columns.iter().any(|c| c.name == "inner_y"));
@@ -241,10 +263,12 @@ fn test_flatten_schema() {
     // _persist_time auto-added
     assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
     assert_eq!(schema.columns.len(), 4);
+
+    Ok(())
 }
 
 #[test]
-fn test_flatten_encode_row() {
+fn test_flatten_encode_row() -> Result<(), Box<dyn std::error::Error>> {
     let src = WithFlatten {
         inner: InnerFields { x: 1, y: 2 },
         z: 3,
@@ -257,6 +281,8 @@ fn test_flatten_encode_row() {
     assert_eq!(dst.inner.x, 1);
     assert_eq!(dst.inner.y, 2);
     assert_eq!(dst.z, 3);
+
+    Ok(())
 }
 
 // ── All annotations combined (chrono feature) ─────────────────────────────────
@@ -281,7 +307,7 @@ mod full_example_tests {
     }
 
     #[test]
-    fn test_full_example_schema() {
+    fn test_full_example_schema() -> Result<(), Box<dyn std::error::Error>> {
         let schema = <FullExample as Persist>::table_schema();
         // expected: event_time, sym (Decimal), extra (Json), _persist_time = 5
         assert_eq!(schema.columns.len(), 5);
@@ -328,10 +354,12 @@ mod full_example_tests {
         assert!(!schema.columns.iter().any(|c| c.name == "internal"));
 
         assert_eq!(schema.order_by, vec!["event_time".to_string()]);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_full_example_encode_row() {
+    fn test_full_example_encode_row() -> Result<(), Box<dyn std::error::Error>> {
         let now = Utc::now();
         let src = FullExample {
             event_time: now,
@@ -354,6 +382,8 @@ mod full_example_tests {
         assert_eq!(dst.extra, "{\"note\":\"test\"}");
         // internal should NOT be overwritten because it has #[persist(skip)]
         assert_eq!(dst.internal, "original");
+    
+        Ok(())
     }
 }
 
@@ -365,7 +395,7 @@ struct Generic<T: Clone + 'static> {
 }
 
 #[test]
-fn test_generic_struct() {
+fn test_generic_struct() -> Result<(), Box<dyn std::error::Error>> {
     // Schema: value (type depends on T), _persist_time
     let schema = <Generic<u64> as Persist>::table_schema();
     assert_eq!(schema.columns.len(), 2);
@@ -379,6 +409,7 @@ fn test_generic_struct() {
             .col_type,
         ColumnType::UInt64
     );
+    Ok(())
 }
 
 // ── Combined array and flatten with generic ─────────────────────────────────
@@ -397,17 +428,19 @@ struct OuterGeneric<T: Clone + 'static> {
 }
 
 #[test]
-fn test_outer_generic_schema() {
+fn test_outer_generic_schema() -> Result<(), Box<dyn std::error::Error>> {
     let schema = <OuterGeneric<u64> as Persist>::table_schema();
     // Columns: inner_a (UInt64 via default), inner_b (UInt64), extra (UInt64), _persist_time
     assert_eq!(schema.columns.len(), 4);
     assert!(schema.columns.iter().any(|c| c.name == "inner_a"));
     assert!(schema.columns.iter().any(|c| c.name == "inner_b"));
     assert!(schema.columns.iter().any(|c| c.name == "extra"));
+
+    Ok(())
 }
 
 #[test]
-fn test_outer_generic_encode_row() {
+fn test_outer_generic_encode_row() -> Result<(), Box<dyn std::error::Error>> {
     let src = OuterGeneric {
         inner: InnerGen { a: 42u64, b: 100 },
         extra: 7,
@@ -420,4 +453,6 @@ fn test_outer_generic_encode_row() {
     assert_eq!(dst.inner.a, 42);
     assert_eq!(dst.inner.b, 100);
     assert_eq!(dst.extra, 7);
+
+    Ok(())
 }

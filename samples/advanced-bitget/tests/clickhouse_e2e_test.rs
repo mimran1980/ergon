@@ -8,7 +8,7 @@
 //! Docker). Run via `just test-clickhouse-live`; the recipe performs the
 //! preflight. These tests FAIL (not skip) when ClickHouse is unreachable.
 
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::Duration;
 
 use advanced_bitget::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED};
@@ -46,7 +46,7 @@ fn lvl(pm: i64, pe: i8, sm: i64, se: i8) -> Level {
 
 #[test]
 #[ignore = "requires live ClickHouse — run via just test-clickhouse-live"]
-fn e2e_ipc_to_clickhouse_exact_rows() {
+fn e2e_ipc_to_clickhouse_exact_rows() -> Result<(), Box<dyn std::error::Error>> {
     // ── Clean slate ────────────────────────────────────────────────────
     for t in ["l2book_typed", "l2book_dynamic", "trade"] {
         ch_query(&format!("DROP TABLE IF EXISTS {t}"));
@@ -61,11 +61,11 @@ fn e2e_ipc_to_clickhouse_exact_rows() {
     })
     .expect("driver");
     let ctx = rusteron_client::AeronContext::new().expect("ctx");
-    ctx.set_dir(&CString::new(driver.dir()).unwrap())
+    ctx.set_dir(&cformat!("{}", driver.dir()))
         .expect("dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
     aeron.start().expect("start");
-    let ch = CString::new(CHANNEL).unwrap();
+    let ch = CHANNEL;
     let pub_typed = aeron
         .async_add_exclusive_publication(&ch, STREAM_TYPED)
         .expect("pub")
@@ -185,11 +185,12 @@ fn e2e_ipc_to_clickhouse_exact_rows() {
         "9\t1700000000000000200\tBTCUSDT\t50000.5\t0.25\ttrue",
         "exact trade row mismatch"
     );
+    Ok(())
 }
 
 #[test]
 #[ignore = "requires live ClickHouse — run via just test-clickhouse-live"]
-fn batched_inserts_flush_on_threshold_and_shutdown() {
+fn batched_inserts_flush_on_threshold_and_shutdown() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::persistence::{RowSink, TradeRow};
 
     ch_query("DROP TABLE IF EXISTS trade");
@@ -216,4 +217,6 @@ fn batched_inserts_flush_on_threshold_and_shutdown() {
         "SELECT min(trade_id), max(trade_id), toString(any(price)) FROM trade FORMAT TabSeparated",
     );
     assert_eq!(extremes.trim(), "0\t299\t1.5");
+
+    Ok(())
 }

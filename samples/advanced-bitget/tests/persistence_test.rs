@@ -38,7 +38,7 @@ fn published_book(sequence: u64, bids: &[Level], asks: &[Level]) -> (Vec<u8>, Ve
 }
 
 #[test]
-fn matched_books_persist_to_both_tables() {
+fn matched_books_persist_to_both_tables() -> Result<(), Box<dyn std::error::Error>> {
     let bids = [lvl(500005, -1, 15, -1)];
     let asks = [lvl(500015, -1, 30, -1)];
     let (typed, dynamic, _schema) = published_book(7, &bids, &asks);
@@ -62,10 +62,12 @@ fn matched_books_persist_to_both_tables() {
     assert_eq!(row.ask_prices, vec![50_001_500_000_000_000_000_000_i128]);
     assert_eq!(p.counters().persisted_typed, 1);
     assert_eq!(p.counters().persisted_dynamic, 1);
+
+    Ok(())
 }
 
 #[test]
-fn mismatched_book_values_are_counted_not_persisted() {
+fn mismatched_book_values_are_counted_not_persisted() -> Result<(), Box<dyn std::error::Error>> {
     let bids_a = [lvl(500005, -1, 15, -1)];
     let bids_b = [lvl(999999, -1, 15, -1)];
     let (typed, _, _) = published_book(7, &bids_a, &[]);
@@ -78,10 +80,12 @@ fn mismatched_book_values_are_counted_not_persisted() {
     assert!(p.sink().l2book_typed.is_empty());
     assert!(p.sink().l2book_dynamic.is_empty());
     assert_eq!(p.counters().compare_failures, 1);
+
+    Ok(())
 }
 
 #[test]
-fn smaller_unmatched_sequence_is_dropped_and_counted() {
+fn smaller_unmatched_sequence_is_dropped_and_counted() -> Result<(), Box<dyn std::error::Error>> {
     let bids = [lvl(1, 0, 1, 0)];
     let (typed_1, _, _) = published_book(1, &bids, &[]);
     let (typed_3, dynamic_3, _) = published_book(3, &bids, &[]);
@@ -98,10 +102,12 @@ fn smaller_unmatched_sequence_is_dropped_and_counted() {
     assert_eq!(p.sink().l2book_typed.len(), 1);
     assert_eq!(p.sink().l2book_typed[0].sequence, 3);
     assert_eq!(p.counters().unmatched_dropped, 1);
+
+    Ok(())
 }
 
 #[test]
-fn trade_persists_directly() {
+fn trade_persists_directly() -> Result<(), Box<dyn std::error::Error>> {
     let mut pubr =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
     let ev = NormalizedEventRef::Trade {
@@ -125,10 +131,12 @@ fn trade_persists_directly() {
     assert_eq!(row.size, 250_000_000_000_000_000_i128);
     assert!(row.is_buy);
     assert_eq!(p.counters().persisted_trades, 1);
+
+    Ok(())
 }
 
 #[test]
-fn recursive_app_message_payload_is_rejected() {
+fn recursive_app_message_payload_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::normalized_app::AppMessageEncoder;
 
     // AppMessage whose payload is itself an AppMessage.
@@ -162,18 +170,21 @@ fn recursive_app_message_payload_is_rejected() {
         "unexpected error: {msg}"
     );
     assert_eq!(p.counters().decode_failures, 1);
+    Ok(())
 }
 
 #[test]
-fn malformed_bytes_are_decode_failures() {
+fn malformed_bytes_are_decode_failures() -> Result<(), Box<dyn std::error::Error>> {
     let mut p = ForegroundPersistor::new(InMemorySink::default());
     assert!(p.on_typed(&[0u8; 4]).is_err());
     assert!(p.on_dynamic(&[0u8; 4]).is_err());
     assert_eq!(p.counters().decode_failures, 2);
+
+    Ok(())
 }
 
 #[test]
-fn schema_message_on_dynamic_stream_is_recognised_not_a_row() {
+fn schema_message_on_dynamic_stream_is_recognised_not_a_row() -> Result<(), Box<dyn std::error::Error>> {
     let mut pubr =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
     pubr.publish_schema();
@@ -184,10 +195,12 @@ fn schema_message_on_dynamic_stream_is_recognised_not_a_row() {
     assert_eq!(p.counters().schemas_seen, 1);
     assert!(p.sink().l2book_dynamic.is_empty());
     assert_eq!(p.counters().decode_failures, 0);
+
+    Ok(())
 }
 
 #[test]
-fn wrong_template_on_dynamic_stream_is_rejected() {
+fn wrong_template_on_dynamic_stream_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
     // An AppMessage (typed schema/template) arriving on the dynamic stream.
     let bids = [lvl(1, 0, 1, 0)];
     let (typed, _, _) = published_book(1, &bids, &[]);
@@ -195,10 +208,12 @@ fn wrong_template_on_dynamic_stream_is_rejected() {
     let mut p = ForegroundPersistor::new(InMemorySink::default());
     assert!(p.on_dynamic(&typed).is_err());
     assert_eq!(p.counters().decode_failures, 1);
+
+    Ok(())
 }
 
 #[test]
-fn persist_error_display_strings() {
+fn persist_error_display_strings() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::decimal::DecimalConvertError;
     use advanced_bitget::persistence::PersistError;
 
@@ -222,16 +237,20 @@ fn persist_error_display_strings() {
             .to_string()
             .contains("sink failure")
     );
+
+    Ok(())
 }
 
 #[test]
-fn dec38_18_literals_are_exact() {
+fn dec38_18_literals_are_exact() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::persistence::dec38_18;
     assert_eq!(dec38_18(0), "0");
     assert_eq!(dec38_18(1_500_000_000_000_000_000), "1.5");
     assert_eq!(dec38_18(-1_500_000_000_000_000_000), "-1.5");
     assert_eq!(dec38_18(1), "0.000000000000000001");
     assert_eq!(dec38_18(50_000_500_000_000_000_000_000), "50000.5");
+
+    Ok(())
 }
 
 /// Sink whose writes fail — proves error mapping and surfacing.
@@ -263,7 +282,7 @@ impl advanced_bitget::persistence::RowSink for FailingSink {
 }
 
 #[test]
-fn sink_failures_surface_as_persist_errors() {
+fn sink_failures_surface_as_persist_errors() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::persistence::PersistError;
 
     let bids = [lvl(1, 0, 1, 0)];
@@ -292,10 +311,12 @@ fn sink_failures_surface_as_persist_errors() {
         PersistError::Sink(_)
     ));
     assert!(matches!(p.flush().unwrap_err(), PersistError::Sink(_)));
+
+    Ok(())
 }
 
 #[test]
-fn queue_bound_drops_oldest_unmatched() {
+fn queue_bound_drops_oldest_unmatched() -> Result<(), Box<dyn std::error::Error>> {
     // 1026 typed books with no dynamic counterparts overflow the 1024-entry
     // bounded queue; the oldest entries are dropped and counted.
     let mut pubr =
@@ -318,17 +339,21 @@ fn queue_bound_drops_oldest_unmatched() {
     }
     assert_eq!(p.counters().unmatched_dropped, 2, "1026 - 1024 dropped");
     assert!(p.sink().l2book_typed.is_empty());
+
+    Ok(())
 }
 
 #[test]
-fn in_memory_flush_counts() {
+fn in_memory_flush_counts() -> Result<(), Box<dyn std::error::Error>> {
     let mut p = ForegroundPersistor::new(InMemorySink::default());
     p.flush().unwrap();
     assert_eq!(p.sink().flushes, 1);
+
+    Ok(())
 }
 
 #[test]
-fn unknown_payload_template_is_rejected() {
+fn unknown_payload_template_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::normalized_app::AppMessageEncoder;
 
     // AppMessage whose payload is an 8-byte SBE header with template id 99.
@@ -353,10 +378,12 @@ fn unknown_payload_template_is_rejected() {
     let err = p.on_typed(&buf).unwrap_err();
     assert!(err.to_string().contains("unknown payload template"));
     assert_eq!(p.counters().decode_failures, 1);
+
+    Ok(())
 }
 
 #[test]
-fn smaller_dynamic_sequence_is_dropped_and_dynamic_queue_is_bounded() {
+fn smaller_dynamic_sequence_is_dropped_and_dynamic_queue_is_bounded() -> Result<(), Box<dyn std::error::Error>> {
     let bids = [lvl(1, 0, 1, 0)];
     let (_, dynamic_1, _) = published_book(1, &bids, &[]);
     let (typed_2, dynamic_2, _) = published_book(2, &bids, &[]);
@@ -388,10 +415,12 @@ fn smaller_dynamic_sequence_is_dropped_and_dynamic_queue_is_bounded() {
         p.on_dynamic(bytes).unwrap();
     }
     assert_eq!(p.counters().unmatched_dropped, 2);
+
+    Ok(())
 }
 
 #[test]
-fn malformed_dynamic_rows_report_structured_decode_errors() {
+fn malformed_dynamic_rows_report_structured_decode_errors() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_clickhouse_persist::sbe::v2::DynamicRowV2Encoder;
 
     // Row with an unexpected uint64 field id (9) for the publisher layout.
@@ -459,10 +488,12 @@ fn malformed_dynamic_rows_report_structured_decode_errors() {
     let mut p = ForegroundPersistor::new(InMemorySink::default());
     let err = p.on_dynamic(&buf).unwrap_err();
     assert!(err.to_string().contains("symbol table too short"));
+
+    Ok(())
 }
 
 #[test]
-fn clickhouse_connect_fails_cleanly_when_ping_rejects() {
+fn clickhouse_connect_fails_cleanly_when_ping_rejects() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::persistence::ClickHouseRowSink;
     use std::io::{Read, Write};
 
@@ -483,10 +514,12 @@ fn clickhouse_connect_fails_cleanly_when_ping_rejects() {
         Err(e) => e,
     };
     assert!(err.contains("ping failed"), "unexpected error: {err}");
+
+    Ok(())
 }
 
 #[test]
-fn unexpected_decimal_array_field_and_mismatched_lengths_are_rejected() {
+fn unexpected_decimal_array_field_and_mismatched_lengths_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_clickhouse_persist::sbe::v2::DynamicRowV2Encoder;
 
     fn row(build: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
@@ -568,10 +601,12 @@ fn unexpected_decimal_array_field_and_mismatched_lengths_are_rejected() {
     let mut p = ForegroundPersistor::new(InMemorySink::default());
     let err = p.on_dynamic(&mismatched).unwrap_err();
     assert!(err.to_string().contains("mismatched level array lengths"));
+
+    Ok(())
 }
 
 #[test]
-fn truncated_l2book_payload_is_a_decode_error() {
+fn truncated_l2book_payload_is_a_decode_error() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::normalized_app::AppMessageEncoder;
 
     let bids = [lvl(1, 0, 1, 0)];
@@ -600,10 +635,12 @@ fn truncated_l2book_payload_is_a_decode_error() {
         err,
         advanced_bitget::persistence::PersistError::Decode(_)
     ));
+
+    Ok(())
 }
 
 #[test]
-fn clickhouse_sql_errors_surface_with_status_and_body() {
+fn clickhouse_sql_errors_surface_with_status_and_body() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::persistence::ClickHouseRowSink;
     use std::io::{Read, Write};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -634,4 +671,6 @@ fn clickhouse_sql_errors_surface_with_status_and_body() {
     };
     assert!(err.contains("500"), "status surfaced: {err}");
     assert!(err.contains("boom"), "body surfaced: {err}");
+
+    Ok(())
 }

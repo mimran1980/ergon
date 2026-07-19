@@ -15,7 +15,7 @@ const MODULE: &str = "car_example";
 // ── todo 02: composite/enum/set wire parity ───────────────────────────
 
 #[test]
-fn enum_all_variants_roundtrip() {
+fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "enum_rt");
     compile_and_run(
         "enum_rt",
@@ -51,10 +51,12 @@ fn enum_all_variants_roundtrip() {
         assert_eq!(car2.discounted_model(), Model::C);
     "#,
     );
+
+    Ok(())
 }
 
 #[test]
-fn set_fields_roundtrip() {
+fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "set_rt");
     compile_and_run(
         "set_rt",
@@ -87,12 +89,14 @@ fn set_fields_roundtrip() {
         assert_eq!(extras.raw(), 6u8);
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 03: group/var-data wire parity ───────────────────────────────
 
 #[test]
-fn group_with_vardata_entries_roundtrip() {
+fn group_with_vardata_entries_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "group_vd_rt");
     compile_and_run(
         "group_vd_rt",
@@ -146,10 +150,12 @@ fn group_with_vardata_entries_roundtrip() {
         assert_eq!(ff_dec.remaining(), 1);
     "#,
     );
+
+    Ok(())
 }
 
 #[test]
-fn vardata_empty_and_max_roundtrip() {
+fn vardata_empty_and_max_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "vd_edge");
     compile_and_run(
         "vd_edge",
@@ -189,12 +195,14 @@ fn vardata_empty_and_max_roundtrip() {
         assert_eq!(activation, b"XYZ0123456789", "longer var-data");
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 01: scalar wire parity ───────────────────────────────────────
 
 #[test]
-fn all_scalar_accessor_paths() {
+fn all_scalar_accessor_paths() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "scalar_paths");
     compile_and_run(
         "scalar_paths",
@@ -222,12 +230,14 @@ fn all_scalar_accessor_paths() {
         assert_eq!(car2.serial_number(), 1234u64);
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 58: boolean support ──────────────────────────────────────────
 
 #[test]
-fn boolean_field_from_bool_impl() {
+fn boolean_field_from_bool_impl() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "bool_impl");
     compile_and_run(
         "bool_impl",
@@ -244,12 +254,14 @@ fn boolean_field_from_bool_impl() {
         assert!(!b2);
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 52: NULL/MIN/MAX constants ───────────────────────────────────
 
 #[test]
-fn null_min_max_constants_match_schema_values() {
+fn null_min_max_constants_match_schema_values() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "consts_val");
     // Source contains the constants
     assert!(src.contains("SERIAL_NUMBER_NULL"), "missing NULL constant");
@@ -287,12 +299,14 @@ fn null_min_max_constants_match_schema_values() {
         assert_eq!(PerformanceFiguresEntryDecoder::OCTANE_RATING_MAX, 110u8);
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 60: schema_id fast extract ───────────────────────────────────
 
 #[test]
-fn schema_id_from_header_extracts_correctly() {
+fn schema_id_from_header_extracts_correctly() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "schema_id");
     assert!(
         src.contains("fn schema_id_from_header"),
@@ -320,12 +334,14 @@ fn schema_id_from_header_extracts_correctly() {
         assert_eq!(id, 1u16); // Car schema id is 1
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 61: Display/Debug impls ──────────────────────────────────────
 
 #[test]
-fn display_includes_scalar_fields() {
+fn display_includes_scalar_fields() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "display_full");
     compile_and_run(
         "display_full",
@@ -356,12 +372,14 @@ fn display_includes_scalar_fields() {
         assert!(d.contains("bytes"), "var-data shows byte count: {d}");
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 66: constant field values ────────────────────────────────────
 
 #[test]
-fn constant_fields_return_correct_values() {
+fn constant_fields_return_correct_values() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "const_fields");
     compile_and_run(
         "const_fields",
@@ -387,12 +405,14 @@ fn constant_fields_return_correct_values() {
         assert_eq!(car2.discounted_model().raw(), 67u8); // 'C'
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 80: schema hash / SHA256 ─────────────────────────────────────
 
 #[test]
-fn schema_constants_present_and_nonzero() {
+fn schema_constants_present_and_nonzero() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "schema_consts");
     assert!(src.contains("SCHEMA_HASH"), "SCHEMA_HASH missing");
     assert!(src.contains("SCHEMA_SHA256"), "SCHEMA_SHA256 missing");
@@ -406,12 +426,14 @@ fn schema_constants_present_and_nonzero() {
         assert!(!SCHEMA_SHA256_HEX.is_empty(), "SCHEMA_SHA256_HEX non-empty");
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 03 + 84: encoder roundtrip with groups ───────────────────────
 
 #[test]
-fn encoder_roundtrip_with_groups_and_vardata() {
+fn encoder_roundtrip_with_groups_and_vardata() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "enc_rt");
     compile_and_run(
         "enc_rt",
@@ -475,12 +497,14 @@ fn encoder_roundtrip_with_groups_and_vardata() {
         assert_eq!(activation, b"RACE");
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 67 + 94: as_chunks + SoA for fixed-entry groups ─────────────
 
 #[test]
-fn fixed_entry_group_as_chunks_and_entries() {
+fn fixed_entry_group_as_chunks_and_entries() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "as_chunks");
     compile_and_run(
         "as_chunks",
@@ -527,12 +551,14 @@ fn fixed_entry_group_as_chunks_and_entries() {
         assert_eq!(entries.len(), 3);
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 69: buffer verify function ───────────────────────────────────
 
 #[test]
-fn verify_function_detects_invalid_messages() {
+fn verify_function_detects_invalid_messages() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "verify_fn");
     compile_and_run(
         "verify_fn",
@@ -557,12 +583,14 @@ fn verify_function_detects_invalid_messages() {
         assert!(CarDecoder::verify(&encoded[..5]).is_err());
     "#,
     );
+
+    Ok(())
 }
 
 // ── todo 93: float composite skips Eq/Ord/Hash ──────────────────────────
 
 #[test]
-fn float_composite_skips_eq_ord_hash() {
+fn float_composite_skips_eq_ord_hash() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::float_composite_schema(), "float_comp");
     // Float composite (FloatPair) should NOT derive Eq, Ord, or Hash.
     // Use " Eq," not "Eq," to avoid false match on "PartialEq,"
@@ -581,12 +609,14 @@ fn float_composite_skips_eq_ord_hash() {
     assert!(ip_pre.contains(" Eq,"), "IntPair should derive Eq");
     assert!(ip_pre.contains(" Ord,"), "IntPair should derive Ord");
     assert!(ip_pre.contains("Hash"), "IntPair should derive Hash");
+
+    Ok(())
 }
 
 // ── Error path tests (critical for trading system robustness) ──────────
 
 #[test]
-fn buffer_too_short_truncated_field() {
+fn buffer_too_short_truncated_field() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "buf_err");
     compile_and_run(
         "buf_err",
@@ -614,10 +644,12 @@ fn buffer_too_short_truncated_field() {
         assert!(CarDecoder::verify(&[]).is_err());
     "#,
     );
+
+    Ok(())
 }
 
 #[test]
-fn vardata_truncated_length_detected() {
+fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "vd_trunc");
     compile_and_run(
         "vd_trunc",
@@ -664,6 +696,8 @@ fn vardata_truncated_length_detected() {
         assert!(CarDecoder::verify(trunc_at_block_end).is_err());
     "#,
     );
+
+    Ok(())
 }
 
 // ── Raw accessor tests (HFT hot-path opts) ─────────────────────────────
@@ -738,7 +772,7 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
 // ── todo 121: endianness test matrix ──────────────────────────────────
 
 #[test]
-fn all_types_little_endian_roundtrip() {
+fn all_types_little_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::all_types_le_schema(), "all_types_le");
     // Verify source compiles and contains expected types
     assert!(src.contains("AllScalars"), "AllScalars composite missing");
@@ -821,10 +855,12 @@ fn all_types_little_endian_roundtrip() {
         assert_eq!(c.raw(), 2u8);
     "#,
     );
+
+    Ok(())
 }
 
 #[test]
-fn all_types_big_endian_roundtrip() {
+fn all_types_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::all_types_be_schema(), "all_types_be");
     assert!(src.contains("from_be_bytes"), "BE byte order missing");
     compile_and_run(
@@ -843,12 +879,14 @@ fn all_types_big_endian_roundtrip() {
         assert!(set.bit2());
     "#,
     );
+
+    Ok(())
 }
 
 // ── API contract: verify generated public surface is stable ────────────
 
 #[test]
-fn generated_api_has_expected_public_items() {
+fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::Error>> {
     // Verify the car example generates a consistent public API surface.
     // Catches accidental codegen changes that break user code.
     let (_schema, src) = generate(&Paths::example_schema(), "api_contract");
@@ -958,12 +996,14 @@ fn generated_api_has_expected_public_items() {
         src.contains("pub fn write_bytes"),
         "missing write_bytes helper"
     );
+
+    Ok(())
 }
 
 // ── Compatibility mode wiring (todo 65) ────────────────────────────────
 
 #[test]
-fn strict_and_extended_modes_produce_identical_output() {
+fn strict_and_extended_modes_produce_identical_output() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 2: prove CompatibilityMode plumbing works. Same schema →
     // same output when no extensions exist. When extensions are added,
     // they gate on WireCompatibleExtensions.
@@ -985,6 +1025,8 @@ fn strict_and_extended_modes_produce_identical_output() {
         ext_src.modules().next().unwrap().source,
         "Strict and WireCompatibleExtensions must produce identical output when no extensions exist"
     );
+
+    Ok(())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

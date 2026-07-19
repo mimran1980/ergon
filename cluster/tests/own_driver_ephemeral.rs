@@ -8,16 +8,16 @@ use ergo_aeron_cluster::codecs::cluster_codecs::{
     WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
 };
 use serial_test::serial;
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::Duration;
 
 #[test]
 #[serial]
-fn test_own_driver_udp_ephemeral_egress() {
+fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let client_dir = std::env::temp_dir().join(format!("eph-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&client_dir);
-    let dir_cstr = CString::new(client_dir.to_str().unwrap()).unwrap();
+    let dir_cstr = cformat!("{}", client_dir.display());
     let dc = rusteron_media_driver::AeronDriverContext::new().unwrap();
     dc.set_dir(&dir_cstr).unwrap();
     dc.set_dir_delete_on_shutdown(true).unwrap();
@@ -31,8 +31,8 @@ fn test_own_driver_udp_ephemeral_egress() {
 
     // Client egress on a SEPARATE high port (no conflict with cluster), ingress to cluster's port.
     let egress_port: u16 = 19099;
-    let egress_uri = CString::new(format!("aeron:udp?endpoint=localhost:{egress_port}")).unwrap();
-    let ingress_uri = CString::new(&cluster.ingress_channel[..]).unwrap();
+    let egress_uri = cformat!("aeron:udp?endpoint=localhost:{egress_port}");
+    let ingress_uri = cformat!("{}", cluster.ingress_channel);
 
     let egress = a
         .add_subscription(
@@ -91,4 +91,6 @@ fn test_own_driver_udp_ephemeral_egress() {
     eprintln!("own-driver UDP received SessionEvent from cluster: {got_event}");
     assert!(offered, "ingress offer never connected over cross-driver UDP");
     assert!(got_event, "no SessionEvent received over cross-driver UDP");
+
+    Ok(())
 }

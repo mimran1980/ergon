@@ -4,18 +4,18 @@ use ergo_aeron_cluster::codecs::cluster_codecs::{
     WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
 };
 use serial_test::serial;
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::Duration;
 
 fn connect_and_send(cluster: &ergo_aeron_cluster::TestCluster, credentials: &[u8]) -> (bool, bool) {
-    let dir_cstr = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
+    let dir_cstr = cformat!("{}", cluster.aeron_dir().display());
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir_cstr).unwrap();
     let a = rusteron_client::Aeron::new(&ctx).unwrap();
     a.start().unwrap();
 
-    let ing = CString::new(&cluster.ingress_channel[..]).unwrap();
-    let egr = CString::new(&cluster.egress_channel[..]).unwrap();
+    let ing = cformat!("{}", cluster.ingress_channel);
+    let egr = cformat!("{}", cluster.egress_channel);
 
     let egress = a
         .add_subscription(
@@ -79,18 +79,20 @@ fn connect_and_send(cluster: &ergo_aeron_cluster::TestCluster, credentials: &[u8
 
 #[test]
 #[serial]
-fn test_connect_with_null_credentials() {
+fn test_connect_with_null_credentials() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let (sent, received) = connect_and_send(&cluster, b"");
     assert!(
         sent || received,
         "null credentials connect failed: sent={sent} received={received}"
     );
+
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_connect_with_simple_credentials() {
+fn test_connect_with_simple_credentials() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
     // Default authenticator accepts any credentials in SingleNodeCluster config
     let (sent, received) = connect_and_send(&cluster, b"admin:password");
@@ -98,14 +100,18 @@ fn test_connect_with_simple_credentials() {
         sent || received,
         "credentialed connect failed: sent={sent} received={received}"
     );
+
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_two_connections_to_same_cluster() {
+fn test_two_connections_to_same_cluster() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let (s1, r1) = connect_and_send(&cluster, b"");
     let (s2, r2) = connect_and_send(&cluster, b"");
     assert!(s1 || r1, "first connect failed");
     assert!(s2 || r2, "second connect failed");
+
+    Ok(())
 }

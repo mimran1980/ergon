@@ -13,10 +13,9 @@
 //! Hot path: [`AeronCluster::try_claim`] writes SessionMessageHeader via ErgoSBE
 //! into the claim; fill app payload then [`ClusterClaim::commit`].
 
-use std::ffi::CString;
 use std::time::{Duration, Instant};
 
-use rusteron_client::{Aeron, AeronClaim, AeronContext, AeronExclusivePublication, AeronSubscription, Handlers};
+use rusteron_client::{cformat, Aeron, AeronClaim, AeronContext, AeronExclusivePublication, AeronSubscription, Handlers};
 
 use crate::codecs::ergo_codecs::{
     ChallengeResponseEncoder, SessionCloseRequestEncoder, SessionConnectRequestEncoder, SessionKeepAliveEncoder,
@@ -60,9 +59,7 @@ impl AeronCluster {
     pub fn connect(builder: &crate::SessionBuilder, aeron_dir: &str) -> Result<Self, ClusterError> {
         builder.validate()?;
 
-        let dir_cstr = CString::new(aeron_dir).map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("bad aeron_dir: {e}"),
-        })?;
+        let dir_cstr = cformat!("{aeron_dir}");
         let ctx = AeronContext::new().map_err(|e| ClusterError::ConnectFailed {
             reason: format!("AeronContext: {e}"),
         })?;
@@ -76,12 +73,8 @@ impl AeronCluster {
             reason: format!("Aeron::start: {e}"),
         })?;
 
-        let egress_cstr = CString::new(builder.egress_channel.as_str()).map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("egress CString: {e}"),
-        })?;
-        let ingress_cstr = CString::new(builder.ingress_channel.as_str()).map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("ingress CString: {e}"),
-        })?;
+        let egress_cstr = cformat!("{}", builder.egress_channel);
+        let ingress_cstr = cformat!("{}", builder.ingress_channel);
 
         let egress = aeron
             .add_subscription(
@@ -283,10 +276,7 @@ impl AeronCluster {
     /// Recreate the ingress publication pointed at a new leader endpoint.
     fn reconnect_ingress(&mut self, builder: &crate::SessionBuilder, endpoint: &str) -> Result<(), ClusterError> {
         // Close the old publication then open a new one to the leader.
-        let channel = format!("aeron:udp?endpoint={endpoint}");
-        let cstr = CString::new(channel.as_str()).map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("redirect CString: {e}"),
-        })?;
+        let cstr = cformat!("aeron:udp?endpoint={endpoint}");
         let new_pub = self
             ._aeron
             .add_exclusive_publication(&cstr, builder.ingress_stream_id, Duration::from_secs(5))
@@ -410,10 +400,7 @@ impl AeronCluster {
                     reason: format!("NewLeaderEvent listed no endpoint for leader member {member}: {endpoints}"),
                 }
             })?;
-            let channel = format!("aeron:udp?endpoint={ep}");
-            let cstr = CString::new(channel).map_err(|e| ClusterError::ReconnectFailed {
-                reason: format!("new-leader channel CString: {e}"),
-            })?;
+            let cstr = cformat!("aeron:udp?endpoint={ep}");
             let pub_ = self
                 ._aeron
                 .add_exclusive_publication(&cstr, self.ingress_stream_id, Duration::from_secs(5))
@@ -628,9 +615,7 @@ impl AsyncClusterConnect {
         match self.step {
             AsyncStep::CreateTransport => {
                 self.builder.validate()?;
-                let dir_cstr = CString::new(self.aeron_dir.as_str()).map_err(|e| ClusterError::ConnectFailed {
-                    reason: format!("dir: {e}"),
-                })?;
+                let dir_cstr = cformat!("{}", self.aeron_dir);
                 let ctx = AeronContext::new().map_err(|e| ClusterError::ConnectFailed {
                     reason: format!("ctx: {e}"),
                 })?;
@@ -643,14 +628,8 @@ impl AsyncClusterConnect {
                 aeron.start().map_err(|e| ClusterError::ConnectFailed {
                     reason: format!("start: {e}"),
                 })?;
-                let egr =
-                    CString::new(self.builder.egress_channel.as_str()).map_err(|e| ClusterError::ConnectFailed {
-                        reason: format!("egr: {e}"),
-                    })?;
-                let ing =
-                    CString::new(self.builder.ingress_channel.as_str()).map_err(|e| ClusterError::ConnectFailed {
-                        reason: format!("ing: {e}"),
-                    })?;
+                let egr = cformat!("{}", self.builder.egress_channel);
+                let ing = cformat!("{}", self.builder.ingress_channel);
                 let egress = aeron
                     .add_subscription(
                         &egr,
@@ -707,10 +686,7 @@ impl AsyncClusterConnect {
                                 }
                                 EventCode::REDIRECT => {
                                     if let Some((member_id, ep)) = crate::poller::parse_redirect_leader(&detail) {
-                                        let channel = format!("aeron:udp?endpoint={ep}");
-                                        let c = CString::new(channel).map_err(|e| ClusterError::ReconnectFailed {
-                                            reason: format!("redirect CString: {e}"),
-                                        })?;
+                                        let c = cformat!("aeron:udp?endpoint={ep}");
                                         let aeron =
                                             self.aeron.as_ref().ok_or_else(|| ClusterError::ReconnectFailed {
                                                 reason: "no aeron client for redirect".into(),
@@ -844,18 +820,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_msg_header_total_is_32() {
+    fn test_msg_header_total_is_32() -> Result<(), Box<dyn std::error::Error>> {
         // MessageHeader(8) + SessionMessageHeader body(24) = 32
         assert_eq!(MSG_HDR_TOTAL, 32);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_session_constants() {
+    fn test_session_constants() -> Result<(), Box<dyn std::error::Error>> {
         use crate::codecs::ergo_codecs::{
             SessionCloseRequestEncoder, SessionKeepAliveEncoder, SessionMessageHeaderEncoder,
         };
         assert_eq!(SessionMessageHeaderEncoder::TEMPLATE_ID, 1);
         assert_eq!(SessionKeepAliveEncoder::TEMPLATE_ID, 5);
         assert_eq!(SessionCloseRequestEncoder::TEMPLATE_ID, 4);
+    
+        Ok(())
     }
 }

@@ -31,7 +31,7 @@ const MODULE_EMPTY: &str = "ordered_stages_empty";
 /// through the consuming stage API and assert every value matches. This is a
 /// full wire-order round trip through the new decoder stages.
 #[test]
-fn decode_car_through_consuming_stages() {
+fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE_FULL);
     compile_and_run(
         MODULE_FULL,
@@ -98,13 +98,15 @@ fn decode_car_through_consuming_stages() {
         assert_eq!(done.as_bytes(), encoded);
     "#,
     );
+
+    Ok(())
 }
 
 /// `finish()` must scan past UNREAD entries (not just fully-read ones): read one
 /// fuel figure, then finish() — the remaining two (with their var-data tails)
 /// must be skipped so the next stage lands at the right offset.
 #[test]
-fn finish_skips_unread_entries() {
+fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE_FINISH);
     compile_and_run(
         MODULE_FINISH,
@@ -144,11 +146,13 @@ fn finish_skips_unread_entries() {
         assert_eq!(done.encoded_length_with_header(), encoded.len());
     "#,
     );
+
+    Ok(())
 }
 
 /// Empty groups and empty var-data still traverse through the same stages.
 #[test]
-fn empty_tail_components_traverse_stages() {
+fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE_EMPTY);
     compile_and_run(
         MODULE_EMPTY,
@@ -180,4 +184,6 @@ fn empty_tail_components_traverse_stages() {
         assert_eq!(done.encoded_length_with_header(), encoded.len());
     "#,
     );
+
+    Ok(())
 }

@@ -100,8 +100,10 @@ pub use test_support::{EmbeddedArchiveDriver, TestCluster};
 #[cfg(test)]
 mod tests {
     #[test]
-    fn scaffold_compiles() {
+    fn scaffold_compiles() -> Result<(), Box<dyn std::error::Error>> {
         // Smoke-check ErgoSBE production codecs are wired into the lib.
         assert_eq!(crate::codecs::ergo_codecs::SessionConnectRequestEncoder::SCHEMA_ID, 111);
+    
+        Ok(())
     }
 }

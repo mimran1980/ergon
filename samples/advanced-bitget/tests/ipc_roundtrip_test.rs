@@ -14,34 +14,38 @@ mod normalized_app {
     include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
 }
 
-use std::ffi::CString;
 use std::time::Duration;
+
+use advanced_bitget::config::CHANNEL;
+use rusteron_client::cformat;
 
 /// Embedded driver launches and pub+sub connect — basic smoke test.
 #[test]
-fn embedded_driver_launches_and_pub_sub_created() {
+fn embedded_driver_launches_and_pub_sub_created() -> Result<(), Box<dyn std::error::Error>> {
     let driver =
         rusteron_media_driver::testing::EmbeddedDriver::launch().expect("launch embedded driver");
     let ctx = rusteron_client::AeronContext::new().expect("create context");
-    let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
+    let dir_cstr = cformat!("{}", driver.dir());
     ctx.set_dir(&dir_cstr).expect("set dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("create aeron");
     aeron.start().expect("start aeron");
-    let channel = CString::new("aeron:ipc").unwrap();
+    let channel = CHANNEL;
     let _pub = aeron
-        .async_add_exclusive_publication(&channel, 1001)
+        .async_add_exclusive_publication(channel, 1001)
         .expect("add exclusive publication");
     let _sub = aeron
         .async_add_subscription::<
             rusteron_client::AeronAvailableImageLogger,
             rusteron_client::AeronUnavailableImageLogger,
-        >(&channel, 1001, None, None)
+        >(channel, 1001, None, None)
         .expect("add subscription");
+
+    Ok(())
 }
 
 /// Full roundtrip: claim, direct-encode AppMessage(L2Book), commit, decode.
 #[test]
-fn direct_claim_app_message_roundtrip() {
+fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use normalized_app::{
         AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
@@ -51,16 +55,16 @@ fn direct_claim_app_message_roundtrip() {
         rusteron_media_driver::testing::EmbeddedDriver::launch().expect("launch embedded driver");
 
     let ctx = rusteron_client::AeronContext::new().expect("create context");
-    let dir_cstr = CString::new(format!("{}", driver.dir())).unwrap();
+    let dir_cstr = cformat!("{}", driver.dir());
     ctx.set_dir(&dir_cstr).expect("set dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("create aeron");
     aeron.start().expect("start aeron");
 
-    let channel = CString::new("aeron:ipc").unwrap();
+    let channel = CHANNEL;
     let stream_id: i32 = 1001;
 
     let publication = aeron
-        .async_add_exclusive_publication(&channel, stream_id)
+        .async_add_exclusive_publication(channel, stream_id)
         .expect("add exclusive publication")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect publication");
@@ -69,7 +73,7 @@ fn direct_claim_app_message_roundtrip() {
         .async_add_subscription::<
             rusteron_client::AeronAvailableImageLogger,
             rusteron_client::AeronUnavailableImageLogger,
-        >(&channel, stream_id, None, None)
+        >(channel, stream_id, None, None)
         .expect("add subscription")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect subscription");
@@ -141,6 +145,7 @@ fn direct_claim_app_message_roundtrip() {
         }
     }
     assert!(received, "never received the published message");
+    Ok(())
 }
 
 // fn pointer — can't capture, state flows through ctx param

@@ -37,7 +37,9 @@ pub use cluster::TestCluster;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn scaffold_compiles() {
+    fn scaffold_compiles() -> Result<(), Box<dyn std::error::Error>> {
         assert!(true);
+    
+        Ok(())
     }
 }

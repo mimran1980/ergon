@@ -20,7 +20,7 @@ use common::{Paths, compile_and_run, compile_fails, generate};
 /// Full ordered decode of bids then asks (with nested orders + var-data) through
 /// the consuming message-level stages.
 #[test]
-fn decode_l3_through_consuming_stages() {
+fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_stages_rt");
     compile_and_run(
         "l3_stages_rt",
@@ -100,12 +100,14 @@ fn decode_l3_through_consuming_stages() {
         assert_eq!(done.as_bytes(), encoded);
     "#,
     );
+
+    Ok(())
 }
 
 /// Compile-fail: `into_asks` does not exist on the initial `L3BookDecoder`; it
 /// is only on `L3BookDecoderAfterBids`. So decoding asks before bids cannot compile.
 #[test]
-fn cf_decode_asks_before_bids() {
+fn cf_decode_asks_before_bids() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_cf_asks_before_bids");
     compile_fails(
         "l3_cf_asks_before_bids",
@@ -120,12 +122,14 @@ fn cf_decode_asks_before_bids() {
         let _ = dec.into_asks(); // ILLEGAL: no `into_asks` on the initial decoder
     "#,
     );
+
+    Ok(())
 }
 
 /// Compile-fail: `finish()` consumes the group decoder (which is non-Copy), so
 /// the consumed decoder cannot be iterated afterwards.
 #[test]
-fn cf_finish_consumes_group_decoder() {
+fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_cf_finish_consumes");
     compile_fails(
         "l3_cf_finish_consumes",
@@ -142,6 +146,8 @@ fn cf_finish_consumes_group_decoder() {
         let _ = bids.next();                  // ILLEGAL: use of moved value `bids`
     "#,
     );
+
+    Ok(())
 }
 
 /// Entry-level consuming stages (Task D): a bid level's nested `orders` (and each
@@ -149,7 +155,7 @@ fn cf_finish_consumes_group_decoder() {
 /// order. The level entry is consumed by `into_orders`; each order entry by
 /// `into_order_id`.
 #[test]
-fn decode_l3_entry_consuming_stages() {
+fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_entry_stages_rt");
     compile_and_run(
         "l3_entry_stages_rt",
@@ -210,12 +216,14 @@ fn decode_l3_entry_consuming_stages() {
         assert_eq!(done.as_bytes(), encoded);
     "#,
     );
+
+    Ok(())
 }
 
 /// Compile-fail: `into_orders()` consumes the (non-Copy) entry decoder, so the
 /// consumed level cannot be read afterwards.
 #[test]
-fn cf_entry_consumed_by_into_orders() {
+fn cf_entry_consumed_by_into_orders() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_cf_entry_consumed");
     compile_fails(
         "l3_cf_entry_consumed",
@@ -235,4 +243,6 @@ fn cf_entry_consumed_by_into_orders() {
         let _p = lvl.price();                      // ILLEGAL: use of moved value `lvl`
     "#,
     );
+
+    Ok(())
 }

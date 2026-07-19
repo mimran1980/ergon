@@ -35,7 +35,7 @@ impl EgressListener for L {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== async_connect + try_claim demo ===\n");
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
 
@@ -55,13 +55,13 @@ fn main() {
             Ok(false) => break,
             Err(e) => {
                 eprintln!("connect error: {e}");
-                return;
+                return Ok(());
             }
         }
         std::thread::sleep(Duration::from_millis(10));
         if steps > 500 {
             eprintln!("connect didn't complete");
-            return;
+            return Ok(());
         }
     }
     let mut client = ac.finish().expect("finish");
@@ -92,4 +92,6 @@ fn main() {
     let _ = client.send_keep_alive();
     let _ = client.close();
     println!("\n=== Done: zero-copy round-trip verified ===");
+
+    Ok(())
 }

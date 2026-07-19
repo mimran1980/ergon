@@ -30,10 +30,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_null_credentials_returns_none() {
+    fn test_null_credentials_returns_none() -> Result<(), Box<dyn std::error::Error>> {
         let supplier = NullCredentialsSupplier;
         assert!(supplier.encoded_credentials().is_none());
         assert!(supplier.on_challenge(b"challenge").is_none());
+    
+        Ok(())
     }
 
     struct SimpleCredentialsSupplier {
@@ -52,12 +54,14 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_credentials_supplier() {
+    fn test_simple_credentials_supplier() -> Result<(), Box<dyn std::error::Error>> {
         let supplier = SimpleCredentialsSupplier {
             creds: b"user:pass".to_vec(),
             response: b"response".to_vec(),
         };
         assert_eq!(supplier.encoded_credentials().unwrap(), b"user:pass".to_vec());
         assert_eq!(supplier.on_challenge(b"challenge").unwrap(), b"response".to_vec());
+    
+        Ok(())
     }
 }

@@ -179,11 +179,13 @@ mod tests {
     }
 
     #[test]
-    fn short_buffer_is_protocol_error() {
+    fn short_buffer_is_protocol_error() -> Result<(), Box<dyn std::error::Error>> {
         let err = decode_session_message_header(&[0u8; 4]).unwrap_err();
         match err {
             ClusterError::ProtocolError { reason } => assert!(reason.contains("sbe decode")),
             other => panic!("expected ProtocolError, got {other:?}"),
         }
+    
+        Ok(())
     }
 }

@@ -6776,7 +6776,7 @@ mod tests {
     use crate::{GenerationConfig, Schema};
 
     #[test]
-    fn generator_emits_deterministic_module_name() {
+    fn generator_emits_deterministic_module_name() -> Result<(), Box<dyn std::error::Error>> {
         let generator = Generator::new(GenerationConfig::new("market_data"));
         let schema = Schema::new("fix.sbe", 1, 0);
 
@@ -6786,10 +6786,12 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].path, "market_data.rs");
         assert!(collected[0].source.contains("fix.sbe"));
+    
+        Ok(())
     }
 
     #[test]
-    fn generate_multi_creates_separate_modules() {
+    fn generate_multi_creates_separate_modules() -> Result<(), Box<dyn std::error::Error>> {
         let mut config = GenerationConfig::new("common");
         config.shared_module = Some("common_types".to_string());
 
@@ -6822,10 +6824,12 @@ mod tests {
         // Each module contains its own schema metadata
         assert!(collected[0].source.contains("common.sbe"));
         assert!(collected[1].source.contains("market_data.sbe"));
+    
+        Ok(())
     }
 
     #[test]
-    fn generate_multi_without_shared_module_emits_sbe_rt_everywhere() {
+    fn generate_multi_without_shared_module_emits_sbe_rt_everywhere() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("common");
         let generator = Generator::new(config);
 
@@ -6843,6 +6847,7 @@ mod tests {
 
         // No top-level pub use re-exports (prelude's pub use is inside its module)
         assert!(!collected[1].source.contains("\npub use super::"));
+        Ok(())
     }
 
     // ── partition_tokens defensive-branch coverage ──────────────────
@@ -6875,7 +6880,7 @@ mod tests {
     }
 
     #[test]
-    fn message_structure_skips_unexpected_signal() {
+    fn message_structure_skips_unexpected_signal() -> Result<(), Box<dyn std::error::Error>> {
         // parse_message_structure body loop: BeginEnum inside a message body
         // falls to `_ => i += 1` (lines ~797-799).
         let elem = empty_elements();
@@ -6887,10 +6892,12 @@ mod tests {
             ],
             &elem,
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn group_structure_skips_unexpected_signal() {
+    fn group_structure_skips_unexpected_signal() -> Result<(), Box<dyn std::error::Error>> {
         // parse_group_structure body loop: BeginMessage inside a group body
         // falls to `_ => i += 1` (lines ~937-939).
         let elem = empty_elements();
@@ -6902,10 +6909,12 @@ mod tests {
             ],
             &elem,
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn vardata_structure_skips_non_length_fields() {
+    fn vardata_structure_skips_non_length_fields() -> Result<(), Box<dyn std::error::Error>> {
         // parse_vardata_structure loops tokens looking for the "length"
         // BeginField; any other BeginField falls to `i += 1` (lines ~974-977).
         let _ = parse_vardata_structure(&[
@@ -6914,10 +6923,12 @@ mod tests {
             make_token(Signal::EndField),
             make_token(Signal::EndComposite),
         ]);
+    
+        Ok(())
     }
 
     #[test]
-    fn composite_members_skips_non_field_signals() {
+    fn composite_members_skips_non_field_signals() -> Result<(), Box<dyn std::error::Error>> {
         // parse_composite_members loops from index 1 to len-1; any signal
         // that isn't BeginField falls to `else { i += 1 }` (lines ~1097-1099).
         let _ = parse_composite_members(&[
@@ -6925,10 +6936,11 @@ mod tests {
             make_token(Signal::BeginMessage), // not BeginField → skip
             make_token(Signal::EndComposite),
         ]);
+        Ok(())
     }
 
     #[test]
-    fn field_structure_falls_back_to_uint8_primitive() {
+    fn field_structure_falls_back_to_uint8_primitive() -> Result<(), Box<dyn std::error::Error>> {
         // parse_field_structure: when tokens.len() > 2 and the inner signal
         // isn't BeginComposite/Enum/Set, defaults to Primitive(UInt8) (865-871).
         let elem = empty_elements();
@@ -6940,24 +6952,30 @@ mod tests {
             ],
             &elem,
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn snake_case_handles_empty_or_special_input() {
+    fn snake_case_handles_empty_or_special_input() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(to_snake_case(""), "");
         // Double-underscore input exercises the dedup `continue` (line 520).
         assert_eq!(to_snake_case("Foo__Bar"), "foo_bar");
+    
+        Ok(())
     }
 
     #[test]
-    fn partition_skips_unexpected_at_top_level() {
+    fn partition_skips_unexpected_at_top_level() -> Result<(), Box<dyn std::error::Error>> {
         // Top-level loop only matches BeginComposite/Enum/Set/Message;
         // BeginField falls to `_ => i += 1` (lines ~682-684).
         let _ = super::partition_tokens(&[make_token(Signal::BeginField)]);
+    
+        Ok(())
     }
 
     #[test]
-    fn partition_skips_unexpected_in_message_body() {
+    fn partition_skips_unexpected_in_message_body() -> Result<(), Box<dyn std::error::Error>> {
         // Message body loop only matches BeginField/Group/VarData;
         // BeginEnum inside a message body falls to `_ => i += 1` (lines ~797).
         let _ = super::partition_tokens(&[
@@ -6965,10 +6983,12 @@ mod tests {
             make_token(Signal::BeginEnum), // unexpected inside message body
             make_token(Signal::EndMessage),
         ]);
+    
+        Ok(())
     }
 
     #[test]
-    fn partition_skips_unexpected_in_group_body() {
+    fn partition_skips_unexpected_in_group_body() -> Result<(), Box<dyn std::error::Error>> {
         // Group body loop only matches BeginField/Group/VarData;
         // BeginMessage inside a group falls to `_ => i += 1` (lines ~937).
         let _ = super::partition_tokens(&[
@@ -6976,15 +6996,19 @@ mod tests {
             make_token(Signal::BeginMessage), // unexpected inside group body
             make_token(Signal::EndGroup),
         ]);
+    
+        Ok(())
     }
 
     #[test]
-    fn partition_skips_unexpected_after_top_level_items() {
+    fn partition_skips_unexpected_after_top_level_items() -> Result<(), Box<dyn std::error::Error>> {
         // After BeginMessage/EndMessage pair, unrelated signals skip at top level.
         let _ = super::partition_tokens(&[
             make_token(Signal::BeginMessage),
             make_token(Signal::EndMessage),
             make_token(Signal::BeginEnum), // at top level
         ]);
+    
+        Ok(())
     }
 }

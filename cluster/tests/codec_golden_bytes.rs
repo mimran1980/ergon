@@ -70,35 +70,41 @@ use ergo_aeron_cluster::codecs::ergo_codecs::{
 };
 
 #[test]
-fn parity_ergo_session_message_header() {
+fn parity_ergo_session_message_header() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = vec![0u8; 64];
     let mut e = EsmSessionMessageHeaderEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
     e.leadership_term_id(42);
     e.cluster_session_id(99);
     e.timestamp(1234567890);
     assert_eq!(e.as_ref(), &GOLDEN_SESSION_MESSAGE_HEADER[..]);
+
+    Ok(())
 }
 
 #[test]
-fn parity_ergo_session_keep_alive() {
+fn parity_ergo_session_keep_alive() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = vec![0u8; 64];
     let mut e = EsmSessionKeepAliveEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
     e.leadership_term_id(5);
     e.cluster_session_id(10);
     assert_eq!(e.as_ref(), &GOLDEN_SESSION_KEEP_ALIVE[..]);
+
+    Ok(())
 }
 
 #[test]
-fn parity_ergo_session_close_request() {
+fn parity_ergo_session_close_request() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = vec![0u8; 64];
     let mut e = EsmSessionCloseRequestEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
     e.leadership_term_id(7);
     e.cluster_session_id(42);
     assert_eq!(e.as_ref(), &GOLDEN_SESSION_CLOSE_REQUEST[..]);
+
+    Ok(())
 }
 
 #[test]
-fn parity_ergo_session_event() {
+fn parity_ergo_session_event() -> Result<(), Box<dyn std::error::Error>> {
     let detail: &[u8] = b"some-detail";
     let mut b = vec![0u8; 128];
     let mut e = ErgoSessionEventEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
@@ -110,10 +116,12 @@ fn parity_ergo_session_event() {
     e.version(1);
     let complete = e.detail(detail).unwrap();
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_SESSION_EVENT[..]);
+
+    Ok(())
 }
 
 #[test]
-fn parity_ergo_session_connect_request() {
+fn parity_ergo_session_connect_request() -> Result<(), Box<dyn std::error::Error>> {
     let channel = "aeron:udp?endpoint=localhost:9999";
     let creds = b"user:pass";
     let mut b = vec![0u8; 256];
@@ -125,10 +133,12 @@ fn parity_ergo_session_connect_request() {
     let after_cred = after_ch.encoded_credentials(creds).unwrap();
     let complete = after_cred.client_info(b"").unwrap();
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_SESSION_CONNECT_REQUEST[..]);
+
+    Ok(())
 }
 
 #[test]
-fn parity_ergo_challenge() {
+fn parity_ergo_challenge() -> Result<(), Box<dyn std::error::Error>> {
     let tok = b"challenge-token-12345";
     let mut b = vec![0u8; 128];
     let mut e = ErgoChallengeEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
@@ -136,10 +146,12 @@ fn parity_ergo_challenge() {
     e.cluster_session_id(5);
     let complete = e.encoded_challenge(tok).unwrap();
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_CHALLENGE[..]);
+
+    Ok(())
 }
 
 #[test]
-fn parity_ergo_challenge_response() {
+fn parity_ergo_challenge_response() -> Result<(), Box<dyn std::error::Error>> {
     let rcreds = b"response-creds";
     let mut b = vec![0u8; 128];
     let mut e = ErgoChallengeResponseEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
@@ -147,10 +159,12 @@ fn parity_ergo_challenge_response() {
     e.cluster_session_id(8);
     let complete = e.encoded_credentials(rcreds).unwrap();
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_CHALLENGE_RESPONSE[..]);
+
+    Ok(())
 }
 
 #[test]
-fn parity_ergo_new_leader_event() {
+fn parity_ergo_new_leader_event() -> Result<(), Box<dyn std::error::Error>> {
     let endpoints = "0=localhost:9010,1=localhost:9011,2=localhost:9012";
     let mut b = vec![0u8; 256];
     let mut e = ErgoNewLeaderEventEncoder::wrap_and_apply_header(&mut b, 0).unwrap();
@@ -159,10 +173,12 @@ fn parity_ergo_new_leader_event() {
     e.leader_member_id(1);
     let complete = e.ingress_endpoints(endpoints.as_bytes()).unwrap();
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_NEW_LEADER_EVENT[..]);
+
+    Ok(())
 }
 
 #[test]
-fn parity_ergo_admin_response() {
+fn parity_ergo_admin_response() -> Result<(), Box<dyn std::error::Error>> {
     let msg = b"ok";
     let payload: &[u8] = b"";
     let mut b = vec![0u8; 128];
@@ -174,4 +190,6 @@ fn parity_ergo_admin_response() {
     let after_msg = e.message(msg).unwrap();
     let complete = after_msg.payload(payload).unwrap();
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_ADMIN_RESPONSE[..]);
+
+    Ok(())
 }

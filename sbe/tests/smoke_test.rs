@@ -33,13 +33,21 @@ const INCLUDE_FRAGMENTS: &[&str] = &[
     "bad-include.xml",
 ];
 
-/// Error-handler schemas that are intentionally invalid.
+/// Error-handler / intentionally invalid schemas (parse fails; covered elsewhere).
 const ERROR_SCHEMAS: &[&str] = &[
+    "cyclic-refs-schema.xml",
     "error-handler-dup-message-schema.xml",
+    "error-handler-enum-violates-min-max-value-range.xml",
     "error-handler-group-dimensions-schema.xml",
+    "error-handler-invalid-composite-offsets-schema.xml",
+    "error-handler-invalid-composite.xml",
+    "error-handler-invalid-name.xml",
     "error-handler-message-schema.xml",
     "error-handler-since-version.xml",
+    "error-handler-types-dup-schema.xml",
+    "error-handler-types-schema.xml",
     "schema-with-bad-include.xml",
+    "value-ref-schema.xml",
 ];
 
 fn schema_dir() -> &'static Path {
@@ -47,7 +55,7 @@ fn schema_dir() -> &'static Path {
 }
 
 #[test]
-fn all_schemas_parse() {
+fn all_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
     let dir = schema_dir();
     let mut entries: Vec<_> = fs::read_dir(dir)
         .expect("fixtures/schemas/ dir")
@@ -147,4 +155,6 @@ fn all_schemas_parse() {
             failures.join("\n  ")
         );
     }
+
+    Ok(())
 }

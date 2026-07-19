@@ -2038,7 +2038,7 @@ mod tests {
     use miette::Diagnostic;
 
     #[test]
-    fn parse_u64_val_handles_value_types() {
+    fn parse_u64_val_handles_value_types() -> Result<(), Box<dyn std::error::Error>> {
         // Empty -> None.
         assert_eq!(parse_u64_val("", None), None);
         // Char (single byte).
@@ -2070,29 +2070,37 @@ mod tests {
         // Plain u64 / invalid.
         assert_eq!(parse_u64_val("42", None), Some(42));
         assert_eq!(parse_u64_val("garbage", None), None);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_malformed_xml_is_error() {
+    fn parse_malformed_xml_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse("<messageSchema><unclosed>").unwrap_err();
         assert!(matches!(err, ParseError::MalformedXml { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_valid_xml_without_message_schema_root_is_missing() {
+    fn parse_valid_xml_without_message_schema_root_is_missing() -> Result<(), Box<dyn std::error::Error>> {
         // Valid XML, but no <messageSchema> root element.
         let err = parse("<root/>").unwrap_err();
         assert!(matches!(err, ParseError::Missing { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_file_missing_path_is_malformed_xml() {
+    fn parse_file_missing_path_is_malformed_xml() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse_file("/nonexistent/ergosbe/coverage/schema.xml").unwrap_err();
         assert!(matches!(err, ParseError::MalformedXml { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_set_choice_bit_out_of_range_is_error() {
+    fn parse_set_choice_bit_out_of_range_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -2102,10 +2110,12 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "set choice bit > max must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_set_duplicate_choice_bit_is_error() {
+    fn parse_set_duplicate_choice_bit_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -2116,29 +2126,35 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "duplicate set choice bit must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_invalid_byte_order_is_error() {
+    fn parse_invalid_byte_order_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="sideways">
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "invalid byteOrder must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_invalid_presence_is_error() {
+    fn parse_invalid_presence_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <message name="M" id="1"><field name="f" id="1" type="uint32" presence="bogus"/></message>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "invalid presence must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_invalid_primitive_type_is_error() {
+    fn parse_invalid_primitive_type_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -2147,10 +2163,12 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "invalid primitiveType must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_enum_with_float_encoding_is_error() {
+    fn parse_enum_with_float_encoding_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -2159,10 +2177,12 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "enum with float encoding must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_set_with_signed_encoding_is_error() {
+    fn parse_set_with_signed_encoding_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -2171,10 +2191,12 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "set with signed encoding must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_set_duplicate_choice_name_is_error() {
+    fn parse_set_duplicate_choice_name_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -2183,10 +2205,12 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "duplicate set choice name must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_invalid_message_schema_child_is_error() {
+    fn parse_invalid_message_schema_child_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
@@ -2196,10 +2220,12 @@ mod tests {
             parse(xml).is_err(),
             "invalid messageSchema child must error"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_field_offset_out_of_order_is_error() {
+    fn parse_field_offset_out_of_order_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
@@ -2209,20 +2235,24 @@ mod tests {
   </message>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "out-of-order field offsets must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_invalid_message_child_is_error() {
+    fn parse_invalid_message_child_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <message name="M" id="1"><bogusElement/></message>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "invalid message child must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_invalid_types_container_child_is_error() {
+    fn parse_invalid_types_container_child_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -2234,10 +2264,12 @@ mod tests {
             parse(xml).is_err(),
             "invalid types container child must error"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_collects_all_documentation_sources() {
+    fn parse_collects_all_documentation_sources() -> Result<(), Box<dyn std::error::Error>> {
         // schema-docs-all-sources.xml exercises all four documentation shapes:
         // description attrs, <description> children, <comment> children, and
         // XML <!-- --> comments. Verify they all reach the IR.
@@ -2320,10 +2352,12 @@ mod tests {
             msg_desc.contains("xml-comment:message"),
             "missing preceding-sibling XML comment on M in '{msg_desc}'"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_composite_with_undefined_type_member() {
+    fn parse_composite_with_undefined_type_member() -> Result<(), Box<dyn std::error::Error>> {
         // Composite member with type="X" where X isn't a known primitive
         // encoding or registered type — triggers the is_indirect_ref=true +
         // resolve_type_to_tokens=None fallback (lines ~769-796).
@@ -2337,27 +2371,32 @@ mod tests {
         // Either parse errors (undefined type) or succeeds (fallback branch).
         // In either case the fallback code at 769-796 is exercised.
         let _ = parse(xml);
+        Ok(())
     }
 
     #[test]
-    fn parse_include_file_not_found_is_error() {
+    fn parse_include_file_not_found_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
   <include href="definitely_nonexistent_file_12345.xml"/>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "include file not found must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn missing_no_node_creates_fault_without_span() {
+    fn missing_no_node_creates_fault_without_span() -> Result<(), Box<dyn std::error::Error>> {
         let fault = Fault::missing_no_node("test");
         assert!(matches!(fault.kind, FaultKind::Missing { ref what } if what == "test"));
         assert!(fault.span.is_none());
+    
+        Ok(())
     }
 
     #[test]
-    fn resolve_type_with_since_version() {
+    fn resolve_type_with_since_version() -> Result<(), Box<dyn std::error::Error>> {
         let mut registry = TypeRegistry::new();
         registry.encodings.insert(
             "myType".to_string(),
@@ -2369,15 +2408,19 @@ mod tests {
         let result = resolve_type_to_tokens("f", "myType", Some(1), &registry, 5);
         assert!(result.is_some());
         assert_eq!(result.unwrap()[0].encoding.since_version, 5);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_missing_root_element() {
+    fn parse_missing_root_element() -> Result<(), Box<dyn std::error::Error>> {
         assert!(parse("<?xml version=\"1.0\"?>\n<notSchema/>").is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn compute_type_size_all_paths() {
+    fn compute_type_size_all_paths() -> Result<(), Box<dyn std::error::Error>> {
         let mut registry = TypeRegistry::new();
         registry.encodings.insert(
             "p32".into(),
@@ -2398,10 +2441,12 @@ mod tests {
         );
         assert_eq!(compute_type_size("a4", &registry), Some(8));
         assert_eq!(compute_type_size("missing", &registry), None);
+    
+        Ok(())
     }
 
     #[test]
-    fn compute_type_size_composite_enum_set() {
+    fn compute_type_size_composite_enum_set() -> Result<(), Box<dyn std::error::Error>> {
         let mut registry = TypeRegistry::new();
         let ct = vec![
             Token {
@@ -2460,10 +2505,12 @@ mod tests {
         }];
         registry.registry.insert("S".into(), st);
         assert_eq!(compute_type_size("S", &registry), Some(2));
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_enum_duplicate_value() {
+    fn parse_enum_duplicate_value() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -2471,10 +2518,12 @@ mod tests {
 <sbe:message name="M" id="1"><field name="e" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_enum_null_sentinel_collision() {
+    fn parse_enum_null_sentinel_collision() -> Result<(), Box<dyn std::error::Error>> {
         // To trigger the null sentinel check, the enum's encodingType must
         // reference a REGISTERED type (not a bare primitive), because the
         // null_sentinel lookup goes through registry.encodings.
@@ -2489,10 +2538,11 @@ mod tests {
             parse(xml).is_err(),
             "validValue == null sentinel must error"
         );
+        Ok(())
     }
 
     #[test]
-    fn parse_set_bit_index_too_high() {
+    fn parse_set_bit_index_too_high() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -2500,10 +2550,12 @@ mod tests {
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_set_non_numeric_bit_index() {
+    fn parse_set_non_numeric_bit_index() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -2511,50 +2563,60 @@ mod tests {
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_message_duplicate_field_name() {
+    fn parse_message_duplicate_field_name() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/><field name="x" id="2" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_message_duplicate_field_id() {
+    fn parse_message_duplicate_field_id() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/><field name="y" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_message_out_of_order_offset() {
+    fn parse_message_out_of_order_offset() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32" offset="4"/><field name="y" id="2" type="uint32" offset="0"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_constant_field_missing_value() {
+    fn parse_constant_field_missing_value() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="c" id="1" type="uint32" presence="constant"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_composite_ref_member() {
+    fn parse_composite_ref_member() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -2564,10 +2626,12 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the composite member type-ref code path — may succeed or error
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_field_inheriting_presence() {
+    fn parse_field_inheriting_presence() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -2576,10 +2640,12 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise field inheriting presence from referenced type — may succeed or error
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_value_ref_dot_notation() {
+    fn parse_value_ref_dot_notation() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -2588,10 +2654,12 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the valueRef dot-notation code path — may succeed or warn
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_value_ref_unknown_enum_warns() {
+    fn parse_value_ref_unknown_enum_warns() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
@@ -2599,10 +2667,12 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the valueRef unknown-enum warning path
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_value_ref_no_dot() {
+    fn parse_value_ref_no_dot() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
@@ -2610,10 +2680,12 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the valueRef no-dot path
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_field_inherit_constant_from_type() {
+    fn parse_field_inherit_constant_from_type() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -2622,10 +2694,12 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the field inheriting constant from referenced type path
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_char_constant_wrong_length() {
+    fn parse_char_constant_wrong_length() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -2634,10 +2708,12 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the char constant length check — may error or succeed
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_set_valid_indices() {
+    fn parse_set_valid_indices() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
 <types>
@@ -2649,16 +2725,20 @@ mod tests {
 <message name="M" id="1"><field name="f" id="1" type="uint32"/></message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn workspace_root_found() {
+    fn workspace_root_found() -> Result<(), Box<dyn std::error::Error>> {
         let root = workspace_root();
         assert!(root.join("Cargo.toml").exists());
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_message_with_explicit_offsets_and_registered_types() {
+    fn parse_message_with_explicit_offsets_and_registered_types() -> Result<(), Box<dyn std::error::Error>> {
         // Triggers the offset tracking / compute_type_size path in parse_message
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -2672,10 +2752,12 @@ mod tests {
 </sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_message_nullvalue_on_required_field() {
+    fn parse_message_nullvalue_on_required_field() -> Result<(), Box<dyn std::error::Error>> {
         // Triggers the warning for nullValue on non-optional field
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -2683,10 +2765,12 @@ mod tests {
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32" nullValue="0"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_char_constant_correct_length() {
+    fn parse_char_constant_correct_length() -> Result<(), Box<dyn std::error::Error>> {
         // Triggers the char constant length check with correct length (length > 1)
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -2695,10 +2779,12 @@ mod tests {
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_enum_with_description() {
+    fn parse_enum_with_description() -> Result<(), Box<dyn std::error::Error>> {
         // Triggers the enum description collection trailing brace
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -2710,10 +2796,12 @@ mod tests {
 <sbe:message name="M" id="1"><field name="c" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_set_with_description() {
+    fn parse_set_with_description() -> Result<(), Box<dyn std::error::Error>> {
         // Triggers the set description collection trailing brace
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -2725,10 +2813,12 @@ mod tests {
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_composite_member_nonexistent_type() {
+    fn parse_composite_member_nonexistent_type() -> Result<(), Box<dyn std::error::Error>> {
         // Triggers the else branch at line 770 where resolve_type_to_tokens
         // returns None for a type="X" that's not in the registry
         let xml = r#"<?xml version="1.0"?>
@@ -2738,10 +2828,11 @@ mod tests {
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
+        Ok(())
     }
 
     #[test]
-    fn compute_type_size_array_and_constant_members() {
+    fn compute_type_size_array_and_constant_members() -> Result<(), Box<dyn std::error::Error>> {
         let mut registry = TypeRegistry::new();
         let ct = vec![
             Token {
@@ -2793,10 +2884,12 @@ mod tests {
         ];
         registry.registry.insert("C".into(), ct);
         assert_eq!(compute_type_size("C", &registry), Some(6));
+    
+        Ok(())
     }
 
     #[test]
-    fn compute_type_size_unknown_signal() {
+    fn compute_type_size_unknown_signal() -> Result<(), Box<dyn std::error::Error>> {
         let mut registry = TypeRegistry::new();
         let tokens = vec![Token {
             id: None,
@@ -2806,10 +2899,12 @@ mod tests {
         }];
         registry.registry.insert("X".into(), tokens);
         assert_eq!(compute_type_size("X", &registry), None);
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_malformed_include_file_is_error() {
+    fn parse_malformed_include_file_is_error() -> Result<(), Box<dyn std::error::Error>> {
         // The include file is found but contains invalid XML — covers the
         // Document::parse error handler in parse_schema (xml.rs:544-548).
         let xml = r#"<?xml version="1.0"?>
@@ -2818,10 +2913,12 @@ mod tests {
   <include href="bad-include.xml"/>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "malformed include file must error");
+    
+        Ok(())
     }
 
     #[test]
-    fn parse_var_data_with_simple_encoding_type_is_error() {
+    fn parse_var_data_with_simple_encoding_type_is_error() -> Result<(), Box<dyn std::error::Error>> {
         // A var-data field whose type is a simple encoding (uint32), not a
         // var-data composite, must be rejected.
         let xml = r#"<?xml version="1.0"?>
@@ -2832,6 +2929,8 @@ mod tests {
   <message name="M" id="1"><data name="d" id="1" type="uint32"/></message>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "simple encoding as varData must error");
+    
+        Ok(())
     }
 
     const MINIMAL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -2891,7 +2990,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_schema_metadata() {
+    fn parses_schema_metadata() -> Result<(), Box<dyn std::error::Error>> {
         let ir = parse(MINIMAL_SCHEMA).unwrap();
         assert_eq!(ir.package, "example.sbe");
         assert_eq!(ir.id, 1);
@@ -2900,10 +2999,12 @@ mod tests {
         assert_eq!(ir.description.as_deref(), Some("minimal test schema"));
         assert_eq!(ir.semantic_version, None);
         assert_eq!(ir.header_type, "messageHeader");
+    
+        Ok(())
     }
 
     #[test]
-    fn parses_message_header_composite_and_message_fields() {
+    fn parses_message_header_composite_and_message_fields() -> Result<(), Box<dyn std::error::Error>> {
         let ir = parse(MINIMAL_SCHEMA).unwrap();
 
         let mut expected = Vec::new();
@@ -2950,22 +3051,28 @@ mod tests {
         crate::resolve::resolve_schema(&mut expected_ir, None).unwrap();
 
         assert_eq!(ir.tokens, expected_ir.tokens);
+    
+        Ok(())
     }
 
     #[test]
-    fn rejects_non_message_schema_root() {
+    fn rejects_non_message_schema_root() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse("<notSbe/>").unwrap_err();
         assert!(matches!(err, ParseError::Missing { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn rejects_missing_package() {
+    fn rejects_missing_package() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse(r#"<messageSchema id="1" version="0"/>"#).unwrap_err();
         assert!(matches!(err, ParseError::Missing { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn invalid_primitive_error_describes_and_spans() {
+    fn invalid_primitive_error_describes_and_spans() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse(
             r#"<messageSchema package="x" id="1" version="0">
   <message name="M" id="1"><field name="f" id="1" type="bogus"/></message>
@@ -2975,6 +3082,8 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("invalid primitive type"), "{msg}");
         assert!(err.labels().is_some(), "expected a span label attached");
+    
+        Ok(())
     }
 
     // ── XInclude tests ─────────────────────────────────────────────────
@@ -3013,7 +3122,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_schema_with_xinclude_relative_path() {
+    fn parses_schema_with_xinclude_relative_path() -> Result<(), Box<dyn std::error::Error>> {
         let path = sbe_test_resource("sub/basic-schema.xml");
         let ir = parse_file(&path).unwrap();
 
@@ -3033,10 +3142,11 @@ mod tests {
             ir.tokens.iter().any(|t| t.name == "TestMessage50001"),
             "expected TestMessage50001 from the main schema"
         );
+        Ok(())
     }
 
     #[test]
-    fn parses_example_schema_with_xinclude() {
+    fn parses_example_schema_with_xinclude() -> Result<(), Box<dyn std::error::Error>> {
         let path = sbe_sample_resource("example-schema.xml");
         let ir = parse_file(&path).unwrap();
 
@@ -3055,10 +3165,12 @@ mod tests {
             ir.tokens.iter().any(|t| t.name == "varDataEncoding"),
             "expected varDataEncoding from included common-types.xml"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn xinclude_without_base_falls_back_to_hardcoded_paths() {
+    fn xinclude_without_base_falls_back_to_hardcoded_paths() -> Result<(), Box<dyn std::error::Error>> {
         // Without a base dir, the hardcoded submodule path probes should work
         // for common schemas.
         let path = sbe_sample_resource("example-schema.xml");
@@ -3070,10 +3182,12 @@ mod tests {
             ir.tokens.iter().any(|t| t.name == "groupSizeEncoding"),
             "expected groupSizeEncoding from included file via hardcoded paths"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn xinclude_detects_cycle() {
+    fn xinclude_detects_cycle() -> Result<(), Box<dyn std::error::Error>> {
         // Self-include: the schema includes itself.
         let path = sbe_test_resource("cyclic-self-include.xml");
         let err = parse_file(&path).unwrap_err();
@@ -3082,12 +3196,14 @@ mod tests {
             msg.contains("cyclic include"),
             "expected cyclic include error, got: {msg}"
         );
+    
+        Ok(())
     }
 
     // ── Validation tests ─────────────────────────────────────────────
 
     #[test]
-    fn null_value_on_non_optional_type_parses_with_warning() {
+    fn null_value_on_non_optional_type_parses_with_warning() -> Result<(), Box<dyn std::error::Error>> {
         // nullValue on a required type should generate a warning but still parse.
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3100,10 +3216,12 @@ mod tests {
 </messageSchema>"#;
         let ir = parse(schema).unwrap();
         assert!(ir.tokens.iter().any(|t| t.name == "M"));
+    
+        Ok(())
     }
 
     #[test]
-    fn constant_field_without_value_errors() {
+    fn constant_field_without_value_errors() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3115,10 +3233,12 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Missing { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn duplicate_enum_valid_value_names_error() {
+    fn duplicate_enum_valid_value_names_error() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3133,10 +3253,12 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn duplicate_enum_encoded_values_error() {
+    fn duplicate_enum_encoded_values_error() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3151,10 +3273,12 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn char_constant_length_too_short_errors() {
+    fn char_constant_length_too_short_errors() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3166,10 +3290,12 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn char_constant_exact_length_parses() {
+    fn char_constant_exact_length_parses() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3181,10 +3307,12 @@ mod tests {
 </messageSchema>"#;
         let ir = parse(schema).unwrap();
         assert!(ir.tokens.iter().any(|t| t.name == "M"));
+    
+        Ok(())
     }
 
     #[test]
-    fn duplicate_field_id_is_rejected() {
+    fn duplicate_field_id_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
     package="test" id="1" version="1" byteOrder="littleEndian">
@@ -3202,10 +3330,12 @@ mod tests {
   </sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(schema).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn duplicate_field_name_is_rejected() {
+    fn duplicate_field_name_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
     package="test" id="1" version="1" byteOrder="littleEndian">
@@ -3223,10 +3353,12 @@ mod tests {
   </sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(schema).is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn group_with_unknown_dimension_type_fails() {
+    fn group_with_unknown_dimension_type_fails() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3245,10 +3377,12 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn group_with_wrong_dimension_type_structure_fails() {
+    fn group_with_wrong_dimension_type_structure_fails() -> Result<(), Box<dyn std::error::Error>> {
         // A composite that exists but lacks blockLength/numInGroup fields.
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3271,10 +3405,12 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn var_data_with_unknown_type_fails() {
+    fn var_data_with_unknown_type_fails() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3291,10 +3427,12 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn var_data_with_wrong_type_structure_fails() {
+    fn var_data_with_wrong_type_structure_fails() -> Result<(), Box<dyn std::error::Error>> {
         // A composite that exists but lacks length/varData fields.
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3315,10 +3453,12 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn block_length_validation_passes_for_correct_value() {
+    fn block_length_validation_passes_for_correct_value() -> Result<(), Box<dyn std::error::Error>> {
         // Computed: uint64@0=8, uint16@8=2, uint8@10=1 → 11
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3337,10 +3477,12 @@ mod tests {
   </message>
 </messageSchema>"#;
         parse(schema).unwrap();
+    
+        Ok(())
     }
 
     #[test]
-    fn block_length_mismatch_warns_but_does_not_error() {
+    fn block_length_mismatch_warns_but_does_not_error() -> Result<(), Box<dyn std::error::Error>> {
         // Mismatched blockLength is a warning (matching Aeron sbe-tool),
         // not a parse error.
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -3361,12 +3503,14 @@ mod tests {
 </messageSchema>"#;
         // Must parse successfully despite mismatched blockLength.
         parse(schema).unwrap();
+    
+        Ok(())
     }
 
     // ── Gap 1: presence inheritance from referenced types ─────────────
 
     #[test]
-    fn field_inherits_optional_presence_from_type() {
+    fn field_inherits_optional_presence_from_type() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3408,10 +3552,12 @@ mod tests {
             Presence::Required,
             "g should stay Required (explicit)"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn field_inherits_constant_presence_from_type() {
+    fn field_inherits_constant_presence_from_type() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3439,12 +3585,14 @@ mod tests {
             Presence::Constant,
             "f should inherit Constant from ConstU32"
         );
+    
+        Ok(())
     }
 
     // ── Gap 2: composite child ref attributes ─────────────────────────
 
     #[test]
-    fn composite_member_with_valid_ref_parses() {
+    fn composite_member_with_valid_ref_parses() -> Result<(), Box<dyn std::error::Error>> {
         // <ref> on a composite member should resolve through the registry.
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3466,10 +3614,12 @@ mod tests {
 </messageSchema>"#;
         let ir = parse(schema).unwrap();
         assert!(ir.tokens.iter().any(|t| t.name == "M"));
+    
+        Ok(())
     }
 
     #[test]
-    fn composite_member_with_invalid_ref_fails() {
+    fn composite_member_with_invalid_ref_fails() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3489,12 +3639,14 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     // ── Gap 3: header type well-formedness ─────────────────────────────
 
     #[test]
-    fn custom_header_type_with_required_fields_parses() {
+    fn custom_header_type_with_required_fields_parses() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" headerType="MyHeader" byteOrder="littleEndian">
   <types>
@@ -3510,10 +3662,12 @@ mod tests {
   </message>
 </messageSchema>"#;
         parse(schema).unwrap();
+    
+        Ok(())
     }
 
     #[test]
-    fn custom_header_type_missing_fields_fails() {
+    fn custom_header_type_missing_fields_fails() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" headerType="MyHeader" byteOrder="littleEndian">
   <types>
@@ -3534,12 +3688,14 @@ mod tests {
             msg.contains("schemaId"),
             "expected error about missing schemaId, got: {msg}"
         );
+    
+        Ok(())
     }
 
     // ── Gap 10/11: epoch and timeUnit on types and fields ──────────────
 
     #[test]
-    fn parses_epoch_and_time_unit_on_type() {
+    fn parses_epoch_and_time_unit_on_type() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3572,10 +3728,12 @@ mod tests {
             Some("nanoseconds"),
             "timeUnit should be inherited from type"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn parses_epoch_and_time_unit_on_field() {
+    fn parses_epoch_and_time_unit_on_field() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3602,12 +3760,14 @@ mod tests {
             ts_tokens[0].encoding.time_unit.as_deref(),
             Some("nanoseconds")
         );
+    
+        Ok(())
     }
 
     // ── Gap 12: deprecated attribute on all elements ────────────────────
 
     #[test]
-    fn deprecated_on_type() {
+    fn deprecated_on_type() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3631,10 +3791,12 @@ mod tests {
             .collect();
         assert_eq!(old_tokens.len(), 1);
         assert!(old_tokens[0].encoding.deprecated);
+    
+        Ok(())
     }
 
     #[test]
-    fn deprecated_on_message() {
+    fn deprecated_on_message() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3656,10 +3818,12 @@ mod tests {
             .find(|t| t.signal == Signal::BeginMessage && t.name == "M");
         assert!(msg_token.is_some());
         assert!(msg_token.unwrap().encoding.deprecated);
+    
+        Ok(())
     }
 
     #[test]
-    fn deprecated_on_field() {
+    fn deprecated_on_field() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3682,10 +3846,12 @@ mod tests {
             .collect();
         assert_eq!(f_tokens.len(), 1);
         assert!(f_tokens[0].encoding.deprecated);
+    
+        Ok(())
     }
 
     #[test]
-    fn deprecated_on_group() {
+    fn deprecated_on_group() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3713,10 +3879,12 @@ mod tests {
             .find(|t| t.signal == Signal::BeginGroup && t.name == "g");
         assert!(g_token.is_some());
         assert!(g_token.unwrap().encoding.deprecated);
+    
+        Ok(())
     }
 
     #[test]
-    fn deprecated_on_data() {
+    fn deprecated_on_data() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3742,10 +3910,12 @@ mod tests {
             .find(|t| t.signal == Signal::BeginVarData && t.name == "d");
         assert!(d_token.is_some());
         assert!(d_token.unwrap().encoding.deprecated);
+    
+        Ok(())
     }
 
     #[test]
-    fn deprecated_on_composite() {
+    fn deprecated_on_composite() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3770,10 +3940,12 @@ mod tests {
             .find(|t| t.signal == Signal::BeginComposite && t.name == "OldComposite");
         assert!(c_token.is_some());
         assert!(c_token.unwrap().encoding.deprecated);
+    
+        Ok(())
     }
 
     #[test]
-    fn deprecated_on_enum() {
+    fn deprecated_on_enum() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3798,10 +3970,12 @@ mod tests {
             .find(|t| t.signal == Signal::BeginEnum && t.name == "OldEnum");
         assert!(e_token.is_some());
         assert!(e_token.unwrap().encoding.deprecated);
+    
+        Ok(())
     }
 
     #[test]
-    fn deprecated_on_set() {
+    fn deprecated_on_set() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3826,12 +4000,14 @@ mod tests {
             .find(|t| t.signal == Signal::BeginSet && t.name == "OldSet");
         assert!(s_token.is_some());
         assert!(s_token.unwrap().encoding.deprecated);
+    
+        Ok(())
     }
 
     // ── Gap 13: duplicate message name ─────────────────────────────────
 
     #[test]
-    fn duplicate_message_name_is_rejected() {
+    fn duplicate_message_name_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3856,12 +4032,14 @@ mod tests {
             msg.contains("duplicate message name"),
             "expected error about duplicate message name, got: {msg}"
         );
+    
+        Ok(())
     }
 
     // ── Gap 10: varData variable-length member does not contribute to block length ──
 
     #[test]
-    fn vardata_member_excluded_from_block_length() {
+    fn vardata_member_excluded_from_block_length() -> Result<(), Box<dyn std::error::Error>> {
         // The varData member inside varDataEncoding has length="0", which marks it
         // as variable-length. The block length should only include the length field (4 bytes).
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -3901,6 +4079,8 @@ mod tests {
             Some(4),
             "expected block length 4 for message with one uint32 field"
         );
+    
+        Ok(())
     }
 
     // ── Coverage: include-file root variants ──────────────────────────
@@ -3914,7 +4094,7 @@ mod tests {
     </composite>"#;
 
     #[test]
-    fn include_of_message_schema_wrapped_types_registers_types() {
+    fn include_of_message_schema_wrapped_types_registers_types() -> Result<(), Box<dyn std::error::Error>> {
         // The included file's root is <messageSchema>, not <types> — the
         // parser must descend into it and find the nested <types> node.
         let dir = std::env::temp_dir().join(format!("ergosbe_xml_inc_{}", std::process::id()));
@@ -3949,10 +4129,11 @@ mod tests {
             "field using included type must resolve"
         );
         std::fs::remove_file(&inc).ok();
+        Ok(())
     }
 
     #[test]
-    fn include_without_href_is_ignored() {
+    fn include_without_href_is_ignored() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3964,12 +4145,14 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
+    
+        Ok(())
     }
 
     // ── Coverage: char constant with matching declared length ─────────
 
     #[test]
-    fn char_constant_with_matching_length_parses() {
+    fn char_constant_with_matching_length_parses() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3982,12 +4165,14 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
+    
+        Ok(())
     }
 
     // ── Coverage: composite member type-attribute fallbacks ───────────
 
     #[test]
-    fn composite_member_with_primitive_type_attr_inlines_encoding() {
+    fn composite_member_with_primitive_type_attr_inlines_encoding() -> Result<(), Box<dyn std::error::Error>> {
         // Member uses `type="uint16"` (a primitive name, not a registered
         // type). This is indirect by shape but unresolvable by name, so the
         // parser falls back to inline parsing of the element itself.
@@ -4012,10 +4197,12 @@ mod tests {
                 .any(|t| t.name == "p" && t.signal == Signal::BeginField),
             "composite field must resolve"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn composite_member_without_any_type_attr_is_parsed_inline() {
+    fn composite_member_without_any_type_attr_is_parsed_inline() -> Result<(), Box<dyn std::error::Error>> {
         // Member has no type/primitiveType/ref attribute at all — the parser
         // parses the bare element inline (no primitive type recorded).
         let schema = format!(
@@ -4035,12 +4222,14 @@ mod tests {
         // overall parse succeeds is a resolver decision; the member itself
         // must not panic and must take the inline-parse path.
         let _ = parse(&schema);
+    
+        Ok(())
     }
 
     // ── Coverage: enum/set child-element edge cases ────────────────────
 
     #[test]
-    fn enum_valid_value_equal_to_registered_null_sentinel_is_error() {
+    fn enum_valid_value_equal_to_registered_null_sentinel_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4057,10 +4246,12 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn enum_with_unknown_child_element_is_ignored() {
+    fn enum_with_unknown_child_element_is_ignored() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4076,10 +4267,12 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
+    
+        Ok(())
     }
 
     #[test]
-    fn set_with_unknown_child_element_is_ignored() {
+    fn set_with_unknown_child_element_is_ignored() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4095,10 +4288,12 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
+    
+        Ok(())
     }
 
     #[test]
-    fn set_choice_non_numeric_bit_index_is_error() {
+    fn set_choice_non_numeric_bit_index_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4114,12 +4309,14 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     // ── Coverage: message-child structural attribute tolerance ─────────
 
     #[test]
-    fn message_children_with_missing_or_unparseable_attrs_reach_second_pass() {
+    fn message_children_with_missing_or_unparseable_attrs_reach_second_pass() -> Result<(), Box<dyn std::error::Error>> {
         // The first structural pass tolerates a missing name, a non-numeric
         // id, and a non-numeric offset; the second (real) parse pass then
         // reports the actual fault. This proves the pre-validation loop does
@@ -4138,10 +4335,12 @@ mod tests {
             err,
             ParseError::Missing { .. } | ParseError::Invalid { .. }
         ));
+    
+        Ok(())
     }
 
     #[test]
-    fn block_length_tracking_skips_fields_without_computable_size() {
+    fn block_length_tracking_skips_fields_without_computable_size() -> Result<(), Box<dyn std::error::Error>> {
         // Field with a valid offset but an unregistered type: the expected
         // block-length tracker must skip it rather than fault.
         let schema = format!(
@@ -4157,10 +4356,12 @@ mod tests {
         // the block-length pre-pass tolerated the unknown size first.
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn null_value_on_required_field_warns_but_parses() {
+    fn null_value_on_required_field_warns_but_parses() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4171,10 +4372,12 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
+    
+        Ok(())
     }
 
     #[test]
-    fn include_with_non_types_sibling_elements_is_tolerated() {
+    fn include_with_non_types_sibling_elements_is_tolerated() -> Result<(), Box<dyn std::error::Error>> {
         // The included <messageSchema> carries a <message> sibling next to
         // <types>; only the <types> node is imported.
         let dir = std::env::temp_dir().join(format!("ergosbe_xml_inc2_{}", std::process::id()));
@@ -4204,10 +4407,12 @@ mod tests {
         );
         parse(&schema).unwrap();
         std::fs::remove_file(&inc).ok();
+    
+        Ok(())
     }
 
     #[test]
-    fn char_constant_without_text_is_tolerated_at_parse_time() {
+    fn char_constant_without_text_is_tolerated_at_parse_time() -> Result<(), Box<dyn std::error::Error>> {
         // presence="constant" with no element text: the length check is
         // skipped because there is no constant value to measure.
         let schema = format!(
@@ -4222,10 +4427,12 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
+    
+        Ok(())
     }
 
     #[test]
-    fn composite_member_with_unknown_type_and_primitive_type_falls_back_inline() {
+    fn composite_member_with_unknown_type_and_primitive_type_falls_back_inline() -> Result<(), Box<dyn std::error::Error>> {
         // `type="Unknown"` is unresolvable, but `primitiveType="uint8"` lets
         // the inline fallback parse the element directly.
         let schema = format!(
@@ -4242,10 +4449,12 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
+    
+        Ok(())
     }
 
     #[test]
-    fn enum_valid_value_unparseable_with_null_sentinel_skips_check() {
+    fn enum_valid_value_unparseable_with_null_sentinel_skips_check() -> Result<(), Box<dyn std::error::Error>> {
         // The null-sentinel equality check is skipped when the value text
         // cannot be parsed for the encoding type.
         let schema = format!(
@@ -4263,10 +4472,12 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
+    
+        Ok(())
     }
 
     #[test]
-    fn field_with_unparseable_offset_attr_is_tolerated_by_prevalidation() {
+    fn field_with_unparseable_offset_attr_is_tolerated_by_prevalidation() -> Result<(), Box<dyn std::error::Error>> {
         // Structural pre-validation ignores an offset it cannot parse; the
         // real field parse itself does not require the attribute.
         let schema = format!(
@@ -4279,10 +4490,12 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
+    
+        Ok(())
     }
 
     #[test]
-    fn block_length_tracker_skips_type_without_computable_size() {
+    fn block_length_tracker_skips_type_without_computable_size() -> Result<(), Box<dyn std::error::Error>> {
         // "NoPrim" is registered but has no primitive type, so the block
         // length tracker cannot size it and must skip it.
         let schema = format!(
@@ -4297,12 +4510,14 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
+    
+        Ok(())
     }
 
     // ── Coverage: unparseable numeric attribute error paths ────────────
 
     #[test]
-    fn message_with_non_numeric_id_is_error() {
+    fn message_with_non_numeric_id_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4314,10 +4529,12 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn type_with_non_numeric_since_version_is_error() {
+    fn type_with_non_numeric_since_version_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4331,10 +4548,12 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 
     #[test]
-    fn type_with_non_numeric_length_is_error() {
+    fn type_with_non_numeric_length_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4348,5 +4567,7 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
+    
+        Ok(())
     }
 }

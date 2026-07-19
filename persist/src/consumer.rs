@@ -639,7 +639,7 @@ mod tests {
     // ── SchemaRegistry tests ──────────────────────────────────────────
 
     #[test]
-    fn test_register_schema() {
+    fn test_register_schema() -> Result<(), Box<dyn std::error::Error>> {
         let rec = recorder_for(
             "test_table",
             &[("price", ColumnType::Float64)],
@@ -658,10 +658,12 @@ mod tests {
 
         assert_eq!(registry.table_name(sid), Some("test_table"));
         assert!(registry.table_name(sid + 1).is_none());
+    
+        Ok(())
     }
 
     #[test]
-    fn test_register_idempotent() {
+    fn test_register_idempotent() -> Result<(), Box<dyn std::error::Error>> {
         let rec = recorder_for("dup", &[("x", ColumnType::Int64)], &[]);
         let sid = rec.schema_id;
         let schema_bytes = encode_schema_with_id(sid, "dup", &[(0, "x", ColumnType::Int64)], &[]);
@@ -673,18 +675,22 @@ mod tests {
         registry.register(schema2).unwrap(); // second call — no-op
 
         assert_eq!(registry.table_name(sid), Some("dup"));
+    
+        Ok(())
     }
 
     #[test]
-    fn test_table_name_unknown() {
+    fn test_table_name_unknown() -> Result<(), Box<dyn std::error::Error>> {
         let registry = SchemaRegistry::new();
         assert_eq!(registry.table_name(42), None);
+    
+        Ok(())
     }
 
     // ── RowDecoder — basic ────────────────────────────────────────────
 
     #[test]
-    fn test_decode_row_basic() {
+    fn test_decode_row_basic() -> Result<(), Box<dyn std::error::Error>> {
         let (_rec, schema_bytes, row_bytes) = make_fixture(
             "test_table",
             &[
@@ -713,12 +719,14 @@ mod tests {
         assert_eq!(decoded.get("qty").unwrap(), &Some("1000".to_string()));
         assert_eq!(decoded.get("symbol").unwrap(), &Some("'AAPL'".to_string()));
         assert_eq!(decoded.get("src").unwrap(), &Some("'ex'".to_string()));
+    
+        Ok(())
     }
 
     // ── RowDecoder — metadata ─────────────────────────────────────────
 
     #[test]
-    fn test_decode_row_metadata() {
+    fn test_decode_row_metadata() -> Result<(), Box<dyn std::error::Error>> {
         let (_rec, schema_bytes, row_bytes) = make_fixture(
             "meta_test",
             &[(0, "val", ColumnType::Float64)],
@@ -734,12 +742,14 @@ mod tests {
         assert_eq!(decoded.get("val").unwrap(), &Some("1".to_string()));
         assert_eq!(decoded.get("env").unwrap(), &Some("'prod'".to_string()));
         assert_eq!(decoded.get("app").unwrap(), &Some("'my_app'".to_string()));
+    
+        Ok(())
     }
 
     // ── RowDecoder — strings ─────────────────────────────────────────
 
     #[test]
-    fn test_decode_string_fields() {
+    fn test_decode_string_fields() -> Result<(), Box<dyn std::error::Error>> {
         let (_rec, schema_bytes, row_bytes) = make_fixture(
             "str_test",
             &[
@@ -760,12 +770,14 @@ mod tests {
 
         assert_eq!(decoded.get("name").unwrap(), &Some("'hello'".to_string()));
         assert_eq!(decoded.get("code").unwrap(), &Some("'abc'".to_string()));
+    
+        Ok(())
     }
 
     // ── RowDecoder — nulls ────────────────────────────────────────────
 
     #[test]
-    fn test_decode_null_fields() {
+    fn test_decode_null_fields() -> Result<(), Box<dyn std::error::Error>> {
         let (_rec, schema_bytes, row_bytes) = make_fixture(
             "null_test",
             &[
@@ -783,12 +795,14 @@ mod tests {
 
         assert_eq!(decoded.get("val").unwrap(), &None);
         assert_eq!(decoded.get("name").unwrap(), &None);
+    
+        Ok(())
     }
 
     // ── RowDecoder — missing fields → NULL ────────────────────────────
 
     #[test]
-    fn test_decode_missing_fields_null() {
+    fn test_decode_missing_fields_null() -> Result<(), Box<dyn std::error::Error>> {
         // "b" is null-encoded rather than truly absent (DynamicRecorder always
         // encodes every registered field).  The "missing field → NULL" path
         // is exercised by the null-encode path in this test.
@@ -808,12 +822,14 @@ mod tests {
 
         assert_eq!(decoded.get("a").unwrap(), &Some("42".to_string()));
         assert_eq!(decoded.get("b").unwrap(), &None);
+    
+        Ok(())
     }
 
     // ── Roundtrip ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_roundtrip_all_types() {
+    fn test_roundtrip_all_types() -> Result<(), Box<dyn std::error::Error>> {
         let (_rec, schema_bytes, row_bytes) = make_fixture(
             "rt_test",
             &[
@@ -857,12 +873,14 @@ mod tests {
         assert_eq!(decoded.get("s").unwrap(), &Some("'hello'".to_string()));
         assert_eq!(decoded.get("n").unwrap(), &None); // null field
         assert_eq!(decoded.get("tag").unwrap(), &Some("'rt'".to_string()));
+    
+        Ok(())
     }
 
     // ── Multiple rows, no state leak ──────────────────────────────────
 
     #[test]
-    fn test_multiple_rows_no_state_leak() {
+    fn test_multiple_rows_no_state_leak() -> Result<(), Box<dyn std::error::Error>> {
         let rec = recorder_for(
             "seq_test",
             &[("price", ColumnType::Float64), ("qty", ColumnType::UInt64)],
@@ -930,6 +948,7 @@ mod tests {
             decoded1.get("price").unwrap(),
             decoded2.get("price").unwrap()
         );
+        Ok(())
     }
 
     // ── Dynamic metadata discovery mid-stream ─────────────────────────
@@ -986,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dynamic_metadata_discovery_mid_stream() {
+    fn test_dynamic_metadata_discovery_mid_stream() -> Result<(), Box<dyn std::error::Error>> {
         // Schema with no metadata columns.
         let mut rec = recorder_for("live", &[("x", ColumnType::Int64)], &[]);
         let schema_bytes =
@@ -1013,6 +1032,8 @@ mod tests {
         let r3 = DynamicRowDecoder::wrap_and_apply_header(&r3_bytes, 0).unwrap();
         let d3 = decoder.decode(r3).unwrap();
         assert_eq!(d3.get("env").unwrap(), &Some("'staging'".to_string()));
+    
+        Ok(())
     }
 
     // ── format_sql_string ─────────────────────────────────────────────
@@ -1020,7 +1041,7 @@ mod tests {
     // ── Tag mapping matrix + error/Default coverage ──────────────────
 
     #[test]
-    fn test_type_tag_roundtrip_all_supported() {
+    fn test_type_tag_roundtrip_all_supported() -> Result<(), Box<dyn std::error::Error>> {
         let types = [
             ColumnType::Int8,
             ColumnType::Int16,
@@ -1050,10 +1071,12 @@ mod tests {
         // Unsupported both ways.
         assert_eq!(column_type_to_tag(&ColumnType::Date), None);
         assert_eq!(type_tag_to_column_type(200), None);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_row_decode_error_display() {
+    fn test_row_decode_error_display() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             RowDecodeError::UnknownSchemaId(7).to_string(),
             "unknown schema_id: 7"
@@ -1062,16 +1085,20 @@ mod tests {
         assert!(invalid.to_string().contains("bad"));
         let unsupported = RowDecodeError::UnsupportedColumnType(99);
         assert!(unsupported.to_string().contains("99"));
+    
+        Ok(())
     }
 
     #[test]
-    fn test_schema_registry_default() {
+    fn test_schema_registry_default() -> Result<(), Box<dyn std::error::Error>> {
         let reg = SchemaRegistry::default();
         assert_eq!(reg.table_name(1), None);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_truncated_symbol_table_is_out_of_bounds_error() {
+    fn test_truncated_symbol_table_is_out_of_bounds_error() -> Result<(), Box<dyn std::error::Error>> {
         // A row whose string entry claims more bytes than the symbol table
         // holds must fail with the bounds error, not panic.
         let rec = recorder_for("oob", &[("s", ColumnType::String)], &[]);
@@ -1110,10 +1137,12 @@ mod tests {
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
         let err = decoder.decode(row).unwrap_err();
         assert!(matches!(err, RowDecodeError::InvalidUtf8(_)));
+    
+        Ok(())
     }
 
     #[test]
-    fn test_truncated_metadata_symbols_is_out_of_bounds_error() {
+    fn test_truncated_metadata_symbols_is_out_of_bounds_error() -> Result<(), Box<dyn std::error::Error>> {
         let rec = recorder_for("oob2", &[("x", ColumnType::Int64)], &[]);
         let schema_bytes =
             encode_schema_with_id(rec.schema_id, "oob2", &[(0, "x", ColumnType::Int64)], &[]);
@@ -1150,10 +1179,12 @@ mod tests {
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
         let err = decoder.decode(row).unwrap_err();
         assert!(matches!(err, RowDecodeError::InvalidUtf8(_)));
+    
+        Ok(())
     }
 
     #[test]
-    fn test_field_absent_from_wire_decodes_as_null() {
+    fn test_field_absent_from_wire_decodes_as_null() -> Result<(), Box<dyn std::error::Error>> {
         // A schema column entirely absent from the row's typed and null
         // groups still appears in the output as NULL.
         let rec = recorder_for("absent", &[("x", ColumnType::Int64)], &[]);
@@ -1188,25 +1219,34 @@ mod tests {
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
         let decoded = decoder.decode(row).unwrap();
         assert_eq!(decoded.get("x").unwrap(), &None);
+        Ok(())
     }
 
     #[test]
-    fn test_format_sql_string_empty() {
+    fn test_format_sql_string_empty() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string(""), "''");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_format_sql_string_plain() {
+    fn test_format_sql_string_plain() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("hello"), "'hello'");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_format_sql_string_with_quote() {
+    fn test_format_sql_string_with_quote() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("it's"), "'it''s'");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_format_sql_string_with_backslash() {
+    fn test_format_sql_string_with_backslash() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("a\\b"), "'a\\\\b'");
+    
+        Ok(())
     }
 }

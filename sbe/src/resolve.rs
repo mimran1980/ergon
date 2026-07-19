@@ -537,7 +537,7 @@ mod tests {
     // ── Error paths ──────────────────────────────────────────────────
 
     #[test]
-    fn duplicate_template_id_rejected() {
+    fn duplicate_template_id_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let result = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
@@ -548,10 +548,12 @@ mod tests {
 </sbe:messageSchema>"#,
         );
         assert!(result.is_err());
+    
+        Ok(())
     }
 
     #[test]
-    fn since_version_beyond_schema_rejected() {
+    fn since_version_beyond_schema_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let mut ir = minimal_schema();
         // Bump a token's since_version above schema version 0
         ir.tokens[5].encoding.since_version = 5;
@@ -560,16 +562,19 @@ mod tests {
             result,
             Err(ResolveError::SinceVersionBeyondSchema { .. })
         ));
+        Ok(())
     }
 
     #[test]
-    fn resolve_schema_ok_on_valid_schema() {
+    fn resolve_schema_ok_on_valid_schema() -> Result<(), Box<dyn std::error::Error>> {
         let mut ir = minimal_schema();
         assert!(resolve_schema(&mut ir, None).is_ok());
+    
+        Ok(())
     }
 
     #[test]
-    fn resolve_schema_with_source_code() {
+    fn resolve_schema_with_source_code() -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
@@ -577,12 +582,14 @@ mod tests {
 </sbe:messageSchema>"#;
         let mut ir = crate::parse(xml).unwrap();
         assert!(resolve_schema(&mut ir, Some(xml)).is_ok());
+    
+        Ok(())
     }
 
     // ── default_null / min / max ─────────────────────────────────────
 
     #[test]
-    fn default_null_all_primitives() {
+    fn default_null_all_primitives() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(default_null(PrimitiveType::Char), Some(0));
         assert_eq!(default_null(PrimitiveType::Int8), Some(-128i8 as u64));
         assert_eq!(default_null(PrimitiveType::UInt8), Some(255));
@@ -600,10 +607,12 @@ mod tests {
         assert_eq!(default_null(PrimitiveType::UInt64), Some(u64::MAX));
         assert!(default_null(PrimitiveType::Float).is_some());
         assert!(default_null(PrimitiveType::Double).is_some());
+    
+        Ok(())
     }
 
     #[test]
-    fn default_min_all_primitives() {
+    fn default_min_all_primitives() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(default_min(PrimitiveType::Char), Some(0x20));
         assert_eq!(default_min(PrimitiveType::UInt8), Some(0));
         assert_eq!(default_min(PrimitiveType::UInt16), Some(0));
@@ -615,10 +624,12 @@ mod tests {
         assert!(default_min(PrimitiveType::Int64).is_some());
         assert!(default_min(PrimitiveType::Float).is_some());
         assert!(default_min(PrimitiveType::Double).is_some());
+    
+        Ok(())
     }
 
     #[test]
-    fn default_max_all_primitives() {
+    fn default_max_all_primitives() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(default_max(PrimitiveType::Char), Some(0x7E));
         assert_eq!(default_max(PrimitiveType::Int8), Some(127));
         assert_eq!(default_max(PrimitiveType::UInt8), Some(254));
@@ -633,12 +644,14 @@ mod tests {
         );
         assert!(default_max(PrimitiveType::Float).is_some());
         assert!(default_max(PrimitiveType::Double).is_some());
+    
+        Ok(())
     }
 
     // ── Offset resolution ────────────────────────────────────────────
 
     #[test]
-    fn composite_offsets_assigned_sequentially() {
+    fn composite_offsets_assigned_sequentially() -> Result<(), Box<dyn std::error::Error>> {
         let mut ir = minimal_schema();
         resolve_schema(&mut ir, None).unwrap();
         // Find the messageHeader composite
@@ -649,10 +662,12 @@ mod tests {
             .unwrap();
         // Should have a non-zero offset (block length)
         assert!(hdr.encoding.offset.is_some());
+    
+        Ok(())
     }
 
     #[test]
-    fn message_offsets_assigned_correctly() {
+    fn message_offsets_assigned_correctly() -> Result<(), Box<dyn std::error::Error>> {
         let mut ir = minimal_schema();
         resolve_schema(&mut ir, None).unwrap();
         // Find BeginMessage token for message A
@@ -665,10 +680,12 @@ mod tests {
         // uint32 field should be at offset 0
         let field = ir.tokens.iter().find(|t| t.name == "x").unwrap();
         assert_eq!(field.encoding.offset, Some(0));
+    
+        Ok(())
     }
 
     #[test]
-    fn explicit_offset_preserved() {
+    fn explicit_offset_preserved() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -682,12 +699,14 @@ mod tests {
         assert_eq!(x.encoding.offset, Some(0));
         let y = ir.tokens.iter().find(|t| t.name == "y").unwrap();
         assert_eq!(y.encoding.offset, Some(4));
+    
+        Ok(())
     }
 
     // ── Group/var-data offset resolution ─────────────────────────────
 
     #[test]
-    fn group_offsets_resolved() {
+    fn group_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -711,10 +730,12 @@ mod tests {
         assert_eq!(a.encoding.offset, Some(0));
         let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
         assert_eq!(b.encoding.offset, Some(4));
+    
+        Ok(())
     }
 
     #[test]
-    fn vardata_offsets_resolved() {
+    fn vardata_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -736,12 +757,14 @@ mod tests {
             .find(|t| t.signal == Signal::BeginMessage)
             .unwrap();
         assert!(msg.encoding.offset.is_some());
+    
+        Ok(())
     }
 
     // ── Enum/set block sizes ─────────────────────────────────────────
 
     #[test]
-    fn enum_block_size_calculated() {
+    fn enum_block_size_calculated() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -761,10 +784,12 @@ mod tests {
             .unwrap();
         // Block length should be 1 (uint8 enum)
         assert_eq!(msg.encoding.offset, Some(1));
+    
+        Ok(())
     }
 
     #[test]
-    fn set_block_size_calculated() {
+    fn set_block_size_calculated() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -783,12 +808,14 @@ mod tests {
             .find(|t| t.signal == Signal::BeginMessage)
             .unwrap();
         assert_eq!(msg.encoding.offset, Some(1));
+    
+        Ok(())
     }
 
     // ── Constant field handling ──────────────────────────────────────
 
     #[test]
-    fn constant_field_does_not_affect_block_length() {
+    fn constant_field_does_not_affect_block_length() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -808,12 +835,13 @@ mod tests {
             .unwrap();
         // Block length should be 4 (uint32 only, constant doesn't occupy wire)
         assert_eq!(msg.encoding.offset, Some(4));
+        Ok(())
     }
 
     // ── Nested composite in message ──────────────────────────────────
 
     #[test]
-    fn nested_composite_offsets_resolved() {
+    fn nested_composite_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -833,12 +861,14 @@ mod tests {
             .unwrap();
         // Point composite = 2 × int32 = 8 bytes
         assert_eq!(msg.encoding.offset, Some(8));
+    
+        Ok(())
     }
 
     // ── Error Display and take_source_code ───────────────────────────
 
     #[test]
-    fn take_source_code_from_duplicate_template_id() {
+    fn take_source_code_from_duplicate_template_id() -> Result<(), Box<dyn std::error::Error>> {
         let mut err = ResolveError::DuplicateTemplateId {
             id: 1,
             name: "test".to_string(),
@@ -847,40 +877,48 @@ mod tests {
             second_label: None,
         };
         assert!(err.take_source_code().is_none()); // was None
+    
+        Ok(())
     }
 
     #[test]
-    fn take_source_code_from_unknown_type() {
+    fn take_source_code_from_unknown_type() -> Result<(), Box<dyn std::error::Error>> {
         let mut err = ResolveError::UnknownType {
             name: "Foo".to_string(),
             source_code: None,
             span: None,
         };
         assert!(err.take_source_code().is_none());
+    
+        Ok(())
     }
 
     #[test]
-    fn take_source_code_from_invalid_offset() {
+    fn take_source_code_from_invalid_offset() -> Result<(), Box<dyn std::error::Error>> {
         let mut err = ResolveError::InvalidOffset {
             offset: 99,
             source_code: None,
             span: None,
         };
         assert!(err.take_source_code().is_none());
+    
+        Ok(())
     }
 
     #[test]
-    fn take_source_code_from_empty_composite() {
+    fn take_source_code_from_empty_composite() -> Result<(), Box<dyn std::error::Error>> {
         let mut err = ResolveError::EmptyComposite {
             name: "Empty".to_string(),
             source_code: None,
             span: None,
         };
         assert!(err.take_source_code().is_none());
+    
+        Ok(())
     }
 
     #[test]
-    fn take_source_code_from_since_version() {
+    fn take_source_code_from_since_version() -> Result<(), Box<dyn std::error::Error>> {
         let mut err = ResolveError::SinceVersionBeyondSchema {
             version: 5,
             schema_version: 0,
@@ -889,10 +927,12 @@ mod tests {
             span: None,
         };
         assert!(err.take_source_code().is_none());
+    
+        Ok(())
     }
 
     #[test]
-    fn resolve_error_displays() {
+    fn resolve_error_displays() -> Result<(), Box<dyn std::error::Error>> {
         let err = ResolveError::DuplicateTemplateId {
             id: 1,
             name: "A".to_string(),
@@ -931,12 +971,14 @@ mod tests {
             span: None,
         };
         assert!(format!("{err}").contains("sinceVersion 3"));
+    
+        Ok(())
     }
 
     // ── Fixed-size array in message ──────────────────────────────────
 
     #[test]
-    fn fixed_array_field_offset() {
+    fn fixed_array_field_offset() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -956,12 +998,14 @@ mod tests {
             .unwrap();
         // 4 × int32 = 16 bytes
         assert_eq!(msg.encoding.offset, Some(16));
+    
+        Ok(())
     }
 
     // ── Nested group within group ────────────────────────────────────
 
     #[test]
-    fn nested_group_offsets_resolved() {
+    fn nested_group_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -984,12 +1028,14 @@ mod tests {
         // Inner group field should be resolved
         let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
         assert_eq!(b.encoding.offset, Some(0));
+    
+        Ok(())
     }
 
     // ── Edge cases for 100% line/branch coverage ─────────────────────
 
     #[test]
-    fn begin_message_without_id_skips_duplicate_check() {
+    fn begin_message_without_id_skips_duplicate_check() -> Result<(), Box<dyn std::error::Error>> {
         // Construct a minimal IR with a BeginMessage that has no id.
         // The duplicate check should skip it (the `if let Some(id)` false branch).
         let mut ir = Ir {
@@ -1017,10 +1063,12 @@ mod tests {
         };
         // Should not panic or error — the message has no id to conflict
         assert!(resolve_schema(&mut ir, None).is_ok());
+    
+        Ok(())
     }
 
     #[test]
-    fn find_matching_end_fallback_on_no_match() {
+    fn find_matching_end_fallback_on_no_match() -> Result<(), Box<dyn std::error::Error>> {
         // Construct tokens with an unclosed BeginComposite to trigger the fallback.
         let tokens = vec![
             Token {
@@ -1039,10 +1087,12 @@ mod tests {
         // find_matching_end should return tokens.len() - 1 as fallback
         let end = find_matching_end(&tokens, 0, Signal::BeginComposite, Signal::EndComposite);
         assert_eq!(end, 1); // returns last index
+    
+        Ok(())
     }
 
     #[test]
-    fn get_token_block_size_catch_all_signal() {
+    fn get_token_block_size_catch_all_signal() -> Result<(), Box<dyn std::error::Error>> {
         // An EndField or other non-Begin signal as a direct child hits the `_ =>` branch.
         let tokens = vec![Token {
             id: None,
@@ -1053,10 +1103,12 @@ mod tests {
         let (size, next) = get_token_block_size(&tokens, 0);
         assert_eq!(size, 0);
         assert_eq!(next, 1);
+    
+        Ok(())
     }
 
     #[test]
-    fn group_without_dimension_composite() {
+    fn group_without_dimension_composite() -> Result<(), Box<dyn std::error::Error>> {
         // A group whose second token is NOT BeginComposite (missing dimensionType).
         let mut tokens = vec![
             Token {
@@ -1093,10 +1145,12 @@ mod tests {
         assert!(result.is_ok());
         // Field should still get an offset
         assert_eq!(tokens[1].encoding.offset, Some(0));
+    
+        Ok(())
     }
 
     #[test]
-    fn vardata_without_type_composite() {
+    fn vardata_without_type_composite() -> Result<(), Box<dyn std::error::Error>> {
         // A var-data whose second token is NOT BeginComposite (missing type).
         let mut tokens = vec![
             Token {
@@ -1116,5 +1170,7 @@ mod tests {
         let src: Option<miette::NamedSource<String>> = None;
         let result = resolve_vardata_offsets(&mut tokens, &src);
         assert!(result.is_ok());
+    
+        Ok(())
     }
 }

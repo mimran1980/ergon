@@ -13,10 +13,10 @@ use ergo_aeron_cluster::codecs::cluster_codecs::{
     WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
 };
 use ergo_aeron_cluster::poller;
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::{Duration, Instant};
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Live 3-node failover (own-driver UDP) ===\n");
     let mut cluster = ergo_aeron_cluster::TestCluster::three_node();
     let node0_port = parse_port(&cluster.ingress_channel);
@@ -25,7 +25,7 @@ fn main() {
     // Client's own embedded driver.
     let client_dir = std::env::temp_dir().join(format!("fo-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&client_dir);
-    let dir_cstr = CString::new(client_dir.to_str().unwrap()).unwrap();
+    let dir_cstr = cformat!("{}", client_dir.display());
     let dc = rusteron_media_driver::AeronDriverContext::new().unwrap();
     dc.set_dir(&dir_cstr).unwrap();
     dc.set_dir_delete_on_shutdown(true).unwrap();
@@ -37,7 +37,7 @@ fn main() {
     a.start().unwrap();
 
     let egress_port: u16 = 19199;
-    let egress_uri = CString::new(format!("aeron:udp?endpoint=localhost:{egress_port}")).unwrap();
+    let egress_uri = cformat!("aeron:udp?endpoint=localhost:{egress_port}");
     let egress = a
         .add_subscription(
             &egress_uri,
@@ -49,7 +49,7 @@ fn main() {
         .unwrap();
 
     let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
-        let uri = CString::new(format!("aeron:udp?endpoint=localhost:{port}")).unwrap();
+        let uri = cformat!("aeron:udp?endpoint=localhost:{port}");
         let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
         let mut buf = vec![0u8; 512];
         {
@@ -97,7 +97,7 @@ fn main() {
     println!("Connected to leader: {connected}");
     if !connected {
         println!("FAIL: no session");
-        return;
+        return Ok(());
     }
 
     println!("\nKilling leader (node 0)...");
@@ -157,7 +157,9 @@ fn main() {
                     println!("\n=== Result: NewLeaderEvent had no endpoint for member {leader_member_id} ===");
                 }
             }
-        }
+        
+    Ok(())
+}
         None => {
             println!("\n=== Result: no NewLeaderEvent within 30s ===");
             println!("(cluster election timing — the transport survived, but no new");

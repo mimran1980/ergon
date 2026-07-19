@@ -1306,7 +1306,7 @@ mod tests {
     // ── build + record ───────────────────────────────────────────────
 
     #[test]
-    fn test_build_and_record() {
+    fn test_build_and_record() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = simple_recorder();
         let values = simple_values();
         let schema_id = rec.schema_id;
@@ -1324,12 +1324,14 @@ mod tests {
         assert_eq!(parts.strs, vec![(2, 4)]);
         assert!(parts.nulls.is_empty());
         assert_eq!(parts.symbols, b"AAPL");
+    
+        Ok(())
     }
 
     // ── schema_id determinism ─────────────────────────────────────────
 
     #[test]
-    fn test_schema_id_determinism() {
+    fn test_schema_id_determinism() -> Result<(), Box<dyn std::error::Error>> {
         let rec1 = DynamicRecorderBuilder::new("t")
             .field("a", ColumnType::Int64)
             .field("b", ColumnType::String)
@@ -1372,12 +1374,14 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(rec1.schema_id, rec5.schema_id);
+    
+        Ok(())
     }
 
     // ── metadata ──────────────────────────────────────────────────────
 
     #[test]
-    fn test_metadata_values_present() {
+    fn test_metadata_values_present() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("test")
             .field("val", ColumnType::Int64)
             .metadata("source", "exchange_a")
@@ -1397,10 +1401,12 @@ mod tests {
         assert!(sym.windows(10).any(|w| w == b"exchange_a"));
         assert!(sym.windows(3).any(|w| w == b"env"));
         assert!(sym.windows(4).any(|w| w == b"prod"));
+    
+        Ok(())
     }
 
     #[test]
-    fn test_metadata_consistency() {
+    fn test_metadata_consistency() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("x", ColumnType::Int64)
             .metadata("key1", "val1")
@@ -1415,12 +1421,14 @@ mod tests {
         let p2 = decode_parts(&buf2);
         assert_eq!(p1.meta.len(), p2.meta.len());
         assert_eq!(p1.symbols, p2.symbols);
+    
+        Ok(())
     }
 
     // ── String values ─────────────────────────────────────────────────
 
     #[test]
-    fn test_string_values() {
+    fn test_string_values() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("name", ColumnType::String)
             .field("code", ColumnType::String)
@@ -1438,10 +1446,12 @@ mod tests {
         let parts = decode_parts(&buf);
         assert_eq!(parts.strs, vec![(0, 5), (1, 3)]);
         assert_eq!(parts.symbols, b"helloabc");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_string_symbol_table_with_metadata() {
+    fn test_string_symbol_table_with_metadata() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("msg", ColumnType::String)
             .metadata("tag", "xyz")
@@ -1458,12 +1468,14 @@ mod tests {
         assert_eq!(parts.symbols.len(), 3 + 3 + 4);
         assert!(parts.symbols.starts_with(b"tagxyz"));
         assert!(parts.symbols.ends_with(b"data"));
+    
+        Ok(())
     }
 
     // ── Null values ───────────────────────────────────────────────────
 
     #[test]
-    fn test_null_values() {
+    fn test_null_values() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("val", ColumnType::Int64)
             .field("name", ColumnType::String)
@@ -1479,12 +1491,14 @@ mod tests {
         assert!(parts.i64s.is_empty());
         assert!(parts.strs.is_empty());
         assert_eq!(parts.nulls, vec![0, 1]);
+    
+        Ok(())
     }
 
     // ── Empty metadata ────────────────────────────────────────────────
 
     #[test]
-    fn test_empty_metadata_produces_valid_sbe() {
+    fn test_empty_metadata_produces_valid_sbe() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("x", ColumnType::Float64)
             .build()
@@ -1494,12 +1508,14 @@ mod tests {
         let parts = decode_parts(&buf);
         assert!(parts.meta.is_empty());
         assert_eq!(parts.f64s.len(), 1);
+    
+        Ok(())
     }
 
     // ── Multi-key metadata ────────────────────────────────────────────
 
     #[test]
-    fn test_multiple_metadata_keys() {
+    fn test_multiple_metadata_keys() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("x", ColumnType::Int64)
             .metadata("a", "1")
@@ -1510,24 +1526,28 @@ mod tests {
 
         let buf = rec.record(&[DynamicValue::Int64(0)]).unwrap().to_vec();
         assert_eq!(decode_parts(&buf).meta.len(), 3);
+    
+        Ok(())
     }
 
     // ── Wrong value count ─────────────────────────────────────────────
 
     #[test]
-    fn test_wrong_value_count_errors() {
+    fn test_wrong_value_count_errors() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = simple_recorder();
         let err = rec.record(&[DynamicValue::Int64(1)]).unwrap_err();
         assert!(matches!(
             err,
             DynamicRecorderError::ValueCountMismatch { .. }
         ));
+    
+        Ok(())
     }
 
     // ── Value type mismatch ───────────────────────────────────────────
 
     #[test]
-    fn test_value_type_mismatch_errors() {
+    fn test_value_type_mismatch_errors() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("price", ColumnType::Float64)
             .build()
@@ -1537,12 +1557,14 @@ mod tests {
             err,
             DynamicRecorderError::ValueTypeMismatch { .. }
         ));
+    
+        Ok(())
     }
 
     // ── 100k loop — no allocation ─────────────────────────────────────
 
     #[test]
-    fn test_no_allocation_loop() {
+    fn test_no_allocation_loop() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("price", ColumnType::Float64)
             .field("qty", ColumnType::UInt64)
@@ -1565,12 +1587,14 @@ mod tests {
             assert_eq!(buf.len(), first_buf);
             assert_eq!(rec.buffer.capacity(), cap);
         }
+    
+        Ok(())
     }
 
     // ── Schema ID w/ metadata ─────────────────────────────────────────
 
     #[test]
-    fn test_schema_id_determinism_with_metadata() {
+    fn test_schema_id_determinism_with_metadata() -> Result<(), Box<dyn std::error::Error>> {
         // Same fields + same metadata → same schema_id regardless of
         // registration order.
         let a = DynamicRecorderBuilder::new("x")
@@ -1601,12 +1625,14 @@ mod tests {
             .unwrap();
 
         assert_ne!(a.schema_id, c.schema_id);
+    
+        Ok(())
     }
 
     // ── General round-trip ────────────────────────────────────────────
 
     #[test]
-    fn test_round_trip_all_types() {
+    fn test_round_trip_all_types() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("rt_test")
             .field("i", ColumnType::Int64)
             .field("u", ColumnType::UInt64)
@@ -1645,12 +1671,14 @@ mod tests {
         assert_eq!(parts.symbols.len(), 2 + 5 + 5);
         assert!(parts.symbols.starts_with(b"rtcheck"));
         assert!(parts.symbols.ends_with(b"hello"));
+    
+        Ok(())
     }
 
     // ── Nullable column type ──────────────────────────────────────────
 
     #[test]
-    fn test_nullable_column_type() {
+    fn test_nullable_column_type() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("val", ColumnType::Nullable(Box::new(ColumnType::Int64)))
             .build()
@@ -1663,12 +1691,14 @@ mod tests {
         // Non-null value is also accepted.
         let buf2 = rec.record(&[DynamicValue::Int64(42)]).unwrap().to_vec();
         assert_eq!(decode_parts(&buf2).i64s.len(), 1);
+    
+        Ok(())
     }
 
     // ── All-null values ─────────────────────────────────────────
 
     #[test]
-    fn test_all_null_values() {
+    fn test_all_null_values() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("i", ColumnType::Int64)
             .field("u", ColumnType::UInt64)
@@ -1698,12 +1728,14 @@ mod tests {
         assert!(parts.bools.is_empty());
         assert!(parts.strs.is_empty());
         assert_eq!(parts.nulls, vec![0, 1, 2, 3, 4]);
+    
+        Ok(())
     }
 
     // ── Mixed null/non-null interleaved ─────────────────────────
 
     #[test]
-    fn test_mixed_null_and_non_null() {
+    fn test_mixed_null_and_non_null() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("a", ColumnType::Int64)
             .field("b", ColumnType::String)
@@ -1730,12 +1762,14 @@ mod tests {
         assert_eq!(parts.nulls, vec![1, 3]);
         assert!(parts.strs.is_empty());
         assert!(parts.u64s.is_empty());
+    
+        Ok(())
     }
 
     // ── Build with empty fields ─────────────────────────────────
 
     #[test]
-    fn test_build_with_empty_fields_errors() {
+    fn test_build_with_empty_fields_errors() -> Result<(), Box<dyn std::error::Error>> {
         match DynamicRecorderBuilder::new("t").build() {
             Err(e) => {
                 assert!(matches!(e, DynamicRecorderError::NoFields));
@@ -1743,12 +1777,14 @@ mod tests {
             }
             Ok(_) => panic!("expected NoFields error"),
         }
+    
+        Ok(())
     }
 
     // ── Build with duplicate column names ───────────────────────
 
     #[test]
-    fn test_build_with_duplicate_column_names() {
+    fn test_build_with_duplicate_column_names() -> Result<(), Box<dyn std::error::Error>> {
         // Current behaviour: the builder does not validate uniqueness, so
         // duplicate column names are accepted.
         let mut rec = DynamicRecorderBuilder::new("t")
@@ -1763,12 +1799,14 @@ mod tests {
             .to_vec();
         assert!(!buf.is_empty());
         assert_eq!(decode_parts(&buf).i64s, vec![(0, 1), (1, 2)]);
+    
+        Ok(())
     }
 
     // ── Maximum columns (u8 field_id range 0..=255) ─────────────
 
     #[test]
-    fn test_maximum_columns() {
+    fn test_maximum_columns() -> Result<(), Box<dyn std::error::Error>> {
         let mut builder = DynamicRecorderBuilder::new("max_cols");
         for i in 0..=255u16 {
             builder = builder.field(format!("col_{i}"), ColumnType::Int64);
@@ -1787,12 +1825,14 @@ mod tests {
             assert_eq!(v, expected as i64);
         }
         assert!(parts.nulls.is_empty());
+    
+        Ok(())
     }
 
     // ── Empty metadata + all-null values ────────────────────────
 
     #[test]
-    fn test_all_null_no_metadata() {
+    fn test_all_null_no_metadata() -> Result<(), Box<dyn std::error::Error>> {
         let mut rec = DynamicRecorderBuilder::new("t")
             .field("a", ColumnType::Int64)
             .build()
@@ -1803,5 +1843,7 @@ mod tests {
         assert!(parts.meta.is_empty());
         assert!(parts.i64s.is_empty());
         assert_eq!(parts.nulls, vec![0]);
+    
+        Ok(())
     }
 }

@@ -78,41 +78,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_session_initial_state() {
+    fn test_session_initial_state() -> Result<(), Box<dyn std::error::Error>> {
         let s = AeronClusterSession::new(42, 1);
         assert_eq!(s.state(), SessionState::Connected);
         assert_eq!(s.cluster_session_id(), 42);
         assert_eq!(s.leadership_term_id(), 1);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_close_transitions_to_pending_close() {
+    fn test_close_transitions_to_pending_close() -> Result<(), Box<dyn std::error::Error>> {
         let mut s = AeronClusterSession::new(1, 1);
         assert!(s.close().is_ok());
         assert_eq!(s.state(), SessionState::PendingClose);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_close_on_closed_returns_error() {
+    fn test_close_on_closed_returns_error() -> Result<(), Box<dyn std::error::Error>> {
         let mut s = AeronClusterSession::new(1, 1);
         s.mark_closed();
         assert_eq!(s.close(), Err(ClusterError::SessionClosed));
+    
+        Ok(())
     }
 
     #[test]
-    fn test_on_new_leader_transition() {
+    fn test_on_new_leader_transition() -> Result<(), Box<dyn std::error::Error>> {
         let mut s = AeronClusterSession::new(1, 1);
         s.on_new_leader(5);
         assert_eq!(s.state(), SessionState::AwaitingNewLeaderConnection);
         assert_eq!(s.leadership_term_id(), 5);
         s.on_ingress_connected();
         assert_eq!(s.state(), SessionState::Connected);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_mark_closed() {
+    fn test_mark_closed() -> Result<(), Box<dyn std::error::Error>> {
         let mut s = AeronClusterSession::new(1, 1);
         s.mark_closed();
         assert_eq!(s.state(), SessionState::Closed);
+    
+        Ok(())
     }
 }

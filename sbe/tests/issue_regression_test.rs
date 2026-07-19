@@ -94,7 +94,7 @@ fn parse_xml_meta(xml: &str) -> SchemaMeta {
 // it is valid XML with the expected SBE attributes.
 
 #[test]
-fn issue435_enum_ref_composite_ref_set_ref() {
+fn issue435_enum_ref_composite_ref_set_ref() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("435")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue435");
@@ -104,10 +104,12 @@ fn issue435_enum_ref_composite_ref_set_ref() {
     assert!(xml.contains("setRef"), "should contain set definition");
     assert!(xml.contains("enumRef"), "should contain enum definition");
     assert!(xml.contains("exampleRef"), "should contain composite ref");
+
+    Ok(())
 }
 
 #[test]
-fn issue472_optional_uint64() {
+fn issue472_optional_uint64() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("472")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue472");
@@ -116,10 +118,12 @@ fn issue472_optional_uint64() {
         xml.contains("presence=\"optional\""),
         "should have optional field"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue483_all_presence_types() {
+fn issue483_all_presence_types() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("483")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue483");
@@ -127,10 +131,12 @@ fn issue483_all_presence_types() {
     assert!(xml.contains("presence=\"required\""), "required field");
     assert!(xml.contains("presence=\"constant\""), "constant field");
     assert!(xml.contains("presence=\"optional\""), "optional field");
+
+    Ok(())
 }
 
 #[test]
-fn issue488_variable_length_data() {
+fn issue488_variable_length_data() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("488")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue488");
@@ -139,10 +145,12 @@ fn issue488_variable_length_data() {
         xml.contains("varDataEncoding"),
         "should contain varDataEncoding"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue496_nested_composites() {
+fn issue496_nested_composites() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("496")).unwrap();
     let meta = parse_xml_meta(&xml);
     // Note: this file re-uses the issue488 package/id
@@ -150,10 +158,12 @@ fn issue496_nested_composites() {
     assert!(xml.contains("compositeOne"), "compositeOne");
     assert!(xml.contains("compositeTwo"), "compositeTwo");
     assert!(xml.contains("compositeThree"), "compositeThree");
+
+    Ok(())
 }
 
 #[test]
-fn issue505_constant_fields() {
+fn issue505_constant_fields() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("505")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue505");
@@ -164,10 +174,12 @@ fn issue505_constant_fields() {
     assert!(xml.contains(">D<"), "char constant D"); // idSourceTwo
     assert!(xml.contains(">EF<"), "char constant EF"); // idSourceThree
     assert!(xml.contains(">GH<"), "char constant GH"); // idSourceFour
+
+    Ok(())
 }
 
 #[test]
-fn issue560_constant_enum_ref() {
+fn issue560_constant_enum_ref() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("560")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue560");
@@ -185,10 +197,12 @@ fn issue560_constant_enum_ref() {
         "varStringEncoding composite"
     );
     assert!(xml.contains("varDataEncoding"), "varDataEncoding composite");
+
+    Ok(())
 }
 
 #[test]
-fn issue567_valid_group_uint32_dimension() {
+fn issue567_valid_group_uint32_dimension() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("567-valid")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.id, 1);
@@ -196,10 +210,12 @@ fn issue567_valid_group_uint32_dimension() {
         xml.contains("numInGroup") && xml.contains("maxValue"),
         "valid group dimension has maxValue"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue567_invalid_group_dimension() {
+fn issue567_invalid_group_dimension() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("567-invalid")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.id, 1);
@@ -219,10 +235,12 @@ fn issue567_invalid_group_dimension() {
     } else {
         panic!("groupSizeEncoding not found");
     }
+
+    Ok(())
 }
 
 #[test]
-fn issue661_set_with_since_version() {
+fn issue661_set_with_since_version() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("661")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue661");
@@ -232,20 +250,24 @@ fn issue661_set_with_since_version() {
         xml.contains("sinceVersion=\"1\""),
         "field with sinceVersion"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue827_set_uint64_encoding() {
+fn issue827_set_uint64_encoding() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("827")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue827");
     assert_eq!(meta.id, 827);
     assert!(xml.contains("encodingType=\"uint64\""), "uint64 encoding");
     assert!(xml.contains("Bit35"), "bit 35 position");
+
+    Ok(())
 }
 
 #[test]
-fn issue835_large_fix_schema() {
+fn issue835_large_fix_schema() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("835")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "simple");
@@ -265,29 +287,35 @@ fn issue835_large_fix_schema() {
         xml.contains("MDIncrementalRefreshOrderBook47"),
         "should contain the group message"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue847_composite_ref_in_header() {
+fn issue847_composite_ref_in_header() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("847")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue847");
     assert_eq!(meta.id, 1);
     assert!(xml.contains("name=\"c1\""), "ref inside messageHeader");
+
+    Ok(())
 }
 
 #[test]
-fn issue848_composite_ref_to_composite() {
+fn issue848_composite_ref_to_composite() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("848")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue848");
     assert_eq!(meta.id, 1);
     assert!(xml.contains("name=\"c1\""), "ref to Comp1 inside Comp2");
     assert!(xml.contains("Comp2"), "Comp2 composite");
+
+    Ok(())
 }
 
 #[test]
-fn issue849_deeply_nested_composites() {
+fn issue849_deeply_nested_composites() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("849")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue849");
@@ -296,10 +324,12 @@ fn issue849_deeply_nested_composites() {
     assert!(xml.contains("Comp2"), "Comp2");
     assert!(xml.contains("Comp3"), "Comp3");
     assert!(xml.contains("Comp4"), "Comp4");
+
+    Ok(())
 }
 
 #[test]
-fn issue889_enum_optional_encoding() {
+fn issue889_enum_optional_encoding() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("889")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue889");
@@ -309,10 +339,12 @@ fn issue889_enum_optional_encoding() {
         "enum with optional encoding type"
     );
     assert!(xml.contains("LotType"), "LotType enum");
+
+    Ok(())
 }
 
 #[test]
-fn issue895_optional_float_double() {
+fn issue895_optional_float_double() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("895")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue895");
@@ -322,10 +354,12 @@ fn issue895_optional_float_double() {
         xml.contains("type=\"float\"") && xml.contains("type=\"double\""),
         "float and double types"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue910_keyword_field_names() {
+fn issue910_keyword_field_names() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("910")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue910");
@@ -337,10 +371,12 @@ fn issue910_keyword_field_names() {
     // 8 messages
     let msg_count = xml.matches("message name=").count();
     assert_eq!(msg_count, 8, "should have 8 messages, found {msg_count}");
+
+    Ok(())
 }
 
 #[test]
-fn issue967_composite_optional_constant() {
+fn issue967_composite_optional_constant() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("967")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue967");
@@ -355,10 +391,12 @@ fn issue967_composite_optional_constant() {
         xml.contains("sinceVersion=\"12\""),
         "field with sinceVersion"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue972_composite_optional_fields() {
+fn issue972_composite_optional_fields() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("972")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue972");
@@ -372,10 +410,12 @@ fn issue972_composite_optional_fields() {
         xml.contains("nullValue=\"0\""),
         "null value on optional fields"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue984_group_char_arrays() {
+fn issue984_group_char_arrays() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("984")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue984");
@@ -389,10 +429,12 @@ fn issue984_group_char_arrays() {
         xml.contains("dimensionType=\"groupSize\""),
         "custom dimensionType"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue987_composite_offset_attributes() {
+fn issue987_composite_offset_attributes() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("987")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue987");
@@ -402,10 +444,12 @@ fn issue987_composite_offset_attributes() {
         xml.contains("offset=\"4\""),
         "composite with explicit offset"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue1007_enum_keyword_values() {
+fn issue1007_enum_keyword_values() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("1007")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue1007");
@@ -413,10 +457,12 @@ fn issue1007_enum_keyword_values() {
     // ValidValue names "false" and "true" are Rust keywords
     assert!(xml.contains("name=\"false\""), "validValue named 'false'");
     assert!(xml.contains("name=\"true\""), "validValue named 'true'");
+
+    Ok(())
 }
 
 #[test]
-fn issue1028_set_since_version_in_composite() {
+fn issue1028_set_since_version_in_composite() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("1028")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue1028");
@@ -428,10 +474,12 @@ fn issue1028_set_since_version_in_composite() {
         xml.contains("OutboundBusinessHeader"),
         "OutboundBusinessHeader composite"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue1057_set_and_primitive_in_composite() {
+fn issue1057_set_and_primitive_in_composite() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("1057")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue1057");
@@ -443,10 +491,12 @@ fn issue1057_set_and_primitive_in_composite() {
         xml.contains("OutboundBusinessHeader"),
         "OutboundBusinessHeader composite"
     );
+
+    Ok(())
 }
 
 #[test]
-fn issue1066_optional_versioned_field() {
+fn issue1066_optional_versioned_field() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("1066")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.package, "issue1066");
@@ -454,12 +504,14 @@ fn issue1066_optional_versioned_field() {
     assert_eq!(meta.version, 2);
     assert!(xml.contains("sinceVersion=\"2\""), "sinceVersion on field");
     assert!(xml.contains("presence=\"optional\""), "optional on field");
+
+    Ok(())
 }
 
 // ── Codegen pipeline smoke test ───────────────────────────────────────
 
 #[test]
-fn issue435_codegen_pipeline() {
+fn issue435_codegen_pipeline() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("435")).unwrap();
     let meta = parse_xml_meta(&xml);
     let schema = ergo_sbe::Schema::new(&meta.package, meta.id, meta.version);
@@ -469,13 +521,15 @@ fn issue435_codegen_pipeline() {
     assert_eq!(module.path, "issue435.rs");
     assert!(module.source.contains(&meta.package));
     assert!(module.source.contains(&meta.id.to_string()));
+
+    Ok(())
 }
 
 // ── Bulk checks ───────────────────────────────────────────────────────
 
 /// All issue schemas parse as valid XML.
 #[test]
-fn all_issue_schemas_valid_xml() {
+fn all_issue_schemas_valid_xml() -> Result<(), Box<dyn std::error::Error>> {
     for num in &[
         "435",
         "472",
@@ -513,11 +567,13 @@ fn all_issue_schemas_valid_xml() {
             "issue{num}: byteOrder should exist"
         );
     }
+
+    Ok(())
 }
 
 /// Codegen pipeline works for every issue schema.
 #[test]
-fn all_issue_schemas_codegen() {
+fn all_issue_schemas_codegen() -> Result<(), Box<dyn std::error::Error>> {
     for num in &[
         "435",
         "472",
@@ -563,4 +619,6 @@ fn all_issue_schemas_codegen() {
             meta.id
         );
     }
+
+    Ok(())
 }

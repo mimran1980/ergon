@@ -92,7 +92,7 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
 /// and the Engine composite, writes an otherwise-empty message, decodes, and
 /// asserts field-by-field equality.
 #[test]
-fn roundtrip_scalar_and_engine() {
+fn roundtrip_scalar_and_engine() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_example");
 
     let test_code = r##"
@@ -166,11 +166,13 @@ proptest! {
 "##;
 
     compile_and_run_proptest("scalar", "car_example", &src, test_code);
+
+    Ok(())
 }
 
 /// Test 2 — var-data (string) round-trip: manufacturer, model, activationCode.
 #[test]
-fn roundtrip_strings() {
+fn roundtrip_strings() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_example");
 
     let test_code = r##"
@@ -223,13 +225,15 @@ proptest! {
 "##;
 
     compile_and_run_proptest("strings", "car_example", &src, test_code);
+
+    Ok(())
 }
 
 /// Test 3 — group round-trip: fuel figures with random entries.
 ///
 /// Generates 0–8 entries with random speed, mpg, and usage description.
 #[test]
-fn roundtrip_groups() {
+fn roundtrip_groups() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_example");
 
     let test_code = r##"
@@ -292,18 +296,20 @@ proptest! {
 "##;
 
     compile_and_run_proptest("groups", "car_example", &src, test_code);
+
+    Ok(())
 }
 
 /// Test 4 — zero-length edge cases: empty groups, empty var-data.
 #[test]
-fn roundtrip_zero_length() {
+fn roundtrip_zero_length() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_example");
 
     let test_code = r##"
 use prop_car_example::*;
 
 #[test]
-fn zero_length_roundtrip() {
+fn zero_length_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; 512];
     let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     car.serial_number(0);
@@ -335,22 +341,26 @@ fn zero_length_roundtrip() {
     assert_eq!(b"", model, "model");
     let (activation, _done) = a2.into_activation_code().unwrap();
     assert_eq!(b"", activation, "activationCode");
+
+    Ok(())
 }
 "##;
 
     compile_and_run_proptest("zero_len", "car_example", &src, test_code);
+
+    Ok(())
 }
 
 /// Test 5 — boundary values: minimum and maximum integer values, all bits set.
 #[test]
-fn roundtrip_boundary_values() {
+fn roundtrip_boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_example");
 
     let test_code = r##"
 use prop_car_example::*;
 
 #[test]
-fn boundary_values() {
+fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; 512];
     let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     car.serial_number(u64::MAX);
@@ -415,8 +425,12 @@ fn boundary_values() {
     assert_eq!(b"MAX", model);
     let (activation, _done) = a2.into_activation_code().unwrap();
     assert_eq!(b"MAX", activation);
+
+    Ok(())
 }
 "##;
 
     compile_and_run_proptest("boundary", "car_example", &src, test_code);
+
+    Ok(())
 }

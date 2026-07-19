@@ -13,7 +13,7 @@
 #![cfg(feature = "test-harness")]
 
 use std::error::Error;
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::{Duration, Instant};
 
 use cluster_ha_orderbook::follower::BookFollower;
@@ -43,7 +43,7 @@ struct OwnDriver {
 fn launch_own_driver(tag: &str) -> OwnDriver {
     let dir = std::env::temp_dir().join(format!("{tag}-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
-    let dir_cstr = CString::new(dir.to_str().unwrap()).unwrap();
+    let dir_cstr = cformat!("{}", dir.display());
     let dc = rusteron_media_driver::AeronDriverContext::new().unwrap();
     dc.set_dir(&dir_cstr).unwrap();
     dc.set_dir_delete_on_shutdown(true).unwrap();

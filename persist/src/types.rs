@@ -211,57 +211,77 @@ mod tests {
     // -- scalar variants ---------------------------------------------------
 
     #[test]
-    fn test_int8_ddl() {
+    fn test_int8_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Int8.to_string(), "Int8");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_int16_ddl() {
+    fn test_int16_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Int16.to_string(), "Int16");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_int32_ddl() {
+    fn test_int32_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Int32.to_string(), "Int32");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_int64_ddl() {
+    fn test_int64_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Int64.to_string(), "Int64");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_uint8_ddl() {
+    fn test_uint8_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::UInt8.to_string(), "UInt8");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_uint16_ddl() {
+    fn test_uint16_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::UInt16.to_string(), "UInt16");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_uint32_ddl() {
+    fn test_uint32_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::UInt32.to_string(), "UInt32");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_uint64_ddl() {
+    fn test_uint64_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::UInt64.to_string(), "UInt64");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_float32_ddl() {
+    fn test_float32_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Float32.to_string(), "Float32");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_float64_ddl() {
+    fn test_float64_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Float64.to_string(), "Float64");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_decimal_ddl() {
+    fn test_decimal_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             ColumnType::Decimal {
                 precision: 18,
@@ -270,10 +290,12 @@ mod tests {
             .to_string(),
             "Decimal(18, 8)"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn test_decimal_min_precision() {
+    fn test_decimal_min_precision() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             ColumnType::Decimal {
                 precision: 1,
@@ -282,10 +304,12 @@ mod tests {
             .to_string(),
             "Decimal(1, 0)"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn test_decimal_max_precision() {
+    fn test_decimal_max_precision() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             ColumnType::Decimal {
                 precision: 76,
@@ -294,6 +318,8 @@ mod tests {
             .to_string(),
             "Decimal(76, 76)"
         );
+    
+        Ok(())
     }
 
     #[test]
@@ -327,85 +353,111 @@ mod tests {
     }
 
     #[test]
-    fn test_string_ddl() {
+    fn test_string_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::String.to_string(), "String");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_fixed_string_ddl() {
+    fn test_fixed_string_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::FixedString(32).to_string(), "FixedString(32)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_date_ddl() {
+    fn test_date_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Date.to_string(), "Date");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_datetime_ddl() {
+    fn test_datetime_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::DateTime(3).to_string(), "DateTime(3)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_datetime64_ddl() {
+    fn test_datetime64_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::DateTime64(6).to_string(), "DateTime64(6)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_bool_ddl() {
+    fn test_bool_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Bool.to_string(), "Bool");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_interval_ddl() {
+    fn test_interval_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Interval.to_string(), "Interval");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_json_ddl() {
+    fn test_json_ddl() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::Json.to_string(), "Json");
+    
+        Ok(())
     }
 
     // -- compound types ----------------------------------------------------
 
     #[test]
-    fn test_nullable() {
+    fn test_nullable() -> Result<(), Box<dyn std::error::Error>> {
         let ct = ColumnType::Nullable(Box::new(ColumnType::UInt64));
         assert_eq!(ct.to_string(), "Nullable(UInt64)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_nullable_nesting_collapsed() {
+    fn test_nullable_nesting_collapsed() -> Result<(), Box<dyn std::error::Error>> {
         // Nullable(Nullable(Int32)) -> Nullable(Int32)
         let ct = ColumnType::Nullable(Box::new(ColumnType::Nullable(Box::new(ColumnType::Int32))));
         assert_eq!(ct.to_string(), "Nullable(Int32)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_array() {
+    fn test_array() -> Result<(), Box<dyn std::error::Error>> {
         let ct = ColumnType::Array(Box::new(ColumnType::Int32));
         assert_eq!(ct.to_string(), "Array(Int32)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_array_nullable() {
+    fn test_array_nullable() -> Result<(), Box<dyn std::error::Error>> {
         let ct = ColumnType::Array(Box::new(ColumnType::Nullable(Box::new(ColumnType::Int32))));
         assert_eq!(ct.to_string(), "Array(Nullable(Int32))");
+    
+        Ok(())
     }
 
     // -- DDL functions -----------------------------------------------------
 
     #[test]
-    fn test_column_definition_ddl() {
+    fn test_column_definition_ddl() -> Result<(), Box<dyn std::error::Error>> {
         let ct = ColumnType::Decimal {
             precision: 18,
             scale: 8,
         };
         assert_eq!(column_definition_ddl("price", &ct), "price Decimal(18, 8)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_alter_table_add_column_ddl() {
+    fn test_alter_table_add_column_ddl() -> Result<(), Box<dyn std::error::Error>> {
         let ct = ColumnType::Decimal {
             precision: 18,
             scale: 8,
@@ -414,10 +466,12 @@ mod tests {
             alter_table_add_column_ddl("trades", "price", &ct),
             "ALTER TABLE trades ADD COLUMN IF NOT EXISTS price Decimal(18, 8)"
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn test_create_table_ddl() {
+    fn test_create_table_ddl() -> Result<(), Box<dyn std::error::Error>> {
         let id = ColumnType::UInt64;
         let symbol = ColumnType::String;
         let price = ColumnType::Decimal {
@@ -440,30 +494,38 @@ CREATE TABLE IF NOT EXISTS trades (
     ts DateTime(3)
 ) ENGINE = MergeTree() ORDER BY (id, ts)";
         assert_eq!(ddl, expected);
+    
+        Ok(())
     }
 
     // -- From<ColumnType> for String ---------------------------------------
 
     #[test]
-    fn test_from_column_type_for_string() {
+    fn test_from_column_type_for_string() -> Result<(), Box<dyn std::error::Error>> {
         let s: String = ColumnType::UInt32.into();
         assert_eq!(s, "UInt32");
+    
+        Ok(())
     }
 
     // -- decimal_bounds utility --------------------------------------------
 
     #[test]
-    fn test_decimal_bounds_valid() {
+    fn test_decimal_bounds_valid() -> Result<(), Box<dyn std::error::Error>> {
         assert!(ColumnType::decimal_bounds(1, 0));
         assert!(ColumnType::decimal_bounds(76, 76));
         assert!(ColumnType::decimal_bounds(18, 8));
+    
+        Ok(())
     }
 
     #[test]
-    fn test_decimal_bounds_invalid() {
+    fn test_decimal_bounds_invalid() -> Result<(), Box<dyn std::error::Error>> {
         assert!(!ColumnType::decimal_bounds(0, 0));
         assert!(!ColumnType::decimal_bounds(77, 0));
         assert!(!ColumnType::decimal_bounds(5, 6));
+    
+        Ok(())
     }
 
     // -- default type mappings — todo 06 ---------------------------------
@@ -473,133 +535,179 @@ CREATE TABLE IF NOT EXISTS trades (
     }
 
     #[test]
-    fn test_default_i8() {
+    fn test_default_i8() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<i8>(ColumnType::Int8);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_i16() {
+    fn test_default_i16() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<i16>(ColumnType::Int16);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_i32() {
+    fn test_default_i32() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<i32>(ColumnType::Int32);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_i64() {
+    fn test_default_i64() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<i64>(ColumnType::Int64);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_u8() {
+    fn test_default_u8() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<u8>(ColumnType::UInt8);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_u16() {
+    fn test_default_u16() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<u16>(ColumnType::UInt16);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_u32() {
+    fn test_default_u32() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<u32>(ColumnType::UInt32);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_u64() {
+    fn test_default_u64() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<u64>(ColumnType::UInt64);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_f32() {
+    fn test_default_f32() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<f32>(ColumnType::Float32);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_f64() {
+    fn test_default_f64() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<f64>(ColumnType::Float64);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_bool() {
+    fn test_default_bool() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<bool>(ColumnType::Bool);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_string() {
+    fn test_default_string() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<String>(ColumnType::String);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_str() {
+    fn test_default_str() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<&str>(ColumnType::String);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_vec_u8() {
+    fn test_default_vec_u8() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<Vec<u8>>(ColumnType::String);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_unknown_type_falls_back_to_json() {
+    fn test_default_unknown_type_falls_back_to_json() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<Vec<i32>>(ColumnType::Json);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_char_maps_to_json() {
+    fn test_default_char_maps_to_json() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<char>(ColumnType::Json);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_default_unit_maps_to_json() {
+    fn test_default_unit_maps_to_json() -> Result<(), Box<dyn std::error::Error>> {
         assert_maps_to::<()>(ColumnType::Json);
+    
+        Ok(())
     }
 
     // -- Display edge cases ------------------------------------------------
 
     #[test]
-    fn test_fixed_string_zero() {
+    fn test_fixed_string_zero() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::FixedString(0).to_string(), "FixedString(0)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_datetime_zero() {
+    fn test_datetime_zero() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::DateTime(0).to_string(), "DateTime(0)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_datetime64_zero() {
+    fn test_datetime64_zero() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(ColumnType::DateTime64(0).to_string(), "DateTime64(0)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_nullable_triple_nesting_collapsed() {
+    fn test_nullable_triple_nesting_collapsed() -> Result<(), Box<dyn std::error::Error>> {
         // Nullable(Nullable(Nullable(Int32))) -> Nullable(Int32)
         // after two collapses.
         let ct = ColumnType::Nullable(Box::new(ColumnType::Nullable(Box::new(
             ColumnType::Nullable(Box::new(ColumnType::Int32)),
         ))));
         assert_eq!(ct.to_string(), "Nullable(Int32)");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_array_nested() {
+    fn test_array_nested() -> Result<(), Box<dyn std::error::Error>> {
         let ct = ColumnType::Array(Box::new(ColumnType::Array(Box::new(ColumnType::UInt64))));
         assert_eq!(ct.to_string(), "Array(Array(UInt64))");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_array_nullable_deep() {
+    fn test_array_nullable_deep() -> Result<(), Box<dyn std::error::Error>> {
         let ct = ColumnType::Array(Box::new(ColumnType::Nullable(Box::new(ColumnType::Array(
             Box::new(ColumnType::Nullable(Box::new(ColumnType::Int32))),
         )))));
         assert_eq!(ct.to_string(), "Array(Nullable(Array(Nullable(Int32))))");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_decimal_odd_bounds() {
+    fn test_decimal_odd_bounds() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             ColumnType::Decimal {
                 precision: 1,
@@ -616,5 +724,7 @@ CREATE TABLE IF NOT EXISTS trades (
             .to_string(),
             "Decimal(76, 0)"
         );
+    
+        Ok(())
     }
 }

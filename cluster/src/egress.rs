@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_session_event_ok() {
+    fn test_dispatch_session_event_ok() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
         let _ = enc
@@ -227,10 +227,12 @@ mod tests {
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().session_code, Some(EventCode::OK));
         assert_eq!(adapter.listener().detail, "ok");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_dispatch_challenge() {
+    fn test_dispatch_challenge() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
         let _ = enc.correlation_id(5).cluster_session_id(2);
@@ -241,10 +243,12 @@ mod tests {
         assert!(adapter.on_fragment(&bytes).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().challenge, b"chal-token");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_dispatch_new_leader() {
+    fn test_dispatch_new_leader() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 256];
         let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
         let _ = enc.leadership_term_id(10).cluster_session_id(99).leader_member_id(1);
@@ -255,10 +259,12 @@ mod tests {
         assert!(adapter.on_fragment(&bytes).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().leader_endpoints, "0=host:9000,1=host:9001");
+    
+        Ok(())
     }
 
     #[test]
-    fn test_dispatch_session_message_header() {
+    fn test_dispatch_session_message_header() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
         let _ = enc.leadership_term_id(1).cluster_session_id(42).timestamp(999);
@@ -269,10 +275,12 @@ mod tests {
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().msg_csid, 42);
         assert_eq!(adapter.listener().msg_ts, 999);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_unknown_template_id_returns_false() {
+    fn test_unknown_template_id_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
         let _ = enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
@@ -283,12 +291,16 @@ mod tests {
         let mut adapter = EgressAdapter::new(Rec::default());
         assert!(!adapter.on_fragment(&data).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 0);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_short_fragment_returns_false() {
+    fn test_short_fragment_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut adapter = EgressAdapter::new(Rec::default());
         assert!(!adapter.on_fragment(&[0u8; 4]).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 0);
+    
+        Ok(())
     }
 }

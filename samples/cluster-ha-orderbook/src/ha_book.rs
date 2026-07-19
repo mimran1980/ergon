@@ -197,11 +197,13 @@ mod tests {
     }
 
     #[test]
-    fn starts_not_serving() {
+    fn starts_not_serving() -> Result<(), Box<dyn std::error::Error>> {
         let b = LeadershipAwareBook::new();
         assert!(!b.is_serving());
         assert_eq!(b.stale_reason(), Some(StaleReason::NotReady));
         assert!(b.live_image().is_none());
+    
+        Ok(())
     }
 
     #[test]

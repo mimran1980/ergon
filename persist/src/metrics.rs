@@ -58,13 +58,15 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn test_noop_metrics_no_panic() {
+    fn test_noop_metrics_no_panic() -> Result<(), Box<dyn std::error::Error>> {
         let m = NoopMetrics;
         m.row_persisted("trades");
         m.batch_flushed("trades", 100, Duration::from_millis(42));
         m.request_failed("trades");
         m.row_dropped("trades", 5);
         m.retry_attempted("trades", 1);
+    
+        Ok(())
     }
 
     struct CountingMetrics {
@@ -94,7 +96,7 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_metrics_counts_hooks() {
+    fn test_custom_metrics_counts_hooks() -> Result<(), Box<dyn std::error::Error>> {
         let m = CountingMetrics {
             rows: AtomicUsize::new(0),
             batches: AtomicUsize::new(0),
@@ -116,20 +118,25 @@ mod tests {
         assert_eq!(m.failures.load(Ordering::Relaxed), 1);
         assert_eq!(m.drops.load(Ordering::Relaxed), 1);
         assert_eq!(m.retries.load(Ordering::Relaxed), 2);
+    
+        Ok(())
     }
 
     /// Verify NoopMetrics is Send + Sync + 'static.
     #[test]
-    fn test_noop_metrics_send_sync_static() {
+    fn test_noop_metrics_send_sync_static() -> Result<(), Box<dyn std::error::Error>> {
         fn assert_bounds<T: Send + Sync + 'static>() {}
         assert_bounds::<NoopMetrics>();
+        Ok(())
     }
 
     /// Verify a custom metrics impl can be stored behind Arc<dyn PersistMetrics>.
     #[test]
-    fn test_trait_object_roundtrip() {
+    fn test_trait_object_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let m: Arc<dyn PersistMetrics> = Arc::new(NoopMetrics);
         m.row_persisted("test");
         // No panic = pass.
+    
+        Ok(())
     }
 }

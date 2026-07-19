@@ -11,7 +11,7 @@ use advanced_bitget::normalized_app::{
 };
 
 #[test]
-fn parse_decimal_exact_matrix() {
+fn parse_decimal_exact_matrix() -> Result<(), Box<dyn std::error::Error>> {
     // (input, mantissa, exponent)
     let cases: &[(&str, i64, i8)] = &[
         ("0", 0, 0),
@@ -36,10 +36,12 @@ fn parse_decimal_exact_matrix() {
     for bad in ["", "abc", "1.2.3", "9223372036854775808", "1e5000"] {
         assert!(parse_decimal_exact(bad).is_err(), "must reject {bad:?}");
     }
+
+    Ok(())
 }
 
 #[test]
-fn rust_decimal_generic_roundtrip_through_generated_methods() {
+fn rust_decimal_generic_roundtrip_through_generated_methods() -> Result<(), Box<dyn std::error::Error>> {
     let values = ["50000.5", "0.000000000000015", "-42", "0", "0.25"];
     for text in values {
         let d = rust_decimal::Decimal::from_str(text).unwrap();
@@ -98,10 +100,11 @@ fn rust_decimal_generic_roundtrip_through_generated_methods() {
     // Silence unused import when AppMessageEncoder isn't referenced above.
     let _ = AppMessageEncoder::compute_encoded_length_with_message_header(1, 1);
     let _ = std::any::type_name::<sbe_rt::EncodeError>();
+    Ok(())
 }
 
 #[test]
-fn convert_error_display_and_wire_decimal_new() {
+fn convert_error_display_and_wire_decimal_new() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::decimal::{DecimalConvertError, WireDecimal, to_clickhouse_decimal};
 
     assert_eq!(
@@ -130,10 +133,12 @@ fn convert_error_display_and_wire_decimal_new() {
         to_clickhouse_decimal(1_500_000_000_000_000_000, 2),
         Err(DecimalConvertError::OutOfRange)
     );
+
+    Ok(())
 }
 
 #[test]
-fn rust_decimal_adapter_positive_exponent_and_overflow() {
+fn rust_decimal_adapter_positive_exponent_and_overflow() -> Result<(), Box<dyn std::error::Error>> {
     // Positive exponent scales up exactly.
     let d: rust_decimal::Decimal = SbeDecimal::try_from_sbe(5, 2).unwrap();
     assert_eq!(d, rust_decimal::Decimal::from(500));
@@ -143,4 +148,6 @@ fn rust_decimal_adapter_positive_exponent_and_overflow() {
     // Overflow: mantissa * 10^30 exceeds the adapter's exact range.
     let err = <rust_decimal::Decimal as SbeDecimal>::try_from_sbe(i64::MAX, 30).unwrap_err();
     assert_eq!(err, advanced_bitget::decimal::DecimalConvertError::Overflow);
+
+    Ok(())
 }

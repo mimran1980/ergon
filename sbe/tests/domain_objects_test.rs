@@ -27,7 +27,7 @@ fn binance_schema() -> PathBuf {
 // ── Car: domain with all field types ────────────────────────────────────
 
 #[test]
-fn car_domain_all_fields() {
+fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_dom_all");
     compile_and_run(
         "car_dom_all",
@@ -92,12 +92,14 @@ fn car_domain_all_fields() {
         println!("car_domain_all_fields: PASSED");
     "#,
     );
+
+    Ok(())
 }
 
 // ── Car: domain Clone + PartialEq + Debug ───────────────────────────────
 
 #[test]
-fn car_domain_clone_eq_debug() {
+fn car_domain_clone_eq_debug() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_dom_clone");
     compile_and_run(
         "car_dom_clone",
@@ -124,12 +126,14 @@ fn car_domain_clone_eq_debug() {
         println!("car_domain_clone_eq_debug: PASSED");
     "#,
     );
+
+    Ok(())
 }
 
 // ── Car: domain with empty groups ───────────────────────────────────────
 
 #[test]
-fn car_domain_empty_groups() {
+fn car_domain_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_dom_empty");
     compile_and_run(
         "car_dom_empty",
@@ -155,12 +159,14 @@ fn car_domain_empty_groups() {
         println!("car_domain_empty_groups: PASSED");
     "#,
     );
+
+    Ok(())
 }
 
 // ── L3: domain with nested groups + var-data ────────────────────────────
 
 #[test]
-fn l3_domain_nested_groups_vardata() {
+fn l3_domain_nested_groups_vardata() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3_dom_nested");
     compile_and_run(
         "l3_dom_nested",
@@ -224,12 +230,13 @@ fn l3_domain_nested_groups_vardata() {
         println!("l3_domain_nested_groups_vardata: PASSED");
     "#,
     );
+    Ok(())
 }
 
 // ── L3: domain with 12 orders per level ─────────────────────────────────
 
 #[test]
-fn l3_domain_12_orders() {
+fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3_dom_12");
     compile_and_run(
         "l3_dom_12",
@@ -263,12 +270,14 @@ fn l3_domain_12_orders() {
         println!("l3_domain_12_orders: PASSED");
     "#,
     );
+
+    Ok(())
 }
 
 // ── L3: compute_encoded_length matches actual ───────────────────────────
 
 #[test]
-fn l3_compute_encoded_length_matches() {
+fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3_len");
     compile_and_run(
         "l3_len",
@@ -288,12 +297,14 @@ fn l3_compute_encoded_length_matches() {
         println!("l3_compute_encoded_length_matches: PASSED ({} == {})", computed, complete.encoded_length());
     "#,
     );
+
+    Ok(())
 }
 
 // ── Binance: DepthResponse domain (scalars + 2 groups, no var-data) ─────
 
 #[test]
-fn binance_depth_domain() {
+fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&binance_schema(), "binance_depth_dom");
     compile_and_run(
         "binance_depth_dom",
@@ -330,12 +341,14 @@ fn binance_depth_domain() {
         println!("binance_depth_domain: PASSED");
     "#,
     );
+
+    Ok(())
 }
 
 // ── serde: Serialize/Deserialize round-trip on a domain object ─────────
 
 #[test]
-fn car_serde_round_trip() {
+fn car_serde_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_serde");
     compile_and_run_serde(
         "car_serde",
@@ -370,4 +383,5 @@ fn car_serde_round_trip() {
         println!("car_serde_round_trip: PASSED json_len={}", json.len());
     "#,
     );
+    Ok(())
 }

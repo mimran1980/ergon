@@ -34,7 +34,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 static GLOBAL: CountingAllocator = CountingAllocator;
 
 #[test]
-fn record_into_success_path_allocates_zero() {
+fn record_into_success_path_allocates_zero() -> Result<(), Box<dyn std::error::Error>> {
     let rec = DynamicRecorderBuilder::new("l2book_dynamic")
         .field("sequence", ColumnType::UInt64)
         .field("symbol", ColumnType::String)
@@ -68,4 +68,6 @@ fn record_into_success_path_allocates_zero() {
     }
     let diff = ALLOC_COUNT.load(Ordering::Relaxed) - start;
     assert_eq!(diff, 0, "record_into allocated {diff} times in 100 calls");
+
+    Ok(())
 }

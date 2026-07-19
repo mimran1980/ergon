@@ -1,7 +1,7 @@
 #![cfg(feature = "test-harness")]
 
 use serial_test::serial;
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::Duration;
 
 /// Verify the embedded archive driver can start, accept a recording,
@@ -9,26 +9,28 @@ use std::time::Duration;
 /// rusteron-archive's testing.rs.
 #[test]
 #[serial]
-fn test_embedded_archive_driver_starts() {
+fn test_embedded_archive_driver_starts() -> Result<(), Box<dyn std::error::Error>> {
     let archive = ergo_aeron_cluster::EmbeddedArchiveDriver::start(9800);
     assert!(archive.aeron_dir.exists());
+
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_archive_and_cluster_can_coexist() {
+fn test_archive_and_cluster_can_coexist() -> Result<(), Box<dyn std::error::Error>> {
     // Start both an archive and a cluster — verify no port conflicts
     let _archive = ergo_aeron_cluster::EmbeddedArchiveDriver::start(9801);
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
 
-    let dir_cstr = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
+    let dir_cstr = cformat!("{}", cluster.aeron_dir().display());
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir_cstr).unwrap();
     let a = rusteron_client::Aeron::new(&ctx).unwrap();
     a.start().unwrap();
 
-    let ing = CString::new(&cluster.ingress_channel[..]).unwrap();
-    let egr = CString::new(&cluster.egress_channel[..]).unwrap();
+    let ing = cformat!("{}", cluster.ingress_channel);
+    let egr = cformat!("{}", cluster.egress_channel);
 
     let egress = a
         .add_subscription(
@@ -85,4 +87,6 @@ fn test_archive_and_cluster_can_coexist() {
     }
 
     assert!(sent || received, "cluster+archive coexistence test failed");
+
+    Ok(())
 }

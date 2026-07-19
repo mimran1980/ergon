@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "rust_decimal")]
-    fn rust_decimal_column_type() {
+    fn rust_decimal_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <rust_decimal::Decimal as PersistAs>::column_type(),
             ColumnType::Decimal {
@@ -180,85 +180,105 @@ mod tests {
                 scale: 8
             }
         );
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "rust_decimal")]
-    fn rust_decimal_encode_len() {
+    fn rust_decimal_encode_len() -> Result<(), Box<dyn std::error::Error>> {
         let d = rust_decimal::Decimal::new(1, 0);
         assert_eq!(d.encode_value().len(), 8);
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "rust_decimal")]
-    fn rust_decimal_encode_one() {
+    fn rust_decimal_encode_one() -> Result<(), Box<dyn std::error::Error>> {
         let d = rust_decimal::Decimal::new(1, 0);
         assert_eq!(d.encode_value(), 100_000_000i64.to_le_bytes().to_vec());
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "rust_decimal")]
-    fn rust_decimal_encode_negative() {
+    fn rust_decimal_encode_negative() -> Result<(), Box<dyn std::error::Error>> {
         let d = rust_decimal::Decimal::new(-1, 0);
         assert_eq!(d.encode_value(), (-100_000_000i64).to_le_bytes().to_vec());
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "rust_decimal")]
-    fn rust_decimal_encode_with_scale() {
+    fn rust_decimal_encode_with_scale() -> Result<(), Box<dyn std::error::Error>> {
         let d = rust_decimal::Decimal::new(123, 2); // 1.23
         assert_eq!(d.encode_value(), 123_000_000i64.to_le_bytes().to_vec());
+    
+        Ok(())
     }
 
     // ── chrono ──────────────────────────────────────────────────────────
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_naive_datetime_column_type() {
+    fn chrono_naive_datetime_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <chrono::NaiveDateTime as PersistAs>::column_type(),
             ColumnType::DateTime64(9)
         );
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_naive_datetime_encode_epoch() {
+    fn chrono_naive_datetime_encode_epoch() -> Result<(), Box<dyn std::error::Error>> {
         let dt = chrono::NaiveDateTime::new(
             chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
             chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
         );
         assert_eq!(dt.encode_value(), vec![0u8; 8]);
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_datetime_utc_column_type() {
+    fn chrono_datetime_utc_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <chrono::DateTime<chrono::Utc> as PersistAs>::column_type(),
             ColumnType::DateTime64(9)
         );
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_datetime_utc_encode_epoch() {
+    fn chrono_datetime_utc_encode_epoch() -> Result<(), Box<dyn std::error::Error>> {
         let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap();
         assert_eq!(dt.encode_value(), vec![0u8; 8]);
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_datetime_fixed_offset_column_type() {
+    fn chrono_datetime_fixed_offset_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <chrono::DateTime<chrono::FixedOffset> as PersistAs>::column_type(),
             ColumnType::DateTime64(9)
         );
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_datetime_fixed_offset_encode_epoch() {
+    fn chrono_datetime_fixed_offset_encode_epoch() -> Result<(), Box<dyn std::error::Error>> {
         use chrono::TimeZone;
         let ndt = chrono::NaiveDateTime::new(
             chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
@@ -268,27 +288,33 @@ mod tests {
             .unwrap()
             .from_utc_datetime(&ndt);
         assert_eq!(dt.encode_value(), vec![0u8; 8]);
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_naive_date_column_type() {
+    fn chrono_naive_date_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <chrono::NaiveDate as PersistAs>::column_type(),
             ColumnType::Date
         );
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_naive_date_encode_epoch() {
+    fn chrono_naive_date_encode_epoch() -> Result<(), Box<dyn std::error::Error>> {
         let d = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
         assert_eq!(d.encode_value(), vec![0u8; 2]);
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn chrono_naive_date_encode_known() {
+    fn chrono_naive_date_encode_known() -> Result<(), Box<dyn std::error::Error>> {
         let d = chrono::NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
         let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
         let expected = u16::try_from((d - epoch).num_days())
@@ -296,84 +322,106 @@ mod tests {
             .to_le_bytes()
             .to_vec();
         assert_eq!(d.encode_value(), expected);
+    
+        Ok(())
     }
 
     // ── duration ────────────────────────────────────────────────────────
 
     #[test]
-    fn duration_column_type() {
+    fn duration_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <std::time::Duration as PersistAs>::column_type(),
             ColumnType::Interval
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn duration_encode_zero() {
+    fn duration_encode_zero() -> Result<(), Box<dyn std::error::Error>> {
         let d = std::time::Duration::ZERO;
         assert_eq!(d.encode_value(), vec![0u8; 8]);
+    
+        Ok(())
     }
 
     #[test]
-    fn duration_encode_one_second() {
+    fn duration_encode_one_second() -> Result<(), Box<dyn std::error::Error>> {
         let d = std::time::Duration::new(1, 0);
         assert_eq!(d.encode_value(), 1_000_000_000i64.to_le_bytes().to_vec());
+    
+        Ok(())
     }
 
     // ── chrono::TimeDelta ────────────────────────────────────────────
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn time_delta_column_type() {
+    fn time_delta_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <chrono::TimeDelta as PersistAs>::column_type(),
             ColumnType::Interval
         );
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn time_delta_encode_zero() {
+    fn time_delta_encode_zero() -> Result<(), Box<dyn std::error::Error>> {
         let d = chrono::TimeDelta::nanoseconds(0);
         assert_eq!(d.encode_value(), vec![0u8; 8]);
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "chrono")]
-    fn time_delta_encode_one_second() {
+    fn time_delta_encode_one_second() -> Result<(), Box<dyn std::error::Error>> {
         let d = chrono::TimeDelta::nanoseconds(1_000_000_000);
         assert_eq!(d.encode_value(), 1_000_000_000i64.to_le_bytes().to_vec());
+    
+        Ok(())
     }
 
     // ── serde ───────────────────────────────────────────────────────────
 
     #[test]
     #[cfg(feature = "serde")]
-    fn serde_value_column_type() {
+    fn serde_value_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             <serde_json::Value as PersistAs>::column_type(),
             ColumnType::String
         );
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "serde")]
-    fn serde_value_encode_null() {
+    fn serde_value_encode_null() -> Result<(), Box<dyn std::error::Error>> {
         let v = serde_json::Value::Null;
         assert_eq!(v.encode_value(), b"null");
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "serde")]
-    fn serde_value_encode_string() {
+    fn serde_value_encode_string() -> Result<(), Box<dyn std::error::Error>> {
         let v = serde_json::Value::String("hello".into());
         assert_eq!(v.encode_value(), b"\"hello\"");
+    
+        Ok(())
     }
 
     #[test]
     #[cfg(feature = "serde")]
-    fn serde_value_encode_number() {
+    fn serde_value_encode_number() -> Result<(), Box<dyn std::error::Error>> {
         let v = serde_json::json!(42);
         assert_eq!(v.encode_value(), b"42");
+    
+        Ok(())
     }
 }

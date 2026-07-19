@@ -5,7 +5,7 @@
 //! published through the `ClaimPublisher` and decoded by the
 //! `ForegroundPersistor` on the other side.
 
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -17,15 +17,15 @@ use advanced_bitget::publication::{AeronPublication, ClaimPublisher, PublishOutc
 static DRIVER_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
-fn dynamic_stream_carries_schema_then_rows_isolated_from_typed() {
+fn dynamic_stream_carries_schema_then_rows_isolated_from_typed() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = DRIVER_LOCK.lock().unwrap();
     let driver = rusteron_media_driver::testing::EmbeddedDriver::launch().expect("driver");
     let ctx = rusteron_client::AeronContext::new().expect("ctx");
-    ctx.set_dir(&CString::new(driver.dir()).unwrap())
+    ctx.set_dir(&cformat!("{}", driver.dir()))
         .expect("dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
     aeron.start().expect("start");
-    let ch = CString::new(CHANNEL).unwrap();
+    let ch = CHANNEL;
 
     let pub_typed = aeron
         .async_add_exclusive_publication(&ch, STREAM_TYPED)
@@ -112,4 +112,6 @@ fn dynamic_stream_carries_schema_then_rows_isolated_from_typed() {
     );
     assert_eq!(c.decode_failures, 0, "no cross-stream contamination");
     assert_eq!(persistor.sink().l2book_typed[0].sequence, 7);
+
+    Ok(())
 }

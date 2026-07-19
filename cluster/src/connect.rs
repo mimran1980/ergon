@@ -129,17 +129,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_step_ordering_matches_discriminants() {
+    fn test_step_ordering_matches_discriminants() -> Result<(), Box<dyn std::error::Error>> {
         assert!(ConnectStep::CreateEgressSubscription < ConnectStep::CreateIngressPublication);
         assert!(ConnectStep::CreateIngressPublication < ConnectStep::AwaitPublicationConnected);
         assert!(ConnectStep::AwaitPublicationConnected < ConnectStep::SendSessionConnectRequest);
         assert!(ConnectStep::SendSessionConnectRequest < ConnectStep::PollResponse);
         assert!(ConnectStep::PollResponse < ConnectStep::ConcludeConnect);
         assert!(ConnectStep::ConcludeConnect < ConnectStep::Done);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_steps_progress_in_order() {
+    fn test_steps_progress_in_order() -> Result<(), Box<dyn std::error::Error>> {
         let mut ac = AsyncConnect::new(5_000);
         assert_eq!(ac.current_step(), ConnectStep::CreateEgressSubscription);
 
@@ -161,32 +163,40 @@ mod tests {
         }
         assert_eq!(ac.state(), SessionState::Connected);
         assert_eq!(ac.current_step(), ConnectStep::Done);
+    
+        Ok(())
     }
 
     #[test]
-    fn test_timeout_expires() {
+    fn test_timeout_expires() -> Result<(), Box<dyn std::error::Error>> {
         let mut ac = AsyncConnect::new(0);
         std::thread::sleep(std::time::Duration::from_millis(1));
         match ac.advance() {
             Err(ClusterError::Timeout { .. }) => {}
             other => panic!("expected Timeout, got {other:?}"),
         }
+    
+        Ok(())
     }
 
     #[test]
-    fn test_done_returns_false() {
+    fn test_done_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut ac = AsyncConnect::new(5_000);
         while ac.advance().unwrap_or(false) {}
         assert_eq!(ac.current_step(), ConnectStep::Done);
         assert!(!ac.advance().unwrap());
+    
+        Ok(())
     }
 
     #[test]
-    fn reoffer_interval_clamps() {
+    fn reoffer_interval_clamps() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(connect_reoffer_interval_ms(10_000), 1_000); // 10000/4 = 2500 → clamp 1000
         assert_eq!(connect_reoffer_interval_ms(2_000), 500);
         assert_eq!(connect_reoffer_interval_ms(100), 50); // 25 → clamp 50
         assert_eq!(connect_reoffer_interval_ms(0), 50);
+    
+        Ok(())
     }
 
     #[test]

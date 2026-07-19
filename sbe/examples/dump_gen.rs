@@ -2,7 +2,7 @@
 use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
 use std::path::PathBuf;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let xml_path = PathBuf::from("sbe/tests/fixtures/schemas/unit-attribute-test-schema.xml");
     let ir = parse_file(&xml_path).unwrap();
     let schema = Schema::from_ir(ir);
@@ -27,4 +27,6 @@ fn main() {
             }
         }
     }
+
+    Ok(())
 }

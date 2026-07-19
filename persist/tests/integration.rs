@@ -195,7 +195,7 @@ struct TradeV1 {
 
 #[test]
 #[ignore]
-fn test_derive_persist_roundtrip() {
+fn test_derive_persist_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     run_async(async {
         if std::env::var("DOCKER_TEST").is_err() {
             return;
@@ -236,16 +236,18 @@ fn test_derive_persist_roundtrip() {
         assert_eq!(rows[1], row2, "second row mismatch");
 
         drop_table(table).await;
-    })
+    });
+
+    Ok(())
 }
 
 // ── Test 2: Dynamic record + decode + persist roundtrip ────────────────────
 
 #[tokio::test]
 #[ignore]
-async fn test_dynamic_persist_roundtrip() {
+async fn test_dynamic_persist_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("DOCKER_TEST").is_err() {
-        return;
+        return Ok(());
     }
     let table = "int_test_dynamic_rnd";
     drop_table(table).await;
@@ -316,6 +318,7 @@ async fn test_dynamic_persist_roundtrip() {
     assert_eq!(rows[0], TradeV1 { price: 150, qty: 5 }, "row mismatch");
 
     drop_table(table).await;
+    Ok(())
 }
 
 // ── Test 3: Schema migration (add column) ──────────────────────────────────
@@ -335,7 +338,7 @@ struct MigrationV2 {
 
 #[test]
 #[ignore]
-fn test_schema_migration() {
+fn test_schema_migration() -> Result<(), Box<dyn std::error::Error>> {
     run_async(async {
         if std::env::var("DOCKER_TEST").is_err() {
             return;
@@ -395,7 +398,9 @@ fn test_schema_migration() {
         );
 
         drop_table(table).await;
-    })
+    });
+
+    Ok(())
 }
 
 // ── Test 4: Type conflict (incompatible change skipped) ────────────────────
@@ -414,7 +419,7 @@ struct ConflictTypeString {
 
 #[test]
 #[ignore]
-fn test_type_conflict() {
+fn test_type_conflict() -> Result<(), Box<dyn std::error::Error>> {
     run_async(async {
         if std::env::var("DOCKER_TEST").is_err() {
             return;
@@ -488,7 +493,9 @@ fn test_type_conflict() {
         );
 
         drop_table(table).await;
-    })
+    });
+
+    Ok(())
 }
 
 // ── Test 5: Multiple table names from same struct ──────────────────────────
@@ -500,7 +507,7 @@ struct SharedStruct {
 
 #[test]
 #[ignore]
-fn test_multiple_tables() {
+fn test_multiple_tables() -> Result<(), Box<dyn std::error::Error>> {
     run_async(async {
         if std::env::var("DOCKER_TEST").is_err() {
             return;
@@ -540,14 +547,16 @@ fn test_multiple_tables() {
 
         drop_table(table_a).await;
         drop_table(table_b).await;
-    })
+    });
+
+    Ok(())
 }
 
 // ── Test 6: Cleanup drops tables ───────────────────────────────────────────
 
 #[test]
 #[ignore]
-fn test_cleanup_drops_tables() {
+fn test_cleanup_drops_tables() -> Result<(), Box<dyn std::error::Error>> {
     run_async(async {
         if std::env::var("DOCKER_TEST").is_err() {
             return;
@@ -575,7 +584,9 @@ fn test_cleanup_drops_tables() {
             !table_exists(&client, table).await,
             "table should be dropped after cleanup"
         );
-    })
+    });
+
+    Ok(())
 }
 
 // ── Test 7: Metadata injection ─────────────────────────────────────────────
@@ -587,7 +598,7 @@ struct MetaStruct {
 
 #[test]
 #[ignore]
-fn test_metadata_injection() {
+fn test_metadata_injection() -> Result<(), Box<dyn std::error::Error>> {
     run_async(async {
         if std::env::var("DOCKER_TEST").is_err() {
             return;
@@ -627,5 +638,7 @@ fn test_metadata_injection() {
         assert_eq!(rows[0].env, "prod");
 
         drop_table(table).await;
-    })
+    });
+
+    Ok(())
 }

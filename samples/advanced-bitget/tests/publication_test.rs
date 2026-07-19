@@ -30,7 +30,7 @@ fn book_event<'a>(bids: &'a [Level], asks: &'a [Level]) -> NormalizedEventRef<'a
 }
 
 #[test]
-fn publish_l2book_encodes_app_message_on_typed_stream() {
+fn publish_l2book_encodes_app_message_on_typed_stream() -> Result<(), Box<dyn std::error::Error>> {
     let mut p =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
     let bids = [lvl(500005, -1, 15, -1), lvl(500000, -1, 20, -1)];
@@ -80,10 +80,12 @@ fn publish_l2book_encodes_app_message_on_typed_stream() {
 
     let (symbol, _) = after.into_symbol().unwrap();
     assert_eq!(symbol, b"BTCUSDT");
+
+    Ok(())
 }
 
 #[test]
-fn publish_l2book_publishes_dynamic_v2_row_with_same_correlation() {
+fn publish_l2book_publishes_dynamic_v2_row_with_same_correlation() -> Result<(), Box<dyn std::error::Error>> {
     let mut p =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
     let bids = [lvl(500005, -1, 15, -1)];
@@ -134,10 +136,12 @@ fn publish_l2book_publishes_dynamic_v2_row_with_same_correlation() {
             vec![(30, -1)],     // ask sizes
         ]
     );
+
+    Ok(())
 }
 
 #[test]
-fn publish_trade_encodes_app_message_trade() {
+fn publish_trade_encodes_app_message_trade() -> Result<(), Box<dyn std::error::Error>> {
     let mut p =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
     let ev = NormalizedEventRef::Trade {
@@ -164,10 +168,12 @@ fn publish_trade_encodes_app_message_trade() {
     assert_eq!(trade.trade_id(), 9);
     assert_eq!(trade.price_wire().mantissa(), 500005);
     assert_eq!(trade.size_wire().exponent(), -2);
+
+    Ok(())
 }
 
 #[test]
-fn backpressure_drops_once_without_retry_and_counts() {
+fn backpressure_drops_once_without_retry_and_counts() -> Result<(), Box<dyn std::error::Error>> {
     let typed = RecordingPublication::failing(DropReason::Backpressured);
     let mut p = ClaimPublisher::new(typed, RecordingPublication::new()).unwrap();
     let bids = [lvl(1, 0, 1, 0)];
@@ -181,10 +187,12 @@ fn backpressure_drops_once_without_retry_and_counts() {
         "exactly one claim attempt, no retry"
     );
     assert!(typed.committed.is_empty());
+
+    Ok(())
 }
 
 #[test]
-fn claim_length_is_exact() {
+fn claim_length_is_exact() -> Result<(), Box<dyn std::error::Error>> {
     let mut p =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
     let bids = [lvl(500005, -1, 15, -1)];
@@ -194,10 +202,12 @@ fn claim_length_is_exact() {
     // fill the entire claim.
     assert_eq!(typed.committed[0].len(), typed.claimed_lengths[0]);
     assert_eq!(dynamic.committed[0].len(), dynamic.claimed_lengths[0]);
+
+    Ok(())
 }
 
 #[test]
-fn publish_schema_emits_decodable_dynamic_schema_v2() {
+fn publish_schema_emits_decodable_dynamic_schema_v2() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_clickhouse_persist::sbe::v2::DynamicSchemaV2Decoder;
 
     let mut p =
@@ -226,10 +236,12 @@ fn publish_schema_emits_decodable_dynamic_schema_v2() {
     let dec = g.finish().unwrap();
     let (table, _) = dec.into_table_name().unwrap();
     assert_eq!(table, b"l2book_dynamic");
+
+    Ok(())
 }
 
 #[test]
-fn short_claims_classify_encode_failures_for_all_message_kinds() {
+fn short_claims_classify_encode_failures_for_all_message_kinds() -> Result<(), Box<dyn std::error::Error>> {
     let bids = [lvl(1, 0, 1, 0)];
 
     // Typed book claim comes up short → EncodeFailed before the dynamic leg.
@@ -269,10 +281,12 @@ fn short_claims_classify_encode_failures_for_all_message_kinds() {
     let mut p =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::short(4)).unwrap();
     assert_eq!(p.publish_schema(), PublishOutcome::EncodeFailed);
+
+    Ok(())
 }
 
 #[test]
-fn every_drop_reason_maps_to_its_counter() {
+fn every_drop_reason_maps_to_its_counter() -> Result<(), Box<dyn std::error::Error>> {
     let bids = [lvl(1, 0, 1, 0)];
     let cases = [
         DropReason::Backpressured,
@@ -299,14 +313,18 @@ fn every_drop_reason_maps_to_its_counter() {
             + c.dropped_max_position;
         assert_eq!(hit, 1, "exactly one drop counter for {reason:?}");
     }
+
+    Ok(())
 }
 
 #[test]
-fn derived_ipc_mtu_covers_the_largest_maintained_message() {
+fn derived_ipc_mtu_covers_the_largest_maintained_message() -> Result<(), Box<dyn std::error::Error>> {
     use advanced_bitget::publication::{derive_ipc_mtu, worst_case_typed_claim_len};
     let worst = worst_case_typed_claim_len();
     let mtu = derive_ipc_mtu();
     assert!(mtu >= worst + 32, "claim + data header must fit one MTU");
     assert!(mtu.is_power_of_two());
     assert!(mtu >= 1408);
+
+    Ok(())
 }

@@ -41,7 +41,7 @@ impl EgressListener for EchoListener {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Ergo Aeron Cluster Echo Client (library API) ===\n");
 
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
@@ -91,6 +91,8 @@ fn main() {
     println!("Closing session...");
     let _ = client.close();
     println!("\n=== Done ===");
+
+    Ok(())
 }
 
 // suppress unused-import warning for NullCredentialsSupplier when not used

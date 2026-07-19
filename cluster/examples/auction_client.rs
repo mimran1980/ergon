@@ -9,7 +9,7 @@ use ergo_aeron_cluster::codecs::cluster_codecs::{
     session_connect_request_codec::SessionConnectRequestEncoder,
     session_message_header_codec::{SBE_BLOCK_LENGTH, SessionMessageHeaderEncoder},
 };
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::time::Duration;
 
 // Message layout matching `BasicAuctionClusteredService`:
@@ -19,21 +19,21 @@ const CUSTOMER_ID_OFFSET: usize = 8;
 const PRICE_OFFSET: usize = 16;
 const BID_MESSAGE_LENGTH: usize = 24;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let customer_id: u64 = 100;
     let num_bids: u64 = 5;
     println!("=== Ergo Aeron Cluster Auction Client ===\n");
     println!("Customer ID: {customer_id}, Bids to send: {num_bids}");
 
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
-    let dir = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
+    let dir = cformat!("{}", cluster.aeron_dir().display());
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir).unwrap();
     let a = rusteron_client::Aeron::new(&ctx).unwrap();
     a.start().unwrap();
 
-    let ing = CString::new(&cluster.ingress_channel[..]).unwrap();
-    let egr = CString::new(&cluster.egress_channel[..]).unwrap();
+    let ing = cformat!("{}", cluster.ingress_channel);
+    let egr = cformat!("{}", cluster.egress_channel);
     let egress = a
         .add_subscription(
             &egr,
@@ -157,4 +157,6 @@ fn main() {
     }
 
     println!("\n=== Done: final price = {last_bid_price} ===");
+
+    Ok(())
 }

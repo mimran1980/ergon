@@ -46,7 +46,7 @@ fn warm_up() {
 }
 
 #[test]
-fn encode_app_message_zero_alloc() {
+fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use normalized_app::{AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt};
 
     warm_up();
@@ -90,10 +90,11 @@ fn encode_app_message_zero_alloc() {
         "AppMessage encode allocated {} times",
         after - before
     );
+    Ok(())
 }
 
 #[test]
-fn decode_app_message_zero_alloc() {
+fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use normalized_app::{
         AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
@@ -149,24 +150,26 @@ fn decode_app_message_zero_alloc() {
         "AppMessage decode allocated {} times",
         after - before
     );
+    Ok(())
 }
 
 /// Task 9 gate: zero allocations around the warmed real claim path —
 /// `try_claim_owned` + direct encode + commit — not just Vec encoding.
 #[test]
-fn publish_claim_commit_zero_alloc() {
+fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    use advanced_bitget::config::CHANNEL;
     use advanced_bitget::market::{Level, NormalizedEventRef, WireDec};
     use advanced_bitget::publication::{AeronPublication, ClaimPublisher, PublishOutcome};
-    use std::ffi::CString;
+    use rusteron_client::cformat;
     use std::time::Duration;
 
     let driver = rusteron_media_driver::testing::EmbeddedDriver::launch().expect("driver");
     let ctx = rusteron_client::AeronContext::new().expect("ctx");
-    ctx.set_dir(&CString::new(driver.dir()).unwrap())
+    ctx.set_dir(&cformat!("{}", driver.dir()))
         .expect("dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
     aeron.start().expect("start");
-    let ch = CString::new("aeron:ipc").unwrap();
+    let ch = CHANNEL;
     let pub_typed = aeron
         .async_add_exclusive_publication(&ch, 1001)
         .expect("pub")
@@ -262,4 +265,5 @@ fn publish_claim_commit_zero_alloc() {
         "claim+encode+commit allocated {} times over 200 publishes",
         after - before
     );
+    Ok(())
 }

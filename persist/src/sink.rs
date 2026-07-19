@@ -1148,106 +1148,121 @@ mod tests {
     // ── SQL helpers ───────────────────────────────────────────────────
 
     #[test]
-    fn test_format_sql_string_empty() {
+    fn test_format_sql_string_empty() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string(""), "''");
+        Ok(())
     }
 
     #[test]
-    fn test_format_sql_string_plain() {
+    fn test_format_sql_string_plain() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("hello"), "'hello'");
+        Ok(())
     }
 
     #[test]
-    fn test_format_sql_string_with_quote() {
+    fn test_format_sql_string_with_quote() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("it's"), "'it''s'");
+        Ok(())
     }
 
     #[test]
-    fn test_format_sql_string_with_backslash() {
+    fn test_format_sql_string_with_backslash() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("a\\b"), "'a\\\\b'");
+        Ok(())
     }
 
     #[test]
-    fn test_format_sql_string_mixed_escape() {
+    fn test_format_sql_string_mixed_escape() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("a'\\b"), "'a''\\\\b'");
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_int64() {
+    fn test_json_to_sql_literal_int64() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::Number(serde_json::Number::from(42i64));
         assert_eq!(json_to_sql_literal(&v, &ColumnType::Int64), "42");
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_uint64() {
+    fn test_json_to_sql_literal_uint64() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::Number(serde_json::Number::from(100u64));
         assert_eq!(json_to_sql_literal(&v, &ColumnType::UInt64), "100");
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_float64() {
+    fn test_json_to_sql_literal_float64() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::Number(serde_json::Number::from_f64(2.5).unwrap());
         assert_eq!(json_to_sql_literal(&v, &ColumnType::Float64), "2.5");
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_bool_true() {
+    fn test_json_to_sql_literal_bool_true() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::Bool(true);
         assert_eq!(json_to_sql_literal(&v, &ColumnType::Bool), "1");
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_bool_false() {
+    fn test_json_to_sql_literal_bool_false() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::Bool(false);
         assert_eq!(json_to_sql_literal(&v, &ColumnType::Bool), "0");
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_string() {
+    fn test_json_to_sql_literal_string() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::String("AAPL".into());
         assert_eq!(json_to_sql_literal(&v, &ColumnType::String), "'AAPL'");
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_nullable_null() {
+    fn test_json_to_sql_literal_nullable_null() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::Null;
         assert_eq!(
             json_to_sql_literal(&v, &ColumnType::Nullable(Box::new(ColumnType::Int64))),
             "NULL"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_nullable_some() {
+    fn test_json_to_sql_literal_nullable_some() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::Number(serde_json::Number::from(42i64));
         assert_eq!(
             json_to_sql_literal(&v, &ColumnType::Nullable(Box::new(ColumnType::Int64))),
             "42"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_datetime() {
+    fn test_json_to_sql_literal_datetime() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::String("2024-01-15 10:30:00".into());
         assert_eq!(
             json_to_sql_literal(&v, &ColumnType::DateTime64(3)),
             "'2024-01-15 10:30:00'"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_json_to_sql_literal_datetime_timestamp() {
+    fn test_json_to_sql_literal_datetime_timestamp() -> Result<(), Box<dyn std::error::Error>> {
         let v = JsonValue::Number(serde_json::Number::from(1705312200i64));
         assert_eq!(
             json_to_sql_literal(&v, &ColumnType::DateTime64(3)),
             "1705312200"
         );
+        Ok(())
     }
 
     // ── DDL helpers ───────────────────────────────────────────────────
 
     #[test]
-    fn test_build_create_sql() {
+    fn test_build_create_sql() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema {
             columns: vec![
                 col("price", ColumnType::Float64),
@@ -1264,19 +1279,21 @@ mod tests {
         assert!(ddl.contains("qty UInt64"));
         assert!(ddl.contains("symbol String"));
         assert!(ddl.contains("ORDER BY (_persist_time)"));
+        Ok(())
     }
 
     #[test]
-    fn test_build_create_sql_with_persist_time() {
+    fn test_build_create_sql_with_persist_time() -> Result<(), Box<dyn std::error::Error>> {
         let schema = Trade::table_schema();
         assert_eq!(schema.columns.len(), 5);
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
+        Ok(())
     }
 
     // ── INSERT helpers ────────────────────────────────────────────────
 
     #[test]
-    fn test_build_insert_sql() {
+    fn test_build_insert_sql() -> Result<(), Box<dyn std::error::Error>> {
         let cols = vec![
             "price".into(),
             "qty".into(),
@@ -1292,12 +1309,13 @@ mod tests {
 INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
 (100.5, 1000, 'AAPL', now64(9)), (200.0, 500, 'MSFT', now64(9))";
         assert_eq!(sql, expected);
+        Ok(())
     }
 
     // ── Schema + metadata ─────────────────────────────────────────────
 
     #[test]
-    fn test_full_schema_includes_metadata() {
+    fn test_full_schema_includes_metadata() -> Result<(), Box<dyn std::error::Error>> {
         // We need a PersistSender to test full_schema, but creating one
         // requires a ClickhouseSink (which needs a runtime).  Instead we
         // test the logic directly: T::table_schema() + extra columns.
@@ -1311,19 +1329,21 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
             col_type: ColumnType::String,
         });
         assert!(extended.columns.iter().any(|c| c.name == "app"));
+        Ok(())
     }
 
     #[test]
-    fn test_schema_caching_equal_schema() {
+    fn test_schema_caching_equal_schema() -> Result<(), Box<dyn std::error::Error>> {
         let a = Trade::table_schema();
         let b = Trade::table_schema();
         // Diff should be empty for identical schemas.
         let diff = b.diff(&a);
         assert!(diff.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn test_schema_caching_new_column() {
+    fn test_schema_caching_new_column() -> Result<(), Box<dyn std::error::Error>> {
         let old = Trade::table_schema();
         let mut new = old.clone();
         new.columns.push(ColumnDef {
@@ -1333,10 +1353,11 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         let diff = new.diff(&old);
         assert_eq!(diff.new_columns.len(), 1);
         assert_eq!(diff.new_columns[0].name, "extra");
+        Ok(())
     }
 
     #[test]
-    fn test_schema_caching_type_conflict() {
+    fn test_schema_caching_type_conflict() -> Result<(), Box<dyn std::error::Error>> {
         let old = Trade::table_schema();
         let mut new = old.clone();
         // Change price type from Float64 to String (incompatible)
@@ -1347,10 +1368,11 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         }
         let diff = new.diff(&old);
         assert!(diff.type_conflicts.iter().any(|tc| tc.column == "price"));
+        Ok(())
     }
 
     #[test]
-    fn test_schema_caching_widen() {
+    fn test_schema_caching_widen() -> Result<(), Box<dyn std::error::Error>> {
         let old = Trade::table_schema();
         let new = old.clone();
         // Widen qty from UInt64 to... well it's already UInt64, can't widen.
@@ -1363,10 +1385,11 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         let diff = schema_u64.diff(&schema_u32);
         assert_eq!(diff.compatible_widens.len(), 1);
         assert_eq!(diff.compatible_widens[0].column, "qty");
+        Ok(())
     }
 
     #[test]
-    fn test_alter_table_ddl_new_column() {
+    fn test_alter_table_ddl_new_column() -> Result<(), Box<dyn std::error::Error>> {
         let old = TableSchema::new(vec![col("price", ColumnType::Float64)], vec![]);
         let new = TableSchema::new(
             vec![
@@ -1378,6 +1401,7 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         let ddl = new.diff(&old).alter_table_ddl("trades");
         assert_eq!(ddl.len(), 1);
         assert!(ddl[0].contains("ADD COLUMN IF NOT EXISTS qty UInt64"));
+        Ok(())
     }
 
     // ── Batch / flush accumulation (no CH) ────────────────────────────
@@ -1385,7 +1409,7 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
     /// A bare-bones fixture that exercises the batch/condition logic
     /// without a ClickHouse connection.
     #[test]
-    fn test_batch_accumulation_via_row_to_values() {
+    fn test_batch_accumulation_via_row_to_values() -> Result<(), Box<dyn std::error::Error>> {
         // row_to_values + full_schema are pure functions.
         // We test the pure part: given a dto and schema, does
         // value_for_column produce the expected SQL string?
@@ -1418,19 +1442,21 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
             json_to_sql_literal(obj.get("active").unwrap(), &ColumnType::Bool),
             "1"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_batch_values_includes_persist_time() {
+    fn test_batch_values_includes_persist_time() -> Result<(), Box<dyn std::error::Error>> {
         // Simulate the row_to_values output.
         let schema = Trade::table_schema();
         let _columns: Vec<&str> = schema.columns.iter().map(|c| c.name.as_str()).collect();
         // Every row should include `now64(9)` for `_persist_time`.
         // (tested via insert SQL builder)
+        Ok(())
     }
 
     #[test]
-    fn test_build_insert_includes_all_columns() {
+    fn test_build_insert_includes_all_columns() -> Result<(), Box<dyn std::error::Error>> {
         let schema = Trade::table_schema();
         let columns: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
         assert!(columns.contains(&"_persist_time".to_string()));
@@ -1438,30 +1464,33 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         let rows = vec!["(100.5, 1000, 'AAPL', true, now64(9))".to_string()];
         let sql = build_insert_sql("trades", &columns, &rows);
         assert!(sql.contains("_persist_time"));
+        Ok(())
     }
 
     // ── Cleanup DDL ───────────────────────────────────────────────────
 
     #[test]
-    fn test_build_drop_sql() {
+    fn test_build_drop_sql() -> Result<(), Box<dyn std::error::Error>> {
         let sql = "DROP TABLE IF EXISTS trades";
         assert_eq!(sql, "DROP TABLE IF EXISTS trades");
+        Ok(())
     }
 
     #[test]
-    fn test_value_for_column_with_metadata() {
+    fn test_value_for_column_with_metadata() -> Result<(), Box<dyn std::error::Error>> {
         // Verify that metadata values are injected correctly.
         // We need a PersistSender to access value_for_column, but we can
         // test json_to_sql_literal and format_sql_string independently.
         let meta_value = "my_app";
         let formatted = format_sql_string(meta_value);
         assert_eq!(formatted, "'my_app'");
+        Ok(())
     }
 
     // ── Default env var ───────────────────────────────────────────────
 
     #[test]
-    fn test_default_url_fallback() {
+    fn test_default_url_fallback() -> Result<(), Box<dyn std::error::Error>> {
         // When CLICKHOUSE_URL is not set, the builder defaults to
         // http://localhost:8123.  We can't directly test this without
         // constructing a sink, but we verify the builder state.
@@ -1469,10 +1498,11 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         assert!(builder.url.is_none());
         assert_eq!(builder.batch_size, 1000);
         assert_eq!(builder.flush_interval, Duration::from_millis(100));
+        Ok(())
     }
 
     #[test]
-    fn test_builder_custom_values() {
+    fn test_builder_custom_values() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new()
             .url("http://ch:8123")
             .user("foo")
@@ -1486,34 +1516,39 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         assert_eq!(builder.database.as_deref(), Some("testdb"));
         assert_eq!(builder.batch_size, 500);
         assert_eq!(builder.flush_interval, Duration::from_secs(1));
+        Ok(())
     }
 
     #[test]
-    fn test_builder_compression_default_is_lz4() {
+    fn test_builder_compression_default_is_lz4() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new();
         assert_eq!(builder.compression, PersistCompression::Lz4);
+        Ok(())
     }
 
     #[test]
-    fn test_builder_compression_set_to_none() {
+    fn test_builder_compression_set_to_none() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new().compression(PersistCompression::None);
         assert_eq!(builder.compression, PersistCompression::None);
+        Ok(())
     }
 
     #[test]
-    fn test_builder_tls_skip_verify() {
+    fn test_builder_tls_skip_verify() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new().tls_skip_verify();
         assert!(builder.tls_skip_verify);
+        Ok(())
     }
 
     #[test]
-    fn test_builder_tls_ca_cert() {
+    fn test_builder_tls_ca_cert() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new().tls_ca_cert("/path/to/ca.pem");
         assert_eq!(builder.tls_ca_cert.as_deref(), Some("/path/to/ca.pem"));
+        Ok(())
     }
 
     #[test]
-    fn test_builder_retry_config_defaults() {
+    fn test_builder_retry_config_defaults() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new();
         assert_eq!(
             builder.retry_config.initial_backoff,
@@ -1521,21 +1556,23 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         );
         assert_eq!(builder.retry_config.max_backoff, Duration::from_secs(10));
         assert_eq!(builder.retry_config.max_retries, 5);
+        Ok(())
     }
 
     // ── global flush (todo 22) ──────────────────────────────────────────
 
     #[test]
-    fn test_sink_flush_no_senders_is_noop() {
+    fn test_sink_flush_no_senders_is_noop() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .build()
             .unwrap();
         let _ = sink.flush(); // no-op, not an error
+        Ok(())
     }
 
     #[test]
-    fn test_sink_builder_creates_viable_sink() {
+    fn test_sink_builder_creates_viable_sink() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .batch_size(500)
@@ -1544,20 +1581,22 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
             .unwrap();
         let _sender_builder = sink.sender("test_table");
         // sender builder created — registration tested at integration level
+        Ok(())
     }
 
     // ── RetryConfig ────────────────────────────────────────────────────
 
     #[test]
-    fn test_retry_config_default() {
+    fn test_retry_config_default() -> Result<(), Box<dyn std::error::Error>> {
         let cfg = RetryConfig::default();
         assert_eq!(cfg.initial_backoff, Duration::from_millis(100));
         assert_eq!(cfg.max_backoff, Duration::from_secs(10));
         assert_eq!(cfg.max_retries, 5);
+        Ok(())
     }
 
     #[test]
-    fn test_retry_config_custom() {
+    fn test_retry_config_custom() -> Result<(), Box<dyn std::error::Error>> {
         let cfg = RetryConfig {
             initial_backoff: Duration::from_millis(500),
             max_backoff: Duration::from_secs(30),
@@ -1566,10 +1605,11 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         assert_eq!(cfg.initial_backoff, Duration::from_millis(500));
         assert_eq!(cfg.max_backoff, Duration::from_secs(30));
         assert_eq!(cfg.max_retries, 10);
+        Ok(())
     }
 
     #[test]
-    fn test_retry_config_max_retries_boundary() {
+    fn test_retry_config_max_retries_boundary() -> Result<(), Box<dyn std::error::Error>> {
         let cfg_zero = RetryConfig {
             max_retries: 0,
             ..Default::default()
@@ -1581,50 +1621,57 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
             ..Default::default()
         };
         assert_eq!(cfg_one.max_retries, 1);
+        Ok(())
     }
 
     // ── SinkError Display ─────────────────────────────────────────────
 
     #[test]
-    fn test_sink_error_connection_display() {
+    fn test_sink_error_connection_display() -> Result<(), Box<dyn std::error::Error>> {
         let err = SinkError::Connection("refused".into());
         assert_eq!(err.to_string(), "clickhouse connection: refused");
+        Ok(())
     }
 
     #[test]
-    fn test_sink_error_ddl_display() {
+    fn test_sink_error_ddl_display() -> Result<(), Box<dyn std::error::Error>> {
         let err = SinkError::Ddl("syntax error".into());
         assert_eq!(err.to_string(), "clickhouse DDL: syntax error");
+        Ok(())
     }
 
     #[test]
-    fn test_sink_error_insert_display() {
+    fn test_sink_error_insert_display() -> Result<(), Box<dyn std::error::Error>> {
         let err = SinkError::Insert("timeout".into());
         assert_eq!(err.to_string(), "clickhouse INSERT: timeout");
+        Ok(())
     }
 
     #[test]
-    fn test_sink_error_runtime_display() {
+    fn test_sink_error_runtime_display() -> Result<(), Box<dyn std::error::Error>> {
         let err = SinkError::Runtime("channel closed".into());
         assert_eq!(err.to_string(), "internal runtime: channel closed");
+        Ok(())
     }
 
     #[test]
-    fn test_sink_error_serde_display() {
+    fn test_sink_error_serde_display() -> Result<(), Box<dyn std::error::Error>> {
         let err = SinkError::Serde("invalid utf-8".into());
         assert_eq!(err.to_string(), "serialization: invalid utf-8");
+        Ok(())
     }
 
     #[test]
-    fn test_sink_error_impl_error() {
+    fn test_sink_error_impl_error() -> Result<(), Box<dyn std::error::Error>> {
         fn assert_error<E: std::error::Error>() {}
         assert_error::<SinkError>();
+        Ok(())
     }
 
     // ── PersistSenderBuilder ──────────────────────────────────────────
 
     #[test]
-    fn test_sender_builder_metadata_injection() {
+    fn test_sender_builder_metadata_injection() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .build()
@@ -1639,20 +1686,22 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         assert_eq!(builder.metadata[0], ("app".into(), "my_app".into()));
         assert_eq!(builder.metadata[1], ("host".into(), "localhost".into()));
         assert_eq!(builder.metadata[2], ("pid".into(), "12345".into()));
+        Ok(())
     }
 
     #[test]
-    fn test_sender_builder_metadata_empty() {
+    fn test_sender_builder_metadata_empty() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .build()
             .unwrap();
         let builder = sink.sender("no_meta");
         assert!(builder.metadata.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn test_sender_builder_metadata_carries_to_sender() {
+    fn test_sender_builder_metadata_carries_to_sender() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .build()
@@ -1661,42 +1710,46 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         assert_eq!(sender.table_name, "trades");
         assert_eq!(sender.metadata.len(), 1);
         assert_eq!(sender.metadata[0], ("app".into(), "my_app".into()));
+        Ok(())
     }
 
     #[test]
-    fn test_sender_builder_table_name() {
+    fn test_sender_builder_table_name() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .build()
             .unwrap();
         let builder = sink.sender("custom_name");
         assert_eq!(builder.table_name, "custom_name");
+        Ok(())
     }
 
     #[test]
-    fn test_sender_builder_default_batch_size() {
+    fn test_sender_builder_default_batch_size() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .build()
             .unwrap();
         let builder = sink.sender("t");
         assert_eq!(builder.batch_size, 1000);
+        Ok(())
     }
 
     // ── Edge cases ────────────────────────────────────────────────────
 
     #[test]
-    fn test_sender_builder_empty_table_name() {
+    fn test_sender_builder_empty_table_name() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .build()
             .unwrap();
         let builder = sink.sender("");
         assert!(builder.table_name.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn test_sender_builder_very_long_table_name() {
+    fn test_sender_builder_very_long_table_name() -> Result<(), Box<dyn std::error::Error>> {
         let sink = ClickhouseSinkBuilder::new()
             .url("http://localhost:9999")
             .build()
@@ -1704,45 +1757,52 @@ INSERT INTO trades (price, qty, symbol, _persist_time) VALUES \
         let long_name = "t".repeat(255);
         let builder = sink.sender(&long_name);
         assert_eq!(builder.table_name.len(), 255);
+        Ok(())
     }
 
     #[test]
-    fn test_builder_zero_batch_size() {
+    fn test_builder_zero_batch_size() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new().batch_size(0);
         assert_eq!(builder.batch_size, 0);
+        Ok(())
     }
 
     // ── ClickhouseSinkBuilder ─────────────────────────────────────────
 
     #[test]
-    fn test_builder_large_batch_size() {
+    fn test_builder_large_batch_size() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new().batch_size(100_000);
         assert_eq!(builder.batch_size, 100_000);
+        Ok(())
     }
 
     #[test]
-    fn test_builder_url_valid_http() {
+    fn test_builder_url_valid_http() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new().url("http://clickhouse:8123");
         assert_eq!(builder.url.as_deref(), Some("http://clickhouse:8123"));
+        Ok(())
     }
 
     #[test]
-    fn test_builder_url_valid_https() {
+    fn test_builder_url_valid_https() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new().url("https://ch.example.com:8443");
         assert_eq!(builder.url.as_deref(), Some("https://ch.example.com:8443"));
+        Ok(())
     }
 
     #[test]
-    fn test_builder_url_with_path() {
+    fn test_builder_url_with_path() -> Result<(), Box<dyn std::error::Error>> {
         let builder = ClickhouseSinkBuilder::new().url("http://localhost:8123/");
         assert_eq!(builder.url.as_deref(), Some("http://localhost:8123/"));
+        Ok(())
     }
 
     #[test]
-    fn test_builder_builders_isolated() {
+    fn test_builder_builders_isolated() -> Result<(), Box<dyn std::error::Error>> {
         let a = ClickhouseSinkBuilder::new().url("http://a:8123");
         let b = ClickhouseSinkBuilder::new().url("http://b:8123");
         assert_eq!(a.url.as_deref(), Some("http://a:8123"));
         assert_eq!(b.url.as_deref(), Some("http://b:8123"));
+        Ok(())
     }
 }

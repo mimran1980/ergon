@@ -24,7 +24,7 @@ mod common;
 use common::{Paths, compile_and_run, generate};
 
 #[test]
-fn car_encode_decode_perf_smoke() {
+fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
     let (_, src) = generate(&Paths::example_schema(), "perf_car");
 
     compile_and_run(
@@ -101,4 +101,6 @@ fn car_encode_decode_perf_smoke() {
         assert!(decode_dur.as_secs() < 30, "decode too slow: {:?}", decode_dur);
     "#,
     );
+
+    Ok(())
 }

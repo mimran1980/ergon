@@ -27,7 +27,7 @@ mod normalized_app {
 // ── Bitget: BestBidAsk (template 1002) ────────────────────────────────────
 
 #[test]
-fn bitget_best_bid_ask_roundtrip() {
+fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5};
 
     let symbol = b"BTCUSDT";
@@ -73,10 +73,12 @@ fn bitget_best_bid_ask_roundtrip() {
         "BTCUSDT",
         "symbol"
     );
+
+    Ok(())
 }
 
 #[test]
-fn bitget_best_bid_ask_verify_passes() {
+fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>> {
     use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder};
 
     let symbol = b"BTCUSDT";
@@ -100,12 +102,14 @@ fn bitget_best_bid_ask_verify_passes() {
     let encoded = complete.as_bytes();
 
     assert!(BestBidAskDecoder::verify(encoded).is_ok());
+
+    Ok(())
 }
 
 // ── Bitget: Depth50 group roundtrip (template 1001) ──────────────────────
 
 #[test]
-fn bitget_depth50_group_roundtrip() {
+fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use bitget_spot::{Depth50Decoder, Depth50Encoder, InstCategory, Padding5};
 
     let asks_count = 3u16;
@@ -203,26 +207,32 @@ fn bitget_depth50_group_roundtrip() {
         .into_symbol()
         .expect("symbol decode");
     assert_eq!(core::str::from_utf8(symbol).unwrap(), "BTCUSDT", "symbol");
+
+    Ok(())
 }
 
 // ── Buffer-too-short error tests ──────────────────────────────────────────
 
 #[test]
-fn bitget_buffer_too_short_for_header() {
+fn bitget_buffer_too_short_for_header() -> Result<(), Box<dyn std::error::Error>> {
     use bitget_spot::BestBidAskDecoder;
 
     let too_short = [0u8; 4];
     let result = BestBidAskDecoder::try_from(&too_short[..]);
     assert!(result.is_err(), "decoding from a 4-byte buffer should fail");
+
+    Ok(())
 }
 
 #[test]
-fn bitget_verify_too_short() {
+fn bitget_verify_too_short() -> Result<(), Box<dyn std::error::Error>> {
     use bitget_spot::BestBidAskDecoder;
 
     let too_short = [0u8; 4];
     let result = BestBidAskDecoder::verify(&too_short[..]);
     assert!(result.is_err(), "verify on a 4-byte buffer should fail");
+
+    Ok(())
 }
 
 // Encoder buffer-too-short test removed: encoder is infallible (panics on OOB
@@ -231,7 +241,7 @@ fn bitget_verify_too_short() {
 // ── Binance: ServerTimeResponse (template 102) ────────────────────────────
 
 #[test]
-fn binance_server_time_roundtrip() {
+fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use binance_spot::ServerTimeResponseDecoder;
     use binance_spot::ServerTimeResponseEncoder;
 
@@ -247,10 +257,12 @@ fn binance_server_time_roundtrip() {
     let decoder = ServerTimeResponseDecoder::try_from(encoded)
         .expect("ServerTimeResponseDecoder::try_from should succeed");
     assert_eq!(decoder.server_time(), expected_ts, "server_time");
+
+    Ok(())
 }
 
 #[test]
-fn binance_server_time_verify_passes() {
+fn binance_server_time_verify_passes() -> Result<(), Box<dyn std::error::Error>> {
     use binance_spot::ServerTimeResponseDecoder;
     use binance_spot::ServerTimeResponseEncoder;
 
@@ -260,20 +272,24 @@ fn binance_server_time_verify_passes() {
     let encoded = encoder.as_ref();
 
     assert!(ServerTimeResponseDecoder::verify(encoded).is_ok());
+
+    Ok(())
 }
 
 #[test]
-fn binance_server_time_buffer_too_short() {
+fn binance_server_time_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
     use binance_spot::ServerTimeResponseDecoder;
 
     let result = ServerTimeResponseDecoder::try_from(&[0u8; 4][..]);
     assert!(result.is_err(), "decoding from a 4-byte buffer should fail");
+
+    Ok(())
 }
 
 // ── Bitget: Trade (template 1003) — group + var-data message ──────────────
 
 #[test]
-fn bitget_trade_roundtrip() {
+fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
 
     let trades_count = 2u16;
@@ -357,10 +373,12 @@ fn bitget_trade_roundtrip() {
         "ETHUSDT",
         "symbol"
     );
+
+    Ok(())
 }
 
 #[test]
-fn bitget_trade_max_uint64() {
+fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
     use bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
 
     let sts_max = u64::MAX;
@@ -399,10 +417,12 @@ fn bitget_trade_max_uint64() {
     let decoder = TradeDecoder::try_from(encoded).expect("TradeDecoder::try_from should succeed");
 
     assert_eq!(decoder.sts(), sts_max, "sts should be u64::MAX");
+
+    Ok(())
 }
 
 #[test]
-fn bitget_trade_zero_values() {
+fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     use bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
 
     let trades_count = 1u16;
@@ -456,12 +476,14 @@ fn bitget_trade_zero_values() {
     let after_trades = trades.finish().expect("finish trades");
     let (symbol_bytes, _complete) = after_trades.into_symbol().expect("symbol");
     assert_eq!(symbol_bytes, b"", "empty symbol");
+
+    Ok(())
 }
 
 // ── Binance: WebSocketSessionLogonResponse (template 51) — multiple scalars + var data ──
 
 #[test]
-fn binance_logon_response_roundtrip() {
+fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use binance_spot::{
         BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder,
     };
@@ -517,12 +539,14 @@ fn binance_logon_response_roundtrip() {
         "my-test-api-key",
         "logged_on_api_key"
     );
+
+    Ok(())
 }
 
 // ── Binance: WebSocketResponse (template 50) — group + var-data message ───
 
 #[test]
-fn binance_websocket_response_group_roundtrip() {
+fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use binance_spot::{
         BoolEnum, RateLimitInterval, RateLimitType, WebSocketResponseDecoder,
         WebSocketResponseEncoder,
@@ -638,10 +662,12 @@ fn binance_websocket_response_group_roundtrip() {
         "{\"data\":\"ok\"}",
         "result"
     );
+
+    Ok(())
 }
 
 #[test]
-fn binance_websocket_response_group_buffer_too_short() {
+fn binance_websocket_response_group_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
     use binance_spot::WebSocketResponseDecoder;
 
     // Encode a valid header + body but truncate before the group data
@@ -660,12 +686,14 @@ fn binance_websocket_response_group_buffer_too_short() {
         result.is_err(),
         "rate_limits() on buffer without group dim should fail"
     );
+
+    Ok(())
 }
 
 // ── Wrong-schema detection: bitget schema bytes rejected by binance, and vice versa ──
 
 #[test]
-fn wrong_schema_bitget_encoded_rejected_by_binance() {
+fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::error::Error>> {
     use binance_spot::WebSocketResponseDecoder;
     use bitget_spot::{BestBidAskEncoder, InstCategory, Padding5};
 
@@ -698,12 +726,14 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() {
         result.is_err(),
         "bitget-encoded data rejected by binance decoder: schema_id differs"
     );
+
+    Ok(())
 }
 
 // ── Type-inventory tests: catch codegen regressions that silently drop message types ──
 
 #[test]
-fn bitget_type_inventory() {
+fn bitget_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
     // BestBidAskDecoder (template 1002) — verify SCHEMA_ID, SCHEMA_VERSION, TEMPLATE_ID
     assert_eq!(
         bitget_spot::BestBidAskDecoder::SCHEMA_ID,
@@ -769,10 +799,12 @@ fn bitget_type_inventory() {
         "1.0.0",
         "bitget SCHEMA_SEMANTIC_VERSION"
     );
+
+    Ok(())
 }
 
 #[test]
-fn binance_type_inventory() {
+fn binance_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
     // WebSocketSessionLogonResponseDecoder
     assert_eq!(
         binance_spot::WebSocketSessionLogonResponseDecoder::SCHEMA_ID,
@@ -828,10 +860,12 @@ fn binance_type_inventory() {
         "5.2",
         "binance SEMANTIC_VERSION"
     );
+
+    Ok(())
 }
 
 #[test]
-fn wrong_schema_binance_encoded_rejected_by_bitget() {
+fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::error::Error>> {
     use binance_spot::ServerTimeResponseEncoder;
     use bitget_spot::BestBidAskDecoder;
 
@@ -847,12 +881,14 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() {
         result.is_err(),
         "binance-encoded data rejected by bitget decoder: schema_id differs"
     );
+
+    Ok(())
 }
 
 // ── Task 10: AppMessage/L2Book/Trade roundtrip ─────────────────────────
 
 #[test]
-fn app_message_l2book_roundtrip() {
+fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use normalized_app::{
         AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
@@ -934,4 +970,5 @@ fn app_message_l2book_roundtrip() {
         }
         _ => panic!("expected L2Book"),
     }
+    Ok(())
 }

@@ -25,7 +25,7 @@ fn build_symbol_table(strings: &[&str]) -> Vec<u8> {
 // ── DynamicSchema tests ──────────────────────────────────────────────────
 
 #[test]
-fn test_dynamic_schema_metadata_only() {
+fn test_dynamic_schema_metadata_only() -> Result<(), Box<dyn std::error::Error>> {
     use persist_sbe::{DynamicSchemaDecoder, DynamicSchemaEncoder};
 
     let mut buf = [0u8; BUF_SIZE];
@@ -85,10 +85,12 @@ fn test_dynamic_schema_metadata_only() {
     assert_eq!(table_name, b"sbe_test_tbl");
     let (symbols, _) = decoder.into_symbol_table().unwrap();
     assert_eq!(symbols, sym.as_slice());
+
+    Ok(())
 }
 
 #[test]
-fn test_dynamic_schema_with_columns() {
+fn test_dynamic_schema_with_columns() -> Result<(), Box<dyn std::error::Error>> {
     use persist_sbe::{DynamicSchemaDecoder, DynamicSchemaEncoder};
 
     let mut buf = [0u8; BUF_SIZE];
@@ -157,10 +159,12 @@ fn test_dynamic_schema_with_columns() {
     assert_eq!(table_name, b"price_feed");
     let (symbols, _) = decoder.into_symbol_table().unwrap();
     assert_eq!(symbols, sym.as_slice());
+
+    Ok(())
 }
 
 #[test]
-fn test_dynamic_schema_empty_metadata() {
+fn test_dynamic_schema_empty_metadata() -> Result<(), Box<dyn std::error::Error>> {
     use persist_sbe::{DynamicSchemaDecoder, DynamicSchemaEncoder};
 
     let mut buf = [0u8; BUF_SIZE];
@@ -187,12 +191,14 @@ fn test_dynamic_schema_empty_metadata() {
     assert_eq!(table_name, b"");
     let (symbols, _) = decoder.into_symbol_table().unwrap();
     assert_eq!(symbols, b"");
+
+    Ok(())
 }
 
 // ── DynamicRow tests ─────────────────────────────────────────────────────
 
 #[test]
-fn test_dynamic_row_empty() {
+fn test_dynamic_row_empty() -> Result<(), Box<dyn std::error::Error>> {
     use persist_sbe::{DynamicRowDecoder, DynamicRowEncoder};
 
     let mut buf = [0u8; BUF_SIZE];
@@ -234,10 +240,12 @@ fn test_dynamic_row_empty() {
     let decoder = g.finish().unwrap();
     let (symbols, _) = decoder.into_symbol_table().unwrap();
     assert_eq!(symbols, b"");
+
+    Ok(())
 }
 
 #[test]
-fn test_dynamic_row_all_field_types() {
+fn test_dynamic_row_all_field_types() -> Result<(), Box<dyn std::error::Error>> {
     use persist_sbe::{DynamicRowDecoder, DynamicRowEncoder};
 
     let mut buf = [0u8; BUF_SIZE];
@@ -381,10 +389,12 @@ fn test_dynamic_row_all_field_types() {
 
     let (symbols, _) = decoder.into_symbol_table().unwrap();
     assert_eq!(symbols, sym.as_slice());
+
+    Ok(())
 }
 
 #[test]
-fn test_dynamic_row_multiple_entries() {
+fn test_dynamic_row_multiple_entries() -> Result<(), Box<dyn std::error::Error>> {
     use persist_sbe::{DynamicRowDecoder, DynamicRowEncoder};
 
     let mut buf = [0u8; BUF_SIZE];
@@ -465,10 +475,12 @@ fn test_dynamic_row_multiple_entries() {
     let e1 = u64s.next().unwrap();
     assert_eq!(e1.field_id(), 50);
     assert_eq!(e1.value(), 500u64);
+
+    Ok(())
 }
 
 #[test]
-fn test_dynamic_row_string_roundtrip() {
+fn test_dynamic_row_string_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use persist_sbe::{DynamicRowDecoder, DynamicRowEncoder};
 
     let mut buf = [0u8; BUF_SIZE];
@@ -534,12 +546,14 @@ fn test_dynamic_row_string_roundtrip() {
     assert_eq!(&st[0..3], b"abc");
     assert_eq!(&st[3..14], b"hello world");
     assert_eq!(&st[14..17], b"SBE");
+
+    Ok(())
 }
 
 // ── Cross-message tests ──────────────────────────────────────────────────
 
 #[test]
-fn test_schema_and_row_same_schema_id() {
+fn test_schema_and_row_same_schema_id() -> Result<(), Box<dyn std::error::Error>> {
     // Verify that a DynamicSchema + DynamicRow with matching schema_id
     // both encode/decode independently.
     use persist_sbe::{DynamicRowDecoder, DynamicRowEncoder};
@@ -577,4 +591,6 @@ fn test_schema_and_row_same_schema_id() {
 
     let row_dec = DynamicRowDecoder::try_from(row_bytes).unwrap();
     assert_eq!(row_dec.schema_id(), shared_schema_id);
+
+    Ok(())
 }

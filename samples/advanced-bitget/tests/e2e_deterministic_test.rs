@@ -5,13 +5,14 @@
 //! order; the embedded media driver is a real process-level singleton, so a
 //! mutex serialises the driver section.
 
-use std::ffi::CString;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use advanced_bitget::config::CHANNEL;
 use advanced_bitget::normalized_app::{
     AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
 };
+use rusteron_client::cformat;
 
 /// The embedded media driver aborts when several launch concurrently in one
 /// process — serialise it (plan Task 11: real singleton resources only).
@@ -38,12 +39,12 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
 
     let driver = rusteron_media_driver::testing::EmbeddedDriver::launch().expect("driver");
     let ctx = rusteron_client::AeronContext::new().expect("ctx");
-    let dir_cstr = CString::new(driver.dir()).unwrap();
+    let dir_cstr = cformat!("{}", driver.dir());
     ctx.set_dir(&dir_cstr).expect("dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
     aeron.start().expect("start");
 
-    let channel = CString::new("aeron:ipc").unwrap();
+    let channel = CHANNEL;
     let pubn = aeron
         .async_add_exclusive_publication(&channel, 1001)
         .expect("pub")
@@ -137,26 +138,36 @@ fn verify_counts(expect: &mut Expect, buf: &[u8], _hdr: rusteron_client::AeronHe
 }
 
 #[test]
-fn e2e_zero_levels() {
+fn e2e_zero_levels() -> Result<(), Box<dyn std::error::Error>> {
     run_roundtrip(b"BTCUSDT", 0, 0, 1);
+
+    Ok(())
 }
 
 #[test]
-fn e2e_one_level() {
+fn e2e_one_level() -> Result<(), Box<dyn std::error::Error>> {
     run_roundtrip(b"BTCUSDT", 1, 1, 2);
+
+    Ok(())
 }
 
 #[test]
-fn e2e_typical_asymmetric() {
+fn e2e_typical_asymmetric() -> Result<(), Box<dyn std::error::Error>> {
     run_roundtrip(b"ETHUSDT", 10, 8, 3);
+
+    Ok(())
 }
 
 #[test]
-fn e2e_large_25x25() {
+fn e2e_large_25x25() -> Result<(), Box<dyn std::error::Error>> {
     run_roundtrip(b"BTCUSDT", 25, 25, 4);
+
+    Ok(())
 }
 
 #[test]
-fn e2e_large_asymmetric_40x3() {
+fn e2e_large_asymmetric_40x3() -> Result<(), Box<dyn std::error::Error>> {
     run_roundtrip(b"BTCUSDT", 40, 3, 5);
+
+    Ok(())
 }

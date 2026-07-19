@@ -155,57 +155,71 @@ mod tests {
     use super::{CompatibilityMode, GenerationConfig};
 
     #[test]
-    fn default_config_is_strict_and_checked() {
+    fn default_config_is_strict_and_checked() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::default();
 
         assert_eq!(config.compatibility, CompatibilityMode::Strict);
         assert!(config.checked_accessors);
+    
+        Ok(())
     }
 
     #[test]
-    fn enable_decimal_converters_adds_name() {
+    fn enable_decimal_converters_adds_name() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("test").enable_decimal_converters("Decimal");
         assert_eq!(config.decimal_composites, vec!["Decimal"]);
+    
+        Ok(())
     }
 
     #[test]
-    fn enable_decimal_converters_dedup() {
+    fn enable_decimal_converters_dedup() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("test")
             .enable_decimal_converters("Decimal")
             .enable_decimal_converters("Decimal");
         assert_eq!(config.decimal_composites.len(), 1);
+    
+        Ok(())
     }
 
     #[test]
-    fn with_external_sbe_rt_sets_path() {
+    fn with_external_sbe_rt_sets_path() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("m").with_external_sbe_rt("crate::rt::sbe_rt");
         assert_eq!(
             config.external_sbe_rt_path.as_deref(),
             Some("crate::rt::sbe_rt")
         );
+    
+        Ok(())
     }
 
     #[test]
-    fn enable_decimal_converters_multiple() {
+    fn enable_decimal_converters_multiple() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("test")
             .enable_decimal_converters("Decimal")
             .enable_decimal_converters("Price");
         assert_eq!(config.decimal_composites, vec!["Decimal", "Price"]);
+    
+        Ok(())
     }
 
     #[test]
-    fn new_config_has_empty_decimal_composites() {
+    fn new_config_has_empty_decimal_composites() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("test");
         assert!(config.decimal_composites.is_empty());
+    
+        Ok(())
     }
 
     #[test]
-    fn new_config_has_correct_defaults() {
+    fn new_config_has_correct_defaults() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("mymod");
         assert_eq!(config.module_name, "mymod");
         assert_eq!(config.compatibility, CompatibilityMode::Strict);
         assert!(config.checked_accessors);
         assert!(config.shared_module.is_none());
         assert!(!config.domain_objects);
+    
+        Ok(())
     }
 }

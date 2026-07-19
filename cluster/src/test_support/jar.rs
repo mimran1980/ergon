@@ -55,20 +55,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_find_aeron_all_jar() {
+    fn test_find_aeron_all_jar() -> Result<(), Box<dyn std::error::Error>> {
         let path = find_jar("aeron-all-");
         assert!(path.exists());
+    
+        Ok(())
     }
 
     #[test]
-    fn test_find_aeron_cluster_jar() {
+    fn test_find_aeron_cluster_jar() -> Result<(), Box<dyn std::error::Error>> {
         let path = find_jar("aeron-cluster-");
         assert!(path.exists());
+    
+        Ok(())
     }
 
     #[test]
-    fn test_find_aeron_archive_jar() {
+    fn test_find_aeron_archive_jar() -> Result<(), Box<dyn std::error::Error>> {
         let path = find_jar("aeron-archive-");
         assert!(path.exists());
+    
+        Ok(())
     }
 }

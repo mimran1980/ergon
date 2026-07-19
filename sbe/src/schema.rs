@@ -132,16 +132,18 @@ mod tests {
     use super::{Schema, SchemaSource};
 
     #[test]
-    fn schema_metadata_preserves_identity_fields() {
+    fn schema_metadata_preserves_identity_fields() -> Result<(), Box<dyn std::error::Error>> {
         let schema = Schema::new("fix.sbe", 42, 7);
 
         assert_eq!(schema.package, "fix.sbe");
         assert_eq!(schema.id, 42);
         assert_eq!(schema.version, 7);
+    
+        Ok(())
     }
 
     #[test]
-    fn schema_source_constructors_hold_xml() {
+    fn schema_source_constructors_hold_xml() -> Result<(), Box<dyn std::error::Error>> {
         let borrowed = SchemaSource::borrowed_xml("<messageSchema/>");
         let owned = SchemaSource::owned_xml("<messageSchema/>".to_string());
         match &borrowed {
@@ -150,10 +152,12 @@ mod tests {
         match &owned {
             SchemaSource::Xml(cow) => assert!(matches!(cow, std::borrow::Cow::Owned(_))),
         }
+    
+        Ok(())
     }
 
     #[test]
-    fn schema_from_ir_preserves_metadata() {
+    fn schema_from_ir_preserves_metadata() -> Result<(), Box<dyn std::error::Error>> {
         use crate::ir::{ByteOrder, Ir};
         let ir = Ir {
             package: "test_pkg".to_string(),
@@ -170,10 +174,12 @@ mod tests {
         assert_eq!(schema.id, 99);
         assert_eq!(schema.version, 3);
         assert_eq!(schema.ir.header_type, "customHeader");
+    
+        Ok(())
     }
 
     #[test]
-    fn schema_new_has_correct_ir_defaults() {
+    fn schema_new_has_correct_ir_defaults() -> Result<(), Box<dyn std::error::Error>> {
         use crate::ir::ByteOrder;
         let schema = Schema::new("pkg", 1, 0);
         assert_eq!(schema.ir.package, "pkg");
@@ -184,5 +190,7 @@ mod tests {
         assert!(schema.ir.semantic_version.is_none());
         assert_eq!(schema.ir.header_type, "messageHeader");
         assert!(schema.ir.tokens.is_empty());
+    
+        Ok(())
     }
 }

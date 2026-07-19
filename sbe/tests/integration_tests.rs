@@ -12,7 +12,7 @@ use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
 use std::fs;
 
 #[test]
-fn test_generate_car_example() {
+fn test_generate_car_example() -> Result<(), Box<dyn std::error::Error>> {
     let xml_path = Paths::example_schema();
 
     let xml_content = fs::read_to_string(&xml_path).expect("Failed to read example schema");
@@ -35,10 +35,12 @@ fn test_generate_car_example() {
     assert!(module.source.contains("pub struct OptionalExtras"));
     assert!(module.source.contains("pub enum Model"));
     assert!(module.source.contains("pub enum BooleanType"));
+
+    Ok(())
 }
 
 #[test]
-fn test_fixed_entry_group_access() {
+fn test_fixed_entry_group_access() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_entry_group");
 
     compile_and_run(
@@ -126,4 +128,6 @@ fn test_fixed_entry_group_access() {
         assert_eq!(count, 3, "iterator should yield 3 entries");
     "#,
     );
+
+    Ok(())
 }

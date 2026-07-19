@@ -9,7 +9,7 @@
 //! the driver stops last (RAII drop).
 
 use std::error::Error;
-use std::ffi::CString;
+use rusteron_client::cformat;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -27,7 +27,7 @@ use advanced_bitget::publication::{AeronPublication, ClaimPublisher, derive_ipc_
 
 fn aeron_client(dir: &str) -> Result<rusteron_client::Aeron, Box<dyn Error + Send + Sync>> {
     let ctx = rusteron_client::AeronContext::new()?;
-    ctx.set_dir(&CString::new(dir)?)?;
+    ctx.set_dir(&cformat!("{dir}"))?;
     let aeron = rusteron_client::Aeron::new(&ctx)?;
     aeron.start()?;
     Ok(aeron)
@@ -37,7 +37,7 @@ fn add_pub(
     aeron: &rusteron_client::Aeron,
     stream: i32,
 ) -> Result<rusteron_client::AeronExclusivePublication, Box<dyn Error + Send + Sync>> {
-    let ch = CString::new(CHANNEL)?;
+    let ch = CHANNEL;
     Ok(aeron
         .async_add_exclusive_publication(&ch, stream)?
         .poll_blocking(Duration::from_secs(5))?)
@@ -47,7 +47,7 @@ fn add_sub(
     aeron: &rusteron_client::Aeron,
     stream: i32,
 ) -> Result<rusteron_client::AeronSubscription, Box<dyn Error + Send + Sync>> {
-    let ch = CString::new(CHANNEL)?;
+    let ch = CHANNEL;
     Ok(aeron
         .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
             &ch, stream, None, None,

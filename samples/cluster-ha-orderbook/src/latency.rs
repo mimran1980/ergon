@@ -345,7 +345,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deltas_are_non_negative_when_ordered() {
+    fn deltas_are_non_negative_when_ordered() -> Result<(), Box<dyn std::error::Error>> {
         let s = LatencySample {
             leadership_term_id: 1,
             cluster_session_id: 2,
@@ -361,6 +361,8 @@ mod tests {
         assert_eq!(s.receive_to_claim_ns(), 100);
         assert_eq!(s.claim_to_egress_ns(), 300);
         assert_eq!(s.e2e_ns(), 600);
+    
+        Ok(())
     }
 
     #[test]
