@@ -340,6 +340,7 @@ impl Generator {
                 multi,
                 self.config.domain_objects,
                 &self.config.decimal_composites,
+                self.config.unchecked_companions,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
@@ -352,6 +353,7 @@ impl Generator {
                 &ir.header_type,
                 multi,
                 &self.config.decimal_composites,
+                self.config.unchecked_companions,
             );
             src.push_str(&encoder_ts.to_string());
 
@@ -452,6 +454,35 @@ impl Generator {
             }
         };
         src.push_str(&read_bytes_ts.to_string());
+
+        // Unchecked companions for single-binary Criterion comparison.
+        // When bound-check-disabled is NOT set, these provide the unchecked
+        // code path alongside the checked originals so Ergo checked vs
+        // Ergo unchecked is measured in one Criterion session (zero cross-
+        // session noise).
+        if self.config.unchecked_companions {
+            let uc = quote::quote! {
+                /// Unchecked companion to [`read_bytes`] — zero bounds checks.
+                /// For benchmarking only; prefer the checked default in production.
+                #[inline]
+                pub fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
+                    // SAFETY: caller guarantees offset + N <= buf.len().
+                    unsafe {
+                        core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N])
+                    }
+                }
+
+                /// Unchecked companion to [`write_bytes`] — zero bounds checks.
+                #[inline]
+                pub fn write_bytes_unchecked<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
+                    // SAFETY: caller guarantees offset + N <= buf.len().
+                    unsafe {
+                        core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes)
+                    }
+                }
+            };
+            src.push_str(&uc.to_string());
+        }
         src.push('\n');
         // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
@@ -2520,6 +2551,7 @@ fn generate_message_decoder(
     multi_message: bool,
     domain_objects: bool,
     decimal_composites: &[String],
+    _unchecked_companions: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -5119,6 +5151,7 @@ fn generate_message_encoder(
     header_type: &str,
     multi_message: bool,
     decimal_composites: &[String],
+    unchecked_companions: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -5321,8 +5354,7 @@ fn generate_message_encoder(
         #[inline]
         pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
             let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
-            let end = pos.wrapping_add(needed);
-            if end > buf.len() || end < pos {
+            if pos.wrapping_add(needed) > buf.len() {
                 return Err(sbe_rt::EncodeError::BufferTooShort {
                     needed,
                     available: buf.len().saturating_sub(pos),
@@ -5343,11 +5375,10 @@ fn generate_message_encoder(
         let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
         #[cfg(not(feature = "bound-check-disabled"))]
         {
-            // Direct comparison: pos+needed is computed once. `saturating_sub` is
-            // avoided on the hot path because pos is always 0 at call sites, and
-            // `wrapping_add` on a constant folds to the constant.
-            let end = pos.wrapping_add(needed);
-            if end > buf.len() || (end < pos) {
+            // Direct comparison: pos+needed > buf.len(). With pos=0 at all
+            // call sites, the compiler folds this to `needed > buf.len()` —
+            // one load + one cmp instruction.
+            if pos.wrapping_add(needed) > buf.len() {
                 return Err(sbe_rt::EncodeError::BufferTooShort {
                     needed,
                     available: buf.len().saturating_sub(pos),
@@ -5931,6 +5962,31 @@ fn generate_message_encoder(
             .parse()
             .expect("generate_group_encoder produced invalid token stream");
         ts.extend(group_ts);
+    }
+
+    // ── Unchecked companions (single-binary Criterion comparison) ──
+    if unchecked_companions {
+        let needed: usize = header_size + block_length;
+        let needed_lit = syn::LitInt::new(&needed.to_string(), span);
+        let hs_lit = syn::LitInt::new(&header_size.to_string(), span);
+        ts.extend(quote::quote! {
+            impl<'a> #name_encoder_ident<'a> {
+                /// Unchecked companion to [`wrap`] — no bounds check, no Result.
+                /// For single-binary Criterion comparison.
+                #[inline]
+                pub fn wrap_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
+                    Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit }
+                }
+
+                /// Unchecked companion to [`wrap_and_apply_header`] — no bounds
+                /// check, no Result. For single-binary Criterion comparison.
+                #[inline]
+                pub fn wrap_and_apply_header_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
+                    buf[pos..pos + #hs_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
+                    Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit }
+                }
+            }
+        });
     }
 
     ts

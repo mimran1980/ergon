@@ -29,7 +29,9 @@ fn generate_car_codec(out_dir: &Path) {
 
     let schema = ergo_sbe::Schema::from_ir(ir);
     // Benchmarks measure flyweights only — no domain objects.
-    let config = ergo_sbe::GenerationConfig::new("car_bench");
+    // Enable unchecked companions for single-binary checked vs unchecked comparison.
+    let config = ergo_sbe::GenerationConfig::new("car_bench")
+        .with_unchecked_companions();
     let generator = ergo_sbe::Generator::new(config);
     let module_set = generator
         .try_generate(&schema)
