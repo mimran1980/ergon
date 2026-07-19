@@ -248,29 +248,27 @@ impl<P: Publication> ClaimPublisher<P> {
                 );
                 let typed_outcome = self.typed.try_claim_and_commit(outer_len, |buf| {
                     let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0)?;
-                    let _ = app.sent_ts(*receive_ts_ns);
+                    app.sent_ts(*receive_ts_ns);
                     let after = app.app_name(APP_NAME)?;
                     let _ = after.payload_with(
                         inner_len,
                         |payload| -> Result<(), sbe_rt::EncodeError> {
                             let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
-                            let _ = enc
-                                .source(Source::Bitget)
+                            enc.source(Source::Bitget)
                                 .exchange_timestamp(*exchange_ts_ns)
                                 .receive_timestamp(*receive_ts_ns)
                                 .sequence(*sequence);
                             let after = enc.bids(bids.len() as u16, |g| {
                                 for l in *bids {
                                     g.add(|e| -> Result<(), sbe_rt::EncodeError> {
-                                        let _ = e
-                                            .price_wire(Decimal::new(
-                                                l.price.mantissa,
-                                                l.price.exponent,
-                                            ))
-                                            .size_wire(Decimal::new(
-                                                l.size.mantissa,
-                                                l.size.exponent,
-                                            ));
+                                        e.price_wire(Decimal::new(
+                                            l.price.mantissa,
+                                            l.price.exponent,
+                                        ))
+                                        .size_wire(Decimal::new(
+                                            l.size.mantissa,
+                                            l.size.exponent,
+                                        ));
                                         Ok(())
                                     })?;
                                 }
@@ -279,15 +277,14 @@ impl<P: Publication> ClaimPublisher<P> {
                             let after = after.asks(asks.len() as u16, |g| {
                                 for l in *asks {
                                     g.add(|e| -> Result<(), sbe_rt::EncodeError> {
-                                        let _ = e
-                                            .price_wire(Decimal::new(
-                                                l.price.mantissa,
-                                                l.price.exponent,
-                                            ))
-                                            .size_wire(Decimal::new(
-                                                l.size.mantissa,
-                                                l.size.exponent,
-                                            ));
+                                        e.price_wire(Decimal::new(
+                                            l.price.mantissa,
+                                            l.price.exponent,
+                                        ))
+                                        .size_wire(Decimal::new(
+                                            l.size.mantissa,
+                                            l.size.exponent,
+                                        ));
                                         Ok(())
                                     })?;
                                 }
@@ -359,14 +356,13 @@ impl<P: Publication> ClaimPublisher<P> {
                 );
                 let outcome = self.typed.try_claim_and_commit(outer_len, |buf| {
                     let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0)?;
-                    let _ = app.sent_ts(*receive_ts_ns);
+                    app.sent_ts(*receive_ts_ns);
                     let after = app.app_name(APP_NAME)?;
                     let _ = after.payload_with(
                         inner_len,
                         |payload| -> Result<(), sbe_rt::EncodeError> {
                             let mut enc = TradeEncoder::wrap_and_apply_header(payload, 0)?;
-                            let _ = enc
-                                .source(Source::Bitget)
+                            enc.source(Source::Bitget)
                                 .exchange_timestamp(*exchange_ts_ns)
                                 .receive_timestamp(*receive_ts_ns)
                                 .trade_id(*sequence)
