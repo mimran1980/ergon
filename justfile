@@ -184,68 +184,6 @@ check-aeron-cluster:
 test-aeron-cluster-harness:
     cd cluster && cargo test --features test-harness -- --test-threads=1
 
-# Generate cluster SBE codecs from pinned schemas.
-# Portable across macOS (BSD sed/shasum) and Linux (GNU sed/sha256sum).
-# NOTE: regenerates only the two cluster schemas. The RFQ schema
-# (generated/com_aeroncookbook_cluster_rfq_sbe + rfq_codecs/) has no in-repo
-# generator yet; this recipe preserves it instead of deleting it.
-generate-aeron-cluster-codecs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "=== Generating Rust Cluster SBE codecs ==="
-    SBE_JAR=$(find ~/.gradle/caches -name 'sbe-tool-1.39.0*.jar' 2>/dev/null | head -1)
-    if [ -z "$SBE_JAR" ]; then
-      echo "ERROR: sbe-tool-1.39.0.jar not found in ~/.gradle/caches" >&2
-      echo "Run the Gradle build once: cd aeron && ./gradlew :aeron-cluster:generateCodecs" >&2
-      exit 1
-    fi
-    AGRONA_JAR=$(find ~/.gradle/caches -name 'agrona-2.5.0*.jar' 2>/dev/null | head -1)
-    if [ -z "$AGRONA_JAR" ]; then echo "ERROR: agrona-2.5.0.jar not found" >&2; exit 1; fi
-    GEN_DIR="cluster/src/codecs/generated"
-    SCHEMA_DIR="aeron/aeron-cluster/src/main/resources/cluster"
-    CLUSTER_CODECS="cluster/src/codecs/cluster_codecs"
-    MARK_CODECS="cluster/src/codecs/cluster_codecs_mark"
-
-    rm -rf "$GEN_DIR/io_aeron_cluster_codecs" "$GEN_DIR/io_aeron_cluster_codecs_mark"
-    java -Dsbe.target.language=Rust -Dsbe.output.dir="$GEN_DIR" -cp "$SBE_JAR:$AGRONA_JAR" \
-      uk.co.real_logic.sbe.SbeTool "$SCHEMA_DIR/aeron-cluster-codecs.xml"
-    java -Dsbe.target.language=Rust -Dsbe.output.dir="$GEN_DIR" -cp "$SBE_JAR:$AGRONA_JAR" \
-      uk.co.real_logic.sbe.SbeTool "$SCHEMA_DIR/aeron-cluster-mark-codecs.xml"
-
-    mkdir -p "$CLUSTER_CODECS" "$MARK_CODECS"
-    cp "$GEN_DIR/io_aeron_cluster_codecs/src/lib.rs" "$CLUSTER_CODECS/mod.rs"
-    cp "$GEN_DIR/io_aeron_cluster_codecs/src/"*.rs "$CLUSTER_CODECS/"
-    cp "$GEN_DIR/io_aeron_cluster_codecs_mark/src/lib.rs" "$MARK_CODECS/mod.rs"
-    cp "$GEN_DIR/io_aeron_cluster_codecs_mark/src/"*.rs "$MARK_CODECS/"
-
-    for dir in "$CLUSTER_CODECS" "$MARK_CODECS"; do
-      for f in "$dir"/*.rs; do
-        sed -i.bak 's/use crate::\*;/use super::*;/g' "$f" && rm -f "$f.bak"
-        sed -i.bak 's/pub use crate::SBE_/pub use super::SBE_/g' "$f" && rm -f "$f.bak"
-      done
-    done
-    (cd cluster && cargo fmt)
-
-    echo "=== Codecs updated ==="
-    if command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum); elif command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256); else echo "ERROR: neither sha256sum nor shasum available" >&2; exit 1; fi
-    find "$CLUSTER_CODECS" "$MARK_CODECS" -name '*.rs' -exec "${SHA256[@]}" {} \; | sort > "$GEN_DIR/.checksum"
-    echo "=== Checksum saved ==="
-
-# Check for codec drift across every directory generate-aeron-cluster-codecs writes.
-check-aeron-cluster-codec-drift:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just generate-aeron-cluster-codecs
-    # Residual sbe-tool trees (benches + RFQ). Production ErgoSBE codecs are OUT_DIR-only.
-    if ! git diff --exit-code \
-        cluster/src/codecs/cluster_codecs/ \
-        cluster/src/codecs/cluster_codecs_mark/ \
-        cluster/src/codecs/rfq_codecs/; then
-      echo "ERROR: Codec drift detected! Run 'just generate-aeron-cluster-codecs' and commit." >&2
-      exit 1
-    fi
-    echo "OK: Residual sbe-tool codecs match committed (RFQ/benches)."
-
 # Build Aeron cluster test jars (requires Java 17+; run once before test-harness tests)
 build-aeron-jars:
     cd aeron && ./gradlew :aeron-cluster:jar :aeron-archive:jar :aeron-all:jar

@@ -71,8 +71,6 @@ git submodule update --init --recursive
 | `just samples-orderbook` | Live ClickHouse E2E (IPC sample) | Docker |
 | `just samples-cluster-ha` | HA offline + feed_latency CH | Docker |
 | `just samples-cluster-ha-kill-leader` | Multi-node never-stale book | Java + jars |
-| `just check-aeron-cluster-codec-drift` | Residual sbe-tool trees match regenerate (benches only) | Java (sbe-tool) |
-
 **Gotcha (`--all-features` + cluster):** `ergo-aeron-cluster` *is* a workspace
 member. Optional feature `test-harness` compiles the in-crate Java harness
 (Aeron jars). So `just build` / `just check` run:
