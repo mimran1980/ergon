@@ -99,6 +99,12 @@ pub struct GenerationConfig {
     ///
     /// Default: `None` (inline `sbe_rt` in this module).
     pub external_sbe_rt_path: Option<String>,
+    /// When set, emit `From<sbe_rt::EncodeError>` and `From<sbe_rt::DecodeError>`
+    /// impls for the given error type path (e.g. `"crate::ClusterError"`).
+    /// The target type must implement `From<String>`.
+    ///
+    /// Default: `None` (no `From` impls emitted).
+    pub error_from_path: Option<String>,
 }
 
 impl GenerationConfig {
@@ -115,6 +121,7 @@ impl GenerationConfig {
             domain_objects: false,
             decimal_composites: Vec::new(),
             external_sbe_rt_path: None,
+            error_from_path: None,
         }
     }
 
@@ -138,6 +145,18 @@ impl GenerationConfig {
         if !self.decimal_composites.contains(&name) {
             self.decimal_composites.push(name);
         }
+        self
+    }
+
+    /// Emit `From<sbe_rt::EncodeError>` / `From<sbe_rt::DecodeError>` for
+    /// the given error type, so callers can use `?` without `.map_err()`.
+    ///
+    /// `path` must resolve in the generated module, e.g.
+    /// `"crate::ClusterError"` or `"super::MyError"`. The target type must
+    /// implement `From<String>`.
+    #[must_use]
+    pub fn enable_error_from_impls(mut self, path: impl Into<String>) -> Self {
+        self.error_from_path = Some(path.into());
         self
     }
 }

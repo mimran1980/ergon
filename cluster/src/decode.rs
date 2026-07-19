@@ -56,7 +56,7 @@ pub struct NewLeaderEventView<'a> {
 /// buffer (too short, wrong template/schema, …).
 #[inline]
 pub fn decode_session_message_header(data: &[u8]) -> Result<SessionMessageHeaderView, ClusterError> {
-    let d = SessionMessageHeaderDecoder::wrap_and_apply_header(data, 0).map_err(decode_err)?;
+    let d = SessionMessageHeaderDecoder::wrap_and_apply_header(data, 0)?;
     Ok(SessionMessageHeaderView {
         leadership_term_id: d.leadership_term_id(),
         cluster_session_id: d.cluster_session_id(),
@@ -71,13 +71,13 @@ pub fn decode_session_message_header(data: &[u8]) -> Result<SessionMessageHeader
 /// Protocol / bounds errors from ErgoSBE become [`ClusterError::ProtocolError`].
 #[inline]
 pub fn decode_session_event(data: &[u8]) -> Result<SessionEventView<'_>, ClusterError> {
-    let d = SessionEventDecoder::wrap_and_apply_header(data, 0).map_err(decode_err)?;
+    let d = SessionEventDecoder::wrap_and_apply_header(data, 0)?;
     let correlation_id = d.correlation_id();
     let cluster_session_id = d.cluster_session_id();
     let leadership_term_id = d.leadership_term_id();
     let leader_member_id = d.leader_member_id();
     let code = d.code();
-    let (detail, _) = d.into_detail().map_err(decode_err)?;
+    let (detail, _) = d.into_detail()?;
     Ok(SessionEventView {
         correlation_id,
         cluster_session_id,
@@ -95,23 +95,17 @@ pub fn decode_session_event(data: &[u8]) -> Result<SessionEventView<'_>, Cluster
 /// Protocol / bounds errors from ErgoSBE become [`ClusterError::ProtocolError`].
 #[inline]
 pub fn decode_new_leader_event(data: &[u8]) -> Result<NewLeaderEventView<'_>, ClusterError> {
-    let d = NewLeaderEventDecoder::wrap_and_apply_header(data, 0).map_err(decode_err)?;
+    let d = NewLeaderEventDecoder::wrap_and_apply_header(data, 0)?;
     let cluster_session_id = d.cluster_session_id();
     let leadership_term_id = d.leadership_term_id();
     let leader_member_id = d.leader_member_id();
-    let (ingress_endpoints, _) = d.into_ingress_endpoints().map_err(decode_err)?;
+    let (ingress_endpoints, _) = d.into_ingress_endpoints()?;
     Ok(NewLeaderEventView {
         cluster_session_id,
         leadership_term_id,
         leader_member_id,
         ingress_endpoints,
     })
-}
-
-fn decode_err<E: std::fmt::Debug>(e: E) -> ClusterError {
-    ClusterError::ProtocolError {
-        reason: format!("sbe decode: {e:?}"),
-    }
 }
 
 #[cfg(test)]
@@ -177,7 +171,7 @@ mod tests {
     fn short_buffer_is_protocol_error() -> Result<(), Box<dyn std::error::Error>> {
         let err = decode_session_message_header(&[0u8; 4]).unwrap_err();
         match err {
-            ClusterError::ProtocolError { reason } => assert!(reason.contains("sbe decode")),
+            ClusterError::ProtocolError { reason } => assert!(reason.contains("decode")),
             other => panic!("expected ProtocolError, got {other:?}"),
         }
 

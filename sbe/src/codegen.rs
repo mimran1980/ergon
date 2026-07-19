@@ -391,6 +391,27 @@ impl Generator {
         write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
         // 7.6. Generate prelude module — single import surface for users
         generate_prelude(&mut src, &elements, &messages, ir.id, ir.version);
+        // 7.6b. Opt-in From<EncodeError/DecodeError> for user error type
+        if let Some(ref err_path) = self.config.error_from_path {
+            let err_ty: syn::Type = syn::parse_str(err_path).expect("invalid error_from_path");
+            let span = proc_macro2::Span::call_site();
+            let impls = quote::quote! {
+                /// Generated: encode errors convert directly to the crate error type.
+                impl From<sbe_rt::EncodeError> for #err_ty {
+                    fn from(e: sbe_rt::EncodeError) -> Self {
+                        Self::from(format!("sbe encode: {e}"))
+                    }
+                }
+                /// Generated: decode errors convert directly to the crate error type.
+                impl From<sbe_rt::DecodeError> for #err_ty {
+                    fn from(e: sbe_rt::DecodeError) -> Self {
+                        Self::from(format!("sbe decode: {e}"))
+                    }
+                }
+            };
+            src.push_str(&impls.to_string());
+            src.push('\n');
+        }
         // 7.7. Generate const-compatible byte-read helper (avoids per-accessor loop bloat)
         let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
             /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
@@ -585,6 +606,10 @@ fn generate_sbe_rt_src() -> String {
                     self
                 }
             }
+
+            /// Shorthand for closures passed to group `add`:
+            /// `|e| -> GroupResult { ... Ok(()) }`.
+            pub type GroupResult = Result<(), EncodeError>;
         }
     };
 
@@ -1798,7 +1823,33 @@ fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder)
         // wire size — catches generator bugs at compile time, zero runtime cost.
         const _: () = assert!(core::mem::size_of::<#name_ident>() == #size_lit);
     };
+
     src.push_str(&ts.to_string());
+
+    // MessageHeader convenience: peek_template_id + ENCODED_LENGTH so
+    // callers don't re-copy the 8-byte header just to read template_id.
+    if raw_name == "messageHeader" {
+        let extras = quote::quote! {
+            /// Canonical wire size of the SBE message header (always 8 bytes).
+            pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = 8;
+
+            impl #name_ident {
+                /// Read `template_id` from a frame without constructing a full
+                /// `MessageHeader`. Returns `None` when the buffer is shorter
+                /// than the 8-byte header.
+                #[inline]
+                pub fn peek_template_id(data: &[u8]) -> Option<u16> {
+                    if data.len() < 8 {
+                        return None;
+                    }
+                    let mut hdr = [0u8; 8];
+                    hdr.copy_from_slice(&data[..8]);
+                    Some(Self(hdr).template_id())
+                }
+            }
+        };
+        src.push_str(&extras.to_string());
+    }
     src.push('\n');
 
     // ── 5b. Composite decoder (flyweight / _lazy accessor) ──
@@ -3272,6 +3323,19 @@ fn generate_message_decoder(
             fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
                 let bytes = self.#vd_snake_ident()?;
                 core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
+            }
+        });
+
+        // Infallible UTF-8 accessor with a consistent sentinel — survives
+        // invalid SBE at 3am without panicking.
+        let str_lossy_ident = syn::Ident::new(
+            &format!("{vd_snake}_as_str_lossy"),
+            proc_macro2::Span::call_site(),
+        );
+        impl_body.extend(quote::quote! {
+            #[inline]
+            fn #str_lossy_ident(&self) -> &'a str {
+                self.#str_ident().unwrap_or("<invalid utf-8>")
             }
         });
 
@@ -5291,6 +5355,26 @@ fn generate_message_encoder(
     };
     impl_contents.extend(wrap_apply_fn);
 
+    // Claim-compatible wrap: validates buffer is exactly ENCODED_LENGTH bytes.
+    // For use with Aeron try_claim where the buffer is pre-sized to the message.
+    if is_fixed {
+        impl_contents.extend(quote::quote! {
+            /// Wrap a mutable buffer sized exactly to `ENCODED_LENGTH` bytes.
+            /// For use with claim buffers (`try_claim`) where the caller has
+            /// already allocated exactly the right size.
+            #[inline]
+            pub fn wrap_into_claim(buf: &'a mut [u8]) -> Result<Self, sbe_rt::EncodeError> {
+                if buf.len() < Self::ENCODED_LENGTH {
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        needed: Self::ENCODED_LENGTH,
+                        available: buf.len(),
+                    });
+                }
+                Self::wrap_and_apply_header(buf, 0)
+            }
+        });
+    }
+
     // Opt-in: write null sentinels for all optional fields. Call this after
     // wrap_and_apply_header if you want unset optional fields to carry their
     // schema-defined null value instead of whatever was in the buffer.
@@ -5355,7 +5439,6 @@ fn generate_message_encoder(
                     if prim_size == 1 {
                         // [u8; N]: no byte-swap needed, single bulk copy
                         impl_contents.extend(quote::quote! {
-                            #[must_use]
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
                                 self.buf[#body_offset_lit..][..#len_lit].copy_from_slice(&val);
@@ -5364,7 +5447,6 @@ fn generate_message_encoder(
                         });
                     } else {
                         impl_contents.extend(quote::quote! {
-                            #[must_use]
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
                                 let offset = #body_offset_lit;
@@ -5379,7 +5461,6 @@ fn generate_message_encoder(
                     }
                 } else {
                     impl_contents.extend(quote::quote! {
-                        #[must_use]
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
                             let offset = #body_offset_lit;
@@ -5396,7 +5477,6 @@ fn generate_message_encoder(
                 let target_type: syn::Type = syn::parse_str(&to_pascal_case(comp_name)).unwrap();
                 let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
-                    #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #comp_size_lit]
@@ -5418,7 +5498,6 @@ fn generate_message_encoder(
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
-                    #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
@@ -5429,7 +5508,6 @@ fn generate_message_encoder(
                 if is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
                     impl_contents.extend(quote::quote! {
-                        #[must_use]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             let offset = #body_offset_lit;
                             let enum_val: #target_type = val.into();
@@ -5447,7 +5525,6 @@ fn generate_message_encoder(
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
-                    #[must_use]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
@@ -6029,7 +6106,6 @@ fn generate_group_encoder(
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
                     let sz = syn::LitInt::new(&prim_size.to_string(), span);
                     entry_methods.extend(quote::quote! {
-                        #[must_use]
                         pub fn #f_ident(&mut self, val: [#r_ty; #len_lit]) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
                             let mut idx = 0;
@@ -6043,7 +6119,6 @@ fn generate_group_encoder(
                 } else {
                     let sz = syn::LitInt::new(&prim_size.to_string(), span);
                     entry_methods.extend(quote::quote! {
-                        #[must_use]
                         pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
                             self.buf[offset..offset + #sz].copy_from_slice(&val.#to_endian());
@@ -6059,7 +6134,6 @@ fn generate_group_encoder(
                 let target = syn::Ident::new(&to_pascal_case(comp_name), span);
                 let sz = syn::LitInt::new(&comp_size.to_string(), span);
                 entry_methods.extend(quote::quote! {
-                    #[must_use]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&val.0);
@@ -6075,7 +6149,6 @@ fn generate_group_encoder(
                 let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
                 let sz = syn::LitInt::new(&encoding_type.size().to_string(), span);
                 entry_methods.extend(quote::quote! {
-                    #[must_use]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&(val as #r_ty).#to_endian());
@@ -6085,7 +6158,6 @@ fn generate_group_encoder(
                 if is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_snake), span);
                     entry_methods.extend(quote::quote! {
-                        #[must_use]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
                             let enum_val: #target = val.into();
@@ -6102,7 +6174,6 @@ fn generate_group_encoder(
                 let target = syn::Ident::new(&to_pascal_case(set_name), span);
                 let sz = syn::LitInt::new(&encoding_type.size().to_string(), span);
                 entry_methods.extend(quote::quote! {
-                    #[must_use]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&val.0.#to_endian());

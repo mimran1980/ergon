@@ -193,6 +193,9 @@ pub mod sbe_rt {
             self
         }
     }
+    /// Shorthand for closures passed to group `add`:
+    /// `|e| -> GroupResult { ... Ok(()) }`.
+    pub type GroupResult = Result<(), EncodeError>;
 }
 ///Boolean Type.
 #[repr(u8)]
@@ -407,6 +410,22 @@ impl MessageHeader {
     }
 }
 const _: () = assert!(core::mem::size_of:: < MessageHeader > () == 8);
+/// Canonical wire size of the SBE message header (always 8 bytes).
+pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = 8;
+impl MessageHeader {
+    /// Read `template_id` from a frame without constructing a full
+    /// `MessageHeader`. Returns `None` when the buffer is shorter
+    /// than the 8-byte header.
+    #[inline]
+    pub fn peek_template_id(data: &[u8]) -> Option<u16> {
+        if data.len() < 8 {
+            return None;
+        }
+        let mut hdr = [0u8; 8];
+        hdr.copy_from_slice(&data[..8]);
+        Some(Self(hdr).template_id())
+    }
+}
 #[derive(Clone, Copy)]
 pub struct MessageHeaderDecoder<'a> {
     buf: &'a [u8],
@@ -1070,6 +1089,10 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
+    fn manufacturer_as_str_lossy(&self) -> &'a str {
+        self.manufacturer_as_str().unwrap_or("<invalid utf-8>")
+    }
+    #[inline]
     fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
@@ -1091,6 +1114,10 @@ impl<'a> CarDecoder<'a> {
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
     }
     #[inline]
+    fn model_as_str_lossy(&self) -> &'a str {
+        self.model_as_str().unwrap_or("<invalid utf-8>")
+    }
+    #[inline]
     fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
@@ -1110,6 +1137,10 @@ impl<'a> CarDecoder<'a> {
     fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
         core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
+    }
+    #[inline]
+    fn activation_code_as_str_lossy(&self) -> &'a str {
+        self.activation_code_as_str().unwrap_or("<invalid utf-8>")
     }
     /// Consume this stage and return a fresh decoder at the initial
     /// message position. The consumed stage cannot be reused.
@@ -3239,40 +3270,34 @@ impl<'a> CarEncoder<'a> {
             pos: needed,
         })
     }
-    #[must_use]
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = 8;
         self.buf[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
         self
     }
-    #[must_use]
     #[inline]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = 16;
         self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
-    #[must_use]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = 18;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
-    #[must_use]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
         let offset = 18;
         let enum_val: BooleanType = val.into();
         self.buf[offset..offset + 1].copy_from_slice(&(enum_val as u8).to_le_bytes());
         self
     }
-    #[must_use]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = 19;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
-    #[must_use]
     #[inline]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
         let offset = 20;
@@ -3284,19 +3309,16 @@ impl<'a> CarEncoder<'a> {
         }
         self
     }
-    #[must_use]
     #[inline]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
         self.buf[36..][..6].copy_from_slice(&val);
         self
     }
-    #[must_use]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = 42;
         self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
         self
     }
-    #[must_use]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = 43;
         self.buf[offset..offset + 10].copy_from_slice(&val.0);
@@ -3877,13 +3899,11 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
-    #[must_use]
     pub fn speed(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
-    #[must_use]
     pub fn mpg(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         self.buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
@@ -4002,7 +4022,6 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
-    #[must_use]
     pub fn octane_rating(&mut self, val: u8) -> &mut Self {
         let offset = self.entry_start + 0;
         self.buf[offset..offset + 1].copy_from_slice(&val.to_le_bytes());
@@ -4142,13 +4161,11 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
-    #[must_use]
     pub fn mph(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
-    #[must_use]
     pub fn seconds(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         self.buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());

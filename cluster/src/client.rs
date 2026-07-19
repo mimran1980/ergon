@@ -33,13 +33,6 @@ use crate::state::SessionState;
 /// Header-inclusive SessionMessageHeader (prefer generated `ENCODED_LENGTH`).
 const MSG_HDR_TOTAL: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
 
-/// Map an ErgoSBE encode error into the cluster error enum.
-fn enc_err<E: std::fmt::Debug>(e: E) -> ClusterError {
-    ClusterError::ProtocolError {
-        reason: format!("sbe encode: {e:?}"),
-    }
-}
-
 /// Map a raw offer return: `Ok(pos)` if `r > 0`, else typed publication error.
 #[inline]
 fn offer_result(context: &'static str, r: i64) -> Result<i64, ClusterError> {
@@ -240,18 +233,18 @@ impl AeronCluster {
 
     fn encode_connect_request(builder: &crate::SessionBuilder, credentials: &[u8]) -> Result<Vec<u8>, ClusterError> {
         let mut buf = vec![0u8; 512];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).map_err(enc_err)?;
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
         let _ = enc
             .correlation_id(0)
             .response_stream_id(builder.egress_stream_id)
             .version(0);
         let _ = enc
             .response_channel(builder.egress_channel_bytes())
-            .map_err(enc_err)?
+            ?
             .encoded_credentials(credentials)
-            .map_err(enc_err)?
+            ?
             .client_info(b"")
-            .map_err(enc_err)?;
+            ?;
         Ok(buf)
     }
 
@@ -262,11 +255,11 @@ impl AeronCluster {
         credentials: &[u8],
     ) -> Result<(), ClusterError> {
         let mut buf = vec![0u8; 512];
-        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0).map_err(enc_err)?;
+        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0)?;
         let _ = enc
             .correlation_id(correlation_id)
             .cluster_session_id(cluster_session_id);
-        let _ = enc.encoded_credentials(credentials).map_err(enc_err)?;
+        let _ = enc.encoded_credentials(credentials)?;
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
         offer_result("challenge_response", r).map(|_| ())
     }
@@ -291,7 +284,7 @@ impl AeronCluster {
         }
         let mut buf = vec![0u8; MSG_HDR_TOTAL + payload.len()];
         let _ = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
-            .map_err(enc_err)?
+            ?
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id)
             .timestamp(0);
@@ -305,7 +298,7 @@ impl AeronCluster {
     pub fn send_keep_alive(&mut self) -> Result<(), ClusterError> {
         let mut buf = vec![0u8; 8 + SessionKeepAliveEncoder::BLOCK_LENGTH];
         let _ = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0)
-            .map_err(enc_err)?
+            ?
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id);
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
@@ -327,13 +320,13 @@ impl AeronCluster {
         }
         let len = AdminRequestEncoder::compute_encoded_length_with_message_header(payload.len());
         let mut buf = vec![0u8; len];
-        let mut enc = AdminRequestEncoder::wrap_and_apply_header(&mut buf, 0).map_err(enc_err)?;
+        let mut enc = AdminRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
         let _ = enc
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id)
             .correlation_id(correlation_id)
             .request_type(request_type);
-        let complete = enc.payload(payload).map_err(enc_err)?;
+        let complete = enc.payload(payload)?;
         let bytes = complete.as_bytes();
         let r = self.ingress.offer_raw(bytes, Handlers::NONE);
         offer_result("admin_request", r)
@@ -346,7 +339,7 @@ impl AeronCluster {
         }
         let mut buf = vec![0u8; 8 + SessionCloseRequestEncoder::BLOCK_LENGTH];
         let _ = SessionCloseRequestEncoder::wrap_and_apply_header(&mut buf, 0)
-            .map_err(enc_err)?
+            ?
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id);
         // Local close always proceeds: the SessionCloseRequest is an advisory
@@ -488,7 +481,7 @@ impl AeronCluster {
             });
         }
         let _ = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut claim.data()[0..MSG_HDR_TOTAL], 0)
-            .map_err(enc_err)?
+            ?
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id)
             .timestamp(0);
@@ -760,18 +753,18 @@ impl AsyncClusterConnect {
             return Ok(true);
         }
         let mut buf = vec![0u8; 512];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).map_err(enc_err)?;
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
         let _ = enc
             .correlation_id(0)
             .response_stream_id(self.builder.egress_stream_id)
             .version(0);
         let _ = enc
             .response_channel(self.builder.egress_channel_bytes())
-            .map_err(enc_err)?
+            ?
             .encoded_credentials(&self.credentials)
-            .map_err(enc_err)?
+            ?
             .client_info(b"")
-            .map_err(enc_err)?;
+            ?;
         // Always stamp the attempt so re-offer cadence advances even under
         // backpressure (avoids tight spin when publication is not connected).
         self.last_connect_offer = Instant::now();
@@ -786,9 +779,9 @@ impl AsyncClusterConnect {
 
     fn send_challenge_response(&mut self, cid: i64, csid: i64, creds: &[u8]) -> Result<(), ClusterError> {
         let mut buf = vec![0u8; 512];
-        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0).map_err(enc_err)?;
+        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0)?;
         let _ = enc.correlation_id(cid).cluster_session_id(csid);
-        let _ = enc.encoded_credentials(creds).map_err(enc_err)?;
+        let _ = enc.encoded_credentials(creds)?;
         if let Some(ingress) = &self.ingress {
             let r = ingress.offer_raw(&buf, Handlers::NONE);
             offer_result("challenge_response", r)?;

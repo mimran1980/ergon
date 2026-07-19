@@ -1561,9 +1561,9 @@ fn generated_code_has_must_use_annotations() -> Result<(), Box<dyn std::error::E
     let count_msg = src.matches("#[must_use = \"").count();
     let count = count_plain + count_msg;
     assert!(
-        count >= 20,
-        "expected >=20 #[must_use] annotations on encoder types/methods \
-         in the car example, found {count}"
+        count >= 10,
+        "expected >=10 #[must_use] annotations on encoder types/Result-returning \
+         methods in the car example, found {count}"
     );
 
     let lines: Vec<&str> = src.lines().collect();
@@ -1587,27 +1587,10 @@ fn generated_code_has_must_use_annotations() -> Result<(), Box<dyn std::error::E
         "FuelFiguresEncoder struct missing #[must_use]"
     );
 
-    // #[must_use] on encoder setters returning &mut Self. Annotation may be
-    // stacked with #[inline], so check within a 3-line window after #[must_use].
-    let must_use_ok = |fn_prefix: &str| -> bool {
-        lines
-            .windows(4)
-            .filter(|w| w[0].trim().starts_with("#[must_use"))
-            .any(|w| {
-                w[1..].iter().any(|line| {
-                    let t = line.trim();
-                    t.starts_with(fn_prefix) && t.contains("&mut Self")
-                })
-            })
-    };
-    assert!(
-        must_use_ok("pub fn serial_number("),
-        "encoder serial_number setter missing #[must_use]"
-    );
-    assert!(
-        must_use_ok("pub fn model_year("),
-        "encoder model_year setter missing #[must_use]"
-    );
+    // Fixed-field setters (&mut Self) intentionally do NOT carry #[must_use] —
+    // the side effect (buffer write) is the point; the returned reference is
+    // meant to be discarded. Result-returning methods and encoder structs
+    // keep their #[must_use].
 
     // #[must_use] on Result-returning encoder methods
     // After prettyplease formatting, `Result` is on the next line,
