@@ -255,8 +255,7 @@ impl AeronCluster {
     ) -> Result<(), ClusterError> {
         let mut buf = vec![0u8; 512];
         let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc
-            .correlation_id(correlation_id)
+        enc.correlation_id(correlation_id)
             .cluster_session_id(cluster_session_id);
         let _ = enc.encoded_credentials(credentials)?;
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
@@ -318,8 +317,7 @@ impl AeronCluster {
         let len = AdminRequestEncoder::compute_encoded_length_with_message_header(payload.len());
         let mut buf = vec![0u8; len];
         let mut enc = AdminRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc
-            .leadership_term_id(self.leadership_term_id)
+        enc.leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id)
             .correlation_id(correlation_id)
             .request_type(request_type);
@@ -749,8 +747,7 @@ impl AsyncClusterConnect {
         }
         let mut buf = vec![0u8; 512];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc
-            .correlation_id(0)
+        enc.correlation_id(0)
             .response_stream_id(self.builder.egress_stream_id)
             .version(0);
         let _ = enc
