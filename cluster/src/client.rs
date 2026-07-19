@@ -234,8 +234,7 @@ impl AeronCluster {
     fn encode_connect_request(builder: &crate::SessionBuilder, credentials: &[u8]) -> Result<Vec<u8>, ClusterError> {
         let mut buf = vec![0u8; 512];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc
-            .correlation_id(0)
+        enc.correlation_id(0)
             .response_stream_id(builder.egress_stream_id)
             .version(0);
         let _ = enc
@@ -283,8 +282,7 @@ impl AeronCluster {
             return Err(ClusterError::NotConnected);
         }
         let mut buf = vec![0u8; MSG_HDR_TOTAL + payload.len()];
-        let _ = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
-            ?
+        SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)?
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id)
             .timestamp(0);
@@ -297,8 +295,7 @@ impl AeronCluster {
     /// Send a SessionKeepAlive to hold the session open.
     pub fn send_keep_alive(&mut self) -> Result<(), ClusterError> {
         let mut buf = vec![0u8; 8 + SessionKeepAliveEncoder::BLOCK_LENGTH];
-        let _ = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0)
-            ?
+        SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0)?
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id);
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
@@ -338,8 +335,7 @@ impl AeronCluster {
             return Err(ClusterError::SessionClosed);
         }
         let mut buf = vec![0u8; 8 + SessionCloseRequestEncoder::BLOCK_LENGTH];
-        let _ = SessionCloseRequestEncoder::wrap_and_apply_header(&mut buf, 0)
-            ?
+        SessionCloseRequestEncoder::wrap_and_apply_header(&mut buf, 0)?
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id);
         // Local close always proceeds: the SessionCloseRequest is an advisory
@@ -480,8 +476,7 @@ impl AeronCluster {
                 actual: claim.data().len(),
             });
         }
-        let _ = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut claim.data()[0..MSG_HDR_TOTAL], 0)
-            ?
+        SessionMessageHeaderEncoder::wrap_into_claim(&mut claim.data()[..MSG_HDR_TOTAL])?
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id)
             .timestamp(0);
@@ -780,7 +775,7 @@ impl AsyncClusterConnect {
     fn send_challenge_response(&mut self, cid: i64, csid: i64, creds: &[u8]) -> Result<(), ClusterError> {
         let mut buf = vec![0u8; 512];
         let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc.correlation_id(cid).cluster_session_id(csid);
+        enc.correlation_id(cid).cluster_session_id(csid);
         let _ = enc.encoded_credentials(creds)?;
         if let Some(ingress) = &self.ingress {
             let r = ingress.offer_raw(&buf, Handlers::NONE);

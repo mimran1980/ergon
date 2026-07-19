@@ -69,7 +69,7 @@ impl<L: EgressListener> EgressAdapter<L> {
     /// Decode and dispatch one egress fragment. Returns `true` if
     /// handled, `false` if the templateId is unrecognised.
     pub fn on_fragment(&mut self, data: &[u8]) -> Result<bool, crate::ClusterError> {
-        let Some(template_id) = MessageHeader::peek_template_id(data) else {
+        let Some(template_id) = MessageHeader::peek_for_schema(data, SessionMessageHeaderEncoder::SCHEMA_ID) else {
         return Ok(false);
     };
 

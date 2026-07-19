@@ -413,9 +413,23 @@ const _: () = assert!(core::mem::size_of:: < MessageHeader > () == 8);
 /// Canonical wire size of the SBE message header (always 8 bytes).
 pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = 8;
 impl MessageHeader {
+    /// Read `(template_id, schema_id)` from a frame without
+    /// constructing a full `MessageHeader`. Returns `None`
+    /// when the buffer is shorter than 8 bytes.
+    #[inline]
+    pub fn peek_header(data: &[u8]) -> Option<(u16, u16)> {
+        if data.len() < 8 {
+            return None;
+        }
+        let mut hdr = [0u8; 8];
+        hdr.copy_from_slice(&data[..8]);
+        let this = Self(hdr);
+        Some((this.template_id(), this.schema_id()))
+    }
     /// Read `template_id` from a frame without constructing a full
     /// `MessageHeader`. Returns `None` when the buffer is shorter
-    /// than the 8-byte header.
+    /// than the 8-byte header. For correct multi-schema dispatch,
+    /// prefer [`Self::peek_header`] which also returns `schema_id`.
     #[inline]
     pub fn peek_template_id(data: &[u8]) -> Option<u16> {
         if data.len() < 8 {
@@ -424,6 +438,14 @@ impl MessageHeader {
         let mut hdr = [0u8; 8];
         hdr.copy_from_slice(&data[..8]);
         Some(Self(hdr).template_id())
+    }
+    /// Validate `schema_id` and return `template_id`. Returns
+    /// `None` when the buffer is too short or the schema doesn't
+    /// match. Use this for correct multi-schema dispatch.
+    #[inline]
+    pub fn peek_for_schema(data: &[u8], expected_schema_id: u16) -> Option<u16> {
+        let (tid, sid) = Self::peek_header(data)?;
+        if sid == expected_schema_id { Some(tid) } else { None }
     }
 }
 #[derive(Clone, Copy)]

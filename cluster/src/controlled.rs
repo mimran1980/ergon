@@ -77,7 +77,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
     /// Decode and dispatch one egress fragment. Returns the action the
     /// listener produced (or `Continue` for unrecognised template IDs).
     pub fn on_fragment(&mut self, data: &[u8]) -> ControlledPollAction {
-        let Some(template_id) = MessageHeader::peek_template_id(data) else {
+        let Some(template_id) = MessageHeader::peek_for_schema(data, SessionMessageHeaderEncoder::SCHEMA_ID) else {
         return ControlledPollAction::Continue;
     };
 

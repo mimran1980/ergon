@@ -4,6 +4,7 @@
 
 use crate::codecs::ergo_codecs::{
     ChallengeDecoder, EventCode, MessageHeader, NewLeaderEventDecoder, SessionEventDecoder,
+    SessionMessageHeaderEncoder,
 };
 use crate::codecs::ergo_codecs::{ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder};
 
@@ -38,7 +39,7 @@ pub enum EgressEvent {
 
 /// Parse a single egress fragment into an `EgressEvent`.
 pub fn parse_event(data: &[u8]) -> Option<EgressEvent> {
-    let tid = MessageHeader::peek_template_id(data)?;
+    let tid = MessageHeader::peek_for_schema(data, SessionMessageHeaderEncoder::SCHEMA_ID)?;
 
     match tid {
         SessionEventEncoder::TEMPLATE_ID => {
