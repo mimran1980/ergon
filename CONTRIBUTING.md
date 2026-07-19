@@ -59,6 +59,26 @@ For wire-shape or hot-path changes, also cover:
 - zero allocations on generated decode/encode hot paths
 - maintained benchmark ratios when the scenario is already in the ledger
 
+### SBE performance gate (mandatory)
+
+**Any change under `sbe/` must re-run the SBE parity benches before the change
+is kept.** ErgoSBE may never go slower than Aeron on maintained scenarios.
+
+```sh
+just bench
+# or: cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
+```
+
+- Acceptance: ErgoSBE/Aeron ratio **≤ 1.00** on every maintained scenario
+  (equal work; see `ergosbe-benchmarks/README.md` and the perf ledger).
+- Keep a change only if it is **performance-neutral or faster** (and still
+  wire-compatible). Regressions → fix or revert; no “bench later.”
+- Log material runs (command, date, host/toolchain, medians + CIs) in
+  `ergosbe-performance-optimisation-goal.md`.
+- Docs-only `sbe/` edits with zero codegen impact may skip full benches; when
+  unsure, run them.
+- Cluster encode/decode hot paths: also `just bench-cluster` when those change.
+
 ## Git hygiene
 
 - Stage paths explicitly; **never** `git add -A` (dirty

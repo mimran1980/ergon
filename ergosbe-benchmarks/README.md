@@ -8,6 +8,13 @@ Criterion head-to-head matrix: **ErgoSBE vs Aeron SBE** generated codecs
 **Benchmark crate.** Acceptance is the maintained scenario set in the perf ledger
 (all ≤ 1.00 ErgoSBE/Aeron on equal work).
 
+### Mandatory after any `sbe/` change
+
+Agents and contributors **must** run this matrix (or `just bench` from the
+repo root) after generator/hot-path work under `sbe/`. Keep the change only if
+maintained ratios stay ≤ 1.00 (never slower than Aeron). Improvements are fine
+only when neutral or faster.
+
 ## Depends on
 
 - Path dep on `ergo-sbe` (generates codecs in `build.rs`)
