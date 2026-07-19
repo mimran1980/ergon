@@ -7,9 +7,6 @@ use crate::codecs::ergo_codecs::{
 };
 use crate::codecs::ergo_codecs::{ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder};
 
-/// SBE message frame header is always 8 bytes.
-const HEADER_LEN: usize = 8;
-
 /// One captured egress event from a poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EgressEvent {
@@ -41,14 +38,7 @@ pub enum EgressEvent {
 
 /// Parse a single egress fragment into an `EgressEvent`.
 pub fn parse_event(data: &[u8]) -> Option<EgressEvent> {
-    if data.len() < HEADER_LEN {
-        return None;
-    }
-    // Length already checked — copy avoids unwrap on try_into.
-    let mut hdr = [0u8; HEADER_LEN];
-    hdr.copy_from_slice(&data[..HEADER_LEN]);
-    let header = MessageHeader(hdr);
-    let tid = header.template_id();
+    let tid = MessageHeader::peek_template_id(data)?;
 
     match tid {
         SessionEventEncoder::TEMPLATE_ID => {

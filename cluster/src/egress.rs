@@ -69,17 +69,11 @@ impl<L: EgressListener> EgressAdapter<L> {
     /// Decode and dispatch one egress fragment. Returns `true` if
     /// handled, `false` if the templateId is unrecognised.
     pub fn on_fragment(&mut self, data: &[u8]) -> Result<bool, crate::ClusterError> {
-        if data.len() < HEADER_LEN {
-            return Ok(false);
-        }
+        let Some(template_id) = MessageHeader::peek_template_id(data) else {
+        return Ok(false);
+    };
 
-        // ErgoSBE header read: MessageHeader is `pub struct MessageHeader(pub [u8; 8])`.
-        let mut hdr = [0u8; HEADER_LEN];
-        hdr.copy_from_slice(&data[..HEADER_LEN]);
-        let header = MessageHeader(hdr);
-        let template_id = header.template_id();
-
-        match template_id {
+    match template_id {
             SessionMessageHeaderEncoder::TEMPLATE_ID => {
                 if data.len() < HEADER_LEN + 24 {
                     return Err(crate::ClusterError::ProtocolError {

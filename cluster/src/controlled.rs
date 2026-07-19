@@ -77,15 +77,11 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
     /// Decode and dispatch one egress fragment. Returns the action the
     /// listener produced (or `Continue` for unrecognised template IDs).
     pub fn on_fragment(&mut self, data: &[u8]) -> ControlledPollAction {
-        if data.len() < HEADER_LEN {
-            return ControlledPollAction::Continue;
-        }
-        let mut hdr = [0u8; HEADER_LEN];
-        hdr.copy_from_slice(&data[..HEADER_LEN]);
-        let header = MessageHeader(hdr);
-        let template_id = header.template_id();
+        let Some(template_id) = MessageHeader::peek_template_id(data) else {
+        return ControlledPollAction::Continue;
+    };
 
-        match template_id {
+    match template_id {
             SessionMessageHeaderEncoder::TEMPLATE_ID => {
                 if data.len() < HEADER_LEN + 24 {
                     return ControlledPollAction::Continue;
