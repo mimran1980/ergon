@@ -57,6 +57,18 @@ pub struct AeronCluster {
     /// reconnect uses the same stream the session was established on
     /// (the post-connect path no longer has the builder).
     ingress_stream_id: i32,
+    /// When the last keep-alive was sent (drives auto-scheduling).
+    last_keep_alive: Instant,
+    /// Interval between keep-alive sends (derived from message_timeout_ms).
+    keep_alive_interval_ms: u64,
+}
+
+impl Drop for AeronCluster {
+    fn drop(&mut self) {
+        if self.state != SessionState::Closed && self.state != SessionState::PendingClose {
+            let _ = self.close();
+        }
+    }
 }
 
 impl AeronCluster {
@@ -99,6 +111,8 @@ impl AeronCluster {
             leader_member_id: -1,
             state: SessionState::Closed,
             ingress_stream_id: builder.ingress_stream_id,
+            last_keep_alive: Instant::now(),
+            keep_alive_interval_ms: connect_reoffer_interval_ms(builder.message_timeout_ms),
         };
 
         client.handshake(builder)?;
@@ -189,7 +203,12 @@ impl AeronCluster {
                     // pre-election peer that neither leads nor redirects does
                     // not burn the full timeout on a single silent offer.
                     if should_reoffer_connect(last_offer, Instant::now(), reoffer_ms) {
-                        let _ = self.try_offer_connect_request(builder, &creds);
+                        match self.try_offer_connect_request(builder, &creds) {
+                            Ok(true) => {}
+                            Ok(false) => {}
+                            Err(e) if e.is_retryable() => { /* keep polling */ }
+                            Err(e) => return Err(e), // fatal — surface immediately
+                        }
                         last_offer = Instant::now();
                     }
                 }
@@ -301,6 +320,20 @@ impl AeronCluster {
         offer_result("keep_alive", r).map(|_| ())
     }
 
+    /// Send keep-alive if the interval has elapsed since the last send.
+    /// Called from `poll_egress` — mirrors Java's automatic session keep-alive.
+    pub fn keep_alive_if_due(&mut self) {
+        let now = Instant::now();
+        if self.state == SessionState::Connected
+            && now.saturating_duration_since(self.last_keep_alive)
+                >= Duration::from_millis(self.keep_alive_interval_ms)
+        {
+            if self.send_keep_alive().is_ok() {
+                self.last_keep_alive = now;
+            }
+        }
+    }
+
     /// Send an AdminRequest (e.g. snapshot) on the ingress publication.
     ///
     /// Responses arrive as admin events on the egress listener
@@ -354,6 +387,7 @@ impl AeronCluster {
         adapter: &mut EgressAdapter<L>,
         limit: usize,
     ) -> Result<i32, ClusterError> {
+        self.keep_alive_if_due();
         // Capture any NewLeaderEvent during the poll so we can act on
         // it after (avoids &mut self inside the poll_fn closure). Capture the
         // first decode error too — the closure is infallible, so we buffer it
@@ -504,6 +538,10 @@ impl ClusterClaim {
     }
 
     /// Commit the claimed bytes, publishing them to the cluster.
+    /// Note: commit errors cannot be classified as retryable — commit
+    /// returns a generic Aeron error (`AeronCError`), not a publication
+    /// sentinel like `offer`/`try_claim`. The caller should treat a failed
+    /// commit as terminal for this claim.
     pub fn commit(self) -> Result<i64, ClusterError> {
         self.claim.commit().map_err(|e| ClusterError::aeron("claim_commit", e))
     }
@@ -717,6 +755,7 @@ impl AsyncClusterConnect {
                 reason: "connect not complete".into(),
             });
         }
+        let keep_alive_interval_ms = connect_reoffer_interval_ms(self.builder.message_timeout_ms);
         let Self {
             aeron,
             ingress,
@@ -738,6 +777,8 @@ impl AsyncClusterConnect {
             leader_member_id,
             state: SessionState::Connected,
             ingress_stream_id: builder.ingress_stream_id,
+            last_keep_alive: Instant::now(),
+            keep_alive_interval_ms,
         })
     }
 
