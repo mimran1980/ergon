@@ -234,7 +234,7 @@ mod tests {
     fn test_dispatch_challenge() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut data, 0)?;
-        let _ = enc.correlation_id(5).cluster_session_id(2);
+        enc.correlation_id(5).cluster_session_id(2);
         let complete = enc.encoded_challenge(b"chal-token")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
@@ -250,7 +250,7 @@ mod tests {
     fn test_dispatch_new_leader() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 256];
         let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut data, 0)?;
-        let _ = enc.leadership_term_id(10).cluster_session_id(99).leader_member_id(1);
+        enc.leadership_term_id(10).cluster_session_id(99).leader_member_id(1);
         let complete = enc.ingress_endpoints(b"0=host:9000,1=host:9001")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
@@ -266,7 +266,7 @@ mod tests {
     fn test_dispatch_session_message_header() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
-        let _ = enc.leadership_term_id(1).cluster_session_id(42).timestamp(999);
+        enc.leadership_term_id(1).cluster_session_id(42).timestamp(999);
         let bytes = enc.as_ref().to_vec();
 
         let mut adapter = EgressAdapter::new(Rec::default());
@@ -282,7 +282,7 @@ mod tests {
     fn test_unknown_template_id_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
-        let _ = enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
+        enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
         // Overwrite template_id at bytes 2-3 with 0 (unknown)
         data[2] = 0u8;
         data[3] = 0u8;

@@ -156,7 +156,7 @@ mod tests {
     fn new_leader_roundtrip_view() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 256];
         let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc.cluster_session_id(2).leadership_term_id(9).leader_member_id(1);
+        enc.cluster_session_id(2).leadership_term_id(9).leader_member_id(1);
         let complete = enc.ingress_endpoints(b"0=localhost:9000")?;
         let bytes = complete.as_bytes_with_header();
         let view = decode_new_leader_event(bytes)?;

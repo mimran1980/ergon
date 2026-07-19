@@ -11,7 +11,7 @@ use super::ergo_rfq_codecs::{CreateRfqCommandDecoder, CreateRfqCommandEncoder, S
 fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut data = vec![0u8; 256];
     let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
-    let _ = enc.leadership_term_id(42).cluster_session_id(99).timestamp(1234567890);
+    enc.leadership_term_id(42).cluster_session_id(99).timestamp(1234567890);
     let bytes = enc.as_ref().to_vec();
     let dec = SessionMessageHeaderDecoder::wrap_and_apply_header(&bytes, 0)?;
     assert_eq!(dec.leadership_term_id(), 42);
@@ -45,7 +45,7 @@ fn test_session_event_ok_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 fn test_session_connect_request_roundtrip_shape() -> Result<(), Box<dyn std::error::Error>> {
     let mut data = vec![0u8; 512];
     let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut data, 0)?;
-    let _ = enc.correlation_id(42).response_stream_id(102).version(1);
+    enc.correlation_id(42).response_stream_id(102).version(1);
     let complete = enc
         .response_channel(b"aeron:udp?endpoint=localhost:9999")?
         .encoded_credentials(b"user:pass")?
@@ -63,13 +63,13 @@ fn test_session_connect_request_roundtrip_shape() -> Result<(), Box<dyn std::err
 fn test_challenge_and_new_leader_encode() -> Result<(), Box<dyn std::error::Error>> {
     let mut data = vec![0u8; 256];
     let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut data, 0)?;
-    let _ = enc.correlation_id(5).cluster_session_id(2);
+    enc.correlation_id(5).cluster_session_id(2);
     let complete = enc.encoded_challenge(b"chal")?;
     assert!(complete.as_bytes_with_header().len() > 8);
 
     let mut data2 = vec![0u8; 256];
     let mut enc2 = NewLeaderEventEncoder::wrap_and_apply_header(&mut data2, 0)?;
-    let _ = enc2.leadership_term_id(1).cluster_session_id(2).leader_member_id(0);
+    enc2.leadership_term_id(1).cluster_session_id(2).leader_member_id(0);
     let complete2 = enc2.ingress_endpoints(b"0=localhost:9000")?;
     assert!(complete2.as_bytes_with_header().len() > 8);
     Ok(())
@@ -111,7 +111,7 @@ fn test_rfq_create_command_ergo_matches_sbe_tool() -> Result<(), Box<dyn std::er
         enc.requester_side(SbeSide::BUY);
         enc.cusip(&cusip);
         enc.requester_user_id(500);
-        let _ = enc.header(0);
+        enc.header(0);
     }
     let sbe_len = 8 + create_rfq_command_codec::SBE_BLOCK_LENGTH as usize;
     let sbe_bytes = &sbe_buf[..sbe_len];

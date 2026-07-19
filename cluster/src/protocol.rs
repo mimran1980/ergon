@@ -81,7 +81,7 @@ mod tests {
     fn test_decode_wrong_template_id_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 32];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
+        enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
         buf[2] = 0xFF;
         buf[3] = 0xFF;
         let mut adapter = crate::egress::EgressAdapter::new(crate::egress::NullListener);
@@ -93,7 +93,7 @@ mod tests {
     fn test_decode_valid_template_id_routes() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 64];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
+        enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
         let bytes = enc.as_ref().to_vec();
         let mut adapter = crate::egress::EgressAdapter::new(crate::egress::NullListener);
         assert!(adapter.on_fragment(&bytes)?);
@@ -115,7 +115,7 @@ mod tests {
     fn test_roundtrip_keep_alive() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 64];
         let mut enc = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc.leadership_term_id(5).cluster_session_id(10);
+        enc.leadership_term_id(5).cluster_session_id(10);
         let bytes = enc.as_ref();
         assert_eq!(
             u16::from_le_bytes([bytes[2], bytes[3]]),
