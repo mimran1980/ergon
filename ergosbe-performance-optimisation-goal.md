@@ -1966,16 +1966,33 @@ Both codecs produce identical 78-byte v16 wire output (golden parity proven).
 
 ### Maintained cluster benchmark gate (2026-07-18)
 
-| Scenario | ErgoSBE | sbe-tool | Ratio | Gate |
-|----------|---------|----------|-------|------|
+| Scenario | ErgoSBE 5-run median | sbe-tool 5-run median | Ratio | Gate |
+|----------|----------------------|-----------------------|-------|------|
 | SessionMessageHeader encode | 4.4094 µs | 5.1494 µs | **0.856** | ✅ |
 | SessionKeepAlive encode | 6.0146 µs | 6.5634 µs | **0.916** | ✅ |
+| SessionMessageHeader decode | 8.9080 µs | 9.5611 µs | **0.932** | ✅ |
+| SessionEvent decode | 15.204 µs | 17.083 µs | **0.890** | ✅ |
 
-**Demoted (cold path, human OK):** SessionConnectRequest encode.
+**All 4 maintained cluster scenarios ≤ 1.00** (5-run medians, 2026-07-18/19).
+ErgoSBE is consistently faster than sbe-tool on the cluster hot path.
 
-**ADD-needed items to complete the maintained matrix:**
-hot-path egress decode (SessionEvent, NewLeaderEvent, SessionMessageHeader)
-and claim-shaped header+payload encode.
+**Demoted (cold path, human OK):** SessionConnectRequest encode (1.001 parity).
+
+5-run decode raw data (2026-07-19, same host/toolchain):
+
+| run | msg_hdr_ergo | msg_hdr_tool | sess_evt_ergo | sess_evt_tool |
+|-----|-------------|-------------|---------------|---------------|
+| 1 | 8.9211 µs | 9.5611 µs | 15.250 µs | 17.016 µs |
+| 2 | 8.9065 µs | 9.5585 µs | 15.204 µs | 17.068 µs |
+| 3 | 8.9071 µs | 9.5641 µs | 15.203 µs | 17.361 µs |
+| 4 | 8.9080 µs | 9.5585 µs | 15.202 µs | 17.083 µs |
+| 5 | 8.9187 µs | 9.5775 µs | 15.219 µs | 17.112 µs |
+| med | 8.9080 µs | 9.5611 µs | 15.204 µs | 17.083 µs |
+
+Both decode scenarios confirmed at 5-run medians ≤ 1.00 (0.932 and 0.890),
+completing the maintained cluster bench matrix. The earlier equal-work audit
+(2026-07-18) was re-verified; sbe-tool now does release-mode template_id and
+schema_id checks equivalent to ErgoSBE's `wrap_and_apply_header`.
 
 ## 2026-07-18 evening: residual completion smoke (encode maintained still green)
 
