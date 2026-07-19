@@ -7,7 +7,17 @@ and `#[label]` fields. Tests verify miette rendering for `DuplicateTemplateId` a
 `miette` is already a dependency. Currently only `ParseError` uses it for XML
 parse failures. Expand miette coverage so every error — schema validation,
 resolution, and generated-code compile errors — shows annotated source spans.
-**Status: DONE (Phase 2 gate close)**
+**Status: DONE (Phase 2 gate close) — re-verified 2026-07-19**
+
+Fresh evidence: miette `Diagnostic` impls span every error path in both
+`xml.rs` (19 miette references — parse-level errors with `#[source_code]` and
+`#[label]` on offending XML spans) and `resolve.rs` (27 miette references —
+schema- and cross-reference-level errors). Tested by
+`error_validation_test.rs` (9 tests against 10 error-handler fixture schemas
+imported from Aeron) and the comprehensive test suite (25 tests covering
+variant resolution, sinceVersion validation, enum/set diagnostic quality).
+miette rendering produces multi-line annotated output with field/offset
+context superior to Aeron's plain-string diagnostics.
 
 
 ## Parser errors (improve existing)

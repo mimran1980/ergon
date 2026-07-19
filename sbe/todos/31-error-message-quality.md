@@ -4,7 +4,17 @@
 
 HFT ops teams need error messages they can act on at 3am. Every error should
 answer: what failed, where in the buffer, and what to do about it.
-**Status: DONE (Phase 2 gate close)**
+**Status: DONE (Phase 2 gate close) — re-verified 2026-07-19**
+
+Fresh evidence: every `DecodeError` variant answers "what failed, where, and
+what to do": `BufferTooShort { field, needed, available }` names the
+offending field and the byte budget, `WrongSchema { expected, actual,
+expected_name }` gives template/schema IDs, invalid var-data length with
+the exact `maxLength` from the schema, and UTF-8 errors for string fields.
+Decoder `verify()` pre-validates the full message (header + body + groups +
+vardata) so the application gets one actionable error before any field
+access, not a cascade of per-accessor panics. The error variants are a
+closed enum (no `Box<dyn Error>`), so consumers exhaustively match.
 
 
 ## DecodeError improvements

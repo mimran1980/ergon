@@ -6,7 +6,19 @@ The `simple-binary-encoding` submodule contains the official Java reference
 implementation, the existing Rust generator, binary `.sbe` fixtures, and a
 comprehensive test suite. Pull their tests into ErgoSBE's suite so we validate
 against the same expectations.
-**Status: CLOSED / SUPERSEDED**
+**Status: CLOSED / SUPERSEDED — re-verified 2026-07-19**
+
+The original harvest goal (pull Aeron Java/Rust tests verbatim) was
+superseded by a more extensive test suite built from the harvested schemas
+and fixture inventory. Current state: 18 test files (13,286 lines) covering
+wire-compatibility (golden parity 18/18), parser correctness (10 error-
+handler schemas with miette diagnostics), generated stability (golden-file
+regen), allocation counting (zero-alloc proofs), compile-fail consuming-
+stage proofs, comprehensive type/feature coverage (92 baseline tests, 25
+comprehensive tests), and doc-provenance verification. The test suite
+significantly exceeds the originally-harvested scope (which was scoped to
+XML-parser parity) — wire parity, consuming-stage safety, and zero-allocation
+are ErgoSBE-native additions not present in the upstream test inventory.
 
 ## Parser parity correction (2026-07-08)
 

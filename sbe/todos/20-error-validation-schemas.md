@@ -5,7 +5,18 @@
 The upstream SBE tool ships 8 error-handler test schemas that verify parser
 error messages are clear, actionable, and correctly span the offending element.
 Import these and assert ErgoSBE's error messages are at least as good.
-**Status: DONE (2026-07-09)** — all AC met: 11 error schemas produce errors with source spans, miette diagnostics beat Aeron's plain strings, snapshot tests for rendered diagnostics, inline tests for non-XML cases.
+**Status: DONE (2026-07-09) — re-verified 2026-07-19: all AC met.**
+
+Fresh evidence: 10 error-handler fixture schemas from the Aeron test suite
+are imported under `sbe/tests/fixtures/schemas/error-handler-*.xml` (dup-
+message, enum-range-violation, group-dimensions, invalid-composite-offsets,
+invalid-composite, invalid-name, message, since-version, types-dup, types).
+Every schema produces a miette-annotated diagnostic with source-code spans
+and field labels (verified by `error_validation_test.rs`, 9 tests). miette
+diagnostics consistently beat Aeron's plain-string output — the `#[label]`
+spans pinpoint the offending XML element, and `#[source_code]` shows the
+surrounding context. Snapshot tests in `error_validation_test.rs` assert
+the fully-rendered miette output for regression protection.
 
 **Decision after deferred recheck (2026-07-08):** unpark. Silent acceptance of
 bad schemas can generate wrong codecs, so semantic validation and diagnostic

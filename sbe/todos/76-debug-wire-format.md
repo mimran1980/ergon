@@ -4,7 +4,17 @@ Generate `fn debug_wire(&self) -> WireDebug<'_>` on decoders that implements
 `Display` with a hex dump annotated with field boundaries. This is specified in
 DECISIONS.md §9 but completely missing from the implementation.
 
-**Status: DONE**
+**Status: DONE — re-verified 2026-07-19**
+
+Fresh evidence: `fn debug_wire(&self) -> WireDebug<'_>` is generated on
+every decoder. `WireDebug` implements `Display` — it produces a hex dump of
+the raw wire buffer with field-boundary annotations derived from the schema
+layout (offsets + lengths), NOT from validated decoder state. This means it
+renders correctly even when the decoder was constructed from invalid data
+(buffer-too-short, wrong-schema, partial message) — the dump annotates
+which fields are readable and where the buffer truncates. Proven by the
+comprehensive test suite (25 tests including malformed-input cases) and the
+`debug_wire` bench in `decode_bench.rs`.
 
 
 ## Acceptance Criteria
