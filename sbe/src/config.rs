@@ -105,6 +105,13 @@ pub struct GenerationConfig {
     ///
     /// Default: `None` (no `From` impls emitted).
     pub error_from_path: Option<String>,
+    /// Emit `_unchecked` companion methods alongside checked constructors
+    /// (`wrap_unchecked`, `wrap_and_apply_header_unchecked`, `read_bytes_unchecked`).
+    /// For Criterion benchmarking — produces both checked and unchecked paths
+    /// in one binary so within-session ratios are noise-free.
+    ///
+    /// Default: `false`.
+    pub unchecked_companions: bool,
 }
 
 impl GenerationConfig {
@@ -122,6 +129,7 @@ impl GenerationConfig {
             decimal_composites: Vec::new(),
             external_sbe_rt_path: None,
             error_from_path: None,
+            unchecked_companions: false,
         }
     }
 
@@ -157,6 +165,15 @@ impl GenerationConfig {
     #[must_use]
     pub fn enable_error_from_impls(mut self, path: impl Into<String>) -> Self {
         self.error_from_path = Some(path.into());
+        self
+    }
+
+    /// Emit `_unchecked` companion methods for benchmarking.
+    /// Produces `wrap_unchecked`, `wrap_and_apply_header_unchecked`,
+    /// and `read_bytes_unchecked` alongside the checked originals.
+    #[must_use]
+    pub fn with_unchecked_companions(mut self) -> Self {
+        self.unchecked_companions = true;
         self
     }
 }

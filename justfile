@@ -161,9 +161,18 @@ run-sample:
     @echo "ClickHouse ready. Running sample..."
     cd samples/advanced-bitget && cargo run --quiet
 
-# Benchmark parity
+# Benchmark parity — both checked (default) and bound-check-disabled modes.
+# Uses Criterion's baseline feature for statistically valid cross-mode comparison.
+# Gate: ALL maintained ErgoSBE/Aeron ratios ≤ 1.00 in both modes,
+# AND unchecked ErgoSBE must not regress vs checked ErgoSBE.
 bench:
-    cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench
+    @echo "=== SBE perf parity: checked mode (save baseline) ==="
+    cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench -- --save-baseline checked
+    @echo ""
+    @echo "=== SBE perf parity: unchecked (compare vs checked baseline) ==="
+    cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench --features bound-check-disabled -- --baseline checked
+    @echo ""
+    @echo "Gate: checked Ergo≤Aero, unchecked Ergo≤Aero, unchecked Ergo≤checked Ergo (all ≤ 1.00)"
 
 # Cluster codec benchmarks (ErgoSBE vs sbe-tool head-to-head)
 bench-cluster:

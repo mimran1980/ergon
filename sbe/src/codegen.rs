@@ -5321,9 +5321,12 @@ fn generate_message_encoder(
         #[inline]
         pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
             let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
-            let available: usize = buf.len().saturating_sub(pos);
-            if available < needed {
-                return Err(sbe_rt::EncodeError::BufferTooShort { needed, available });
+            let end = pos.wrapping_add(needed);
+            if end > buf.len() || end < pos {
+                return Err(sbe_rt::EncodeError::BufferTooShort {
+                    needed,
+                    available: buf.len().saturating_sub(pos),
+                });
             }
             Ok(Self {
                 buf: &mut buf[pos..],
@@ -5339,8 +5342,17 @@ fn generate_message_encoder(
         // `apply_nulls()` if you want null sentinels.
         let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
         #[cfg(not(feature = "bound-check-disabled"))]
-        if buf.len().saturating_sub(pos) < needed {
-            return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: buf.len().saturating_sub(pos) });
+        {
+            // Direct comparison: pos+needed is computed once. `saturating_sub` is
+            // avoided on the hot path because pos is always 0 at call sites, and
+            // `wrapping_add` on a constant folds to the constant.
+            let end = pos.wrapping_add(needed);
+            if end > buf.len() || (end < pos) {
+                return Err(sbe_rt::EncodeError::BufferTooShort {
+                    needed,
+                    available: buf.len().saturating_sub(pos),
+                });
+            }
         }
         buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
         Ok(Self { buf: &mut buf[pos..], message_start: 0, pos: needed })

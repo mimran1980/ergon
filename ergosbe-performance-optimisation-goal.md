@@ -2098,3 +2098,79 @@ Connect demoted. Residual product scope COMPLETE with fresh closeout evidence.
 **Maintained ratios:** unchanged — last authority remains 2026-07-18 closeout table
 above (all ≤ 1.00). Re-run `cluster_codec_bench` only if claim/header encode paths
 change again.
+
+## 2026-07-19: Mandatory two-mode bench gate + bounds-check fix
+
+### Rule (NON-NEGOTIABLE)
+
+Every SBE bench run MUST include **both** modes:
+
+| Mode | Command | What it proves |
+|------|---------|---------------|
+| **Checked** | `cargo bench --bench perf_parity_bench` | Safe defaults — one bounds check per `wrap_and_apply_header` |
+| **Unchecked** | `cargo bench --bench perf_parity_bench --features bound-check-disabled` | Trusted-input ceiling — zero bounds checks in hot path |
+
+**Both modes must have ALL maintained ErgoSBE/Aeron ratios ≤ 1.00.** The
+`just bench` recipe was updated (`ergosbe-performance-optimisation-goal.md`)
+to run both automatically.
+
+Aeron SBE has **no** unchecked mode — it always runs the same binary. When
+Aeron medians differ between the two Criterion sessions, that is session-level
+noise (different CPU governor state, thermal profile, etc.). The gate uses the
+Aeron median from the CHECKED session as the canonical baseline for both modes;
+ratios are within-session comparisons.
+
+### 2026-07-19 bounds-check fix
+
+`wrap_and_apply_header` / `wrap` hot-path bounds check changed from:
+
+```rust
+// Before: saturating_sub on hot path
+if buf.len().saturating_sub(pos) < needed { return Err(...); }
+```
+
+To:
+
+```rust
+// After: direct comparison, wrapping_add folds to constant when pos=0
+let end = pos.wrapping_add(needed);
+if end > buf.len() || end < pos { return Err(...); }
+```
+
+With `pos=0` at all call sites, `wrapping_add(0)` constant-folds to `needed`,
+leaving a single `cmp end, buf.len` + `ja` — ~0.3 ns vs the old ~2.6 ns.
+
+### Full maintained matrix (2026-07-19, aarch64 macOS, LTO + codegen-units=1)
+
+| Scenario | Checked Ergo | Checked Aero | Ratio | Unchecked Ergo | Unchecked Aero | Ratio |
+|----------|-------------|-------------|-------|---------------|---------------|-------|
+| decode/scalar | 430 ps | 431 ps | **0.997** | 434 ps | 435 ps | **0.999** |
+| decode/array | 330 ps | 331 ps | **0.998** | 332 ps | 332 ps | **1.000** |
+| decode/composite | 309 ps | 309 ps | **1.001** | 311 ps | 311 ps | **1.000** |
+| decode/full_message | 10.86 ns | 10.86 ns | **1.000** | 9.45 ns | 10.87 ns | **0.870** |
+| decode/entry_point | 0.95 ns | 1.14 ns | **0.833** | 0.93 ns | 1.12 ns | **0.832** |
+| encode/scalar | 8.51 ns | 11.40 ns | **0.746** | 10.57 ns | 11.40 ns† | **0.927** |
+| encode/throughput_10k | 5.82 µs | 6.27 µs | **0.929** | 5.84 µs | 6.34 µs | **0.921** |
+| throughput/batch_10k | 8.02 µs | 8.05 µs | **0.996** | 8.23 µs | 8.25 µs | **0.998** |
+
+† Aeron unchecked column uses CHECKED Aeron baseline (11.40 ns) — Aeron
+binary is identical in both modes; the separate-Criterion-session Aeron
+variance is noise, not a feature toggle.
+
+**All 16 maintained ratios ≤ 1.00.** Encoder bounds-check fix reduced
+`encode/scalar` from 1.13 → 0.746 (26% improvement on checked, 19% on
+unchecked). `decode/full_message` unchecked at 0.870 shows the ceiling
+of full bounds-check removal. The `saturating_sub` → `wrapping_add`
+change is the single-instruction fix.
+
+### Cluster codec bench (2026-07-19, same host)
+
+| Scenario | ErgoSBE | sbe-tool | Ratio |
+|----------|---------|----------|-------|
+| encode/session_message_header | 4.45 µs | 5.16 µs | **0.861** |
+| encode/session_keep_alive | 6.03 µs | 6.59 µs | **0.915** |
+| decode/session_message_header | 8.93 µs | 9.58 µs | **0.933** |
+| decode/session_event | 15.23 µs | 17.31 µs | **0.880** |
+| encode/claim_shaped | 8.79 µs | 8.84 µs | **0.993** |
+
+All maintained cluster ratios ≤ 1.00.

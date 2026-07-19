@@ -1,7 +1,7 @@
 # Living backlog — verified-open items only
 
 **Status:** LIVING — update when an item is closed with evidence.  
-**Last audit:** 2026-07-19 · branch `first_cut` (Tier1–3 cluster depth + publish hygiene)  
+**Last audit:** 2026-07-19 · branch `first_cut` (ErgoSBE diagnostic quality + unit coverage confirmed)  
 **Not this file:** process checklists in `ergosbe-performance-optimisation-goal.md`,
 the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 
@@ -32,6 +32,22 @@ the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 **Open product gaps:** *(none)*
 
 All prior §A items closed 2026-07-19 — see section D.
+
+### Confirmed ErgoSBE quality (do not re-open as product gaps)
+
+These are **verified capabilities** with unit-test evidence — living confirmation,
+not open work:
+
+| Capability | Status | Evidence |
+|------------|--------|----------|
+| **Extensive unit tests** | CONFIRMED | Workspace `cargo test -p ergo-sbe`: `baseline_test`, `comprehensive_test`, `error_validation_test`, `smoke_test`, proptest, domain objects, allocation, L3 stages, issue regression, golden stability, … |
+| **Useful errors on invalid schema (miette)** | CONFIRMED | `ParseError` / `ResolveError` derive `miette::Diagnostic` with codes + optional source; `error_validation_test` (typed variants + miette Report) + `invalid_schema_fixtures_have_useful_miette_errors` |
+| **Decoder `Display` / `Debug` on invalid size** | CONFIRMED | `Display` skips out-of-bounds fixed fields; groups/var-data use `Result`; structural `Debug` never reads wire — `decoder_display_and_debug_survive_invalid_sizes` |
+| **Encoder `Debug` mid-encode / short buf** | CONFIRMED | Structural `Debug` on every encoder stage (`message_start`, `pos`, `buf_len`) — `encoder_debug_survives_incomplete_and_short_buffers` |
+| **Runtime encode/decode errors actionable** | CONFIRMED | `DecodeError` / `EncodeError` / `VerifyError` field-aware Display + `#[cold]`; short-buffer / verify tests in `comprehensive_test` + `baseline_test` |
+
+Do **not** re-queue “add miette” / “add Display” / “add unit tests for errors” unless
+a regression is measured. Extend tests when adding new error variants.
 
 ---
 
@@ -99,6 +115,15 @@ All prior §C items closed 2026-07-19 — see section D.
 | `cargo test -p ergo-aeron-cluster --doc` | DONE | Multi-line schema descriptions fenced as text code blocks in generator; `cargo test -p ergo-aeron-cluster --doc` green |
 | Live harness always-on CI | WON'T-DO | Intentional env gate |
 | Cluster beyond prototype | WON'T-DO | Experimental banner retained |
+
+### 2026-07-19 ErgoSBE diagnostic quality confirmation
+
+| Item | Resolution | Evidence |
+|------|------------|----------|
+| Extensive unit-test matrix | CONFIRMED | `cargo test -p ergo-sbe` suite inventory in §A table |
+| miette useful schema errors | CONFIRMED + tests | `error_validation_test` + `invalid_schema_fixtures_have_useful_miette_errors` |
+| Decoder Display/Debug on invalid size | DONE | codegen bounds-safe Display + structural Debug; `decoder_display_and_debug_survive_invalid_sizes` |
+| Encoder Debug mid-encode | DONE | structural Debug on all stages; `encoder_debug_survives_incomplete_and_short_buffers` |
 
 ### 2026-07-19 living-backlog closeout
 

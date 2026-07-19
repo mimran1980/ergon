@@ -3235,11 +3235,11 @@ impl<'a> CarEncoder<'a> {
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
         let needed: usize = 8 + Self::BLOCK_LENGTH;
-        let available: usize = buf.len().saturating_sub(pos);
-        if available < needed {
+        let end = pos.wrapping_add(needed);
+        if end > buf.len() || end < pos {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed,
-                available,
+                available: buf.len().saturating_sub(pos),
             });
         }
         Ok(Self {
@@ -3257,11 +3257,14 @@ impl<'a> CarEncoder<'a> {
     ) -> Result<Self, sbe_rt::EncodeError> {
         let needed: usize = 8 + Self::BLOCK_LENGTH;
         #[cfg(not(feature = "bound-check-disabled"))]
-        if buf.len().saturating_sub(pos) < needed {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed,
-                available: buf.len().saturating_sub(pos),
-            });
+        {
+            let end = pos.wrapping_add(needed);
+            if end > buf.len() || (end < pos) {
+                return Err(sbe_rt::EncodeError::BufferTooShort {
+                    needed,
+                    available: buf.len().saturating_sub(pos),
+                });
+            }
         }
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
         Ok(Self {
