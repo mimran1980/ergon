@@ -1,4 +1,4 @@
-//! Aeron IPC direct-claim SBE roundtrip with Rusteron 0.2.1.
+//! Aeron IPC direct-claim SBE roundtrip with Rusteron 0.2.
 #![allow(
     clippy::all,
     clippy::pedantic,

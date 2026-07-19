@@ -32,7 +32,8 @@ path = "../../cluster-test-support"
 optional = true
 
 [dependencies.rusteron-media-driver]
-version = "0.2.4"
+# Same ^0.2 line as cluster / workspace (latest 0.2.x).
+version = "0.2"
 optional = true
 
 [dependencies.serial_test]

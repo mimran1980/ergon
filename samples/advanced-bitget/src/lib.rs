@@ -2,7 +2,7 @@
 //!
 //! Demonstrates:
 //! - SBE message generation (AppMessage, L2Book, Trade) via generated encoders
-//! - Direct-claim encoding into Aeron IPC via Rusteron 0.2.1
+//! - Direct-claim encoding into Aeron IPC via Rusteron 0.2
 //! - SBE message consumption, decoding, and dispatch via AnyMessage
 //! - Typed stream 1001 and dynamic stream 1002 over Aeron IPC
 //! - Foreground ClickHouse persistence with Decimal(38,18) arrays

@@ -7,8 +7,9 @@ license = "Apache-2.0"
 repository = "https://github.com/mimran1980/ErgoSBE"
 
 [dependencies]
-rusteron-client = "0.2.4"
-rusteron-archive = "0.2.4"
+# Keep in sync with workspace.dependencies (this crate is workspace-excluded).
+rusteron-client = "0.2"
+rusteron-archive = "0.2"
 
 [lib]
 name = "ergo_aeron_cluster_test_support"

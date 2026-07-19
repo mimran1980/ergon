@@ -7,7 +7,7 @@ license = "Apache-2.0"
 repository = "https://github.com/mimran1980/ErgoSBE"
 
 [dependencies]
-rusteron-client = "0.2.4"
+rusteron-client = { workspace = true }
 ergo-aeron-cluster-test-support = { path = "../cluster-test-support", optional = true }
 
 [features]
@@ -44,7 +44,7 @@ required-features = ["test-harness"]
 
 [dev-dependencies]
 proptest = "1.11"
-rusteron-media-driver = "0.2.4"
+rusteron-media-driver = { workspace = true }
 serial_test = { version = "3", features = ["file_locks"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 

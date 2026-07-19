@@ -10,7 +10,7 @@ IPC baseline sample: Bitget (or fixture) feed → normalize AppMessage → Aeron
 ## Depends on
 
 - `ergosbe`, `ergo-clickhouse-persist`
-- `rusteron-client` / media-driver **=0.2.1** (not 0.2.4)
+- `rusteron-client` / media-driver **`0.2`** (same line as cluster; latest 0.2.x)
 - Docker ClickHouse on `127.0.0.1:8123` for live CH tests
 
 ## Build / test
@@ -56,4 +56,4 @@ cluster leadership releases. This sample is IPC-only (no cluster term).
 ## Non-goals
 
 - Cluster leadership / NewLeader handling → use `cluster-ha-orderbook`
-- Bumping this sample to rusteron 0.2.4 without a measured pin decision
+- Dual-pinning a second rusteron major/minor line in this crate

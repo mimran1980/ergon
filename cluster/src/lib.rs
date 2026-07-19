@@ -1,8 +1,8 @@
 //! # ergo-aeron-cluster
 //!
 //! Experimental pure-Rust [Aeron Cluster](https://github.com/real-logic/aeron)
-//! *client* on [`rusteron_client`], with **ErgoSBE-generated** session (schema
-//! 111) and RFQ (schema 101) codecs.
+//! *client* on [`rusteron_client`] **0.2** (latest 0.2.x), with
+//! **ErgoSBE-generated** session (schema 111) and RFQ (schema 101) codecs.
 //!
 //! ⚠️ **Prototype.** LLM-assisted and less tested than the Java reference.
 //! Bugs in Rusteron pub/sub **or** this reimplementation may cause undefined

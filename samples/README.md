@@ -5,11 +5,13 @@ members set — each sample is a standalone crate.
 
 ## Map
 
-| Sample | Transport | rusteron pin | Recipe | Purpose |
-|--------|-----------|--------------|--------|---------|
-| [`advanced-bitget`](advanced-bitget/) | Aeron **IPC** (local) | **0.2.1** | `just samples-orderbook` | WS → AppMessage + dynamic V2 → ClickHouse |
-| [`exchange-orderbook`](exchange-orderbook/) | In-process / optional CH | n/a | `just samples-orderbook` | Multi-exchange normalize → local book → CH |
-| [`cluster-ha-orderbook`](cluster-ha-orderbook/) | Aeron **Cluster** | **0.2.4** (via `ergo-aeron-cluster`) | `just samples-cluster-ha` | try_claim publish, never-stale book, feed_latency CH |
+| Sample | Transport | Recipe | Purpose |
+|--------|-----------|--------|---------|
+| [`advanced-bitget`](advanced-bitget/) | Aeron **IPC** (local) | `just samples-orderbook` | WS → AppMessage + dynamic V2 → ClickHouse |
+| [`exchange-orderbook`](exchange-orderbook/) | In-process / optional CH | `just samples-orderbook` | Multi-exchange normalize → local book → CH |
+| [`cluster-ha-orderbook`](cluster-ha-orderbook/) | Aeron **Cluster** | `just samples-cluster-ha` | try_claim publish, never-stale book, feed_latency CH |
+
+**Rusteron:** every sample and pillar uses **`rusteron-* = "0.2"`** (latest 0.2.x).
 
 ### When to use which
 
@@ -21,8 +23,7 @@ members set — each sample is a standalone crate.
 | Dynamic latency rows without a new Persist DTO schema | HA `LatencyPersistor` (or copy its pattern) |
 | Copy-paste nested SBE encode | HA [`publish.rs`](cluster-ha-orderbook/src/publish.rs) + [claim-nested-encode guide](../sbe/docs/guide/claim-nested-encode.md) |
 
-**Do not dual-pin** rusteron 0.2.1 and 0.2.4 in one binary — that is why HA and
-IPC samples stay separate crates.
+Samples stay separate crates for IPC vs Cluster demos (not for rusteron pins).
 
 ### Shared failure modes
 

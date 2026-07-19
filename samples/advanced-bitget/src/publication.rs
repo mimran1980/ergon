@@ -109,7 +109,7 @@ impl Publication for RecordingPublication {
 
 // ── Rusteron adapter ──────────────────────────────────────────────────
 
-/// Rusteron 0.2.1 [`Publication`] adapter over an exclusive IPC publication.
+/// Rusteron [`Publication`] adapter over an exclusive IPC publication.
 pub struct AeronPublication(pub rusteron_client::AeronExclusivePublication);
 
 impl Publication for AeronPublication {

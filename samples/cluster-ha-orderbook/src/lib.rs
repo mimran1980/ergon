@@ -1,8 +1,6 @@
 //! HA cluster orderbook sample: try_claim publish + never-stale book + latency.
 //!
-//! **Rusteron pin:** `ergo-aeron-cluster` / rusteron-client **0.2.4**. The IPC
-//! baseline `advanced-bitget` stays on **0.2.1**. Separate binaries avoid
-//! dual-pin conflict.
+//! **Rusteron:** `rusteron-* = "0.2"` (latest 0.2.x), same as the rest of the monorepo.
 //!
 //! Recipes: `just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`.
 //! See `samples/cluster-ha-orderbook/README.md`.

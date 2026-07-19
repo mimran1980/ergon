@@ -1,7 +1,8 @@
 # ergo-aeron-cluster (`cluster/`)
 
-Experimental pure-Rust **Aeron Cluster client** on `rusteron-client` **0.2.4**,
-with **ErgoSBE-generated** session (schema 111) and RFQ (schema 101) codecs.
+Experimental pure-Rust **Aeron Cluster client** on `rusteron-client` **0.2**
+(latest 0.2.x via workspace deps), with **ErgoSBE-generated** session (schema
+111) and RFQ (schema 101) codecs.
 
 ⚠️ **Prototype.** LLM-assisted, less tested than the Java reference. Bugs in
 Rusteron pub/sub **or** this client may cause UB, segfaults, or data loss.
@@ -16,7 +17,7 @@ RFQ unfrozen. Open items: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.m
 ## Depends on
 
 - Path: `ergosbe` (via `build.rs`)
-- `rusteron-client` 0.2.4
+- `rusteron-client` **0.2** (workspace; latest 0.2.x)
 - Optional: `ergo-aeron-cluster-test-support` behind feature `test-harness`
 - Aeron submodule **1.52.2** for schemas + Java jars
 

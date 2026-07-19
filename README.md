@@ -27,21 +27,24 @@ version numbers in guides are illustrative.
 |-----------|-------|---------|------|
 | `sbe/` | `ergosbe` | SBE XML → idiomatic Rust codec generator | [`sbe/README.md`](sbe/README.md) |
 | `persist/` (+ `persist/derive/`) | `ergo-clickhouse-persist` | Auto-persist annotated structs to ClickHouse | [`persist/README.md`](persist/README.md), [`persist/derive/README.md`](persist/derive/README.md) |
-| `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client on `rusteron-client` 0.2.4 | [`cluster/README.md`](cluster/README.md) |
+| `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client on `rusteron-client` 0.2 | [`cluster/README.md`](cluster/README.md) |
 | `cluster-test-support/` (excluded) | `ergo-aeron-cluster-test-support` | Java test harness (Gradle Aeron jars) | [`cluster-test-support/README.md`](cluster-test-support/README.md) |
 | `ergosbe-benchmarks/` | `ergosbe-benchmarks` | Criterion Aeron-parity matrix | [`ergosbe-benchmarks/README.md`](ergosbe-benchmarks/README.md) |
 | `samples/` (excluded) | — | End-to-end demos (IPC + HA) | [`samples/README.md`](samples/README.md) |
 
-| Sample | Pin / transport | Recipe |
-|--------|-----------------|--------|
-| [`advanced-bitget`](samples/advanced-bitget/) | rusteron **0.2.1**, Aeron IPC | `just samples-orderbook` |
+| Sample | Transport | Recipe |
+|--------|-----------|--------|
+| [`advanced-bitget`](samples/advanced-bitget/) | Aeron IPC | `just samples-orderbook` |
 | [`exchange-orderbook`](samples/exchange-orderbook/) | multi-exchange book + CH | `just samples-orderbook` |
-| [`cluster-ha-orderbook`](samples/cluster-ha-orderbook/) | rusteron **0.2.4**, Aeron Cluster | `just samples-cluster-ha` |
+| [`cluster-ha-orderbook`](samples/cluster-ha-orderbook/) | Aeron Cluster | `just samples-cluster-ha` |
+
+All rusteron crates use **`0.2`** (^0.2 → latest 0.2.x). See root
+`[workspace.dependencies]`.
 
 ```text
-IPC baseline (0.2.1):   exchange WS → AppMessage → local Aeron IPC → CH
-HA cluster (0.2.4):     feed → try_claim → Java cluster → egress follower
-                          → never-stale book + feed_latency DynamicRow → CH
+IPC baseline:   exchange WS → AppMessage → local Aeron IPC → CH
+HA cluster:     feed → try_claim → Java cluster → egress follower
+                  → never-stale book + feed_latency DynamicRow → CH
 ```
 
 Note: for the cluster pillar the **directory names differ from the crate
