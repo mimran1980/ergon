@@ -29,9 +29,7 @@ use crate::ClusterError;
 pub use rusteron_client::AERON_IPC_STREAM;
 
 fn map_uri(e: AeronCError) -> ClusterError {
-    ClusterError::ChannelUri {
-        reason: e.to_string(),
-    }
+    ClusterError::ChannelUri { reason: e.to_string() }
 }
 
 /// Parse and normalize a full Aeron channel URI into a [`CString`] for rusteron.

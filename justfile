@@ -136,6 +136,14 @@ fmt:
     cd samples/advanced-bitget && cargo fmt
     cd samples/cluster-ha-orderbook && cargo fmt
 
+# Auto-fix: fmt + clippy --fix (same feature split as check).
+fix:
+    just fmt
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster --fix --allow-dirty --allow-staged -- -D warnings
+    cargo clippy -p ergo-aeron-cluster --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+    cd samples/advanced-bitget && cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings
+    cd samples/cluster-ha-orderbook && cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+
 # Coverage (requires nightly toolchain)
 cov:
     RUSTC_WRAPPER="" cargo +nightly llvm-cov -p ergo-sbe --lib --branch --summary-only

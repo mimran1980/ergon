@@ -32,8 +32,7 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
     // Client egress on a SEPARATE high port (no conflict with cluster), ingress to cluster's port.
     let egress_port: u16 = 19099;
     // Already CString — do not cformat! again (would re-allocate).
-    let egress_uri =
-        ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
+    let egress_uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
     let ingress_uri = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
 
     let egress = a.add_subscription(

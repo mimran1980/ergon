@@ -61,7 +61,7 @@ All prior §C items closed 2026-07-19 — see section D.
 | `SessionBuilder::connect` / `connect_async` | DONE | `config.rs` |
 | Typed offer errors + `is_retryable` | DONE | `PublicationFailure`, `ClusterError::from_offer_raw` |
 | IdleStrategy poll helpers | DONE | `idle.rs` |
-| Multi-member first-connect | DONE | `ingress_endpoints` + `resolve_initial_ingress_cstr` |
+| Multi-member first-connect | DONE | `ingress_endpoints` + `resolve_initial_ingress_for_aeron` |
 | Admin request API | DONE | `AeronCluster::send_admin_request` |
 | Richer credentials | DONE | `StaticCredentials`, `EchoChallengeCredentials` |
 | Endpoint parse / rotation helpers | DONE | `endpoints.rs` |
@@ -74,7 +74,7 @@ All prior §C items closed 2026-07-19 — see section D.
 | Item | Resolution | Evidence |
 |------|------------|----------|
 | Tests/main `Result` + `?` for fallible setup | DONE | Cluster/persist/sbe/samples signatures; setup paths prefer `?` |
-| Cached channel `CString`s on `SessionBuilder` | DONE | `ingress_cstr` / `egress_cstr`; connect reuses |
+| Cached channel `CString`s on `SessionBuilder` | DONE | `ingress_c` / `egress_c` + `*_channel_c_str()`; connect reuses |
 | `AeronUriStringBuilder` for all channels | DONE | `cluster/src/uri.rs` + client reconnect/redirect |
 | `thiserror` for public errors | DONE | `ClusterError`, `SinkError` |
 | No Tokio in `ergo-aeron-cluster` | DONE | Aeron poll-driven `AsyncClusterConnect` only; crate grep clean |

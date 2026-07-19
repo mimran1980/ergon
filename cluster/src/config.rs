@@ -116,10 +116,7 @@ impl SessionBuilder {
     /// Zero-cost slice of the cached [`CString`].
     #[inline]
     pub(crate) fn egress_channel_bytes(&self) -> &[u8] {
-        self.egress_c
-            .as_ref()
-            .map(|c| c.as_bytes())
-            .unwrap_or(b"")
+        self.egress_c.as_ref().map(|c| c.as_bytes()).unwrap_or(b"")
     }
 
     /// Multi-member endpoints map as UTF-8, if set.
@@ -141,10 +138,7 @@ impl SessionBuilder {
     /// Validate required fields and that channel URIs are valid.
     pub fn validate(&self) -> Result<(), ClusterError> {
         let has_ingress = self.ingress_c.is_some();
-        let has_endpoints = self
-            .ingress_endpoints
-            .as_ref()
-            .is_some_and(|s| !s.is_empty());
+        let has_endpoints = self.ingress_endpoints.as_ref().is_some_and(|s| !s.is_empty());
         if !has_ingress && !has_endpoints {
             return Err(ClusterError::connect(
                 "ingress_channel or ingress_endpoints is required",
@@ -154,9 +148,7 @@ impl SessionBuilder {
             return Err(ClusterError::connect("egress_channel is required"));
         }
         if has_endpoints {
-            let _ = crate::endpoints::parse_ingress_endpoints(
-                self.ingress_endpoints.as_deref().unwrap_or(""),
-            )?;
+            let _ = crate::endpoints::parse_ingress_endpoints(self.ingress_endpoints.as_deref().unwrap_or(""))?;
         }
         Ok(())
     }

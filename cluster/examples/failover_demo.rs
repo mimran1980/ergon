@@ -38,8 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let egress_port: u16 = 19199;
     // Already CString — do not cformat! again (would re-allocate).
-    let egress_uri =
-        ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
+    let egress_uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
     let egress = a.add_subscription(
         &egress_uri,
         102,
@@ -148,11 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // id order, so a first-entry parse would reconnect to the dead leader.
             match poller::parse_leader_endpoint(&eps, leader_member_id) {
                 Some(ep) => {
-                    let _reconn = connect_to_leader(
-                        parse_port(&format!("aeron:udp?endpoint={ep}")),
-                        &resp,
-                    )
-                    .expect("reconnect to new leader");
+                    let _reconn = connect_to_leader(parse_port(&format!("aeron:udp?endpoint={ep}")), &resp)
+                        .expect("reconnect to new leader");
                     println!("  Reconnected ingress to new leader (member {leader_member_id}): {ep}");
                     println!("\n=== Result: failover handled — client survived leader death ===");
                 }

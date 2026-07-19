@@ -49,9 +49,11 @@ pub fn connect_own_driver(
 ) -> Result<AeronCluster, ergo_aeron_cluster::ClusterError> {
     // CString path once; SessionBuilder re-validates/stores as CString for rusteron.
     let egress = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
-    let egress_uri = egress.to_str().map_err(|e| ergo_aeron_cluster::ClusterError::ConnectFailed {
-        reason: format!("egress URI utf8: {e}"),
-    })?;
+    let egress_uri = egress
+        .to_str()
+        .map_err(|e| ergo_aeron_cluster::ClusterError::ConnectFailed {
+            reason: format!("egress URI utf8: {e}"),
+        })?;
     let builder = SessionBuilder::builder()
         .ingress_channel(cluster_ingress)
         .egress_channel(egress_uri)
