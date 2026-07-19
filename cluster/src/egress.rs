@@ -12,8 +12,11 @@ use crate::codecs::ergo_codecs::{
 };
 use crate::decode::{decode_new_leader_event, decode_session_event, decode_session_message_header};
 
-/// SBE message frame header is always 8 bytes.
-const HEADER_LEN: usize = 8;
+/// Decode var-data bytes as UTF-8 with a consistent sentinel on failure.
+#[inline]
+fn as_utf8_lossy(data: &[u8]) -> &str {
+    std::str::from_utf8(data).unwrap_or("<invalid utf-8>")
+}
 
 /// Callbacks for egress (cluster→client) messages.
 ///
@@ -75,20 +78,20 @@ impl<L: EgressListener> EgressAdapter<L> {
 
     match template_id {
             SessionMessageHeaderEncoder::TEMPLATE_ID => {
-                if data.len() < HEADER_LEN + 24 {
+                if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return Err(crate::ClusterError::ProtocolError {
                         reason: "session message too short".into(),
                     });
                 }
                 let body = decode_session_message_header(data)?;
-                let payload = &data[HEADER_LEN + 24..];
+                let payload = &data[SessionMessageHeaderEncoder::ENCODED_LENGTH..];
                 self.listener
                     .on_message(body.cluster_session_id, body.timestamp, payload);
                 Ok(true)
             }
             SessionEventEncoder::TEMPLATE_ID => {
                 let view = decode_session_event(data)?;
-                let detail = std::str::from_utf8(view.detail).unwrap_or("<invalid utf-8>");
+                let detail = as_utf8_lossy(view.detail);
                 self.listener.on_session_event(
                     view.correlation_id,
                     view.cluster_session_id,
@@ -101,7 +104,7 @@ impl<L: EgressListener> EgressAdapter<L> {
             }
             NewLeaderEventEncoder::TEMPLATE_ID => {
                 let view = decode_new_leader_event(data)?;
-                let endpoints = std::str::from_utf8(view.ingress_endpoints).unwrap_or("<invalid utf-8>");
+                let endpoints = as_utf8_lossy(view.ingress_endpoints);
                 self.listener.on_new_leader(
                     view.cluster_session_id,
                     view.leadership_term_id,
@@ -126,7 +129,7 @@ impl<L: EgressListener> EgressAdapter<L> {
                 let rc = decoder.response_code();
                 let (msg_bytes, after_msg) = decoder.into_message()?;
                 let (payload_bytes, _after_payload) = after_msg.into_payload()?;
-                let msg = std::str::from_utf8(msg_bytes).unwrap_or("<invalid utf-8>").to_string();
+                let msg = as_utf8_lossy(msg_bytes).to_string();
                 let payload = payload_bytes.to_vec();
                 self.listener.on_admin_response(csid, cid, rt, rc, &msg, &payload);
                 Ok(true)

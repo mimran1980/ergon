@@ -10,8 +10,11 @@ use crate::codecs::ergo_codecs::{
     AdminResponseEncoder, ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
 };
 
-/// SBE message frame header is always 8 bytes.
-const HEADER_LEN: usize = 8;
+/// Decode var-data bytes as UTF-8 with a consistent sentinel on failure.
+#[inline]
+fn as_utf8_lossy(data: &[u8]) -> &str {
+    std::str::from_utf8(data).unwrap_or("<invalid utf-8>")
+}
 
 /// Action returned by a `ControlledEgressListener`.
 ///
@@ -83,13 +86,13 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
 
     match template_id {
             SessionMessageHeaderEncoder::TEMPLATE_ID => {
-                if data.len() < HEADER_LEN + 24 {
+                if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return ControlledPollAction::Continue;
                 }
                 let Ok(body) = SessionMessageHeaderDecoder::wrap_and_apply_header(data, 0) else {
                     return ControlledPollAction::Continue;
                 };
-                let payload = &data[HEADER_LEN + 24..];
+                let payload = &data[SessionMessageHeaderEncoder::ENCODED_LENGTH..];
                 self.listener
                     .on_message(body.cluster_session_id(), body.timestamp(), payload)
             }
@@ -105,7 +108,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let Ok((detail_bytes, _)) = decoder.into_detail() else {
                     return ControlledPollAction::Continue;
                 };
-                let detail = std::str::from_utf8(detail_bytes).unwrap_or("<bad utf8>");
+                let detail = as_utf8_lossy(detail_bytes);
                 self.listener.on_session_event(cid, csid, ltid, lmid, code, detail)
             }
             NewLeaderEventEncoder::TEMPLATE_ID => {
@@ -118,7 +121,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let Ok((eps_bytes, _)) = decoder.into_ingress_endpoints() else {
                     return ControlledPollAction::Continue;
                 };
-                let eps = std::str::from_utf8(eps_bytes).unwrap_or("<bad utf8>");
+                let eps = as_utf8_lossy(eps_bytes);
                 self.listener.on_new_leader(csid, ltid, lmid, eps)
             }
             ChallengeEncoder::TEMPLATE_ID => {
@@ -146,7 +149,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let Ok((pl, _)) = after_msg.into_payload() else {
                     return ControlledPollAction::Continue;
                 };
-                let msg = std::str::from_utf8(msg_bytes).unwrap_or("<bad utf8>").to_string();
+                let msg = as_utf8_lossy(msg_bytes).to_string();
                 let pl = pl.to_vec();
                 self.listener.on_admin_response(csid, cid, rt, rc, &msg, &pl)
             }

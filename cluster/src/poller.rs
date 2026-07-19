@@ -8,6 +8,12 @@ use crate::codecs::ergo_codecs::{
 };
 use crate::codecs::ergo_codecs::{ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder};
 
+/// Decode var-data as UTF-8 with a consistent sentinel on failure.
+#[inline]
+fn as_utf8_lossy(data: &[u8]) -> &str {
+    std::str::from_utf8(data).unwrap_or("<invalid utf-8>")
+}
+
 /// One captured egress event from a poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EgressEvent {
@@ -50,7 +56,7 @@ pub fn parse_event(data: &[u8]) -> Option<EgressEvent> {
             let lmid = decoder.leader_member_id();
             let code = decoder.code();
             let (detail_bytes, _) = decoder.into_detail().ok()?;
-            let detail = std::str::from_utf8(detail_bytes).unwrap_or("").to_string();
+            let detail = as_utf8_lossy(detail_bytes).to_string();
             Some(EgressEvent::SessionEvent {
                 correlation_id: cid,
                 cluster_session_id: csid,
@@ -81,7 +87,7 @@ pub fn parse_event(data: &[u8]) -> Option<EgressEvent> {
                 cluster_session_id: csid,
                 leadership_term_id: ltid,
                 leader_member_id: lmid,
-                ingress_endpoints: std::str::from_utf8(eps_bytes).unwrap_or("").to_string(),
+                ingress_endpoints: as_utf8_lossy(eps_bytes).to_string(),
             })
         }
         other => Some(EgressEvent::Other { template_id: other }),
