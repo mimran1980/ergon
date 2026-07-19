@@ -66,17 +66,22 @@ For wire-shape or hot-path changes, also cover:
 - Do not rename pillar directories (`sbe`, `persist`, `cluster`, `samples`).
 - Commit messages: one sentence, conventional prefix (`feat:`, `fix:`, `docs:`, …).
 
-## Tests and binaries — Result + `?`
+## Errors and `Result`
 
-- Unit/integration tests: return `Result<(), Box<dyn std::error::Error>>`
-  (or `Box<dyn Error>`) so bodies use `?` instead of `.unwrap()` / `.expect()`.
-- `fn main()` for binaries and examples: same `Result` return (Rust prints the
-  error and exits non-zero). Prefer `?` over unwrap in main.
+- **Library / public API:** crate-specific errors only (`ClusterError`,
+  `SinkError`, SBE schema/codegen errors via `thiserror`). Prefer
+  `ClusterResult<T>` (= `Result<T, ClusterError>`) at the cluster boundary.
+- **Never** expose `Box<dyn std::error::Error>` (or `anyhow`) from a published
+  library function. Application code converts into its own type with `?` /
+  `From`.
+- **Unit/integration tests:** `Result<(), Box<dyn std::error::Error>>` so bodies
+  use `?` instead of `.unwrap()` / `.expect()`.
+- **`fn main()`** (binaries, examples): same `Box<dyn Error>` return (or app
+  error). Prefer `?` over unwrap.
 - `build.rs` may stay panic-oriented (Cargo convention).
-- `#[should_panic]` tests must return `()` (Rust forbids `Result` there);
-  panics remain the assertion mechanism.
-- `proptest!` strategy-parameter tests (`fn name(x in strategy)`) may stay as
-  `()` when a `Result` return confuses the proptest macro; prefer `prop_assert!`.
+- `#[should_panic]` tests must return `()` (Rust forbids `Result` there).
+- `proptest!` strategy-parameter tests may stay as `()` when `Result` confuses
+  the macro.
 
 ## Module docs
 

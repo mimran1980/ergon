@@ -89,7 +89,7 @@ pub use decode::{
     decode_session_event, decode_session_message_header,
 };
 pub use egress::{EgressAdapter, EgressListener, NullListener};
-pub use error::ClusterError;
+pub use error::{ClusterError, ClusterResult};
 pub use poller::{EgressEvent, parse_event, parse_redirect_leader};
 pub use state::SessionState;
 pub use uri::{channel_cstr, ipc_cstr, udp_endpoint_cstr};

@@ -12,8 +12,8 @@ use rusteron_client::{cformat, AeronCError, AeronUriStringBuilder};
 use crate::ClusterError;
 
 fn map_uri(e: AeronCError) -> ClusterError {
-    ClusterError::ConnectFailed {
-        reason: format!("channel URI: {e}"),
+    ClusterError::ChannelUri {
+        reason: e.to_string(),
     }
 }
 

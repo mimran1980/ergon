@@ -62,18 +62,10 @@ impl AeronCluster {
         builder.validate()?;
 
         let dir_cstr = cformat!("{aeron_dir}");
-        let ctx = AeronContext::new().map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("AeronContext: {e}"),
-        })?;
-        ctx.set_dir(&dir_cstr).map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("set_dir: {e}"),
-        })?;
-        let aeron = Aeron::new(&ctx).map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("Aeron::new: {e}"),
-        })?;
-        aeron.start().map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("Aeron::start: {e}"),
-        })?;
+        let ctx = AeronContext::new().map_err(|e| ClusterError::aeron("AeronContext", e))?;
+        ctx.set_dir(&dir_cstr).map_err(|e| ClusterError::aeron("set_dir", e))?;
+        let aeron = Aeron::new(&ctx).map_err(|e| ClusterError::aeron("Aeron::new", e))?;
+        aeron.start().map_err(|e| ClusterError::aeron("Aeron::start", e))?;
 
         // Reuse SessionBuilder-cached channel CStrings (URI-validated once).
         let egress_cstr = builder.egress_cstr()?;
@@ -87,15 +79,11 @@ impl AeronCluster {
                 Handlers::NONE,
                 Duration::from_secs(5),
             )
-            .map_err(|e| ClusterError::ConnectFailed {
-                reason: format!("add_subscription: {e}"),
-            })?;
+            .map_err(|e| ClusterError::aeron("add_subscription", e))?;
 
         let ingress = aeron
             .add_exclusive_publication(ingress_cstr, builder.ingress_stream_id, Duration::from_secs(5))
-            .map_err(|e| ClusterError::ConnectFailed {
-                reason: format!("add_exclusive_publication: {e}"),
-            })?;
+            .map_err(|e| ClusterError::aeron("add_exclusive_publication", e))?;
 
         let mut client = Self {
             _aeron: aeron,
@@ -283,9 +271,7 @@ impl AeronCluster {
         let new_pub = self
             ._aeron
             .add_exclusive_publication(&cstr, builder.ingress_stream_id, Duration::from_secs(5))
-            .map_err(|e| ClusterError::ConnectFailed {
-                reason: format!("redirect pub: {e}"),
-            })?;
+            .map_err(|e| ClusterError::aeron("redirect pub", e))?;
         self.ingress = new_pub;
         Ok(())
     }
@@ -386,9 +372,7 @@ impl AeronCluster {
                 },
                 limit,
             )
-            .map_err(|e| ClusterError::ConnectFailed {
-                reason: format!("poll_fn: {e}"),
-            })?;
+            .map_err(|e| ClusterError::aeron("poll_fn", e))?;
 
         if let Some((term, member, endpoints)) = new_leader {
             self.leadership_term_id = term;
@@ -407,9 +391,7 @@ impl AeronCluster {
             let pub_ = self
                 ._aeron
                 .add_exclusive_publication(&cstr, self.ingress_stream_id, Duration::from_secs(5))
-                .map_err(|e| ClusterError::ReconnectFailed {
-                    reason: format!("new-leader publication to member {member}: {e}"),
-                })?;
+                .map_err(|e| ClusterError::reconnect(format!("new-leader publication to member {member}: {e}")))?;
             self.ingress = pub_;
             self.state = SessionState::Connected;
         }
@@ -472,9 +454,7 @@ impl AeronCluster {
         let mut claim = self
             .ingress
             .try_claim_owned(total)
-            .map_err(|e| ClusterError::Publication {
-                reason: format!("try_claim: {e}"),
-            })?;
+            .map_err(|e| ClusterError::publication(format!("try_claim: {e}")))?;
 
         // Write the SessionMessageHeader (schema 111) into the claim's
         // first 32 bytes via the ErgoSBE encoder.
@@ -516,16 +496,12 @@ impl ClusterClaim {
 
     /// Commit the claimed bytes, publishing them to the cluster.
     pub fn commit(self) -> Result<i64, ClusterError> {
-        self.claim.commit().map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("commit: {e}"),
-        })
+        self.claim.commit().map_err(|e| ClusterError::publication(format!("commit: {e}")))
     }
 
     /// Abort the claim, discarding it as padding.
     pub fn abort(self) -> Result<(), ClusterError> {
-        self.claim.abort().map_err(|e| ClusterError::ConnectFailed {
-            reason: format!("abort: {e}"),
-        })
+        self.claim.abort().map_err(|e| ClusterError::publication(format!("abort: {e}")))
     }
 }
 
@@ -618,18 +594,10 @@ impl AsyncClusterConnect {
             AsyncStep::CreateTransport => {
                 self.builder.validate()?;
                 let dir_cstr = cformat!("{}", self.aeron_dir);
-                let ctx = AeronContext::new().map_err(|e| ClusterError::ConnectFailed {
-                    reason: format!("ctx: {e}"),
-                })?;
-                ctx.set_dir(&dir_cstr).map_err(|e| ClusterError::ConnectFailed {
-                    reason: format!("set_dir: {e}"),
-                })?;
-                let aeron = Aeron::new(&ctx).map_err(|e| ClusterError::ConnectFailed {
-                    reason: format!("new: {e}"),
-                })?;
-                aeron.start().map_err(|e| ClusterError::ConnectFailed {
-                    reason: format!("start: {e}"),
-                })?;
+                let ctx = AeronContext::new().map_err(|e| ClusterError::aeron("ctx", e))?;
+                ctx.set_dir(&dir_cstr).map_err(|e| ClusterError::aeron("set_dir", e))?;
+                let aeron = Aeron::new(&ctx).map_err(|e| ClusterError::aeron("new", e))?;
+                aeron.start().map_err(|e| ClusterError::aeron("start", e))?;
                 let egr = self.builder.egress_cstr()?;
                 let ing = self.builder.ingress_cstr()?;
                 let egress = aeron
@@ -640,14 +608,10 @@ impl AsyncClusterConnect {
                         Handlers::NONE,
                         Duration::from_secs(5),
                     )
-                    .map_err(|e| ClusterError::ConnectFailed {
-                        reason: format!("sub: {e}"),
-                    })?;
+                    .map_err(|e| ClusterError::aeron("sub", e))?;
                 let ingress = aeron
                     .add_exclusive_publication(ing, self.builder.ingress_stream_id, Duration::from_secs(5))
-                    .map_err(|e| ClusterError::ConnectFailed {
-                        reason: format!("pub: {e}"),
-                    })?;
+                    .map_err(|e| ClusterError::aeron("pub", e))?;
                 self.aeron = Some(aeron);
                 self.ingress = Some(ingress);
                 self.egress = Some(egress);
@@ -699,9 +663,7 @@ impl AsyncClusterConnect {
                                                 self.builder.ingress_stream_id,
                                                 Duration::from_secs(5),
                                             )
-                                            .map_err(|e| ClusterError::ReconnectFailed {
-                                                reason: format!("redirect publication: {e}"),
-                                            })?;
+                                            .map_err(|e| ClusterError::reconnect(format!("redirect publication: {e}")))?;
                                         self.ingress = Some(p);
                                         self.leader_member_id = member_id;
                                         self.connect_sent = false;
