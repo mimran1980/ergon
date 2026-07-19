@@ -84,9 +84,8 @@ checklist (`just check`, package lists, no `test-harness` on published cluster).
   `assert!` / `assert_eq!` for assertions).
 - **`fn main()`** (binaries, examples): same `Box<dyn Error>` return (or app
   error). Prefer `?` over unwrap.
-- **Channels:** app logic uses `&str` / `channel_uri`; rusteron FFI uses
-  `CString` / `&CStr` (`channel_cstr`). Converting `&str` → C string is not
-  free (NUL terminator + no interior NUL).
+- **Channels:** public API is `&str` / `String` only. `CString` is crate-private
+  at the rusteron FFI boundary (not free for dynamic strings).
 - `build.rs` may stay panic-oriented (Cargo convention).
 - `#[should_panic]` tests must return `()` (Rust forbids `Result` there).
 - `proptest!` strategy-parameter tests may stay as `()` when `Result` confuses

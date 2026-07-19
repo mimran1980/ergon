@@ -1,18 +1,21 @@
 //! Aeron channel URI construction via [`AeronUriStringBuilder`].
 //!
-//! # `&str` vs `CStr` / `CString`
+//! # Public API is UTF-8 only (`&str` / `String`)
 //!
-//! - **Application-facing** APIs use **`&str` / `String`** (UTF-8 URIs).
-//! - **rusteron / Aeron C** APIs require **`&CStr`** (NUL-terminated). That is
-//!   *not* zero-cost from `&str`: you must prove no interior NUL and append a
-//!   terminator (`CString::new` / `cformat!`). Static channels use `c"aeron:ipc"`
-//!   (`&'static CStr`) with zero runtime cost.
+//! Callers never need [`CString`] / [`CStr`]. Those exist only **inside** this
+//! crate at the rusteron FFI boundary (`set_dir`, `add_subscription`, …), where
+//! Aeron C requires a trailing NUL.
 //!
-//! Flow: validate/normalize with [`AeronUriStringBuilder`] → `String` →
-//! `cformat!` → `CString` for FFI. Prefer [`channel_uri`] when you only need
-//! the UTF-8 form; use [`channel_cstr`] at the rusteron call site.
+//! | Form | Cost | When |
+//! |------|------|------|
+//! | `&str` / `String` | normal UTF-8 | all public config & helpers |
+//! | `c"aeron:ipc"` | zero | static IPC if you talk to rusteron yourself |
+//! | private `CString` | one small alloc | last step before rusteron |
+//!
+//! Dynamic `&str` → C is **not** free (NUL + no interior NUL). We do that once
+//! and cache on [`crate::SessionBuilder`] for connect reuse.
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 use rusteron_client::{AeronCError, AeronUriStringBuilder, cformat};
 
@@ -22,16 +25,13 @@ fn map_uri(e: AeronCError) -> ClusterError {
     ClusterError::ChannelUri { reason: e.to_string() }
 }
 
-/// Parse and normalize a full Aeron channel URI as UTF-8 (`String`).
+/// Canonical IPC channel (static, zero-cost).
+pub const IPC: &str = "aeron:ipc";
+
+/// Parse and normalize a full Aeron channel URI as UTF-8.
 pub fn channel_uri(uri: &str) -> Result<String, ClusterError> {
     let builder: AeronUriStringBuilder = uri.parse().map_err(map_uri)?;
     builder.build(512).map_err(map_uri)
-}
-
-/// Parse and normalize a full Aeron channel URI into a [`CString`] for rusteron.
-pub fn channel_cstr(uri: &str) -> Result<CString, ClusterError> {
-    let s = channel_uri(uri)?;
-    Ok(cformat!("{s}"))
 }
 
 /// Build `aeron:udp?endpoint={endpoint}` as UTF-8.
@@ -43,38 +43,23 @@ pub fn udp_endpoint_uri(endpoint: &str) -> Result<String, ClusterError> {
         .map_err(map_uri)
 }
 
-/// Build `aeron:udp?endpoint={endpoint}` as [`CString`] for rusteron.
-pub fn udp_endpoint_cstr(endpoint: &str) -> Result<CString, ClusterError> {
-    let s = udp_endpoint_uri(endpoint)?;
-    Ok(cformat!("{s}"))
-}
-
-/// Standard IPC channel as UTF-8 (`"aeron:ipc"`).
-pub fn ipc_uri() -> Result<String, ClusterError> {
-    AeronUriStringBuilder::ipc().and_then(|b| b.build(64)).map_err(map_uri)
-}
-
-/// Standard IPC channel as [`CString`] for rusteron.
-///
-/// Builds from the static `c"aeron:ipc"` literal (one small alloc for the owned
-/// [`CString`]; call sites that can take `&'static CStr` may use `c"aeron:ipc"`
-/// directly with zero alloc).
-pub fn ipc_cstr() -> Result<CString, ClusterError> {
-    Ok(c"aeron:ipc".to_owned())
-}
-
-/// Borrow a cached channel as [`CStr`] (for rusteron).
+/// Standard IPC channel as `&'static str` (zero cost).
 #[inline]
-pub fn as_cstr(c: &CString) -> &CStr {
-    c.as_c_str()
+pub fn ipc_uri() -> &'static str {
+    IPC
 }
 
-/// Borrow a cached channel as UTF-8 [`&str`] (zero-cost if the CString is valid UTF-8,
-/// which Aeron URIs always are after our builders).
-pub fn cstring_as_str(c: &CString) -> Result<&str, ClusterError> {
-    c.to_str().map_err(|e| ClusterError::ChannelUri {
-        reason: format!("channel is not valid UTF-8: {e}"),
-    })
+/// Convert a UTF-8 channel URI to a [`CString`] for rusteron (allocates).
+///
+/// **Not public** — only used inside this crate at the FFI edge.
+#[inline]
+pub(crate) fn to_c_string(uri: &str) -> CString {
+    cformat!("{uri}")
+}
+
+/// Build CString for `host:port` as UDP endpoint channel (FFI only).
+pub(crate) fn udp_endpoint_c_string(endpoint: &str) -> Result<CString, ClusterError> {
+    Ok(to_c_string(&udp_endpoint_uri(endpoint)?))
 }
 
 #[cfg(test)]
@@ -82,10 +67,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ipc_channel_roundtrips() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(ipc_uri()?, "aeron:ipc");
-        let c = ipc_cstr()?;
-        assert_eq!(cstring_as_str(&c)?, "aeron:ipc");
+    fn ipc_is_static_str() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(ipc_uri(), "aeron:ipc");
+        assert_eq!(IPC, "aeron:ipc");
         Ok(())
     }
 
@@ -94,8 +78,6 @@ mod tests {
         let s = udp_endpoint_uri("localhost:19099")?;
         assert!(s.starts_with("aeron:udp?"), "{s}");
         assert!(s.contains("endpoint=localhost:19099"), "{s}");
-        let c = udp_endpoint_cstr("localhost:19099")?;
-        assert_eq!(cstring_as_str(&c)?, s);
         Ok(())
     }
 
@@ -103,6 +85,13 @@ mod tests {
     fn full_uri_parse() -> Result<(), Box<dyn std::error::Error>> {
         let s = channel_uri("aeron:udp?endpoint=127.0.0.1:9002")?;
         assert!(s.contains("endpoint=127.0.0.1:9002"), "{s}");
+        Ok(())
+    }
+
+    #[test]
+    fn ffi_c_string_is_crate_internal() -> Result<(), Box<dyn std::error::Error>> {
+        let c = to_c_string(IPC);
+        assert_eq!(c.to_str()?, "aeron:ipc");
         Ok(())
     }
 }

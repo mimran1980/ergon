@@ -28,8 +28,8 @@ fn test_connect_to_three_node_cluster() -> Result<(), Box<dyn std::error::Error>
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
-    let egr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
+    let ing = rusteron_client::cformat!("{}", ergo_aeron_cluster::channel_uri(&cluster.ingress_channel)?);
+    let egr = rusteron_client::cformat!("{}", ergo_aeron_cluster::channel_uri(&cluster.egress_channel)?);
 
     let egress = a.add_subscription(
         &egr,

@@ -37,7 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     a.start()?;
 
     let egress_port: u16 = 19199;
-    let egress_uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{}", egress_port))?;
+    let egress_uri = rusteron_client::cformat!(
+        "{}",
+        ergo_aeron_cluster::udp_endpoint_uri(&format!("localhost:{}", egress_port))?
+    );
     let egress = a.add_subscription(
         &egress_uri,
         102,
@@ -47,7 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
-        let uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{}", port))?;
+        let uri = rusteron_client::cformat!(
+            "{}",
+            ergo_aeron_cluster::udp_endpoint_uri(&format!("localhost:{}", port))?
+        );
         let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
         let mut buf = vec![0u8; 512];
         {
