@@ -217,8 +217,8 @@ mod tests {
     #[test]
     fn cstr_accessors_borrow_cached_storage() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::builder()
-            .ingress_channel(uri::IPC.to_str()?)
-            .egress_channel(uri::IPC.to_str()?);
+            .ingress_channel(uri::AERON_IPC_STREAM.to_str()?)
+            .egress_channel(uri::AERON_IPC_STREAM.to_str()?);
         b.validate()?;
         let a = b.ingress_channel_c_str().ok_or("missing")?.as_ptr();
         let a2 = b.ingress_channel_c_str().ok_or("missing")?.as_ptr();

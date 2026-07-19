@@ -96,9 +96,10 @@ claim.commit()?;
 | `idle::{default_idle, poll_egress_idle, …}` | Aeron `IdleStrategy` poll helpers |
 
 Channels: public helpers return **`CString` / `&CStr`** for rusteron
-(`channel_cstr`, `udp_endpoint_cstr`, `ipc_cstr` / `IPC`). Prefer those over
-`String`/`&str` when the next hop is Aeron C — avoid allocate-then-convert
-twice.
+(`channel_cstr`, `udp_endpoint_cstr`). Static IPC is rusteron's
+[`AERON_IPC_STREAM`](https://docs.rs/rusteron-client) (`c"aeron:ipc"`) —
+re-exported; do not invent another constant. Prefer C strings over
+`String`/`&str` when the next hop is Aeron C.
 
 Nested AppMessage recipe:
 [`../sbe/docs/guide/claim-nested-encode.md`](../sbe/docs/guide/claim-nested-encode.md).  

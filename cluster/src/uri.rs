@@ -9,7 +9,7 @@
 //!
 //! | Form | Cost | Use |
 //! |------|------|-----|
-//! | `c"aeron:ipc"` / [`IPC`] | zero | static IPC |
+//! | [`AERON_IPC_STREAM`] | zero | static IPC (rusteron; do not re-define) |
 //! | [`channel_cstr`] / [`udp_endpoint_cstr`] | one normalize + one CString | dynamic channels for rusteron |
 //! | `String` / `&str` | only when you truly need UTF-8 text and **not** FFI next | rare |
 //!
@@ -17,20 +17,22 @@
 //! once to [`CString`] for the public API so callers pass `&CStr` to rusteron
 //! without a second `cformat!`.
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 use rusteron_client::{AeronCError, AeronUriStringBuilder, cformat};
 
 use crate::ClusterError;
+
+/// IPC channel — re-export of rusteron's zero-cost `c"aeron:ipc"`.
+///
+/// Prefer this over inventing another `c"aeron:ipc"` / owned [`CString`].
+pub use rusteron_client::AERON_IPC_STREAM;
 
 fn map_uri(e: AeronCError) -> ClusterError {
     ClusterError::ChannelUri {
         reason: e.to_string(),
     }
 }
-
-/// Canonical IPC channel as compile-time `&'static CStr` (zero runtime cost).
-pub static IPC: &CStr = c"aeron:ipc";
 
 /// Parse and normalize a full Aeron channel URI into a [`CString`] for rusteron.
 pub fn channel_cstr(uri: &str) -> Result<CString, ClusterError> {
@@ -51,21 +53,13 @@ pub fn udp_endpoint_cstr(endpoint: &str) -> Result<CString, ClusterError> {
     Ok(cformat!("{s}"))
 }
 
-/// Standard IPC channel as owned [`CString`] (small alloc; prefer [`IPC`] when
-/// a borrow of `&'static CStr` is enough).
-#[inline]
-pub fn ipc_cstr() -> CString {
-    IPC.to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn ipc_static_is_zero_cost_cstr() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(IPC.to_bytes(), b"aeron:ipc");
-        assert_eq!(ipc_cstr().as_c_str(), IPC);
+    fn rusteron_ipc_is_aeron_ipc() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(AERON_IPC_STREAM.to_bytes(), b"aeron:ipc");
         Ok(())
     }
 

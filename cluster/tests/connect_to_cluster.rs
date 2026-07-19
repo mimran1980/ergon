@@ -19,8 +19,8 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    // Static &CStr — zero-cost; do not cformat!/CString for IPC.
-    let ipc = ergo_aeron_cluster::IPC;
+    // rusteron's zero-cost IPC constant (do not invent another c"aeron:ipc").
+    let ipc = ergo_aeron_cluster::AERON_IPC_STREAM;
 
     // Diagnostic
     let _ds = a.add_subscription(
