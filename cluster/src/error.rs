@@ -173,13 +173,14 @@ impl ClusterError {
     }
 
     /// Free-form publication-side failure (encode, commit message, …).
-    /// Not classified as a retryable Aeron sentinel.
+    /// Carries the reason as an Aeron message string. Not classified
+    /// as a retryable sentinel — use `from_offer_raw`/`from_offer_error`
+    /// for those.
     #[inline]
     pub fn publication(reason: impl Into<String>) -> Self {
-        let _ = reason.into();
-        Self::Publication {
-            failure: PublicationFailure::Other(0),
+        Self::Aeron {
             context: "publication",
+            message: reason.into(),
         }
     }
 

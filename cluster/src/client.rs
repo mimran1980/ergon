@@ -698,7 +698,7 @@ impl AsyncClusterConnect {
                                     return Err(ClusterError::AuthRejected);
                                 }
                                 EventCode::REDIRECT => {
-                                    if let Some((member_id, ep)) = crate::poller::parse_redirect_leader(&detail) {
+                                    if let Some(ep) = crate::poller::parse_leader_endpoint(&detail, leader_member_id) {
                                         let c = uri::udp_endpoint_cstr(&ep)?;
                                         let aeron =
                                             self.aeron.as_ref().ok_or_else(|| ClusterError::ReconnectFailed {
@@ -714,7 +714,7 @@ impl AsyncClusterConnect {
                                                 ClusterError::reconnect(format!("redirect publication: {e}"))
                                             })?;
                                         self.ingress = Some(p);
-                                        self.leader_member_id = member_id;
+                                        self.leader_member_id = leader_member_id;
                                         self.connect_sent = false;
                                         self.encode_and_send_connect()?;
                                     }
