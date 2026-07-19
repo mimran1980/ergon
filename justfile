@@ -1,4 +1,33 @@
 # ErgoSBE — reproducible workspace gates
+#
+# ── ergo-aeron-cluster + --all-features ─────────────────────────────────
+# `cluster` IS a workspace member. Commands that pass `--all-features` still
+# use `--exclude ergo-aeron-cluster` and then re-run that crate alone because:
+#
+#   • cluster's optional feature `test-harness` enables
+#     `ergo-aeron-cluster-test-support` (path dep; Java / Aeron jars).
+#   • `--all-features` turns that feature on, so a single
+#     `cargo {build,test,clippy} --workspace --all-features` would pull the
+#     harness into the default Rust-only gate.
+#   • Default `cluster` features (`default = []`) are pure Rust and safe for CI.
+#
+# Pattern:
+#   cargo … --workspace --all-features --exclude ergo-aeron-cluster
+#   cargo … -p ergo-aeron-cluster            # default features only
+#
+# Full harness: `just build-aeron-jars` then `just test-aeron-cluster-harness`.
+# Samples and `cluster-test-support` are workspace-excluded packages (standalone).
+#
+# ── Release (crates.io) ─────────────────────────────────────────────────
+# Publish product crates individually; do NOT `--all-features` for release.
+# Suggested order (path deps first):
+#   1. ergosbe              (sbe/)
+#   2. ergo-clickhouse-persist-derive  then  ergo-clickhouse-persist
+#   3. ergo-aeron-cluster   with default features only (never publish test-harness
+#      as required; keep test-support optional / unpublished)
+# Do not publish: ergosbe-benchmarks (publish=false), samples, cluster-test-support.
+# Consumers depend on crates.io versions; monorepo samples keep `path = …`.
+# Tag the repo after publish; Aeron submodule pin is independent of crate release.
 
 # Wipe Cargo build artifacts and reset git submodules to the commits pinned by
 # this repo (fetch origin, hard-reset + clean dirt, force-checkout).
@@ -25,16 +54,17 @@ clean:
     echo "clean: done (targets removed; submodules hard-reset to parent pins)"
 
 # Compile product workspace + sample harnesses (no tests, no Java jars).
+# See header: --all-features excludes cluster so test-harness is not enabled;
+# cluster is built next at default features only.
 build:
     cargo build --workspace --all-features --exclude ergo-aeron-cluster
     cargo build -p ergo-aeron-cluster
     cd samples/advanced-bitget && cargo build
     cd samples/cluster-ha-orderbook && cargo build
 
-# Full local check: hygiene, format, clippy, tests (no external services).
-# ergo-aeron-cluster's test-harness feature needs Java, so it is excluded from
-# the --all-features workspace gates below and checked at default features
-# (lib only). Run `just test-aeron-cluster-harness` for the Java integration tests.
+# Full local check: hygiene, format, clippy, tests (no external services / no Java).
+# Cluster: --all-features workspace pass excludes it; second pass is default-features
+# --lib only. Harness: just test-aeron-cluster-harness (after just build-aeron-jars).
 check:
     ./scripts/check-repository-hygiene.sh
     cargo fmt --all --check
@@ -49,9 +79,10 @@ check:
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
 
-# Workspace unit tests only
+# Workspace unit tests only (same --all-features / cluster exclude pattern as check).
 test-unit:
-    cargo test --workspace --all-features -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test -p ergo-aeron-cluster --lib
 
 # Sample IPC tests (embedded Aeron driver — no external services)
 test-ipc:

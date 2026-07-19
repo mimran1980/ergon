@@ -75,13 +75,35 @@ git submodule update --init --recursive
 | `just samples-cluster-ha-kill-leader` | Multi-node never-stale book | Java + jars |
 | `just check-aeron-cluster-codec-drift` | Residual sbe-tool trees match regenerate (benches only) | Java (sbe-tool) |
 
-**Gotcha:** never run `cargo … --workspace --all-features` without
-`--exclude ergo-aeron-cluster` — the cluster's `test-harness` feature pulls the
-Java/Gradle-building test-support crate.
+**Gotcha (`--all-features` + cluster):** `ergo-aeron-cluster` *is* a workspace
+member. Optional feature `test-harness` pulls `cluster-test-support` (Java/Aeron
+jars). So `just build` / `just check` run:
+
+```text
+cargo … --workspace --all-features --exclude ergo-aeron-cluster
+cargo … -p ergo-aeron-cluster          # default features only (pure Rust)
+```
+
+Never bare `cargo … --workspace --all-features` if you want a Java-free gate.
+Harness: `just build-aeron-jars` then `just test-aeron-cluster-harness`.
 
 **Layout:** pillar directories `sbe/`, `persist/`, `cluster/`, `samples/` are
 permanent names (never rename). Cluster dir names intentionally differ from
 crate names (`ergo-aeron-cluster`).
+
+### Release (crates.io)
+
+Publish **product** crates one-by-one at **default features** (do not enable
+`test-harness` for a publish build):
+
+1. `ergosbe` (`sbe/`)
+2. `ergo-clickhouse-persist-derive` then `ergo-clickhouse-persist`
+3. `ergo-aeron-cluster` — default features only; keep harness optional
+
+**Do not publish:** `ergosbe-benchmarks` (`publish = false`), samples,
+`cluster-test-support`. Tag the monorepo after a coordinated release. Downstream
+apps use crates.io versions; in-repo samples keep `path = …`. The Aeron submodule
+pin is independent of crate version numbers.
 
 **Verified-open backlog only:** [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md).  
 Umbrella orientation (historical):
