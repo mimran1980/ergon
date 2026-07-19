@@ -510,6 +510,8 @@ fn generate_sbe_rt_src() -> String {
                 WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
                 UnknownTemplateLength { template_id: u16 },
                 InvalidVarDataLength { field: &'static str, length: u32, max_length: u32 },
+                /// Field/group/data was added in a schema version later than the wire message.
+                FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
                 Utf8(core::str::Utf8Error),
             }
 
@@ -521,6 +523,7 @@ fn generate_sbe_rt_src() -> String {
                         Self::WrongSchema { expected, actual, expected_name } => write!(f, "wrong schema: expected id {} ({}), got id {}", expected, expected_name, actual),
                         Self::UnknownTemplateLength { template_id } => write!(f, "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.", template_id),
                         Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}: length {} exceeds max {}", field, length, max_length),
+                        Self::FieldNotInVersion { field, wire_version, since_version } => write!(f, "field '{}' not in wire version {} (added in version {})", field, wire_version, since_version),
                         Self::Utf8(err) => write!(f, "UTF-8 decode error: {}", err),
                     }
                 }
@@ -3321,9 +3324,18 @@ fn generate_message_decoder(
             &format!("tail_offset_{}", g_idx),
             proc_macro2::Span::call_site(),
         );
+        let g_since_lit = syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
+        let g_snake_str = g_snake.clone();
         impl_body.extend(quote::quote! {
             #[inline]
             fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+                if self.acting_version < #g_since_lit {
+                    return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                        field: #g_snake_str,
+                        wire_version: self.acting_version,
+                        since_version: #g_since_lit,
+                    });
+                }
                 let offset = self.#tail_offset_ident()?;
                 #g_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }
@@ -3350,9 +3362,18 @@ fn generate_message_decoder(
         // primitive, so max_length is always Some. The else branch can't fire.
         let max = vd.max_length.unwrap_or(0);
         let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
+        let vd_since_lit = syn::LitInt::new(&vd.since_version.to_string(), proc_macro2::Span::call_site());
+        let vd_snake_str = vd_snake.clone();
         impl_body.extend(quote::quote! {
             #[inline]
             fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                if self.acting_version < #vd_since_lit {
+                    return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                        field: #vd_snake_str,
+                        wire_version: self.acting_version,
+                        since_version: #vd_since_lit,
+                    });
+                }
                 let offset = self.#vd_tail_ident()?;
                 let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                 let header = #type_pascal_ident(bytes);
@@ -3950,10 +3971,17 @@ fn generate_domain_recursive(
         });
     } else {
         // Message domains: full encode via wrap_and_apply_header
+        let has_optional = fields.iter().any(|f| f.presence == Presence::Optional && f.null_value.is_some());
+        let nullify = if has_optional {
+            quote::quote! { enc.apply_nulls(); }
+        } else {
+            quote::quote! {}
+        };
         let has_tail = !group_encode_stmts.is_empty() || !vardata_encode_stmts.is_empty();
         let encode_body = if has_tail {
             quote::quote! {
                 let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
+                #nullify
                 #(#encode_stmts)*
                 #(#group_encode_stmts)*
                 #(#vardata_encode_stmts)*
@@ -3963,6 +3991,7 @@ fn generate_domain_recursive(
             // Fixed-only message: encoder implements AsRef<[u8]>
             quote::quote! {
                 let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
+                #nullify
                 #(#encode_stmts)*
                 Ok(enc.as_ref().len())
             }
@@ -6888,13 +6917,25 @@ fn generate_any_message(
                 type Output;
 
                 #(#visitor_methods)*
+
+                /// Called for unknown template IDs (not in this schema).
+                /// `header` is the raw 8-byte MessageHeader; `payload` is
+                /// the bytes after the header. Default returns `unimplemented!()`.
+                fn visit_unknown(
+                    &mut self,
+                    header: &#header_type_ident,
+                    payload: &[u8],
+                ) -> Self::Output {
+                    unimplemented!("unknown template id {} in schema {}",
+                        header.#ti_ident(), stringify!(#schema_name))
+                }
             }
 
             impl<'a> AnyMessage<'a> {
                 pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
                     match self {
                         #(#visit_arms)*
-                        Self::Unknown { .. } => unimplemented!(),
+                        Self::Unknown { header, payload } => visitor.visit_unknown(header, payload),
                     }
                 }
             }

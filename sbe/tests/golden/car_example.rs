@@ -25,6 +25,8 @@ pub mod sbe_rt {
         WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
         UnknownTemplateLength { template_id: u16 },
         InvalidVarDataLength { field: &'static str, length: u32, max_length: u32 },
+        /// Field/group/data was added in a schema version later than the wire message.
+        FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
         Utf8(core::str::Utf8Error),
     }
     impl core::fmt::Display for DecodeError {
@@ -54,6 +56,12 @@ pub mod sbe_rt {
                     write!(
                         f, "var data field '{}: length {} exceeds max {}", field, length,
                         max_length
+                    )
+                }
+                Self::FieldNotInVersion { field, wire_version, since_version } => {
+                    write!(
+                        f, "field '{}' not in wire version {} (added in version {})",
+                        field, wire_version, since_version
                     )
                 }
                 Self::Utf8(err) => write!(f, "UTF-8 decode error: {}", err),
@@ -1079,6 +1087,13 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
+        if self.acting_version < 0 {
+            return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                field: "fuel_figures",
+                wire_version: self.acting_version,
+                since_version: 0,
+            });
+        }
         let offset = self.tail_offset_0()?;
         FuelFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
@@ -1086,11 +1101,25 @@ impl<'a> CarDecoder<'a> {
     fn performance_figures(
         &self,
     ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
+        if self.acting_version < 0 {
+            return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                field: "performance_figures",
+                wire_version: self.acting_version,
+                since_version: 0,
+            });
+        }
         let offset = self.tail_offset_1()?;
         PerformanceFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
     #[inline]
     fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        if self.acting_version < 0 {
+            return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                field: "manufacturer",
+                wire_version: self.acting_version,
+                since_version: 0,
+            });
+        }
         let offset = self.tail_offset_2()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
@@ -1116,6 +1145,13 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        if self.acting_version < 0 {
+            return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                field: "model",
+                wire_version: self.acting_version,
+                since_version: 0,
+            });
+        }
         let offset = self.tail_offset_3()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
@@ -1141,6 +1177,13 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        if self.acting_version < 0 {
+            return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                field: "activation_code",
+                wire_version: self.acting_version,
+                since_version: 0,
+            });
+        }
         let offset = self.tail_offset_4()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
@@ -4582,12 +4625,21 @@ impl<'a> AnyMessage<'a> {
 pub trait MessageVisitor {
     type Output;
     fn visit_car(&mut self, decoder: &CarDecoder<'_>) -> Self::Output;
+    /// Called for unknown template IDs (not in this schema).
+    /// `header` is the raw 8-byte MessageHeader; `payload` is
+    /// the bytes after the header. Default returns `unimplemented!()`.
+    fn visit_unknown(&mut self, header: &MessageHeader, payload: &[u8]) -> Self::Output {
+        unimplemented!(
+            "unknown template id {} in schema {}", header.template_id(),
+            stringify!("baseline")
+        )
+    }
 }
 impl<'a> AnyMessage<'a> {
     pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
         match self {
             Self::Car(d) => visitor.visit_car(d),
-            Self::Unknown { .. } => unimplemented!(),
+            Self::Unknown { header, payload } => visitor.visit_unknown(header, payload),
         }
     }
 }
