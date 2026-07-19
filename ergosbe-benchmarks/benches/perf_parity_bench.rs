@@ -561,11 +561,9 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
                 car.serial_number(42);
                 car.model_year(2013);
                 let after_fuel = car
-                    .fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
+                    .fuel_figures(3, |g| -> sbe_rt::GroupResult {
                         for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
-                            g.add(|e| {
-                                let _ = e.speed(s).mpg(m);
-                            })?;
+                            g.add(|e| { e.speed(s).mpg(m); })?;
                         }
                         Ok(())
                     })
