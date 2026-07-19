@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::process::{Child, Command};
 
-use crate::jar;
+use super::jar;
 
 /// A Java `ArchivingMediaDriver` child process.
 pub struct EmbeddedArchiveDriver {

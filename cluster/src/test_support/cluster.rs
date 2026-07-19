@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
 
-use crate::jar;
+use super::jar;
 
 static NEXT_BASE_PORT: AtomicU16 = AtomicU16::new(9000);
 

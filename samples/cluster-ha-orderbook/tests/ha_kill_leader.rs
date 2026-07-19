@@ -169,7 +169,7 @@ fn await_serving(
 #[test]
 #[serial]
 fn kill_leader_never_serves_stale_book() -> Result<(), Box<dyn Error>> {
-    let mut cluster = ergo_aeron_cluster_test_support::TestCluster::three_node();
+    let mut cluster = ergo_aeron_cluster::TestCluster::three_node();
     let driver = launch_own_driver("ha-kill");
     let mut client = connect_own_driver(&cluster.ingress_channel, 19300, &driver.dir)?;
     assert_eq!(client.state(), SessionState::Connected);

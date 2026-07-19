@@ -1,4 +1,6 @@
-use ergo_aeron_cluster_test_support::TestCluster;
+#![cfg(feature = "test-harness")]
+
+use ergo_aeron_cluster::TestCluster;
 use serial_test::serial;
 use std::time::Duration;
 

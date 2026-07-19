@@ -10,7 +10,7 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_connect_and_receive_session_event_ok() {
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let dir_cstr = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
     eprintln!("AERON_DIR={}", cluster.aeron_dir().display());
 

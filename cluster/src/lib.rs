@@ -87,6 +87,16 @@ pub use error::ClusterError;
 pub use poller::{EgressEvent, parse_event, parse_redirect_leader};
 pub use state::SessionState;
 
+/// Java Aeron Cluster spawn harness (integration tests / examples only).
+///
+/// Enable with `--features test-harness` (requires Java 17+ and
+/// `just build-aeron-jars`). Not for production and not published as a separate crate.
+#[cfg(feature = "test-harness")]
+pub mod test_support;
+
+#[cfg(feature = "test-harness")]
+pub use test_support::{EmbeddedArchiveDriver, TestCluster};
+
 #[cfg(test)]
 mod tests {
     #[test]

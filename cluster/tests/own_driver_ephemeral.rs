@@ -14,7 +14,7 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_own_driver_udp_ephemeral_egress() {
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let client_dir = std::env::temp_dir().join(format!("eph-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&client_dir);
     let dir_cstr = CString::new(client_dir.to_str().unwrap()).unwrap();

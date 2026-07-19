@@ -28,7 +28,7 @@ fn main() {
     println!("Schema: protocol-codecs.xml (schema 101, version 1)");
     println!("Source: aeron-io/aeron-cookbook-code (vendored)\n");
 
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let dir = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir).unwrap();

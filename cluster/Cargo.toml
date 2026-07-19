@@ -8,11 +8,14 @@ repository = "https://github.com/mimran1980/ErgoSBE"
 
 [dependencies]
 rusteron-client = { workspace = true }
-ergo-aeron-cluster-test-support = { path = "../cluster-test-support", optional = true }
+# Optional: only with feature `test-harness` (Java multi-node spawn helpers).
+rusteron-archive = { workspace = true, optional = true }
 
 [features]
 default = []
-test-harness = ["ergo-aeron-cluster-test-support"]
+# Java ClusterLauncher + TestCluster (integration tests / examples). Pure Rust
+# default build does not enable this.
+test-harness = ["dep:rusteron-archive"]
 
 [lib]
 name = "ergo_aeron_cluster"
@@ -54,3 +57,13 @@ ergo-sbe = { path = "../sbe" }
 [[bench]]
 name = "cluster_codec_bench"
 harness = false
+
+[[test]]
+name = "harness_cluster_spawn"
+path = "tests/harness_cluster_spawn.rs"
+required-features = ["test-harness"]
+
+[[test]]
+name = "harness_failure"
+path = "tests/harness_failure.rs"
+required-features = ["test-harness"]

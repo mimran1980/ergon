@@ -44,7 +44,7 @@ impl EgressListener for EchoListener {
 fn main() {
     println!("=== Ergo Aeron Cluster Echo Client (library API) ===\n");
 
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
 
     let builder = SessionBuilder::builder()
         .ingress_channel(cluster.ingress_channel.clone())

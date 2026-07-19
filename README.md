@@ -27,8 +27,7 @@ version numbers in guides are illustrative.
 |-----------|-------|---------|------|
 | `sbe/` | `ergo-sbe` | SBE XML → idiomatic Rust codec generator | [`sbe/README.md`](sbe/README.md) |
 | `persist/` (+ `persist/derive/`) | `ergo-clickhouse-persist` | Auto-persist annotated structs to ClickHouse | [`persist/README.md`](persist/README.md), [`persist/derive/README.md`](persist/derive/README.md) |
-| `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client on `rusteron-client` 0.2 | [`cluster/README.md`](cluster/README.md) |
-| `cluster-test-support/` (excluded) | `ergo-aeron-cluster-test-support` | Java test harness (Gradle Aeron jars) | [`cluster-test-support/README.md`](cluster-test-support/README.md) |
+| `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client + optional Java `test-harness` | [`cluster/README.md`](cluster/README.md) |
 | `ergosbe-benchmarks/` | `ergosbe-benchmarks` | Criterion Aeron-parity matrix | [`ergosbe-benchmarks/README.md`](ergosbe-benchmarks/README.md) |
 | `samples/` (excluded) | — | End-to-end demos (IPC + HA) | [`samples/README.md`](samples/README.md) |
 
@@ -45,10 +44,9 @@ IPC:      AppMessage claims → Aeron IPC → typed/dynamic CH + Persist snapsho
 Cluster:  try_claim → Java cluster → never-stale book + feed_latency DynamicRow
 ```
 
-Note: for the cluster pillar the **directory names differ from the crate
-names** on purpose — the dirs are `cluster/` and `cluster-test-support/`, the
-crates remain `ergo-aeron-cluster` and `ergo-aeron-cluster-test-support`.
-"Excluded" crates are not workspace members; each builds standalone.
+Note: cluster dir is `cluster/`, crate name is `ergo-aeron-cluster`. Java
+multi-node helpers live **in that crate** under feature `test-harness`
+(`test_support` module). "Excluded" samples are not workspace members.
 
 ## Submodules
 
@@ -76,8 +74,8 @@ git submodule update --init --recursive
 | `just check-aeron-cluster-codec-drift` | Residual sbe-tool trees match regenerate (benches only) | Java (sbe-tool) |
 
 **Gotcha (`--all-features` + cluster):** `ergo-aeron-cluster` *is* a workspace
-member. Optional feature `test-harness` pulls `cluster-test-support` (Java/Aeron
-jars). So `just build` / `just check` run:
+member. Optional feature `test-harness` compiles the in-crate Java harness
+(Aeron jars). So `just build` / `just check` run:
 
 ```text
 cargo … --workspace --all-features --exclude ergo-aeron-cluster
@@ -98,12 +96,12 @@ Publish **product** crates one-by-one at **default features** (do not enable
 
 1. `ergo-sbe` (`sbe/`)
 2. `ergo-clickhouse-persist-derive` then `ergo-clickhouse-persist`
-3. `ergo-aeron-cluster` — default features only; keep harness optional
+3. `ergo-aeron-cluster` — default features only (never enable `test-harness` for publish)
 
-**Do not publish:** `ergosbe-benchmarks` (`publish = false`), samples,
-`cluster-test-support`. Tag the monorepo after a coordinated release. Downstream
-apps use crates.io versions; in-repo samples keep `path = …`. The Aeron submodule
-pin is independent of crate version numbers.
+**Do not publish:** `ergosbe-benchmarks` (`publish = false`), samples.
+Tag the monorepo after a coordinated release. Downstream apps use crates.io
+versions; in-repo samples keep `path = …`. The Aeron submodule pin is independent
+of crate version numbers.
 
 **Verified-open backlog only:** [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md).  
 Umbrella orientation (historical):

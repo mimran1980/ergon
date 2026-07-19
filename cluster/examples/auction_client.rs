@@ -25,7 +25,7 @@ fn main() {
     println!("=== Ergo Aeron Cluster Auction Client ===\n");
     println!("Customer ID: {customer_id}, Bids to send: {num_bids}");
 
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let dir = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir).unwrap();

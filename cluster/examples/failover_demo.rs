@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 fn main() {
     println!("=== Live 3-node failover (own-driver UDP) ===\n");
-    let mut cluster = ergo_aeron_cluster_test_support::TestCluster::three_node();
+    let mut cluster = ergo_aeron_cluster::TestCluster::three_node();
     let node0_port = parse_port(&cluster.ingress_channel);
     println!("3-node cluster up. node 0 ingress port = {node0_port}");
 

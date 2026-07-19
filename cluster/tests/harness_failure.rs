@@ -1,4 +1,6 @@
-use ergo_aeron_cluster_test_support::jar;
+#![cfg(feature = "test-harness")]
+
+use ergo_aeron_cluster::test_support::jar;
 
 #[test]
 fn test_find_jar_returns_error_for_invalid_prefix() {

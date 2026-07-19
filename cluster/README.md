@@ -18,7 +18,7 @@ RFQ unfrozen. Open items: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.m
 
 - Path: `ergo-sbe` (via `build.rs`)
 - `rusteron-client` **0.2** (workspace; latest 0.2.x)
-- Optional: `ergo-aeron-cluster-test-support` behind feature `test-harness`
+- Optional: feature `test-harness` (in-crate `test_support` / Java ClusterLauncher)
 - Aeron submodule **1.52.2** for schemas + Java jars
 
 ## Build / test

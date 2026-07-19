@@ -22,7 +22,7 @@ use common::{Capture, await_echo, connect_own_driver, launch_own_driver};
 #[serial]
 #[ignore = "privileged: quorum loss, ~30s"]
 fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
-    let mut cluster = ergo_aeron_cluster_test_support::TestCluster::three_node();
+    let mut cluster = ergo_aeron_cluster::TestCluster::three_node();
     let driver = launch_own_driver("quorum");
     let mut client = connect_own_driver(&cluster.ingress_channel, 19310, &driver.dir)?;
     let leader = client.leader_member_id();
@@ -73,7 +73,7 @@ fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
 fn test_cluster_restart_and_reconnect() -> Result<(), Box<dyn Error>> {
     // --- Lifecycle 1: cluster A ---
     {
-        let mut cluster_a = ergo_aeron_cluster_test_support::TestCluster::three_node();
+        let mut cluster_a = ergo_aeron_cluster::TestCluster::three_node();
         let driver = launch_own_driver("restart-a");
         let mut client = connect_own_driver(&cluster_a.ingress_channel, 19320, &driver.dir)?;
         let mut adapter = EgressAdapter::new(Capture::new());
@@ -86,7 +86,7 @@ fn test_cluster_restart_and_reconnect() -> Result<(), Box<dyn Error>> {
     }
 
     // --- Lifecycle 2: a fresh cluster comes up (the "restart") ---
-    let cluster_b = ergo_aeron_cluster_test_support::TestCluster::three_node();
+    let cluster_b = ergo_aeron_cluster::TestCluster::three_node();
     let driver = launch_own_driver("restart-b");
     let mut client = connect_own_driver(&cluster_b.ingress_channel, 19321, &driver.dir)?;
     let mut adapter = EgressAdapter::new(Capture::new());
@@ -104,7 +104,7 @@ fn test_cluster_restart_and_reconnect() -> Result<(), Box<dyn Error>> {
 #[ignore = "log-recovery restart, ~90s (needs Java 17 + just build-aeron-jars)"]
 fn test_log_recovery_restart() -> Result<(), Box<dyn Error>> {
     // --- Lifecycle 1: fresh cluster A, write data ---
-    let mut cluster_a = ergo_aeron_cluster_test_support::TestCluster::three_node();
+    let mut cluster_a = ergo_aeron_cluster::TestCluster::three_node();
     let base_port = cluster_a.base_port();
     let driver_a = launch_own_driver("logrec-a");
     let mut client_a = connect_own_driver(&cluster_a.ingress_channel, 19330, &driver_a.dir)?;
@@ -119,7 +119,7 @@ fn test_log_recovery_restart() -> Result<(), Box<dyn Error>> {
     drop(driver_a);
 
     // --- Lifecycle 2: restart with keep_dirs at the same base port ---
-    let restart = ergo_aeron_cluster_test_support::TestCluster {
+    let restart = ergo_aeron_cluster::TestCluster {
         processes: vec![],
         ingress_channel: String::new(),
         egress_channel: String::new(),

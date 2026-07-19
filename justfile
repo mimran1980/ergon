@@ -4,8 +4,8 @@
 # `cluster` IS a workspace member. Commands that pass `--all-features` still
 # use `--exclude ergo-aeron-cluster` and then re-run that crate alone because:
 #
-#   • cluster's optional feature `test-harness` enables
-#     `ergo-aeron-cluster-test-support` (path dep; Java / Aeron jars).
+#   • cluster's optional feature `test-harness` enables the in-crate
+#     `test_support` module (Java ClusterLauncher / Aeron jars via rusteron-archive).
 #   • `--all-features` turns that feature on, so a single
 #     `cargo {build,test,clippy} --workspace --all-features` would pull the
 #     harness into the default Rust-only gate.
@@ -16,16 +16,15 @@
 #   cargo … -p ergo-aeron-cluster            # default features only
 #
 # Full harness: `just build-aeron-jars` then `just test-aeron-cluster-harness`.
-# Samples and `cluster-test-support` are workspace-excluded packages (standalone).
+# Samples are workspace-excluded packages (standalone).
 #
 # ── Release (crates.io) ─────────────────────────────────────────────────
 # Publish product crates individually; do NOT `--all-features` for release.
 # Suggested order (path deps first):
 #   1. ergo-sbe             (sbe/)
 #   2. ergo-clickhouse-persist-derive  then  ergo-clickhouse-persist
-#   3. ergo-aeron-cluster   with default features only (never publish test-harness
-#      as required; keep test-support optional / unpublished)
-# Do not publish: ergosbe-benchmarks (publish=false), samples, cluster-test-support.
+#   3. ergo-aeron-cluster   with default features only (never require test-harness)
+# Do not publish: ergosbe-benchmarks (publish=false), samples.
 # Consumers depend on crates.io versions; monorepo samples keep `path = …`.
 # Tag the repo after publish; Aeron submodule pin is independent of crate release.
 
@@ -36,7 +35,7 @@ clean:
     set -euo pipefail
     echo "=== cargo clean (workspace) ==="
     cargo clean
-    for d in samples/advanced-bitget samples/cluster-ha-orderbook cluster-test-support; do
+    for d in samples/advanced-bitget samples/cluster-ha-orderbook; do
       if [ -f "$d/Cargo.toml" ]; then
         echo "=== cargo clean ($d) ==="
         (cd "$d" && cargo clean)
@@ -163,8 +162,7 @@ bench-cluster:
     cargo bench -p ergo-aeron-cluster
 
 # =============================================================================
-# cluster/ = crate ergo-aeron-cluster (AI-driven Aeron Cluster client — workspace
-# member; cluster-test-support/ = crate ergo-aeron-cluster-test-support, excluded)
+# cluster/ = crate ergo-aeron-cluster (client + optional in-crate test_support)
 # =============================================================================
 
 # Check the cluster crate (lib: fmt + clippy + tests, no Java required)
@@ -248,20 +246,20 @@ hash-aeron-jars:
     #!/usr/bin/env bash
     set -euo pipefail
     if command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum); elif command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256); else echo "ERROR: neither sha256sum nor shasum available" >&2; exit 1; fi
-    echo "# SHA-256 hashes of test jars" > cluster-test-support/test-jars.sha256
+    echo "# SHA-256 hashes of test jars" > cluster/test-jars.sha256
     for dir in aeron-all aeron-cluster aeron-archive; do
       jar=$(find aeron/$dir/build/libs -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)
       if [ -n "$jar" ]; then
-        "${SHA256[@]}" "$jar" | tee -a cluster-test-support/test-jars.sha256
+        "${SHA256[@]}" "$jar" | tee -a cluster/test-jars.sha256
       fi
     done
-    echo "=== SHA-256 hashes saved to cluster-test-support/test-jars.sha256 ==="
+    echo "=== SHA-256 hashes saved to cluster/test-jars.sha256 ==="
 
 check-aeron-jars:
     #!/usr/bin/env bash
     set -euo pipefail
     just hash-aeron-jars
-    if ! git diff --exit-code cluster-test-support/test-jars.sha256; then
+    if ! git diff --exit-code cluster/test-jars.sha256; then
       echo "ERROR: Jar SHA-256 mismatch. Run 'just hash-aeron-jars' and commit." >&2
       exit 1
     fi

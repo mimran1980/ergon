@@ -10,7 +10,7 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_three_node_cluster_spawns() {
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::three_node();
+    let cluster = ergo_aeron_cluster::TestCluster::three_node();
     assert!(cluster.ingress_channel.contains("aeron:udp"));
     assert!(cluster.egress_channel.contains("aeron:udp"));
 }
@@ -18,7 +18,7 @@ fn test_three_node_cluster_spawns() {
 #[test]
 #[serial]
 fn test_connect_to_three_node_cluster() {
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::three_node();
+    let cluster = ergo_aeron_cluster::TestCluster::three_node();
     let dir_cstr = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
 
     let ctx = rusteron_client::AeronContext::new().unwrap();

@@ -37,7 +37,7 @@ impl EgressListener for L {
 
 fn main() {
     println!("=== async_connect + try_claim demo ===\n");
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
 
     let builder = SessionBuilder::builder()
         .ingress_channel(cluster.ingress_channel.clone())

@@ -7,7 +7,7 @@ use serial_test::serial;
 use std::ffi::CString;
 use std::time::Duration;
 
-fn connect_and_send(cluster: &ergo_aeron_cluster_test_support::TestCluster, credentials: &[u8]) -> (bool, bool) {
+fn connect_and_send(cluster: &ergo_aeron_cluster::TestCluster, credentials: &[u8]) -> (bool, bool) {
     let dir_cstr = CString::new(cluster.aeron_dir().to_str().unwrap()).unwrap();
     let ctx = rusteron_client::AeronContext::new().unwrap();
     ctx.set_dir(&dir_cstr).unwrap();
@@ -80,7 +80,7 @@ fn connect_and_send(cluster: &ergo_aeron_cluster_test_support::TestCluster, cred
 #[test]
 #[serial]
 fn test_connect_with_null_credentials() {
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let (sent, received) = connect_and_send(&cluster, b"");
     assert!(
         sent || received,
@@ -91,7 +91,7 @@ fn test_connect_with_null_credentials() {
 #[test]
 #[serial]
 fn test_connect_with_simple_credentials() {
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
     // Default authenticator accepts any credentials in SingleNodeCluster config
     let (sent, received) = connect_and_send(&cluster, b"admin:password");
     assert!(
@@ -103,7 +103,7 @@ fn test_connect_with_simple_credentials() {
 #[test]
 #[serial]
 fn test_two_connections_to_same_cluster() {
-    let cluster = ergo_aeron_cluster_test_support::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let (s1, r1) = connect_and_send(&cluster, b"");
     let (s2, r2) = connect_and_send(&cluster, b"");
     assert!(s1 || r1, "first connect failed");
