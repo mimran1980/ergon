@@ -14,12 +14,12 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     let dir_cstr = cformat!("{}", cluster.aeron_dir().display());
     eprintln!("AERON_DIR={}", cluster.aeron_dir().display());
 
-    let ctx = rusteron_client::AeronContext::new().unwrap();
-    ctx.set_dir(&dir_cstr).unwrap();
-    let a = rusteron_client::Aeron::new(&ctx).unwrap();
-    a.start().unwrap();
+    let ctx = rusteron_client::AeronContext::new()?;
+    ctx.set_dir(&dir_cstr)?;
+    let a = rusteron_client::Aeron::new(&ctx)?;
+    a.start()?;
 
-    let ipc = c"aeron:ipc";
+    let ipc = ergo_aeron_cluster::ipc_cstr()?;
 
     // Diagnostic
     let _ds = a
@@ -29,14 +29,13 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
             rusteron_client::Handlers::NONE,
             rusteron_client::Handlers::NONE,
             Duration::from_secs(3),
-        )
-        .unwrap();
-    let dp = a.add_publication(&ipc, 999, Duration::from_secs(3)).unwrap();
+        )?;
+    let dp = a.add_publication(&ipc, 999, Duration::from_secs(3))?;
     assert!(dp.offer_raw(b"t", rusteron_client::Handlers::NONE) > 0, "IPC diag");
 
     // Connect to cluster via its ingress channel
-    let ing_cstr = cformat!("{}", cluster.ingress_channel);
-    let egr_cstr = cformat!("{}", cluster.egress_channel);
+    let ing_cstr = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
+    let egr_cstr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
 
     let egress = a
         .add_subscription(
@@ -45,9 +44,8 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
             rusteron_client::Handlers::NONE,
             rusteron_client::Handlers::NONE,
             Duration::from_secs(5),
-        )
-        .unwrap();
-    let ingress = a.add_publication(&ing_cstr, 101, Duration::from_secs(5)).unwrap();
+        )?;
+    let ingress = a.add_publication(&ing_cstr, 101, Duration::from_secs(5))?;
 
     let mut buf = vec![0u8; 512];
     {

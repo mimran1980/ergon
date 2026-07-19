@@ -25,7 +25,7 @@ use ergo_aeron_cluster::egress::EgressAdapter;
 #[serial]
 fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error::Error>> {
     let mut cluster = ergo_aeron_cluster::TestCluster::three_node();
-    let driver = launch_own_driver("fo-udp");
+    let driver = launch_own_driver("fo-udp")?;
 
     let mut client = connect_own_driver(&cluster.ingress_channel, 19200, &driver.dir)?;
     assert_eq!(client.state(), SessionState::Connected, "connected after handshake");

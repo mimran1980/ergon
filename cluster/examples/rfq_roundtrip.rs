@@ -33,13 +33,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ingress   = {INGRESS}\n");
 
     let dir_cstr = cformat!("{dir}");
-    let ctx = rusteron_client::AeronContext::new().unwrap();
-    ctx.set_dir(&dir_cstr).unwrap();
-    let a = rusteron_client::Aeron::new(&ctx).unwrap();
-    a.start().unwrap();
+    let ctx = rusteron_client::AeronContext::new()?;
+    ctx.set_dir(&dir_cstr)?;
+    let a = rusteron_client::Aeron::new(&ctx)?;
+    a.start()?;
 
-    let ing = cformat!("{INGRESS}");
-    let egr = cformat!("{INGRESS}");
+    let ing = ergo_aeron_cluster::channel_cstr(INGRESS)?;
+    let egr = ergo_aeron_cluster::channel_cstr(INGRESS)?;
     let egress = a
         .add_subscription(
             &egr,
@@ -47,9 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rusteron_client::Handlers::NONE,
             rusteron_client::Handlers::NONE,
             Duration::from_secs(5),
-        )
-        .unwrap();
-    let ingress = a.add_exclusive_publication(&ing, 101, Duration::from_secs(5)).unwrap();
+        )?;
+    let ingress = a.add_exclusive_publication(&ing, 101, Duration::from_secs(5))?;
 
     // Connect (SessionConnectRequest, schema 111)
     {

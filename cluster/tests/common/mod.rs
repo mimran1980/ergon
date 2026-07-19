@@ -21,32 +21,44 @@ pub struct OwnDriver {
 }
 
 /// Launch the client's own driver in a fresh temp dir tagged `tag`.
-pub fn launch_own_driver(tag: &str) -> OwnDriver {
+pub fn launch_own_driver(tag: &str) -> Result<OwnDriver, Box<dyn Error>> {
     let dir = std::env::temp_dir().join(format!("{tag}-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let dir_cstr = cformat!("{}", dir.display());
-    let dc = rusteron_media_driver::AeronDriverContext::new().unwrap();
-    dc.set_dir(&dir_cstr).unwrap();
-    dc.set_dir_delete_on_shutdown(true).unwrap();
-    dc.set_dir_delete_on_start(true).unwrap();
+    let dc = rusteron_media_driver::AeronDriverContext::new()?;
+    dc.set_dir(&dir_cstr)?;
+    dc.set_dir_delete_on_shutdown(true)?;
+    dc.set_dir_delete_on_start(true)?;
     let _guard = rusteron_media_driver::AeronDriver::launch_embedded_guard(dc, false);
-    OwnDriver {
-        dir: dir.to_str().unwrap().to_string(),
+    Ok(OwnDriver {
+        dir: dir
+            .to_str()
+            .ok_or("aeron dir is not valid UTF-8")?
+            .to_string(),
         _guard,
-    }
+    })
 }
 
 /// Connect a high-level client to the cluster over own-driver UDP. The
 /// egress port is the client's own UDP endpoint (the cluster sends
 /// SessionEvent / echoes / NewLeaderEvent here).
+///
+/// Egress URI is built via [`ergo_aeron_cluster::udp_endpoint_cstr`] so it
+/// matches the typed `AeronUriStringBuilder` path used in production.
 pub fn connect_own_driver(
     cluster_ingress: &str,
     egress_port: u16,
     aeron_dir: &str,
 ) -> Result<AeronCluster, ergo_aeron_cluster::ClusterError> {
+    let egress = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
+    let egress_uri = egress
+        .to_str()
+        .map_err(|e| ergo_aeron_cluster::ClusterError::ConnectFailed {
+            reason: format!("egress URI utf8: {e}"),
+        })?;
     let builder = SessionBuilder::builder()
-        .ingress_channel(cluster_ingress.to_string())
-        .egress_channel(format!("aeron:udp?endpoint=localhost:{egress_port}"))
+        .ingress_channel(cluster_ingress)
+        .egress_channel(egress_uri)
         .ingress_stream_id(101)
         .egress_stream_id(102)
         .message_timeout(Duration::from_secs(10));

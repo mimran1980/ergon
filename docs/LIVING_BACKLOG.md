@@ -1,7 +1,7 @@
 # Living backlog — verified-open items only
 
 **Status:** LIVING — update when an item is closed with evidence.  
-**Last audit:** 2026-07-19 · branch `first_cut` (README + claim/nested API polish)  
+**Last audit:** 2026-07-19 · branch `first_cut` (URI builder + Result/? + thiserror)  
 **Not this file:** process checklists in `ergosbe-performance-optimisation-goal.md`,
 the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 
@@ -53,6 +53,17 @@ All prior §C items closed 2026-07-19 — see section D.
 ---
 
 ## D. Closed (do not re-queue)
+
+### 2026-07-19 rusteron URI / Result / thiserror polish
+
+| Item | Resolution | Evidence |
+|------|------------|----------|
+| Tests/main `Result` + `?` for fallible setup | DONE | Cluster/persist/sbe/samples signatures; setup paths prefer `?` |
+| Cached channel `CString`s on `SessionBuilder` | DONE | `ingress_cstr` / `egress_cstr`; connect reuses |
+| `AeronUriStringBuilder` for all channels | DONE | `cluster/src/uri.rs` + client reconnect/redirect |
+| `thiserror` for public errors | DONE | `ClusterError`, `SinkError` |
+| No Tokio in `ergo-aeron-cluster` | DONE | Aeron poll-driven `AsyncClusterConnect` only; crate grep clean |
+| Living backlog / perf note | DONE | This entry; ledger note under perf goal (API hygiene, ratios unchanged) |
 
 ### 2026-07-19 README + ErgoSBE claim/nested API polish
 

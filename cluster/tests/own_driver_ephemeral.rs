@@ -18,21 +18,21 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
     let client_dir = std::env::temp_dir().join(format!("eph-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&client_dir);
     let dir_cstr = cformat!("{}", client_dir.display());
-    let dc = rusteron_media_driver::AeronDriverContext::new().unwrap();
-    dc.set_dir(&dir_cstr).unwrap();
-    dc.set_dir_delete_on_shutdown(true).unwrap();
-    dc.set_dir_delete_on_start(true).unwrap();
+    let dc = rusteron_media_driver::AeronDriverContext::new()?;
+    dc.set_dir(&dir_cstr)?;
+    dc.set_dir_delete_on_shutdown(true)?;
+    dc.set_dir_delete_on_start(true)?;
     let (_stop, _h) = rusteron_media_driver::AeronDriver::launch_embedded(dc, false);
 
-    let ctx = rusteron_client::AeronContext::new().unwrap();
-    ctx.set_dir(&dir_cstr).unwrap();
-    let a = rusteron_client::Aeron::new(&ctx).unwrap();
-    a.start().unwrap();
+    let ctx = rusteron_client::AeronContext::new()?;
+    ctx.set_dir(&dir_cstr)?;
+    let a = rusteron_client::Aeron::new(&ctx)?;
+    a.start()?;
 
     // Client egress on a SEPARATE high port (no conflict with cluster), ingress to cluster's port.
     let egress_port: u16 = 19099;
-    let egress_uri = cformat!("aeron:udp?endpoint=localhost:{egress_port}");
-    let ingress_uri = cformat!("{}", cluster.ingress_channel);
+    let egress_uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{}", egress_port))?;
+    let ingress_uri = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
 
     let egress = a
         .add_subscription(

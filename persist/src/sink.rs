@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::env;
-use std::fmt;
+
 use std::fs::File;
 use std::io::BufReader;
 use std::marker::PhantomData;
@@ -28,33 +28,24 @@ use crate::types::ColumnType;
 // ── Error ──────────────────────────────────────────────────────────────────
 
 /// Errors from ClickHouse sink operations.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SinkError {
     /// Network / ClickHouse connection error.
+    #[error("clickhouse connection: {0}")]
     Connection(String),
     /// DDL execution error.
+    #[error("clickhouse DDL: {0}")]
     Ddl(String),
     /// INSERT execution error.
+    #[error("clickhouse INSERT: {0}")]
     Insert(String),
     /// Internal runtime error.
+    #[error("internal runtime: {0}")]
     Runtime(String),
     /// Serialization error (JSON).
+    #[error("serialization: {0}")]
     Serde(String),
 }
-
-impl fmt::Display for SinkError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Connection(e) => write!(f, "clickhouse connection: {e}"),
-            Self::Ddl(e) => write!(f, "clickhouse DDL: {e}"),
-            Self::Insert(e) => write!(f, "clickhouse INSERT: {e}"),
-            Self::Runtime(e) => write!(f, "internal runtime: {e}"),
-            Self::Serde(e) => write!(f, "serialization: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for SinkError {}
 
 impl From<serde_json::Error> for SinkError {
     fn from(e: serde_json::Error) -> Self {

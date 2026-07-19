@@ -2,10 +2,15 @@
 //!
 //! Mirrors Java `AeronCluster.Context`. Defaults: ingress stream 101, egress
 //! stream 102, 10s message timeout.
+//!
+//! Channel strings are normalized through [`crate::uri`] (`AeronUriStringBuilder`)
+//! and cached as [`CString`]s so connect/reconnect hot paths do not re-parse.
 
+use std::ffi::CString;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::uri;
 use crate::{ClusterError, CredentialsSupplier};
 
 /// Builds and connects an [`crate::AeronCluster`].
@@ -13,13 +18,16 @@ use crate::{ClusterError, CredentialsSupplier};
 /// Mirrors `AeronCluster.Context` in the Java client. All channel and
 /// stream-ID defaults match the upstream Java defaults.
 ///
+/// Channel setters validate and cache FFI-ready [`CString`]s via
+/// [`AeronUriStringBuilder`](rusteron_client::AeronUriStringBuilder).
+///
 /// # Example
 ///
 /// ```rust,ignore
 /// use ergo_aeron_cluster::SessionBuilder;
 /// let builder = SessionBuilder::builder()
-///     .ingress_channel("aeron:udp?endpoint=localhost:9002".into())
-///     .egress_channel("aeron:udp?endpoint=localhost:19002".into())
+///     .ingress_channel("aeron:udp?endpoint=localhost:9002")
+///     .egress_channel("aeron:udp?endpoint=localhost:19002")
 ///     .ingress_stream_id(101)
 ///     .egress_stream_id(102);
 /// ```
@@ -27,6 +35,10 @@ use crate::{ClusterError, CredentialsSupplier};
 pub struct SessionBuilder {
     pub(crate) ingress_channel: String,
     pub(crate) egress_channel: String,
+    /// Cached FFI form of [`Self::ingress_channel`] (reuse on every connect).
+    pub(crate) ingress_cstr: Option<CString>,
+    /// Cached FFI form of [`Self::egress_channel`].
+    pub(crate) egress_cstr: Option<CString>,
     pub(crate) ingress_stream_id: i32,
     pub(crate) egress_stream_id: i32,
     pub(crate) message_timeout_ms: u64,
@@ -41,6 +53,8 @@ impl Default for SessionBuilder {
         Self {
             ingress_channel: String::new(),
             egress_channel: String::new(),
+            ingress_cstr: None,
+            egress_cstr: None,
             ingress_stream_id: 101,
             egress_stream_id: 102,
             message_timeout_ms: 10_000,
@@ -55,13 +69,19 @@ impl SessionBuilder {
         Self::default()
     }
 
+    /// Set the ingress channel URI (validated + cached as `CString`).
     pub fn ingress_channel(mut self, channel: impl Into<String>) -> Self {
-        self.ingress_channel = channel.into();
+        let s = channel.into();
+        self.ingress_cstr = uri::channel_cstr(&s).ok();
+        self.ingress_channel = s;
         self
     }
 
+    /// Set the egress channel URI (validated + cached as `CString`).
     pub fn egress_channel(mut self, channel: impl Into<String>) -> Self {
-        self.egress_channel = channel.into();
+        let s = channel.into();
+        self.egress_cstr = uri::channel_cstr(&s).ok();
+        self.egress_channel = s;
         self
     }
 
@@ -92,7 +112,7 @@ impl SessionBuilder {
         self
     }
 
-    /// Validate required fields are set.
+    /// Validate required fields and that channel URIs parsed successfully.
     pub fn validate(&self) -> Result<(), ClusterError> {
         if self.ingress_channel.is_empty() {
             return Err(ClusterError::ConnectFailed {
@@ -104,7 +124,34 @@ impl SessionBuilder {
                 reason: "egress_channel is required".into(),
             });
         }
+        if self.ingress_cstr.is_none() {
+            // Re-run for a precise URI error message.
+            let _ = uri::channel_cstr(&self.ingress_channel)?;
+            return Err(ClusterError::ConnectFailed {
+                reason: format!("invalid ingress_channel URI: {}", self.ingress_channel),
+            });
+        }
+        if self.egress_cstr.is_none() {
+            let _ = uri::channel_cstr(&self.egress_channel)?;
+            return Err(ClusterError::ConnectFailed {
+                reason: format!("invalid egress_channel URI: {}", self.egress_channel),
+            });
+        }
         Ok(())
+    }
+
+    /// Cached ingress channel `CString` (call after [`Self::validate`]).
+    pub(crate) fn ingress_cstr(&self) -> Result<&CString, ClusterError> {
+        self.ingress_cstr.as_ref().ok_or_else(|| ClusterError::ConnectFailed {
+            reason: "ingress_channel CString missing (call validate first)".into(),
+        })
+    }
+
+    /// Cached egress channel `CString` (call after [`Self::validate`]).
+    pub(crate) fn egress_cstr(&self) -> Result<&CString, ClusterError> {
+        self.egress_cstr.as_ref().ok_or_else(|| ClusterError::ConnectFailed {
+            reason: "egress_channel CString missing (call validate first)".into(),
+        })
     }
 }
 
@@ -118,7 +165,6 @@ mod tests {
         assert_eq!(b.ingress_stream_id, 101);
         assert_eq!(b.egress_stream_id, 102);
         assert_eq!(b.message_timeout_ms, 10_000);
-    
         Ok(())
     }
 
@@ -126,7 +172,6 @@ mod tests {
     fn test_validate_rejects_empty_channels() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::default();
         assert!(b.validate().is_err());
-    
         Ok(())
     }
 
@@ -135,8 +180,21 @@ mod tests {
         let b = SessionBuilder::default()
             .ingress_channel("aeron:udp?endpoint=localhost:9010")
             .egress_channel("aeron:udp?endpoint=localhost:9020");
-        assert!(b.validate().is_ok());
-    
+        b.validate()?;
+        assert!(b.ingress_cstr().is_ok());
+        assert!(b.egress_cstr().is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn test_channel_cstrs_are_cached() -> Result<(), Box<dyn std::error::Error>> {
+        let b = SessionBuilder::builder()
+            .ingress_channel("aeron:ipc")
+            .egress_channel("aeron:ipc");
+        b.validate()?;
+        let a = b.ingress_cstr()?.as_ptr();
+        let a2 = b.ingress_cstr()?.as_ptr();
+        assert_eq!(a, a2, "cached CString must be stable across calls");
         Ok(())
     }
 }

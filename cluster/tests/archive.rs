@@ -24,13 +24,13 @@ fn test_archive_and_cluster_can_coexist() -> Result<(), Box<dyn std::error::Erro
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
 
     let dir_cstr = cformat!("{}", cluster.aeron_dir().display());
-    let ctx = rusteron_client::AeronContext::new().unwrap();
-    ctx.set_dir(&dir_cstr).unwrap();
-    let a = rusteron_client::Aeron::new(&ctx).unwrap();
-    a.start().unwrap();
+    let ctx = rusteron_client::AeronContext::new()?;
+    ctx.set_dir(&dir_cstr)?;
+    let a = rusteron_client::Aeron::new(&ctx)?;
+    a.start()?;
 
-    let ing = cformat!("{}", cluster.ingress_channel);
-    let egr = cformat!("{}", cluster.egress_channel);
+    let ing = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
+    let egr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
 
     let egress = a
         .add_subscription(
@@ -39,9 +39,8 @@ fn test_archive_and_cluster_can_coexist() -> Result<(), Box<dyn std::error::Erro
             rusteron_client::Handlers::NONE,
             rusteron_client::Handlers::NONE,
             Duration::from_secs(5),
-        )
-        .unwrap();
-    let ingress = a.add_publication(&ing, 101, Duration::from_secs(5)).unwrap();
+        )?;
+    let ingress = a.add_publication(&ing, 101, Duration::from_secs(5))?;
 
     // Encode and send SessionConnectRequest
     let mut buf = vec![0u8; 512];

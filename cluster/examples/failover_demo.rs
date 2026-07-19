@@ -26,18 +26,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client_dir = std::env::temp_dir().join(format!("fo-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&client_dir);
     let dir_cstr = cformat!("{}", client_dir.display());
-    let dc = rusteron_media_driver::AeronDriverContext::new().unwrap();
-    dc.set_dir(&dir_cstr).unwrap();
-    dc.set_dir_delete_on_shutdown(true).unwrap();
-    dc.set_dir_delete_on_start(true).unwrap();
+    let dc = rusteron_media_driver::AeronDriverContext::new()?;
+    dc.set_dir(&dir_cstr)?;
+    dc.set_dir_delete_on_shutdown(true)?;
+    dc.set_dir_delete_on_start(true)?;
     let (_stop, _h) = rusteron_media_driver::AeronDriver::launch_embedded(dc, false);
-    let ctx = rusteron_client::AeronContext::new().unwrap();
-    ctx.set_dir(&dir_cstr).unwrap();
-    let a = rusteron_client::Aeron::new(&ctx).unwrap();
-    a.start().unwrap();
+    let ctx = rusteron_client::AeronContext::new()?;
+    ctx.set_dir(&dir_cstr)?;
+    let a = rusteron_client::Aeron::new(&ctx)?;
+    a.start()?;
 
     let egress_port: u16 = 19199;
-    let egress_uri = cformat!("aeron:udp?endpoint=localhost:{egress_port}");
+    let egress_uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{}", egress_port))?;
     let egress = a
         .add_subscription(
             &egress_uri,
@@ -45,11 +45,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rusteron_client::Handlers::NONE,
             rusteron_client::Handlers::NONE,
             Duration::from_secs(5),
-        )
-        .unwrap();
+        )?;
 
     let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
-        let uri = cformat!("aeron:udp?endpoint=localhost:{port}");
+        let uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{}", port))?;
         let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
         let mut buf = vec![0u8; 512];
         {

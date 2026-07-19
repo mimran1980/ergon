@@ -8,6 +8,7 @@ repository = "https://github.com/mimran1980/ErgoSBE"
 
 [dependencies]
 rusteron-client = { workspace = true }
+thiserror = "2"
 # Optional: only with feature `test-harness` (Java multi-node spawn helpers).
 rusteron-archive = { workspace = true, optional = true }
 

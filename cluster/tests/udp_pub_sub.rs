@@ -12,18 +12,18 @@ fn test_udp_pub_sub_loopback_same_driver() -> Result<(), Box<dyn std::error::Err
     let _ = std::fs::create_dir_all(&dir);
     let dir_cstr = cformat!("{}", dir.display());
 
-    let dc = rusteron_media_driver::AeronDriverContext::new().unwrap();
-    dc.set_dir(&dir_cstr).unwrap();
-    dc.set_dir_delete_on_shutdown(true).unwrap();
-    dc.set_dir_delete_on_start(true).unwrap();
+    let dc = rusteron_media_driver::AeronDriverContext::new()?;
+    dc.set_dir(&dir_cstr)?;
+    dc.set_dir_delete_on_shutdown(true)?;
+    dc.set_dir_delete_on_start(true)?;
     let (_stop, _h) = rusteron_media_driver::AeronDriver::launch_embedded(dc, false);
 
-    let ctx = rusteron_client::AeronContext::new().unwrap();
-    ctx.set_dir(&dir_cstr).unwrap();
-    let a = rusteron_client::Aeron::new(&ctx).unwrap();
-    a.start().unwrap();
+    let ctx = rusteron_client::AeronContext::new()?;
+    ctx.set_dir(&dir_cstr)?;
+    let a = rusteron_client::Aeron::new(&ctx)?;
+    a.start()?;
 
-    let uri = c"aeron:udp?endpoint=localhost:19999";
+    let uri = ergo_aeron_cluster::udp_endpoint_cstr("localhost:19999")?;
 
     // Sub first, then pub. The subscription is held only so a receiver
     // exists on the channel for the publication to connect to.
@@ -34,10 +34,9 @@ fn test_udp_pub_sub_loopback_same_driver() -> Result<(), Box<dyn std::error::Err
             rusteron_client::Handlers::NONE,
             rusteron_client::Handlers::NONE,
             Duration::from_secs(3),
-        )
-        .unwrap();
+        )?;
 
-    let p = a.add_publication(&uri, 77, Duration::from_secs(3)).unwrap();
+    let p = a.add_publication(&uri, 77, Duration::from_secs(3))?;
 
     // Try to send
     let mut sent = false;

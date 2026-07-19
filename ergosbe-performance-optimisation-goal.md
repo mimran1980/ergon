@@ -2066,3 +2066,18 @@ until a full five-run is ledgered.
 
 Encode five-run authority remains header **0.856** / keep-alive **0.916**.
 Connect demoted. Residual product scope COMPLETE with fresh closeout evidence.
+
+## 2026-07-19: cluster URI/CString hygiene + thiserror (no ratio change)
+
+**Scope:** API / error hygiene only — not a re-bench of the maintained matrix.
+
+| Change | Hot-path impact |
+|--------|-----------------|
+| `SessionBuilder` caches channel `CString`s after `AeronUriStringBuilder` parse | Connect/reconnect reuse cached FFI strings (cold path; fewer re-parses) |
+| Redirect / new-leader uses `udp_endpoint_cstr` | Cold path correctness |
+| `ClusterError` / `SinkError` via `thiserror` | Zero hot-path cost |
+| Result + `?` in tests / examples | Test-only |
+
+**Maintained ratios:** unchanged — last authority remains 2026-07-18 closeout table
+above (all ≤ 1.00). Re-run `cluster_codec_bench` only if claim/header encode paths
+change again.

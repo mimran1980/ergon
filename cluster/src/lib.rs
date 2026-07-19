@@ -53,6 +53,10 @@ pub mod codecs;
 /// [`SessionBuilder`] configuration for connect.
 pub mod config;
 /// Async connect state machine and connect re-offer cadence helpers.
+///
+/// **Aeron poll-driven async only** — not Tokio/`async`/`await`. Drive
+/// [`AsyncClusterConnect::poll`] from your event loop (same model as Java
+/// `AeronCluster.AsyncConnect`).
 pub mod connect;
 /// Controlled egress poll (Java `ControlledEgressAdapter` analogue).
 pub mod controlled;
@@ -64,6 +68,8 @@ pub mod decode;
 pub mod egress;
 /// Cluster client error type.
 pub mod error;
+/// Aeron channel URI helpers ([`AeronUriStringBuilder`](rusteron_client::AeronUriStringBuilder)).
+pub mod uri;
 /// Low-level egress event parse helpers (SessionEvent, NewLeader, redirects).
 pub mod poller;
 /// Session protocol constants derived from ErgoSBE encoder metadata.
@@ -86,6 +92,7 @@ pub use egress::{EgressAdapter, EgressListener, NullListener};
 pub use error::ClusterError;
 pub use poller::{EgressEvent, parse_event, parse_redirect_leader};
 pub use state::SessionState;
+pub use uri::{channel_cstr, ipc_cstr, udp_endpoint_cstr};
 
 /// Java Aeron Cluster spawn harness (integration tests / examples only).
 ///
