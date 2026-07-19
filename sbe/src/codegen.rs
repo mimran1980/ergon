@@ -5347,23 +5347,37 @@ fn generate_message_encoder(
         const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
     });
 
-    // wrap() and wrap_and_apply_header() — fallible, non-panicking.
+    // ── Hot-path bounds check: one cmp, cold error construction ──
+    // The error path is `#[cold] #[inline(never)]` so the hot path is a single
+    // `cmp + ja` followed by the same body as the unchecked companion. The
+    // compiler keeps the cold `Err` constructor out of the hot icache, and
+    // the branch predictor always predicts not-taken for correctly-sized buffers.
+    let needed_lit = syn::LitInt::new(&(header_size + block_length).to_string(), span);
+    let cold_check = quote::quote! {
+        /// Cold error constructor — never inlined into the hot path.
+        #[cold]
+        #[inline(never)]
+        fn buffer_too_short(buf: &[u8], pos: usize, needed: usize) -> sbe_rt::EncodeError {
+            sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available: buf.len().saturating_sub(pos),
+            }
+        }
+    };
+    impl_contents.extend(cold_check);
+
     let wrap_fn = quote::quote! {
         /// Wrap a mutable buffer for encoding. Returns an error if the buffer
         /// is too short for the header + fixed block.
         #[inline]
         pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
-            let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
-            if pos.wrapping_add(needed) > buf.len() {
-                return Err(sbe_rt::EncodeError::BufferTooShort {
-                    needed,
-                    available: buf.len().saturating_sub(pos),
-                });
+            if pos.wrapping_add(#needed_lit) > buf.len() {
+                return Err(Self::buffer_too_short(buf, pos, #needed_lit));
             }
             Ok(Self {
                 buf: &mut buf[pos..],
                 message_start: 0,
-                pos: needed,
+                pos: #needed_lit,
             })
         }
     };
@@ -5372,21 +5386,12 @@ fn generate_message_encoder(
     let wrap_apply_body = quote::quote! {
         // Optional-field nullification is NOT applied by default — call
         // `apply_nulls()` if you want null sentinels.
-        let needed: usize = #header_size_lit + Self::BLOCK_LENGTH;
         #[cfg(not(feature = "bound-check-disabled"))]
-        {
-            // Direct comparison: pos+needed > buf.len(). With pos=0 at all
-            // call sites, the compiler folds this to `needed > buf.len()` —
-            // one load + one cmp instruction.
-            if pos.wrapping_add(needed) > buf.len() {
-                return Err(sbe_rt::EncodeError::BufferTooShort {
-                    needed,
-                    available: buf.len().saturating_sub(pos),
-                });
-            }
+        if pos.wrapping_add(#needed_lit) > buf.len() {
+            return Err(Self::buffer_too_short(buf, pos, #needed_lit));
         }
         buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
-        Ok(Self { buf: &mut buf[pos..], message_start: 0, pos: needed })
+        Ok(Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit })
     };
     let wrap_apply_fn = quote::quote! {
         /// Wrap a mutable buffer and write the SBE message header.

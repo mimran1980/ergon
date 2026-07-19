@@ -30,8 +30,18 @@ the comparison profile but do not by themselves prove generated-code speed.
 ## Global Constraints
 
 - Official-SBE wire compatibility is non-negotiable.
-- ErgoSBE must be equal to or faster than Aeron in every maintained measured
-  scenario.
+- **Mandatory bench invariants** (enforced every `just bench` run):
+  1. **ErgoSBE unchecked ≤ ErgoSBE checked** — removing bounds checks
+     must never make the code slower (proves the check has non-zero cost).
+  2. **ErgoSBE unchecked ≤ Aeron** — even without bounds checks, ErgoSBE
+     must match or beat Aeron on identical work.
+  3. **ErgoSBE checked ≤ Aeron** — with bounds checks active, ErgoSBE
+     must still match or beat Aeron. Cold error-path construction
+     (`#[cold] #[inline(never)]`) keeps the hot path clean.
+  All three ratios must be ≤ 1.00 for every maintained scenario. The
+  `just bench` recipe runs a single Criterion session with
+  `ergosbe_checked`, `ergosbe_unchecked`, and `aeron` variants so
+  cross-session noise cannot mask regressions.
 - Prefer an easier or safer Rust API when it is zero-cost or outside the hot
   path.
 - No safety check, abstraction, branch, or ergonomic wrapper may slow a

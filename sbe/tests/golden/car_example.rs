@@ -3230,21 +3230,26 @@ impl<'a> CarEncoder<'a> {
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
+    /// Cold error constructor — never inlined into the hot path.
+    #[cold]
+    #[inline(never)]
+    fn buffer_too_short(buf: &[u8], pos: usize, needed: usize) -> sbe_rt::EncodeError {
+        sbe_rt::EncodeError::BufferTooShort {
+            needed,
+            available: buf.len().saturating_sub(pos),
+        }
+    }
     /// Wrap a mutable buffer for encoding. Returns an error if the buffer
     /// is too short for the header + fixed block.
     #[inline]
     pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
-        let needed: usize = 8 + Self::BLOCK_LENGTH;
-        if pos.wrapping_add(needed) > buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed,
-                available: buf.len().saturating_sub(pos),
-            });
+        if pos.wrapping_add(53) > buf.len() {
+            return Err(Self::buffer_too_short(buf, pos, 53));
         }
         Ok(Self {
             buf: &mut buf[pos..],
             message_start: 0,
-            pos: needed,
+            pos: 53,
         })
     }
     /// Wrap a mutable buffer and write the SBE message header.
@@ -3254,21 +3259,15 @@ impl<'a> CarEncoder<'a> {
         buf: &'a mut [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::EncodeError> {
-        let needed: usize = 8 + Self::BLOCK_LENGTH;
         #[cfg(not(feature = "bound-check-disabled"))]
-        {
-            if pos.wrapping_add(needed) > buf.len() {
-                return Err(sbe_rt::EncodeError::BufferTooShort {
-                    needed,
-                    available: buf.len().saturating_sub(pos),
-                });
-            }
+        if pos.wrapping_add(53) > buf.len() {
+            return Err(Self::buffer_too_short(buf, pos, 53));
         }
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
         Ok(Self {
             buf: &mut buf[pos..],
             message_start: 0,
-            pos: needed,
+            pos: 53,
         })
     }
     #[inline]
