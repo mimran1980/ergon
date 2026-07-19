@@ -38,14 +38,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let egress_port: u16 = 19199;
     let egress_uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{}", egress_port))?;
-    let egress = a
-        .add_subscription(
-            &egress_uri,
-            102,
-            rusteron_client::Handlers::NONE,
-            rusteron_client::Handlers::NONE,
-            Duration::from_secs(5),
-        )?;
+    let egress = a.add_subscription(
+        &egress_uri,
+        102,
+        rusteron_client::Handlers::NONE,
+        rusteron_client::Handlers::NONE,
+        Duration::from_secs(5),
+    )?;
 
     let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
         let uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{}", port))?;
@@ -156,9 +155,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("\n=== Result: NewLeaderEvent had no endpoint for member {leader_member_id} ===");
                 }
             }
-        
-    Ok(())
-}
+
+            Ok(())
+        }
         None => {
             println!("\n=== Result: no NewLeaderEvent within 30s ===");
             println!("(cluster election timing — the transport survived, but no new");

@@ -1,4 +1,5 @@
 //! Generate L3 orderbook code for inspection.
+#![allow(clippy::unnecessary_wraps)]
 #![allow(clippy::expect_used, clippy::unwrap_used, missing_docs)]
 use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
 use std::path::PathBuf;

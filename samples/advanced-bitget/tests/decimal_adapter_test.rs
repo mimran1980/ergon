@@ -41,7 +41,8 @@ fn parse_decimal_exact_matrix() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn rust_decimal_generic_roundtrip_through_generated_methods() -> Result<(), Box<dyn std::error::Error>> {
+fn rust_decimal_generic_roundtrip_through_generated_methods()
+-> Result<(), Box<dyn std::error::Error>> {
     let values = ["50000.5", "0.000000000000015", "-42", "0", "0.25"];
     for text in values {
         let d = rust_decimal::Decimal::from_str(text).unwrap();

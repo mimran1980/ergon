@@ -59,10 +59,15 @@ Prefer **`codecs::session` / `codecs::rfq`** in new code. Prefer
 
 ```rust
 use ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder;
-use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
+use ergo_aeron_cluster::{SessionBuilder, default_idle, poll_egress_idle};
 
-// SessionBuilder::builder().ingress_channel(...).egress_channel(...)
-// let mut client = AeronCluster::connect(&builder, aeron_dir)?;
+// Preferred entry: SessionBuilder::connect / connect_async
+// let mut client = SessionBuilder::builder()
+//     .ingress_channel("aeron:udp?endpoint=localhost:9002")
+//     .egress_channel("aeron:udp?endpoint=localhost:19002")
+//     // or multi-member first-connect:
+//     // .ingress_endpoints("0=host:9002,1=host:9102")
+//     .connect(aeron_dir)?;
 
 // Header-inclusive length is generated:
 const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH; // 32
@@ -72,10 +77,25 @@ let mut claim = client.try_claim(app_len)?;
 // claim.payload_mut() — encode AppMessage / nested SBE here
 claim.commit()?;
 
-// Egress
-// client.poll_egress(&mut adapter, limit)?;
-// client.send_keep_alive()?;
+// Typed offer errors: err.is_retryable() for back-pressure / not-connected
+// Admin: client.send_admin_request(cid, AdminRequestType::SNAPSHOT, &[])?;
+// Idle: let mut idle = default_idle(); poll_egress_idle(&mut client, &mut adapter, 10, &mut idle)?;
 ```
+
+## Client surface (experimental)
+
+| API | Role |
+|-----|------|
+| `SessionBuilder::connect` / `connect_async` | Entry points (async = Aeron poll, not Tokio) |
+| `offer` / `try_claim` / `send_keep_alive` / `close` | Session data plane |
+| `send_admin_request` | AdminRequest (e.g. SNAPSHOT) on ingress |
+| `poll_egress` + `EgressListener` | SessionEvent, NewLeader, app, admin response |
+| `ingress_endpoints` + `uri` / `endpoints` | Multi-member first-connect + leader resolve |
+| `StaticCredentials` / `EchoChallengeCredentials` | Auth suppliers |
+| `ClusterError::is_retryable` / `PublicationFailure` | Offer back-pressure classification |
+| `idle::{default_idle, poll_egress_idle, …}` | Aeron `IdleStrategy` poll helpers |
+
+Channels always go through `AeronUriStringBuilder` (`channel_cstr` / `udp_endpoint_cstr`).
 
 Nested AppMessage recipe:
 [`../sbe/docs/guide/claim-nested-encode.md`](../sbe/docs/guide/claim-nested-encode.md).  

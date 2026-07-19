@@ -66,6 +66,11 @@ For wire-shape or hot-path changes, also cover:
 - Do not rename pillar directories (`sbe`, `persist`, `cluster`, `samples`).
 - Commit messages: one sentence, conventional prefix (`feat:`, `fix:`, `docs:`, …).
 
+## Publish
+
+See [`docs/PUBLISH.md`](docs/PUBLISH.md) for crates.io order and the pre-publish
+checklist (`just check`, package lists, no `test-harness` on published cluster).
+
 ## Errors and `Result`
 
 - **Library / public API:** crate-specific errors only (`ClusterError`,

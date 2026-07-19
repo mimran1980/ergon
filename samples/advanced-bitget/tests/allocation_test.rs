@@ -165,18 +165,17 @@ fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     let driver = rusteron_media_driver::testing::EmbeddedDriver::launch().expect("driver");
     let ctx = rusteron_client::AeronContext::new().expect("ctx");
-    ctx.set_dir(&cformat!("{}", driver.dir()))
-        .expect("dir");
+    ctx.set_dir(&cformat!("{}", driver.dir())).expect("dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
     aeron.start().expect("start");
     let ch = CHANNEL;
     let pub_typed = aeron
-        .async_add_exclusive_publication(&ch, 1001)
+        .async_add_exclusive_publication(ch, 1001)
         .expect("pub")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
     let pub_dyn = aeron
-        .async_add_exclusive_publication(&ch, 1002)
+        .async_add_exclusive_publication(ch, 1002)
         .expect("pub")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
@@ -184,14 +183,14 @@ fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     // the term buffer comfortably holds this test's traffic.
     let _sub_typed = aeron
         .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
-            &ch, 1001, None, None,
+            ch, 1001, None, None,
         )
         .expect("sub")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
     let _sub_dyn = aeron
         .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
-            &ch, 1002, None, None,
+            ch, 1002, None, None,
         )
         .expect("sub")
         .poll_blocking(Duration::from_secs(5))

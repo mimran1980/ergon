@@ -37,14 +37,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ing = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
     let egr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
-    let egress = a
-        .add_subscription(
-            &egr,
-            102,
-            rusteron_client::Handlers::NONE,
-            rusteron_client::Handlers::NONE,
-            Duration::from_secs(5),
-        )?;
+    let egress = a.add_subscription(
+        &egr,
+        102,
+        rusteron_client::Handlers::NONE,
+        rusteron_client::Handlers::NONE,
+        Duration::from_secs(5),
+    )?;
     let ingress = a.add_publication(&ing, 101, Duration::from_secs(5))?;
 
     // Connect

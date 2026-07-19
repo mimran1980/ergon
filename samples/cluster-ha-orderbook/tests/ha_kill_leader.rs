@@ -12,8 +12,8 @@
 
 #![cfg(feature = "test-harness")]
 
-use std::error::Error;
 use rusteron_client::cformat;
+use std::error::Error;
 use std::time::{Duration, Instant};
 
 use cluster_ha_orderbook::follower::BookFollower;

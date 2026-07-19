@@ -162,7 +162,7 @@ mod tests {
         book.apply_snapshot([(10050, 10), (10000, 5)], [(10100, 3), (10200, 7)]);
         assert_eq!(book.best_bid(), Some(book.price_dec(10050)));
         assert_eq!(book.best_ask(), Some(book.price_dec(10100)));
-    
+
         Ok(())
     }
 }

@@ -3,8 +3,8 @@
 use ergo_aeron_cluster::codecs::cluster_codecs::{
     WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
 };
-use serial_test::serial;
 use rusteron_client::cformat;
+use serial_test::serial;
 use std::time::Duration;
 
 #[test]
@@ -22,14 +22,13 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     let ipc = ergo_aeron_cluster::ipc_cstr()?;
 
     // Diagnostic
-    let _ds = a
-        .add_subscription(
-            &ipc,
-            999,
-            rusteron_client::Handlers::NONE,
-            rusteron_client::Handlers::NONE,
-            Duration::from_secs(3),
-        )?;
+    let _ds = a.add_subscription(
+        &ipc,
+        999,
+        rusteron_client::Handlers::NONE,
+        rusteron_client::Handlers::NONE,
+        Duration::from_secs(3),
+    )?;
     let dp = a.add_publication(&ipc, 999, Duration::from_secs(3))?;
     assert!(dp.offer_raw(b"t", rusteron_client::Handlers::NONE) > 0, "IPC diag");
 
@@ -37,14 +36,13 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     let ing_cstr = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
     let egr_cstr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
 
-    let egress = a
-        .add_subscription(
-            &egr_cstr,
-            102,
-            rusteron_client::Handlers::NONE,
-            rusteron_client::Handlers::NONE,
-            Duration::from_secs(5),
-        )?;
+    let egress = a.add_subscription(
+        &egr_cstr,
+        102,
+        rusteron_client::Handlers::NONE,
+        rusteron_client::Handlers::NONE,
+        Duration::from_secs(5),
+    )?;
     let ingress = a.add_publication(&ing_cstr, 101, Duration::from_secs(5))?;
 
     let mut buf = vec![0u8; 512];

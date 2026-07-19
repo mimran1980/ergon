@@ -66,10 +66,12 @@ pub mod credentials;
 pub mod decode;
 /// Egress adapter + listener dispatch for session and app messages.
 pub mod egress;
+/// Multi-member ingress endpoint maps (`0=host:port,…`).
+pub mod endpoints;
 /// Cluster client error type.
 pub mod error;
-/// Aeron channel URI helpers ([`AeronUriStringBuilder`](rusteron_client::AeronUriStringBuilder)).
-pub mod uri;
+/// Poll-loop idle helpers ([`rusteron_client::IdleStrategy`]).
+pub mod idle;
 /// Low-level egress event parse helpers (SessionEvent, NewLeader, redirects).
 pub mod poller;
 /// Session protocol constants derived from ErgoSBE encoder metadata.
@@ -78,18 +80,25 @@ pub mod protocol;
 pub mod session;
 /// [`SessionState`] machine for connected / new-leader / closed.
 pub mod state;
+/// Aeron channel URI helpers ([`AeronUriStringBuilder`](rusteron_client::AeronUriStringBuilder)).
+pub mod uri;
 
 pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim};
 pub use config::SessionBuilder;
 pub use connect::{AsyncConnect, connect_reoffer_interval_ms, should_reoffer_connect};
 pub use controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
-pub use credentials::{CredentialsSupplier, NullCredentialsSupplier};
+pub use credentials::{CredentialsSupplier, EchoChallengeCredentials, NullCredentialsSupplier, StaticCredentials};
 pub use decode::{
-    NewLeaderEventView, SessionEventView, SessionMessageHeaderView, decode_new_leader_event,
-    decode_session_event, decode_session_message_header,
+    NewLeaderEventView, SessionEventView, SessionMessageHeaderView, decode_new_leader_event, decode_session_event,
+    decode_session_message_header,
 };
 pub use egress::{EgressAdapter, EgressListener, NullListener};
-pub use error::{ClusterError, ClusterResult};
+pub use endpoints::{IngressEndpoint, endpoint_for_member, next_endpoint_index, parse_ingress_endpoints};
+pub use error::{ClusterError, ClusterResult, PublicationFailure};
+pub use idle::{
+    BusySpinIdleStrategy, ClusterBackoffIdle, ClusterIdleStrategy, NoOpIdleStrategy, SleepingIdleStrategy,
+    YieldingIdleStrategy, default_idle, poll_connect_once, poll_connect_until_done, poll_egress_idle,
+};
 pub use poller::{EgressEvent, parse_event, parse_redirect_leader};
 pub use state::SessionState;
 pub use uri::{channel_cstr, ipc_cstr, udp_endpoint_cstr};
@@ -110,7 +119,7 @@ mod tests {
     fn scaffold_compiles() -> Result<(), Box<dyn std::error::Error>> {
         // Smoke-check ErgoSBE production codecs are wired into the lib.
         assert_eq!(crate::codecs::ergo_codecs::SessionConnectRequestEncoder::SCHEMA_ID, 111);
-    
+
         Ok(())
     }
 }

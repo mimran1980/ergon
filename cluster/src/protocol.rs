@@ -22,42 +22,42 @@ mod tests {
         assert_eq!(ChallengeResponseEncoder::TEMPLATE_ID, 8, "ChallengeResponse");
         assert_eq!(AdminRequestEncoder::TEMPLATE_ID, 26, "AdminRequest");
         assert_eq!(AdminResponseEncoder::TEMPLATE_ID, 27, "AdminResponse");
-    
+
         Ok(())
     }
 
     #[test]
     fn test_schema_id_is_111() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(SessionConnectRequestEncoder::SCHEMA_ID, 111);
-    
+
         Ok(())
     }
 
     #[test]
     fn test_schema_version_is_16() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(SessionConnectRequestEncoder::SCHEMA_VERSION, 16);
-    
+
         Ok(())
     }
 
     #[test]
     fn test_message_header_is_8_bytes() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(SessionMessageHeaderEncoder::HEADER_TEMPLATE.len(), 8);
-    
+
         Ok(())
     }
 
     #[test]
     fn test_session_message_header_is_24_bytes() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(SessionMessageHeaderEncoder::BLOCK_LENGTH, 24);
-    
+
         Ok(())
     }
 
     #[test]
     fn test_session_event_body_is_44_bytes() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(SessionEventEncoder::BLOCK_LENGTH, 44);
-    
+
         Ok(())
     }
 
@@ -65,7 +65,7 @@ mod tests {
     fn test_decode_empty_buffer_returns_false_not_panic() -> Result<(), Box<dyn std::error::Error>> {
         let mut adapter = crate::egress::EgressAdapter::new(crate::egress::NullListener);
         assert!(!adapter.on_fragment(&[]).expect("should not error"));
-    
+
         Ok(())
     }
 
@@ -73,7 +73,7 @@ mod tests {
     fn test_decode_truncated_header_returns_false() -> Result<(), Box<dyn std::error::Error>> {
         let mut adapter = crate::egress::EgressAdapter::new(crate::egress::NullListener);
         assert!(!adapter.on_fragment(&[0u8; 4]).expect("should not error"));
-    
+
         Ok(())
     }
 
@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(EventCode::REDIRECT as i32, 2);
         assert_eq!(EventCode::AUTHENTICATIONREJECTED as i32, 3);
         assert_eq!(EventCode::CLOSED as i32, 4);
-    
+
         Ok(())
     }
 

@@ -202,7 +202,7 @@ mod tests {
         assert!(!b.is_serving());
         assert_eq!(b.stale_reason(), Some(StaleReason::NotReady));
         assert!(b.live_image().is_none());
-    
+
         Ok(())
     }
 

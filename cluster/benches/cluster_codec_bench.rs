@@ -319,10 +319,7 @@ fn new_leader_fixture() -> Vec<u8> {
     use ergo_aeron_cluster::codecs::ergo_codecs::NewLeaderEventEncoder;
     let mut buf = vec![0u8; 256];
     let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
-    let _ = enc
-        .cluster_session_id(2)
-        .leadership_term_id(9)
-        .leader_member_id(1);
+    let _ = enc.cluster_session_id(2).leadership_term_id(9).leader_member_id(1);
     let complete = enc.ingress_endpoints(b"0=localhost:9000,1=localhost:9100").unwrap();
     let len = complete.encoded_length_with_header();
     buf.truncate(len);
@@ -337,8 +334,7 @@ fn bench_decode_new_leader(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..HFT_BATCH {
                 use ergo_aeron_cluster::codecs::ergo_codecs::NewLeaderEventDecoder;
-                let dec =
-                    NewLeaderEventDecoder::wrap_and_apply_header(black_box(fixture.as_slice()), 0).unwrap();
+                let dec = NewLeaderEventDecoder::wrap_and_apply_header(black_box(fixture.as_slice()), 0).unwrap();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
                 let lmid = dec.leader_member_id();
@@ -350,8 +346,7 @@ fn bench_decode_new_leader(c: &mut Criterion) {
     g.bench_function("sbe-tool", |b| {
         b.iter(|| {
             use ergo_aeron_cluster::codecs::cluster_codecs::{
-                ReadBuf, message_header_codec::MessageHeaderDecoder,
-                new_leader_event_codec::NewLeaderEventDecoder,
+                ReadBuf, message_header_codec::MessageHeaderDecoder, new_leader_event_codec::NewLeaderEventDecoder,
             };
             for _ in 0..HFT_BATCH {
                 let buf = black_box(fixture.as_slice());
@@ -400,14 +395,15 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
                 for i in 0..HFT_BATCH {
                     let off = i * total;
                     let slot = &mut buf[off..off + total];
-                    let _ = ergo_aeron_cluster::codecs::ergo_codecs::SessionMessageHeaderEncoder::wrap_and_apply_header(
-                        &mut slot[..32],
-                        0,
-                    )
-                    .unwrap()
-                    .leadership_term_id(5)
-                    .cluster_session_id(42)
-                    .timestamp(0);
+                    let _ =
+                        ergo_aeron_cluster::codecs::ergo_codecs::SessionMessageHeaderEncoder::wrap_and_apply_header(
+                            &mut slot[..32],
+                            0,
+                        )
+                        .unwrap()
+                        .leadership_term_id(5)
+                        .cluster_session_id(42)
+                        .timestamp(0);
                     slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
                 }
                 black_box(&buf);

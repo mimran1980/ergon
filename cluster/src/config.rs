@@ -107,40 +107,82 @@ impl SessionBuilder {
     }
 
     /// Set multi-member ingress endpoints (`"0=host:port,1=host:port"`).
+    ///
+    /// When set, first-connect opens the exclusive publication against the
+    /// first (lowest id) member endpoint, then follows REDIRECT / NewLeader
+    /// to the elected leader. [`Self::ingress_channel`] may still be set as
+    /// an explicit override for the initial publication URI.
     pub fn ingress_endpoints(mut self, endpoints: impl Into<String>) -> Self {
         self.ingress_endpoints = Some(endpoints.into());
         self
     }
 
+    /// Synchronous connect — equivalent to [`crate::AeronCluster::connect`].
+    pub fn connect(self, aeron_dir: &str) -> Result<crate::AeronCluster, ClusterError> {
+        crate::AeronCluster::connect(&self, aeron_dir)
+    }
+
+    /// Poll-driven Aeron async connect (not Tokio).
+    pub fn connect_async(self, aeron_dir: impl Into<String>) -> crate::AsyncClusterConnect {
+        crate::AeronCluster::connect_async(self, aeron_dir)
+    }
+
     /// Validate required fields and that channel URIs parsed successfully.
+    ///
+    /// Requires a non-empty egress channel and either a valid
+    /// [`Self::ingress_channel`] or [`Self::ingress_endpoints`] map.
     pub fn validate(&self) -> Result<(), ClusterError> {
-        if self.ingress_channel.is_empty() {
-            return Err(ClusterError::ConnectFailed {
-                reason: "ingress_channel is required".into(),
-            });
+        let has_ingress = !self.ingress_channel.is_empty();
+        let has_endpoints = self.ingress_endpoints.as_ref().is_some_and(|s| !s.is_empty());
+        if !has_ingress && !has_endpoints {
+            return Err(ClusterError::connect(
+                "ingress_channel or ingress_endpoints is required",
+            ));
         }
         if self.egress_channel.is_empty() {
-            return Err(ClusterError::ConnectFailed {
-                reason: "egress_channel is required".into(),
-            });
+            return Err(ClusterError::connect("egress_channel is required"));
         }
-        if self.ingress_cstr.is_none() {
-            // Re-run for a precise URI error message.
+        if has_ingress && self.ingress_cstr.is_none() {
             let _ = uri::channel_cstr(&self.ingress_channel)?;
-            return Err(ClusterError::ConnectFailed {
-                reason: format!("invalid ingress_channel URI: {}", self.ingress_channel),
-            });
+            return Err(ClusterError::connect(format!(
+                "invalid ingress_channel URI: {}",
+                self.ingress_channel
+            )));
+        }
+        if has_endpoints {
+            let _ = crate::endpoints::parse_ingress_endpoints(self.ingress_endpoints.as_deref().unwrap_or(""))?;
         }
         if self.egress_cstr.is_none() {
             let _ = uri::channel_cstr(&self.egress_channel)?;
-            return Err(ClusterError::ConnectFailed {
-                reason: format!("invalid egress_channel URI: {}", self.egress_channel),
-            });
+            return Err(ClusterError::connect(format!(
+                "invalid egress_channel URI: {}",
+                self.egress_channel
+            )));
         }
         Ok(())
     }
 
+    /// Resolve the initial exclusive-publication channel for connect.
+    ///
+    /// Preference: explicit `ingress_channel` CString when set; otherwise the
+    /// first member in `ingress_endpoints` as `aeron:udp?endpoint=…`.
+    pub(crate) fn resolve_initial_ingress_cstr(&self) -> Result<CString, ClusterError> {
+        if let Some(c) = self.ingress_cstr.as_ref() {
+            return Ok(c.clone());
+        }
+        if let Some(ref map) = self.ingress_endpoints {
+            let eps = crate::endpoints::parse_ingress_endpoints(map)?;
+            let first = &eps[0];
+            return uri::udp_endpoint_cstr(&first.endpoint);
+        }
+        Err(ClusterError::connect(
+            "no ingress_channel or ingress_endpoints to resolve",
+        ))
+    }
+
     /// Cached ingress channel `CString` (call after [`Self::validate`]).
+    /// Prefer [`Self::resolve_initial_ingress_cstr`] for connect.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn ingress_cstr(&self) -> Result<&CString, ClusterError> {
         self.ingress_cstr.as_ref().ok_or_else(|| ClusterError::ConnectFailed {
             reason: "ingress_channel CString missing (call validate first)".into(),
@@ -195,6 +237,18 @@ mod tests {
         let a = b.ingress_cstr()?.as_ptr();
         let a2 = b.ingress_cstr()?.as_ptr();
         assert_eq!(a, a2, "cached CString must be stable across calls");
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_endpoints_without_ingress_channel() -> Result<(), Box<dyn std::error::Error>> {
+        let b = SessionBuilder::builder()
+            .ingress_endpoints("0=localhost:9002,1=localhost:9102")
+            .egress_channel("aeron:udp?endpoint=localhost:19002");
+        b.validate()?;
+        let c = b.resolve_initial_ingress_cstr()?;
+        let s = c.to_str()?;
+        assert!(s.contains("localhost:9002"), "{s}");
         Ok(())
     }
 }

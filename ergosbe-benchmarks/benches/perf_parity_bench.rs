@@ -530,7 +530,7 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
                 car.serial_number(42);
                 car.model_year(2013);
                 let after_fuel = car
-                    .try_fuel_figures::<sbe_rt::EncodeError, _>(3, |g| {
+                    .fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
                         for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
                             g.add(|e| {
                                 let _ = e.speed(s).mpg(m);
@@ -540,7 +540,7 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
                     })
                     .unwrap();
                 let after_perf = after_fuel
-                    .try_performance_figures::<sbe_rt::EncodeError, _>(0, |_| Ok(()))
+                    .performance_figures(0, |_| Ok::<(), sbe_rt::EncodeError>(()))
                     .unwrap();
                 let complete = after_perf
                     .manufacturer_with::<sbe_rt::EncodeError, _>(5, |b: &mut [u8]| {
@@ -585,7 +585,14 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
                 car.some_numbers([1u32, 2, 3, 4]);
                 car.vehicle_code([97, 98, 99, 100, 101, 102]);
                 car.extras(OptionalExtras::default());
-                car.engine(Engine::new(2000, 4, [49, 0, 0]));
+                car.engine(Engine::new(
+                    2000,
+                    4,
+                    [49, 0, 0],
+                    0i8,
+                    BooleanType::F,
+                    Booster::new(BoostType::TURBO, 0),
+                ));
                 let car = car
                     .fuel_figures(3, |g| {
                         g.add(|e| {

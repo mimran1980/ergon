@@ -85,7 +85,8 @@ fn publish_l2book_encodes_app_message_on_typed_stream() -> Result<(), Box<dyn st
 }
 
 #[test]
-fn publish_l2book_publishes_dynamic_v2_row_with_same_correlation() -> Result<(), Box<dyn std::error::Error>> {
+fn publish_l2book_publishes_dynamic_v2_row_with_same_correlation()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut p =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
     let bids = [lvl(500005, -1, 15, -1)];
@@ -241,7 +242,8 @@ fn publish_schema_emits_decodable_dynamic_schema_v2() -> Result<(), Box<dyn std:
 }
 
 #[test]
-fn short_claims_classify_encode_failures_for_all_message_kinds() -> Result<(), Box<dyn std::error::Error>> {
+fn short_claims_classify_encode_failures_for_all_message_kinds()
+-> Result<(), Box<dyn std::error::Error>> {
     let bids = [lvl(1, 0, 1, 0)];
 
     // Typed book claim comes up short → EncodeFailed before the dynamic leg.
@@ -318,7 +320,8 @@ fn every_drop_reason_maps_to_its_counter() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
-fn derived_ipc_mtu_covers_the_largest_maintained_message() -> Result<(), Box<dyn std::error::Error>> {
+fn derived_ipc_mtu_covers_the_largest_maintained_message() -> Result<(), Box<dyn std::error::Error>>
+{
     use advanced_bitget::publication::{derive_ipc_mtu, worst_case_typed_claim_len};
     let worst = worst_case_typed_claim_len();
     let mtu = derive_ipc_mtu();

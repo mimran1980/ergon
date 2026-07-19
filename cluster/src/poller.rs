@@ -136,7 +136,7 @@ mod tests {
         let (id, ep) = parse_redirect_leader(d).unwrap();
         assert_eq!(id, 0);
         assert_eq!(ep, "localhost:9010");
-    
+
         Ok(())
     }
 
@@ -145,7 +145,7 @@ mod tests {
         let (id, ep) = parse_redirect_leader("3=host:9999").unwrap();
         assert_eq!(id, 3);
         assert_eq!(ep, "host:9999");
-    
+
         Ok(())
     }
 
@@ -153,14 +153,14 @@ mod tests {
     fn test_parse_redirect_leader_malformed() -> Result<(), Box<dyn std::error::Error>> {
         assert!(parse_redirect_leader("garbage").is_none());
         assert!(parse_redirect_leader("").is_none());
-    
+
         Ok(())
     }
 
     #[test]
     fn test_parse_event_short_returns_none() -> Result<(), Box<dyn std::error::Error>> {
         assert!(parse_event(&[0u8; 4]).is_none());
-    
+
         Ok(())
     }
 
@@ -179,7 +179,7 @@ mod tests {
     fn test_parse_leader_endpoint_missing_member() -> Result<(), Box<dyn std::error::Error>> {
         assert!(parse_leader_endpoint("0=localhost:9012", 5).is_none());
         assert!(parse_leader_endpoint("", 0).is_none());
-    
+
         Ok(())
     }
 }

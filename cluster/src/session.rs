@@ -83,7 +83,7 @@ mod tests {
         assert_eq!(s.state(), SessionState::Connected);
         assert_eq!(s.cluster_session_id(), 42);
         assert_eq!(s.leadership_term_id(), 1);
-    
+
         Ok(())
     }
 
@@ -92,7 +92,7 @@ mod tests {
         let mut s = AeronClusterSession::new(1, 1);
         assert!(s.close().is_ok());
         assert_eq!(s.state(), SessionState::PendingClose);
-    
+
         Ok(())
     }
 
@@ -101,7 +101,7 @@ mod tests {
         let mut s = AeronClusterSession::new(1, 1);
         s.mark_closed();
         assert_eq!(s.close(), Err(ClusterError::SessionClosed));
-    
+
         Ok(())
     }
 
@@ -113,7 +113,7 @@ mod tests {
         assert_eq!(s.leadership_term_id(), 5);
         s.on_ingress_connected();
         assert_eq!(s.state(), SessionState::Connected);
-    
+
         Ok(())
     }
 
@@ -122,7 +122,7 @@ mod tests {
         let mut s = AeronClusterSession::new(1, 1);
         s.mark_closed();
         assert_eq!(s.state(), SessionState::Closed);
-    
+
         Ok(())
     }
 }

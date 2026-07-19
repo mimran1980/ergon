@@ -15,13 +15,15 @@
 
 use std::time::{Duration, Instant};
 
-use rusteron_client::{cformat, Aeron, AeronClaim, AeronContext, AeronExclusivePublication, AeronSubscription, Handlers};
+use rusteron_client::{
+    Aeron, AeronClaim, AeronContext, AeronExclusivePublication, AeronSubscription, Handlers, cformat,
+};
 
 use crate::uri;
 
 use crate::codecs::ergo_codecs::{
-    ChallengeResponseEncoder, SessionCloseRequestEncoder, SessionConnectRequestEncoder, SessionKeepAliveEncoder,
-    SessionMessageHeaderEncoder,
+    AdminRequestEncoder, AdminRequestType, ChallengeResponseEncoder, SessionCloseRequestEncoder,
+    SessionConnectRequestEncoder, SessionKeepAliveEncoder, SessionMessageHeaderEncoder,
 };
 use crate::connect::{connect_reoffer_interval_ms, should_reoffer_connect};
 use crate::egress::{EgressAdapter, EgressListener};
@@ -33,8 +35,18 @@ const MSG_HDR_TOTAL: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
 
 /// Map an ErgoSBE encode error into the cluster error enum.
 fn enc_err<E: std::fmt::Debug>(e: E) -> ClusterError {
-    ClusterError::Publication {
+    ClusterError::ProtocolError {
         reason: format!("sbe encode: {e:?}"),
+    }
+}
+
+/// Map a raw offer return: `Ok(pos)` if `r > 0`, else typed publication error.
+#[inline]
+fn offer_result(context: &'static str, r: i64) -> Result<i64, ClusterError> {
+    if r > 0 {
+        Ok(r)
+    } else {
+        Err(ClusterError::from_offer_raw(context, r))
     }
 }
 
@@ -67,9 +79,9 @@ impl AeronCluster {
         let aeron = Aeron::new(&ctx).map_err(|e| ClusterError::aeron("Aeron::new", e))?;
         aeron.start().map_err(|e| ClusterError::aeron("Aeron::start", e))?;
 
-        // Reuse SessionBuilder-cached channel CStrings (URI-validated once).
+        // Egress CString cached on builder; ingress may come from multi-member map.
         let egress_cstr = builder.egress_cstr()?;
-        let ingress_cstr = builder.ingress_cstr()?;
+        let ingress_cstr = builder.resolve_initial_ingress_cstr()?;
 
         let egress = aeron
             .add_subscription(
@@ -82,7 +94,7 @@ impl AeronCluster {
             .map_err(|e| ClusterError::aeron("add_subscription", e))?;
 
         let ingress = aeron
-            .add_exclusive_publication(ingress_cstr, builder.ingress_stream_id, Duration::from_secs(5))
+            .add_exclusive_publication(&ingress_cstr, builder.ingress_stream_id, Duration::from_secs(5))
             .map_err(|e| ClusterError::aeron("add_exclusive_publication", e))?;
 
         let mut client = Self {
@@ -256,12 +268,7 @@ impl AeronCluster {
             .cluster_session_id(cluster_session_id);
         let _ = enc.encoded_credentials(credentials).map_err(enc_err)?;
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
-        if r <= 0 {
-            return Err(ClusterError::Publication {
-                reason: format!("challenge response offer returned {r}"),
-            });
-        }
-        Ok(())
+        offer_result("challenge_response", r).map(|_| ())
     }
 
     /// Recreate the ingress publication pointed at a new leader endpoint.
@@ -291,13 +298,7 @@ impl AeronCluster {
         buf[MSG_HDR_TOTAL..].copy_from_slice(payload);
 
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
-        if r > 0 {
-            Ok(r)
-        } else {
-            Err(ClusterError::Publication {
-                reason: format!("offer returned {r} (backpressure / not connected)"),
-            })
-        }
+        offer_result("offer", r)
     }
 
     /// Send a SessionKeepAlive to hold the session open.
@@ -308,12 +309,34 @@ impl AeronCluster {
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id);
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
-        if r < 0 {
-            return Err(ClusterError::Publication {
-                reason: format!("keep-alive offer returned {r}"),
-            });
+        offer_result("keep_alive", r).map(|_| ())
+    }
+
+    /// Send an AdminRequest (e.g. snapshot) on the ingress publication.
+    ///
+    /// Responses arrive as admin events on the egress listener
+    /// ([`crate::EgressListener::on_admin_response`]).
+    pub fn send_admin_request(
+        &mut self,
+        correlation_id: i64,
+        request_type: AdminRequestType,
+        payload: &[u8],
+    ) -> Result<i64, ClusterError> {
+        if self.state != SessionState::Connected {
+            return Err(ClusterError::NotConnected);
         }
-        Ok(())
+        let len = AdminRequestEncoder::compute_encoded_length_with_message_header(payload.len());
+        let mut buf = vec![0u8; len];
+        let mut enc = AdminRequestEncoder::wrap_and_apply_header(&mut buf, 0).map_err(enc_err)?;
+        let _ = enc
+            .leadership_term_id(self.leadership_term_id)
+            .cluster_session_id(self.cluster_session_id)
+            .correlation_id(correlation_id)
+            .request_type(request_type);
+        let complete = enc.payload(payload).map_err(enc_err)?;
+        let bytes = complete.as_bytes();
+        let r = self.ingress.offer_raw(bytes, Handlers::NONE);
+        offer_result("admin_request", r)
     }
 
     /// Send a SessionCloseRequest and mark the session PendingClose.
@@ -454,7 +477,7 @@ impl AeronCluster {
         let mut claim = self
             .ingress
             .try_claim_owned(total)
-            .map_err(|e| ClusterError::publication(format!("try_claim: {e}")))?;
+            .map_err(|e| ClusterError::from_offer_error("try_claim", e))?;
 
         // Write the SessionMessageHeader (schema 111) into the claim's
         // first 32 bytes via the ErgoSBE encoder.
@@ -496,12 +519,12 @@ impl ClusterClaim {
 
     /// Commit the claimed bytes, publishing them to the cluster.
     pub fn commit(self) -> Result<i64, ClusterError> {
-        self.claim.commit().map_err(|e| ClusterError::publication(format!("commit: {e}")))
+        self.claim.commit().map_err(|e| ClusterError::aeron("claim_commit", e))
     }
 
     /// Abort the claim, discarding it as padding.
     pub fn abort(self) -> Result<(), ClusterError> {
-        self.claim.abort().map_err(|e| ClusterError::publication(format!("abort: {e}")))
+        self.claim.abort().map_err(|e| ClusterError::aeron("claim_abort", e))
     }
 }
 
@@ -599,7 +622,7 @@ impl AsyncClusterConnect {
                 let aeron = Aeron::new(&ctx).map_err(|e| ClusterError::aeron("new", e))?;
                 aeron.start().map_err(|e| ClusterError::aeron("start", e))?;
                 let egr = self.builder.egress_cstr()?;
-                let ing = self.builder.ingress_cstr()?;
+                let ing = self.builder.resolve_initial_ingress_cstr()?;
                 let egress = aeron
                     .add_subscription(
                         egr,
@@ -610,7 +633,7 @@ impl AsyncClusterConnect {
                     )
                     .map_err(|e| ClusterError::aeron("sub", e))?;
                 let ingress = aeron
-                    .add_exclusive_publication(ing, self.builder.ingress_stream_id, Duration::from_secs(5))
+                    .add_exclusive_publication(&ing, self.builder.ingress_stream_id, Duration::from_secs(5))
                     .map_err(|e| ClusterError::aeron("pub", e))?;
                 self.aeron = Some(aeron);
                 self.ingress = Some(ingress);
@@ -663,7 +686,9 @@ impl AsyncClusterConnect {
                                                 self.builder.ingress_stream_id,
                                                 Duration::from_secs(5),
                                             )
-                                            .map_err(|e| ClusterError::reconnect(format!("redirect publication: {e}")))?;
+                                            .map_err(|e| {
+                                                ClusterError::reconnect(format!("redirect publication: {e}"))
+                                            })?;
                                         self.ingress = Some(p);
                                         self.leader_member_id = member_id;
                                         self.connect_sent = false;
@@ -754,11 +779,7 @@ impl AsyncClusterConnect {
         let _ = enc.encoded_credentials(creds).map_err(enc_err)?;
         if let Some(ingress) = &self.ingress {
             let r = ingress.offer_raw(&buf, Handlers::NONE);
-            if r <= 0 {
-                return Err(ClusterError::Publication {
-                    reason: format!("challenge response offer returned {r}"),
-                });
-            }
+            offer_result("challenge_response", r)?;
         }
         Ok(())
     }
@@ -787,7 +808,7 @@ mod tests {
     fn test_msg_header_total_is_32() -> Result<(), Box<dyn std::error::Error>> {
         // MessageHeader(8) + SessionMessageHeader body(24) = 32
         assert_eq!(MSG_HDR_TOTAL, 32);
-    
+
         Ok(())
     }
 
@@ -799,7 +820,7 @@ mod tests {
         assert_eq!(SessionMessageHeaderEncoder::TEMPLATE_ID, 1);
         assert_eq!(SessionKeepAliveEncoder::TEMPLATE_ID, 5);
         assert_eq!(SessionCloseRequestEncoder::TEMPLATE_ID, 4);
-    
+
         Ok(())
     }
 }

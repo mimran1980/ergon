@@ -305,6 +305,7 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
     }
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn resolve_composite_offsets(
     tokens: &mut [Token],
     src: &Option<miette::NamedSource<String>>,
@@ -332,12 +333,8 @@ fn resolve_composite_offsets(
         // the nested layout so size is never left as 0 (`read_bytes::<0>`).
         if tokens[i].signal == Signal::BeginField && i + 1 < next_i {
             if tokens[i + 1].signal == Signal::BeginComposite {
-                let nested_end = find_matching_end(
-                    tokens,
-                    i + 1,
-                    Signal::BeginComposite,
-                    Signal::EndComposite,
-                );
+                let nested_end =
+                    find_matching_end(tokens, i + 1, Signal::BeginComposite, Signal::EndComposite);
                 resolve_composite_offsets(&mut tokens[i + 1..=nested_end], src)?;
             }
         }
@@ -548,7 +545,7 @@ mod tests {
 </sbe:messageSchema>"#,
         );
         assert!(result.is_err());
-    
+
         Ok(())
     }
 
@@ -569,7 +566,7 @@ mod tests {
     fn resolve_schema_ok_on_valid_schema() -> Result<(), Box<dyn std::error::Error>> {
         let mut ir = minimal_schema();
         assert!(resolve_schema(&mut ir, None).is_ok());
-    
+
         Ok(())
     }
 
@@ -582,7 +579,7 @@ mod tests {
 </sbe:messageSchema>"#;
         let mut ir = crate::parse(xml).unwrap();
         assert!(resolve_schema(&mut ir, Some(xml)).is_ok());
-    
+
         Ok(())
     }
 
@@ -607,7 +604,7 @@ mod tests {
         assert_eq!(default_null(PrimitiveType::UInt64), Some(u64::MAX));
         assert!(default_null(PrimitiveType::Float).is_some());
         assert!(default_null(PrimitiveType::Double).is_some());
-    
+
         Ok(())
     }
 
@@ -624,7 +621,7 @@ mod tests {
         assert!(default_min(PrimitiveType::Int64).is_some());
         assert!(default_min(PrimitiveType::Float).is_some());
         assert!(default_min(PrimitiveType::Double).is_some());
-    
+
         Ok(())
     }
 
@@ -644,7 +641,7 @@ mod tests {
         );
         assert!(default_max(PrimitiveType::Float).is_some());
         assert!(default_max(PrimitiveType::Double).is_some());
-    
+
         Ok(())
     }
 
@@ -662,7 +659,7 @@ mod tests {
             .unwrap();
         // Should have a non-zero offset (block length)
         assert!(hdr.encoding.offset.is_some());
-    
+
         Ok(())
     }
 
@@ -680,7 +677,7 @@ mod tests {
         // uint32 field should be at offset 0
         let field = ir.tokens.iter().find(|t| t.name == "x").unwrap();
         assert_eq!(field.encoding.offset, Some(0));
-    
+
         Ok(())
     }
 
@@ -699,7 +696,7 @@ mod tests {
         assert_eq!(x.encoding.offset, Some(0));
         let y = ir.tokens.iter().find(|t| t.name == "y").unwrap();
         assert_eq!(y.encoding.offset, Some(4));
-    
+
         Ok(())
     }
 
@@ -730,7 +727,7 @@ mod tests {
         assert_eq!(a.encoding.offset, Some(0));
         let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
         assert_eq!(b.encoding.offset, Some(4));
-    
+
         Ok(())
     }
 
@@ -757,7 +754,7 @@ mod tests {
             .find(|t| t.signal == Signal::BeginMessage)
             .unwrap();
         assert!(msg.encoding.offset.is_some());
-    
+
         Ok(())
     }
 
@@ -784,7 +781,7 @@ mod tests {
             .unwrap();
         // Block length should be 1 (uint8 enum)
         assert_eq!(msg.encoding.offset, Some(1));
-    
+
         Ok(())
     }
 
@@ -808,7 +805,7 @@ mod tests {
             .find(|t| t.signal == Signal::BeginMessage)
             .unwrap();
         assert_eq!(msg.encoding.offset, Some(1));
-    
+
         Ok(())
     }
 
@@ -861,7 +858,7 @@ mod tests {
             .unwrap();
         // Point composite = 2 × int32 = 8 bytes
         assert_eq!(msg.encoding.offset, Some(8));
-    
+
         Ok(())
     }
 
@@ -877,7 +874,7 @@ mod tests {
             second_label: None,
         };
         assert!(err.take_source_code().is_none()); // was None
-    
+
         Ok(())
     }
 
@@ -889,7 +886,7 @@ mod tests {
             span: None,
         };
         assert!(err.take_source_code().is_none());
-    
+
         Ok(())
     }
 
@@ -901,7 +898,7 @@ mod tests {
             span: None,
         };
         assert!(err.take_source_code().is_none());
-    
+
         Ok(())
     }
 
@@ -913,7 +910,7 @@ mod tests {
             span: None,
         };
         assert!(err.take_source_code().is_none());
-    
+
         Ok(())
     }
 
@@ -927,7 +924,7 @@ mod tests {
             span: None,
         };
         assert!(err.take_source_code().is_none());
-    
+
         Ok(())
     }
 
@@ -971,7 +968,7 @@ mod tests {
             span: None,
         };
         assert!(format!("{err}").contains("sinceVersion 3"));
-    
+
         Ok(())
     }
 
@@ -998,7 +995,7 @@ mod tests {
             .unwrap();
         // 4 × int32 = 16 bytes
         assert_eq!(msg.encoding.offset, Some(16));
-    
+
         Ok(())
     }
 
@@ -1028,7 +1025,7 @@ mod tests {
         // Inner group field should be resolved
         let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
         assert_eq!(b.encoding.offset, Some(0));
-    
+
         Ok(())
     }
 
@@ -1063,7 +1060,7 @@ mod tests {
         };
         // Should not panic or error — the message has no id to conflict
         assert!(resolve_schema(&mut ir, None).is_ok());
-    
+
         Ok(())
     }
 
@@ -1087,7 +1084,7 @@ mod tests {
         // find_matching_end should return tokens.len() - 1 as fallback
         let end = find_matching_end(&tokens, 0, Signal::BeginComposite, Signal::EndComposite);
         assert_eq!(end, 1); // returns last index
-    
+
         Ok(())
     }
 
@@ -1103,7 +1100,7 @@ mod tests {
         let (size, next) = get_token_block_size(&tokens, 0);
         assert_eq!(size, 0);
         assert_eq!(next, 1);
-    
+
         Ok(())
     }
 
@@ -1145,7 +1142,7 @@ mod tests {
         assert!(result.is_ok());
         // Field should still get an offset
         assert_eq!(tokens[1].encoding.offset, Some(0));
-    
+
         Ok(())
     }
 
@@ -1170,7 +1167,7 @@ mod tests {
         let src: Option<miette::NamedSource<String>> = None;
         let result = resolve_vardata_offsets(&mut tokens, &src);
         assert!(result.is_ok());
-    
+
         Ok(())
     }
 }

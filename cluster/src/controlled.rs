@@ -170,7 +170,7 @@ mod tests {
         assert_eq!(ControlledPollAction::Continue as i32, 0);
         assert_eq!(ControlledPollAction::Abort as i32, 1);
         assert_eq!(ControlledPollAction::Break as i32, 2);
-    
+
         Ok(())
     }
 
@@ -178,7 +178,7 @@ mod tests {
     fn test_short_fragment_returns_continue() -> Result<(), Box<dyn std::error::Error>> {
         let mut a = ControlledEgressAdapter::new(NoOp);
         assert_eq!(a.on_fragment(&[0u8; 4]), ControlledPollAction::Continue);
-    
+
         Ok(())
     }
 

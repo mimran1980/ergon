@@ -3,8 +3,8 @@
 use ergo_aeron_cluster::codecs::cluster_codecs::{
     WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
 };
-use serial_test::serial;
 use rusteron_client::cformat;
+use serial_test::serial;
 use std::time::Duration;
 
 fn connect_and_send(

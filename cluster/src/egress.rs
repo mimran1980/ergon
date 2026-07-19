@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().session_code, Some(EventCode::OK));
         assert_eq!(adapter.listener().detail, "ok");
-    
+
         Ok(())
     }
 
@@ -243,7 +243,7 @@ mod tests {
         assert!(adapter.on_fragment(&bytes).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().challenge, b"chal-token");
-    
+
         Ok(())
     }
 
@@ -259,7 +259,7 @@ mod tests {
         assert!(adapter.on_fragment(&bytes).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().leader_endpoints, "0=host:9000,1=host:9001");
-    
+
         Ok(())
     }
 
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(adapter.listener().calls, 1);
         assert_eq!(adapter.listener().msg_csid, 42);
         assert_eq!(adapter.listener().msg_ts, 999);
-    
+
         Ok(())
     }
 
@@ -291,7 +291,7 @@ mod tests {
         let mut adapter = EgressAdapter::new(Rec::default());
         assert!(!adapter.on_fragment(&data).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 0);
-    
+
         Ok(())
     }
 
@@ -300,7 +300,7 @@ mod tests {
         let mut adapter = EgressAdapter::new(Rec::default());
         assert!(!adapter.on_fragment(&[0u8; 4]).expect("decode failure"));
         assert_eq!(adapter.listener().calls, 0);
-    
+
         Ok(())
     }
 }

@@ -43,7 +43,14 @@ fn encode_checked(buf: &mut [u8]) -> usize {
         extras.set_sports_pack(true);
         car.extras(extras);
     }
-    car.engine(Engine::new(2000, 4, [49, 0, 0]));
+    car.engine(Engine::new(
+        2000,
+        4,
+        [49, 0, 0],
+        0i8,
+        BooleanType::F,
+        Booster::new(BoostType::TURBO, 0),
+    ));
 
     let car = car
         .fuel_figures(3, |g| {
@@ -111,7 +118,14 @@ fn encode_full(buf: &mut [u8]) -> usize {
         extras.set_sports_pack(true);
         car.extras(extras);
     }
-    car.engine(Engine::new(2000, 4, [49, 0, 0]));
+    car.engine(Engine::new(
+        2000,
+        4,
+        [49, 0, 0],
+        0i8,
+        BooleanType::F,
+        Booster::new(BoostType::TURBO, 0),
+    ));
 
     let car = car
         .fuel_figures(3, |g| {
@@ -208,7 +222,14 @@ fn bench_encode_scalar_only(c: &mut Criterion) {
                 extras.set_sports_pack(true);
                 car.extras(extras);
             }
-            car.engine(Engine::new(2000, 4, [49, 0, 0]));
+            car.engine(Engine::new(
+                2000,
+                4,
+                [49, 0, 0],
+                0i8,
+                BooleanType::F,
+                Booster::new(BoostType::TURBO, 0),
+            ));
             black_box(&car);
         });
     });

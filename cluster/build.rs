@@ -116,10 +116,7 @@ fn compile_test_harness_java(manifest_dir: &Path, aeron_dir: &Path) {
         .join("main");
 
     let cp = format!("{}/*:{}/*", jar_dir.display(), cluster_jar.display());
-    eprintln!(
-        "Compiling ClusterLauncher into {}",
-        samples_classes.display()
-    );
+    eprintln!("Compiling ClusterLauncher into {}", samples_classes.display());
     let _ = fs::create_dir_all(&samples_classes);
     let status = std::process::Command::new("javac")
         .args(["-cp", &cp, "-d"])

@@ -1,7 +1,7 @@
 # Living backlog — verified-open items only
 
 **Status:** LIVING — update when an item is closed with evidence.  
-**Last audit:** 2026-07-19 · branch `first_cut` (URI builder + Result/? + thiserror)  
+**Last audit:** 2026-07-19 · branch `first_cut` (Tier1–3 cluster depth + publish hygiene)  
 **Not this file:** process checklists in `ergosbe-performance-optimisation-goal.md`,
 the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 
@@ -53,6 +53,21 @@ All prior §C items closed 2026-07-19 — see section D.
 ---
 
 ## D. Closed (do not re-queue)
+
+### 2026-07-19 Tier 1–3 cluster client depth + publish hygiene
+
+| Item | Resolution | Evidence |
+|------|------------|----------|
+| `SessionBuilder::connect` / `connect_async` | DONE | `config.rs` |
+| Typed offer errors + `is_retryable` | DONE | `PublicationFailure`, `ClusterError::from_offer_raw` |
+| IdleStrategy poll helpers | DONE | `idle.rs` |
+| Multi-member first-connect | DONE | `ingress_endpoints` + `resolve_initial_ingress_cstr` |
+| Admin request API | DONE | `AeronCluster::send_admin_request` |
+| Richer credentials | DONE | `StaticCredentials`, `EchoChallengeCredentials` |
+| Endpoint parse / rotation helpers | DONE | `endpoints.rs` |
+| jar `Result` helpers | DONE | `try_find_jar`, `try_sha256` |
+| Publish hygiene doc | DONE | `docs/PUBLISH.md` |
+| Public API stays typed errors | DONE | no lib `Box<dyn Error>` (tests/main only) |
 
 ### 2026-07-19 rusteron URI / Result / thiserror polish
 

@@ -46,14 +46,14 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
 
     let channel = CHANNEL;
     let pubn = aeron
-        .async_add_exclusive_publication(&channel, 1001)
+        .async_add_exclusive_publication(channel, 1001)
         .expect("pub")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
     let sub = aeron.async_add_subscription::<
         rusteron_client::AeronAvailableImageLogger,
         rusteron_client::AeronUnavailableImageLogger,
-    >(&channel, 1001, None, None).expect("sub")
+    >(channel, 1001, None, None).expect("sub")
         .poll_blocking(Duration::from_secs(5)).expect("connect");
 
     let mut claim = pubn.try_claim_owned(outer_len).expect("claim");

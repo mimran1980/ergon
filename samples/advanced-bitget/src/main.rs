@@ -8,8 +8,8 @@
 //! ingestion. Shutdown order: ingestion stops, persistor drains and joins,
 //! the driver stops last (RAII drop).
 
-use std::error::Error;
 use rusteron_client::cformat;
+use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -39,7 +39,7 @@ fn add_pub(
 ) -> Result<rusteron_client::AeronExclusivePublication, Box<dyn Error + Send + Sync>> {
     let ch = CHANNEL;
     Ok(aeron
-        .async_add_exclusive_publication(&ch, stream)?
+        .async_add_exclusive_publication(ch, stream)?
         .poll_blocking(Duration::from_secs(5))?)
 }
 
@@ -50,7 +50,7 @@ fn add_sub(
     let ch = CHANNEL;
     Ok(aeron
         .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
-            &ch, stream, None, None,
+            ch, stream, None, None,
         )?
         .poll_blocking(Duration::from_secs(5))?)
 }

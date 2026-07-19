@@ -27,7 +27,7 @@ mod tests {
         let s = SessionState::Connected;
         let s2 = s;
         assert_eq!(s, s2);
-    
+
         Ok(())
     }
 
@@ -38,7 +38,7 @@ mod tests {
             SessionState::AwaitingNewLeader,
             SessionState::AwaitingNewLeaderConnection
         );
-    
+
         Ok(())
     }
 }

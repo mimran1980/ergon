@@ -4,9 +4,7 @@
 //! and the maintained Criterion decode benches (template_id + schema_id checks
 //! in release). Prefer them over residual sbe-tool decoders for new call sites.
 
-use crate::codecs::ergo_codecs::{
-    EventCode, NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderDecoder,
-};
+use crate::codecs::ergo_codecs::{EventCode, NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderDecoder};
 use crate::error::ClusterError;
 
 /// Fixed fields from a decoded `SessionMessageHeader` (schema 111, template 1).
@@ -164,10 +162,7 @@ mod tests {
     fn new_leader_roundtrip_view() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 256];
         let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0)?;
-        let _ = enc
-            .cluster_session_id(2)
-            .leadership_term_id(9)
-            .leader_member_id(1);
+        let _ = enc.cluster_session_id(2).leadership_term_id(9).leader_member_id(1);
         let complete = enc.ingress_endpoints(b"0=localhost:9000")?;
         let bytes = complete.as_bytes_with_header();
         let view = decode_new_leader_event(bytes)?;
@@ -185,7 +180,7 @@ mod tests {
             ClusterError::ProtocolError { reason } => assert!(reason.contains("sbe decode")),
             other => panic!("expected ProtocolError, got {other:?}"),
         }
-    
+
         Ok(())
     }
 }

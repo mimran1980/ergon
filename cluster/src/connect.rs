@@ -136,7 +136,7 @@ mod tests {
         assert!(ConnectStep::SendSessionConnectRequest < ConnectStep::PollResponse);
         assert!(ConnectStep::PollResponse < ConnectStep::ConcludeConnect);
         assert!(ConnectStep::ConcludeConnect < ConnectStep::Done);
-    
+
         Ok(())
     }
 
@@ -163,7 +163,7 @@ mod tests {
         }
         assert_eq!(ac.state(), SessionState::Connected);
         assert_eq!(ac.current_step(), ConnectStep::Done);
-    
+
         Ok(())
     }
 
@@ -175,7 +175,7 @@ mod tests {
             Err(ClusterError::Timeout { .. }) => {}
             other => panic!("expected Timeout, got {other:?}"),
         }
-    
+
         Ok(())
     }
 
@@ -185,7 +185,7 @@ mod tests {
         while ac.advance().unwrap_or(false) {}
         assert_eq!(ac.current_step(), ConnectStep::Done);
         assert!(!ac.advance().unwrap());
-    
+
         Ok(())
     }
 
@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(connect_reoffer_interval_ms(2_000), 500);
         assert_eq!(connect_reoffer_interval_ms(100), 50); // 25 → clamp 50
         assert_eq!(connect_reoffer_interval_ms(0), 50);
-    
+
         Ok(())
     }
 

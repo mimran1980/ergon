@@ -184,7 +184,8 @@ fn malformed_bytes_are_decode_failures() -> Result<(), Box<dyn std::error::Error
 }
 
 #[test]
-fn schema_message_on_dynamic_stream_is_recognised_not_a_row() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_message_on_dynamic_stream_is_recognised_not_a_row()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut pubr =
         ClaimPublisher::new(RecordingPublication::new(), RecordingPublication::new()).unwrap();
     pubr.publish_schema();
@@ -383,7 +384,8 @@ fn unknown_payload_template_is_rejected() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[test]
-fn smaller_dynamic_sequence_is_dropped_and_dynamic_queue_is_bounded() -> Result<(), Box<dyn std::error::Error>> {
+fn smaller_dynamic_sequence_is_dropped_and_dynamic_queue_is_bounded()
+-> Result<(), Box<dyn std::error::Error>> {
     let bids = [lvl(1, 0, 1, 0)];
     let (_, dynamic_1, _) = published_book(1, &bids, &[]);
     let (typed_2, dynamic_2, _) = published_book(2, &bids, &[]);
@@ -420,7 +422,8 @@ fn smaller_dynamic_sequence_is_dropped_and_dynamic_queue_is_bounded() -> Result<
 }
 
 #[test]
-fn malformed_dynamic_rows_report_structured_decode_errors() -> Result<(), Box<dyn std::error::Error>> {
+fn malformed_dynamic_rows_report_structured_decode_errors() -> Result<(), Box<dyn std::error::Error>>
+{
     use ergo_clickhouse_persist::sbe::v2::DynamicRowV2Encoder;
 
     // Row with an unexpected uint64 field id (9) for the publisher layout.
@@ -519,7 +522,8 @@ fn clickhouse_connect_fails_cleanly_when_ping_rejects() -> Result<(), Box<dyn st
 }
 
 #[test]
-fn unexpected_decimal_array_field_and_mismatched_lengths_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+fn unexpected_decimal_array_field_and_mismatched_lengths_are_rejected()
+-> Result<(), Box<dyn std::error::Error>> {
     use ergo_clickhouse_persist::sbe::v2::DynamicRowV2Encoder;
 
     fn row(build: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {

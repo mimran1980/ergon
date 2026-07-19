@@ -7,14 +7,12 @@
 
 use std::ffi::CString;
 
-use rusteron_client::{cformat, AeronCError, AeronUriStringBuilder};
+use rusteron_client::{AeronCError, AeronUriStringBuilder, cformat};
 
 use crate::ClusterError;
 
 fn map_uri(e: AeronCError) -> ClusterError {
-    ClusterError::ChannelUri {
-        reason: e.to_string(),
-    }
+    ClusterError::ChannelUri { reason: e.to_string() }
 }
 
 /// Parse and normalize a full Aeron channel URI into a [`CString`].

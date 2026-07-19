@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(s.receive_to_claim_ns(), 100);
         assert_eq!(s.claim_to_egress_ns(), 300);
         assert_eq!(s.e2e_ns(), 600);
-    
+
         Ok(())
     }
 

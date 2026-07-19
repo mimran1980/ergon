@@ -493,7 +493,7 @@ fn parse_types_node(
                 validate_sbe_name(type_child, &name, "type @name")?;
                 reject_duplicate_type_name(type_child, &name, registry)?;
                 let encoding = parse_type_element(type_child, registry)?;
-                // Constant presence must declare a constant value.
+                // Constant presence must declare a constant value (text body or valueRef).
                 if encoding.presence == Presence::Constant
                     && encoding
                         .constant_value
@@ -503,7 +503,9 @@ fn parse_types_node(
                     return Err(Fault::invalid(
                         type_child,
                         "type constant value",
-                        format!("{name}: presence=constant requires a constant text value"),
+                        format!(
+                            "{name}: presence=constant requires a constant text value or valueRef"
+                        ),
                     ));
                 }
                 registry.encodings.insert(name, encoding);
@@ -746,8 +748,14 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
         .attribute("maxValue")
         .and_then(|s| parse_u64_val(s, primitive_type));
 
+    // Constant `<type>`: body text, or `valueRef` (e.g. TimeUnit.nanosecond) as in
+    // value-ref-schema.xml — same options Aeron accepts for constant fields.
     let constant_value = if presence == Presence::Constant {
-        node.text().map(|s| s.trim().to_string())
+        let from_text = node
+            .text()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        from_text.or_else(|| node.attribute("valueRef").map(|s| s.to_string()))
     } else {
         None
     };
@@ -2070,7 +2078,7 @@ mod tests {
         // Plain u64 / invalid.
         assert_eq!(parse_u64_val("42", None), Some(42));
         assert_eq!(parse_u64_val("garbage", None), None);
-    
+
         Ok(())
     }
 
@@ -2078,16 +2086,17 @@ mod tests {
     fn parse_malformed_xml_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse("<messageSchema><unclosed>").unwrap_err();
         assert!(matches!(err, ParseError::MalformedXml { .. }));
-    
+
         Ok(())
     }
 
     #[test]
-    fn parse_valid_xml_without_message_schema_root_is_missing() -> Result<(), Box<dyn std::error::Error>> {
+    fn parse_valid_xml_without_message_schema_root_is_missing()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Valid XML, but no <messageSchema> root element.
         let err = parse("<root/>").unwrap_err();
         assert!(matches!(err, ParseError::Missing { .. }));
-    
+
         Ok(())
     }
 
@@ -2095,7 +2104,7 @@ mod tests {
     fn parse_file_missing_path_is_malformed_xml() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse_file("/nonexistent/ergosbe/coverage/schema.xml").unwrap_err();
         assert!(matches!(err, ParseError::MalformedXml { .. }));
-    
+
         Ok(())
     }
 
@@ -2110,7 +2119,7 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "set choice bit > max must error");
-    
+
         Ok(())
     }
 
@@ -2126,7 +2135,7 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "duplicate set choice bit must error");
-    
+
         Ok(())
     }
 
@@ -2137,7 +2146,7 @@ mod tests {
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "invalid byteOrder must error");
-    
+
         Ok(())
     }
 
@@ -2149,7 +2158,7 @@ mod tests {
   <message name="M" id="1"><field name="f" id="1" type="uint32" presence="bogus"/></message>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "invalid presence must error");
-    
+
         Ok(())
     }
 
@@ -2163,7 +2172,7 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "invalid primitiveType must error");
-    
+
         Ok(())
     }
 
@@ -2177,7 +2186,7 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "enum with float encoding must error");
-    
+
         Ok(())
     }
 
@@ -2191,7 +2200,7 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "set with signed encoding must error");
-    
+
         Ok(())
     }
 
@@ -2205,7 +2214,7 @@ mod tests {
   </types>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "duplicate set choice name must error");
-    
+
         Ok(())
     }
 
@@ -2220,7 +2229,7 @@ mod tests {
             parse(xml).is_err(),
             "invalid messageSchema child must error"
         );
-    
+
         Ok(())
     }
 
@@ -2235,7 +2244,7 @@ mod tests {
   </message>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "out-of-order field offsets must error");
-    
+
         Ok(())
     }
 
@@ -2247,7 +2256,7 @@ mod tests {
   <message name="M" id="1"><bogusElement/></message>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "invalid message child must error");
-    
+
         Ok(())
     }
 
@@ -2264,7 +2273,7 @@ mod tests {
             parse(xml).is_err(),
             "invalid types container child must error"
         );
-    
+
         Ok(())
     }
 
@@ -2352,7 +2361,7 @@ mod tests {
             msg_desc.contains("xml-comment:message"),
             "missing preceding-sibling XML comment on M in '{msg_desc}'"
         );
-    
+
         Ok(())
     }
 
@@ -2382,7 +2391,7 @@ mod tests {
   <include href="definitely_nonexistent_file_12345.xml"/>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "include file not found must error");
-    
+
         Ok(())
     }
 
@@ -2391,7 +2400,7 @@ mod tests {
         let fault = Fault::missing_no_node("test");
         assert!(matches!(fault.kind, FaultKind::Missing { ref what } if what == "test"));
         assert!(fault.span.is_none());
-    
+
         Ok(())
     }
 
@@ -2408,14 +2417,14 @@ mod tests {
         let result = resolve_type_to_tokens("f", "myType", Some(1), &registry, 5);
         assert!(result.is_some());
         assert_eq!(result.unwrap()[0].encoding.since_version, 5);
-    
+
         Ok(())
     }
 
     #[test]
     fn parse_missing_root_element() -> Result<(), Box<dyn std::error::Error>> {
         assert!(parse("<?xml version=\"1.0\"?>\n<notSchema/>").is_err());
-    
+
         Ok(())
     }
 
@@ -2441,7 +2450,7 @@ mod tests {
         );
         assert_eq!(compute_type_size("a4", &registry), Some(8));
         assert_eq!(compute_type_size("missing", &registry), None);
-    
+
         Ok(())
     }
 
@@ -2505,7 +2514,7 @@ mod tests {
         }];
         registry.registry.insert("S".into(), st);
         assert_eq!(compute_type_size("S", &registry), Some(2));
-    
+
         Ok(())
     }
 
@@ -2518,7 +2527,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="e" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
-    
+
         Ok(())
     }
 
@@ -2550,7 +2559,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
-    
+
         Ok(())
     }
 
@@ -2563,7 +2572,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
-    
+
         Ok(())
     }
 
@@ -2575,7 +2584,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/><field name="x" id="2" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
-    
+
         Ok(())
     }
 
@@ -2587,7 +2596,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/><field name="y" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
-    
+
         Ok(())
     }
 
@@ -2599,7 +2608,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32" offset="4"/><field name="y" id="2" type="uint32" offset="0"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
-    
+
         Ok(())
     }
 
@@ -2611,7 +2620,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="c" id="1" type="uint32" presence="constant"/></sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(xml).is_err());
-    
+
         Ok(())
     }
 
@@ -2626,7 +2635,7 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the composite member type-ref code path — may succeed or error
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2640,7 +2649,7 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise field inheriting presence from referenced type — may succeed or error
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2654,7 +2663,7 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the valueRef dot-notation code path — may succeed or warn
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2667,7 +2676,7 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the valueRef unknown-enum warning path
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2680,7 +2689,7 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the valueRef no-dot path
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2694,7 +2703,7 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the field inheriting constant from referenced type path
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2708,7 +2717,7 @@ mod tests {
 </sbe:messageSchema>"#;
         // Exercise the char constant length check — may error or succeed
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2725,7 +2734,7 @@ mod tests {
 <message name="M" id="1"><field name="f" id="1" type="uint32"/></message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2733,12 +2742,13 @@ mod tests {
     fn workspace_root_found() -> Result<(), Box<dyn std::error::Error>> {
         let root = workspace_root();
         assert!(root.join("Cargo.toml").exists());
-    
+
         Ok(())
     }
 
     #[test]
-    fn parse_message_with_explicit_offsets_and_registered_types() -> Result<(), Box<dyn std::error::Error>> {
+    fn parse_message_with_explicit_offsets_and_registered_types()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Triggers the offset tracking / compute_type_size path in parse_message
         let xml = r#"<?xml version="1.0"?>
 <messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
@@ -2752,7 +2762,7 @@ mod tests {
 </sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2765,7 +2775,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32" nullValue="0"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2779,7 +2789,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2796,7 +2806,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="c" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2813,7 +2823,7 @@ mod tests {
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
         let _ = parse(xml);
-    
+
         Ok(())
     }
 
@@ -2884,7 +2894,7 @@ mod tests {
         ];
         registry.registry.insert("C".into(), ct);
         assert_eq!(compute_type_size("C", &registry), Some(6));
-    
+
         Ok(())
     }
 
@@ -2899,7 +2909,7 @@ mod tests {
         }];
         registry.registry.insert("X".into(), tokens);
         assert_eq!(compute_type_size("X", &registry), None);
-    
+
         Ok(())
     }
 
@@ -2913,12 +2923,13 @@ mod tests {
   <include href="bad-include.xml"/>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "malformed include file must error");
-    
+
         Ok(())
     }
 
     #[test]
-    fn parse_var_data_with_simple_encoding_type_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    fn parse_var_data_with_simple_encoding_type_is_error() -> Result<(), Box<dyn std::error::Error>>
+    {
         // A var-data field whose type is a simple encoding (uint32), not a
         // var-data composite, must be rejected.
         let xml = r#"<?xml version="1.0"?>
@@ -2929,7 +2940,7 @@ mod tests {
   <message name="M" id="1"><data name="d" id="1" type="uint32"/></message>
 </messageSchema>"#;
         assert!(parse(xml).is_err(), "simple encoding as varData must error");
-    
+
         Ok(())
     }
 
@@ -2999,12 +3010,13 @@ mod tests {
         assert_eq!(ir.description.as_deref(), Some("minimal test schema"));
         assert_eq!(ir.semantic_version, None);
         assert_eq!(ir.header_type, "messageHeader");
-    
+
         Ok(())
     }
 
     #[test]
-    fn parses_message_header_composite_and_message_fields() -> Result<(), Box<dyn std::error::Error>> {
+    fn parses_message_header_composite_and_message_fields() -> Result<(), Box<dyn std::error::Error>>
+    {
         let ir = parse(MINIMAL_SCHEMA).unwrap();
 
         let mut expected = Vec::new();
@@ -3051,7 +3063,7 @@ mod tests {
         crate::resolve::resolve_schema(&mut expected_ir, None).unwrap();
 
         assert_eq!(ir.tokens, expected_ir.tokens);
-    
+
         Ok(())
     }
 
@@ -3059,7 +3071,7 @@ mod tests {
     fn rejects_non_message_schema_root() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse("<notSbe/>").unwrap_err();
         assert!(matches!(err, ParseError::Missing { .. }));
-    
+
         Ok(())
     }
 
@@ -3067,7 +3079,7 @@ mod tests {
     fn rejects_missing_package() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse(r#"<messageSchema id="1" version="0"/>"#).unwrap_err();
         assert!(matches!(err, ParseError::Missing { .. }));
-    
+
         Ok(())
     }
 
@@ -3082,7 +3094,7 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("invalid primitive type"), "{msg}");
         assert!(err.labels().is_some(), "expected a span label attached");
-    
+
         Ok(())
     }
 
@@ -3165,12 +3177,13 @@ mod tests {
             ir.tokens.iter().any(|t| t.name == "varDataEncoding"),
             "expected varDataEncoding from included common-types.xml"
         );
-    
+
         Ok(())
     }
 
     #[test]
-    fn xinclude_without_base_falls_back_to_hardcoded_paths() -> Result<(), Box<dyn std::error::Error>> {
+    fn xinclude_without_base_falls_back_to_hardcoded_paths()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Without a base dir, the hardcoded submodule path probes should work
         // for common schemas.
         let path = sbe_sample_resource("example-schema.xml");
@@ -3182,7 +3195,7 @@ mod tests {
             ir.tokens.iter().any(|t| t.name == "groupSizeEncoding"),
             "expected groupSizeEncoding from included file via hardcoded paths"
         );
-    
+
         Ok(())
     }
 
@@ -3196,14 +3209,15 @@ mod tests {
             msg.contains("cyclic include"),
             "expected cyclic include error, got: {msg}"
         );
-    
+
         Ok(())
     }
 
     // ── Validation tests ─────────────────────────────────────────────
 
     #[test]
-    fn null_value_on_non_optional_type_parses_with_warning() -> Result<(), Box<dyn std::error::Error>> {
+    fn null_value_on_non_optional_type_parses_with_warning()
+    -> Result<(), Box<dyn std::error::Error>> {
         // nullValue on a required type should generate a warning but still parse.
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3216,7 +3230,7 @@ mod tests {
 </messageSchema>"#;
         let ir = parse(schema).unwrap();
         assert!(ir.tokens.iter().any(|t| t.name == "M"));
-    
+
         Ok(())
     }
 
@@ -3233,7 +3247,7 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Missing { .. }));
-    
+
         Ok(())
     }
 
@@ -3253,7 +3267,7 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -3273,7 +3287,7 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -3290,7 +3304,7 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -3307,7 +3321,7 @@ mod tests {
 </messageSchema>"#;
         let ir = parse(schema).unwrap();
         assert!(ir.tokens.iter().any(|t| t.name == "M"));
-    
+
         Ok(())
     }
 
@@ -3330,7 +3344,7 @@ mod tests {
   </sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(schema).is_err());
-    
+
         Ok(())
     }
 
@@ -3353,7 +3367,7 @@ mod tests {
   </sbe:message>
 </sbe:messageSchema>"#;
         assert!(parse(schema).is_err());
-    
+
         Ok(())
     }
 
@@ -3377,7 +3391,7 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -3405,7 +3419,7 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -3427,7 +3441,7 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -3453,12 +3467,13 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
     #[test]
-    fn block_length_validation_passes_for_correct_value() -> Result<(), Box<dyn std::error::Error>> {
+    fn block_length_validation_passes_for_correct_value() -> Result<(), Box<dyn std::error::Error>>
+    {
         // Computed: uint64@0=8, uint16@8=2, uint8@10=1 → 11
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -3477,7 +3492,7 @@ mod tests {
   </message>
 </messageSchema>"#;
         parse(schema).unwrap();
-    
+
         Ok(())
     }
 
@@ -3503,7 +3518,7 @@ mod tests {
 </messageSchema>"#;
         // Must parse successfully despite mismatched blockLength.
         parse(schema).unwrap();
-    
+
         Ok(())
     }
 
@@ -3552,7 +3567,7 @@ mod tests {
             Presence::Required,
             "g should stay Required (explicit)"
         );
-    
+
         Ok(())
     }
 
@@ -3585,7 +3600,7 @@ mod tests {
             Presence::Constant,
             "f should inherit Constant from ConstU32"
         );
-    
+
         Ok(())
     }
 
@@ -3614,7 +3629,7 @@ mod tests {
 </messageSchema>"#;
         let ir = parse(schema).unwrap();
         assert!(ir.tokens.iter().any(|t| t.name == "M"));
-    
+
         Ok(())
     }
 
@@ -3639,7 +3654,7 @@ mod tests {
 </messageSchema>"#;
         let err = parse(schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -3662,7 +3677,7 @@ mod tests {
   </message>
 </messageSchema>"#;
         parse(schema).unwrap();
-    
+
         Ok(())
     }
 
@@ -3688,7 +3703,7 @@ mod tests {
             msg.contains("schemaId"),
             "expected error about missing schemaId, got: {msg}"
         );
-    
+
         Ok(())
     }
 
@@ -3728,7 +3743,7 @@ mod tests {
             Some("nanoseconds"),
             "timeUnit should be inherited from type"
         );
-    
+
         Ok(())
     }
 
@@ -3760,7 +3775,7 @@ mod tests {
             ts_tokens[0].encoding.time_unit.as_deref(),
             Some("nanoseconds")
         );
-    
+
         Ok(())
     }
 
@@ -3791,7 +3806,7 @@ mod tests {
             .collect();
         assert_eq!(old_tokens.len(), 1);
         assert!(old_tokens[0].encoding.deprecated);
-    
+
         Ok(())
     }
 
@@ -3818,7 +3833,7 @@ mod tests {
             .find(|t| t.signal == Signal::BeginMessage && t.name == "M");
         assert!(msg_token.is_some());
         assert!(msg_token.unwrap().encoding.deprecated);
-    
+
         Ok(())
     }
 
@@ -3846,7 +3861,7 @@ mod tests {
             .collect();
         assert_eq!(f_tokens.len(), 1);
         assert!(f_tokens[0].encoding.deprecated);
-    
+
         Ok(())
     }
 
@@ -3879,7 +3894,7 @@ mod tests {
             .find(|t| t.signal == Signal::BeginGroup && t.name == "g");
         assert!(g_token.is_some());
         assert!(g_token.unwrap().encoding.deprecated);
-    
+
         Ok(())
     }
 
@@ -3910,7 +3925,7 @@ mod tests {
             .find(|t| t.signal == Signal::BeginVarData && t.name == "d");
         assert!(d_token.is_some());
         assert!(d_token.unwrap().encoding.deprecated);
-    
+
         Ok(())
     }
 
@@ -3940,7 +3955,7 @@ mod tests {
             .find(|t| t.signal == Signal::BeginComposite && t.name == "OldComposite");
         assert!(c_token.is_some());
         assert!(c_token.unwrap().encoding.deprecated);
-    
+
         Ok(())
     }
 
@@ -3970,7 +3985,7 @@ mod tests {
             .find(|t| t.signal == Signal::BeginEnum && t.name == "OldEnum");
         assert!(e_token.is_some());
         assert!(e_token.unwrap().encoding.deprecated);
-    
+
         Ok(())
     }
 
@@ -4000,7 +4015,7 @@ mod tests {
             .find(|t| t.signal == Signal::BeginSet && t.name == "OldSet");
         assert!(s_token.is_some());
         assert!(s_token.unwrap().encoding.deprecated);
-    
+
         Ok(())
     }
 
@@ -4032,7 +4047,7 @@ mod tests {
             msg.contains("duplicate message name"),
             "expected error about duplicate message name, got: {msg}"
         );
-    
+
         Ok(())
     }
 
@@ -4079,7 +4094,7 @@ mod tests {
             Some(4),
             "expected block length 4 for message with one uint32 field"
         );
-    
+
         Ok(())
     }
 
@@ -4094,7 +4109,8 @@ mod tests {
     </composite>"#;
 
     #[test]
-    fn include_of_message_schema_wrapped_types_registers_types() -> Result<(), Box<dyn std::error::Error>> {
+    fn include_of_message_schema_wrapped_types_registers_types()
+    -> Result<(), Box<dyn std::error::Error>> {
         // The included file's root is <messageSchema>, not <types> — the
         // parser must descend into it and find the nested <types> node.
         let dir = std::env::temp_dir().join(format!("ergosbe_xml_inc_{}", std::process::id()));
@@ -4145,7 +4161,7 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
-    
+
         Ok(())
     }
 
@@ -4165,14 +4181,15 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
-    
+
         Ok(())
     }
 
     // ── Coverage: composite member type-attribute fallbacks ───────────
 
     #[test]
-    fn composite_member_with_primitive_type_attr_inlines_encoding() -> Result<(), Box<dyn std::error::Error>> {
+    fn composite_member_with_primitive_type_attr_inlines_encoding()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Member uses `type="uint16"` (a primitive name, not a registered
         // type). This is indirect by shape but unresolvable by name, so the
         // parser falls back to inline parsing of the element itself.
@@ -4197,12 +4214,13 @@ mod tests {
                 .any(|t| t.name == "p" && t.signal == Signal::BeginField),
             "composite field must resolve"
         );
-    
+
         Ok(())
     }
 
     #[test]
-    fn composite_member_without_any_type_attr_is_parsed_inline() -> Result<(), Box<dyn std::error::Error>> {
+    fn composite_member_without_any_type_attr_is_parsed_inline()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Member has no type/primitiveType/ref attribute at all — the parser
         // parses the bare element inline (no primitive type recorded).
         let schema = format!(
@@ -4222,14 +4240,15 @@ mod tests {
         // overall parse succeeds is a resolver decision; the member itself
         // must not panic and must take the inline-parse path.
         let _ = parse(&schema);
-    
+
         Ok(())
     }
 
     // ── Coverage: enum/set child-element edge cases ────────────────────
 
     #[test]
-    fn enum_valid_value_equal_to_registered_null_sentinel_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    fn enum_valid_value_equal_to_registered_null_sentinel_is_error()
+    -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
             r#"<?xml version="1.0"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
@@ -4246,7 +4265,7 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -4267,7 +4286,7 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
-    
+
         Ok(())
     }
 
@@ -4288,7 +4307,7 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
-    
+
         Ok(())
     }
 
@@ -4309,14 +4328,15 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
     // ── Coverage: message-child structural attribute tolerance ─────────
 
     #[test]
-    fn message_children_with_missing_or_unparseable_attrs_reach_second_pass() -> Result<(), Box<dyn std::error::Error>> {
+    fn message_children_with_missing_or_unparseable_attrs_reach_second_pass()
+    -> Result<(), Box<dyn std::error::Error>> {
         // The first structural pass tolerates a missing name, a non-numeric
         // id, and a non-numeric offset; the second (real) parse pass then
         // reports the actual fault. This proves the pre-validation loop does
@@ -4335,12 +4355,13 @@ mod tests {
             err,
             ParseError::Missing { .. } | ParseError::Invalid { .. }
         ));
-    
+
         Ok(())
     }
 
     #[test]
-    fn block_length_tracking_skips_fields_without_computable_size() -> Result<(), Box<dyn std::error::Error>> {
+    fn block_length_tracking_skips_fields_without_computable_size()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Field with a valid offset but an unregistered type: the expected
         // block-length tracker must skip it rather than fault.
         let schema = format!(
@@ -4356,7 +4377,7 @@ mod tests {
         // the block-length pre-pass tolerated the unknown size first.
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -4372,12 +4393,13 @@ mod tests {
 </messageSchema>"#
         );
         parse(&schema).unwrap();
-    
+
         Ok(())
     }
 
     #[test]
-    fn include_with_non_types_sibling_elements_is_tolerated() -> Result<(), Box<dyn std::error::Error>> {
+    fn include_with_non_types_sibling_elements_is_tolerated()
+    -> Result<(), Box<dyn std::error::Error>> {
         // The included <messageSchema> carries a <message> sibling next to
         // <types>; only the <types> node is imported.
         let dir = std::env::temp_dir().join(format!("ergosbe_xml_inc2_{}", std::process::id()));
@@ -4407,12 +4429,13 @@ mod tests {
         );
         parse(&schema).unwrap();
         std::fs::remove_file(&inc).ok();
-    
+
         Ok(())
     }
 
     #[test]
-    fn char_constant_without_text_is_tolerated_at_parse_time() -> Result<(), Box<dyn std::error::Error>> {
+    fn char_constant_without_text_is_tolerated_at_parse_time()
+    -> Result<(), Box<dyn std::error::Error>> {
         // presence="constant" with no element text: the length check is
         // skipped because there is no constant value to measure.
         let schema = format!(
@@ -4427,12 +4450,13 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
-    
+
         Ok(())
     }
 
     #[test]
-    fn composite_member_with_unknown_type_and_primitive_type_falls_back_inline() -> Result<(), Box<dyn std::error::Error>> {
+    fn composite_member_with_unknown_type_and_primitive_type_falls_back_inline()
+    -> Result<(), Box<dyn std::error::Error>> {
         // `type="Unknown"` is unresolvable, but `primitiveType="uint8"` lets
         // the inline fallback parse the element directly.
         let schema = format!(
@@ -4449,12 +4473,13 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
-    
+
         Ok(())
     }
 
     #[test]
-    fn enum_valid_value_unparseable_with_null_sentinel_skips_check() -> Result<(), Box<dyn std::error::Error>> {
+    fn enum_valid_value_unparseable_with_null_sentinel_skips_check()
+    -> Result<(), Box<dyn std::error::Error>> {
         // The null-sentinel equality check is skipped when the value text
         // cannot be parsed for the encoding type.
         let schema = format!(
@@ -4472,12 +4497,13 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
-    
+
         Ok(())
     }
 
     #[test]
-    fn field_with_unparseable_offset_attr_is_tolerated_by_prevalidation() -> Result<(), Box<dyn std::error::Error>> {
+    fn field_with_unparseable_offset_attr_is_tolerated_by_prevalidation()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Structural pre-validation ignores an offset it cannot parse; the
         // real field parse itself does not require the attribute.
         let schema = format!(
@@ -4490,12 +4516,13 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
-    
+
         Ok(())
     }
 
     #[test]
-    fn block_length_tracker_skips_type_without_computable_size() -> Result<(), Box<dyn std::error::Error>> {
+    fn block_length_tracker_skips_type_without_computable_size()
+    -> Result<(), Box<dyn std::error::Error>> {
         // "NoPrim" is registered but has no primitive type, so the block
         // length tracker cannot size it and must skip it.
         let schema = format!(
@@ -4510,7 +4537,7 @@ mod tests {
 </messageSchema>"#
         );
         let _ = parse(&schema);
-    
+
         Ok(())
     }
 
@@ -4529,7 +4556,7 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -4548,7 +4575,7 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 
@@ -4567,7 +4594,7 @@ mod tests {
         );
         let err = parse(&schema).unwrap_err();
         assert!(matches!(err, ParseError::Invalid { .. }));
-    
+
         Ok(())
     }
 }

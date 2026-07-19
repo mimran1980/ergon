@@ -219,7 +219,8 @@ fn trade_emits_normalized_trade() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn disconnect_clears_state_and_resuppresses_until_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+fn disconnect_clears_state_and_resuppresses_until_snapshot()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut ing = BitgetIngestor::new();
     let mut out = Vec::new();
     ing.apply(snapshot(&[["1.0", "1.0"]], &[]), collect_books(&mut out))
@@ -391,7 +392,8 @@ fn frame_error_display_strings() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn trades_frame_with_malformed_price_bubbles_from_apply_to() -> Result<(), Box<dyn std::error::Error>> {
+fn trades_frame_with_malformed_price_bubbles_from_apply_to()
+-> Result<(), Box<dyn std::error::Error>> {
     let text = r#"{"action":"snapshot","arg":{"channel":"trade","instId":"BTCUSDT"},"data":[{"ts":"1","price":"oops","size":"1","side":"buy"}]}"#;
     let mut ing = BitgetIngestor::new();
     let err = parse_frame(text)

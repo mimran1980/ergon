@@ -5,8 +5,8 @@
 //! OWN embedded media driver + UDP transport, then drives it through
 //! `poll_egress`. These helpers factor that shared scaffolding out.
 
-use std::error::Error;
 use rusteron_client::cformat;
+use std::error::Error;
 use std::time::{Duration, Instant};
 
 use ergo_aeron_cluster::codecs::ergo_codecs::{AdminRequestType, AdminResponseCode, EventCode};
@@ -31,10 +31,7 @@ pub fn launch_own_driver(tag: &str) -> Result<OwnDriver, Box<dyn Error>> {
     dc.set_dir_delete_on_start(true)?;
     let _guard = rusteron_media_driver::AeronDriver::launch_embedded_guard(dc, false);
     Ok(OwnDriver {
-        dir: dir
-            .to_str()
-            .ok_or("aeron dir is not valid UTF-8")?
-            .to_string(),
+        dir: dir.to_str().ok_or("aeron dir is not valid UTF-8")?.to_string(),
         _guard,
     })
 }

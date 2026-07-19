@@ -3,8 +3,8 @@
 use ergo_aeron_cluster::codecs::cluster_codecs::{
     WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
 };
-use serial_test::serial;
 use rusteron_client::cformat;
+use serial_test::serial;
 use std::time::Duration;
 
 #[test]
@@ -31,14 +31,13 @@ fn test_connect_to_three_node_cluster() -> Result<(), Box<dyn std::error::Error>
     let ing = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
     let egr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
 
-    let egress = a
-        .add_subscription(
-            &egr,
-            102,
-            rusteron_client::Handlers::NONE,
-            rusteron_client::Handlers::NONE,
-            Duration::from_secs(5),
-        )?;
+    let egress = a.add_subscription(
+        &egr,
+        102,
+        rusteron_client::Handlers::NONE,
+        rusteron_client::Handlers::NONE,
+        Duration::from_secs(5),
+    )?;
     let ingress = a.add_publication(&ing, 101, Duration::from_secs(5))?;
 
     let mut buf = vec![0u8; 512];

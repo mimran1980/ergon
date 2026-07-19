@@ -61,31 +61,30 @@ fn e2e_ipc_to_clickhouse_exact_rows() -> Result<(), Box<dyn std::error::Error>> 
     })
     .expect("driver");
     let ctx = rusteron_client::AeronContext::new().expect("ctx");
-    ctx.set_dir(&cformat!("{}", driver.dir()))
-        .expect("dir");
+    ctx.set_dir(&cformat!("{}", driver.dir())).expect("dir");
     let aeron = rusteron_client::Aeron::new(&ctx).expect("aeron");
     aeron.start().expect("start");
     let ch = CHANNEL;
     let pub_typed = aeron
-        .async_add_exclusive_publication(&ch, STREAM_TYPED)
+        .async_add_exclusive_publication(ch, STREAM_TYPED)
         .expect("pub")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
     let pub_dyn = aeron
-        .async_add_exclusive_publication(&ch, STREAM_DYNAMIC)
+        .async_add_exclusive_publication(ch, STREAM_DYNAMIC)
         .expect("pub")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
     let sub_typed = aeron
         .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
-            &ch, STREAM_TYPED, None, None,
+            ch, STREAM_TYPED, None, None,
         )
         .expect("sub")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
     let sub_dyn = aeron
         .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
-            &ch, STREAM_DYNAMIC, None, None,
+            ch, STREAM_DYNAMIC, None, None,
         )
         .expect("sub")
         .poll_blocking(Duration::from_secs(5))

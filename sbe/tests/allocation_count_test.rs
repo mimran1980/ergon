@@ -11,6 +11,8 @@
 #![allow(unsafe_code)]
 #![allow(unused_must_use)]
 #![allow(clippy::unwrap_used)]
+// Tests return Result for `?` consistency project-wide even when a path has no `?`.
+#![allow(clippy::unnecessary_wraps)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;

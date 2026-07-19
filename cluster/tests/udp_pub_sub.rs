@@ -1,8 +1,8 @@
 //! Verify the C embedded driver can create and use UDP publications.
 //! This gates whether cross-driver communication is possible at all.
 
-use serial_test::serial;
 use rusteron_client::cformat;
+use serial_test::serial;
 use std::time::Duration;
 
 #[test]
@@ -27,14 +27,13 @@ fn test_udp_pub_sub_loopback_same_driver() -> Result<(), Box<dyn std::error::Err
 
     // Sub first, then pub. The subscription is held only so a receiver
     // exists on the channel for the publication to connect to.
-    let _sub = a
-        .add_subscription(
-            &uri,
-            77,
-            rusteron_client::Handlers::NONE,
-            rusteron_client::Handlers::NONE,
-            Duration::from_secs(3),
-        )?;
+    let _sub = a.add_subscription(
+        &uri,
+        77,
+        rusteron_client::Handlers::NONE,
+        rusteron_client::Handlers::NONE,
+        Duration::from_secs(3),
+    )?;
 
     let p = a.add_publication(&uri, 77, Duration::from_secs(3))?;
 
