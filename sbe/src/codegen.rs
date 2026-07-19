@@ -556,6 +556,35 @@ fn generate_sbe_rt_src() -> String {
                     self(entry);
                 }
             }
+
+            /// Closure return type for group encode (`add`, `bids`, …).
+            ///
+            /// Both unit `()` and `Result<(), E>` work under one method name so
+            /// callers do not need a parallel `try_*` family just to `?` inside
+            /// the body. Method-level buffer/count errors still use `Result`.
+            pub trait GroupEncodeResult {
+                type Error: From<EncodeError>;
+                fn into_group_result(self) -> Result<(), Self::Error>;
+            }
+
+            impl GroupEncodeResult for () {
+                type Error = EncodeError;
+                #[inline]
+                fn into_group_result(self) -> Result<(), EncodeError> {
+                    Ok(())
+                }
+            }
+
+            impl<E> GroupEncodeResult for Result<(), E>
+            where
+                E: From<EncodeError>,
+            {
+                type Error = E;
+                #[inline]
+                fn into_group_result(self) -> Result<(), E> {
+                    self
+                }
+            }
         }
     };
 
@@ -5302,7 +5331,6 @@ fn generate_message_encoder(
             let next_stage = &stage_idents[tail_idx + 1];
 
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
-            let try_g_snake = syn::Ident::new(&format!("try_{}", to_snake_case(&g.name)), span);
             let raw_enc_name = to_pascal_case(&g.name);
             let scoped_enc = if multi_message {
                 format!("{}{}", &name, raw_enc_name)
@@ -5319,20 +5347,25 @@ fn generate_message_encoder(
 
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
+                    /// Encode this group. Closure may return `()` or `Result<(), E>`
+                    /// (via [`sbe_rt::GroupEncodeResult`]) so `?` works without a
+                    /// separate `try_*` method name.
                     #[must_use]
-                    pub fn #g_snake<F>(
+                    pub fn #g_snake<R, F>(
                         mut self,
                         count: #count_ty,
                         f: F,
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
+                    ) -> Result<#next_stage<'a>, R::Error>
                     where
-                        F: FnOnce(&mut #g_pascal_enc<'a>),
+                        R: sbe_rt::GroupEncodeResult,
+                        F: FnOnce(&mut #g_pascal_enc<'a>) -> R,
                     {
                         if self.pos + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 needed: #dim_size_lit,
                                 available: self.buf.len() - self.pos,
-                            });
+                            }
+                            .into());
                         }
                         self.buf[self.pos..self.pos + #dim_size_lit]
                             .copy_from_slice(&#g_pascal_enc::GROUP_DIM_TEMPLATE);
@@ -5341,38 +5374,7 @@ fn generate_message_encoder(
                             .copy_from_slice(&count.#to_endian());
                         let mut group =
                             #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
-                        f(&mut group);
-                        Ok(#next_stage {
-                            buf: group.buf,
-                            message_start: self.message_start,
-                            pos: group.pos,
-                        })
-                    }
-
-                    /// Fallible group: propagates caller `?` errors via `E: From<EncodeError>`.
-                    #[must_use]
-                    pub fn #try_g_snake<E, F>(
-                        mut self,
-                        count: #count_ty,
-                        f: F,
-                    ) -> Result<#next_stage<'a>, E>
-                    where
-                        E: From<sbe_rt::EncodeError>,
-                        F: FnOnce(&mut #g_pascal_enc<'a>) -> Result<(), E>,
-                    {
-                        if self.pos + #dim_size_lit > self.buf.len() {
-                            return Err(sbe_rt::EncodeError::BufferTooShort {
-                                needed: #dim_size_lit,
-                                available: self.buf.len() - self.pos,
-                            }.into());
-                        }
-                        self.buf[self.pos..self.pos + #dim_size_lit]
-                            .copy_from_slice(&#g_pascal_enc::GROUP_DIM_TEMPLATE);
-                        self.buf[self.pos + #num_offset_lit..self.pos + #num_offset_lit + #num_size_lit]
-                            .copy_from_slice(&count.#to_endian());
-                        let mut group =
-                            #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
-                        f(&mut group)?;
+                        f(&mut group).into_group_result()?;
                         Ok(#next_stage {
                             buf: group.buf,
                             message_start: self.message_start,
@@ -5672,32 +5674,6 @@ fn generate_group_encoder(
 
     let mut add_body = quote::quote! {
         if self.written >= self.count {
-            return Err(sbe_rt::EncodeError::GroupFull { declared: self.count as u32, attempted: self.written as u32 + 1 });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.pos + block_len > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort { needed: block_len, available: self.buf.len() - self.pos });
-        }
-    };
-    if !null_stmts.is_empty() {
-        add_body.extend(null_stmts.clone());
-    }
-    add_body.extend(quote::quote! {
-        // SAFETY: same borrow-split pattern as the group encoder method above.
-        // The closure `f` only operates on __entry (which holds __buf), never
-        // on `self`. The block scope drops __buf before `self.pos` is written.
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
-            f(&mut __entry);
-            self.pos = __entry.pos;
-        }
-        self.written += 1;
-        Ok(())
-    });
-
-    let mut try_add_body = quote::quote! {
-        if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
                 declared: self.count as u32,
                 attempted: self.written as u32 + 1,
@@ -5714,13 +5690,16 @@ fn generate_group_encoder(
         }
     };
     if !null_stmts.is_empty() {
-        try_add_body.extend(null_stmts);
+        add_body.extend(null_stmts);
     }
-    try_add_body.extend(quote::quote! {
+    add_body.extend(quote::quote! {
+        // SAFETY: same borrow-split pattern as the group encoder method above.
+        // The closure `f` only operates on __entry (which holds __buf), never
+        // on `self`. The block scope drops __buf before `self.pos` is written.
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
-            f(&mut __entry)?;
+            f(&mut __entry).into_group_result()?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -5747,24 +5726,15 @@ fn generate_group_encoder(
                 Self { buf, pos, count, written: 0 }
             }
 
+            /// Write one group entry. Closure may return `()` or `Result<(), E>`
+            /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
             #[must_use]
-            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+            pub fn add<'b, R, F>(&'b mut self, f: F) -> Result<(), R::Error>
             where
-                F: FnOnce(&mut #entry_enc_ident<'b>),
+                R: sbe_rt::GroupEncodeResult,
+                F: FnOnce(&mut #entry_enc_ident<'b>) -> R,
             {
                 #add_body
-            }
-
-            /// Fallible group entry: propagates caller `?` from the closure
-            /// (e.g. nested encode errors). Prefer this over `add` + `let _ =`
-            /// so claim paths can abort cleanly.
-            #[must_use]
-            pub fn try_add<'b, E, F>(&'b mut self, f: F) -> Result<(), E>
-            where
-                E: From<sbe_rt::EncodeError>,
-                F: FnOnce(&mut #entry_enc_ident<'b>) -> Result<(), E>,
-            {
-                #try_add_body
             }
 
             /// Manual entry creation: returns a borrowed entry encoder.
@@ -5914,12 +5884,17 @@ fn generate_group_encoder(
 
         entry_methods.extend(quote::quote! {
             #[must_use]
-            pub fn #ng_snake<F>(&mut self, count: #ng_count_ty, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
+            pub fn #ng_snake<R, F>(&mut self, count: #ng_count_ty, f: F) -> Result<&mut Self, R::Error>
             where
-                F: FnOnce(&mut #ng_enc<'a>),
+                R: sbe_rt::GroupEncodeResult,
+                F: FnOnce(&mut #ng_enc<'a>) -> R,
             {
                 if self.pos + #ng_dim > self.buf.len() {
-                    return Err(sbe_rt::EncodeError::BufferTooShort { needed: #ng_dim, available: self.buf.len() - self.pos });
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        needed: #ng_dim,
+                        available: self.buf.len() - self.pos,
+                    }
+                    .into());
                 }
                 self.buf[self.pos..self.pos + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
                 self.buf[self.pos + #num_off_idx..self.pos + #num_off_idx + #num_sz_lit].copy_from_slice(&count.#to_endian());
@@ -5934,7 +5909,7 @@ fn generate_group_encoder(
                 {
                     let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
                     let mut group = #ng_enc::wrap(__buf, self.pos + #ng_dim, count);
-                    f(&mut group);
+                    f(&mut group).into_group_result()?;
                     __pos = group.pos;
                 }
                 self.pos = __pos;

@@ -46,11 +46,11 @@ let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0)?;
 let after = app.app_name(name)?;
 after.payload_with(inner, |p| {
     let mut book = L2BookEncoder::wrap_and_apply_header(p, 0)?;
-    book.try_bids(n_b as u16, |g| {
+    book.bids(n_b as u16, |g| {
         for level in bids {
-            g.try_add(|e| { let _ = e.price_wire(px).size_wire(sz); Ok(()) })?;
+            g.add(|e| { let _ = e.price_wire(px).size_wire(sz); Ok::<(), _>(()) })?;
         }
-        Ok(())
+        Ok::<(), _>(())
     })?;
     Ok(())
 })?;

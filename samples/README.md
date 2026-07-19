@@ -51,7 +51,7 @@ curl -sf http://127.0.0.1:8123/ping || bash persist/tests/run-clickhouse.sh star
 
 - Consuming decoder stages: [`sbe/docs/guide/generated-api.md`](../sbe/docs/guide/generated-api.md)
 - Claim + nested AppMessage: [`sbe/docs/guide/claim-nested-encode.md`](../sbe/docs/guide/claim-nested-encode.md)
-- Group `try_add`, `payload_with`, `ENCODED_LENGTH` / `after_this_message`
+- Group `add` / `bids` (unit or `Result` closures), `payload_with`, framing consts
 
 ## Non-goals
 

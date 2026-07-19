@@ -167,6 +167,32 @@ pub mod sbe_rt {
             self(entry);
         }
     }
+    /// Closure return type for group encode (`add`, `bids`, …).
+    ///
+    /// Both unit `()` and `Result<(), E>` work under one method name so
+    /// callers do not need a parallel `try_*` family just to `?` inside
+    /// the body. Method-level buffer/count errors still use `Result`.
+    pub trait GroupEncodeResult {
+        type Error: From<EncodeError>;
+        fn into_group_result(self) -> Result<(), Self::Error>;
+    }
+    impl GroupEncodeResult for () {
+        type Error = EncodeError;
+        #[inline]
+        fn into_group_result(self) -> Result<(), EncodeError> {
+            Ok(())
+        }
+    }
+    impl<E> GroupEncodeResult for Result<(), E>
+    where
+        E: From<EncodeError>,
+    {
+        type Error = E;
+        #[inline]
+        fn into_group_result(self) -> Result<(), E> {
+            self
+        }
+    }
 }
 ///Boolean Type.
 #[repr(u8)]
@@ -3171,42 +3197,18 @@ impl<'a> CarEncoder<'a> {
     }
 }
 impl<'a> CarEncoder<'a> {
+    /// Encode this group. Closure may return `()` or `Result<(), E>`
+    /// (via [`sbe_rt::GroupEncodeResult`]) so `?` works without a
+    /// separate `try_*` method name.
     #[must_use]
-    pub fn fuel_figures<F>(
+    pub fn fuel_figures<R, F>(
         mut self,
         count: u16,
         f: F,
-    ) -> Result<CarAfterFuelFigures<'a>, sbe_rt::EncodeError>
+    ) -> Result<CarAfterFuelFigures<'a>, R::Error>
     where
-        F: FnOnce(&mut FuelFiguresEncoder<'a>),
-    {
-        if self.pos + 4 > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: 4,
-                available: self.buf.len() - self.pos,
-            });
-        }
-        self.buf[self.pos..self.pos + 4]
-            .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
-        self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group);
-        Ok(CarAfterFuelFigures {
-            buf: group.buf,
-            message_start: self.message_start,
-            pos: group.pos,
-        })
-    }
-    /// Fallible group: propagates caller `?` errors via `E: From<EncodeError>`.
-    #[must_use]
-    pub fn try_fuel_figures<E, F>(
-        mut self,
-        count: u16,
-        f: F,
-    ) -> Result<CarAfterFuelFigures<'a>, E>
-    where
-        E: From<sbe_rt::EncodeError>,
-        F: FnOnce(&mut FuelFiguresEncoder<'a>) -> Result<(), E>,
+        R: sbe_rt::GroupEncodeResult,
+        F: FnOnce(&mut FuelFiguresEncoder<'a>) -> R,
     {
         if self.pos + 4 > self.buf.len() {
             return Err(
@@ -3221,7 +3223,7 @@ impl<'a> CarEncoder<'a> {
             .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group)?;
+        f(&mut group).into_group_result()?;
         Ok(CarAfterFuelFigures {
             buf: group.buf,
             message_start: self.message_start,
@@ -3230,42 +3232,18 @@ impl<'a> CarEncoder<'a> {
     }
 }
 impl<'a> CarAfterFuelFigures<'a> {
+    /// Encode this group. Closure may return `()` or `Result<(), E>`
+    /// (via [`sbe_rt::GroupEncodeResult`]) so `?` works without a
+    /// separate `try_*` method name.
     #[must_use]
-    pub fn performance_figures<F>(
+    pub fn performance_figures<R, F>(
         mut self,
         count: u16,
         f: F,
-    ) -> Result<CarAfterPerformanceFigures<'a>, sbe_rt::EncodeError>
+    ) -> Result<CarAfterPerformanceFigures<'a>, R::Error>
     where
-        F: FnOnce(&mut PerformanceFiguresEncoder<'a>),
-    {
-        if self.pos + 4 > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: 4,
-                available: self.buf.len() - self.pos,
-            });
-        }
-        self.buf[self.pos..self.pos + 4]
-            .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
-        self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
-        let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group);
-        Ok(CarAfterPerformanceFigures {
-            buf: group.buf,
-            message_start: self.message_start,
-            pos: group.pos,
-        })
-    }
-    /// Fallible group: propagates caller `?` errors via `E: From<EncodeError>`.
-    #[must_use]
-    pub fn try_performance_figures<E, F>(
-        mut self,
-        count: u16,
-        f: F,
-    ) -> Result<CarAfterPerformanceFigures<'a>, E>
-    where
-        E: From<sbe_rt::EncodeError>,
-        F: FnOnce(&mut PerformanceFiguresEncoder<'a>) -> Result<(), E>,
+        R: sbe_rt::GroupEncodeResult,
+        F: FnOnce(&mut PerformanceFiguresEncoder<'a>) -> R,
     {
         if self.pos + 4 > self.buf.len() {
             return Err(
@@ -3280,7 +3258,7 @@ impl<'a> CarAfterFuelFigures<'a> {
             .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group)?;
+        f(&mut group).into_group_result()?;
         Ok(CarAfterPerformanceFigures {
             buf: group.buf,
             message_start: self.message_start,
@@ -3669,41 +3647,13 @@ impl<'a> FuelFiguresEncoder<'a> {
             written: 0,
         }
     }
+    /// Write one group entry. Closure may return `()` or `Result<(), E>`
+    /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
     #[must_use]
-    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+    pub fn add<'b, R, F>(&'b mut self, f: F) -> Result<(), R::Error>
     where
-        F: FnOnce(&mut FuelFiguresEntryEncoder<'b>),
-    {
-        if self.written >= self.count {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: self.written as u32 + 1,
-            });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.pos + block_len > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: block_len,
-                available: self.buf.len() - self.pos,
-            });
-        }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut __entry);
-            self.pos = __entry.pos;
-        }
-        self.written += 1;
-        Ok(())
-    }
-    /// Fallible group entry: propagates caller `?` from the closure
-    /// (e.g. nested encode errors). Prefer this over `add` + `let _ =`
-    /// so claim paths can abort cleanly.
-    #[must_use]
-    pub fn try_add<'b, E, F>(&'b mut self, f: F) -> Result<(), E>
-    where
-        E: From<sbe_rt::EncodeError>,
-        F: FnOnce(&mut FuelFiguresEntryEncoder<'b>) -> Result<(), E>,
+        R: sbe_rt::GroupEncodeResult,
+        F: FnOnce(&mut FuelFiguresEntryEncoder<'b>) -> R,
     {
         if self.written >= self.count {
             return Err(
@@ -3727,7 +3677,7 @@ impl<'a> FuelFiguresEncoder<'a> {
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut __entry)?;
+            f(&mut __entry).into_group_result()?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -3822,41 +3772,13 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             written: 0,
         }
     }
+    /// Write one group entry. Closure may return `()` or `Result<(), E>`
+    /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
     #[must_use]
-    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+    pub fn add<'b, R, F>(&'b mut self, f: F) -> Result<(), R::Error>
     where
-        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'b>),
-    {
-        if self.written >= self.count {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: self.written as u32 + 1,
-            });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.pos + block_len > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: block_len,
-                available: self.buf.len() - self.pos,
-            });
-        }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut __entry);
-            self.pos = __entry.pos;
-        }
-        self.written += 1;
-        Ok(())
-    }
-    /// Fallible group entry: propagates caller `?` from the closure
-    /// (e.g. nested encode errors). Prefer this over `add` + `let _ =`
-    /// so claim paths can abort cleanly.
-    #[must_use]
-    pub fn try_add<'b, E, F>(&'b mut self, f: F) -> Result<(), E>
-    where
-        E: From<sbe_rt::EncodeError>,
-        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'b>) -> Result<(), E>,
+        R: sbe_rt::GroupEncodeResult,
+        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'b>) -> R,
     {
         if self.written >= self.count {
             return Err(
@@ -3880,7 +3802,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut __entry)?;
+            f(&mut __entry).into_group_result()?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -3930,19 +3852,19 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         self
     }
     #[must_use]
-    pub fn acceleration<F>(
-        &mut self,
-        count: u16,
-        f: F,
-    ) -> Result<&mut Self, sbe_rt::EncodeError>
+    pub fn acceleration<R, F>(&mut self, count: u16, f: F) -> Result<&mut Self, R::Error>
     where
-        F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>),
+        R: sbe_rt::GroupEncodeResult,
+        F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>) -> R,
     {
         if self.pos + 4 > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: 4,
-                available: self.buf.len() - self.pos,
-            });
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: 4,
+                    available: self.buf.len() - self.pos,
+                }
+                    .into(),
+            );
         }
         self.buf[self.pos..self.pos + 4]
             .copy_from_slice(&PerformanceFiguresAccelerationEncoder::GROUP_DIM_TEMPLATE);
@@ -3955,7 +3877,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
                 self.pos + 4,
                 count,
             );
-            f(&mut group);
+            f(&mut group).into_group_result()?;
             __pos = group.pos;
         }
         self.pos = __pos;
@@ -3982,44 +3904,13 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             written: 0,
         }
     }
+    /// Write one group entry. Closure may return `()` or `Result<(), E>`
+    /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
     #[must_use]
-    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+    pub fn add<'b, R, F>(&'b mut self, f: F) -> Result<(), R::Error>
     where
-        F: FnOnce(&mut PerformanceFiguresAccelerationEntryEncoder<'b>),
-    {
-        if self.written >= self.count {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: self.written as u32 + 1,
-            });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.pos + block_len > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: block_len,
-                available: self.buf.len() - self.pos,
-            });
-        }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = PerformanceFiguresAccelerationEntryEncoder::wrap(
-                __buf,
-                self.pos,
-            );
-            f(&mut __entry);
-            self.pos = __entry.pos;
-        }
-        self.written += 1;
-        Ok(())
-    }
-    /// Fallible group entry: propagates caller `?` from the closure
-    /// (e.g. nested encode errors). Prefer this over `add` + `let _ =`
-    /// so claim paths can abort cleanly.
-    #[must_use]
-    pub fn try_add<'b, E, F>(&'b mut self, f: F) -> Result<(), E>
-    where
-        E: From<sbe_rt::EncodeError>,
-        F: FnOnce(&mut PerformanceFiguresAccelerationEntryEncoder<'b>) -> Result<(), E>,
+        R: sbe_rt::GroupEncodeResult,
+        F: FnOnce(&mut PerformanceFiguresAccelerationEntryEncoder<'b>) -> R,
     {
         if self.written >= self.count {
             return Err(
@@ -4046,7 +3937,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                 __buf,
                 self.pos,
             );
-            f(&mut __entry)?;
+            f(&mut __entry).into_group_result()?;
             self.pos = __entry.pos;
         }
         self.written += 1;

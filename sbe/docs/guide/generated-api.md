@@ -10,7 +10,9 @@ schema. The examples use a hypothetical `Quote` message from a market-data schem
 > and [advanced.md](advanced.md).
 >
 > **Claim / nested SBE:** [claim-nested-encode.md](claim-nested-encode.md) —
-> `ENCODED_LENGTH`, `after_this_message`, `payload_with`, group `try_add`.
+> `ENCODED_LENGTH`, `after_this_message`, `payload_with`. Group methods (`add`,
+> `bids`, …) accept unit or `Result` closures via `GroupEncodeResult` — no
+> parallel `try_add` / `try_bids` names.
 
 ## Module structure
 

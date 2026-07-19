@@ -259,9 +259,9 @@ impl<P: Publication> ClaimPublisher<P> {
                                 .exchange_timestamp(*exchange_ts_ns)
                                 .receive_timestamp(*receive_ts_ns)
                                 .sequence(*sequence);
-                            let after = enc.try_bids(bids.len() as u16, |g| {
+                            let after = enc.bids(bids.len() as u16, |g| {
                                 for l in *bids {
-                                    g.try_add(|e| -> Result<(), sbe_rt::EncodeError> {
+                                    g.add(|e| -> Result<(), sbe_rt::EncodeError> {
                                         let _ = e
                                             .price_wire(Decimal::new(
                                                 l.price.mantissa,
@@ -276,9 +276,9 @@ impl<P: Publication> ClaimPublisher<P> {
                                 }
                                 Ok::<(), sbe_rt::EncodeError>(())
                             })?;
-                            let after = after.try_asks(asks.len() as u16, |g| {
+                            let after = after.asks(asks.len() as u16, |g| {
                                 for l in *asks {
-                                    g.try_add(|e| -> Result<(), sbe_rt::EncodeError> {
+                                    g.add(|e| -> Result<(), sbe_rt::EncodeError> {
                                         let _ = e
                                             .price_wire(Decimal::new(
                                                 l.price.mantissa,

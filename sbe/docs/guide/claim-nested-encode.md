@@ -35,14 +35,15 @@ let after = app.app_name(app_name.as_bytes())?;
 after.payload_with(inner_len, |payload| {
     let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
     // fixed fields …
-    book.try_bids(n, |g| {
+    // Closures may return `()` or `Result` — one method name (`bids` / `add`).
+    book.bids(n, |g| {
         for level in bids {
-            g.try_add(|e| {
+            g.add(|e| {
                 let _ = e.price_wire(dec).size_wire(sz);
-                Ok(())
+                Ok::<(), sbe_rt::EncodeError>(())
             })?;
         }
-        Ok(())
+        Ok::<(), sbe_rt::EncodeError>(())
     })?;
     // asks + symbol …
     Ok(())
@@ -55,7 +56,8 @@ after.payload_with(inner_len, |payload| {
    nested message; never guess claim size.
 2. **`payload_with(exact_len, …)`** for nested SBE (writes var-data length +
    lends the slice). Same idea as decoder `into_*` / `into_*_as_message`.
-3. **`try_add`** on groups so encode failures propagate into claim abort.
+3. **Group `add` / `bids` / …** — closures may return `()` or `Result` (no
+   parallel `try_*` names).
 4. **Decimals:** with `enable_decimal_converters("Decimal")`, wire setters are
    `price_wire(Decimal)` and generic converters are `price::<D: SbeDecimal>(…)`.
 5. **Flyweight vs eager composites:** `engine()` is zero-copy; `engine_as_struct()`
