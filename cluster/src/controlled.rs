@@ -3,11 +3,8 @@
 //! so the application can apply backpressure (Abort) or stop (Break).
 
 use crate::codecs::ergo_codecs::{
-    AdminRequestType, AdminResponseCode, AdminResponseDecoder, ChallengeDecoder, EventCode, MessageHeader,
-    NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderDecoder,
-};
-use crate::codecs::ergo_codecs::{
-    AdminResponseEncoder, ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
+    AdminRequestType, AdminResponseCode, AnyMessage, EventCode,
+    SessionMessageHeaderEncoder,
 };
 
 /// Decode var-data bytes as UTF-8 with a consistent sentinel on failure.
@@ -77,82 +74,69 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         Self { listener }
     }
 
-    /// Decode and dispatch one egress fragment. Returns the action the
-    /// listener produced (or `Continue` for unrecognised template IDs).
+    /// Decode and dispatch one egress fragment via `AnyMessage::decode`.
+    /// Returns the action the listener produced, or `Continue` for
+    /// unrecognised / unparseable fragments.
     pub fn on_fragment(&mut self, data: &[u8]) -> ControlledPollAction {
-        let Some(template_id) = MessageHeader::peek_for_schema(data, SessionMessageHeaderEncoder::SCHEMA_ID) else {
-        return ControlledPollAction::Continue;
-    };
+        let Ok(msg) = AnyMessage::decode(data, 0) else {
+            return ControlledPollAction::Continue;
+        };
 
-    match template_id {
-            SessionMessageHeaderEncoder::TEMPLATE_ID => {
+        match msg {
+            AnyMessage::SessionMessageHeader(decoder) => {
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return ControlledPollAction::Continue;
                 }
-                let Ok(body) = SessionMessageHeaderDecoder::wrap_and_apply_header(data, 0) else {
-                    return ControlledPollAction::Continue;
-                };
                 let payload = &data[SessionMessageHeaderEncoder::ENCODED_LENGTH..];
                 self.listener
-                    .on_message(body.cluster_session_id(), body.timestamp(), payload)
+                    .on_message(decoder.cluster_session_id(), decoder.timestamp(), payload)
             }
-            SessionEventEncoder::TEMPLATE_ID => {
-                let Ok(decoder) = SessionEventDecoder::wrap_and_apply_header(data, 0) else {
-                    return ControlledPollAction::Continue;
-                };
+            AnyMessage::SessionEvent(decoder) => {
                 let cid = decoder.correlation_id();
                 let csid = decoder.cluster_session_id();
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let code = decoder.code();
-                let Ok((detail_bytes, _)) = decoder.into_detail() else {
-                    return ControlledPollAction::Continue;
-                };
-                let detail = as_utf8_lossy(detail_bytes);
+                let detail = decoder.into_detail()
+                    .map(|(b, _)| as_utf8_lossy(b))
+                    .unwrap_or("<invalid utf-8>");
                 self.listener.on_session_event(cid, csid, ltid, lmid, code, detail)
             }
-            NewLeaderEventEncoder::TEMPLATE_ID => {
-                let Ok(decoder) = NewLeaderEventDecoder::wrap_and_apply_header(data, 0) else {
-                    return ControlledPollAction::Continue;
-                };
+            AnyMessage::NewLeaderEvent(decoder) => {
                 let csid = decoder.cluster_session_id();
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
-                let Ok((eps_bytes, _)) = decoder.into_ingress_endpoints() else {
-                    return ControlledPollAction::Continue;
-                };
-                let eps = as_utf8_lossy(eps_bytes);
+                let eps = decoder.into_ingress_endpoints()
+                    .map(|(b, _)| as_utf8_lossy(b))
+                    .unwrap_or("<invalid utf-8>");
                 self.listener.on_new_leader(csid, ltid, lmid, eps)
             }
-            ChallengeEncoder::TEMPLATE_ID => {
-                let Ok(decoder) = ChallengeDecoder::wrap_and_apply_header(data, 0) else {
-                    return ControlledPollAction::Continue;
-                };
+            AnyMessage::Challenge(decoder) => {
                 let cid = decoder.correlation_id();
                 let csid = decoder.cluster_session_id();
-                let Ok((chal, _)) = decoder.into_encoded_challenge() else {
-                    return ControlledPollAction::Continue;
-                };
+                let chal = decoder.into_encoded_challenge()
+                    .map(|(b, _)| b)
+                    .unwrap_or(&[]);
                 self.listener.on_challenge(cid, csid, chal)
             }
-            AdminResponseEncoder::TEMPLATE_ID => {
-                let Ok(decoder) = AdminResponseDecoder::wrap_and_apply_header(data, 0) else {
-                    return ControlledPollAction::Continue;
-                };
+            AnyMessage::AdminResponse(decoder) => {
                 let csid = decoder.cluster_session_id();
                 let cid = decoder.correlation_id();
                 let rt = decoder.request_type();
                 let rc = decoder.response_code();
-                let Ok((msg_bytes, after_msg)) = decoder.into_message() else {
-                    return ControlledPollAction::Continue;
+                let (msg_bytes, after_msg) = match decoder.into_message() {
+                    Ok(v) => v,
+                    Err(_) => return ControlledPollAction::Continue,
                 };
-                let Ok((pl, _)) = after_msg.into_payload() else {
-                    return ControlledPollAction::Continue;
+                let (pl, _) = match after_msg.into_payload() {
+                    Ok(v) => v,
+                    Err(_) => return ControlledPollAction::Continue,
                 };
                 let msg = as_utf8_lossy(msg_bytes).to_string();
                 let pl = pl.to_vec();
                 self.listener.on_admin_response(csid, cid, rt, rc, &msg, &pl)
             }
+            AnyMessage::Unknown { .. } => ControlledPollAction::Continue,
             _ => ControlledPollAction::Continue,
         }
     }

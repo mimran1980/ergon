@@ -3,14 +3,12 @@
 //! SessionEvent / NewLeader / SessionMessageHeader decoding uses the same
 //! ErgoSBE equal-work path as [`crate::decode`].
 
-// Production decode uses ErgoSBE.
 use crate::codecs::ergo_codecs::{
-    AdminRequestType, AdminResponseCode, AdminResponseDecoder, ChallengeDecoder, EventCode, MessageHeader,
+    AdminRequestType, AdminResponseCode, AnyMessage, EventCode,
 };
 use crate::codecs::ergo_codecs::{
-    AdminResponseEncoder, ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
+    SessionMessageHeaderEncoder,
 };
-use crate::decode::{decode_new_leader_event, decode_session_event, decode_session_message_header};
 
 /// Decode var-data bytes as UTF-8 with a consistent sentinel on failure.
 #[inline]
@@ -69,72 +67,75 @@ impl<L: EgressListener> EgressAdapter<L> {
         &mut self.listener
     }
 
-    /// Decode and dispatch one egress fragment. Returns `true` if
-    /// handled, `false` if the templateId is unrecognised.
+    /// Decode and dispatch one egress fragment via `AnyMessage::decode` —
+    /// schema validation and template-id dispatch are handled by the
+    /// generated code. Returns `true` if handled, `false` for unknown types.
     pub fn on_fragment(&mut self, data: &[u8]) -> Result<bool, crate::ClusterError> {
-        let Some(template_id) = MessageHeader::peek_for_schema(data, SessionMessageHeaderEncoder::SCHEMA_ID) else {
-        return Ok(false);
-    };
+        let msg = match AnyMessage::decode(data, 0) {
+            Ok(m) => m,
+            Err(_) => return Ok(false),
+        };
 
-    match template_id {
-            SessionMessageHeaderEncoder::TEMPLATE_ID => {
+        match msg {
+            AnyMessage::SessionMessageHeader(decoder) => {
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return Err(crate::ClusterError::ProtocolError {
                         reason: "session message too short".into(),
                     });
                 }
-                let body = decode_session_message_header(data)?;
                 let payload = &data[SessionMessageHeaderEncoder::ENCODED_LENGTH..];
                 self.listener
-                    .on_message(body.cluster_session_id, body.timestamp, payload);
+                    .on_message(decoder.cluster_session_id(), decoder.timestamp(), payload);
                 Ok(true)
             }
-            SessionEventEncoder::TEMPLATE_ID => {
-                let view = decode_session_event(data)?;
-                let detail = as_utf8_lossy(view.detail);
-                self.listener.on_session_event(
-                    view.correlation_id,
-                    view.cluster_session_id,
-                    view.leadership_term_id,
-                    view.leader_member_id,
-                    view.code,
-                    detail,
-                );
-                Ok(true)
-            }
-            NewLeaderEventEncoder::TEMPLATE_ID => {
-                let view = decode_new_leader_event(data)?;
-                let endpoints = as_utf8_lossy(view.ingress_endpoints);
-                self.listener.on_new_leader(
-                    view.cluster_session_id,
-                    view.leadership_term_id,
-                    view.leader_member_id,
-                    endpoints,
-                );
-                Ok(true)
-            }
-            ChallengeEncoder::TEMPLATE_ID => {
-                let decoder = ChallengeDecoder::wrap_and_apply_header(data, 0)?;
+            AnyMessage::SessionEvent(decoder) => {
                 let cid = decoder.correlation_id();
                 let csid = decoder.cluster_session_id();
-                let (challenge, _after_challenge) = decoder.into_encoded_challenge()?;
-                self.listener.on_challenge(cid, csid, challenge);
+                let ltid = decoder.leadership_term_id();
+                let lmid = decoder.leader_member_id();
+                let code = decoder.code();
+                let detail = decoder.into_detail()
+                    .map(|(b, _)| as_utf8_lossy(b))
+                    .unwrap_or("<invalid utf-8>");
+                self.listener.on_session_event(cid, csid, ltid, lmid, code, detail);
                 Ok(true)
             }
-            AdminResponseEncoder::TEMPLATE_ID => {
-                let decoder = AdminResponseDecoder::wrap_and_apply_header(data, 0)?;
+            AnyMessage::NewLeaderEvent(decoder) => {
+                let csid = decoder.cluster_session_id();
+                let ltid = decoder.leadership_term_id();
+                let lmid = decoder.leader_member_id();
+                let eps = decoder.into_ingress_endpoints()
+                    .map(|(b, _)| as_utf8_lossy(b))
+                    .unwrap_or("<invalid utf-8>");
+                self.listener.on_new_leader(csid, ltid, lmid, eps);
+                Ok(true)
+            }
+            AnyMessage::Challenge(decoder) => {
+                let cid = decoder.correlation_id();
+                let csid = decoder.cluster_session_id();
+                let chal = decoder.into_encoded_challenge()
+                    .map(|(b, _)| b)
+                    .unwrap_or(&[]);
+                self.listener.on_challenge(cid, csid, chal);
+                Ok(true)
+            }
+            AnyMessage::AdminResponse(decoder) => {
                 let csid = decoder.cluster_session_id();
                 let cid = decoder.correlation_id();
                 let rt = decoder.request_type();
                 let rc = decoder.response_code();
-                let (msg_bytes, after_msg) = decoder.into_message()?;
-                let (payload_bytes, _after_payload) = after_msg.into_payload()?;
+                let (msg_bytes, after_msg) = decoder.into_message().map_err(|e| crate::ClusterError::ProtocolError {
+                    reason: format!("admin response message: {e:?}"),
+                })?;
+                let (payload_bytes, _) = after_msg.into_payload().map_err(|e| crate::ClusterError::ProtocolError {
+                    reason: format!("admin response payload: {e:?}"),
+                })?;
                 let msg = as_utf8_lossy(msg_bytes).to_string();
-                let payload = payload_bytes.to_vec();
-                self.listener.on_admin_response(csid, cid, rt, rc, &msg, &payload);
+                self.listener.on_admin_response(csid, cid, rt, rc, &msg, payload_bytes);
                 Ok(true)
             }
-            _ => Ok(false),
+            AnyMessage::Unknown { .. } => Ok(false),
+            _ => Ok(false), // messages not in the cluster protocol
         }
     }
 
