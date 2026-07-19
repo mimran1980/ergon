@@ -3568,6 +3568,9 @@ fn generate_domain_recursive(
 
     let mut struct_fields: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut from_exprs: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut encode_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut group_encode_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut vardata_encode_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
 
     // Scalar / array / composite / enum / set fields
     for f in fields {
@@ -3584,12 +3587,15 @@ fn generate_domain_recursive(
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
                     struct_fields.push(quote::quote! { pub #f_ident: [#r_type; #len_lit] });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                    encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
                 } else if f.presence == Presence::Optional {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#r_type> });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                    encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #r_type });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                    encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
                 }
             }
             FieldType::Composite {
@@ -3602,8 +3608,10 @@ fn generate_domain_recursive(
                 // so the DTO field must also be optional.
                 if !is_entry && f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#comp_ident> });
+                    encode_stmts.push(quote::quote! { if let Some(ref v) = self.#f_ident { enc.#f_ident(*v); } });
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #comp_ident });
+                    encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
                 }
                 from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
             }
@@ -3612,21 +3620,27 @@ fn generate_domain_recursive(
             } => {
                 if is_bool_enum(elements, enum_name) {
                     // bool enums → plain bool in DTO
+                    let bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
                     if !is_entry && f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<bool> });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#bool_ident() });
+                        encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#bool_ident(v); } });
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: bool });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#bool_ident() });
+                        encode_stmts.push(quote::quote! { enc.#bool_ident(self.#f_ident); });
                     }
-                    let bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
-                    from_exprs.push(quote::quote! { #f_ident: dec.#bool_ident() });
                 } else {
                     let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
                     if !is_entry && f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                        encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                        encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
                     }
-                    from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
                 }
             }
             FieldType::Set {
@@ -3635,8 +3649,10 @@ fn generate_domain_recursive(
                 let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
                 if !is_entry && f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
+                    encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
+                    encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
                 }
                 from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
             }
@@ -3680,6 +3696,23 @@ fn generate_domain_recursive(
             });
         }
 
+        // Encode: group chain
+        let (_, _, count_prim) = get_dim_num_layout(elements, &g.dimension_type);
+        let count_ty: syn::Type = syn::parse_str(rust_type(count_prim)).unwrap();
+        group_encode_stmts.push(quote::quote! {
+            let enc = enc.#g_field_ident(
+                self.#g_field_ident.len() as #count_ty,
+                |g| -> Result<(), sbe_rt::EncodeError> {
+                    for e in &self.#g_field_ident {
+                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                            e.encode_into(entry)
+                        })?;
+                    }
+                    Ok(())
+                }
+            )?;
+        });
+
         // Recursively generate the entry domain struct
         let entry_prefix = format!("{struct_prefix}{g_pascal}Entry");
         let entry_decoder_name = format!("{g_scoped}Entry");
@@ -3706,9 +3739,13 @@ fn generate_domain_recursive(
         from_exprs.push(quote::quote! {
             #vd_ident: dec.#vd_ident().unwrap_or(&[]).to_vec()
         });
+        vardata_encode_stmts.push(quote::quote! {
+            let enc = enc.#vd_ident(&self.#vd_ident)?;
+        });
     }
 
-    // Generate the struct + From impl
+    // ── Generate the struct + From impl ──────────────────────────────
+    let encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);
     ts.extend(quote::quote! {
         /// Owned domain object — application-layer counterpart to the flyweight decoder.
         /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
@@ -3726,6 +3763,66 @@ fn generate_domain_recursive(
             }
         }
     });
+
+    // ── Encode-from-DTO ──────────────────────────────────────────────
+    if is_entry {
+        // Entry domains: encode_into for use inside group closures
+        let entry_encoder_ident = syn::Ident::new(
+            &format!("{decoder_name}Encoder"),
+            span,
+        );
+        let encode_body = if !vardata_encode_stmts.is_empty() || !group_encode_stmts.is_empty() {
+            quote::quote! {
+                #(#encode_stmts)*
+                #(#group_encode_stmts)*
+                #(#vardata_encode_stmts)*
+                Ok(())
+            }
+        } else {
+            quote::quote! {
+                #(#encode_stmts)*
+                Ok(())
+            }
+        };
+        ts.extend(quote::quote! {
+            impl #domain_ident {
+                /// Encode this entry into a group entry encoder.
+                pub fn encode_into<'a>(
+                    &self,
+                    enc: &mut #entry_encoder_ident<'a>,
+                ) -> Result<(), sbe_rt::EncodeError> {
+                    #encode_body
+                }
+            }
+        });
+    } else {
+        // Message domains: full encode via wrap_and_apply_header
+        let has_tail = !group_encode_stmts.is_empty() || !vardata_encode_stmts.is_empty();
+        let encode_body = if has_tail {
+            quote::quote! {
+                let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
+                #(#encode_stmts)*
+                #(#group_encode_stmts)*
+                #(#vardata_encode_stmts)*
+                Ok(enc.encoded_length_with_header())
+            }
+        } else {
+            // Fixed-only message: encoder implements AsRef<[u8]>
+            quote::quote! {
+                let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
+                #(#encode_stmts)*
+                Ok(enc.as_ref().len())
+            }
+        };
+        ts.extend(quote::quote! {
+            impl #domain_ident {
+                /// Encode this domain object into a byte buffer.
+                pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
+                    #encode_body
+                }
+            }
+        });
+    }
 }
 
 fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream {

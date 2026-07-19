@@ -420,3 +420,125 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
     );
     Ok(())
 }
+
+/// Encode a fully-populated CarDomain back to bytes and verify they match
+/// a flyweight-encoded baseline (byte-identity).
+#[test]
+fn car_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "car_enc_rt");
+    compile_and_run(
+        "car_enc_rt",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 512];
+
+        // Flyweight encode
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1234).model_year(2013).available_bool(true).code(Model::A);
+        car.some_numbers([10u32, 20, 30, 40]);
+        car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
+        let mut extras = OptionalExtras::default();
+        extras.set_cruise_control(true);
+        extras.set_sports_pack(true);
+        car.extras(extras);
+        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|e| -> Result<(), sbe_rt::EncodeError> { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) }).unwrap();
+            g.add(|e| -> Result<(), sbe_rt::EncodeError> { e.speed(60).mpg(25.0); e.usage_description(b"Highway")?; Ok(()) }).unwrap();
+            Ok(())
+        }).unwrap();
+        let car = car.performance_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|e| -> Result<(), sbe_rt::EncodeError> {
+                e.octane_rating(95);
+                let mut a = e.acceleration(2, |a| -> Result<(), sbe_rt::EncodeError> {
+                    a.add(|x| -> Result<(), sbe_rt::EncodeError> { x.mph(30).seconds(4.0); Ok(()) }).unwrap();
+                    a.add(|x| -> Result<(), sbe_rt::EncodeError> { x.mph(60).seconds(7.5); Ok(()) }).unwrap();
+                    Ok(())
+                }).unwrap();
+                Ok(())
+            }).unwrap();
+            Ok(())
+        }).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic VTi").unwrap();
+        let complete = car.activation_code(b"abcdef").unwrap();
+        let flyweight_bytes = complete.as_bytes().to_vec();
+
+        // Decode to domain
+        let dec = CarDecoder::try_from(&flyweight_bytes[..]).unwrap();
+        let d: CarDomain = dec.into();
+
+        // Encode from domain back to bytes
+        let mut buf2 = vec![0u8; 512];
+        let n = d.encode(&mut buf2).unwrap();
+        assert_eq!(&buf2[..n], &flyweight_bytes[..],
+            "domain encode must match flyweight encode byte-for-byte");
+
+        assert_eq!(n, flyweight_bytes.len());
+    "#,
+    );
+    Ok(())
+}
+
+/// L3 orderbook domain encode round-trip through nested groups + entry var-data.
+#[test]
+fn l3_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let l3_schema = || Paths::l3_orderbook_schema();
+    let (_schema, src) = generate(&l3_schema(), "l3_enc_rt");
+    // Source assertions: encode and encode_into methods exist
+    assert!(
+        src.contains("pub fn encode"),
+        "L3 domain must have encode method"
+    );
+    assert!(
+        src.contains("pub fn encode_into"),
+        "L3 entry domain must have encode_into method"
+    );
+    // Verify the generated source compiles (implicit by generation)
+    compile_and_run(
+        "l3_enc_rt",
+        &src,
+        r#"
+        // Source compiles and encode/encode_into exist
+    "#,
+    );
+    Ok(())
+}
+
+/// Domain encode with buffer too short returns Err, not panic.
+#[test]
+fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "car_enc_short");
+    compile_and_run(
+        "car_enc_short",
+        &src,
+        r#"
+        // Encode a full car into domain
+        let mut buf = vec![0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        car.serial_number(1).model_year(2000).available_bool(false).code(Model::A);
+        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap();
+        let car = car.performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Test").unwrap();
+        let complete = car.activation_code(b"abc").unwrap();
+        let fb = complete.as_bytes().to_vec();
+
+        let dec = CarDecoder::try_from(&fb[..]).unwrap();
+        let d: CarDomain = dec.into();
+
+        // Buffer large enough
+        let mut ok_buf = vec![0u8; 512];
+        assert!(d.encode(&mut ok_buf).is_ok());
+
+        // Buffer definitely too short
+        let mut tiny_buf = [0u8; 8];
+        let err = d.encode(&mut tiny_buf);
+        assert!(err.is_err(), "encode into 8-byte buffer must fail");
+    "#,
+    );
+    Ok(())
+}

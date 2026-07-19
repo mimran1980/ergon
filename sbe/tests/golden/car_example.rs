@@ -2914,6 +2914,18 @@ impl<'a> From<FuelFiguresEntryDecoder<'a>> for CarFuelFiguresEntryDomain {
         }
     }
 }
+impl CarFuelFiguresEntryDomain {
+    /// Encode this entry into a group entry encoder.
+    pub fn encode_into<'a>(
+        &self,
+        enc: &mut FuelFiguresEntryEncoder<'a>,
+    ) -> Result<(), sbe_rt::EncodeError> {
+        enc.speed(self.speed);
+        enc.mpg(self.mpg);
+        let enc = enc.usage_description(&self.usage_description)?;
+        Ok(())
+    }
+}
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
 /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
@@ -2929,6 +2941,17 @@ for CarPerformanceFiguresEntryAccelerationEntryDomain {
             mph: dec.mph(),
             seconds: dec.seconds(),
         }
+    }
+}
+impl CarPerformanceFiguresEntryAccelerationEntryDomain {
+    /// Encode this entry into a group entry encoder.
+    pub fn encode_into<'a>(
+        &self,
+        enc: &mut PerformanceFiguresAccelerationEntryEncoder<'a>,
+    ) -> Result<(), sbe_rt::EncodeError> {
+        enc.mph(self.mph);
+        enc.seconds(self.seconds);
+        Ok(())
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
@@ -2952,6 +2975,28 @@ impl<'a> From<PerformanceFiguresEntryDecoder<'a>> for CarPerformanceFiguresEntry
                 })
                 .unwrap_or_default(),
         }
+    }
+}
+impl CarPerformanceFiguresEntryDomain {
+    /// Encode this entry into a group entry encoder.
+    pub fn encode_into<'a>(
+        &self,
+        enc: &mut PerformanceFiguresEntryEncoder<'a>,
+    ) -> Result<(), sbe_rt::EncodeError> {
+        enc.octane_rating(self.octane_rating);
+        let enc = enc
+            .acceleration(
+                self.acceleration.len() as u16,
+                |g| -> Result<(), sbe_rt::EncodeError> {
+                    for e in &self.acceleration {
+                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                            e.encode_into(entry)
+                        })?;
+                    }
+                    Ok(())
+                },
+            )?;
+        Ok(())
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
@@ -3006,6 +3051,48 @@ impl<'a> From<CarDecoder<'a>> for CarDomain {
             model: dec.model().unwrap_or(&[]).to_vec(),
             activation_code: dec.activation_code().unwrap_or(&[]).to_vec(),
         }
+    }
+}
+impl CarDomain {
+    /// Encode this domain object into a byte buffer.
+    pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
+        let mut enc = CarEncoder::wrap_and_apply_header(buf, 0)?;
+        enc.serial_number(self.serial_number);
+        enc.model_year(self.model_year);
+        enc.available_bool(self.available);
+        enc.code(self.code);
+        enc.some_numbers(self.some_numbers);
+        enc.vehicle_code(self.vehicle_code);
+        enc.extras(self.extras);
+        enc.engine(self.engine);
+        let enc = enc
+            .fuel_figures(
+                self.fuel_figures.len() as u16,
+                |g| -> Result<(), sbe_rt::EncodeError> {
+                    for e in &self.fuel_figures {
+                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                            e.encode_into(entry)
+                        })?;
+                    }
+                    Ok(())
+                },
+            )?;
+        let enc = enc
+            .performance_figures(
+                self.performance_figures.len() as u16,
+                |g| -> Result<(), sbe_rt::EncodeError> {
+                    for e in &self.performance_figures {
+                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                            e.encode_into(entry)
+                        })?;
+                    }
+                    Ok(())
+                },
+            )?;
+        let enc = enc.manufacturer(&self.manufacturer)?;
+        let enc = enc.model(&self.model)?;
+        let enc = enc.activation_code(&self.activation_code)?;
+        Ok(enc.encoded_length_with_header())
     }
 }
 ///Description of a basic Car
