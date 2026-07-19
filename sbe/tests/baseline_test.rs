@@ -107,7 +107,8 @@ fn generated_code_contains_expected_types() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn generate_composite_with_enum_set_and_nested_composite() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_composite_with_enum_set_and_nested_composite() -> Result<(), Box<dyn std::error::Error>>
+{
     // composite-elements-schema.xml has a composite ("outer") containing an
     // enum, a set, and a nested composite ("inner"); the rc4 variant adds
     // explicit offsets. Generating these exercises the composite field-type
@@ -947,7 +948,8 @@ fn display_shows_group_entry_fields_not_just_count() -> Result<(), Box<dyn std::
 // ── composite flyweight default (todo 112) ───────────────────────────
 
 #[test]
-fn composite_default_is_flyweight_as_struct_is_eager_copy() -> Result<(), Box<dyn std::error::Error>> {
+fn composite_default_is_flyweight_as_struct_is_eager_copy() -> Result<(), Box<dyn std::error::Error>>
+{
     let (_schema, src) = generate(&Paths::example_schema(), "composite_api");
     compile_and_run(
         "composite_api",
@@ -1747,7 +1749,8 @@ fn u8_dimension_type_generates_correctly() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
-fn constant_field_in_message_header_does_not_affect_offsets() -> Result<(), Box<dyn std::error::Error>> {
+fn constant_field_in_message_header_does_not_affect_offsets()
+-> Result<(), Box<dyn std::error::Error>> {
     let schema_path = Paths::sbe_tool_test_resource("constant-header-field.xml");
     let (_schema, src) = generate(&schema_path, "consthdr");
 
@@ -2095,7 +2098,8 @@ fn ilink_binary_schema_compiles() -> Result<(), Box<dyn std::error::Error>> {
 // ── Group entry wire blockLength versioning (todo 145) ────────────────
 
 #[test]
-fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() -> Result<(), Box<dyn std::error::Error>> {
+fn v2_decoder_reads_v1_group_entries_using_wire_blocklength()
+-> Result<(), Box<dyn std::error::Error>> {
     let v1_path = Paths::sbe_tool_test_resource("group-versioning-v1.xml");
     let v2_path = Paths::sbe_tool_test_resource("group-versioning-v2.xml");
     let (_s1, v1_src) = generate(&v1_path, "grpvers_v1");
@@ -2143,7 +2147,8 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength() -> Result<(), Box<
 }
 
 #[test]
-fn var_data_after_version_mismatched_group_at_correct_offset() -> Result<(), Box<dyn std::error::Error>> {
+fn var_data_after_version_mismatched_group_at_correct_offset()
+-> Result<(), Box<dyn std::error::Error>> {
     let v2_path = Paths::sbe_tool_test_resource("group-versioning-v2.xml");
     let v1_path = Paths::sbe_tool_test_resource("group-versioning-v1.xml");
     let (_s1, v2_src) = generate(&v2_path, "grpvers_v2b");
@@ -2259,7 +2264,8 @@ fn upstream_issue_schemas_parse_or_error_gracefully() -> Result<(), Box<dyn std:
 // ── Performance regression locks (prevent reintroduction of slow shapes) ──
 
 #[test]
-fn generated_encoder_has_no_phantomdata_or_state_generic() -> Result<(), Box<dyn std::error::Error>> {
+fn generated_encoder_has_no_phantomdata_or_state_generic() -> Result<(), Box<dyn std::error::Error>>
+{
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     assert!(
         !src.contains("core::marker::PhantomData"),
@@ -2385,7 +2391,8 @@ fn nested_message_decode_via_vardata() -> Result<(), Box<dyn std::error::Error>>
 
 /// `into_payload_as_message` only exists after preceding fields are consumed.
 #[test]
-fn nested_message_as_message_requires_ordered_consumption() -> Result<(), Box<dyn std::error::Error>> {
+fn nested_message_as_message_requires_ordered_consumption() -> Result<(), Box<dyn std::error::Error>>
+{
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/nested-message-payload.xml"
@@ -2598,7 +2605,8 @@ fn generate_panics_on_invalid_decimal_composite() {
 /// Converter emission skips scalar fields, non-decimal composites, and
 /// messages without any decimal fields.
 #[test]
-fn decimal_converter_skips_non_decimal_fields_and_messages() -> Result<(), Box<dyn std::error::Error>> {
+fn decimal_converter_skips_non_decimal_fields_and_messages()
+-> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="mixed" id="98" version="0" byteOrder="littleEndian">
 <types>
@@ -2642,7 +2650,8 @@ fn decimal_converter_skips_non_decimal_fields_and_messages() -> Result<(), Box<d
 /// A var-data composite whose `length` member is not the first member still
 /// resolves the length field's max value.
 #[test]
-fn vardata_composite_with_length_not_first_member_generates() -> Result<(), Box<dyn std::error::Error>> {
+fn vardata_composite_with_length_not_first_member_generates()
+-> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="revvar" id="97" version="0" byteOrder="littleEndian">
 <types>
@@ -2696,7 +2705,8 @@ fn group_entry_constant_field_without_value_is_skipped() -> Result<(), Box<dyn s
 /// A schema whose headerType composite is absent falls back to the default
 /// header member names during generation.
 #[test]
-fn schema_without_header_composite_uses_default_member_names() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_without_header_composite_uses_default_member_names()
+-> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="nohdr" id="95" version="0" byteOrder="littleEndian">
 <types>

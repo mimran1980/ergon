@@ -375,7 +375,8 @@ fn record_into_covers_all_scalar_types_and_nullable() -> Result<(), Box<dyn std:
 }
 
 #[test]
-fn build_v2_rejects_empty_name_no_fields_and_unsupported_types() -> Result<(), Box<dyn std::error::Error>> {
+fn build_v2_rejects_empty_name_no_fields_and_unsupported_types()
+-> Result<(), Box<dyn std::error::Error>> {
     assert!(matches!(
         DynamicRecorderBuilder::new("")
             .field("a", ColumnType::Int64)

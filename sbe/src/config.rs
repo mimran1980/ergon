@@ -160,7 +160,7 @@ mod tests {
 
         assert_eq!(config.compatibility, CompatibilityMode::Strict);
         assert!(config.checked_accessors);
-    
+
         Ok(())
     }
 
@@ -168,7 +168,7 @@ mod tests {
     fn enable_decimal_converters_adds_name() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("test").enable_decimal_converters("Decimal");
         assert_eq!(config.decimal_composites, vec!["Decimal"]);
-    
+
         Ok(())
     }
 
@@ -178,7 +178,7 @@ mod tests {
             .enable_decimal_converters("Decimal")
             .enable_decimal_converters("Decimal");
         assert_eq!(config.decimal_composites.len(), 1);
-    
+
         Ok(())
     }
 
@@ -189,7 +189,7 @@ mod tests {
             config.external_sbe_rt_path.as_deref(),
             Some("crate::rt::sbe_rt")
         );
-    
+
         Ok(())
     }
 
@@ -199,7 +199,7 @@ mod tests {
             .enable_decimal_converters("Decimal")
             .enable_decimal_converters("Price");
         assert_eq!(config.decimal_composites, vec!["Decimal", "Price"]);
-    
+
         Ok(())
     }
 
@@ -207,7 +207,7 @@ mod tests {
     fn new_config_has_empty_decimal_composites() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("test");
         assert!(config.decimal_composites.is_empty());
-    
+
         Ok(())
     }
 
@@ -219,7 +219,7 @@ mod tests {
         assert!(config.checked_accessors);
         assert!(config.shared_module.is_none());
         assert!(!config.domain_objects);
-    
+
         Ok(())
     }
 }

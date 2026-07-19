@@ -354,7 +354,7 @@ mod full_example_tests {
         assert!(!schema.columns.iter().any(|c| c.name == "internal"));
 
         assert_eq!(schema.order_by, vec!["event_time".to_string()]);
-    
+
         Ok(())
     }
 
@@ -382,7 +382,7 @@ mod full_example_tests {
         assert_eq!(dst.extra, "{\"note\":\"test\"}");
         // internal should NOT be overwritten because it has #[persist(skip)]
         assert_eq!(dst.internal, "original");
-    
+
         Ok(())
     }
 }

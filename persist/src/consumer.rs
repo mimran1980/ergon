@@ -658,7 +658,7 @@ mod tests {
 
         assert_eq!(registry.table_name(sid), Some("test_table"));
         assert!(registry.table_name(sid + 1).is_none());
-    
+
         Ok(())
     }
 
@@ -675,7 +675,7 @@ mod tests {
         registry.register(schema2).unwrap(); // second call — no-op
 
         assert_eq!(registry.table_name(sid), Some("dup"));
-    
+
         Ok(())
     }
 
@@ -683,7 +683,7 @@ mod tests {
     fn test_table_name_unknown() -> Result<(), Box<dyn std::error::Error>> {
         let registry = SchemaRegistry::new();
         assert_eq!(registry.table_name(42), None);
-    
+
         Ok(())
     }
 
@@ -719,7 +719,7 @@ mod tests {
         assert_eq!(decoded.get("qty").unwrap(), &Some("1000".to_string()));
         assert_eq!(decoded.get("symbol").unwrap(), &Some("'AAPL'".to_string()));
         assert_eq!(decoded.get("src").unwrap(), &Some("'ex'".to_string()));
-    
+
         Ok(())
     }
 
@@ -742,7 +742,7 @@ mod tests {
         assert_eq!(decoded.get("val").unwrap(), &Some("1".to_string()));
         assert_eq!(decoded.get("env").unwrap(), &Some("'prod'".to_string()));
         assert_eq!(decoded.get("app").unwrap(), &Some("'my_app'".to_string()));
-    
+
         Ok(())
     }
 
@@ -770,7 +770,7 @@ mod tests {
 
         assert_eq!(decoded.get("name").unwrap(), &Some("'hello'".to_string()));
         assert_eq!(decoded.get("code").unwrap(), &Some("'abc'".to_string()));
-    
+
         Ok(())
     }
 
@@ -795,7 +795,7 @@ mod tests {
 
         assert_eq!(decoded.get("val").unwrap(), &None);
         assert_eq!(decoded.get("name").unwrap(), &None);
-    
+
         Ok(())
     }
 
@@ -822,7 +822,7 @@ mod tests {
 
         assert_eq!(decoded.get("a").unwrap(), &Some("42".to_string()));
         assert_eq!(decoded.get("b").unwrap(), &None);
-    
+
         Ok(())
     }
 
@@ -873,7 +873,7 @@ mod tests {
         assert_eq!(decoded.get("s").unwrap(), &Some("'hello'".to_string()));
         assert_eq!(decoded.get("n").unwrap(), &None); // null field
         assert_eq!(decoded.get("tag").unwrap(), &Some("'rt'".to_string()));
-    
+
         Ok(())
     }
 
@@ -1032,7 +1032,7 @@ mod tests {
         let r3 = DynamicRowDecoder::wrap_and_apply_header(&r3_bytes, 0).unwrap();
         let d3 = decoder.decode(r3).unwrap();
         assert_eq!(d3.get("env").unwrap(), &Some("'staging'".to_string()));
-    
+
         Ok(())
     }
 
@@ -1071,7 +1071,7 @@ mod tests {
         // Unsupported both ways.
         assert_eq!(column_type_to_tag(&ColumnType::Date), None);
         assert_eq!(type_tag_to_column_type(200), None);
-    
+
         Ok(())
     }
 
@@ -1085,7 +1085,7 @@ mod tests {
         assert!(invalid.to_string().contains("bad"));
         let unsupported = RowDecodeError::UnsupportedColumnType(99);
         assert!(unsupported.to_string().contains("99"));
-    
+
         Ok(())
     }
 
@@ -1093,12 +1093,13 @@ mod tests {
     fn test_schema_registry_default() -> Result<(), Box<dyn std::error::Error>> {
         let reg = SchemaRegistry::default();
         assert_eq!(reg.table_name(1), None);
-    
+
         Ok(())
     }
 
     #[test]
-    fn test_truncated_symbol_table_is_out_of_bounds_error() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_truncated_symbol_table_is_out_of_bounds_error() -> Result<(), Box<dyn std::error::Error>>
+    {
         // A row whose string entry claims more bytes than the symbol table
         // holds must fail with the bounds error, not panic.
         let rec = recorder_for("oob", &[("s", ColumnType::String)], &[]);
@@ -1137,12 +1138,13 @@ mod tests {
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
         let err = decoder.decode(row).unwrap_err();
         assert!(matches!(err, RowDecodeError::InvalidUtf8(_)));
-    
+
         Ok(())
     }
 
     #[test]
-    fn test_truncated_metadata_symbols_is_out_of_bounds_error() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_truncated_metadata_symbols_is_out_of_bounds_error()
+    -> Result<(), Box<dyn std::error::Error>> {
         let rec = recorder_for("oob2", &[("x", ColumnType::Int64)], &[]);
         let schema_bytes =
             encode_schema_with_id(rec.schema_id, "oob2", &[(0, "x", ColumnType::Int64)], &[]);
@@ -1179,7 +1181,7 @@ mod tests {
         let row = DynamicRowDecoder::wrap_and_apply_header(&row_bytes, 0).unwrap();
         let err = decoder.decode(row).unwrap_err();
         assert!(matches!(err, RowDecodeError::InvalidUtf8(_)));
-    
+
         Ok(())
     }
 
@@ -1225,28 +1227,28 @@ mod tests {
     #[test]
     fn test_format_sql_string_empty() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string(""), "''");
-    
+
         Ok(())
     }
 
     #[test]
     fn test_format_sql_string_plain() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("hello"), "'hello'");
-    
+
         Ok(())
     }
 
     #[test]
     fn test_format_sql_string_with_quote() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("it's"), "'it''s'");
-    
+
         Ok(())
     }
 
     #[test]
     fn test_format_sql_string_with_backslash() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(format_sql_string("a\\b"), "'a\\\\b'");
-    
+
         Ok(())
     }
 }

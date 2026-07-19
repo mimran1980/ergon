@@ -180,7 +180,7 @@ mod tests {
                 scale: 8
             }
         );
-    
+
         Ok(())
     }
 
@@ -189,7 +189,7 @@ mod tests {
     fn rust_decimal_encode_len() -> Result<(), Box<dyn std::error::Error>> {
         let d = rust_decimal::Decimal::new(1, 0);
         assert_eq!(d.encode_value().len(), 8);
-    
+
         Ok(())
     }
 
@@ -198,7 +198,7 @@ mod tests {
     fn rust_decimal_encode_one() -> Result<(), Box<dyn std::error::Error>> {
         let d = rust_decimal::Decimal::new(1, 0);
         assert_eq!(d.encode_value(), 100_000_000i64.to_le_bytes().to_vec());
-    
+
         Ok(())
     }
 
@@ -207,7 +207,7 @@ mod tests {
     fn rust_decimal_encode_negative() -> Result<(), Box<dyn std::error::Error>> {
         let d = rust_decimal::Decimal::new(-1, 0);
         assert_eq!(d.encode_value(), (-100_000_000i64).to_le_bytes().to_vec());
-    
+
         Ok(())
     }
 
@@ -216,7 +216,7 @@ mod tests {
     fn rust_decimal_encode_with_scale() -> Result<(), Box<dyn std::error::Error>> {
         let d = rust_decimal::Decimal::new(123, 2); // 1.23
         assert_eq!(d.encode_value(), 123_000_000i64.to_le_bytes().to_vec());
-    
+
         Ok(())
     }
 
@@ -229,7 +229,7 @@ mod tests {
             <chrono::NaiveDateTime as PersistAs>::column_type(),
             ColumnType::DateTime64(9)
         );
-    
+
         Ok(())
     }
 
@@ -241,7 +241,7 @@ mod tests {
             chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
         );
         assert_eq!(dt.encode_value(), vec![0u8; 8]);
-    
+
         Ok(())
     }
 
@@ -252,7 +252,7 @@ mod tests {
             <chrono::DateTime<chrono::Utc> as PersistAs>::column_type(),
             ColumnType::DateTime64(9)
         );
-    
+
         Ok(())
     }
 
@@ -261,7 +261,7 @@ mod tests {
     fn chrono_datetime_utc_encode_epoch() -> Result<(), Box<dyn std::error::Error>> {
         let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap();
         assert_eq!(dt.encode_value(), vec![0u8; 8]);
-    
+
         Ok(())
     }
 
@@ -272,7 +272,7 @@ mod tests {
             <chrono::DateTime<chrono::FixedOffset> as PersistAs>::column_type(),
             ColumnType::DateTime64(9)
         );
-    
+
         Ok(())
     }
 
@@ -288,7 +288,7 @@ mod tests {
             .unwrap()
             .from_utc_datetime(&ndt);
         assert_eq!(dt.encode_value(), vec![0u8; 8]);
-    
+
         Ok(())
     }
 
@@ -299,7 +299,7 @@ mod tests {
             <chrono::NaiveDate as PersistAs>::column_type(),
             ColumnType::Date
         );
-    
+
         Ok(())
     }
 
@@ -308,7 +308,7 @@ mod tests {
     fn chrono_naive_date_encode_epoch() -> Result<(), Box<dyn std::error::Error>> {
         let d = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
         assert_eq!(d.encode_value(), vec![0u8; 2]);
-    
+
         Ok(())
     }
 
@@ -322,7 +322,7 @@ mod tests {
             .to_le_bytes()
             .to_vec();
         assert_eq!(d.encode_value(), expected);
-    
+
         Ok(())
     }
 
@@ -334,7 +334,7 @@ mod tests {
             <std::time::Duration as PersistAs>::column_type(),
             ColumnType::Interval
         );
-    
+
         Ok(())
     }
 
@@ -342,7 +342,7 @@ mod tests {
     fn duration_encode_zero() -> Result<(), Box<dyn std::error::Error>> {
         let d = std::time::Duration::ZERO;
         assert_eq!(d.encode_value(), vec![0u8; 8]);
-    
+
         Ok(())
     }
 
@@ -350,7 +350,7 @@ mod tests {
     fn duration_encode_one_second() -> Result<(), Box<dyn std::error::Error>> {
         let d = std::time::Duration::new(1, 0);
         assert_eq!(d.encode_value(), 1_000_000_000i64.to_le_bytes().to_vec());
-    
+
         Ok(())
     }
 
@@ -363,7 +363,7 @@ mod tests {
             <chrono::TimeDelta as PersistAs>::column_type(),
             ColumnType::Interval
         );
-    
+
         Ok(())
     }
 
@@ -372,7 +372,7 @@ mod tests {
     fn time_delta_encode_zero() -> Result<(), Box<dyn std::error::Error>> {
         let d = chrono::TimeDelta::nanoseconds(0);
         assert_eq!(d.encode_value(), vec![0u8; 8]);
-    
+
         Ok(())
     }
 
@@ -381,7 +381,7 @@ mod tests {
     fn time_delta_encode_one_second() -> Result<(), Box<dyn std::error::Error>> {
         let d = chrono::TimeDelta::nanoseconds(1_000_000_000);
         assert_eq!(d.encode_value(), 1_000_000_000i64.to_le_bytes().to_vec());
-    
+
         Ok(())
     }
 
@@ -394,7 +394,7 @@ mod tests {
             <serde_json::Value as PersistAs>::column_type(),
             ColumnType::String
         );
-    
+
         Ok(())
     }
 
@@ -403,7 +403,7 @@ mod tests {
     fn serde_value_encode_null() -> Result<(), Box<dyn std::error::Error>> {
         let v = serde_json::Value::Null;
         assert_eq!(v.encode_value(), b"null");
-    
+
         Ok(())
     }
 
@@ -412,7 +412,7 @@ mod tests {
     fn serde_value_encode_string() -> Result<(), Box<dyn std::error::Error>> {
         let v = serde_json::Value::String("hello".into());
         assert_eq!(v.encode_value(), b"\"hello\"");
-    
+
         Ok(())
     }
 
@@ -421,7 +421,7 @@ mod tests {
     fn serde_value_encode_number() -> Result<(), Box<dyn std::error::Error>> {
         let v = serde_json::json!(42);
         assert_eq!(v.encode_value(), b"42");
-    
+
         Ok(())
     }
 }

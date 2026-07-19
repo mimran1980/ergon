@@ -79,7 +79,8 @@ fn assert_doc_on_item(schema_xml: &str, module_name: &str, expected: &str, item_
 ///   3. <comment> child         (`comment-child:header`)
 ///   4. preceding XML comment   (`xml-comment:header`)
 #[test]
-fn all_four_sources_on_message_header_with_correct_order() -> Result<(), Box<dyn std::error::Error>> {
+fn all_four_sources_on_message_header_with_correct_order() -> Result<(), Box<dyn std::error::Error>>
+{
     let path = PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/schema-docs-all-sources.xml"
@@ -248,7 +249,8 @@ fn multiline_indented_description_is_text_fenced() -> Result<(), Box<dyn std::er
 </sbe:messageSchema>"#;
     let ir = ergo_sbe::parse(xml).expect("parse");
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("ml_fence")).generate(&schema);
+    let modules =
+        ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("ml_fence")).generate(&schema);
     let src = &modules.modules().next().unwrap().source;
     assert!(
         src.contains("```text") || src.contains("text\\n"),

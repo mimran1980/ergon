@@ -379,21 +379,21 @@ mod tests {
     #[test]
     fn test_price_column_type() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(Price::column_type().to_string(), "Decimal(18, 8)");
-    
+
         Ok(())
     }
 
     #[test]
     fn test_price_default_column_name() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(<Price as PersistAs>::column_name("ask_price"), "ask_price");
-    
+
         Ok(())
     }
 
     #[test]
     fn test_price_encode_value() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(Price(42).encode_value(), vec![42, 0, 0, 0, 0, 0, 0, 0]);
-    
+
         Ok(())
     }
 
@@ -403,7 +403,7 @@ mod tests {
             <Option<Price> as PersistAs>::column_type().to_string(),
             "Nullable(Decimal(18, 8))"
         );
-    
+
         Ok(())
     }
 
@@ -416,14 +416,14 @@ mod tests {
             buf
         };
         assert_eq!(val.encode_value(), expected);
-    
+
         Ok(())
     }
 
     #[test]
     fn test_option_price_encode_none() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(Option::<Price>::None.encode_value(), vec![1]);
-    
+
         Ok(())
     }
 
@@ -431,7 +431,7 @@ mod tests {
     fn test_option_option_price_column_type() -> Result<(), Box<dyn std::error::Error>> {
         let col_type = <Option<Option<Price>> as PersistAs>::column_type();
         assert_eq!(col_type.to_string(), "Nullable(Decimal(18, 8))");
-    
+
         Ok(())
     }
 
@@ -442,14 +442,14 @@ mod tests {
             val.encode_value().as_slice(),
             &[0, 0, 42, 0, 0, 0, 0, 0, 0, 0]
         );
-    
+
         Ok(())
     }
 
     #[test]
     fn test_option_option_price_encode_none() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(Option::<Option<Price>>::None.encode_value(), vec![1]);
-    
+
         Ok(())
     }
 
@@ -457,7 +457,7 @@ mod tests {
     fn test_option_option_price_encode_some_none() -> Result<(), Box<dyn std::error::Error>> {
         let val: Option<Option<Price>> = Some(None);
         assert_eq!(val.encode_value(), vec![0, 1]);
-    
+
         Ok(())
     }
 }
@@ -478,7 +478,7 @@ mod table_schema_tests {
         let a = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         let b = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         assert!(a.diff(&b).is_empty());
-    
+
         Ok(())
     }
 
@@ -495,7 +495,7 @@ mod table_schema_tests {
         let diff = new.diff(&old);
         assert_eq!(diff.new_columns.len(), 1);
         assert_eq!(diff.new_columns[0].name, "qty");
-    
+
         Ok(())
     }
 
@@ -506,7 +506,7 @@ mod table_schema_tests {
         let diff = new.diff(&old);
         assert_eq!(diff.compatible_widens.len(), 1);
         assert_eq!(diff.compatible_widens[0].column, "qty");
-    
+
         Ok(())
     }
 
@@ -516,7 +516,7 @@ mod table_schema_tests {
         let new = TableSchema::new(vec![col("qty", ColumnType::UInt32)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.type_conflicts.len(), 1);
-    
+
         Ok(())
     }
 
@@ -526,7 +526,7 @@ mod table_schema_tests {
         let new = TableSchema::new(vec![col("tag", ColumnType::String)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.type_conflicts.len(), 1);
-    
+
         Ok(())
     }
 
@@ -536,7 +536,7 @@ mod table_schema_tests {
         let new = TableSchema::new(vec![col("x", ColumnType::Int64)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.compatible_widens.len(), 1);
-    
+
         Ok(())
     }
 
@@ -546,7 +546,7 @@ mod table_schema_tests {
         let new = TableSchema::new(vec![col("x", ColumnType::UInt32)], vec![]);
         let diff = new.diff(&old);
         assert_eq!(diff.type_conflicts.len(), 1);
-    
+
         Ok(())
     }
 
@@ -561,7 +561,7 @@ mod table_schema_tests {
         );
         let new = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         assert!(new.diff(&old).is_empty());
-    
+
         Ok(())
     }
 
@@ -570,7 +570,7 @@ mod table_schema_tests {
         let schema = TableSchema::new(vec![], vec![]);
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
         assert_eq!(schema.order_by, vec!["_persist_time"]);
-    
+
         Ok(())
     }
 
@@ -588,7 +588,7 @@ mod table_schema_tests {
                 .count(),
             1
         );
-    
+
         Ok(())
     }
 
@@ -596,7 +596,7 @@ mod table_schema_tests {
     fn default_order_by() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec![]);
         assert_eq!(schema.order_by, vec!["_persist_time"]);
-    
+
         Ok(())
     }
 
@@ -604,7 +604,7 @@ mod table_schema_tests {
     fn custom_order_by() -> Result<(), Box<dyn std::error::Error>> {
         let schema = TableSchema::new(vec![col("price", ColumnType::UInt64)], vec!["price".into()]);
         assert_eq!(schema.order_by, vec!["price"]);
-    
+
         Ok(())
     }
 
@@ -621,7 +621,7 @@ mod table_schema_tests {
         let ddl = new.diff(&old).alter_table_ddl("trades");
         assert_eq!(ddl.len(), 1);
         assert!(ddl[0].contains("ADD COLUMN IF NOT EXISTS qty UInt32"));
-    
+
         Ok(())
     }
 
@@ -648,7 +648,7 @@ mod table_schema_tests {
         assert_eq!(diff.new_columns.len(), 1); // side
         assert_eq!(diff.compatible_widens.len(), 1); // qty
         assert_eq!(diff.type_conflicts.len(), 1); // bad
-    
+
         Ok(())
     }
 
@@ -668,7 +668,7 @@ mod table_schema_tests {
         assert_eq!(schema.columns.len(), 1001);
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
         assert_eq!(schema.order_by, vec!["_persist_time"]);
-    
+
         Ok(())
     }
 
@@ -689,7 +689,7 @@ mod table_schema_tests {
             .alter_table_ddl("test_table");
         assert_eq!(ddl.len(), 1);
         assert!(ddl[0].contains(&long_name));
-    
+
         Ok(())
     }
 
@@ -710,7 +710,7 @@ mod table_schema_tests {
         );
         assert!(a.diff(&b).is_empty());
         assert!(b.diff(&a).is_empty());
-    
+
         Ok(())
     }
 
@@ -730,7 +730,7 @@ mod table_schema_tests {
         assert_eq!(ddl.len(), 2);
         assert!(ddl[0].contains("ADD COLUMN IF NOT EXISTS side String"));
         assert!(ddl[1].contains("MODIFY COLUMN qty UInt64"));
-    
+
         Ok(())
     }
 
@@ -741,7 +741,7 @@ mod table_schema_tests {
         let schema = TableSchema::new(vec![col("x", ColumnType::Int32)], vec![]);
         let ddl = schema.diff(&schema).alter_table_ddl("t");
         assert!(ddl.is_empty());
-    
+
         Ok(())
     }
 
@@ -757,7 +757,7 @@ mod table_schema_tests {
         // (both have only _persist_time).
         let ddl = a.diff(&b).alter_table_ddl("t");
         assert!(ddl.is_empty());
-    
+
         Ok(())
     }
 
@@ -773,7 +773,7 @@ mod table_schema_tests {
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
         assert_eq!(schema.ttl.as_ref().unwrap().column, "_persist_time");
         assert_eq!(schema.ttl.as_ref().unwrap().interval, "7 DAY");
-    
+
         Ok(())
     }
 }
@@ -828,7 +828,7 @@ mod persist_trait_tests {
         assert!(schema.columns.iter().any(|c| c.name == "symbol"));
         // _persist_time auto-added
         assert!(schema.columns.iter().any(|c| c.name == "_persist_time"));
-    
+
         Ok(())
     }
 
@@ -848,7 +848,7 @@ mod persist_trait_tests {
         assert_eq!(dst.price, 100.50);
         assert_eq!(dst.qty, 10);
         assert_eq!(dst.symbol, "AAPL");
-    
+
         Ok(())
     }
 
@@ -862,7 +862,7 @@ mod persist_trait_tests {
         let json = serde_json::to_string(&original).unwrap();
         let decoded: TradeRow = serde_json::from_str(&json).unwrap();
         assert_eq!(original, decoded);
-    
+
         Ok(())
     }
 
@@ -872,7 +872,7 @@ mod persist_trait_tests {
     fn row_bounds_for_client_insert() -> Result<(), Box<dyn std::error::Error>> {
         fn assert_row_write<T: clickhouse::Row + serde::Serialize>() {}
         assert_row_write::<TradeRow>();
-    
+
         Ok(())
     }
 }

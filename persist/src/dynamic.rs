@@ -1324,7 +1324,7 @@ mod tests {
         assert_eq!(parts.strs, vec![(2, 4)]);
         assert!(parts.nulls.is_empty());
         assert_eq!(parts.symbols, b"AAPL");
-    
+
         Ok(())
     }
 
@@ -1374,7 +1374,7 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(rec1.schema_id, rec5.schema_id);
-    
+
         Ok(())
     }
 
@@ -1401,7 +1401,7 @@ mod tests {
         assert!(sym.windows(10).any(|w| w == b"exchange_a"));
         assert!(sym.windows(3).any(|w| w == b"env"));
         assert!(sym.windows(4).any(|w| w == b"prod"));
-    
+
         Ok(())
     }
 
@@ -1421,7 +1421,7 @@ mod tests {
         let p2 = decode_parts(&buf2);
         assert_eq!(p1.meta.len(), p2.meta.len());
         assert_eq!(p1.symbols, p2.symbols);
-    
+
         Ok(())
     }
 
@@ -1446,7 +1446,7 @@ mod tests {
         let parts = decode_parts(&buf);
         assert_eq!(parts.strs, vec![(0, 5), (1, 3)]);
         assert_eq!(parts.symbols, b"helloabc");
-    
+
         Ok(())
     }
 
@@ -1468,7 +1468,7 @@ mod tests {
         assert_eq!(parts.symbols.len(), 3 + 3 + 4);
         assert!(parts.symbols.starts_with(b"tagxyz"));
         assert!(parts.symbols.ends_with(b"data"));
-    
+
         Ok(())
     }
 
@@ -1491,7 +1491,7 @@ mod tests {
         assert!(parts.i64s.is_empty());
         assert!(parts.strs.is_empty());
         assert_eq!(parts.nulls, vec![0, 1]);
-    
+
         Ok(())
     }
 
@@ -1508,7 +1508,7 @@ mod tests {
         let parts = decode_parts(&buf);
         assert!(parts.meta.is_empty());
         assert_eq!(parts.f64s.len(), 1);
-    
+
         Ok(())
     }
 
@@ -1526,7 +1526,7 @@ mod tests {
 
         let buf = rec.record(&[DynamicValue::Int64(0)]).unwrap().to_vec();
         assert_eq!(decode_parts(&buf).meta.len(), 3);
-    
+
         Ok(())
     }
 
@@ -1540,7 +1540,7 @@ mod tests {
             err,
             DynamicRecorderError::ValueCountMismatch { .. }
         ));
-    
+
         Ok(())
     }
 
@@ -1557,7 +1557,7 @@ mod tests {
             err,
             DynamicRecorderError::ValueTypeMismatch { .. }
         ));
-    
+
         Ok(())
     }
 
@@ -1587,7 +1587,7 @@ mod tests {
             assert_eq!(buf.len(), first_buf);
             assert_eq!(rec.buffer.capacity(), cap);
         }
-    
+
         Ok(())
     }
 
@@ -1625,7 +1625,7 @@ mod tests {
             .unwrap();
 
         assert_ne!(a.schema_id, c.schema_id);
-    
+
         Ok(())
     }
 
@@ -1671,7 +1671,7 @@ mod tests {
         assert_eq!(parts.symbols.len(), 2 + 5 + 5);
         assert!(parts.symbols.starts_with(b"rtcheck"));
         assert!(parts.symbols.ends_with(b"hello"));
-    
+
         Ok(())
     }
 
@@ -1691,7 +1691,7 @@ mod tests {
         // Non-null value is also accepted.
         let buf2 = rec.record(&[DynamicValue::Int64(42)]).unwrap().to_vec();
         assert_eq!(decode_parts(&buf2).i64s.len(), 1);
-    
+
         Ok(())
     }
 
@@ -1728,7 +1728,7 @@ mod tests {
         assert!(parts.bools.is_empty());
         assert!(parts.strs.is_empty());
         assert_eq!(parts.nulls, vec![0, 1, 2, 3, 4]);
-    
+
         Ok(())
     }
 
@@ -1762,7 +1762,7 @@ mod tests {
         assert_eq!(parts.nulls, vec![1, 3]);
         assert!(parts.strs.is_empty());
         assert!(parts.u64s.is_empty());
-    
+
         Ok(())
     }
 
@@ -1777,7 +1777,7 @@ mod tests {
             }
             Ok(_) => panic!("expected NoFields error"),
         }
-    
+
         Ok(())
     }
 
@@ -1799,7 +1799,7 @@ mod tests {
             .to_vec();
         assert!(!buf.is_empty());
         assert_eq!(decode_parts(&buf).i64s, vec![(0, 1), (1, 2)]);
-    
+
         Ok(())
     }
 
@@ -1825,7 +1825,7 @@ mod tests {
             assert_eq!(v, expected as i64);
         }
         assert!(parts.nulls.is_empty());
-    
+
         Ok(())
     }
 
@@ -1843,7 +1843,7 @@ mod tests {
         assert!(parts.meta.is_empty());
         assert!(parts.i64s.is_empty());
         assert_eq!(parts.nulls, vec![0]);
-    
+
         Ok(())
     }
 }

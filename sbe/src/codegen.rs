@@ -1185,12 +1185,17 @@ fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> {
             let constant_value = tokens[i].encoding.constant_value.clone();
             let length = tokens[i].encoding.length;
 
-            let member_type =
-                if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginComposite {
-                    let comp_name = tokens[i + 1].name.clone();
-                    // Prefer resolved composite size on BeginComposite; fall back to
-                    // scanning nested field tokens (nested `<ref>` clones can lag).
-                    let size = tokens[i + 1].encoding.offset.filter(|&s| s > 0).unwrap_or_else(|| {
+            let member_type = if i + 2 < tokens.len()
+                && tokens[i + 1].signal == Signal::BeginComposite
+            {
+                let comp_name = tokens[i + 1].name.clone();
+                // Prefer resolved composite size on BeginComposite; fall back to
+                // scanning nested field tokens (nested `<ref>` clones can lag).
+                let size = tokens[i + 1]
+                    .encoding
+                    .offset
+                    .filter(|&s| s > 0)
+                    .unwrap_or_else(|| {
                         let end = find_matching_end(
                             tokens,
                             i + 1,
@@ -1204,10 +1209,8 @@ fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> {
                                 if tokens[j].encoding.presence != Presence::Constant
                                     && !tokens[j].encoding.is_variable_length
                                 {
-                                    let prim_sz = tokens[j]
-                                        .encoding
-                                        .primitive_type
-                                        .map_or(0, |p| p.size());
+                                    let prim_sz =
+                                        tokens[j].encoding.primitive_type.map_or(0, |p| p.size());
                                     let len = tokens[j].encoding.length.unwrap_or(1);
                                     // Nested type (enum/set/composite) size from encoding type.
                                     let nested = if j + 1 < end {
@@ -1226,50 +1229,54 @@ fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> {
                                     };
                                     sz += if nested > 0 { nested } else { prim_sz * len };
                                 }
-                                j = find_matching_end(tokens, j, Signal::BeginField, Signal::EndField)
-                                    + 1;
+                                j = find_matching_end(
+                                    tokens,
+                                    j,
+                                    Signal::BeginField,
+                                    Signal::EndField,
+                                ) + 1;
                             } else {
                                 j += 1;
                             }
                         }
                         sz
                     });
-                    MemberType::Composite {
-                        name: comp_name,
-                        size,
-                    }
-                } else if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginEnum {
-                    let enum_name = tokens[i + 1].name.clone();
-                    let encoding_type = tokens[i + 1]
-                        .encoding
-                        .primitive_type
-                        .unwrap_or(PrimitiveType::UInt8);
-                    MemberType::Enum {
-                        name: enum_name,
-                        encoding_type,
-                    }
-                } else if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginSet {
-                    let set_name = tokens[i + 1].name.clone();
-                    let encoding_type = tokens[i + 1]
-                        .encoding
-                        .primitive_type
-                        .unwrap_or(PrimitiveType::UInt8);
-                    MemberType::Set {
-                        name: set_name,
-                        encoding_type,
-                    }
-                } else {
-                    let prim = tokens[i]
-                        .encoding
-                        .primitive_type
-                        .unwrap_or(PrimitiveType::UInt8);
-                    MemberType::Primitive {
-                        prim,
-                        length,
-                        presence,
-                        constant_value,
-                    }
-                };
+                MemberType::Composite {
+                    name: comp_name,
+                    size,
+                }
+            } else if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginEnum {
+                let enum_name = tokens[i + 1].name.clone();
+                let encoding_type = tokens[i + 1]
+                    .encoding
+                    .primitive_type
+                    .unwrap_or(PrimitiveType::UInt8);
+                MemberType::Enum {
+                    name: enum_name,
+                    encoding_type,
+                }
+            } else if i + 2 < tokens.len() && tokens[i + 1].signal == Signal::BeginSet {
+                let set_name = tokens[i + 1].name.clone();
+                let encoding_type = tokens[i + 1]
+                    .encoding
+                    .primitive_type
+                    .unwrap_or(PrimitiveType::UInt8);
+                MemberType::Set {
+                    name: set_name,
+                    encoding_type,
+                }
+            } else {
+                let prim = tokens[i]
+                    .encoding
+                    .primitive_type
+                    .unwrap_or(PrimitiveType::UInt8);
+                MemberType::Primitive {
+                    prim,
+                    length,
+                    presence,
+                    constant_value,
+                }
+            };
 
             members.push(CompositeMember {
                 name,
@@ -6786,7 +6793,7 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].path, "market_data.rs");
         assert!(collected[0].source.contains("fix.sbe"));
-    
+
         Ok(())
     }
 
@@ -6824,12 +6831,13 @@ mod tests {
         // Each module contains its own schema metadata
         assert!(collected[0].source.contains("common.sbe"));
         assert!(collected[1].source.contains("market_data.sbe"));
-    
+
         Ok(())
     }
 
     #[test]
-    fn generate_multi_without_shared_module_emits_sbe_rt_everywhere() -> Result<(), Box<dyn std::error::Error>> {
+    fn generate_multi_without_shared_module_emits_sbe_rt_everywhere()
+    -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("common");
         let generator = Generator::new(config);
 
@@ -6892,7 +6900,7 @@ mod tests {
             ],
             &elem,
         );
-    
+
         Ok(())
     }
 
@@ -6909,7 +6917,7 @@ mod tests {
             ],
             &elem,
         );
-    
+
         Ok(())
     }
 
@@ -6923,7 +6931,7 @@ mod tests {
             make_token(Signal::EndField),
             make_token(Signal::EndComposite),
         ]);
-    
+
         Ok(())
     }
 
@@ -6952,7 +6960,7 @@ mod tests {
             ],
             &elem,
         );
-    
+
         Ok(())
     }
 
@@ -6961,7 +6969,7 @@ mod tests {
         assert_eq!(to_snake_case(""), "");
         // Double-underscore input exercises the dedup `continue` (line 520).
         assert_eq!(to_snake_case("Foo__Bar"), "foo_bar");
-    
+
         Ok(())
     }
 
@@ -6970,7 +6978,7 @@ mod tests {
         // Top-level loop only matches BeginComposite/Enum/Set/Message;
         // BeginField falls to `_ => i += 1` (lines ~682-684).
         let _ = super::partition_tokens(&[make_token(Signal::BeginField)]);
-    
+
         Ok(())
     }
 
@@ -6983,7 +6991,7 @@ mod tests {
             make_token(Signal::BeginEnum), // unexpected inside message body
             make_token(Signal::EndMessage),
         ]);
-    
+
         Ok(())
     }
 
@@ -6996,19 +7004,20 @@ mod tests {
             make_token(Signal::BeginMessage), // unexpected inside group body
             make_token(Signal::EndGroup),
         ]);
-    
+
         Ok(())
     }
 
     #[test]
-    fn partition_skips_unexpected_after_top_level_items() -> Result<(), Box<dyn std::error::Error>> {
+    fn partition_skips_unexpected_after_top_level_items() -> Result<(), Box<dyn std::error::Error>>
+    {
         // After BeginMessage/EndMessage pair, unrelated signals skip at top level.
         let _ = super::partition_tokens(&[
             make_token(Signal::BeginMessage),
             make_token(Signal::EndMessage),
             make_token(Signal::BeginEnum), // at top level
         ]);
-    
+
         Ok(())
     }
 }

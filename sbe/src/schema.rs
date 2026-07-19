@@ -138,7 +138,7 @@ mod tests {
         assert_eq!(schema.package, "fix.sbe");
         assert_eq!(schema.id, 42);
         assert_eq!(schema.version, 7);
-    
+
         Ok(())
     }
 
@@ -152,7 +152,7 @@ mod tests {
         match &owned {
             SchemaSource::Xml(cow) => assert!(matches!(cow, std::borrow::Cow::Owned(_))),
         }
-    
+
         Ok(())
     }
 
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(schema.id, 99);
         assert_eq!(schema.version, 3);
         assert_eq!(schema.ir.header_type, "customHeader");
-    
+
         Ok(())
     }
 
@@ -190,7 +190,7 @@ mod tests {
         assert!(schema.ir.semantic_version.is_none());
         assert_eq!(schema.ir.header_type, "messageHeader");
         assert!(schema.ir.tokens.is_empty());
-    
+
         Ok(())
     }
 }

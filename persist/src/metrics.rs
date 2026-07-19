@@ -65,7 +65,7 @@ mod tests {
         m.request_failed("trades");
         m.row_dropped("trades", 5);
         m.retry_attempted("trades", 1);
-    
+
         Ok(())
     }
 
@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(m.failures.load(Ordering::Relaxed), 1);
         assert_eq!(m.drops.load(Ordering::Relaxed), 1);
         assert_eq!(m.retries.load(Ordering::Relaxed), 2);
-    
+
         Ok(())
     }
 
@@ -136,7 +136,7 @@ mod tests {
         let m: Arc<dyn PersistMetrics> = Arc::new(NoopMetrics);
         m.row_persisted("test");
         // No panic = pass.
-    
+
         Ok(())
     }
 }
