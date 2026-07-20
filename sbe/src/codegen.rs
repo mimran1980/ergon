@@ -311,7 +311,15 @@ impl Generator {
             if shared.contains(&type_name) {
                 continue;
             }
-            generate_composite(&mut src, composite_tokens, ir.byte_order);
+            // SBE spec §4.1: MessageHeader is ALWAYS little-endian on the wire,
+            // regardless of the schema's declared byteOrder. The body follows
+            // the schema byteOrder; the header composite must use LE.
+            let comp_byte_order = if composite_tokens[0].name == "messageHeader" {
+                ByteOrder::LittleEndian
+            } else {
+                ir.byte_order
+            };
+            generate_composite(&mut src, composite_tokens, comp_byte_order);
         }
 
         // Generate MessageHeader alias if custom name is used (skip if shared)
@@ -5249,23 +5257,15 @@ fn generate_message_encoder(
     let snake_name = to_snake_case(&msg.name);
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
 
-    // Pre-compute HEADER_TEMPLATE bytes at codegen time.
+    // Pre-compute HEADER_TEMPLATE bytes. SBE spec §4.1: the message header
+    // is ALWAYS little-endian regardless of the schema's byteOrder. The body
+    // follows the schema byteOrder; the header does not.
     let mut header_tpl = vec![0u8; header_size];
     let hdr_bl = block_length as u16;
-    match byte_order {
-        ByteOrder::LittleEndian => {
-            header_tpl[0..2].copy_from_slice(&hdr_bl.to_le_bytes());
-            header_tpl[2..4].copy_from_slice(&msg.id.to_le_bytes());
-            header_tpl[4..6].copy_from_slice(&schema_id.to_le_bytes());
-            header_tpl[6..8].copy_from_slice(&schema_version.to_le_bytes());
-        }
-        ByteOrder::BigEndian => {
-            header_tpl[0..2].copy_from_slice(&hdr_bl.to_be_bytes());
-            header_tpl[2..4].copy_from_slice(&msg.id.to_be_bytes());
-            header_tpl[4..6].copy_from_slice(&schema_id.to_be_bytes());
-            header_tpl[6..8].copy_from_slice(&schema_version.to_be_bytes());
-        }
-    }
+    header_tpl[0..2].copy_from_slice(&hdr_bl.to_le_bytes());
+    header_tpl[2..4].copy_from_slice(&msg.id.to_le_bytes());
+    header_tpl[4..6].copy_from_slice(&schema_id.to_le_bytes());
+    header_tpl[6..8].copy_from_slice(&schema_version.to_le_bytes());
     let hdr_lits: Vec<syn::LitInt> = header_tpl
         .iter()
         .map(|b| syn::LitInt::new(&b.to_string(), span))

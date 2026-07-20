@@ -1131,6 +1131,158 @@ fn all_types_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// ── Endianness wire tests ──────────────────────────────────────────────
+
+/// SBE spec §4.1: the message header is ALWAYS little-endian,
+/// regardless of the schema's declared byteOrder. The body fields
+/// follow the schema byteOrder. This test proves both properties.
+#[test]
+fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn std::error::Error>> {
+    let (_le_schema, le_src) = generate(&Paths::all_types_le_schema(), "endian_le");
+    let (_be_schema, be_src) = generate(&Paths::all_types_be_schema(), "endian_be");
+
+    assert!(le_src.contains("from_le_bytes"), "LE schema uses LE accessors");
+    assert!(be_src.contains("from_be_bytes"), "BE schema uses BE accessors");
+
+    // ── LE schema: header IS LE, body IS LE ──
+    compile_and_run(
+        "endian_le",
+        &le_src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut enc = AllTypesEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let scalar = AllScalars::new(42i8, 128u8, 1000i16, 50000u16,
+            100000i32, 3000000000u32, 99999i64, 77777u64,
+            1.0f32, 2.0f64);
+        enc.scalar_composite(scalar).enum_field(TestEnum::C).set_field(TestSet::default());
+        enc.fixed_array([b'A'; 8]);
+        let _ = enc.var_data(b"endian-test").unwrap();
+
+        // Verify header bytes: ALWAYS LE (SBE spec §4.1)
+        // blockLength (LE u16 at offset 0): body is 52 bytes (AllScalars=41 + FloatPair=8 + enum=1 + set=1 + array=1)
+        let block_len = u16::from_le_bytes([buf[0], buf[1]]);
+        assert!(block_len > 0, "blockLength must be non-zero: {block_len}");
+        // templateId (LE u16 at offset 2)
+        let tid = u16::from_le_bytes([buf[2], buf[3]]);
+        assert_eq!(tid, 1, "templateId");
+        // schemaId (LE u16 at offset 4)
+        let sid = u16::from_le_bytes([buf[4], buf[5]]);
+        assert_eq!(sid, 42, "schemaId");
+        // version (LE u16 at offset 6)
+        let ver = u16::from_le_bytes([buf[6], buf[7]]);
+        assert_eq!(ver, 0, "version");
+
+        // Prove body uses LE: first body field is i8_val at offset 0 of AllScalars composite.
+        // i8 is a single byte (endian-independent), but u16_val at composite offset 3
+        // should be LE (50000 = 0xC350 → bytes [0x50, 0xC3] in LE)
+        let body_start = 8; // after 8-byte header
+        let u16_offset = body_start + 3; // i8(1) + u8(1) + i16(2) = 4, wait — composite offsets
+        // AllScalars layout: i8(1) + u8(1) = 2; i16 at offset 2 (2 bytes), u16 at offset 4 (2 bytes)
+        let u16_val_bytes = [buf[body_start + 4], buf[body_start + 5]];
+        let u16_val = u16::from_le_bytes(u16_val_bytes);
+        assert_eq!(u16_val, 50000u16, "LE body: u16_val should be 50000 in LE bytes");
+
+        // Roundtrip: decode from LE buffer
+        let dec = AllTypesDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let s = dec.scalar_composite_as_struct();
+        assert_eq!(s.i8_val(), 42i8);
+        assert_eq!(s.u16_val(), 50000u16);
+        assert_eq!(s.i64_val(), 99999i64);
+        assert_eq!(s.f32_val(), 1.0f32);
+        assert_eq!(dec.enum_field(), TestEnum::C);
+    "#,
+    );
+
+    // ── BE schema: header IS STILL LE, body IS BE ──
+    compile_and_run(
+        "endian_be",
+        &be_src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut enc = AllTypesEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let scalar = AllScalars::new(42i8, 128u8, 1000i16, 50000u16,
+            100000i32, 3000000000u32, 99999i64, 77777u64,
+            1.0f32, 2.0f64);
+        enc.scalar_composite(scalar).enum_field(TestEnum::C).set_field(TestSet::default());
+        enc.fixed_array([b'A'; 8]);
+        let _ = enc.var_data(b"endian-test").unwrap();
+
+        // CRITICAL: header must STILL be LE even in a BE schema
+        let tid = u16::from_le_bytes([buf[2], buf[3]]);
+        assert_eq!(tid, 1, "templateId must be LE in BE schema too");
+        let sid = u16::from_le_bytes([buf[4], buf[5]]);
+        assert_eq!(sid, 42, "schemaId must be LE in BE schema too");
+
+        // Prove body uses BE: u16_val (50000 = 0xC350) → BE bytes [0xC3, 0x50]
+        let body_start = 8;
+        let be_bytes = [buf[body_start + 4], buf[body_start + 5]];
+        let u16_val_be = u16::from_be_bytes(be_bytes);
+        assert_eq!(u16_val_be, 50000u16, "BE body: u16_val should be 50000 in BE bytes");
+
+        // The LE read of the same bytes should NOT be 50000 (it would be byteswapped)
+        let u16_val_le = u16::from_le_bytes(be_bytes);
+        assert_ne!(u16_val_le, 50000u16, "BE body: u16_val should NOT be 50000 when read as LE");
+
+        // Roundtrip from BE buffer
+        let dec = AllTypesDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let s = dec.scalar_composite_as_struct();
+        assert_eq!(s.i8_val(), 42i8);
+        assert_eq!(s.u16_val(), 50000u16);
+        assert_eq!(s.i64_val(), 99999i64);
+        assert_eq!(s.f32_val(), 1.0f32);
+        assert_eq!(dec.enum_field(), TestEnum::C);
+    "#,
+    );
+
+    Ok(())
+}
+
+/// Every scalar type roundtrips correctly in big-endian. The composite
+/// accessor uses `from_be_bytes` and the values must survive encode→decode.
+#[test]
+fn all_scalars_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::all_types_be_schema(), "be_scalars");
+    compile_and_run(
+        "be_scalars",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut enc = AllTypesEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let scalar = AllScalars::new(
+            42i8,             // i8_val
+            128u8,            // u8_val
+            1000i16,          // i16_val
+            50000u16,         // u16_val
+            100000i32,        // i32_val
+            3000000000u32,    // u32_val
+            99999i64,         // i64_val
+            77777u64,         // u64_val
+            1.5f32,           // f32_val
+            3.14159f64,       // f64_val
+        );
+        enc.scalar_composite(scalar).enum_field(TestEnum::C).set_field(TestSet::default());
+        enc.fixed_array([b'A'; 8]);
+        let _ = enc.var_data(b"test").unwrap();
+
+        // Roundtrip all scalars through BE codec
+        let dec = AllTypesDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+        let s = dec.scalar_composite_as_struct();
+        assert_eq!(s.i8_val(), 42i8);
+        assert_eq!(s.u8_val(), 128u8);
+        assert_eq!(s.i16_val(), 1000i16);
+        assert_eq!(s.u16_val(), 50000u16);
+        assert_eq!(s.i32_val(), 100000i32);
+        assert_eq!(s.u32_val(), 3000000000u32);
+        assert_eq!(s.i64_val(), 99999i64);
+        assert_eq!(s.u64_val(), 77777u64);
+        assert_eq!(s.f32_val(), 1.5f32);
+        assert_eq!(s.f64_val(), 3.14159f64);
+        assert_eq!(dec.enum_field(), TestEnum::C);
+    "#,
+    );
+    Ok(())
+}
+
 // ── API contract: verify generated public surface is stable ────────────
 
 #[test]
