@@ -11,6 +11,15 @@ the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 2. Close an item only with generated/source evidence + tests.  
 3. Do **not** re-open residual umbrella product work — that scope is COMPLETE.
 
+## Open work (2026-07-20 — ErgoSBE cleanup + egress hardening)
+
+| # | Item | Plan |
+|---|------|------|
+| E1 | Make ErgoSBE the sole runtime codec | Task 2 in [2026-07-20 plan](superpowers/plans/2026-07-20-aeron-cluster-ergosbe-cleanup-and-egress-hardening.md) |
+| E2 | Fragment assembly + session-ID filtering | Task 3 |
+| E3 | Deepen tests (fragmentation, controlled actions) | Task 4 |
+| E4 | Reconcile docs (README, DECISIONS, master plan) | Task 5 |
+
 ## Intentional non-goals (do not add as open work)
 
 | Item | Why |
@@ -18,7 +27,7 @@ the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 | Rust Aeron Cluster **service** | Explicit non-goal |
 | SessionConnectRequest encode ≤ 1.00 as a gate | Demoted cold path |
 | NewLeaderEvent decode ≤ 1.00 as a gate | Diagnostic-only; smoke ratio ≫ 1.00 after equal-work audit |
-| Delete residual sbe-tool codec trees | Needed for head-to-head benches |
+| Delete residual sbe-tool codec trees | ~~Needed for head-to-head benches~~ → moved to `cluster/benches/reference_sbe/` (E1) |
 | Pillar directory renames | Permanent layout rule |
 | Live exchange WebSocket in CI | Manual recipe only (IPC + HA samples offline/CH) |
 | Third sample crate (exchange-orderbook) | Merged into advanced-bitget |
