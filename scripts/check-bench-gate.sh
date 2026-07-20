@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# check-bench-gate.sh — enforce the ≤1.00 bench gate for SBE and cluster
+# codec benchmarks. Called by `just bench` + `just bench-cluster`.
+# Parses Criterion estimates.json; exits 0 if all maintained ratios ≤ 1.00,
+# non-zero with details if any exceed 1.00 + noise tolerance.
+set -euo pipefail
+
+CRITERION_DIR="${1:-target/criterion}"
+NOISE_TOLERANCE="${2:-0.005}"  # 0.5% noise tolerance
+
+failures=0
+
+check_ratio() {
+    local label="$1"
+    local ergo_med="$2"
+    local aero_med="$3"
+    local ratio
+    ratio=$(python3 -c "print(f'{$ergo_med / $aero_med:.4f}')")
+    local over
+    over=$(python3 -c "print('true' if $ergo_med / $aero_med > 1.0 + $NOISE_TOLERANCE else 'false')")
+    printf "  %-45s %10s / %-10s = %s" "$label" "$ergo_med" "$aero_med" "$ratio"
+    if [ "$over" = "true" ]; then
+        echo "  FAIL"
+        return 1
+    else
+        echo "  ok"
+        return 0
+    fi
+}
+
+get_median() {
+    local path="$CRITERION_DIR/$1/new/estimates.json"
+    if [ -f "$path" ]; then
+        python3 -c "import json; print(json.load(open('$path'))['median']['point_estimate'])"
+        return 0
+    else
+        return 1
+    fi
+}
+
+echo "=== SBE bench gate ==="
+
+# Maintained SBE parity pairs (group_name/function)
+pairs=(
+    "decode_scalar|ergosbe|aeron"
+    "decode_array|ergosbe|aeron"
+    "decode_composite|ergosbe_engine|aeron_engine"
+    "decode_full_message|ergosbe_consuming|aeron"
+    "decode_entry_point|ergosbe_wrap|aeron_wrap"
+    "encode_scalar|ergosbe_checked|aeron"
+    "encode_throughput_10k|ergosbe_checked|aeron"
+    "throughput_batch_10k|ergosbe|aeron"
+)
+
+for pair in "${pairs[@]}"; do
+    IFS='|' read -r group ergo_fn aero_fn <<< "$pair"
+    ergo_med=$(get_median "parity_${group}/${ergo_fn}" 2>/dev/null) || true
+    aero_med=$(get_median "parity_${group}/${aero_fn}" 2>/dev/null) || true
+
+    if [ -z "$ergo_med" ] || [ -z "$aero_med" ]; then
+        echo "  SKIP $group (missing estimates — run bench first)"
+        continue
+    fi
+
+    check_ratio "$group (ErgoSBE/Aeron)" "$ergo_med" "$aero_med" || ((failures++))
+
+    # Unchecked companion (only exists for encode scenarios)
+    case "$group" in
+        encode_scalar|encode_throughput_10k)
+            ergo_uc_med=$(get_median "parity_${group}/ergosbe_unchecked" 2>/dev/null) || true
+            if [ -n "$ergo_uc_med" ]; then
+                check_ratio "$group (unchecked/Aeron)" "$ergo_uc_med" "$aero_med" || ((failures++))
+                check_ratio "$group (unchecked/checked)" "$ergo_uc_med" "$ergo_med" || ((failures++))
+            fi
+            ;;
+    esac
+done
+
+echo ""
+echo "=== Cluster bench gate ==="
+
+# Cluster codec bench pairs (under its own target/criterion)
+CRITERION_DIR_CLUSTER="${CRITERION_DIR}"
+cluster_pairs=(
+    "cluster_encode_session_message_header|ergosbe|sbe-tool"
+    "cluster_encode_session_keep_alive|ergosbe|sbe-tool"
+    "cluster_decode_session_message_header|ergosbe|sbe-tool"
+    "cluster_decode_session_event|ergosbe|sbe-tool"
+    "cluster_encode_claim_shaped_header_plus_app|ergosbe|sbe-tool"
+)
+
+for pair in "${cluster_pairs[@]}"; do
+    IFS='|' read -r group ergo_fn sbe_fn <<< "$pair"
+    ergo_med=$(get_median "${group}/${ergo_fn}" 2>/dev/null) || true
+    sbe_med=$(get_median "${group}/${sbe_fn}" 2>/dev/null) || true
+
+    if [ -z "$ergo_med" ] || [ -z "$sbe_med" ]; then
+        echo "  SKIP $group (missing estimates — run bench-cluster first)"
+        continue
+    fi
+
+    check_ratio "$group (ErgoSBE/sbe-tool)" "$ergo_med" "$sbe_med" || ((failures++))
+done
+
+echo ""
+if [ "$failures" -gt 0 ]; then
+    echo "FAIL: $failures ratio(s) exceeded 1.00 + $NOISE_TOLERANCE tolerance"
+    exit 1
+else
+    echo "PASS: all maintained ratios ≤ 1.00"
+    exit 0
+fi

@@ -165,6 +165,7 @@ run-sample:
 # Uses Criterion's baseline feature for statistically valid cross-mode comparison.
 # Gate: ALL maintained ErgoSBE/Aeron ratios ≤ 1.00 in both modes,
 # AND unchecked ErgoSBE must not regress vs checked ErgoSBE.
+# The check-bench-gate.sh script enforces this (exit non-zero on failure).
 bench:
     @echo "=== SBE perf parity: checked mode (save baseline) ==="
     cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench -- --save-baseline checked
@@ -172,12 +173,16 @@ bench:
     @echo "=== SBE perf parity: unchecked (compare vs checked baseline) ==="
     cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench --features bound-check-disabled -- --baseline checked
     @echo ""
-    @echo "Gate: checked Ergo≤Aero, unchecked Ergo≤Aero, unchecked Ergo≤checked Ergo (all ≤ 1.00)"
+    @echo "=== Gate ==="
+    ./scripts/check-bench-gate.sh target/criterion
 
 # Cluster codec benchmarks (ErgoSBE vs sbe-tool head-to-head).
-# With unchecked-companions feature for single-session checked vs unchecked comparison.
+# Gate enforced by check-bench-gate.sh after the run.
 bench-cluster:
-    cargo bench -p ergo-aeron-cluster --features unchecked-companions
+    cargo bench -p ergo-aeron-cluster
+    @echo ""
+    @echo "=== Gate ==="
+    ./scripts/check-bench-gate.sh target/criterion
 
 # =============================================================================
 # cluster/ = crate ergo-aeron-cluster (client + optional in-crate test_support)

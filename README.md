@@ -161,9 +161,10 @@ These are the implemented/generated capabilities. Release-quality claims such as
 
 ## Current Status
 
-- **Maintained ErgoSBE/Aeron five-run matrix:** all 10 scenarios ≤ 1.00 as of
-  2026-07-18 ([`ergosbe-performance-optimisation-goal.md`](ergosbe-performance-optimisation-goal.md)).
-  Evidence for that set only — not a universal “HFT-ready” claim.
+- **Maintained ErgoSBE/Aeron parity matrix:** 16 ratios across 8 scenarios
+  (checked + unchecked) verified ≤ 1.00. Enforced by `scripts/check-bench-gate.sh`
+  via `just bench`. See [`ergosbe-performance-optimisation-goal.md`](ergosbe-performance-optimisation-goal.md)
+  for the full ledger.
 - Persist + IPC samples (`just samples-orderbook`) green when CH is up; live
   exchange WebSocket remains a **manual** recipe (not CI).
 - **Cluster:** residual product complete; claim_shaped encode maintained;

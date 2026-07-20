@@ -26,8 +26,8 @@ only when neutral or faster.
 # From repo root
 just bench
 # or
-cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-cargo bench -p ergo-sbe-benchmarks --no-run   # compile gate only
+cargo bench -p ergosbe-benchmarks --bench perf_parity_bench
+cargo bench -p ergosbe-benchmarks --no-run   # compile gate only
 ```
 
 ## Fair-bench rules
