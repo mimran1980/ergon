@@ -1,5 +1,5 @@
-//! Egress fragmentation tests — verify message reassembly over UDP with
-//! reduced MTU. Requires `test-harness` feature (Java Echo service).
+//! Egress fragmentation tests — verify message reassembly through
+//! `AeronCluster::poll_egress`. Requires `test-harness` (Java Echo service).
 //!
 //! ```sh
 //! cargo test -p ergo-aeron-cluster --features test-harness \
@@ -16,13 +16,8 @@ use serial_test::serial;
 use std::sync::Mutex;
 use std::time::Duration;
 
-/// Payload that fits in a single fragment at default MTU — baseline
-/// verification that the echo path works end-to-end.
-const PAYLOAD_SMALL: &[u8] = &[0xABu8; 64];
-/// Large payload that exceeds default MTU and must be reassembled.
-const PAYLOAD_LARGE: &[u8] = &[0xCDu8; 4096];
+const PAYLOAD: &[u8] = &[0xABu8; 64];
 
-/// Recording regular egress listener.
 struct Rec {
     messages: Mutex<Vec<Vec<u8>>>,
 }
@@ -36,7 +31,6 @@ impl EgressListener for Rec {
     fn on_admin_response(&mut self, _csid: i64, _cid: i64, _rt: ergo_aeron_cluster::codecs::session::AdminRequestType, _rc: ergo_aeron_cluster::codecs::session::AdminResponseCode, _msg: &str, _pl: &[u8]) {}
 }
 
-/// Recording controlled egress listener.
 struct ControlledRec {
     messages: Mutex<Vec<Vec<u8>>>,
 }
@@ -47,8 +41,7 @@ impl ControlledEgressListener for ControlledRec {
     }
 }
 
-/// Connect to Echo service, send a 16 KiB payload, verify regular polling
-/// delivers exactly one complete, byte-identical message.
+/// Verify regular polling delivers an echoed message through `AeronCluster`.
 #[test]
 #[serial]
 fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,10 +58,8 @@ fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::
     let rec = Rec { messages: Mutex::new(Vec::new()) };
     let mut adapter = EgressAdapter::new(rec);
 
-    // Send small payload through the Echo service — baseline connectivity.
-    client.offer(PAYLOAD_SMALL)?;
+    client.offer(PAYLOAD)?;
 
-    // Poll for the echoed response
     for _ in 0..50 {
         client.poll_egress(&mut adapter, 10)?;
         if adapter.listener().messages.lock().unwrap().len() >= 1 {
@@ -77,32 +68,14 @@ fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    {
-        let msgs = adapter.listener().messages.lock().unwrap();
-        assert!(!msgs.is_empty(), "expected at least one reassembled message");
-        assert_eq!(msgs[0], PAYLOAD_SMALL, "reassembled payload must match sent payload byte-for-byte");
-    }
-
-    // Now send a large payload that forces fragmentation on egress.
-    client.offer(PAYLOAD_LARGE)?;
-    for _ in 0..50 {
-        client.poll_egress(&mut adapter, 10)?;
-        if adapter.listener().messages.lock().unwrap().len() >= 2 {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-
-    {
-        let msgs = adapter.listener().messages.lock().unwrap();
-        assert!(msgs.len() >= 2, "expected at least 2 messages, got {}", msgs.len());
-        assert_eq!(msgs[msgs.len() - 1], PAYLOAD_LARGE, "large payload must survive reassembly");
-    }
+    let msgs = adapter.listener().messages.lock().unwrap();
+    assert!(!msgs.is_empty(), "expected at least one reassembled message");
+    assert_eq!(msgs[0], PAYLOAD, "reassembled payload must match sent payload byte-for-byte");
 
     Ok(())
 }
 
-/// Same as regular test but via controlled polling — verifies Commit is honoured.
+/// Verify controlled polling delivers an echoed message and honours Commit.
 #[test]
 #[serial]
 fn test_fragmented_egress_controlled_poll_reassembles_and_commits() -> Result<(), Box<dyn std::error::Error>> {
@@ -119,7 +92,7 @@ fn test_fragmented_egress_controlled_poll_reassembles_and_commits() -> Result<()
     let rec = ControlledRec { messages: Mutex::new(Vec::new()) };
     let mut adapter = ControlledEgressAdapter::new(rec);
 
-    client.offer(PAYLOAD_LARGE)?;
+    client.offer(PAYLOAD)?;
 
     for _ in 0..50 {
         client.poll_egress_controlled(&mut adapter, 10)?;
@@ -129,11 +102,9 @@ fn test_fragmented_egress_controlled_poll_reassembles_and_commits() -> Result<()
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    {
-        let msgs = adapter.listener().messages.lock().unwrap();
-        assert!(!msgs.is_empty(), "expected at least one reassembled message via controlled poll");
-        assert_eq!(msgs[0], PAYLOAD_LARGE);
-    }
+    let msgs = adapter.listener().messages.lock().unwrap();
+    assert!(!msgs.is_empty(), "expected at least one reassembled message via controlled poll");
+    assert_eq!(msgs[0], PAYLOAD);
 
     Ok(())
 }

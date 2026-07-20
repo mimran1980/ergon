@@ -36,7 +36,7 @@ use crate::state::SessionState;
 /// Header-inclusive SessionMessageHeader (prefer generated `ENCODED_LENGTH`).
 const MSG_HDR_TOTAL: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
 
-/// Aeron data header flags.
+/// Aeron frame header flags (from `AeronHeaderValuesFrame.flags()`).
 const BEGIN_FLAG: u8 = 0x40;
 const END_FLAG: u8 = 0x80;
 
@@ -50,8 +50,11 @@ fn to_aeron_action(action: ControlledPollAction) -> AeronAction {
     }
 }
 
-/// Reassembles fragmented Aeron messages. Accumulates fragments between
-/// BEGIN and END flags and dispatches complete logical messages.
+/// Reassembles fragmented Aeron messages using `poll_fn`'s `AeronHeader` metadata.
+/// Accumulates fragments between BEGIN and END flags; dispatches complete messages.
+///
+/// Equivalent to Aeron's `aeron_fragment_assembler_t` — same BEGIN/END flag
+/// buffering algorithm, integrated with Rust closures instead of C handler objects.
 struct FragmentReassembler {
     buffer: Vec<u8>,
 }
@@ -61,22 +64,16 @@ impl FragmentReassembler {
         Self { buffer: Vec::new() }
     }
 
-    /// Feed a fragment. Returns `Some(data)` when a complete message is
-    /// assembled (all fragments from BEGIN to END concatenated).
+    /// Feed a fragment. Returns `Some(&[u8])` when a complete message is assembled.
     ///
-    /// Aeron data header (8 bytes): frame_length(i32) + version(i8) + flags(i8) + type(i16).
-    /// The flags byte at offset 5 contains BEGIN=0x40 and END=0x80.
-    fn on_fragment(&mut self, data: &[u8]) -> Option<&[u8]> {
-        // Guard: need at least the 8-byte data header to check flags.
-        if data.len() < 8 {
-            return None;
-        }
-        let flags = data[5];
+    /// `data` is the fragment payload (frame header already stripped by Aeron).
+    /// `flags` comes from `AeronHeader::get_values()?.frame().flags()` — contains
+    /// BEGIN (0x40) and END (0x80) bits.
+    fn on_fragment(&mut self, data: &[u8], flags: u8) -> Option<&[u8]> {
         if (flags & BEGIN_FLAG) != 0 {
             self.buffer.clear();
         }
-        // Skip the 8-byte data header; the message payload starts at offset 8.
-        self.buffer.extend_from_slice(&data[8..]);
+        self.buffer.extend_from_slice(data);
         if (flags & END_FLAG) != 0 {
             Some(&self.buffer)
         } else {
@@ -461,8 +458,10 @@ impl AeronCluster {
         let n = self
             .egress
             .poll_fn(
-                |data, _hdr| {
-                    if let Some(complete) = self.egress_assembler.on_fragment(data) {
+                |data, hdr| {
+                    // ponytail: get_values() allocates — acceptable; fragmentation is rare.
+                    let flags = hdr.get_values().map(|v| v.frame().flags()).unwrap_or(0);
+                    if let Some(complete) = self.egress_assembler.on_fragment(data, flags) {
                         if let Some(crate::poller::EgressEvent::NewLeader {
                             leadership_term_id,
                             leader_member_id,
@@ -508,8 +507,9 @@ impl AeronCluster {
         let n = self
             .egress
             .controlled_poll_fn(
-                |data, _hdr| {
-                    if let Some(complete) = self.egress_controlled_assembler.on_fragment(data) {
+                |data, hdr| {
+                    let flags = hdr.get_values().map(|v| v.frame().flags()).unwrap_or(0);
+                    if let Some(complete) = self.egress_controlled_assembler.on_fragment(data, flags) {
                         if let Some(crate::poller::EgressEvent::NewLeader {
                             leadership_term_id,
                             leader_member_id,
