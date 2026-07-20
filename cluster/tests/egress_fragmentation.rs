@@ -8,9 +8,9 @@
 
 #![cfg(feature = "test-harness")]
 
-use ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder;
 use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
-use ergo_aeron_cluster::{AeronCluster, ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction, SessionBuilder};
+use ergo_aeron_cluster::controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
+use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::sync::Mutex;
@@ -53,9 +53,8 @@ fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::
     let dir = cformat!("{}", cluster.aeron_dir().display());
 
     let builder = SessionBuilder::builder()
-        .ingress_channel(&cluster.ingress_channel)?
-        .egress_channel(&cluster.egress_channel)?
-        .build()?;
+        .ingress_channel(&cluster.ingress_channel)
+        .egress_channel(&cluster.egress_channel);
 
     let mut client = AeronCluster::connect(&builder, &dir.to_string_lossy())?;
     assert!(client.cluster_session_id() >= 0, "session not established");
@@ -90,9 +89,8 @@ fn test_fragmented_egress_controlled_poll_reassembles_and_commits() -> Result<()
     let dir = cformat!("{}", cluster.aeron_dir().display());
 
     let builder = SessionBuilder::builder()
-        .ingress_channel(&cluster.ingress_channel)?
-        .egress_channel(&cluster.egress_channel)?
-        .build()?;
+        .ingress_channel(&cluster.ingress_channel)
+        .egress_channel(&cluster.egress_channel);
 
     let mut client = AeronCluster::connect(&builder, &dir.to_string_lossy())?;
     assert!(client.cluster_session_id() >= 0);

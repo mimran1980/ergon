@@ -52,13 +52,30 @@ pub trait EgressListener {
 }
 
 /// Dispatch egress fragments to an `EgressListener`.
+///
+/// Optionally filters application messages (`SessionMessageHeader`) by
+/// `expected_session_id` — messages from other sessions are silently
+/// dropped. Lifecycle events (SessionEvent, NewLeader, Challenge,
+/// AdminResponse) are always dispatched regardless of the filter.
 pub struct EgressAdapter<L: EgressListener> {
     listener: L,
+    expected_session_id: Option<i64>,
 }
 
 impl<L: EgressListener> EgressAdapter<L> {
     pub fn new(listener: L) -> Self {
-        Self { listener }
+        Self { listener, expected_session_id: None }
+    }
+
+    /// Create an adapter that only dispatches `SessionMessageHeader`
+    /// messages matching `session_id`. Other message types are unaffected.
+    pub fn with_session_filter(listener: L, session_id: i64) -> Self {
+        Self { listener, expected_session_id: Some(session_id) }
+    }
+
+    /// Update the session-id filter (e.g. after a NewLeaderEvent assigns a new session).
+    pub fn set_expected_session_id(&mut self, id: i64) {
+        self.expected_session_id = Some(id);
     }
 
     /// Mutably borrow the wrapped listener (e.g. to inspect captured
@@ -78,6 +95,12 @@ impl<L: EgressListener> EgressAdapter<L> {
 
         match msg {
             AnyMessage::SessionMessageHeader(decoder) => {
+                // Filter: drop messages not addressed to our session.
+                if let Some(expected) = self.expected_session_id {
+                    if decoder.cluster_session_id() != expected {
+                        return Ok(true); // handled (dropped), not an error
+                    }
+                }
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return Err(crate::ClusterError::ProtocolError {
                         reason: "session message too short".into(),

@@ -86,11 +86,17 @@ pub trait ControlledEgressListener {
 /// Dispatch egress fragments to a `ControlledEgressListener`.
 pub struct ControlledEgressAdapter<L: ControlledEgressListener> {
     listener: L,
+    expected_session_id: Option<i64>,
 }
 
 impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
     pub fn new(listener: L) -> Self {
-        Self { listener }
+        Self { listener, expected_session_id: None }
+    }
+
+    /// Update the session-id filter (e.g. after a NewLeaderEvent).
+    pub fn set_expected_session_id(&mut self, id: i64) {
+        self.expected_session_id = Some(id);
     }
 
     /// Decode and dispatch one egress fragment via `AnyMessage::decode`.
@@ -103,6 +109,12 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
 
         match msg {
             AnyMessage::SessionMessageHeader(decoder) => {
+                // Filter: drop messages not addressed to our session.
+                if let Some(expected) = self.expected_session_id {
+                    if decoder.cluster_session_id() != expected {
+                        return ControlledPollAction::Continue;
+                    }
+                }
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return ControlledPollAction::Continue;
                 }

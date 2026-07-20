@@ -442,7 +442,10 @@ impl AeronCluster {
 
     /// Poll egress and dispatch decoded messages through `adapter`.
     /// Fragments are reassembled into complete logical messages before
-    /// decoding. Handles `NewLeaderEvent` internally: updates the session's
+    /// decoding. Application messages not matching the connected
+    /// `cluster_session_id` are silently dropped.
+    ///
+    /// Handles `NewLeaderEvent` internally: updates the session's
     /// leadership term / leader id, recreates assemblers, and reconnects
     /// ingress to the new leader. Returns fragments polled.
     pub fn poll_egress<L: EgressListener>(
@@ -450,6 +453,8 @@ impl AeronCluster {
         adapter: &mut EgressAdapter<L>,
         limit: usize,
     ) -> Result<i32, ClusterError> {
+        // Filter application messages by the connected session id.
+        adapter.set_expected_session_id(self.cluster_session_id);
         self.keep_alive_if_due();
         let mut new_leader: Option<(i64, i32, String)> = None;
         let mut decode_err: Option<ClusterError> = None;
@@ -497,6 +502,7 @@ impl AeronCluster {
         adapter: &mut ControlledEgressAdapter<L>,
         fragment_limit: usize,
     ) -> Result<i32, ClusterError> {
+        adapter.set_expected_session_id(self.cluster_session_id);
         self.keep_alive_if_due();
         let mut new_leader: Option<(i64, i32, String)> = None;
         let n = self
