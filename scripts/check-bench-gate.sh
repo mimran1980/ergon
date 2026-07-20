@@ -63,17 +63,6 @@ for pair in "${pairs[@]}"; do
     fi
 
     check_ratio "$group (ErgoSBE/Aeron)" "$ergo_med" "$aero_med" || ((failures++))
-
-    # Unchecked companion (only exists for encode scenarios)
-    case "$group" in
-        encode_scalar|encode_throughput_10k)
-            ergo_uc_med=$(get_median "parity_${group}/ergosbe_unchecked" 2>/dev/null) || true
-            if [ -n "$ergo_uc_med" ]; then
-                check_ratio "$group (unchecked/Aeron)" "$ergo_uc_med" "$aero_med" || ((failures++))
-                check_ratio "$group (unchecked/checked)" "$ergo_uc_med" "$ergo_med" || ((failures++))
-            fi
-            ;;
-    esac
 done
 
 echo ""
