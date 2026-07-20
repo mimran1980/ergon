@@ -13,55 +13,74 @@ fn as_utf8_lossy(data: &[u8]) -> &str {
     std::str::from_utf8(data).unwrap_or("<invalid utf-8>")
 }
 
+/// Map [`ControlledPollAction`] to Aeron C values (ABORT=1, BREAK=2, COMMIT=3, CONTINUE=4).
+pub(crate) const fn action_to_aeron(action: ControlledPollAction) -> i32 {
+    match action {
+        ControlledPollAction::Continue => 4,
+        ControlledPollAction::Abort => 1,
+        ControlledPollAction::Break => 2,
+        ControlledPollAction::Commit => 3,
+    }
+}
+
 /// Action returned by a `ControlledEgressListener`.
 ///
 /// Mirrors Aeron's `ControlledFragmentHandler.Action`:
 /// - `Continue` — keep dispatching fragments
 /// - `Abort` — stop dispatching and re-deliver this fragment next poll
 /// - `Break` — stop dispatching; do not re-deliver
+/// - `Commit` — commit the current position and continue
+///
+/// Values are explicitly mapped to Aeron C constants at the FFI boundary
+/// (ABORT=1, BREAK=2, COMMIT=3, CONTINUE=4), not via `#[repr(i32)]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
 pub enum ControlledPollAction {
-    Continue = 0,
-    Abort = 1,
-    Break = 2,
+    Continue,
+    Abort,
+    Break,
+    Commit,
 }
 
-/// Controlled variant of `EgressListener`. Each callback returns an
-/// action so the caller can apply flow control.
+/// Controlled variant of `EgressListener`. Only `on_message` returns an
+/// action — lifecycle, challenge, and admin callbacks default to no-ops.
 pub trait ControlledEgressListener {
     fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]) -> ControlledPollAction;
+
     fn on_session_event(
         &mut self,
-        correlation_id: i64,
-        cluster_session_id: i64,
-        leadership_term_id: i64,
-        leader_member_id: i32,
-        code: EventCode,
-        detail: &str,
-    ) -> ControlledPollAction;
+        _correlation_id: i64,
+        _cluster_session_id: i64,
+        _leadership_term_id: i64,
+        _leader_member_id: i32,
+        _code: EventCode,
+        _detail: &str,
+    ) {
+    }
     fn on_new_leader(
         &mut self,
-        cluster_session_id: i64,
-        leadership_term_id: i64,
-        leader_member_id: i32,
-        ingress_endpoints: &str,
-    ) -> ControlledPollAction;
+        _cluster_session_id: i64,
+        _leadership_term_id: i64,
+        _leader_member_id: i32,
+        _ingress_endpoints: &str,
+    ) {
+    }
     fn on_challenge(
         &mut self,
-        correlation_id: i64,
-        cluster_session_id: i64,
-        encoded_challenge: &[u8],
-    ) -> ControlledPollAction;
+        _correlation_id: i64,
+        _cluster_session_id: i64,
+        _encoded_challenge: &[u8],
+    ) {
+    }
     fn on_admin_response(
         &mut self,
-        cluster_session_id: i64,
-        correlation_id: i64,
-        request_type: AdminRequestType,
-        response_code: AdminResponseCode,
-        message: &str,
-        payload: &[u8],
-    ) -> ControlledPollAction;
+        _cluster_session_id: i64,
+        _correlation_id: i64,
+        _request_type: AdminRequestType,
+        _response_code: AdminResponseCode,
+        _message: &str,
+        _payload: &[u8],
+    ) {
+    }
 }
 
 /// Dispatch egress fragments to a `ControlledEgressListener`.
@@ -100,7 +119,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let detail = decoder.into_detail()
                     .map(|(b, _)| as_utf8_lossy(b))
                     .unwrap_or("<invalid utf-8>");
-                self.listener.on_session_event(cid, csid, ltid, lmid, code, detail)
+                self.listener.on_session_event(cid, csid, ltid, lmid, code, detail);
+                ControlledPollAction::Continue
             }
             AnyMessage::NewLeaderEvent(decoder) => {
                 let csid = decoder.cluster_session_id();
@@ -109,7 +129,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let eps = decoder.into_ingress_endpoints()
                     .map(|(b, _)| as_utf8_lossy(b))
                     .unwrap_or("<invalid utf-8>");
-                self.listener.on_new_leader(csid, ltid, lmid, eps)
+                self.listener.on_new_leader(csid, ltid, lmid, eps);
+                ControlledPollAction::Continue
             }
             AnyMessage::Challenge(decoder) => {
                 let cid = decoder.correlation_id();
@@ -117,7 +138,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let chal = decoder.into_encoded_challenge()
                     .map(|(b, _)| b)
                     .unwrap_or(&[]);
-                self.listener.on_challenge(cid, csid, chal)
+                self.listener.on_challenge(cid, csid, chal);
+                ControlledPollAction::Continue
             }
             AnyMessage::AdminResponse(decoder) => {
                 let csid = decoder.cluster_session_id();
@@ -134,7 +156,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 };
                 let msg = as_utf8_lossy(msg_bytes).to_string();
                 let pl = pl.to_vec();
-                self.listener.on_admin_response(csid, cid, rt, rc, &msg, &pl)
+                self.listener.on_admin_response(csid, cid, rt, rc, &msg, &pl);
+                ControlledPollAction::Continue
             }
             AnyMessage::Unknown { .. } => ControlledPollAction::Continue,
             _ => ControlledPollAction::Continue,
@@ -156,9 +179,11 @@ mod tests {
 
     #[test]
     fn test_action_values_match_aeron() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(ControlledPollAction::Continue as i32, 0);
-        assert_eq!(ControlledPollAction::Abort as i32, 1);
-        assert_eq!(ControlledPollAction::Break as i32, 2);
+        // Verify mapping matches Aeron C constants.
+        assert_eq!(super::action_to_aeron(ControlledPollAction::Abort), 1);
+        assert_eq!(super::action_to_aeron(ControlledPollAction::Break), 2);
+        assert_eq!(super::action_to_aeron(ControlledPollAction::Commit), 3);
+        assert_eq!(super::action_to_aeron(ControlledPollAction::Continue), 4);
         Ok(())
     }
 
@@ -294,31 +319,27 @@ mod tests {
         fn on_session_event(
             &mut self, _cid: i64, _sid: i64, _tid: i64, _mid: i32,
             code: EventCode, detail: &str,
-        ) -> ControlledPollAction {
+        ) {
             self.calls += 1;
             self.session_code = Some(code);
             self.detail = detail.to_string();
-            ControlledPollAction::Continue
         }
         fn on_new_leader(
             &mut self, _sid: i64, _tid: i64, _mid: i32, eps: &str,
-        ) -> ControlledPollAction {
+        ) {
             self.calls += 1;
             self.leader_endpoints = eps.to_string();
-            ControlledPollAction::Continue
         }
-        fn on_challenge(&mut self, _cid: i64, _sid: i64, chal: &[u8]) -> ControlledPollAction {
+        fn on_challenge(&mut self, _cid: i64, _sid: i64, chal: &[u8]) {
             self.calls += 1;
             self.challenge = chal.to_vec();
-            ControlledPollAction::Continue
         }
         fn on_admin_response(
             &mut self, _sid: i64, _cid: i64, _rt: AdminRequestType,
             _rc: AdminResponseCode, msg: &str, _pl: &[u8],
-        ) -> ControlledPollAction {
+        ) {
             self.calls += 1;
             self.detail = msg.to_string();
-            ControlledPollAction::Continue
         }
     }
 }
