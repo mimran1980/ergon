@@ -2,11 +2,11 @@
 //! handshake. Captures the next `SessionEvent`, `Challenge`, or
 //! `NewLeaderEvent` so the caller can react.
 
-use crate::codecs::ergo_codecs::{
+use crate::codecs::session::{
     ChallengeDecoder, EventCode, MessageHeader, NewLeaderEventDecoder, SessionEventDecoder,
     SessionMessageHeaderEncoder,
 };
-use crate::codecs::ergo_codecs::{ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder};
+use crate::codecs::session::{ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder};
 
 /// Decode var-data as UTF-8 with a consistent sentinel on failure.
 #[inline]

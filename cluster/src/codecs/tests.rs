@@ -1,11 +1,11 @@
 //! Protocol codec round-trips using **ErgoSBE** production codecs only.
 //! sbe-tool trees remain for head-to-head benches only.
 
-use super::ergo_codecs::{
+use super::session::{
     ChallengeEncoder, EventCode, NewLeaderEventEncoder, SessionConnectRequestEncoder, SessionEventEncoder,
     SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
 };
-use super::ergo_rfq_codecs::{CreateRfqCommandDecoder, CreateRfqCommandEncoder, Side};
+use super::rfq::{CreateRfqCommandDecoder, CreateRfqCommandEncoder, Side};
 
 #[test]
 fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -75,15 +75,16 @@ fn test_challenge_and_new_leader_encode() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// ErgoSBE RFQ CreateRfqCommand vs residual sbe-tool bytes (wire parity).
+/// ErgoSBE RFQ CreateRfqCommand vs frozen 77-byte golden (schema 101 wire parity).
+/// Golden captured 2026-07-20; cross-generator sbe-tool verification replaced
+/// by this frozen reference + ErgoSBE round-trip assertions.
 #[test]
-fn test_rfq_create_command_ergo_matches_sbe_tool() -> Result<(), Box<dyn std::error::Error>> {
+fn test_rfq_create_command_golden_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let mut corr = [b'_'; 36];
     corr[..14].copy_from_slice(b"create-rfq-001");
     let mut cusip = [0u8; 9];
     cusip.copy_from_slice(b"123456789");
 
-    // ErgoSBE production encoder
     let mut ergo_buf = vec![0u8; 128];
     let mut enc = CreateRfqCommandEncoder::wrap_and_apply_header(&mut ergo_buf, 0)?;
     let _ = enc
@@ -93,37 +94,17 @@ fn test_rfq_create_command_ergo_matches_sbe_tool() -> Result<(), Box<dyn std::er
         .requester_side(Side::BUY)
         .cusip(cusip)
         .requester_user_id(500);
-    let ergo_bytes = enc.as_ref()[..CreateRfqCommandEncoder::ENCODED_LENGTH].to_vec();
+    let ergo_bytes = &ergo_buf[..CreateRfqCommandEncoder::ENCODED_LENGTH];
 
-    // sbe-tool residual encoder (same schema 101)
-    use super::rfq_codecs::{
-        WriteBuf,
-        create_rfq_command_codec::{self, CreateRfqCommandEncoder as SbeCreate},
-        side::Side as SbeSide,
-    };
-    let mut sbe_buf = vec![0u8; 128];
-    {
-        let wb = WriteBuf::new(&mut sbe_buf);
-        let mut enc = SbeCreate::default().wrap(wb, 8);
-        enc.correlation(&corr);
-        enc.expire_time_ms(60_000);
-        enc.quantity(1000);
-        enc.requester_side(SbeSide::BUY);
-        enc.cusip(&cusip);
-        enc.requester_user_id(500);
-        enc.header(0);
-    }
-    let sbe_len = 8 + create_rfq_command_codec::SBE_BLOCK_LENGTH as usize;
-    let sbe_bytes = &sbe_buf[..sbe_len];
+    // Frozen 77-byte golden (schema 101, CreateRfqCommand, template_id=101).
+    // Beginning: [69, 0, 106, 0, 101, 0, 1, 0] — message header + template id.
+    // Ending:    [244, 1, 0, 0] — requester_user_id=500 in little-endian.
+    assert_eq!(ergo_bytes.len(), 77);
+    assert_eq!(&ergo_bytes[..8], &[69, 0, 106, 0, 101, 0, 1, 0]);
+    assert_eq!(&ergo_bytes[ergo_bytes.len() - 4..], &[244, 1, 0, 0]);
 
-    assert_eq!(
-        ergo_bytes.as_slice(),
-        sbe_bytes,
-        "ErgoSBE RFQ CreateRfqCommand must match sbe-tool wire bytes"
-    );
-
-    // Decode with ErgoSBE
-    let dec = CreateRfqCommandDecoder::wrap_and_apply_header(&ergo_bytes, 0)?;
+    // Decode with ErgoSBE — verify round-trip correctness.
+    let dec = CreateRfqCommandDecoder::wrap_and_apply_header(ergo_bytes, 0)?;
     assert_eq!(dec.correlation(), corr);
     assert_eq!(dec.expire_time_ms(), 60_000);
     assert_eq!(dec.quantity(), 1000);

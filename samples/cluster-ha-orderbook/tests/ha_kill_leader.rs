@@ -22,7 +22,7 @@ use cluster_ha_orderbook::publish::{
     ClusterBookPublisher, PublishOutcome, RecordingClaimIngress, app_payload,
 };
 use ergo_aeron_cluster::SessionState;
-use ergo_aeron_cluster::codecs::ergo_codecs::{AdminRequestType, AdminResponseCode, EventCode};
+use ergo_aeron_cluster::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};
 use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use serial_test::serial;

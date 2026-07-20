@@ -1,8 +1,6 @@
 #![cfg(feature = "test-harness")]
 
-use ergo_aeron_cluster::codecs::cluster_codecs::{
-    WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
-};
+use ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder;
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;
@@ -30,20 +28,14 @@ fn connect_and_send(
     let ingress = a.add_publication(&ing, 101, Duration::from_secs(5))?;
 
     let mut buf = vec![0u8; 512];
-    {
-        let wb = WriteBuf::new(&mut buf);
-        let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
-        enc.correlation_id(1);
-        enc.response_stream_id(102);
-        enc.version(0);
-        enc.response_channel(cluster.egress_channel.as_bytes());
-        enc.encoded_credentials(credentials);
-        let _h = enc.header(0);
-    }
+    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
+    enc.correlation_id(1).response_stream_id(102).version(0);
+    let complete = enc.response_channel(cluster.egress_channel.as_bytes())?.encoded_credentials(credentials)?.client_info(b"")?;
+    let buf_ref = complete.as_bytes_with_header();
 
     let mut sent = false;
     for _ in 0..20 {
-        let r = ingress.offer_raw(&buf, rusteron_client::Handlers::NONE);
+        let r = ingress.offer_raw(buf_ref, rusteron_client::Handlers::NONE);
         if r > 0 {
             sent = true;
             break;

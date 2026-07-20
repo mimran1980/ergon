@@ -2,7 +2,7 @@
 //! `ControlledEgressListener`. Callbacks return a `ControlledPollAction`
 //! so the application can apply backpressure (Abort) or stop (Break).
 
-use crate::codecs::ergo_codecs::{
+use crate::codecs::session::{
     AdminRequestType, AdminResponseCode, AnyMessage, EventCode,
     SessionMessageHeaderEncoder,
 };
@@ -149,7 +149,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codecs::ergo_codecs::{
+    use crate::codecs::session::{
         ChallengeEncoder, EventCode as ErgoEventCode,
         NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
     };

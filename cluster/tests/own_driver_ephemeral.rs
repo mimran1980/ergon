@@ -4,9 +4,7 @@
 //! ingress to cluster's 9002, responseChannel=9100 so the cluster
 //! sends SessionEvent back to the client's sub.
 
-use ergo_aeron_cluster::codecs::cluster_codecs::{
-    WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
-};
+use ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder;
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;
@@ -47,20 +45,14 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
     // SessionConnectRequest with response_channel = client's egress URI
     let resp = format!("aeron:udp?endpoint=localhost:{egress_port}");
     let mut buf = vec![0u8; 512];
-    {
-        let wb = WriteBuf::new(&mut buf);
-        let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
-        enc.correlation_id(1);
-        enc.response_stream_id(102);
-        enc.version(0);
-        enc.response_channel(resp.as_bytes());
-        enc.encoded_credentials(b"");
-        let _h = enc.header(0);
-    }
+    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
+    enc.correlation_id(1).response_stream_id(102).version(0);
+    let complete = enc.response_channel(resp.as_bytes())?.encoded_credentials(b"")?.client_info(b"")?;
+    let buf_ref = complete.as_bytes_with_header();
 
     let mut offered = false;
     for _ in 0..50 {
-        if ingress.offer_raw(&buf, rusteron_client::Handlers::NONE) > 0 {
+        if ingress.offer_raw(buf_ref, rusteron_client::Handlers::NONE) > 0 {
             offered = true;
             break;
         }

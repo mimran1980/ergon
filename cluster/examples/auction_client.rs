@@ -4,10 +4,8 @@
 //! cargo run --example auction_client --features test-harness
 //! ```
 
-use ergo_aeron_cluster::codecs::cluster_codecs::{
-    WriteBuf,
-    session_connect_request_codec::SessionConnectRequestEncoder,
-    session_message_header_codec::{SBE_BLOCK_LENGTH, SessionMessageHeaderEncoder},
+use ergo_aeron_cluster::codecs::session::{
+    SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
 };
 use rusteron_client::cformat;
 use std::time::Duration;
@@ -46,16 +44,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect + get session ID
     {
         let mut buf = vec![0u8; 512];
-        let wb = WriteBuf::new(&mut buf);
-        let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
-        enc.correlation_id(1);
-        enc.response_stream_id(102);
-        enc.version(0);
-        enc.response_channel(cluster.egress_channel.as_bytes());
-        enc.encoded_credentials(b"");
-        let _h = enc.header(0);
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
+        enc.correlation_id(1).response_stream_id(102).version(0);
+        let complete = enc.response_channel(cluster.egress_channel.as_bytes())?.encoded_credentials(b"")?.client_info(b"")?;
+        let bytes = complete.as_bytes_with_header();
         for _ in 0..20 {
-            if ingress.offer_raw(&buf, rusteron_client::Handlers::NONE) > 0 {
+            if ingress.offer_raw(bytes, rusteron_client::Handlers::NONE) > 0 {
                 break;
             }
             std::thread::sleep(Duration::from_millis(200));
@@ -95,16 +89,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Build bid message with SessionMessageHeader
         let mut msg = vec![0u8; 512];
-        let hdr_len: usize;
-        {
-            let wb = WriteBuf::new(&mut msg);
-            let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
-            enc.leadership_term_id(leadership_term_id);
-            enc.cluster_session_id(cluster_session_id);
-            enc.timestamp(0);
-            let _h = enc.header(0);
-            hdr_len = 8 + SBE_BLOCK_LENGTH as usize;
-        }
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg, 0)?;
+        enc.leadership_term_id(leadership_term_id).cluster_session_id(cluster_session_id).timestamp(0);
+        let hdr_len = enc.as_ref().len();
         // Write bid payload after header
         msg[hdr_len + CORRELATION_ID_OFFSET..hdr_len + CORRELATION_ID_OFFSET + 8].copy_from_slice(&cid.to_le_bytes());
         msg[hdr_len + CUSTOMER_ID_OFFSET..hdr_len + CUSTOMER_ID_OFFSET + 8].copy_from_slice(&customer_id.to_le_bytes());

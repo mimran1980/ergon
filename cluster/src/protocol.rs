@@ -3,8 +3,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::codecs::ergo_codecs::EventCode;
-    use crate::codecs::ergo_codecs::{
+    use crate::codecs::session::EventCode;
+    use crate::codecs::session::{
         AdminRequestEncoder, AdminResponseEncoder, ChallengeEncoder, ChallengeResponseEncoder, NewLeaderEventEncoder,
         SessionCloseRequestEncoder, SessionConnectRequestEncoder, SessionEventEncoder, SessionKeepAliveEncoder,
         SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,

@@ -17,9 +17,6 @@ default = []
 # Java ClusterLauncher + TestCluster (integration tests / examples). Pure Rust
 # default build does not enable this.
 test-harness = ["dep:rusteron-archive"]
-# Emit _unchecked companion methods for single-binary Criterion comparison
-# (bench-only — never enable for production builds).
-unchecked-companions = []
 
 [lib]
 name = "ergo_aeron_cluster"

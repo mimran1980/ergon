@@ -18,8 +18,8 @@
 //!
 //! # Codecs
 //!
-//! Production modules: [`codecs::ergo_codecs`], [`codecs::ergo_codecs_mark`],
-//! [`codecs::ergo_rfq_codecs`] (generated in `build.rs` from the Aeron submodule
+//! Production modules: [`codecs::session`], [`codecs::mark`],
+//! [`codecs::rfq`] (generated in `build.rs` from the Aeron submodule
 //! and vendored RFQ XML). Residual sbe-tool trees under [`codecs`] remain for
 //! head-to-head benches only.
 //!
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn scaffold_compiles() -> Result<(), Box<dyn std::error::Error>> {
         // Smoke-check ErgoSBE production codecs are wired into the lib.
-        assert_eq!(crate::codecs::ergo_codecs::SessionConnectRequestEncoder::SCHEMA_ID, 111);
+        assert_eq!(crate::codecs::session::SessionConnectRequestEncoder::SCHEMA_ID, 111);
 
         Ok(())
     }

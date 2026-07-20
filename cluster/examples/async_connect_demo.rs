@@ -7,7 +7,7 @@
 
 use ergo_aeron_cluster::{
     AeronCluster, SessionBuilder,
-    codecs::ergo_codecs::EventCode,
+    codecs::session::EventCode,
     egress::{EgressAdapter, EgressListener},
 };
 use std::time::Duration;
@@ -27,8 +27,8 @@ impl EgressListener for L {
         &mut self,
         _: i64,
         _: i64,
-        _: ergo_aeron_cluster::codecs::ergo_codecs::AdminRequestType,
-        _: ergo_aeron_cluster::codecs::ergo_codecs::AdminResponseCode,
+        _: ergo_aeron_cluster::codecs::session::AdminRequestType,
+        _: ergo_aeron_cluster::codecs::session::AdminResponseCode,
         _: &str,
         _: &[u8],
     ) {

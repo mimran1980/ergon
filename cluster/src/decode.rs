@@ -4,7 +4,7 @@
 //! and the maintained Criterion decode benches (template_id + schema_id checks
 //! in release). Prefer them over residual sbe-tool decoders for new call sites.
 
-use crate::codecs::ergo_codecs::{EventCode, NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderDecoder};
+use crate::codecs::session::{EventCode, NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderDecoder};
 use crate::error::ClusterError;
 
 /// Fixed fields from a decoded `SessionMessageHeader` (schema 111, template 1).
@@ -111,7 +111,7 @@ pub fn decode_new_leader_event(data: &[u8]) -> Result<NewLeaderEventView<'_>, Cl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codecs::ergo_codecs::{
+    use crate::codecs::session::{
         EventCode, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
     };
 

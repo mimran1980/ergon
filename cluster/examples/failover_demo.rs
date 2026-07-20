@@ -9,9 +9,7 @@
 //! cargo run --example failover_demo --features test-harness
 //! ```
 
-use ergo_aeron_cluster::codecs::cluster_codecs::{
-    WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
-};
+use ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder;
 use ergo_aeron_cluster::poller;
 use rusteron_client::cformat;
 use std::time::{Duration, Instant};
@@ -51,18 +49,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let uri = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{port}")).ok()?;
         let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
         let mut buf = vec![0u8; 512];
-        {
-            let wb = WriteBuf::new(&mut buf);
-            let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
-            enc.correlation_id(1);
-            enc.response_stream_id(102);
-            enc.version(0);
-            enc.response_channel(resp.as_bytes());
-            enc.encoded_credentials(b"");
-            let _h = enc.header(0);
-        }
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).ok()?;
+        enc.correlation_id(1).response_stream_id(102).version(0);
+        let complete = enc.response_channel(resp.as_bytes()).ok()?.encoded_credentials(b"").ok()?.client_info(b"").ok()?;
+        let bytes = complete.as_bytes_with_header();
         for _ in 0..50 {
-            if pub_.offer_raw(&buf, rusteron_client::Handlers::NONE) > 0 {
+            if pub_.offer_raw(bytes, rusteron_client::Handlers::NONE) > 0 {
                 return Some(pub_);
             }
             std::thread::sleep(Duration::from_millis(100));

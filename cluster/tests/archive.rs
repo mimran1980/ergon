@@ -43,23 +43,14 @@ fn test_archive_and_cluster_can_coexist() -> Result<(), Box<dyn std::error::Erro
 
     // Encode and send SessionConnectRequest
     let mut buf = vec![0u8; 512];
-    {
-        use ergo_aeron_cluster::codecs::cluster_codecs::{
-            WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder,
-        };
-        let wb = WriteBuf::new(&mut buf);
-        let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
-        enc.correlation_id(1);
-        enc.response_stream_id(102);
-        enc.version(0);
-        enc.response_channel(cluster.egress_channel.as_bytes());
-        enc.encoded_credentials(b"");
-        let _h = enc.header(0);
-    }
+    let mut enc = ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
+    enc.correlation_id(1).response_stream_id(102).version(0);
+    let complete = enc.response_channel(cluster.egress_channel.as_bytes())?.encoded_credentials(b"")?.client_info(b"")?;
+    let connect_bytes = complete.as_bytes_with_header();
 
     let mut sent = false;
     for _ in 0..20 {
-        if ingress.offer_raw(&buf, rusteron_client::Handlers::NONE) > 0 {
+        if ingress.offer_raw(connect_bytes, rusteron_client::Handlers::NONE) > 0 {
             sent = true;
             break;
         }

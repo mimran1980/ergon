@@ -3,10 +3,10 @@
 //! SessionEvent / NewLeader / SessionMessageHeader decoding uses the same
 //! ErgoSBE equal-work path as [`crate::decode`].
 
-use crate::codecs::ergo_codecs::{
+use crate::codecs::session::{
     AdminRequestType, AdminResponseCode, AnyMessage, EventCode,
 };
-use crate::codecs::ergo_codecs::{
+use crate::codecs::session::{
     SessionMessageHeaderEncoder,
 };
 
@@ -158,7 +158,7 @@ impl EgressListener for NullListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codecs::ergo_codecs::{
+    use crate::codecs::session::{
         ChallengeEncoder, EventCode as ErgoEventCode, NewLeaderEventEncoder, SessionEventEncoder,
         SessionMessageHeaderEncoder,
     };

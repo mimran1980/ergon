@@ -6,7 +6,7 @@
 
 use ergo_aeron_cluster::{
     AeronCluster, NullCredentialsSupplier, SessionBuilder,
-    codecs::ergo_codecs::EventCode,
+    codecs::session::EventCode,
     egress::{EgressAdapter, EgressListener},
 };
 use std::time::Duration;
@@ -33,8 +33,8 @@ impl EgressListener for EchoListener {
         &mut self,
         _sid: i64,
         _cid: i64,
-        _rt: ergo_aeron_cluster::codecs::ergo_codecs::AdminRequestType,
-        _rc: ergo_aeron_cluster::codecs::ergo_codecs::AdminResponseCode,
+        _rt: ergo_aeron_cluster::codecs::session::AdminRequestType,
+        _rc: ergo_aeron_cluster::codecs::session::AdminResponseCode,
         _m: &str,
         _p: &[u8],
     ) {

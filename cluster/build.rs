@@ -8,8 +8,9 @@
 //! RFQ (vendored cookbook schema 101):
 //!   cluster/schemas/protocol-codecs.xml
 //!
-//! The generated files are `include!`d from `src/codecs/mod.rs`. The
-//! aeron submodule must be checked out (`git submodule update --init aeron`).
+//! The generated files are `include!`d from `src/codecs/mod.rs` as public
+//! modules `session`, `mark`, and `rfq`. The aeron submodule must be
+//! checked out (`git submodule update --init aeron`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,10 +26,7 @@ fn generate_schema(schema_path: &std::path::Path, module: &str, out_dir: &std::p
     let xml_src = fs::read_to_string(schema_path).unwrap_or_else(|e| panic!("read {}: {e}", schema_path.display()));
     let ir = ergo_sbe::parse(&xml_src).unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let mut cfg = ergo_sbe::GenerationConfig::new(module);
-    if cfg!(feature = "unchecked-companions") {
-        cfg = cfg.with_unchecked_companions();
-    }
+    let cfg = ergo_sbe::GenerationConfig::new(module);
     let generator = ergo_sbe::Generator::new(cfg);
     let modules = generator
         .try_generate(&schema)
@@ -53,8 +51,8 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
     for (xml, module) in [
-        ("aeron-cluster-codecs.xml", "aeron_cluster_codecs"),
-        ("aeron-cluster-mark-codecs.xml", "aeron_cluster_codecs_mark"),
+        ("aeron-cluster-codecs.xml", "session"),
+        ("aeron-cluster-mark-codecs.xml", "mark"),
     ] {
         generate_schema(&schema_dir.join(xml), module, &out_dir);
     }
@@ -62,7 +60,7 @@ fn main() {
     // Cookbook RFQ protocol (schema 101) — production path is ErgoSBE.
     generate_schema(
         &manifest_dir.join("schemas/protocol-codecs.xml"),
-        "aeron_rfq_codecs",
+        "rfq",
         &out_dir,
     );
 

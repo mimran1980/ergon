@@ -203,16 +203,16 @@ impl ClusterError {
 /// `Result` alias for the public cluster client API.
 pub type ClusterResult<T> = Result<T, ClusterError>;
 
-impl From<crate::codecs::ergo_codecs::sbe_rt::DecodeError> for ClusterError {
-    fn from(e: crate::codecs::ergo_codecs::sbe_rt::DecodeError) -> Self {
+impl From<crate::codecs::session::sbe_rt::DecodeError> for ClusterError {
+    fn from(e: crate::codecs::session::sbe_rt::DecodeError) -> Self {
         ClusterError::ProtocolError {
             reason: format!("decode: {e:?}"),
         }
     }
 }
 
-impl From<crate::codecs::ergo_codecs::sbe_rt::EncodeError> for ClusterError {
-    fn from(e: crate::codecs::ergo_codecs::sbe_rt::EncodeError) -> Self {
+impl From<crate::codecs::session::sbe_rt::EncodeError> for ClusterError {
+    fn from(e: crate::codecs::session::sbe_rt::EncodeError) -> Self {
         ClusterError::ProtocolError {
             reason: format!("encode: {e:?}"),
         }
