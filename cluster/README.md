@@ -12,7 +12,23 @@ Delete or replace when official Aeron Cluster C client bindings are suitable.
 
 Residual product scope **COMPLETE** (2026-07-18): production codecs ErgoSBE-only,
 connect re-offer, log-recovery test, maintained encode+decode benches ≤ 1.00,
-RFQ unfrozen. Open items: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.md).
+close-on-drop, auto keep-alive, schema-validated AnyMessage dispatch.
+Open items: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.md).
+
+### MTU / fragmentation ceiling
+
+**This client does not reassemble fragmented egress messages.** Aeron delivers
+messages exceeding the publication MTU as multiple fragments with BEGIN/END
+flags. `poll_egress` treats each fragment as a complete SBE message, which will
+be rejected or silently misparsed.
+
+For production use, ensure the cluster's publication MTU is large enough to
+carry your largest egress message in one fragment, OR implement a
+`FragmentAssembler` (mirrors Java `AeronCluster`'s internal assembler).
+
+The zero-copy `try_claim` hot path is unaffected — it writes directly into the
+term buffer and publishes as a single fragment, so ingress (client→cluster)
+traffic has no fragmentation issue.
 
 ## Depends on
 
