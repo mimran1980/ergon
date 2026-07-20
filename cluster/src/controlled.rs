@@ -296,6 +296,105 @@ mod tests {
         Ok(())
     }
 
+    // ── Action mapping: all four ControlledPollAction variants ────────
+
+    /// Listener that returns a configurable action for `on_message`.
+    struct ActionRec {
+        on_message_action: ControlledPollAction,
+        message_count: usize,
+    }
+
+    impl ControlledEgressListener for ActionRec {
+        fn on_message(&mut self, _csid: i64, _ts: i64, _buf: &[u8]) -> ControlledPollAction {
+            self.message_count += 1;
+            self.on_message_action
+        }
+    }
+
+    #[test]
+    fn test_on_message_action_continue() -> Result<(), Box<dyn std::error::Error>> {
+        let mut data = vec![0u8; 128];
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
+        enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
+        let bytes = enc.as_ref().to_vec();
+
+        let mut adapter = ControlledEgressAdapter::new(ActionRec {
+            on_message_action: ControlledPollAction::Continue,
+            message_count: 0,
+        });
+        assert_eq!(adapter.on_fragment(&bytes), ControlledPollAction::Continue);
+        assert_eq!(adapter.listener().message_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_on_message_action_abort() -> Result<(), Box<dyn std::error::Error>> {
+        let mut data = vec![0u8; 128];
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
+        enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
+        let bytes = enc.as_ref().to_vec();
+
+        let mut adapter = ControlledEgressAdapter::new(ActionRec {
+            on_message_action: ControlledPollAction::Abort,
+            message_count: 0,
+        });
+        assert_eq!(adapter.on_fragment(&bytes), ControlledPollAction::Abort);
+        assert_eq!(adapter.listener().message_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_on_message_action_break() -> Result<(), Box<dyn std::error::Error>> {
+        let mut data = vec![0u8; 128];
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
+        enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
+        let bytes = enc.as_ref().to_vec();
+
+        let mut adapter = ControlledEgressAdapter::new(ActionRec {
+            on_message_action: ControlledPollAction::Break,
+            message_count: 0,
+        });
+        assert_eq!(adapter.on_fragment(&bytes), ControlledPollAction::Break);
+        assert_eq!(adapter.listener().message_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_on_message_action_commit() -> Result<(), Box<dyn std::error::Error>> {
+        let mut data = vec![0u8; 128];
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0)?;
+        enc.leadership_term_id(1).cluster_session_id(1).timestamp(1);
+        let bytes = enc.as_ref().to_vec();
+
+        let mut adapter = ControlledEgressAdapter::new(ActionRec {
+            on_message_action: ControlledPollAction::Commit,
+            message_count: 0,
+        });
+        assert_eq!(adapter.on_fragment(&bytes), ControlledPollAction::Commit);
+        assert_eq!(adapter.listener().message_count, 1);
+        Ok(())
+    }
+
+    /// Lifecycle events (SessionEvent) always return Continue regardless of
+    /// what the listener does — they cannot be aborted by the application.
+    #[test]
+    fn test_lifecycle_event_cannot_be_aborted() -> Result<(), Box<dyn std::error::Error>> {
+        let mut data = vec![0u8; 128];
+        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0)?;
+        enc.cluster_session_id(7).correlation_id(99).leadership_term_id(3)
+            .leader_member_id(0).code(ErgoEventCode::OK).version(1);
+        let complete = enc.detail(b"ok")?;
+        let bytes = complete.as_bytes_with_header().to_vec();
+
+        // Even with a listener that would return Abort for on_message,
+        // lifecycle callbacks are no-ops (return ()) so the adapter always
+        // returns Continue for them.
+        let mut adapter = ControlledEgressAdapter::new(Rec::default());
+        let action = adapter.on_fragment(&bytes);
+        assert_eq!(action, ControlledPollAction::Continue);
+        Ok(())
+    }
+
     // ── Recording listener ────────────────────────────────────────────
 
     #[derive(Default)]

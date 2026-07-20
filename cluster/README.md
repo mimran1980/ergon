@@ -15,20 +15,15 @@ connect re-offer, log-recovery test, maintained encode+decode benches ≤ 1.00,
 close-on-drop, auto keep-alive, schema-validated AnyMessage dispatch.
 Open items: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.md).
 
-### MTU / fragmentation ceiling
+### Fragment reassembly
 
-**This client does not reassemble fragmented egress messages.** Aeron delivers
-messages exceeding the publication MTU as multiple fragments with BEGIN/END
-flags. `poll_egress` treats each fragment as a complete SBE message, which will
-be rejected or silently misparsed.
-
-For production use, ensure the cluster's publication MTU is large enough to
-carry your largest egress message in one fragment, OR implement a
-`FragmentAssembler` (mirrors Java `AeronCluster`'s internal assembler).
+Fragmented egress messages (MTU-split by Aeron) are automatically reassembled
+before decoding. `poll_egress` and `poll_egress_controlled` accumulate fragments
+between BEGIN/END flags. Allocation occurs only when Aeron fragments a message;
+the common single-fragment case incurs no extra allocation.
 
 The zero-copy `try_claim` hot path is unaffected — it writes directly into the
-term buffer and publishes as a single fragment, so ingress (client→cluster)
-traffic has no fragmentation issue.
+term buffer and publishes as a single fragment.
 
 ## Depends on
 
@@ -63,13 +58,13 @@ just test-aeron-cluster-harness
 
 | Module | Source | Use |
 |--------|--------|-----|
-| `codecs::session` (`ergo_codecs`) | `build.rs` ← `aeron-cluster-codecs.xml` | **Production** session protocol |
-| `codecs::rfq` (`ergo_rfq_codecs`) | `schemas/protocol-codecs.xml` | **Production** RFQ |
-| `codecs::ergo_codecs_mark` | mark schema | Mark file codecs |
-| `codecs::cluster_codecs` / `rfq_codecs` | residual sbe-tool 1.39.0 | Benches + wire parity **only** |
+| `codecs::session` | `build.rs` ← `aeron-cluster-codecs.xml` | **Production** session protocol |
+| `codecs::mark` | mark schema | Mark file codecs |
+| `codecs::rfq` | `schemas/protocol-codecs.xml` | **Production** RFQ |
+| `benches/reference_sbe/` | sbe-tool 1.39.0 | Criterion-private benchmark reference only |
 
-Prefer **`codecs::session` / `codecs::rfq`** in new code. Prefer
-`decode_session_event` / `decode_new_leader_event` for equal-work egress helpers.
+The `reference_sbe/` directory must never be imported from library, test, or
+example code — only from benchmarks.
 
 ## Usage (try_claim hot path)
 
@@ -106,6 +101,7 @@ claim.commit()?;
 | `offer` / `try_claim` / `send_keep_alive` / `close` | Session data plane |
 | `send_admin_request` | AdminRequest (e.g. SNAPSHOT) on ingress |
 | `poll_egress` + `EgressListener` | SessionEvent, NewLeader, app, admin response |
+| `poll_egress_controlled` + `ControlledEgressListener` | App messages with backpressure (Abort/Break/Commit) |
 | `ingress_endpoints` + `uri` / `endpoints` | Multi-member first-connect + leader resolve |
 | `StaticCredentials` / `EchoChallengeCredentials` | Auth suppliers |
 | `ClusterError::is_retryable` / `PublicationFailure` | Offer back-pressure classification |

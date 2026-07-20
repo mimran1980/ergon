@@ -20,8 +20,9 @@
 //!
 //! Production modules: [`codecs::session`], [`codecs::mark`],
 //! [`codecs::rfq`] (generated in `build.rs` from the Aeron submodule
-//! and vendored RFQ XML). Residual sbe-tool trees under [`codecs`] remain for
-//! head-to-head benches only.
+//! and vendored RFQ XML). sbe-tool reference runtime lives at
+//! `cluster/benches/reference_sbe/` (Criterion-private — never imported
+//! from library, test, or example code).
 //!
 //! # Quick connect
 //!

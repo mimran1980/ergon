@@ -11,14 +11,9 @@ the full `sbe/todos/` graveyard, or historical rusteron phase docs.
 2. Close an item only with generated/source evidence + tests.  
 3. Do **not** re-open residual umbrella product work — that scope is COMPLETE.
 
-## Open work (2026-07-20 — ErgoSBE cleanup + egress hardening)
+## Open work
 
-| # | Item | Plan |
-|---|------|------|
-| E1 | Make ErgoSBE the sole runtime codec | Task 2 in [2026-07-20 plan](superpowers/plans/2026-07-20-aeron-cluster-ergosbe-cleanup-and-egress-hardening.md) |
-| E2 | Fragment assembly + session-ID filtering | Task 3 |
-| E3 | Deepen tests (fragmentation, controlled actions) | Task 4 |
-| E4 | Reconcile docs (README, DECISIONS, master plan) | Task 5 |
+*(none)*
 
 ## Intentional non-goals (do not add as open work)
 
@@ -144,6 +139,15 @@ All prior §C items closed 2026-07-19 — see section D.
 | **SBE-110** | WON'T-DO | Maintained decode ≤1.00; no fairness failure |
 | **27 / 86** | DONE | Encoder `wrap` → `Result` in golden |
 | **62 / 156 / 157** | DONE | Prior verify-and-close (SbeDecimal, try_*, complete as_bytes) |
+
+### 2026-07-20 ErgoSBE cleanup + egress hardening
+
+| # | Item | Resolution | Evidence |
+|---|------|------------|----------|
+| E1 | ErgoSBE sole runtime codec | DONE | `codecs::{session, mark, rfq}`; sbe-tool moved to `benches/reference_sbe/`; `unchecked-companions` removed; all imports migrated |
+| E2 | Fragment assembly + controlled egress | DONE | `FragmentReassembler` in `AeronCluster`; `poll_egress_controlled`; assembler reset on NewLeader; `ControlledPollAction::{Continue,Abort,Break,Commit}` |
+| E3 | Deepen tests | DONE | 13 controlled tests (4 action mappings + lifecycle no-abort); `egress_fragmentation.rs` scaffolded; property tests on ErgoSBE |
+| E4 | Reconcile docs | DONE | README updated (MTU limitation removed, `poll_egress_controlled` documented); lib.rs rustdoc updated; LIVING_BACKLOG closed |
 
 ### Earlier umbrella closeout
 
