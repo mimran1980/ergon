@@ -25,110 +25,157 @@ dirty `simple-binary-encoding` submodule.
 - `Generator::generate` and `Generator::generate_multi` return
   `Result<GeneratedModuleSet, GenerateError>`; remove `try_generate`.
 - Make `GenerationConfig` fields private. Retain builders for domain objects,
-  shared modules, external runtime, generic converter registration, error
-  conversions, and benchmark-only unchecked companions.
+  shared modules, external runtime, type-directed conversions, concrete domain
+  type mappings, error conversions, and benchmark-only unchecked companions.
 - Remove `CompatibilityMode`, `checked_accessors`, `SchemaSource`,
   `Schema::new`, `Generator::config`, and public `GeneratedModuleSet::push`.
 - Generated domain mapping uses `TryFrom<Decoder>` and never drops malformed
-  groups or var-data. Its error is `DecodeError` without converters and the
-  registry-wide conversion error when domain converters are enabled.
+  groups or var-data. Unmapped messages retain the normal wire errors; mapped
+  messages use a generated, typed `<Message>DomainError`.
 
-### Generic converter registry
+### Type-directed conversion seam
 
 Remove the decimal-specific `decimal_composites` configuration,
 `enable_decimal_converters`, generated `SbeDecimal` trait, and all generator
-knowledge of `mantissa`, `exponent`, or `rust_decimal`. Decimal conversion is
-only one consumer-defined use of the generic mechanism.
+knowledge of `mantissa`, `exponent`, or `rust_decimal`. Decimal, Boolean,
+timestamp, enum, and domain-newtype conversions all use the same interface.
 
-The public configuration shape is:
-
-```rust
-let converters = ConverterRegistry::new("crate::ConversionError")
-    .register(
-        ConverterRegistration::for_type("Decimal", "crate::DecimalConverter")
-            .method_suffix("decimal")
-            .use_in_domain_objects(),
-    )
-    .register(
-        ConverterRegistration::for_semantic_type(
-            "UTCTimestamp",
-            "crate::TimestampConverter",
-        )
-        .method_suffix("datetime")
-        .use_in_domain_objects(),
-    );
-
-let config = GenerationConfig::new("messages").with_converters(converters);
-```
-
-`ConverterRegistration` supports three selectors, in this precedence order:
-
-1. Exact field path: `Message.field`.
-2. SBE `semanticType`.
-3. Named SBE type: primitive alias, enum, set, composite, fixed array, or
-   var-data encoding.
-
-An exact selector conflict, invalid Rust adapter path, invalid method suffix,
-missing selector target, or generated method collision is a generation error.
-The registry preserves insertion order for deterministic output, but selector
-precedence—not insertion order—chooses the applicable registration.
-
-ErgoSBE emits a generic adapter contract only when at least one converter is
-registered:
+The generated runtime exposes two small traits:
 
 ```rust
-pub trait SbeConverter {
-    type Value;
-    type WireView<'a>
-    where
-        Self: 'a;
-    type WireOwned;
+pub trait TryFromSbe<Wire>: Sized {
+    type Error: core::fmt::Debug + core::fmt::Display;
 
-    fn decode<'a>(
-        wire: Self::WireView<'a>,
-    ) -> Result<Self::Value, ConversionError>;
+    fn try_from_sbe(wire: Wire) -> Result<Self, Self::Error>;
+}
 
-    fn encode(
-        value: &Self::Value,
-    ) -> Result<Self::WireOwned, ConversionError>;
+pub trait TryToSbe<Wire> {
+    type Error: core::fmt::Debug + core::fmt::Display;
+
+    fn try_to_sbe(&self) -> Result<Wire, Self::Error>;
 }
 ```
 
-`ConversionError` is the registry-wide error path supplied by the consumer.
-It must implement `From<DecodeError>` and `From<EncodeError>`, allowing raw SBE
-failures and adapter failures to propagate through one typed domain-mapping
-error. The adapter type is user-owned, so consumers can implement the generated
-trait without orphan-rule problems. ErgoSBE takes no dependency on conversion
-libraries.
+The traits live in the generated module, so an application may implement them
+for an external type such as `rust_decimal::Decimal`, `time::OffsetDateTime`,
+`chrono::DateTime<Utc>`, or its own newtype without violating Rust's orphan
+rules. ErgoSBE does not depend on any conversion library and does not know the
+target type's layout.
 
-For a field named `price` with suffix `decimal`, generate additive methods
-alongside the canonical wire accessors:
+For a conversion-enabled fixed field named `price`, generate additive methods
+beside the canonical wire accessor/setter:
 
 ```rust
-decoder.price_as_decimal() -> Result<Adapter::Value, ConversionError>
-encoder.price_from_decimal(&Adapter::Value) -> Result<NextStage, ConversionError>
+pub fn price_as<T>(&self) -> Result<T, T::Error>
+where
+    T: TryFromSbe<Decimal>;
+
+pub fn price_from<T>(&mut self, value: &T) -> Result<&mut Self, T::Error>
+where
+    T: TryToSbe<Decimal>;
 ```
 
-The converter methods call the existing wire accessor/setter and then the
-registered adapter. They do not replace or slow the normal flyweight API.
-Optional and versioned fields preserve `Option`; conversion runs only when the
-wire value is present. Var-data converters receive a borrowed slice when
-decoding and return an owned wire value when encoding. Fixed primitives,
-arrays, enums, sets, and composites use their existing generated wire/value
-types. Group-entry fields receive the same converter methods as message fields.
+Encoder methods on consuming type-state stages return the exact next stage
+rather than `&mut Self`; the example above represents a non-consuming fixed
+field. Calls normally rely on type inference:
 
-When `.use_in_domain_objects()` is selected, the corresponding domain field is
-`<Adapter as SbeConverter>::Value` (or an `Option` of that type when absent
-values are possible).
-Domain `TryFrom<Decoder>` calls `Adapter::decode`; domain `encode` calls
-`Adapter::encode`. This applies recursively to repeating-group entry domain
-objects. Registered value types must implement the derives enabled for the
-domain object (`Debug`, `Clone`, `PartialEq`, and optional serde traits).
+```rust
+let price: rust_decimal::Decimal = decoder.price_as()?;
+encoder.price_from(&price)?;
 
-Registrations without `.use_in_domain_objects()` add ergonomic encoder/decoder
-methods only and leave the domain field in its normal SBE-owned representation.
-With an empty registry, no converter trait, methods, dependencies, or runtime
-branches are emitted.
+let timestamp: time::OffsetDateTime = decoder.timestamp_as()?;
+encoder.timestamp_from(&timestamp)?;
+```
+
+The wire methods remain available and unchanged:
+
+```rust
+let raw_price: Decimal = decoder.price();
+encoder.price(raw_price);
+```
+
+This is a compile-time seam: no runtime registry, hash lookup, trait object,
+dynamic dispatch, reflection, or converter allocation is permitted. Generated
+calls are statically dispatched and marked `#[inline]`; unused generic methods
+are not monomorphized. The raw flyweight path contains no conversion branch and
+must remain byte-for-byte and benchmark equivalent when conversion support is
+unused.
+
+#### Enabling conversion methods
+
+Boolean conversion is enabled automatically for SBE Boolean enums. ErgoSBE
+implements `TryFromSbe<BooleanType> for bool` and
+`TryToSbe<BooleanType> for bool` internally, and existing convenience methods
+such as `available_bool()` delegate through that implementation. The public
+Boolean convenience methods remain infallible and compile to the same direct
+comparison/write as today.
+
+Other fixed-value conversions are enabled by a selector only; the generator
+does not need an adapter path, method suffix, target type, or error type:
+
+```rust
+let config = GenerationConfig::new("messages")
+    .with_conversion(ConversionSelector::semantic_type("UTCTimestamp"))
+    .with_conversion(ConversionSelector::named_type("Decimal"));
+```
+
+Selectors have deterministic precedence:
+
+1. Exact `Message.field` path.
+2. SBE `semanticType`.
+3. Named primitive alias, enum, set, composite, or fixed array type.
+
+Duplicate/conflicting selectors, selectors matching no field, and generated
+method collisions are generation errors. A concrete domain mapping implicitly
+enables conversion methods for the same selector, so normal users do not need
+both calls.
+
+The first version deliberately supports fixed primitives, aliases, enums,
+sets, composites, fixed arrays, and fixed fields within repeating-group
+entries. Whole groups and var-data are excluded: their borrowing/ownership
+requirements would force a substantially more complicated trait. Their
+existing raw and owned-domain APIs remain available. Add a separate var-data
+conversion seam only after a measured use case justifies it.
+
+#### Domain-object integration
+
+Domain objects need a concrete Rust field type, so generation accepts a small
+type map—not a converter registry:
+
+```rust
+let config = GenerationConfig::new("messages")
+    .with_domain_objects()
+    .with_domain_type(
+        DomainTypeMapping::semantic_type(
+            "UTCTimestamp",
+            "time::OffsetDateTime",
+        ),
+    )
+    .with_domain_type(
+        DomainTypeMapping::named_type(
+            "Decimal",
+            "rust_decimal::Decimal",
+        ),
+    );
+```
+
+The map contains only a selector and the Rust type path. It contains no
+conversion function, adapter type, method suffix, global error, or runtime
+object. Generated domain `TryFrom<Decoder>` calls that type's `TryFromSbe`
+implementation; domain `encode` calls its `TryToSbe` implementation. Optional
+and versioned fields remain `Option<T>`, and group-entry domain objects use the
+same mapping recursively.
+
+For each mapped message, generate one concrete `<Message>DomainError` enum. It
+wraps wire `DecodeError`/`EncodeError` plus the exact associated error type for
+each distinct mapping. This preserves typed errors without requiring callers to
+invent a registry-wide error or use `Box<dyn Error>`. Domain value types must
+implement the derives enabled for the domain object (`Debug`, `Clone`,
+`PartialEq`, and optional serde traits).
+
+If a schema has no Boolean fields, conversion selectors, or domain mappings,
+no conversion traits, methods, domain-error variants, dependencies, or runtime
+behavior are emitted.
 
 ### Ergo Aeron Cluster
 
@@ -143,20 +190,22 @@ branches are emitted.
 
 ## Tasks
 
-- [ ] **1. ErgoSBE fallible API and converter registry:** add failing tests;
+- [ ] **1. ErgoSBE fallible API and type-directed conversions:** add failing
+  tests;
   implement fallible generation, private builder configuration, the generic
-  selector/adapter registry described above, fallible domain mapping, real
-  issue-schema generation, and correct `sinceVersion = 0` emission. Remove all
-  decimal-specific generator branches and migrate current decimal behavior to
-  a test/Persist adapter registration. Localize lint exemptions and prefer `?`
-  at fallible boundaries.
+  conversion seam and concrete domain type map described above, fallible domain
+  mapping, real issue-schema generation, and correct `sinceVersion = 0`
+  emission. Remove all decimal-specific generator branches; implement existing
+  Boolean conversion through the same traits; and migrate current decimal
+  behavior to consumer trait implementations in tests/Persist. Localize lint
+  exemptions and prefer `?` at fallible boundaries.
 - [ ] **2. Intentional SBE examples:** replace debug generators with one owned
   domain-object example and one explicitly zero-copy flyweight example backed
   by a single regeneration-checked generated fixture. Enable domain objects in
   Persist and test owned round trips without making Persist a reference app.
-  The owned example registers at least two unrelated adapters (for example a
-  decimal and a timestamp/newtype) to prove the mechanism is generic rather
-  than a renamed decimal special case.
+  The owned example implements conversions for at least two unrelated types
+  (for example a decimal and a timestamp/newtype) to prove the mechanism is
+  generic rather than a renamed decimal special case.
 - [ ] **3. Cluster egress hardening:** test and implement filtering for every
   session-bearing event, callback error/panic containment, surfaced decode
   failures, fallible keep-alive, and atomic retryable leader transitions that
@@ -214,17 +263,21 @@ Inspect both package file lists. They must contain no TODO archives, historical
 plans, Persist/Samples code, Java harness, or external-path assets. Re-run the
 formal review and close Standards and Specification findings separately.
 
-Converter acceptance additionally requires:
+Conversion acceptance additionally requires:
 
-- Compile/run proofs for primitive, composite, var-data, optional/versioned,
-  and group-entry registrations.
-- Decoder, encoder, and domain-object round trips through the same adapter.
+- Compile/run proofs for Boolean, primitive/alias, enum/set, composite, fixed
+  array, optional/versioned, and group-entry conversions.
+- Decoder, encoder, and domain-object round trips through the same trait
+  implementations.
 - At least two unrelated target libraries/types with no converter-library
   dependency in `ergo-sbe`.
-- Compile-fail or generation-error coverage for bad selectors, paths, suffixes,
-  duplicate registrations, and method collisions.
-- Golden-output and benchmark proof that an empty registry leaves the existing
-  wire API and hot path unchanged.
+- Compile-fail or generation-error coverage for missing trait implementations,
+  bad selectors/type paths, duplicate mappings, and method collisions.
+- Generated-source checks proving no trait objects, dynamic dispatch, or
+  runtime registry exists.
+- Golden-output and benchmark proof that empty conversion configuration leaves
+  the existing wire API and hot path unchanged, and that Boolean conversion is
+  equivalent to the current handwritten implementation.
 
 After every checkbox is complete, move genuinely unfinished work into
 `docs/ROADMAP.md`, update `CHANGELOG.md`, and delete this active plan so it does
