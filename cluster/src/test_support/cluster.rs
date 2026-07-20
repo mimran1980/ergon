@@ -8,11 +8,11 @@ use super::jar;
 static NEXT_BASE_PORT: AtomicU16 = AtomicU16::new(9000);
 
 pub struct TestCluster {
-    processes: Vec<Child>,
+    pub(crate) processes: Vec<Child>,
     pub ingress_channel: String,
     pub egress_channel: String,
-    aeron_dir: PathBuf,
-    base_port: u16,
+    pub(crate) aeron_dir: PathBuf,
+    pub(crate) base_port: u16,
 }
 
 fn classpath() -> String {

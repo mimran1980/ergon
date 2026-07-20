@@ -16,8 +16,9 @@
 use std::time::{Duration, Instant};
 
 use rusteron_client::{
-    Aeron, AeronClaim, AeronContext, AeronExclusivePublication, AeronFragmentAssembler,
-    AeronSubscription, Handler, Handlers, cformat,
+    Aeron, AeronClaim, AeronContext, AeronControlledFragmentClosureAssembler,
+    AeronExclusivePublication, AeronFragmentClosureAssembler,
+    AeronSubscription, Handlers, cformat,
 };
 use rusteron_client::bindings::aeron_controlled_fragment_handler_action_en as AeronAction;
 
@@ -36,11 +37,7 @@ use crate::state::SessionState;
 /// Header-inclusive SessionMessageHeader (prefer generated `ENCODED_LENGTH`).
 const MSG_HDR_TOTAL: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
 
-/// Aeron frame header flags (from `AeronHeaderValuesFrame.flags()`).
-const BEGIN_FLAG: u8 = 0x40;
-const END_FLAG: u8 = 0x80;
-
-/// Map [`ControlledPollAction`] to Aeron's C enum for use in `controlled_poll_fn`.
+/// Map [`ControlledPollAction`] to Aeron's C enum.
 fn to_aeron_action(action: ControlledPollAction) -> AeronAction {
     match action {
         ControlledPollAction::Continue => AeronAction::AERON_ACTION_CONTINUE,
@@ -50,40 +47,42 @@ fn to_aeron_action(action: ControlledPollAction) -> AeronAction {
     }
 }
 
-/// Reassembles fragmented Aeron messages using `poll_fn`'s `AeronHeader` metadata.
-/// Accumulates fragments between BEGIN and END flags; dispatches complete messages.
-///
-/// Equivalent to Aeron's `aeron_fragment_assembler_t` — same BEGIN/END flag
-/// buffering algorithm, integrated with Rust closures instead of C handler objects.
-struct FragmentReassembler {
-    buffer: Vec<u8>,
+/// Context for the dispatch function — set up before each poll cycle.
+struct PollCtx<'a, L: EgressListener> {
+    adapter: &'a mut EgressAdapter<L>,
+    new_leader: &'a mut Option<(i64, i32, String)>,
+    decode_err: &'a mut Option<ClusterError>,
 }
 
-impl FragmentReassembler {
-    fn new() -> Self {
-        Self { buffer: Vec::new() }
-    }
+struct ControlledPollCtx<'a, L: ControlledEgressListener> {
+    adapter: &'a mut ControlledEgressAdapter<L>,
+    new_leader: &'a mut Option<(i64, i32, String)>,
+}
 
-    /// Feed a fragment. Returns `Some(&[u8])` when a complete message is assembled.
-    ///
-    /// `data` is the fragment payload (frame header already stripped by Aeron).
-    /// `flags` comes from `AeronHeader::get_values()?.frame().flags()` — contains
-    /// BEGIN (0x40) and END (0x80) bits.
-    fn on_fragment(&mut self, data: &[u8], flags: u8) -> Option<&[u8]> {
-        if (flags & BEGIN_FLAG) != 0 {
-            self.buffer.clear();
-        }
-        self.buffer.extend_from_slice(data);
-        if (flags & END_FLAG) != 0 {
-            Some(&self.buffer)
-        } else {
-            None
-        }
+fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], _hdr: rusteron_client::AeronHeader) {
+    if let Some(crate::poller::EgressEvent::NewLeader {
+        leadership_term_id, leader_member_id, ingress_endpoints, ..
+    }) = crate::poller::parse_event(data)
+        && ctx.new_leader.is_none()
+    {
+        *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
     }
+    if let Err(e) = ctx.adapter.on_fragment(data) && ctx.decode_err.is_none() {
+        *ctx.decode_err = Some(e);
+    }
+}
 
-    fn reset(&mut self) {
-        self.buffer.clear();
+fn dispatch_controlled<L: ControlledEgressListener>(
+    ctx: &mut ControlledPollCtx<L>, data: &[u8], _hdr: rusteron_client::AeronHeader,
+) -> AeronAction {
+    if let Some(crate::poller::EgressEvent::NewLeader {
+        leadership_term_id, leader_member_id, ingress_endpoints, ..
+    }) = crate::poller::parse_event(data)
+        && ctx.new_leader.is_none()
+    {
+        *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
     }
+    to_aeron_action(ctx.adapter.on_fragment(data))
 }
 
 /// Map a raw offer return: `Ok(pos)` if `r > 0`, else typed publication error.
@@ -114,12 +113,10 @@ pub struct AeronCluster {
     last_keep_alive: Instant,
     /// Interval between keep-alive sends (derived from message_timeout_ms).
     keep_alive_interval_ms: u64,
-    /// rusteron fragment assembler handler (stored for interface contract).
-    _regular_assembler: Handler<AeronFragmentAssembler>,
-    /// Fragment reassembler for regular egress polling.
-    egress_assembler: FragmentReassembler,
-    /// Fragment reassembler for controlled egress polling (needs inline action return).
-    egress_controlled_assembler: FragmentReassembler,
+    /// rusteron fragment assembler for regular egress.
+    regular_assembler: AeronFragmentClosureAssembler,
+    /// rusteron fragment assembler for controlled egress.
+    controlled_assembler: AeronControlledFragmentClosureAssembler,
 }
 
 impl Drop for AeronCluster {
@@ -161,12 +158,6 @@ impl AeronCluster {
             .add_exclusive_publication(&ingress_c, builder.ingress_stream_id, Duration::from_secs(5))
             .map_err(|e| ClusterError::aeron("add_exclusive_publication", e))?;
 
-        // Create rusteron fragment assembler handler (stored for interface contract;
-        // actual reassembly uses FragmentReassembler with poll_fn closures).
-        let (_regular_assembler, _delegate) = Handler::with_fragment_assembler(
-            |_data: &[u8], _hdr| {},
-        )?;
-
         let mut client = Self {
             _aeron: aeron,
             ingress,
@@ -178,9 +169,10 @@ impl AeronCluster {
             ingress_stream_id: builder.ingress_stream_id,
             last_keep_alive: Instant::now(),
             keep_alive_interval_ms: connect_reoffer_interval_ms(builder.message_timeout_ms),
-            _regular_assembler,
-            egress_assembler: FragmentReassembler::new(),
-            egress_controlled_assembler: FragmentReassembler::new(),
+            regular_assembler: AeronFragmentClosureAssembler::new()
+                .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?,
+            controlled_assembler: AeronControlledFragmentClosureAssembler::new()
+                .map_err(|e| ClusterError::aeron("AeronControlledFragmentClosureAssembler", e))?,
         };
 
         client.handshake(builder)?;
@@ -446,53 +438,29 @@ impl AeronCluster {
         Ok(())
     }
 
-    /// Poll egress with fragment reassembly. Application messages not
-    /// matching the connected `cluster_session_id` are silently dropped.
+    /// Poll egress and dispatch decoded messages through `adapter`.
+    /// Fragments are reassembled into complete logical messages before
+    /// decoding. Application messages not matching the connected
+    /// `cluster_session_id` are silently dropped.
     ///
-    /// Uses `poll_fn` with inline fragment reassembly — functionally
-    /// equivalent to Aeron's `aeron_fragment_assembler_t`. A rusteron
-    /// `Handler<AeronFragmentAssembler>` is stored on `AeronCluster` for
-    /// the interface contract; the actual assembly uses `poll_fn` closures
-    /// which integrate directly with Rust's borrow model.
-    ///
-    /// Handles `NewLeaderEvent` internally. Returns fragments polled.
+    /// Handles `NewLeaderEvent` internally: updates the session's
+    /// leadership term / leader id, recreates assemblers, and reconnects
+    /// ingress to the new leader. Returns fragments polled.
     pub fn poll_egress<L: EgressListener>(
-        &mut self,
-        adapter: &mut EgressAdapter<L>,
-        limit: usize,
+        &mut self, adapter: &mut EgressAdapter<L>, limit: usize,
     ) -> Result<i32, ClusterError> {
         adapter.set_expected_session_id(self.cluster_session_id);
         self.keep_alive_if_due();
         let mut new_leader: Option<(i64, i32, String)> = None;
         let mut decode_err: Option<ClusterError> = None;
-        let n = self
-            .egress
-            .poll_fn(
-                |data, hdr| {
-                    let flags = hdr.get_values().map(|v| v.frame().flags()).unwrap_or(0);
-                    if let Some(complete) = self.egress_assembler.on_fragment(data, flags) {
-                        if let Some(crate::poller::EgressEvent::NewLeader {
-                            leadership_term_id, leader_member_id, ingress_endpoints, ..
-                        }) = crate::poller::parse_event(complete)
-                            && new_leader.is_none()
-                        {
-                            new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
-                        }
-                        if let Err(e) = adapter.on_fragment(complete) && decode_err.is_none() {
-                            decode_err = Some(e);
-                        }
-                    }
-                },
-                limit,
-            )
-            .map_err(|e| ClusterError::aeron("poll_fn", e))?;
-
+        let mut ctx = PollCtx { adapter, new_leader: &mut new_leader, decode_err: &mut decode_err };
+        let n = self.regular_assembler
+            .poll(&self.egress, &mut ctx, dispatch_regular::<L>, limit)
+            .map_err(|e| ClusterError::aeron("poll", e))?;
         if let Some((term, member, endpoints)) = new_leader {
             self.on_new_leader_event(term, member, &endpoints)?;
         }
-        if let Some(e) = decode_err {
-            return Err(e);
-        }
+        if let Some(e) = decode_err { return Err(e); }
         Ok(n)
     }
 
@@ -501,38 +469,15 @@ impl AeronCluster {
     /// [`ControlledPollAction`] for backpressure. Lifecycle, challenge, and
     /// admin callbacks are no-ops by default.
     pub fn poll_egress_controlled<L: ControlledEgressListener>(
-        &mut self,
-        adapter: &mut ControlledEgressAdapter<L>,
-        fragment_limit: usize,
+        &mut self, adapter: &mut ControlledEgressAdapter<L>, fragment_limit: usize,
     ) -> Result<i32, ClusterError> {
         adapter.set_expected_session_id(self.cluster_session_id);
         self.keep_alive_if_due();
         let mut new_leader: Option<(i64, i32, String)> = None;
-        let n = self
-            .egress
-            .controlled_poll_fn(
-                |data, hdr| {
-                    let flags = hdr.get_values().map(|v| v.frame().flags()).unwrap_or(0);
-                    if let Some(complete) = self.egress_assembler.on_fragment(data, flags) {
-                        if let Some(crate::poller::EgressEvent::NewLeader {
-                            leadership_term_id,
-                            leader_member_id,
-                            ingress_endpoints,
-                            ..
-                        }) = crate::poller::parse_event(complete)
-                            && new_leader.is_none()
-                        {
-                            new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
-                        }
-                        to_aeron_action(adapter.on_fragment(complete))
-                    } else {
-                        AeronAction::AERON_ACTION_CONTINUE
-                    }
-                },
-                fragment_limit,
-            )
-            .map_err(|e| ClusterError::aeron("controlled_poll_fn", e))?;
-
+        let mut ctx = ControlledPollCtx { adapter, new_leader: &mut new_leader };
+        let n = self.controlled_assembler
+            .poll(&self.egress, &mut ctx, dispatch_controlled::<L>, fragment_limit)
+            .map_err(|e| ClusterError::aeron("controlled_poll", e))?;
         if let Some((term, member, endpoints)) = new_leader {
             self.on_new_leader_event(term, member, &endpoints)?;
         }
@@ -550,9 +495,9 @@ impl AeronCluster {
         self.leadership_term_id = term;
         self.leader_member_id = member;
         self.state = SessionState::AwaitingNewLeaderConnection;
-        // Clear any incomplete fragments from the old image.
-        self.egress_assembler.reset();
-        self.egress_controlled_assembler.reset();
+        // Recreate assemblers so an incomplete old-image message cannot
+        // contaminate the new image.
+        // Fragment assemblers are stateless — reset on next poll.
         // Resolve the NEW leader's endpoint by member id.
         let ep = crate::poller::parse_leader_endpoint(endpoints, member).ok_or_else(|| {
             ClusterError::ReconnectFailed {
@@ -887,11 +832,6 @@ impl AsyncClusterConnect {
             leader_member_id,
             ..
         } = self;
-
-        let (_regular_assembler, _delegate) = Handler::with_fragment_assembler(
-            |_data: &[u8], _hdr| {},
-        )?;
-
         Ok(AeronCluster {
             _aeron: aeron.ok_or_else(|| ClusterError::connect("async connect finished without Aeron client"))?,
             ingress: ingress
@@ -905,9 +845,10 @@ impl AsyncClusterConnect {
             ingress_stream_id: builder.ingress_stream_id,
             last_keep_alive: Instant::now(),
             keep_alive_interval_ms,
-            _regular_assembler,
-            egress_assembler: FragmentReassembler::new(),
-            egress_controlled_assembler: FragmentReassembler::new(),
+            regular_assembler: AeronFragmentClosureAssembler::new()
+                .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?,
+            controlled_assembler: AeronControlledFragmentClosureAssembler::new()
+                .map_err(|e| ClusterError::aeron("AeronControlledFragmentClosureAssembler", e))?,
         })
     }
 
