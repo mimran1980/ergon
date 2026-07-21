@@ -335,7 +335,7 @@ Another agent should take the unchecked items in this dependency order:
   collisions.
 - [ ] Cover valid and invalid UTF-8 and ASCII, binary fields without string
   methods, text fields inside groups, and encoder validation before writes.
-- [ ] Cover acting-version composite members, nested composite encoding, domain
+- [x] Cover acting-version composite members, nested composite encoding, domain
   conversion errors, malformed groups, and malformed variable data.
 - [ ] Prove owned-message measured length equals the exact prefix returned by
   `encode_into` for fixed messages, nested groups, composites, text, and binary
@@ -362,7 +362,7 @@ Another agent should take the unchecked items in this dependency order:
   field-aware errors and no lossy helpers.
 - [x] Complete the latest-version fixed-field and ordered-tail state machine for
   messages and group entries.
-- [ ] Complete owned/flyweight/direct-encoder composite symmetry.
+- [x] Complete owned/flyweight/direct-encoder composite symmetry.
 - [ ] Complete recursive fallible domain decoding and encoding.
 - [ ] Add allocation-free `encoded_length_with_header` and `encode_into`
   inherent methods to owned latest-version messages. Preallocate decoded domain
