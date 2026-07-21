@@ -2,13 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, first_cut]
   pull_request:
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   RUST_BACKTRACE: 1
