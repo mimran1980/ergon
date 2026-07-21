@@ -59,7 +59,7 @@ const GOLDEN_ADMIN_RESPONSE: [u8; 42] = [
 
 // ── ErgoSBE production encoders (sole protocol path) ─────────────────────
 
-use ergo_aeron_cluster::proto::{
+use ergo_aeron_cluster::codecs::session::{
     AdminRequestType as ErgoAdminRequestType, AdminResponseCode as ErgoAdminResponseCode,
     AdminResponseEncoder as ErgoAdminResponseEncoder, ChallengeEncoder as ErgoChallengeEncoder,
     ChallengeResponseEncoder as ErgoChallengeResponseEncoder, EventCode as ErgoEventCode,

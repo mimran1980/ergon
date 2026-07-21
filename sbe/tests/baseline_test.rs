@@ -2906,7 +2906,8 @@ fn fixed_fields_struct_exists_and_requires_all_required_fields()
 #[test]
 fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_method_done");
-    // Task 4 implemented: fixed(), raw_fixed(), finish_unchecked() are generated.
+    // Task 4: fixed(), raw_fixed(), and CarFixedFields are generated.
+    // finish_unchecked() is intentionally removed — no bypass of the fixed phase.
     assert!(
         src.contains("pub fn fixed("),
         "fixed() method must be generated"
@@ -2916,10 +2917,9 @@ fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Err
         "raw_fixed() method must be generated"
     );
     assert!(
-        src.contains("finish_unchecked"),
-        "finish_unchecked() must be generated"
+        !src.contains("finish_unchecked"),
+        "finish_unchecked() must NOT be generated (no fixed-phase bypass)"
     );
-    // CarFixedFields is generated alongside the encoder
     assert!(src.contains("struct CarFixedFields"), "FixedFields struct must exist");
     Ok(())
 }
@@ -2942,18 +2942,23 @@ fn composite_value_and_flyweight_symmetry_exists() -> Result<(), Box<dyn std::er
 #[test]
 fn fixed_and_raw_fixed_replace_try_fixed() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_replaces_try");
-    // Task 4 implemented: fixed(), raw_fixed(), and finish_unchecked() replace try_fixed.
+    // Task 4: fixed() + raw_fixed() dedicated writer replace try_fixed.
     assert!(
         src.contains("pub fn fixed("),
         "fixed() must be generated"
     );
     assert!(
         src.contains("pub fn raw_fixed("),
-        "raw_fixed() must be generated"
+        "raw_fixed() dedicated writer must be generated"
     );
     assert!(
-        src.contains("finish_unchecked"),
-        "finish_unchecked() must be generated"
+        src.contains("RawFixedWriter"),
+        "RawFixedWriter struct must be generated"
+    );
+    // try_fixed is removed
+    assert!(
+        !src.contains("try_fixed"),
+        "try_fixed must NOT be generated"
     );
     Ok(())
 }

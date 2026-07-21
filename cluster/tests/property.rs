@@ -1,4 +1,4 @@
-use ergo_aeron_cluster::proto::{
+use ergo_aeron_cluster::codecs::session::{
     ChallengeEncoder, EventCode, NewLeaderEventEncoder, SessionEventEncoder, SessionKeepAliveEncoder,
     SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
 };
@@ -47,7 +47,7 @@ proptest! {
         let bytes = complete.as_bytes_with_header();
 
         // Decode: skip header bytes (8), decode the body
-        let dec = ergo_aeron_cluster::proto::ChallengeDecoder::wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::codecs::session::ChallengeDecoder::wrap_and_apply_header(bytes, 0).unwrap();
         prop_assert_eq!(dec.correlation_id(), cid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         let (chal, _) = dec.into_encoded_challenge().unwrap();
@@ -67,7 +67,7 @@ proptest! {
         let complete = enc.ingress_endpoints(eps.as_bytes()).unwrap();
         let bytes = complete.as_bytes_with_header();
 
-        let dec = ergo_aeron_cluster::proto::NewLeaderEventDecoder::wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::codecs::session::NewLeaderEventDecoder::wrap_and_apply_header(bytes, 0).unwrap();
         prop_assert_eq!(dec.leadership_term_id(), ltid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.leader_member_id(), mid);
@@ -90,7 +90,7 @@ proptest! {
         let complete = enc.detail(detail.as_bytes()).unwrap();
         let bytes = complete.as_bytes_with_header();
 
-        let dec = ergo_aeron_cluster::proto::SessionEventDecoder::wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::codecs::session::SessionEventDecoder::wrap_and_apply_header(bytes, 0).unwrap();
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.correlation_id(), cid);
         prop_assert_eq!(dec.leadership_term_id(), ltid);
@@ -110,7 +110,7 @@ proptest! {
     fn prop_codec_no_panic_on_arbitrary(encoded in prop::collection::vec(any::<u8>(), 0..128)) {
         // Decoding arbitrary bytes should never panic — AnyMessage::decode is safe
         if encoded.len() >= 8 {
-            let _ = ergo_aeron_cluster::proto::AnyMessage::decode(&encoded, 0);
+            let _ = ergo_aeron_cluster::codecs::session::AnyMessage::decode(&encoded, 0);
         }
     }
 }

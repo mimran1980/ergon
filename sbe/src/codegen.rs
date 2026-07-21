@@ -5907,7 +5907,7 @@ fn generate_message_encoder(
             }
             let fname_snake = to_snake_case(&f.name);
             let f_ident = syn::Ident::new(&fname_snake, span);
-            let is_optional = f.presence == crate::Presence::Optional || f.since_version > 0;
+            let is_optional = f.presence == crate::Presence::Optional;
             if is_optional {
                 let ty = field_type_ident(&f.field_type, span);
                 fixed_fields_ts.extend(quote::quote! {
@@ -5952,10 +5952,12 @@ fn generate_message_encoder(
                 syn::Ident::new(&fname_snake, span)
             };
             let field_ident = syn::Ident::new(&fname_snake, span);
-            if f.presence == crate::Presence::Optional || f.since_version > 0 {
+            if f.presence == crate::Presence::Optional {
+                // Optional fields: write when Some, skip when None.
+                // Callers who need null sentinels can call apply_nulls() explicitly.
                 write_stmts.extend(quote::quote! {
-                    if let Some(v) = fixed.#field_ident {
-                        self.#setter_ident(v);
+                    if let Some(ref v) = fixed.#field_ident {
+                        self.#setter_ident(*v);
                     }
                 });
             } else {
@@ -5977,39 +5979,36 @@ fn generate_message_encoder(
         });
     }
 
-    // ── raw_fixed() + finish_unchecked() — low-level direct-write escape hatch ──
+    // ── raw_fixed() — dedicated consuming writer for manual fixed-field access ──
+    // Individual fixed-field setters are available only on the raw writer.
+    // The only safe transition to tail stages is via `fixed(&FixedFields)`.
     {
-        impl_contents.extend(quote::quote! {
-            /// Return a mutable reference to self for manual fixed-field
-            /// writing. All field setters remain available.
-            #[inline]
-            pub fn raw_fixed(&mut self) -> &mut Self {
-                self
+        let raw_name = syn::Ident::new(&format!("{name}RawFixedWriter"), span);
+        ts.extend(quote::quote! {
+            /// Raw fixed-field writer. Individual field setters are available
+            /// only on this writer. When done, embed the fields in a
+            /// `#fixed_name` and call the encoder's `fixed()`.
+            #[must_use = "raw fixed writer must be embedded in FixedFields"]
+            pub struct #raw_name<'a> {
+                buf: &'a mut [u8],
+                message_start: usize,
+                pos: usize,
             }
         });
-
-        if total_tail > 0 {
-            let first_tail = &stage_idents[1];
-            let tail_offset = header_size + block_length;
-            let tail_off_lit = syn::LitInt::new(&tail_offset.to_string(), span);
-            impl_contents.extend(quote::quote! {
-                /// Advance past the fixed block to the first tail stage without
-                /// required-field validation. The caller guarantees that the
-                /// buffer contains valid fixed-field data up to the tail.
-                #[inline]
-                #[must_use]
-                pub fn finish_unchecked(self) -> #first_tail<'a> {
-                    // ponytail: no required-field validation — caller's
-                    // responsibility to ensure the fixed block is populated.
-                    let pos = self.message_start + #tail_off_lit;
-                    #first_tail {
-                        buf: self.buf,
-                        message_start: self.message_start,
-                        pos,
-                    }
+        impl_contents.extend(quote::quote! {
+            /// Return a dedicated raw fixed-field writer. All individual field
+            /// setters are available on the writer. To advance to tail stages,
+            /// collect the values into a `#fixed_name` and call `fixed()`.
+            #[inline]
+            #[must_use]
+            pub fn raw_fixed(mut self) -> #raw_name<'a> {
+                #raw_name {
+                    buf: self.buf,
+                    message_start: self.message_start,
+                    pos: self.pos,
                 }
-            });
-        }
+            }
+        });
     }
 
     // Close the impl block

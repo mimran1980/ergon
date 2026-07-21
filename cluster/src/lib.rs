@@ -50,15 +50,9 @@ pub mod transport {
 /// High-level cluster client: connect, try_claim, offer, keep-alive, close.
 pub mod client;
 /// SBE codecs: ErgoSBE production modules + residual sbe-tool trees for benches.
-pub(crate) mod codecs;
-
-// Hidden re-export: generated Aeron protocol codecs for tests/benches only.
-// NOT part of the public high-level client API.
+/// Generated Aeron protocol codecs — hidden from docs, not part of the public API.
 #[doc(hidden)]
-pub mod proto {
-    pub use crate::codecs::session::*;
-    pub use crate::codecs::mark::*;
-}
+pub mod codecs;
 /// [`SessionBuilder`] configuration for connect.
 pub mod config;
 /// Async connect state machine and connect re-offer cadence helpers.

@@ -3374,6 +3374,15 @@ pub struct CarFixedFields {
     pub extras: OptionalExtras,
     pub engine: Engine,
 }
+/// Raw fixed-field writer. Individual field setters are available
+/// only on this writer. When done, embed the fields in a
+/// `#fixed_name` and call the encoder's `fixed()`.
+#[must_use = "raw fixed writer must be embedded in FixedFields"]
+pub struct CarRawFixedWriter<'a> {
+    buf: &'a mut [u8],
+    message_start: usize,
+    pos: usize,
+}
 impl<'a> CarEncoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
@@ -3535,23 +3544,16 @@ impl<'a> CarEncoder<'a> {
         self.engine(fixed.engine);
         self
     }
-    /// Return a mutable reference to self for manual fixed-field
-    /// writing. All field setters remain available.
-    #[inline]
-    pub fn raw_fixed(&mut self) -> &mut Self {
-        self
-    }
-    /// Advance past the fixed block to the first tail stage without
-    /// required-field validation. The caller guarantees that the
-    /// buffer contains valid fixed-field data up to the tail.
+    /// Return a dedicated raw fixed-field writer. All individual field
+    /// setters are available on the writer. To advance to tail stages,
+    /// collect the values into a `#fixed_name` and call `fixed()`.
     #[inline]
     #[must_use]
-    pub fn finish_unchecked(self) -> CarAfterFuelFigures<'a> {
-        let pos = self.message_start + 53;
-        CarAfterFuelFigures {
+    pub fn raw_fixed(mut self) -> CarRawFixedWriter<'a> {
+        CarRawFixedWriter {
             buf: self.buf,
             message_start: self.message_start,
-            pos,
+            pos: self.pos,
         }
     }
 }

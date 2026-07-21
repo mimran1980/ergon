@@ -41,6 +41,18 @@ baseline facts, not completed implementation tasks:
   Clippy because generated version-zero comparisons are useless.
 - The ErgoSBE and Cluster package file lists contain substantial test, fixture,
   reference-codec, application-protocol, and harness material.
+- The first text-variable-data pass preserves `characterEncoding` and adds an
+  ordered UTF-8 accessor, but the non-consuming accessor is still emitted for
+  binary fields, ASCII is not validated, encoder string methods are absent, and
+  owned domains do not yet distinguish `String` from `Vec<u8>`.
+- Cluster's generated codec namespace is still public: hiding `pub mod codecs`
+  from rustdoc (or placing the same types under a public `proto` re-export) does
+  not remove those types from the crate interface. Its connect poller still uses
+  lossy text and drops decode errors through `Option`.
+- The latest raw fixed-field change creates a consuming writer without generated
+  setters or a validated completion transition; optional `None` still skips the
+  write instead of writing the schema null sentinel. Checked-in golden output
+  also still contains version-zero comparisons.
 
 Areas previously marked complete must be treated as follows:
 
@@ -50,7 +62,7 @@ Areas previously marked complete must be treated as follows:
 | Latest-version safe encoder | Incomplete | Required-field proof, null writes, group-entry proof, and compile-fail ordering |
 | Domain mapper | Not implemented | Configured types in generated domains and lossless fallible recursion |
 | Composite symmetry | Partial | Named values, versioned members, direct encoders, and nested symmetry |
-| Text variable data | Incorrect | Schema-driven text detection, ordered string methods, and strict errors |
+| Text variable data | Partial | Gate every accessor by schema metadata, validate ASCII, add encoder/domain support, and prove strict errors |
 | Cluster hardening | Partial | Error propagation, atomic reconnect, private codecs, and allocation-free offer |
 | Examples and samples | Incomplete | No RFQ/auction reference examples, no raw offers, no avoidable unwraps, both labs compiling |
 | Performance proof | Incomplete | Equal-work benchmarks and allocation assertions for the new interfaces |
@@ -184,7 +196,82 @@ through the same latest-version safe encoder and conversion bindings.
 Borrowed and fixed-width conversions remain allocation-free unless the selected
 domain type inherently allocates.
 
-### 5. Ergo Aeron Cluster interface
+### 5. Downstream-proven ErgoSBE conveniences
+
+Promote a helper into ErgoSBE only when it expresses SBE mechanics, removes the
+same boilerplate from at least two consumers, and can remain allocation-free on
+the hot path. The public interface should use inherent methods and concrete
+errors; do not introduce a generic transport trait until multiple independent
+transports need one.
+
+#### Exact owned-message encoding
+
+Every generated owned latest-version message exposes:
+
+```rust
+let len = value.encoded_length_with_header()?;
+let encoded = value.encode_into(&mut destination[..len])?;
+```
+
+`encoded_length_with_header` validates length and count bounds and recursively
+measures nested groups, composites, and variable data without allocating.
+`encode_into` uses the safe ordered encoder, includes the message header, and
+returns only the exact encoded prefix as `&[u8]`. It never allocates a `Vec` or
+silently truncates a count. Existing group-entry domain values retain their
+`encode_into(&mut EntryEncoder)` method.
+
+This is the reusable part of Persist's `compute_encoded_length`/`record_into`
+shape and lets Cluster and samples encode directly into caller-owned buffers or
+Aeron claims. Persist's runtime heterogeneous row validation remains
+Persist-specific.
+
+#### One header-inspection interface
+
+Replace `peek_header`, `peek_template_id`, `peek_for_schema`, and the free
+`schema_id_from_header` function with one checked operation:
+
+```rust
+let header = MessageHeader::try_from_prefix(frame)?;
+let template_id = header.template_id();
+let schema_id = header.schema_id();
+```
+
+The returned fixed-size value also exposes block length and version. It performs
+no allocation, reports a short header as a typed decode error, and respects the
+schema byte order and header layout. Consumers compare its values with generated
+constants instead of reading byte offsets or collapsing malformed and
+wrong-schema frames into the same `None`.
+
+#### One runtime for multiple schemas
+
+Add an explicit `with_shared_runtime("sbe_rt")` generation option.
+`generate_multi` then emits one `sbe_rt.rs` module and makes each otherwise
+independent schema module re-export that runtime. This is separate from
+`with_shared_module`, which shares schema types. Reject output-name collisions
+and incompatible per-schema runtime configuration at generation time.
+
+Keep `with_external_sbe_rt(path)` for a runtime owned by another module or crate.
+Remove `enable_error_from_impls`: it stringifies typed errors and assumes an
+application `From<String>` implementation. With one runtime, downstream errors
+can transparently wrap the same concrete `sbe_rt::DecodeError` and
+`sbe_rt::EncodeError`.
+
+#### Adopt before adding
+
+Persist, Cluster, and Samples should use existing generated
+`into_*_as_str`, `into_*_as_message`, `payload_with`, `ENCODED_LENGTH`,
+`after_this_message`, ordered tail stages, and conversion/domain APIs wherever
+their schemas support them. Delete local aliases and byte-offset parsing rather
+than generating a second spelling for the same operation. Domain group decoding
+preallocates from the declared entry count and propagates every entry error.
+
+Do not promote ClickHouse type tags, SQL formatting, symbol-table layout,
+registry or retry policy, Aeron URI/C-string handling, endpoint selection,
+publication status, claims, reconnect policy, fragment assembly, order books,
+exchange parsing, or market decimal types. Those are persistence, transport, or
+application policy rather than SBE mechanics.
+
+### 6. Ergo Aeron Cluster interface
 
 Generated Aeron protocol codecs and implementation modules are private. Only
 deliberate high-level types are re-exported. Public `channel_cstr` and
@@ -216,6 +303,24 @@ Generic lifecycle, reconnect, validation, and observability ideas may be learned
 from `reverb-sys/aeron-cluster-client-cpp`, but application protocols are not
 copied into the crate.
 
+## Execution order
+
+Another agent should take the unchecked items in this dependency order:
+
+1. Add the contract and compile-fail tests in A without weakening existing
+   assertions.
+2. Build the resolved conversion/text model, shared runtime, and single header
+   interface before changing downstream crates.
+3. Finish latest-version ordered encoding, composite symmetry, fallible domains,
+   and exact caller-buffer encoding; regenerate and compile every golden codec.
+4. Migrate Persist and Samples to the completed APIs, deleting only duplicated
+   helpers and keeping their application policy local.
+5. Finish Cluster privacy, error propagation, reconnect, and allocation-free
+   offer work against the stable ErgoSBE interface.
+6. Run equal-work performance gates, then complete documentation, package-file,
+   and crates.io dry-run gates. Do not mark a phase complete while a listed
+   acceptance command fails.
+
 ## Implementation backlog
 
 ### A. Lock the contracts with tests
@@ -228,37 +333,58 @@ copied into the crate.
 - [ ] Cover selector precedence, every eligible wire kind, nested paths,
   duplicates, conflicts, invalid Rust types, unmatched selectors, and method
   collisions.
-- [x] Cover valid and invalid UTF-8 and ASCII, binary fields without string
+- [ ] Cover valid and invalid UTF-8 and ASCII, binary fields without string
   methods, text fields inside groups, and encoder validation before writes.
 - [ ] Cover acting-version composite members, nested composite encoding, domain
   conversion errors, malformed groups, and malformed variable data.
+- [ ] Prove owned-message measured length equals the exact prefix returned by
+  `encode_into` for fixed messages, nested groups, composites, text, and binary
+  variable data; cover overflow, count, and short-buffer errors.
+- [ ] Cover the single header parser for short input, both byte orders, custom
+  header layouts, and all four standard header values. Add compile-fail coverage
+  proving the retired peek/free-function interfaces are absent.
+- [ ] Generate two independent schemas with one shared runtime and prove they
+  use identical error and conversion-trait types while emitting each runtime
+  item exactly once.
 - [ ] Cover Cluster listener errors, invalid text, session filtering, keep-alive
   failures, callback panics, and reconnect rollback.
 
 ### B. Complete ErgoSBE generation
 
-- [x] Build the resolved conversion and character-encoding model once after
+- [ ] Build the resolved conversion and character-encoding model once after
   schema normalization and use it from every emitter.
-- [x] Remove decimal-specific configuration and generated traits, repeated
+- [ ] Remove decimal-specific configuration and generated traits, repeated
   selector scans, unused generation helpers, stale comments, and silent `u8`
   fallbacks.
 - [ ] Emit the complete generic conversion interface for primitives, aliases,
   enums, sets, arrays, composites, messages, and recursive group entries.
-- [x] Emit schema-driven raw and text variable-data methods with strict,
+- [ ] Emit schema-driven raw and text variable-data methods with strict,
   field-aware errors and no lossy helpers.
 - [ ] Complete the latest-version fixed-field and ordered-tail state machine for
   messages and group entries.
 - [ ] Complete owned/flyweight/direct-encoder composite symmetry.
 - [ ] Complete recursive fallible domain decoding and encoding.
-- [x] Remove generated comparisons such as `acting_version < 0`.
+- [ ] Add allocation-free `encoded_length_with_header` and `encode_into`
+  inherent methods to owned latest-version messages. Preallocate decoded domain
+  group vectors from their exact entry counts and preserve every conversion
+  error.
+- [ ] Consolidate all header peeking into
+  `MessageHeader::try_from_prefix`; remove raw-offset and overlapping Option
+  helpers after migrating consumers.
+- [ ] Add explicit shared-runtime output for `generate_multi`, independent of
+  shared schema types. Retain external-runtime support and remove stringifying
+  generated application-error conversions.
+- [ ] Remove generated comparisons such as `acting_version < 0` and regenerate
+  every checked-in golden codec before treating the warning as fixed.
 
 ### C. Harden Ergo Aeron Cluster
 
-- [x] Make protocol codecs and internal modules private and expose only the
-  high-level client interface.
+- [ ] Make protocol codecs and internal modules private and expose only the
+  high-level client interface; a doc-hidden public re-export does not satisfy
+  this requirement.
 - [x] Change textual high-level views and callbacks to borrowed `&str`, while
   preserving bytes for binary protocol fields.
-- [x] Propagate decoding, text, listener, polling, keep-alive, and controlled
+- [ ] Propagate decoding, text, listener, polling, keep-alive, and controlled
   callback errors through `ClusterResult`.
 - [ ] Make leader reconnect state replacement atomic and recreate both fragment
   assemblers.
@@ -268,14 +394,26 @@ copied into the crate.
   schemas, examples, and reference-only public exports.
 - [ ] Retain and simplify only connect/echo, controlled-polling, and failover
   examples.
+- [ ] Replace manual header offsets and overlapping peek helpers with
+  `MessageHeader::try_from_prefix`, and use generated exact lengths, completed
+  encoded slices, and nested-message helpers throughout Cluster.
 
 ### D. Keep laboratories honest
 
-- [ ] Update Persist only where required to exercise the final converter, text,
-  and domain interfaces. Keep it unpublished and outside release claims.
+- [ ] Update Persist to use schema-declared text accessors for table names,
+  metadata, column names, and string values, while keeping the
+  application-defined symbol table binary. Generate its v1/v2 schemas against
+  one shared runtime.
+- [ ] Retain `DynamicRecorder`'s runtime row validation and ClickHouse encoding
+  policy in Persist, but remove wrapper code duplicated by generated exact-length
+  and caller-buffer encoding APIs.
 - [ ] Update `advanced-bitget` and `cluster-ha-orderbook` to compile against the
   final interface and use `Result`/`?` instead of avoidable unwraps.
-- [ ] Use domain objects where they make the laboratory clearer; retain raw
+- [ ] Replace local `WireDec`/`WireDecimal`, manual UTF-8 conversion, header-byte
+  reads, and nested payload wrappers with configured conversions, generated
+  composite/domain values, schema text methods, and existing nested-message
+  helpers where applicable.
+- [ ] Use domain objects where they make the laboratories clearer; retain raw
   flyweights where allocation-free behaviour is what the test exercises.
 - [ ] Do not describe either sample as an example to copy or a reference
   implementation.
@@ -286,9 +424,11 @@ copied into the crate.
 
 - [ ] Add equal-work Criterion cases for raw setters versus fixed structs,
   primitive and composite converters, byte versus borrowed-string variable data,
-  domain mapping, ordered group entries, and Cluster `offer_parts`.
+  domain mapping, owned `encode_into`, header inspection, ordered group entries,
+  shared versus duplicated runtime generation, and Cluster `offer_parts`.
 - [ ] Add allocation assertions for fixed encoding, converter helpers, composite
-  flyweights, borrowed text, fixed-width domain round trips, and Cluster offer.
+  flyweights, borrowed text, owned measured encoding, fixed-width domain round
+  trips, header inspection, and Cluster offer.
 - [ ] Compare generated direct access, safe fixed access, and the maintained Aeron
   reference using byte-identical work.
 - [ ] Run three benchmark sessions. No maintained runtime median may regress by
@@ -328,6 +468,10 @@ Text-specific acceptance:
 - ASCII encoder rejection occurs before tail bytes are modified.
 - Cluster event views borrow strings; credentials and payloads borrow bytes.
 - Borrowed text decoding performs zero allocations.
+- Owned message sizing and caller-buffer encoding perform zero allocations and
+  return an exact header-inclusive prefix.
+- Multi-schema generation can share one runtime without forcing schemas to share
+  wire types.
 
 Release commands:
 
