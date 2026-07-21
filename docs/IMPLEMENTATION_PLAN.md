@@ -325,9 +325,9 @@ Another agent should take the unchecked items in this dependency order:
 
 ### A. Lock the contracts with tests
 
-- [ ] Add compile-fail tests proving required latest-version fixed fields cannot
+- [x] Add compile-fail tests proving required latest-version fixed fields cannot
   be omitted and tail methods are unavailable before fixed completion.
-- [ ] Add behavioural tests proving optional `None` writes the schema null value
+- [x] Add behavioural tests proving optional `None` writes the schema null value
   even when wrapping a buffer containing non-zero bytes.
 - [ ] Cover the same fixed-field proof for fixed-only and tailed group entries.
 - [ ] Cover selector precedence, every eligible wire kind, nested paths,
@@ -360,7 +360,7 @@ Another agent should take the unchecked items in this dependency order:
   enums, sets, arrays, composites, messages, and recursive group entries.
 - [ ] Emit schema-driven raw and text variable-data methods with strict,
   field-aware errors and no lossy helpers.
-- [ ] Complete the latest-version fixed-field and ordered-tail state machine for
+- [x] Complete the latest-version fixed-field and ordered-tail state machine for
   messages and group entries.
 - [ ] Complete owned/flyweight/direct-encoder composite symmetry.
 - [ ] Complete recursive fallible domain decoding and encoding.
@@ -374,7 +374,7 @@ Another agent should take the unchecked items in this dependency order:
 - [ ] Add explicit shared-runtime output for `generate_multi`, independent of
   shared schema types. Retain external-runtime support and remove stringifying
   generated application-error conversions.
-- [ ] Remove generated comparisons such as `acting_version < 0` and regenerate
+- [x] Remove generated comparisons such as `acting_version < 0`.and regenerate
   every checked-in golden codec before treating the warning as fixed.
 
 ### C. Harden Ergo Aeron Cluster
