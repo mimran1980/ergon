@@ -69,6 +69,9 @@ pub mod credentials;
 pub mod decode;
 /// Egress adapter + listener dispatch for session and app messages.
 pub mod egress;
+/// Shared fragment decode — canonical AnyMessage dispatch used by egress,
+/// controlled, and poller paths. Not public API.
+pub(crate) mod fragment;
 /// Multi-member ingress endpoint maps (`0=host:port,…`).
 pub mod endpoints;
 /// Cluster client error type.
