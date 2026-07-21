@@ -16,7 +16,7 @@ env:
 
 jobs:
   lint:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -35,7 +35,7 @@ jobs:
       - run: cargo doc --no-deps --workspace
 
   test:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -54,7 +54,7 @@ jobs:
       - run: cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 
   msrv:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -70,7 +70,7 @@ jobs:
       - run: cargo +1.95.0 check -p ergo-aeron-cluster --all-targets
 
   aeron-cluster-integration:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -94,7 +94,7 @@ jobs:
         run: cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
 
   samples:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -130,7 +130,7 @@ jobs:
   # Live integration tests: ClickHouse Docker + persist + sample E2E.
   # Gated behind workflow_dispatch (manual trigger) because it needs Docker.
   clickhouse-live:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -172,7 +172,7 @@ jobs:
         run: cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture
 
   build:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -188,7 +188,7 @@ jobs:
       - run: cargo build --release -p ergo-aeron-cluster
 
   bench:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
@@ -205,7 +205,7 @@ jobs:
       - run: cargo bench -p ergo-aeron-cluster --no-run
 
   package:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
