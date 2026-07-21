@@ -47,7 +47,10 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
     let mut buf = vec![0u8; 512];
     let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
     enc.correlation_id(1).response_stream_id(102).version(0);
-    let complete = enc.response_channel(resp.as_bytes())?.encoded_credentials(b"")?.client_info(b"")?;
+    let complete = enc
+        .response_channel(resp.as_bytes())?
+        .encoded_credentials(b"")?
+        .client_info(b"")?;
     let buf_ref = complete.as_bytes_with_header();
 
     let mut offered = false;

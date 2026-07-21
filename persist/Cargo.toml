@@ -1,5 +1,6 @@
 [package]
 name = "ergo-clickhouse-persist"
+publish = false
 description = "Debugging persistence: auto-persist annotated structs to ClickHouse with dynamic schema management"
 keywords = ["clickhouse", "persistence", "debugging", "sbe", "trading"]
 categories = ["database", "development-tools", "debugging"]
@@ -42,7 +43,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros"] }
 
 [build-dependencies]
-ergo-sbe = { path = "../sbe" }
+ergo-sbe = { version = "0.1.0", path = "../sbe" }
 
 # NOTE: inherited workspace lints are deliberately omitted here.
 # The generated SBE code contains unsafe blocks (opt-in _unchecked methods)

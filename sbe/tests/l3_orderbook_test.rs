@@ -53,9 +53,16 @@ fn l3_domain_objects_generated() -> Result<(), Box<dyn std::error::Error>> {
     let ir = ergo_sbe::parse_file(&l3_schema()).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let mut config = ergo_sbe::GenerationConfig::new("l3book");
-    config.domain_objects = true;
+    let config = config.enable_domain_objects();
     let g = ergo_sbe::Generator::new(config);
-    let src = g.generate(&schema).modules().next().unwrap().source.clone();
+    let src = g
+        .generate(&schema)
+        .unwrap()
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
     assert!(
         src.contains("pub struct L3BookDomain"),
         "missing L3BookDomain"

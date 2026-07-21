@@ -136,7 +136,7 @@ pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let g = Generator::new(GenerationConfig::new(module_name));
-    let ms = g.generate(&schema);
+    let ms = g.generate(&schema).unwrap();
     let module = ms.modules().next().unwrap();
     (schema, module.source.clone())
 }
@@ -346,9 +346,9 @@ pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let mut config = GenerationConfig::new(module_name);
-    config.domain_objects = true;
+    let config = config.enable_domain_objects();
     let g = Generator::new(config);
-    let ms = g.generate(&schema);
+    let ms = g.generate(&schema).unwrap();
     let module = ms.modules().next().unwrap();
     (schema, module.source.clone())
 }

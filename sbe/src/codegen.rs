@@ -48,24 +48,43 @@ pub struct GeneratedModuleSet {
     modules: Vec<GeneratedModule>,
 }
 
-/// Errors returned by [`Generator::try_generate`] when the configuration
+/// Errors returned by [`Generator::generate`] when the configuration
 /// is invalid for the given schema.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GenerateError {
-    /// A registered decimal composite is missing or has the wrong layout.
-    InvalidDecimalComposite {
-        /// Name of the composite.
-        name: String,
+    /// A conversion selector matched no fields, or a domain type path is invalid.
+    InvalidConversion {
+        /// Description of the selector.
+        selector: String,
         /// Why validation failed.
         reason: String,
+    },
+    /// Two selectors mapped to the same generated method name.
+    ConversionCollision {
+        /// The colliding method name.
+        method: String,
+        /// The first selector that produced the collision.
+        selector_a: String,
+        /// The second selector that produced the collision.
+        selector_b: String,
     },
 }
 
 impl core::fmt::Display for GenerateError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::InvalidDecimalComposite { name, reason } => {
-                write!(f, "invalid decimal composite '{name}': {reason}")
+            Self::InvalidConversion { selector, reason } => {
+                write!(f, "invalid conversion '{selector}': {reason}")
+            }
+            Self::ConversionCollision {
+                method,
+                selector_a,
+                selector_b,
+            } => {
+                write!(
+                    f,
+                    "conversion method collision: '{method}' from '{selector_a}' and '{selector_b}'"
+                )
             }
         }
     }
@@ -75,7 +94,7 @@ impl core::error::Error for GenerateError {}
 
 impl GeneratedModuleSet {
     /// Add a generated module to the set.
-    pub fn push(&mut self, module: GeneratedModule) {
+    pub(crate) fn push(&mut self, module: GeneratedModule) {
         self.modules.push(module);
     }
 
@@ -99,74 +118,75 @@ impl Generator {
         Self { config }
     }
 
-    /// Return this generator's configuration.
-    #[must_use]
-    pub const fn config(&self) -> &GenerationConfig {
-        &self.config
-    }
-
-    /// Generate Rust modules for a normalized schema, returning an error
-    /// on invalid configuration (e.g. bad decimal composite registration).
-    pub fn try_generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
-        self.validate_decimal_composites(schema)?;
-        Ok(self.generate(schema))
-    }
-
-    fn validate_decimal_composites(&self, schema: &Schema) -> Result<(), GenerateError> {
+    fn validate_conversions(&self, schema: &Schema) -> Result<(), GenerateError> {
+        if !self.config.has_conversions() {
+            return Ok(());
+        }
         let elements = partition_tokens(&schema.ir.tokens);
-        for name in &self.config.decimal_composites {
-            let ct = elements
-                .composites
-                .iter()
-                .find(|c| c[0].name == *name)
-                .ok_or_else(|| GenerateError::InvalidDecimalComposite {
-                    name: name.clone(),
-                    reason: "composite not found in schema".into(),
-                })?;
-            // Filter to BeginField tokens only (skip EndField, etc.)
-            let fields: Vec<_> = ct
-                .iter()
-                .filter(|t| matches!(t.signal, Signal::BeginField))
-                .collect();
-            if fields.len() < 2 {
-                return Err(GenerateError::InvalidDecimalComposite {
-                    name: name.clone(),
-                    reason: "composite must have at least 2 members".into(),
+        for sel in &self.config.conversions {
+            let matched = match sel {
+                crate::ConversionSelector::NamedType(name) => {
+                    elements.composites.iter().any(|c| c[0].name == *name)
+                        || elements.enums.iter().any(|e| e[0].name == *name)
+                        || elements.sets.iter().any(|s| s[0].name == *name)
+                }
+                crate::ConversionSelector::SemanticType(_) => {
+                    // Semantic types are validated during codegen when we can
+                    // inspect field metadata — always passes pre-validation.
+                    true
+                }
+                crate::ConversionSelector::FieldPath(_) => {
+                    // Field paths are validated during codegen.
+                    true
+                }
+            };
+            if !matched {
+                return Err(GenerateError::InvalidConversion {
+                    selector: format!("{sel:?}"),
+                    reason: "no matching type found in schema".into(),
                 });
             }
-            let mantissa = fields[0];
-            let exponent = fields[1];
-            let valid = mantissa.name == "mantissa"
-                && mantissa.encoding.primitive_type == Some(PrimitiveType::Int64)
-                && exponent.name == "exponent"
-                && exponent.encoding.primitive_type == Some(PrimitiveType::Int8);
-            if !valid {
-                return Err(GenerateError::InvalidDecimalComposite {
-                    name: name.clone(),
-                    reason: "expected mantissa: int64, exponent: int8 layout".into(),
+        }
+        // Validate domain type paths are non-empty
+        for (sel, rust_type) in &self.config.domain_types {
+            if rust_type.is_empty() {
+                return Err(GenerateError::InvalidConversion {
+                    selector: format!("{sel:?}"),
+                    reason: "domain type path must not be empty".into(),
                 });
             }
         }
         Ok(())
     }
 
+    /// Whether the config has a conversion selector matching the given type name or semantic type.
+    fn has_conversion_for(&self, type_name: &str, _semantic_type: Option<&str>) -> bool {
+        for sel in &self.config.conversions {
+            match sel {
+                crate::ConversionSelector::NamedType(name) if name == type_name => return true,
+                crate::ConversionSelector::SemanticType(st)
+                    if Some(st.as_str()) == _semantic_type =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Generate Rust modules for a normalized schema.
     ///
-    /// Validates decimal converter configuration and panics on invalid
-    /// composites. Use [`try_generate`](Self::try_generate) for fallible
-    /// generation that returns a [`GenerateError`].
-    #[must_use]
-    pub fn generate(&self, schema: &Schema) -> GeneratedModuleSet {
-        if let Err(e) = self.validate_decimal_composites(schema) {
-            panic!("decimal composite validation failed: {e}");
-        }
+    /// Validates conversion configuration and returns an error on invalid setup.
+    pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
+        self.validate_conversions(schema)?;
         let mut modules = GeneratedModuleSet::default();
         let src = self.gen_schema(schema, &HashSet::new(), false, true);
         modules.push(GeneratedModule {
             path: format!("{}.rs", self.config.module_name),
             source: src,
         });
-        modules
+        Ok(modules)
     }
 
     /// Generate Rust modules for multiple schemas, deduplicating shared types.
@@ -179,8 +199,10 @@ impl Generator {
     ///
     /// Each entry is `(schema, module_name)` where `module_name` is the Rust
     /// module name (e.g. `"common_types"`, `"market_data"`).
-    #[must_use]
-    pub fn generate_multi(&self, schemas: &[(&Schema, &str)]) -> GeneratedModuleSet {
+    pub fn generate_multi(
+        &self,
+        schemas: &[(&Schema, &str)],
+    ) -> Result<GeneratedModuleSet, GenerateError> {
         let mut modules = GeneratedModuleSet::default();
         let mut shared_types: HashSet<String> = HashSet::new();
 
@@ -207,7 +229,7 @@ impl Generator {
                 source: src,
             });
         }
-        modules
+        Ok(modules)
     }
 
     /// Inner generation — single schema with dedup flags. `shared` contains
@@ -261,26 +283,13 @@ impl Generator {
         // 1. SBE runtime: external re-export, or inline once per module set.
         if let Some(ref ext) = self.config.external_sbe_rt_path {
             let _ = writeln!(src, "pub use {ext} as sbe_rt;\n");
-            if !self.config.decimal_composites.is_empty() {
-                src.push_str(
-                    "pub trait SbeDecimal: Sized {\n\
-                         type Error;\n\
-                         fn try_from_sbe(mantissa: i64, exponent: i8) -> Result<Self, Self::Error>;\n\
-                         fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;\n\
-                     }\n",
-                );
+            if self.config.has_conversions() {
+                emit_conversion_traits(&mut src);
             }
         } else if emit_sbe_rt {
             src.push_str(&generate_sbe_rt_src());
-            // Decimal converter trait (opt-in, dependency-free).
-            if !self.config.decimal_composites.is_empty() {
-                src.push_str(
-                    "pub trait SbeDecimal: Sized {\n\
-                         type Error;\n\
-                         fn try_from_sbe(mantissa: i64, exponent: i8) -> Result<Self, Self::Error>;\n\
-                         fn try_into_sbe(self) -> Result<(i64, i8), Self::Error>;\n\
-                     }\n",
-                );
+            if self.config.has_conversions() {
+                emit_conversion_traits(&mut src);
             }
         }
 
@@ -347,7 +356,7 @@ impl Generator {
                 &ir.package,
                 multi,
                 self.config.domain_objects,
-                &self.config.decimal_composites,
+                &self.config.conversions,
                 self.config.unchecked_companions,
             );
             src.push_str(&decoder_ts.to_string());
@@ -360,7 +369,7 @@ impl Generator {
                 ir.version,
                 &ir.header_type,
                 multi,
-                &self.config.decimal_composites,
+                &self.config.conversions,
                 self.config.unchecked_companions,
             );
             src.push_str(&encoder_ts.to_string());
@@ -368,9 +377,8 @@ impl Generator {
             // Decimal converter seam: for each field backed by a registered
             // Decimal composite, emit raw *_wire aliases and generic converted
             // methods. Only emitted when converter mode is active.
-            if !self.config.decimal_composites.is_empty() {
-                let converter_ts =
-                    generate_decimal_converter_impls(msg, &self.config.decimal_composites, multi);
+            if !&self.config.conversions.is_empty() {
+                let converter_ts = generate_converter_impls(msg, &self.config.conversions, multi);
                 src.push_str(&converter_ts);
             }
             src.push('\n');
@@ -894,8 +902,7 @@ fn partition_tokens(tokens: &[Token]) -> SchemaElements {
 fn is_bool_enum(elements: &SchemaElements, enum_name: &str) -> bool {
     enum_name == "BooleanType"
         || elements.enums.iter().any(|e| {
-            e[0].name == enum_name
-                && e[0].encoding.semantic_type.as_deref() == Some("Boolean")
+            e[0].name == enum_name && e[0].encoding.semantic_type.as_deref() == Some("Boolean")
         })
 }
 
@@ -2585,7 +2592,7 @@ fn generate_message_decoder(
     schema_name: &str,
     multi_message: bool,
     domain_objects: bool,
-    decimal_composites: &[String],
+    conversions: &[crate::ConversionSelector],
     _unchecked_companions: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
@@ -2816,7 +2823,7 @@ fn generate_message_decoder(
         // suffixed _wire so the generic converted method can take the
         // original name.
         let is_decimal = matches!(&f.field_type,
-            FieldType::Composite { name, .. } if decimal_composites.iter().any(|d| d == name));
+            FieldType::Composite { name, .. } if conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)));
         let method_name = if is_decimal {
             format!("{fname_snake}_wire")
         } else {
@@ -3043,9 +3050,9 @@ fn generate_message_decoder(
                     });
                 }
 
-                // Eager copy accessor (_as_struct)
+                // Eager copy accessor (_value)
                 let as_struct_ident = syn::Ident::new(
-                    &format!("{}_as_struct", fname_snake),
+                    &format!("{}_value", fname_snake),
                     proc_macro2::Span::call_site(),
                 );
                 if since > 0 {
@@ -3332,7 +3339,8 @@ fn generate_message_decoder(
             &format!("tail_offset_{}", g_idx),
             proc_macro2::Span::call_site(),
         );
-        let g_since_lit = syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
+        let g_since_lit =
+            syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
         let g_snake_str = g_snake.clone();
         impl_body.extend(quote::quote! {
             #[inline]
@@ -3370,7 +3378,10 @@ fn generate_message_decoder(
         // primitive, so max_length is always Some. The else branch can't fire.
         let max = vd.max_length.unwrap_or(0);
         let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
-        let vd_since_lit = syn::LitInt::new(&vd.since_version.to_string(), proc_macro2::Span::call_site());
+        let vd_since_lit = syn::LitInt::new(
+            &vd.since_version.to_string(),
+            proc_macro2::Span::call_site(),
+        );
         let vd_snake_str = vd_snake.clone();
         impl_body.extend(quote::quote! {
             #[inline]
@@ -3625,7 +3636,7 @@ fn generate_message_decoder(
             elements,
             byte_order,
             unique,
-            decimal_composites,
+            &conversions,
         ));
     }
 
@@ -3663,7 +3674,7 @@ fn generate_message_decoder(
             &name,
             multi_message,
             byte_order,
-            decimal_composites,
+            conversions,
         ));
     }
 
@@ -3680,14 +3691,14 @@ fn generate_domain_objects(
     _parent_scope: &str,
     multi_message: bool,
     _byte_order: ByteOrder,
-    decimal_composites: &[String],
+    conversions: &[crate::ConversionSelector],
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
-    let _has_decimal = domain_has_decimal(&msg.fields, &msg.groups, decimal_composites);
+    let _has_conversion = domain_has_conversion(&msg.fields, &msg.groups, &conversions);
     // ponytail: generic Domain<D: SbeDecimal> scaffolded (detection, plumbing)
     // but not yet emitted — the identity escape hatch (SbeDecimal for Decimal)
-    // is already emitted by generate_decimal_converter_impls; users get raw
+    // is already emitted by generate_converter_impls; users get raw
     // Decimal in DTOs today and can convert in app code. Full generic DTO
     // emission is follow-up.
     generate_domain_recursive(
@@ -3699,7 +3710,7 @@ fn generate_domain_objects(
         elements,
         multi_message,
         msg_name,
-        decimal_composites,
+        conversions,
         false, // is_entry — this is a message, not a group entry
         &mut ts,
         span,
@@ -3709,20 +3720,23 @@ fn generate_domain_objects(
 
 /// Check whether any field, group entry, or nested group under these
 /// fields/groups uses a registered decimal composite.
-fn domain_has_decimal(
+fn domain_has_conversion(
     fields: &[MessageField],
     groups: &[MessageGroup],
-    decimal_composites: &[String],
+    conversions: &[crate::ConversionSelector],
 ) -> bool {
     for f in fields {
         if let FieldType::Composite { name, .. } = &f.field_type {
-            if decimal_composites.iter().any(|d| d == name) {
+            if conversions
+                .iter()
+                .any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name))
+            {
                 return true;
             }
         }
     }
     for g in groups {
-        if domain_has_decimal(&g.fields, &g.groups, decimal_composites) {
+        if domain_has_conversion(&g.fields, &g.groups, conversions) {
             return true;
         }
     }
@@ -3739,7 +3753,7 @@ fn generate_domain_recursive(
     elements: &SchemaElements,
     multi_message: bool,
     msg_name: &str,
-    decimal_composites: &[String],
+    conversions: &[crate::ConversionSelector],
     is_entry: bool,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
@@ -3772,7 +3786,9 @@ fn generate_domain_recursive(
                 } else if f.presence == Presence::Optional {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#r_type> });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                    encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
+                    encode_stmts.push(
+                        quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
+                    );
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #r_type });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
@@ -3784,12 +3800,14 @@ fn generate_domain_recursive(
             } => {
                 let comp_pascal = to_pascal_case(comp_name);
                 let comp_ident = syn::Ident::new(&comp_pascal, span);
-                let as_struct_ident = syn::Ident::new(&format!("{f_snake}_as_struct"), span);
+                let as_struct_ident = syn::Ident::new(&format!("{f_snake}_value"), span);
                 // Drive-by fix: versioned composites return Option<T> on decoders,
                 // so the DTO field must also be optional.
                 if !is_entry && f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#comp_ident> });
-                    encode_stmts.push(quote::quote! { if let Some(ref v) = self.#f_ident { enc.#f_ident(*v); } });
+                    encode_stmts.push(
+                        quote::quote! { if let Some(ref v) = self.#f_ident { enc.#f_ident(*v); } },
+                    );
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #comp_ident });
                     encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
@@ -3816,7 +3834,9 @@ fn generate_domain_recursive(
                     if !is_entry && f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
                         from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                        encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
+                        encode_stmts.push(
+                            quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
+                        );
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
                         from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
@@ -3830,7 +3850,9 @@ fn generate_domain_recursive(
                 let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
                 if !is_entry && f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
-                    encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
+                    encode_stmts.push(
+                        quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
+                    );
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
                     encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
@@ -3906,7 +3928,7 @@ fn generate_domain_recursive(
             elements,
             multi_message,
             msg_name,
-            decimal_composites,
+            &conversions,
             true, // is_entry — group entries always return T for enums
             ts,
             span,
@@ -3949,10 +3971,7 @@ fn generate_domain_recursive(
     // ── Encode-from-DTO ──────────────────────────────────────────────
     if is_entry {
         // Entry domains: encode_into for use inside group closures
-        let entry_encoder_ident = syn::Ident::new(
-            &format!("{decoder_name}Encoder"),
-            span,
-        );
+        let entry_encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);
         let encode_body = if !vardata_encode_stmts.is_empty() || !group_encode_stmts.is_empty() {
             quote::quote! {
                 #(#encode_stmts)*
@@ -3979,7 +3998,9 @@ fn generate_domain_recursive(
         });
     } else {
         // Message domains: full encode via wrap_and_apply_header
-        let has_optional = fields.iter().any(|f| f.presence == Presence::Optional && f.null_value.is_some());
+        let has_optional = fields
+            .iter()
+            .any(|f| f.presence == Presence::Optional && f.null_value.is_some());
         let nullify = if has_optional {
             quote::quote! { enc.apply_nulls(); }
         } else {
@@ -4160,7 +4181,7 @@ fn generate_group_decoder(
     elements: &SchemaElements,
     byte_order: ByteOrder,
     scoped_name: &str,
-    decimal_composites: &[String],
+    conversions: &[crate::ConversionSelector],
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
     let name = scoped_name.to_string();
@@ -4451,7 +4472,7 @@ fn generate_group_decoder(
         // suffixed _wire so the generic converted method takes the original
         // name (same rule as message-level fields).
         let is_decimal_field = matches!(&f.field_type,
-            FieldType::Composite { name, .. } if decimal_composites.iter().any(|d| d == name));
+            FieldType::Composite { name, .. } if conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)));
         let accessor_name = if is_decimal_field {
             format!("{f_name}_wire")
         } else {
@@ -4578,9 +4599,9 @@ fn generate_group_decoder(
                     }
                 });
 
-                // Eager copy accessor (_as_struct)
+                // Eager copy accessor (_value)
                 let as_struct_ident = syn::Ident::new(
-                    &format!("{}_as_struct", f_name),
+                    &format!("{}_value", f_name),
                     proc_macro2::Span::call_site(),
                 );
                 entry_body.extend(quote::quote! {
@@ -5003,7 +5024,7 @@ fn generate_group_decoder(
             elements,
             byte_order,
             &nested_name,
-            decimal_composites,
+            &conversions,
         ));
     }
 
@@ -5057,13 +5078,29 @@ fn generate_nullification(
     }
 }
 
-/// Generate raw `*_wire` aliases and generic converted methods for fields
-/// whose type is a registered Decimal composite. Only emitted in converter
-/// mode. Generated code never mentions `rust_decimal`.
-fn generate_decimal_converter_impls(
+/// Emit `TryFromSbe` / `TryToSbe` traits into the generated sbe_rt module.
+fn emit_conversion_traits(src: &mut String) {
+    src.push_str(
+        "/// Convert from a wire type to an application type.\n\
+         pub trait TryFromSbe<Wire>: Sized {\n\
+             type Error: core::fmt::Debug + core::fmt::Display;\n\
+             fn try_from_sbe(wire: Wire) -> Result<Self, Self::Error>;\n\
+         }\n\n\
+         /// Convert from an application type to a wire type.\n\
+         pub trait TryToSbe<Wire> {\n\
+             type Error: core::fmt::Debug + core::fmt::Display;\n\
+             fn try_to_sbe(&self) -> Result<Wire, Self::Error>;\n\
+         }\n\n",
+    );
+}
+
+/// Generate `*_as`/`*_from` conversion methods for fields matching the
+/// configured conversion selectors. Also emits raw `*_wire` aliases if the
+/// field would otherwise shadow them.
+fn generate_converter_impls(
     msg: &MessageStructure,
-    decimal_composites: &[String],
-    multi_message: bool,
+    conversions: &[crate::ConversionSelector],
+    _multi_message: bool,
 ) -> String {
     let span = proc_macro2::Span::call_site();
     let msg_name = to_pascal_case(&msg.name);
@@ -5078,34 +5115,38 @@ fn generate_decimal_converter_impls(
             FieldType::Composite { name, .. } => name,
             _ => continue,
         };
-        if !decimal_composites.iter().any(|d| d == comp_name) {
+        let has_conversion = conversions.iter().any(|sel| match sel {
+            crate::ConversionSelector::NamedType(n) => n == comp_name,
+            crate::ConversionSelector::SemanticType(st) => {
+                f.semantic_type.as_deref() == Some(st.as_str())
+            }
+            _ => false,
+        });
+        if !has_conversion {
             continue;
         }
 
         let field_snake = to_snake_case(&f.name);
-        let field_ident = syn::Ident::new(&field_snake, span);
         let wire_ident = syn::Ident::new(&format!("{field_snake}_wire"), span);
+        let as_struct_ident = syn::Ident::new(&format!("{field_snake}_value"), span);
+        let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
+        let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
         let comp_type_ident = syn::Ident::new(&to_pascal_case(comp_name), span);
 
-        // Decoder: generic converted accessor delegates to the raw *_wire method
-        // (already generated by the main field accessor codegen).
         decoder_methods.extend(quote::quote! {
-            /// Generic converted accessor. Calls `SbeDecimal::try_from_sbe`
-            /// on the raw wire mantissa/exponent.
             #[inline]
-            pub fn #field_ident<D: SbeDecimal>(&self) -> Result<D, D::Error> {
-                let raw = self.#wire_ident();
-                D::try_from_sbe(raw.mantissa(), raw.exponent())
+            #[must_use]
+            pub fn #as_ident<T: TryFromSbe<#comp_type_ident>>(&self) -> Result<T, T::Error> {
+                T::try_from_sbe(self.#as_struct_ident())
             }
         });
 
-        // Encoder: generic converted setter calls `SbeDecimal::try_into_sbe`,
-        // then writes via the raw *_wire setter.
         encoder_methods.extend(quote::quote! {
-            /// Generic converted setter. Calls `SbeDecimal::try_into_sbe`.
-            pub fn #field_ident<D: SbeDecimal>(&mut self, val: D) -> Result<&mut Self, D::Error> {
-                let (m, e) = val.try_into_sbe()?;
-                self.#wire_ident(#comp_type_ident::new(m, e));
+            #[inline]
+            #[must_use]
+            pub fn #from_ident<T: TryToSbe<#comp_type_ident>>(&mut self, value: &T) -> Result<&mut Self, T::Error> {
+                let wire = value.try_to_sbe()?;
+                self.#wire_ident(wire);
                 Ok(self)
             }
         });
@@ -5116,7 +5157,7 @@ fn generate_decimal_converter_impls(
     fn emit_group_entry_impls(
         scope: &str,
         g: &MessageGroup,
-        decimal_composites: &[String],
+        conversions: &[crate::ConversionSelector],
         out: &mut String,
     ) {
         let span = proc_macro2::Span::call_site();
@@ -5130,28 +5171,31 @@ fn generate_decimal_converter_impls(
                 FieldType::Composite { name, .. } => name,
                 _ => continue,
             };
-            if !decimal_composites.iter().any(|d| d == comp_name) {
+            if !conversions
+                .iter()
+                .any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == comp_name))
+            {
                 continue;
             }
             let field_snake = to_snake_case(&f.name);
-            let field_ident = syn::Ident::new(&field_snake, span);
+            let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
+            let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
             let wire_ident = syn::Ident::new(&format!("{field_snake}_wire"), span);
+            let as_struct_ident = syn::Ident::new(&format!("{field_snake}_value"), span);
             let comp_type_ident = syn::Ident::new(&to_pascal_case(comp_name), span);
             dec_methods.extend(quote::quote! {
-                /// Generic converted entry accessor. Calls
-                /// `SbeDecimal::try_from_sbe` on the raw wire values.
                 #[inline]
-                pub fn #field_ident<D: SbeDecimal>(&self) -> Result<D, D::Error> {
-                    let raw = self.#wire_ident();
-                    D::try_from_sbe(raw.mantissa(), raw.exponent())
+                #[must_use]
+                pub fn #as_ident<T: TryFromSbe<#comp_type_ident>>(&self) -> Result<T, T::Error> {
+                    T::try_from_sbe(self.#as_struct_ident())
                 }
             });
             enc_methods.extend(quote::quote! {
-                /// Generic converted entry setter. Calls
-                /// `SbeDecimal::try_into_sbe`.
-                pub fn #field_ident<D: SbeDecimal>(&mut self, val: D) -> Result<&mut Self, D::Error> {
-                    let (m, e) = val.try_into_sbe()?;
-                    let _ = self.#wire_ident(#comp_type_ident::new(m, e));
+                #[inline]
+                #[must_use]
+                pub fn #from_ident<T: TryToSbe<#comp_type_ident>>(&mut self, value: &T) -> Result<&mut Self, T::Error> {
+                    let wire = value.try_to_sbe()?;
+                    let _ = self.#wire_ident(wire);
                     Ok(self)
                 }
             });
@@ -5168,18 +5212,18 @@ fn generate_decimal_converter_impls(
             out.push_str(&ts.to_string());
         }
         for ng in &g.groups {
-            emit_group_entry_impls(&scoped, ng, decimal_composites, out);
+            emit_group_entry_impls(&scoped, ng, &conversions, out);
         }
     }
 
     let mut entry_impls = String::new();
-    let group_scope = if multi_message {
+    let group_scope = if _multi_message {
         msg_name.clone()
     } else {
         String::new()
     };
     for g in &msg.groups {
-        emit_group_entry_impls(&group_scope, g, decimal_composites, &mut entry_impls);
+        emit_group_entry_impls(&group_scope, g, &conversions, &mut entry_impls);
     }
 
     if decoder_methods.is_empty() && entry_impls.is_empty() {
@@ -5203,6 +5247,125 @@ fn generate_decimal_converter_impls(
     out
 }
 
+/// Map a [`FieldType`] to the corresponding Rust type as a `syn::Type`.
+fn field_type_ident(ft: &FieldType, span: proc_macro2::Span) -> syn::Type {
+    match ft {
+        FieldType::Primitive(pt, arr_len) => match (pt, arr_len) {
+            (PrimitiveType::Char, Some(n)) => {
+                let n = syn::LitInt::new(&n.to_string(), span);
+                syn::parse_quote!([u8; #n])
+            }
+            (PrimitiveType::Char, None) => syn::parse_quote!(u8),
+            (PrimitiveType::Int8, _) => syn::parse_quote!(i8),
+            (PrimitiveType::Int16, _) => syn::parse_quote!(i16),
+            (PrimitiveType::Int32, _) => syn::parse_quote!(i32),
+            (PrimitiveType::Int64, _) => syn::parse_quote!(i64),
+            (PrimitiveType::UInt8, None) => syn::parse_quote!(u8),
+            (PrimitiveType::UInt16, None) => syn::parse_quote!(u16),
+            (PrimitiveType::UInt32, None) => syn::parse_quote!(u32),
+            (PrimitiveType::UInt64, None) => syn::parse_quote!(u64),
+            (PrimitiveType::Float, _) => syn::parse_quote!(f32),
+            (PrimitiveType::Double, _) => syn::parse_quote!(f64),
+            (pt, Some(len)) => {
+                let elem: syn::Type = field_type_ident(&FieldType::Primitive(*pt, None), span);
+                let n = syn::LitInt::new(&len.to_string(), span);
+                syn::parse_quote!([#elem; #n])
+            }
+            _ => syn::parse_quote!(u8), // fallback
+        },
+        FieldType::Composite { name, .. } => {
+            let ident = syn::Ident::new(&to_pascal_case(name), span);
+            syn::parse_quote!(#ident)
+        }
+        FieldType::Enum { name, .. } => {
+            let ident = syn::Ident::new(&to_pascal_case(name), span);
+            syn::parse_quote!(#ident)
+        }
+        FieldType::Set { name, .. } => {
+            let ident = syn::Ident::new(&to_pascal_case(name), span);
+            syn::parse_quote!(#ident)
+        }
+    }
+}
+
+/// Generate the raw fixed writer impl block with field setters and finish_unchecked.
+fn generate_raw_fixed_impls(
+    msg: &MessageStructure,
+    raw_name: &syn::Ident,
+    header_size: usize,
+    block_length: usize,
+) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let mut ts = proc_macro2::TokenStream::new();
+    let mut setters = proc_macro2::TokenStream::new();
+
+    for f in &msg.fields {
+        if f.presence == crate::Presence::Constant {
+            continue;
+        }
+        let fname_snake = to_snake_case(&f.name);
+        let f_ident = syn::Ident::new(&fname_snake, span);
+        let offset_lit = syn::LitInt::new(&f.offset.to_string(), span);
+        let f_type = &f.field_type;
+        let size = f_type.size();
+
+        let ty_ident: syn::Type = field_type_ident(f_type, span);
+        let size_lit = syn::LitInt::new(&size.to_string(), span);
+
+        let is_array = matches!(f_type, FieldType::Primitive(_, Some(_)));
+        if is_array {
+            setters.extend(quote::quote! {
+                #[inline]
+                pub fn #f_ident(&mut self, val: #ty_ident) -> &mut Self {
+                    let offset = self.pos + #offset_lit;
+                    self.buf[offset..offset + #size_lit].copy_from_slice(&val);
+                    self
+                }
+            });
+        } else if matches!(f_type, FieldType::Primitive(PrimitiveType::Char, _)) {
+            setters.extend(quote::quote! {
+                #[inline]
+                pub fn #f_ident(&mut self, val: u8) -> &mut Self {
+                    let offset = self.pos + #offset_lit;
+                    self.buf[offset] = val;
+                    self
+                }
+            });
+        } else {
+            setters.extend(quote::quote! {
+                #[inline]
+                pub fn #f_ident(&mut self, val: #ty_ident) -> &mut Self {
+                    let offset = self.pos + #offset_lit;
+                    let bytes = val.to_le_bytes();
+                    self.buf[offset..offset + #size_lit].copy_from_slice(&bytes);
+                    self
+                }
+            });
+        }
+    }
+
+    // finish_unchecked: advance past fixed block to first tail stage
+    ts.extend(quote::quote! {
+        impl<'a> #raw_name<'a> {
+            #setters
+
+            /// Advance past the fixed block without required-field validation.
+            /// The buffer must already contain the correct header and block.
+            /// Returns the first tail stage for further encoding.
+            #[inline]
+            #[must_use]
+            pub fn finish_unchecked(self) -> &'a mut [u8] {
+                // ponytail: caller guarantees the fixed block is valid;
+                // returns the tail portion of the buffer for manual use.
+                let body_start = self.message_start + #header_size;
+                let tail_start = body_start + #block_length;
+                &mut self.buf[tail_start..]
+            }
+        }
+    });
+    ts
+}
+
 fn generate_message_encoder(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -5211,7 +5374,7 @@ fn generate_message_encoder(
     schema_version: u16,
     header_type: &str,
     multi_message: bool,
-    decimal_composites: &[String],
+    conversions: &[crate::ConversionSelector],
     unchecked_companions: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
@@ -5518,7 +5681,7 @@ fn generate_message_encoder(
         // suffixed _wire so the generic converted setter takes the
         // original name.
         let is_decimal = matches!(&f.field_type,
-            FieldType::Composite { name, .. } if decimal_composites.iter().any(|d| d == name));
+            FieldType::Composite { name, .. } if conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)));
         let method_name = if is_decimal {
             format!("{f_name}_wire")
         } else {
@@ -5698,22 +5861,123 @@ fn generate_message_encoder(
         });
     }
 
-    // Fallible fixed-body chaining: try_fixed runs a closure over &mut self
-    // and propagates caller errors, keeping the same concrete stage.
-    impl_contents.extend(quote::quote! {
-        /// Run a fallible closure over the fixed-body fields. The closure
-        /// receives `&mut Self` and can set/read fixed fields; tail
-        /// transitions are unavailable inside the closure. Returns the
-        /// same stage on success, or the caller's error on failure.
-        #[inline]
-        pub fn try_fixed<E, F>(mut self, f: F) -> Result<Self, E>
-        where
-            F: FnOnce(&mut Self) -> Result<(), E>,
-        {
-            f(&mut self)?;
-            Ok(self)
+    // ── FixedFields value struct ──
+    // A complete, owned, latest-version snapshot of every required fixed
+    // field. Optional fields are `Option<T>`; constants are excluded.
+    // No `Default` — every required field must be explicitly initialised.
+    {
+        let fixed_name = syn::Ident::new(&format!("{name}FixedFields"), span);
+        let mut fixed_fields_ts = proc_macro2::TokenStream::new();
+        for f in &msg.fields {
+            if f.presence == crate::Presence::Constant {
+                continue;
+            }
+            let fname_snake = to_snake_case(&f.name);
+            let f_ident = syn::Ident::new(&fname_snake, span);
+            let is_optional = f.presence == crate::Presence::Optional || f.since_version > 0;
+            if is_optional {
+                let ty = field_type_ident(&f.field_type, span);
+                fixed_fields_ts.extend(quote::quote! {
+                    pub #f_ident: Option<#ty>,
+                });
+            } else {
+                let ty = field_type_ident(&f.field_type, span);
+                fixed_fields_ts.extend(quote::quote! {
+                    pub #f_ident: #ty,
+                });
+            }
         }
-    });
+        ts.extend(quote::quote! {
+            /// Complete set of latest-version fixed fields for this message.
+            /// Required fields are concrete values; optional/versioned fields
+            /// are `Option<T>`. Constants are excluded.
+            #[derive(Debug, Clone)]
+            pub struct #fixed_name {
+                #fixed_fields_ts
+            }
+        });
+    }
+
+    // ── safe fixed(&FixedFields) — consume encoder, write all fixed fields ──
+    {
+        let fixed_name = syn::Ident::new(&format!("{name}FixedFields"), span);
+        // Build the write block: for each non-constant field, write from the struct.
+        // Use _wire suffixed setters for converter-enabled composite fields.
+        let mut write_stmts = proc_macro2::TokenStream::new();
+        for f in &msg.fields {
+            if f.presence == crate::Presence::Constant {
+                continue;
+            }
+            let fname_snake = to_snake_case(&f.name);
+            let is_converted = match &f.field_type {
+                FieldType::Composite { name, .. } => conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)),
+                _ => false,
+            };
+            let setter_ident = if is_converted {
+                syn::Ident::new(&format!("{fname_snake}_wire"), span)
+            } else {
+                syn::Ident::new(&fname_snake, span)
+            };
+            let field_ident = syn::Ident::new(&fname_snake, span);
+            if f.presence == crate::Presence::Optional || f.since_version > 0 {
+                write_stmts.extend(quote::quote! {
+                    if let Some(v) = fixed.#field_ident {
+                        self.#setter_ident(v);
+                    }
+                });
+            } else {
+                write_stmts.extend(quote::quote! {
+                    self.#setter_ident(fixed.#field_ident);
+                });
+            }
+        }
+        impl_contents.extend(quote::quote! {
+            /// Set all fixed fields at once from a [`#fixed_name`] value.
+            /// Required fields are always written; optional fields are
+            /// written when `Some`. Returns the encoder for tail methods.
+            #[inline]
+            #[must_use]
+            pub fn fixed(mut self, fixed: &#fixed_name) -> Self {
+                #write_stmts
+                self
+            }
+        });
+    }
+
+    // ── raw_fixed() + finish_unchecked() — low-level direct-write escape hatch ──
+    {
+        impl_contents.extend(quote::quote! {
+            /// Return a mutable reference to self for manual fixed-field
+            /// writing. All field setters remain available.
+            #[inline]
+            pub fn raw_fixed(&mut self) -> &mut Self {
+                self
+            }
+        });
+
+        if total_tail > 0 {
+            let first_tail = &stage_idents[1];
+            let tail_offset = header_size + block_length;
+            let tail_off_lit = syn::LitInt::new(&tail_offset.to_string(), span);
+            impl_contents.extend(quote::quote! {
+                /// Advance past the fixed block to the first tail stage without
+                /// required-field validation. The caller guarantees that the
+                /// buffer contains valid fixed-field data up to the tail.
+                #[inline]
+                #[must_use]
+                pub fn finish_unchecked(self) -> #first_tail<'a> {
+                    // ponytail: no required-field validation — caller's
+                    // responsibility to ensure the fixed block is populated.
+                    let pos = self.message_start + #tail_off_lit;
+                    #first_tail {
+                        buf: self.buf,
+                        message_start: self.message_start,
+                        pos,
+                    }
+                }
+            });
+        }
+    }
 
     // Close the impl block
     if total_tail > 0 {
@@ -6012,7 +6276,7 @@ fn generate_message_encoder(
             elements,
             byte_order,
             &enc_group_names[gi],
-            decimal_composites,
+            &conversions,
         );
     }
     if !group_buf.is_empty() {
@@ -6056,7 +6320,7 @@ fn generate_group_encoder(
     elements: &SchemaElements,
     byte_order: ByteOrder,
     scoped_name: &str,
-    decimal_composites: &[String],
+    conversions: &[crate::ConversionSelector],
 ) {
     let name = scoped_name.to_string();
     let order_suffix = match byte_order {
@@ -6213,7 +6477,7 @@ fn generate_group_encoder(
         let f_snake = to_snake_case(&f.name);
         // Converter mode: Decimal-composite raw entry setters become *_wire.
         let is_decimal_field = matches!(&f.field_type,
-            FieldType::Composite { name, .. } if decimal_composites.iter().any(|d| d == name));
+            FieldType::Composite { name, .. } if conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)));
         let setter_name = if is_decimal_field {
             format!("{f_snake}_wire")
         } else {
@@ -6402,14 +6666,7 @@ fn generate_group_encoder(
     // Recursively generate nested Repeating Groups encoders
     for ng in &g.groups {
         let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
-        generate_group_encoder(
-            src,
-            ng,
-            elements,
-            byte_order,
-            &nested_name,
-            decimal_composites,
-        );
+        generate_group_encoder(src, ng, elements, byte_order, &nested_name, &conversions);
     }
 }
 
@@ -7232,7 +7489,7 @@ mod tests {
         let generator = Generator::new(GenerationConfig::new("market_data"));
         let schema = Schema::new("fix.sbe", 1, 0);
 
-        let modules = generator.generate(&schema);
+        let modules = generator.generate(&schema)?;
         let collected = modules.modules().collect::<Vec<_>>();
 
         assert_eq!(collected.len(), 1);
@@ -7253,7 +7510,7 @@ mod tests {
         let schema_b = Schema::new("market_data.sbe", 2, 0);
 
         let modules =
-            generator.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")]);
+            generator.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;
         let collected: Vec<_> = modules.modules().collect();
 
         assert_eq!(collected.len(), 2);
@@ -7289,7 +7546,7 @@ mod tests {
         let schema_a = Schema::new("common.sbe", 1, 0);
         let schema_b = Schema::new("market_data.sbe", 2, 0);
 
-        let modules = generator.generate_multi(&[(&schema_a, "a_mod"), (&schema_b, "b_mod")]);
+        let modules = generator.generate_multi(&[(&schema_a, "a_mod"), (&schema_b, "b_mod")])?;
         let collected: Vec<_> = modules.modules().collect();
 
         assert_eq!(collected.len(), 2);

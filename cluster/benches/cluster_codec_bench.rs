@@ -29,15 +29,14 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
             |mut buf| {
                 for i in 0..HFT_BATCH {
                     let off = i * 32;
-                    let _ =
-                        ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder::wrap_and_apply_header(
-                            &mut buf[off..off + 32],
-                            0,
-                        )
-                        .unwrap()
-                        .leadership_term_id((i % 1000) as i64)
-                        .cluster_session_id(42)
-                        .timestamp(0);
+                    let _ = ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder::wrap_and_apply_header(
+                        &mut buf[off..off + 32],
+                        0,
+                    )
+                    .unwrap()
+                    .leadership_term_id((i % 1000) as i64)
+                    .cluster_session_id(42)
+                    .timestamp(0);
                 }
                 black_box(&buf);
             },
@@ -392,15 +391,14 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
                 for i in 0..HFT_BATCH {
                     let off = i * total;
                     let slot = &mut buf[off..off + total];
-                    let _ =
-                        ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder::wrap_and_apply_header(
-                            &mut slot[..32],
-                            0,
-                        )
-                        .unwrap()
-                        .leadership_term_id(5)
-                        .cluster_session_id(42)
-                        .timestamp(0);
+                    let _ = ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder::wrap_and_apply_header(
+                        &mut slot[..32],
+                        0,
+                    )
+                    .unwrap()
+                    .leadership_term_id(5)
+                    .cluster_session_id(42)
+                    .timestamp(0);
                     slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
                 }
                 black_box(&buf);

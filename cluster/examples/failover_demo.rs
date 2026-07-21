@@ -51,7 +51,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 512];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).ok()?;
         enc.correlation_id(1).response_stream_id(102).version(0);
-        let complete = enc.response_channel(resp.as_bytes()).ok()?.encoded_credentials(b"").ok()?.client_info(b"").ok()?;
+        let complete = enc
+            .response_channel(resp.as_bytes())
+            .ok()?
+            .encoded_credentials(b"")
+            .ok()?
+            .client_info(b"")
+            .ok()?;
         let bytes = complete.as_bytes_with_header();
         for _ in 0..50 {
             if pub_.offer_raw(bytes, rusteron_client::Handlers::NONE) > 0 {

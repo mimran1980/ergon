@@ -90,7 +90,7 @@
 //! let config = GenerationConfig::new("my_messages");
 //! let generator = Generator::new(config);
 //!
-//! let output = generator.generate(&schema);
+//! let output = generator.generate(&schema).unwrap();
 //! assert!(output.modules().any(|m| m.path == "my_messages.rs"));
 //! ```
 //!
@@ -134,8 +134,8 @@ pub mod schema;
 pub mod xml;
 
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
-pub use config::{CompatibilityMode, GenerationConfig};
+pub use config::{ConversionSelector, GenerationConfig};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
-pub use schema::{Schema, SchemaSource};
+pub use schema::Schema;
 pub use xml::{ParseError, parse, parse_file};

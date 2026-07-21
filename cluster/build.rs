@@ -1,16 +1,13 @@
-//! Build script: generate the cluster SBE codecs from the Aeron submodule
-//! schemas using ErgoSBE, writing to OUT_DIR.
+//! Build script: generate the cluster SBE codecs from vendored schemas
+//! using ErgoSBE, writing to OUT_DIR.
 //!
-//! Schemas (aeron submodule, pinned 1.52.2):
-//!   aeron/aeron-cluster/src/main/resources/cluster/aeron-cluster-codecs.xml
-//!   aeron/aeron-cluster/src/main/resources/cluster/aeron-cluster-mark-codecs.xml
-//!
-//! RFQ (vendored cookbook schema 101):
+//! Schemas (vendored under cluster/schemas/):
+//!   cluster/schemas/aeron-cluster-codecs.xml
+//!   cluster/schemas/aeron-cluster-mark-codecs.xml
 //!   cluster/schemas/protocol-codecs.xml
 //!
 //! The generated files are `include!`d from `src/codecs/mod.rs` as public
-//! modules `session`, `mark`, and `rfq`. The aeron submodule must be
-//! checked out (`git submodule update --init aeron`).
+//! modules `session`, `mark`, and `rfq`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,7 +26,7 @@ fn generate_schema(schema_path: &std::path::Path, module: &str, out_dir: &std::p
     let cfg = ergo_sbe::GenerationConfig::new(module);
     let generator = ergo_sbe::Generator::new(cfg);
     let modules = generator
-        .try_generate(&schema)
+        .generate(&schema)
         .unwrap_or_else(|e| panic!("generate {}: {e}", schema_path.display()));
     let m = modules
         .modules()
@@ -46,23 +43,16 @@ fn main() {
     // benches only — no sbe-tool regeneration here.
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let aeron = manifest_dir.join("..").join("aeron");
-    let schema_dir = aeron.join("aeron-cluster/src/main/resources/cluster");
+    let schema_dir = manifest_dir.join("schemas");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
     for (xml, module) in [
         ("aeron-cluster-codecs.xml", "session"),
         ("aeron-cluster-mark-codecs.xml", "mark"),
+        ("protocol-codecs.xml", "rfq"),
     ] {
         generate_schema(&schema_dir.join(xml), module, &out_dir);
     }
-
-    // Cookbook RFQ protocol (schema 101) — production path is ErgoSBE.
-    generate_schema(
-        &manifest_dir.join("schemas/protocol-codecs.xml"),
-        "rfq",
-        &out_dir,
-    );
 
     println!("cargo::rerun-if-changed=../sbe/src/codegen.rs");
     println!("cargo::rerun-if-changed=../sbe/src/schema.rs");
@@ -73,6 +63,7 @@ fn main() {
 
     // Java ClusterLauncher only when building with `--features test-harness`.
     if std::env::var_os("CARGO_FEATURE_TEST_HARNESS").is_some() {
+        let aeron = manifest_dir.join("..").join("aeron");
         compile_test_harness_java(&manifest_dir, &aeron);
     }
 }

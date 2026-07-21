@@ -3,7 +3,7 @@ name = "ergo-sbe"
 description = "Opinionated, idiomatic Rust code generation for Simple Binary Encoding."
 keywords = ["sbe", "codegen", "binary", "protocol", "trading"]
 categories = ["encoding", "parser-implementations", "development-tools"]
-readme = "../README.md"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
+include = ["src/**/*.rs", "tests/**/*.rs", "tests/**/*.xml", "examples/**/*.rs", "design/**/*.md", "docs/**/*.md", "README.md", "Cargo.toml"]
 
 [lib]
 path = "src/lib.rs"

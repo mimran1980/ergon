@@ -41,7 +41,10 @@ fn test_connect_to_three_node_cluster() -> Result<(), Box<dyn std::error::Error>
     let mut buf = vec![0u8; 512];
     let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
     enc.correlation_id(1).response_stream_id(102).version(0);
-    let complete = enc.response_channel(cluster.egress_channel.as_bytes())?.encoded_credentials(b"")?.client_info(b"")?;
+    let complete = enc
+        .response_channel(cluster.egress_channel.as_bytes())?
+        .encoded_credentials(b"")?
+        .client_info(b"")?;
     let buf_ref = complete.as_bytes_with_header();
 
     let mut sent = false;

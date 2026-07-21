@@ -17,11 +17,11 @@ fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str, decimal: b
     // Flyweight-only codecs: no generated domain objects (remediation Task 7).
     let mut config = ergo_sbe::GenerationConfig::new(module_name);
     if decimal {
-        config = config.enable_decimal_converters("Decimal");
+        config = config.with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
     }
     let generator = ergo_sbe::Generator::new(config);
     let modules = generator
-        .try_generate(&schema)
+        .generate(&schema)
         .unwrap_or_else(|e| panic!("SBE generation failed for {xml_path}: {e}"));
     for m in modules.modules() {
         let dest = out_dir.join(&m.path);

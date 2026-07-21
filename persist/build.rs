@@ -17,7 +17,7 @@ fn generate(out_dir: &Path, xml: &str, module: &str) {
     let config = ergo_sbe::GenerationConfig::new(module);
     let generator = ergo_sbe::Generator::new(config);
     let modules = generator
-        .try_generate(&schema)
+        .generate(&schema)
         .unwrap_or_else(|e| panic!("generate {xml}: {e}"));
     for m in modules.modules() {
         let dest = out_dir.join(&m.path);

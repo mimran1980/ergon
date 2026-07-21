@@ -2,10 +2,7 @@
 //! `ControlledEgressListener`. Callbacks return a `ControlledPollAction`
 //! so the application can apply backpressure (Abort) or stop (Break).
 
-use crate::codecs::session::{
-    AdminRequestType, AdminResponseCode, AnyMessage, EventCode,
-    SessionMessageHeaderEncoder,
-};
+use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder};
 
 /// Decode var-data bytes as UTF-8 with a consistent sentinel on failure.
 #[inline]
@@ -14,6 +11,7 @@ fn as_utf8_lossy(data: &[u8]) -> &str {
 }
 
 /// Map [`ControlledPollAction`] to Aeron C values (ABORT=1, BREAK=2, COMMIT=3, CONTINUE=4).
+#[allow(dead_code)]
 pub(crate) const fn action_to_aeron(action: ControlledPollAction) -> i32 {
     match action {
         ControlledPollAction::Continue => 4,
@@ -64,13 +62,7 @@ pub trait ControlledEgressListener {
         _ingress_endpoints: &str,
     ) {
     }
-    fn on_challenge(
-        &mut self,
-        _correlation_id: i64,
-        _cluster_session_id: i64,
-        _encoded_challenge: &[u8],
-    ) {
-    }
+    fn on_challenge(&mut self, _correlation_id: i64, _cluster_session_id: i64, _encoded_challenge: &[u8]) {}
     fn on_admin_response(
         &mut self,
         _cluster_session_id: i64,
@@ -91,7 +83,10 @@ pub struct ControlledEgressAdapter<L: ControlledEgressListener> {
 
 impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
     pub fn new(listener: L) -> Self {
-        Self { listener, expected_session_id: None }
+        Self {
+            listener,
+            expected_session_id: None,
+        }
     }
 
     /// Update the session-id filter (e.g. after a NewLeaderEvent).
@@ -110,11 +105,10 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         match msg {
             AnyMessage::SessionMessageHeader(decoder) => {
                 // Filter: drop messages not addressed to our session.
-                if let Some(expected) = self.expected_session_id {
-                    if decoder.cluster_session_id() != expected {
+                if let Some(expected) = self.expected_session_id
+                    && decoder.cluster_session_id() != expected {
                         return ControlledPollAction::Continue;
                     }
-                }
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return ControlledPollAction::Continue;
                 }
@@ -128,7 +122,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let code = decoder.code();
-                let detail = decoder.into_detail()
+                let detail = decoder
+                    .into_detail()
                     .map(|(b, _)| as_utf8_lossy(b))
                     .unwrap_or("<invalid utf-8>");
                 self.listener.on_session_event(cid, csid, ltid, lmid, code, detail);
@@ -138,7 +133,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let csid = decoder.cluster_session_id();
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
-                let eps = decoder.into_ingress_endpoints()
+                let eps = decoder
+                    .into_ingress_endpoints()
                     .map(|(b, _)| as_utf8_lossy(b))
                     .unwrap_or("<invalid utf-8>");
                 self.listener.on_new_leader(csid, ltid, lmid, eps);
@@ -147,9 +143,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
             AnyMessage::Challenge(decoder) => {
                 let cid = decoder.correlation_id();
                 let csid = decoder.cluster_session_id();
-                let chal = decoder.into_encoded_challenge()
-                    .map(|(b, _)| b)
-                    .unwrap_or(&[]);
+                let chal = decoder.into_encoded_challenge().map(|(b, _)| b).unwrap_or(&[]);
                 self.listener.on_challenge(cid, csid, chal);
                 ControlledPollAction::Continue
             }
@@ -185,8 +179,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
 mod tests {
     use super::*;
     use crate::codecs::session::{
-        ChallengeEncoder, EventCode as ErgoEventCode,
-        NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
+        ChallengeEncoder, EventCode as ErgoEventCode, NewLeaderEventEncoder, SessionEventEncoder,
+        SessionMessageHeaderEncoder,
     };
 
     #[test]
@@ -222,8 +216,12 @@ mod tests {
     fn test_dispatch_session_event_ok() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0)?;
-        enc.cluster_session_id(7).correlation_id(99).leadership_term_id(3)
-            .leader_member_id(0).code(ErgoEventCode::OK).version(1);
+        enc.cluster_session_id(7)
+            .correlation_id(99)
+            .leadership_term_id(3)
+            .leader_member_id(0)
+            .code(ErgoEventCode::OK)
+            .version(1);
         let complete = enc.detail(b"ok")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
@@ -293,8 +291,12 @@ mod tests {
         let mut adapter = ControlledEgressAdapter::new(Rec::default());
         let mut data = vec![0u8; 128];
         let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0)?;
-        enc.cluster_session_id(1).correlation_id(2).leadership_term_id(3)
-            .leader_member_id(0).code(ErgoEventCode::OK).version(1);
+        enc.cluster_session_id(1)
+            .correlation_id(2)
+            .leadership_term_id(3)
+            .leader_member_id(0)
+            .code(ErgoEventCode::OK)
+            .version(1);
         let complete = enc.detail(b"ok")?;
         let mut bytes = complete.as_bytes_with_header().to_vec();
         // Corrupt the var-data length to point past buffer end
@@ -393,8 +395,12 @@ mod tests {
     fn test_lifecycle_event_cannot_be_aborted() -> Result<(), Box<dyn std::error::Error>> {
         let mut data = vec![0u8; 128];
         let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0)?;
-        enc.cluster_session_id(7).correlation_id(99).leadership_term_id(3)
-            .leader_member_id(0).code(ErgoEventCode::OK).version(1);
+        enc.cluster_session_id(7)
+            .correlation_id(99)
+            .leadership_term_id(3)
+            .leader_member_id(0)
+            .code(ErgoEventCode::OK)
+            .version(1);
         let complete = enc.detail(b"ok")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
@@ -427,17 +433,12 @@ mod tests {
             self.msg_ts = ts;
             ControlledPollAction::Continue
         }
-        fn on_session_event(
-            &mut self, _cid: i64, _sid: i64, _tid: i64, _mid: i32,
-            code: EventCode, detail: &str,
-        ) {
+        fn on_session_event(&mut self, _cid: i64, _sid: i64, _tid: i64, _mid: i32, code: EventCode, detail: &str) {
             self.calls += 1;
             self.session_code = Some(code);
             self.detail = detail.to_string();
         }
-        fn on_new_leader(
-            &mut self, _sid: i64, _tid: i64, _mid: i32, eps: &str,
-        ) {
+        fn on_new_leader(&mut self, _sid: i64, _tid: i64, _mid: i32, eps: &str) {
             self.calls += 1;
             self.leader_endpoints = eps.to_string();
         }
@@ -446,8 +447,13 @@ mod tests {
             self.challenge = chal.to_vec();
         }
         fn on_admin_response(
-            &mut self, _sid: i64, _cid: i64, _rt: AdminRequestType,
-            _rc: AdminResponseCode, msg: &str, _pl: &[u8],
+            &mut self,
+            _sid: i64,
+            _cid: i64,
+            _rt: AdminRequestType,
+            _rc: AdminResponseCode,
+            msg: &str,
+            _pl: &[u8],
         ) {
             self.calls += 1;
             self.detail = msg.to_string();

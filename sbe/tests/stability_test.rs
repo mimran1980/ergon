@@ -16,9 +16,15 @@ fn generate_with_domain(xml_path: &std::path::Path, module_name: &str) -> String
     let ir = parse_file(xml_path).unwrap();
     let schema = Schema::from_ir(ir);
     let mut config = GenerationConfig::new(module_name);
-    config.domain_objects = true;
+    let config = config.enable_domain_objects();
     let g = Generator::new(config);
-    g.generate(&schema).modules().next().unwrap().source.clone()
+    g.generate(&schema)
+        .unwrap()
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone()
 }
 
 #[test]

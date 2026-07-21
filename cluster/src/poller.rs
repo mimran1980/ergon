@@ -3,8 +3,7 @@
 //! `NewLeaderEvent` so the caller can react.
 
 use crate::codecs::session::{
-    ChallengeDecoder, EventCode, MessageHeader, NewLeaderEventDecoder, SessionEventDecoder,
-    SessionMessageHeaderEncoder,
+    ChallengeDecoder, EventCode, MessageHeader, NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderEncoder,
 };
 use crate::codecs::session::{ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder};
 

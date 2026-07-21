@@ -1,5 +1,6 @@
 [package]
 name = "ergo-clickhouse-persist-derive"
+publish = false
 description = "Proc-macro derive for ergo-clickhouse-persist"
 version.workspace = true
 edition.workspace = true

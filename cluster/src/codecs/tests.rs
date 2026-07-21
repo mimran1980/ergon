@@ -1,11 +1,11 @@
 //! Protocol codec round-trips using **ErgoSBE** production codecs only.
 //! sbe-tool trees remain for head-to-head benches only.
 
+use super::rfq::{CreateRfqCommandDecoder, CreateRfqCommandEncoder, Side};
 use super::session::{
     ChallengeEncoder, EventCode, NewLeaderEventEncoder, SessionConnectRequestEncoder, SessionEventEncoder,
     SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
 };
-use super::rfq::{CreateRfqCommandDecoder, CreateRfqCommandEncoder, Side};
 
 #[test]
 fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Error>> {

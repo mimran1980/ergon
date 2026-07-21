@@ -514,9 +514,20 @@ fn issue1066_optional_versioned_field() -> Result<(), Box<dyn std::error::Error>
 fn issue435_codegen_pipeline() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("435")).unwrap();
     let meta = parse_xml_meta(&xml);
-    let schema = ergo_sbe::Schema::new(&meta.package, meta.id, meta.version);
+    // Use from_ir with an empty token list — this test exercises the
+    // metadata pipeline, not full schema codegen.
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::Ir {
+        package: meta.package.clone(),
+        id: meta.id,
+        version: meta.version,
+        byte_order: ergo_sbe::ByteOrder::LittleEndian,
+        description: None,
+        semantic_version: None,
+        header_type: "messageHeader".into(),
+        tokens: vec![],
+    });
     let generator = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("issue435"));
-    let modules = generator.generate(&schema);
+    let modules = generator.generate(&schema).unwrap();
     let module = modules.modules().next().unwrap();
     assert_eq!(module.path, "issue435.rs");
     assert!(module.source.contains(&meta.package));
@@ -604,10 +615,21 @@ fn all_issue_schemas_codegen() -> Result<(), Box<dyn std::error::Error>> {
         let path = issue_schema(num);
         let xml = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read issue{num}.xml: {e}"));
         let meta = parse_xml_meta(&xml);
-        let schema = ergo_sbe::Schema::new(&meta.package, meta.id, meta.version);
+        // Use from_ir with an empty token list — this test exercises the
+        // metadata pipeline (module path + source), not full schema codegen.
+        let schema = ergo_sbe::Schema::from_ir(ergo_sbe::Ir {
+            package: meta.package.clone(),
+            id: meta.id,
+            version: meta.version,
+            byte_order: ergo_sbe::ByteOrder::LittleEndian,
+            description: None,
+            semantic_version: None,
+            header_type: "messageHeader".into(),
+            tokens: vec![],
+        });
         let generator =
             ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(format!("issue{num}")));
-        let modules = generator.generate(&schema);
+        let modules = generator.generate(&schema).unwrap();
         let module = modules
             .modules()
             .next()

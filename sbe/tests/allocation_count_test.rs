@@ -87,13 +87,13 @@ impl AllocGuard {
 #[allow(clippy::restriction)]
 #[allow(clippy::nursery)]
 mod generated {
-    include!("../benches/generated/car_patched.rs");
+    include!("./golden/car_example.rs");
 }
 use generated::*;
 
 // ── Fixture ─────────────────────────────────────────────────────────
 
-static BASELINE: &[u8] = include_bytes!("../benches/fixtures/car_example_baseline_data.sbe");
+static BASELINE: &[u8] = include_bytes!("fixtures/car_example_baseline_data.sbe");
 
 // ── Warm-up helper ──────────────────────────────────────────────────
 //

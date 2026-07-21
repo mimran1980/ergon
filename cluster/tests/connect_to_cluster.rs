@@ -47,7 +47,10 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     let mut buf = vec![0u8; 512];
     let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
     enc.correlation_id(1).response_stream_id(102).version(0);
-    let complete = enc.response_channel(cluster.egress_channel.as_bytes())?.encoded_credentials(b"")?.client_info(b"")?;
+    let complete = enc
+        .response_channel(cluster.egress_channel.as_bytes())?
+        .encoded_credentials(b"")?
+        .client_info(b"")?;
     let bytes = complete.as_bytes_with_header();
 
     // Send

@@ -563,7 +563,9 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
                 let after_fuel = car
                     .fuel_figures(3, |g| -> sbe_rt::GroupResult {
                         for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
-                            g.add(|e| { e.speed(s).mpg(m); })?;
+                            g.add(|e| {
+                                e.speed(s).mpg(m);
+                            })?;
                         }
                         Ok(())
                     })

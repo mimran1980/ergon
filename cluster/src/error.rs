@@ -136,6 +136,12 @@ pub enum ClusterError {
         /// Display of the Aeron error.
         message: String,
     },
+    /// An egress listener callback panicked.
+    #[error("egress listener panicked: {context}")]
+    ListenerPanicked {
+        /// What was being dispatched when the panic occurred.
+        context: &'static str,
+    },
 }
 
 impl ClusterError {

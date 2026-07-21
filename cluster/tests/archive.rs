@@ -43,9 +43,13 @@ fn test_archive_and_cluster_can_coexist() -> Result<(), Box<dyn std::error::Erro
 
     // Encode and send SessionConnectRequest
     let mut buf = vec![0u8; 512];
-    let mut enc = ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
+    let mut enc =
+        ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
     enc.correlation_id(1).response_stream_id(102).version(0);
-    let complete = enc.response_channel(cluster.egress_channel.as_bytes())?.encoded_credentials(b"")?.client_info(b"")?;
+    let complete = enc
+        .response_channel(cluster.egress_channel.as_bytes())?
+        .encoded_credentials(b"")?
+        .client_info(b"")?;
     let connect_bytes = complete.as_bytes_with_header();
 
     let mut sent = false;

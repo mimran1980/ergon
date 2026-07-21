@@ -78,6 +78,32 @@ check:
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
 
+
+# Product-only gate: fmt, clippy, and tests for the two publishable prototype crates only.
+check-products:
+	cargo fmt --all --check
+	cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
+	cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+	cargo test -p ergo-sbe --all-features -- --test-threads=1
+	cargo test -p ergo-aeron-cluster --lib
+
+# Lab-only gate: persist and sample crates (unpublished).
+check-labs:
+	cargo clippy -p ergo-clickhouse-persist --all-targets --all-features -- -D warnings
+	cargo test -p ergo-clickhouse-persist --all-targets --all-features -- --test-threads=1
+	cd samples/advanced-bitget && cargo clippy --all-targets --all-features -- -D warnings
+	cd samples/advanced-bitget && cargo test -- --test-threads=1 --skip clickhouse
+	cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
+	cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
+
+# Pre-release check: products + bench compile + package verification.
+release-check: check-products
+	cargo bench -p ergosbe-benchmarks --no-run
+	cargo bench -p ergo-aeron-cluster --no-run
+	cargo publish -p ergo-sbe --dry-run --allow-dirty
+	@echo "release-check: product crates pass, benches compile, dry-run publish OK"
+
+# Workspace unit tests only
 # Workspace unit tests only (same --all-features / cluster exclude pattern as check).
 test-unit:
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1

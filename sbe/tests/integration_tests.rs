@@ -21,7 +21,7 @@ fn test_generate_car_example() -> Result<(), Box<dyn std::error::Error>> {
     let schema = Schema::from_ir(ir);
 
     let generator = Generator::new(GenerationConfig::new("car_example"));
-    let module_set = generator.generate(&schema);
+    let module_set = generator.generate(&schema).unwrap();
 
     let module = module_set.modules().next().unwrap();
     assert_eq!(module.path, "car_example.rs");

@@ -45,7 +45,7 @@ use std::borrow::Cow;
 /// Currently only supports XML. The `Cow` variant lets you pass either
 /// borrowed or owned string content without unnecessary cloning.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SchemaSource<'a> {
+pub(crate) enum SchemaSource<'a> {
     /// XML schema content held in memory.
     Xml(Cow<'a, str>),
 }
@@ -53,13 +53,13 @@ pub enum SchemaSource<'a> {
 impl<'a> SchemaSource<'a> {
     /// Build a schema source from borrowed XML.
     #[must_use]
-    pub const fn borrowed_xml(xml: &'a str) -> Self {
+    pub(crate) const fn borrowed_xml(xml: &'a str) -> Self {
         Self::Xml(Cow::Borrowed(xml))
     }
 
     /// Build a schema source from owned XML.
     #[must_use]
-    pub const fn owned_xml(xml: String) -> Self {
+    pub(crate) const fn owned_xml(xml: String) -> Self {
         Self::Xml(Cow::Owned(xml))
     }
 }
@@ -88,7 +88,7 @@ impl Schema {
     /// The resulting schema has an empty token IR. Use this when you
     /// plan to set the tokens manually, or for testing.
     #[must_use]
-    pub fn new(package: impl Into<String>, id: u16, version: u16) -> Self {
+    pub(crate) fn new(package: impl Into<String>, id: u16, version: u16) -> Self {
         let package_str = package.into();
         Self {
             package: package_str.clone(),

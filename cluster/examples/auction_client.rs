@@ -4,9 +4,7 @@
 //! cargo run --example auction_client --features test-harness
 //! ```
 
-use ergo_aeron_cluster::codecs::session::{
-    SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
-};
+use ergo_aeron_cluster::codecs::session::{SessionConnectRequestEncoder, SessionMessageHeaderEncoder};
 use rusteron_client::cformat;
 use std::time::Duration;
 
@@ -46,7 +44,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 512];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.correlation_id(1).response_stream_id(102).version(0);
-        let complete = enc.response_channel(cluster.egress_channel.as_bytes())?.encoded_credentials(b"")?.client_info(b"")?;
+        let complete = enc
+            .response_channel(cluster.egress_channel.as_bytes())?
+            .encoded_credentials(b"")?
+            .client_info(b"")?;
         let bytes = complete.as_bytes_with_header();
         for _ in 0..20 {
             if ingress.offer_raw(bytes, rusteron_client::Handlers::NONE) > 0 {
@@ -90,7 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Build bid message with SessionMessageHeader
         let mut msg = vec![0u8; 512];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg, 0)?;
-        enc.leadership_term_id(leadership_term_id).cluster_session_id(cluster_session_id).timestamp(0);
+        enc.leadership_term_id(leadership_term_id)
+            .cluster_session_id(cluster_session_id)
+            .timestamp(0);
         let hdr_len = enc.as_ref().len();
         // Write bid payload after header
         msg[hdr_len + CORRELATION_ID_OFFSET..hdr_len + CORRELATION_ID_OFFSET + 8].copy_from_slice(&cid.to_le_bytes());

@@ -1,6 +1,6 @@
 use ergo_aeron_cluster::codecs::session::{
-    ChallengeEncoder, EventCode, NewLeaderEventEncoder, SessionEventEncoder,
-    SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+    ChallengeEncoder, EventCode, NewLeaderEventEncoder, SessionEventEncoder, SessionKeepAliveEncoder,
+    SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
 };
 
 use proptest::prelude::*;

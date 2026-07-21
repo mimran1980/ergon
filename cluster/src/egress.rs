@@ -3,12 +3,8 @@
 //! SessionEvent / NewLeader / SessionMessageHeader decoding uses the same
 //! ErgoSBE equal-work path as [`crate::decode`].
 
-use crate::codecs::session::{
-    AdminRequestType, AdminResponseCode, AnyMessage, EventCode,
-};
-use crate::codecs::session::{
-    SessionMessageHeaderEncoder,
-};
+use crate::codecs::session::SessionMessageHeaderEncoder;
+use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode};
 
 /// Decode var-data bytes as UTF-8 with a consistent sentinel on failure.
 #[inline]
@@ -64,13 +60,19 @@ pub struct EgressAdapter<L: EgressListener> {
 
 impl<L: EgressListener> EgressAdapter<L> {
     pub fn new(listener: L) -> Self {
-        Self { listener, expected_session_id: None }
+        Self {
+            listener,
+            expected_session_id: None,
+        }
     }
 
     /// Create an adapter that only dispatches `SessionMessageHeader`
     /// messages matching `session_id`. Other message types are unaffected.
     pub fn with_session_filter(listener: L, session_id: i64) -> Self {
-        Self { listener, expected_session_id: Some(session_id) }
+        Self {
+            listener,
+            expected_session_id: Some(session_id),
+        }
     }
 
     /// Update the session-id filter (e.g. after a NewLeaderEvent assigns a new session).
@@ -87,20 +89,40 @@ impl<L: EgressListener> EgressAdapter<L> {
     /// Decode and dispatch one egress fragment via `AnyMessage::decode` —
     /// schema validation and template-id dispatch are handled by the
     /// generated code. Returns `true` if handled, `false` for unknown types.
+    ///
+    /// Listener callbacks are wrapped in `std::panic::catch_unwind` so a
+    /// panicking callback cannot unwind through the Aeron C fragment handler.
+    /// Panics are surfaced as [`ClusterError::ListenerPanicked`] on the next
+    /// poll return.
     pub fn on_fragment(&mut self, data: &[u8]) -> Result<bool, crate::ClusterError> {
         let msg = match AnyMessage::decode(data, 0) {
             Ok(m) => m,
             Err(_) => return Ok(false),
         };
 
+        // Wrap dispatch in catch_unwind — panics must not unwind through
+        // the Aeron C fragment handler callback.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.dispatch_unchecked(data, msg)
+        }));
+        match result {
+            Ok(r) => r,
+            Err(_) => Err(crate::ClusterError::ListenerPanicked {
+                context: "egress dispatch",
+            }),
+        }
+    }
+
+    /// Inner dispatch without panic safety (called via catch_unwind).
+    fn dispatch_unchecked(&mut self, data: &[u8], msg: AnyMessage<'_>) -> Result<bool, crate::ClusterError> {
+
         match msg {
             AnyMessage::SessionMessageHeader(decoder) => {
                 // Filter: drop messages not addressed to our session.
-                if let Some(expected) = self.expected_session_id {
-                    if decoder.cluster_session_id() != expected {
+                if let Some(expected) = self.expected_session_id
+                    && decoder.cluster_session_id() != expected {
                         return Ok(true); // handled (dropped), not an error
                     }
-                }
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return Err(crate::ClusterError::ProtocolError {
                         reason: "session message too short".into(),
@@ -117,7 +139,8 @@ impl<L: EgressListener> EgressAdapter<L> {
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let code = decoder.code();
-                let detail = decoder.into_detail()
+                let detail = decoder
+                    .into_detail()
                     .map(|(b, _)| as_utf8_lossy(b))
                     .unwrap_or("<invalid utf-8>");
                 self.listener.on_session_event(cid, csid, ltid, lmid, code, detail);
@@ -127,7 +150,8 @@ impl<L: EgressListener> EgressAdapter<L> {
                 let csid = decoder.cluster_session_id();
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
-                let eps = decoder.into_ingress_endpoints()
+                let eps = decoder
+                    .into_ingress_endpoints()
                     .map(|(b, _)| as_utf8_lossy(b))
                     .unwrap_or("<invalid utf-8>");
                 self.listener.on_new_leader(csid, ltid, lmid, eps);
@@ -136,9 +160,7 @@ impl<L: EgressListener> EgressAdapter<L> {
             AnyMessage::Challenge(decoder) => {
                 let cid = decoder.correlation_id();
                 let csid = decoder.cluster_session_id();
-                let chal = decoder.into_encoded_challenge()
-                    .map(|(b, _)| b)
-                    .unwrap_or(&[]);
+                let chal = decoder.into_encoded_challenge().map(|(b, _)| b).unwrap_or(&[]);
                 self.listener.on_challenge(cid, csid, chal);
                 Ok(true)
             }
@@ -147,12 +169,15 @@ impl<L: EgressListener> EgressAdapter<L> {
                 let cid = decoder.correlation_id();
                 let rt = decoder.request_type();
                 let rc = decoder.response_code();
-                let (msg_bytes, after_msg) = decoder.into_message().map_err(|e| crate::ClusterError::ProtocolError {
-                    reason: format!("admin response message: {e:?}"),
-                })?;
-                let (payload_bytes, _) = after_msg.into_payload().map_err(|e| crate::ClusterError::ProtocolError {
-                    reason: format!("admin response payload: {e:?}"),
-                })?;
+                let (msg_bytes, after_msg) =
+                    decoder.into_message().map_err(|e| crate::ClusterError::ProtocolError {
+                        reason: format!("admin response message: {e:?}"),
+                    })?;
+                let (payload_bytes, _) = after_msg
+                    .into_payload()
+                    .map_err(|e| crate::ClusterError::ProtocolError {
+                        reason: format!("admin response payload: {e:?}"),
+                    })?;
                 let msg = as_utf8_lossy(msg_bytes).to_string();
                 self.listener.on_admin_response(csid, cid, rt, rc, &msg, payload_bytes);
                 Ok(true)

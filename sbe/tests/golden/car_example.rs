@@ -957,7 +957,7 @@ impl<'a> CarDecoder<'a> {
         }
     }
     #[inline]
-    pub fn engine_as_struct(&self) -> Engine {
+    pub fn engine_value(&self) -> Engine {
         let offset = self.pos + 35;
         Engine(read_bytes::<10>(self.buf, offset))
     }
@@ -3124,7 +3124,7 @@ impl<'a> From<CarDecoder<'a>> for CarDomain {
             some_numbers: dec.some_numbers(),
             vehicle_code: dec.vehicle_code(),
             extras: dec.extras(),
-            engine: dec.engine_as_struct(),
+            engine: dec.engine_value(),
             fuel_figures: dec
                 .fuel_figures()
                 .map(|g| {
@@ -3282,6 +3282,20 @@ impl<'a> core::fmt::Debug for CarComplete<'a> {
             .finish()
     }
 }
+/// Complete set of latest-version fixed fields for this message.
+/// Required fields are concrete values; optional/versioned fields
+/// are `Option<T>`. Constants are excluded.
+#[derive(Debug, Clone)]
+pub struct CarFixedFields {
+    pub serial_number: u64,
+    pub model_year: u16,
+    pub available: BooleanType,
+    pub code: Model,
+    pub some_numbers: [u32; 4],
+    pub vehicle_code: [u8; 6],
+    pub extras: OptionalExtras,
+    pub engine: Engine,
+}
 impl<'a> CarEncoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
@@ -3427,17 +3441,40 @@ impl<'a> CarEncoder<'a> {
                 activation_code_len,
             )
     }
-    /// Run a fallible closure over the fixed-body fields. The closure
-    /// receives `&mut Self` and can set/read fixed fields; tail
-    /// transitions are unavailable inside the closure. Returns the
-    /// same stage on success, or the caller's error on failure.
+    /// Set all fixed fields at once from a [`#fixed_name`] value.
+    /// Required fields are always written; optional fields are
+    /// written when `Some`. Returns the encoder for tail methods.
     #[inline]
-    pub fn try_fixed<E, F>(mut self, f: F) -> Result<Self, E>
-    where
-        F: FnOnce(&mut Self) -> Result<(), E>,
-    {
-        f(&mut self)?;
-        Ok(self)
+    #[must_use]
+    pub fn fixed(mut self, fixed: &CarFixedFields) -> Self {
+        self.serial_number(fixed.serial_number);
+        self.model_year(fixed.model_year);
+        self.available(fixed.available);
+        self.code(fixed.code);
+        self.some_numbers(fixed.some_numbers);
+        self.vehicle_code(fixed.vehicle_code);
+        self.extras(fixed.extras);
+        self.engine(fixed.engine);
+        self
+    }
+    /// Return a mutable reference to self for manual fixed-field
+    /// writing. All field setters remain available.
+    #[inline]
+    pub fn raw_fixed(&mut self) -> &mut Self {
+        self
+    }
+    /// Advance past the fixed block to the first tail stage without
+    /// required-field validation. The caller guarantees that the
+    /// buffer contains valid fixed-field data up to the tail.
+    #[inline]
+    #[must_use]
+    pub fn finish_unchecked(self) -> CarAfterFuelFigures<'a> {
+        let pos = self.message_start + 53;
+        CarAfterFuelFigures {
+            buf: self.buf,
+            message_start: self.message_start,
+            pos,
+        }
     }
 }
 impl<'a> CarEncoder<'a> {

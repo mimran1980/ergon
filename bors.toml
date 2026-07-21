@@ -1,6 +1,0 @@
-status = [
-  "lint",
-  "test",
-  "build",
-]
-delete_merged_branches = true

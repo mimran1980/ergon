@@ -84,8 +84,8 @@ fn bench_field_access_safe(c: &mut Criterion) {
     group.bench_function("model_year", |b| {
         b.iter(|| black_box(car.model_year()));
     });
-    group.bench_function("engine_as_struct", |b| {
-        b.iter(|| black_box(car.engine_as_struct()));
+    group.bench_function("engine_value", |b| {
+        b.iter(|| black_box(car.engine_value()));
     });
     group.finish();
 }
@@ -128,7 +128,7 @@ fn bench_full_decode_safe(c: &mut Criterion) {
             let _ = car.some_numbers();
             let _ = car.vehicle_code();
             let _ = car.extras();
-            let _ = car.engine_as_struct();
+            let _ = car.engine_value();
             black_box(());
         });
     });
@@ -166,7 +166,7 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
             let _ = car.some_numbers();
             let _ = car.vehicle_code();
             let _ = car.extras();
-            let _ = car.engine_as_struct();
+            let _ = car.engine_value();
             black_box(());
         });
     });
@@ -214,7 +214,7 @@ fn bench_hft_tight_loop(c: &mut Criterion) {
 
 fn bench_hft_field_stride(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
-    let engine = car.engine_as_struct();
+    let engine = car.engine_value();
 
     let mut group = c.benchmark_group("decode/hft/field_stride");
     group.throughput(Throughput::Elements(1));

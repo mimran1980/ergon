@@ -8,10 +8,10 @@ fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str) {
     let xml = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {xml_path}: {e}"));
     let ir = ergo_sbe::parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path}: {e}"));
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let config = ergo_sbe::GenerationConfig::new(module_name).enable_decimal_converters("Decimal");
+    let config = ergo_sbe::GenerationConfig::new(module_name).with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
     let generator = ergo_sbe::Generator::new(config);
     let modules = generator
-        .try_generate(&schema)
+        .generate(&schema)
         .unwrap_or_else(|e| panic!("generate {xml_path}: {e}"));
     for m in modules.modules() {
         let dest = out_dir.join(&m.path);

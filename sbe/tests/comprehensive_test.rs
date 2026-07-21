@@ -1141,8 +1141,14 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
     let (_le_schema, le_src) = generate(&Paths::all_types_le_schema(), "endian_le");
     let (_be_schema, be_src) = generate(&Paths::all_types_be_schema(), "endian_be");
 
-    assert!(le_src.contains("from_le_bytes"), "LE schema uses LE accessors");
-    assert!(be_src.contains("from_be_bytes"), "BE schema uses BE accessors");
+    assert!(
+        le_src.contains("from_le_bytes"),
+        "LE schema uses LE accessors"
+    );
+    assert!(
+        be_src.contains("from_be_bytes"),
+        "BE schema uses BE accessors"
+    );
 
     // ── LE schema: header IS LE, body IS LE ──
     compile_and_run(
@@ -1184,7 +1190,7 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
 
         // Roundtrip: decode from LE buffer
         let dec = AllTypesDecoder::wrap_and_apply_header(&buf, 0).unwrap();
-        let s = dec.scalar_composite_as_struct();
+        let s = dec.scalar_composite_value();
         assert_eq!(s.i8_val(), 42i8);
         assert_eq!(s.u16_val(), 50000u16);
         assert_eq!(s.i64_val(), 99999i64);
@@ -1225,7 +1231,7 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
 
         // Roundtrip from BE buffer
         let dec = AllTypesDecoder::wrap_and_apply_header(&buf, 0).unwrap();
-        let s = dec.scalar_composite_as_struct();
+        let s = dec.scalar_composite_value();
         assert_eq!(s.i8_val(), 42i8);
         assert_eq!(s.u16_val(), 50000u16);
         assert_eq!(s.i64_val(), 99999i64);
@@ -1266,7 +1272,7 @@ fn all_scalars_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
 
         // Roundtrip all scalars through BE codec
         let dec = AllTypesDecoder::wrap_and_apply_header(&buf, 0).unwrap();
-        let s = dec.scalar_composite_as_struct();
+        let s = dec.scalar_composite_value();
         assert_eq!(s.i8_val(), 42i8);
         assert_eq!(s.u8_val(), 128u8);
         assert_eq!(s.i16_val(), 1000i16);
@@ -1339,7 +1345,7 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
         "pub fn vehicle_code",
         "pub fn extras",
         "pub fn engine",
-        "pub fn engine_as_struct",
+        "pub fn engine_value",
         "pub fn fuel_figures",
         "pub fn performance_figures",
         "pub fn manufacturer",
@@ -1359,7 +1365,7 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
     assert!(src.contains("fn rewind"), "missing group rewind()");
     assert!(src.contains("fn remaining"), "missing group remaining()");
 
-    // Composite value type methods (engine_as_struct returns Engine with fields)
+    // Composite value type methods (engine_value returns Engine with fields)
     // Note: most Engine accessors are now pub fn (non-const) after read_bytes change
     // discounted_model is a constant field — generated as const fn
     assert!(
@@ -1403,26 +1409,21 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
 // ── Compatibility mode wiring (todo 65) ────────────────────────────────
 
 #[test]
-fn strict_and_extended_modes_produce_identical_output() -> Result<(), Box<dyn std::error::Error>> {
-    // Phase 2: prove CompatibilityMode plumbing works. Same schema →
-    // same output when no extensions exist. When extensions are added,
-    // they gate on WireCompatibleExtensions.
-    use ergo_sbe::{CompatibilityMode, GenerationConfig, Generator, Schema, parse_file};
+fn deterministic_generation_produces_identical_output() -> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
 
     let ir = parse_file(&common::Paths::example_schema()).expect("parse car schema");
     let schema = Schema::from_ir(ir);
 
-    let mut strict_cfg = GenerationConfig::new("car_strict");
-    strict_cfg.compatibility = CompatibilityMode::Strict;
-    let strict_src = Generator::new(strict_cfg).generate(&schema);
+    let cfg_a = GenerationConfig::new("car_a");
+    let src_a = Generator::new(cfg_a).generate(&schema).unwrap();
 
-    let mut ext_cfg = GenerationConfig::new("car_ext");
-    ext_cfg.compatibility = CompatibilityMode::WireCompatibleExtensions;
-    let ext_src = Generator::new(ext_cfg).generate(&schema);
+    let cfg_b = GenerationConfig::new("car_b");
+    let src_b = Generator::new(cfg_b).generate(&schema).unwrap();
 
     assert_eq!(
-        strict_src.modules().next().unwrap().source,
-        ext_src.modules().next().unwrap().source,
+        src_a.modules().next().unwrap().source,
+        src_b.modules().next().unwrap().source,
         "Strict and WireCompatibleExtensions must produce identical output when no extensions exist"
     );
 

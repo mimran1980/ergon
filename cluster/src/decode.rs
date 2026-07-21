@@ -111,9 +111,7 @@ pub fn decode_new_leader_event(data: &[u8]) -> Result<NewLeaderEventView<'_>, Cl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codecs::session::{
-        EventCode, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
-    };
+    use crate::codecs::session::{EventCode, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder};
 
     #[test]
     fn session_message_header_roundtrip_view() -> Result<(), Box<dyn std::error::Error>> {

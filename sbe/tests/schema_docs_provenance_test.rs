@@ -46,8 +46,9 @@ fn docs_before(src: &str, item: &str) -> String {
 fn assert_doc_on_item(schema_xml: &str, module_name: &str, expected: &str, item_prefix: &str) {
     let ir = ergo_sbe::parse(schema_xml).expect("parse schema");
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let modules =
-        ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name)).generate(&schema);
+    let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name))
+        .generate(&schema)
+        .unwrap();
     let src = &modules.modules().next().unwrap().source;
     syn::parse_file(src).expect("generated code must be valid Rust");
 
@@ -249,8 +250,9 @@ fn multiline_indented_description_is_text_fenced() -> Result<(), Box<dyn std::er
 </sbe:messageSchema>"#;
     let ir = ergo_sbe::parse(xml).expect("parse");
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let modules =
-        ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("ml_fence")).generate(&schema);
+    let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("ml_fence"))
+        .generate(&schema)
+        .unwrap();
     let src = &modules.modules().next().unwrap().source;
     assert!(
         src.contains("```text") || src.contains("text\\n"),

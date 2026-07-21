@@ -38,6 +38,6 @@ pub mod persistence;
 pub mod publication;
 pub mod snapshot_persist;
 
-// Application-side SbeDecimal adapter for rust_decimal (generated code never
+// Application-side TryFromSbe adapter for rust_decimal (generated code never
 // mentions rust_decimal).
 impl_sbe_decimal_for_rust_decimal!();

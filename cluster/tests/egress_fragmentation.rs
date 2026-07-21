@@ -8,8 +8,8 @@
 
 #![cfg(feature = "test-harness")]
 
-use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
 use ergo_aeron_cluster::controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
+use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use rusteron_client::cformat;
 use serial_test::serial;
@@ -25,10 +25,28 @@ impl EgressListener for Rec {
     fn on_message(&mut self, _csid: i64, _ts: i64, buf: &[u8]) {
         self.messages.lock().unwrap().push(buf.to_vec());
     }
-    fn on_session_event(&mut self, _cid: i64, _csid: i64, _tid: i64, _mid: i32, _code: ergo_aeron_cluster::codecs::session::EventCode, _detail: &str) {}
+    fn on_session_event(
+        &mut self,
+        _cid: i64,
+        _csid: i64,
+        _tid: i64,
+        _mid: i32,
+        _code: ergo_aeron_cluster::codecs::session::EventCode,
+        _detail: &str,
+    ) {
+    }
     fn on_new_leader(&mut self, _csid: i64, _tid: i64, _mid: i32, _eps: &str) {}
     fn on_challenge(&mut self, _cid: i64, _csid: i64, _chal: &[u8]) {}
-    fn on_admin_response(&mut self, _csid: i64, _cid: i64, _rt: ergo_aeron_cluster::codecs::session::AdminRequestType, _rc: ergo_aeron_cluster::codecs::session::AdminResponseCode, _msg: &str, _pl: &[u8]) {}
+    fn on_admin_response(
+        &mut self,
+        _csid: i64,
+        _cid: i64,
+        _rt: ergo_aeron_cluster::codecs::session::AdminRequestType,
+        _rc: ergo_aeron_cluster::codecs::session::AdminResponseCode,
+        _msg: &str,
+        _pl: &[u8],
+    ) {
+    }
 }
 
 struct ControlledRec {
@@ -55,7 +73,9 @@ fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::
     let mut client = AeronCluster::connect(&builder, &dir.to_string_lossy())?;
     assert!(client.cluster_session_id() >= 0, "session not established");
 
-    let rec = Rec { messages: Mutex::new(Vec::new()) };
+    let rec = Rec {
+        messages: Mutex::new(Vec::new()),
+    };
     let mut adapter = EgressAdapter::new(rec);
 
     client.offer(PAYLOAD)?;
@@ -70,7 +90,10 @@ fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::
 
     let msgs = adapter.listener().messages.lock().unwrap();
     assert!(!msgs.is_empty(), "expected at least one reassembled message");
-    assert_eq!(msgs[0], PAYLOAD, "reassembled payload must match sent payload byte-for-byte");
+    assert_eq!(
+        msgs[0], PAYLOAD,
+        "reassembled payload must match sent payload byte-for-byte"
+    );
 
     Ok(())
 }
@@ -89,7 +112,9 @@ fn test_fragmented_egress_controlled_poll_reassembles_and_commits() -> Result<()
     let mut client = AeronCluster::connect(&builder, &dir.to_string_lossy())?;
     assert!(client.cluster_session_id() >= 0);
 
-    let rec = ControlledRec { messages: Mutex::new(Vec::new()) };
+    let rec = ControlledRec {
+        messages: Mutex::new(Vec::new()),
+    };
     let mut adapter = ControlledEgressAdapter::new(rec);
 
     client.offer(PAYLOAD)?;
@@ -103,7 +128,10 @@ fn test_fragmented_egress_controlled_poll_reassembles_and_commits() -> Result<()
     }
 
     let msgs = adapter.listener().messages.lock().unwrap();
-    assert!(!msgs.is_empty(), "expected at least one reassembled message via controlled poll");
+    assert!(
+        !msgs.is_empty(),
+        "expected at least one reassembled message via controlled poll"
+    );
     assert_eq!(msgs[0], PAYLOAD);
 
     Ok(())
