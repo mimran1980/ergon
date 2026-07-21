@@ -159,7 +159,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                     return ControlledPollAction::Continue;
                 };
                 let pl = pl.to_vec();
-                self.listener.on_admin_response(csid, cid, rt, rc, &msg, &pl);
+                self.listener.on_admin_response(csid, cid, rt, rc, msg, &pl);
                 ControlledPollAction::Continue
             }
             AnyMessage::Unknown { .. } => ControlledPollAction::Continue,
