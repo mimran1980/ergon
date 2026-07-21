@@ -446,8 +446,8 @@ Another agent should take the unchecked items in this dependency order:
 - [ ] Repoint the two Rust source-documentation references from the temporary
   `sbe/design/DECISIONS.md` compatibility pointer to this file, then delete the
   pointer without changing the canonical design location.
-- [ ] Restrict the ErgoSBE package to its manifest, README, and required source.
-- [ ] Restrict the Cluster package to its manifest, README, build script,
+- [x] Restrict the ErgoSBE package to its manifest, README, and required source.
+- [x] Restrict the Cluster package to its manifest, README, build script,
   required Aeron schemas, source, and three supported examples.
 - [ ] Move Java harness support into the unpublished laboratory area and remove
   tests, reference codecs, RFQ schemas, and application protocols from the
