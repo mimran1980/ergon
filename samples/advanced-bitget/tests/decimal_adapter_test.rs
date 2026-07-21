@@ -7,7 +7,8 @@ use std::str::FromStr;
 
 use advanced_bitget::decimal::parse_decimal_exact;
 use advanced_bitget::normalized_app::{
-    AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, SbeDecimal, Source, sbe_rt,
+    AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, Source, sbe_rt,
+    TryFromSbe, TryToSbe,
 };
 
 #[test]
@@ -29,7 +30,7 @@ fn parse_decimal_exact_matrix() -> Result<(), Box<dyn std::error::Error>> {
         ("92233720368.54775807", i64::MAX, -8),
     ];
     for &(input, m, e) in cases {
-        assert_eq!(parse_decimal_exact(input), Ok((m, e)), "input {input}");
+        let wd = parse_decimal_exact(input).unwrap(); assert_eq!((wd.mantissa, wd.exponent), (m, e), "input {input}");
     }
 
     // Malformed and out-of-range inputs are rejected, never zeroed.
@@ -58,7 +59,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let after = enc
             .bids(1, |g| {
                 let _ = g.add(|e| {
-                    e.price::<rust_decimal::Decimal>(d).unwrap();
+                    e.price_from(&d).unwrap();
                     let _ = e.size_wire(Decimal::new(1, 0));
                 });
             })
@@ -70,11 +71,13 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let dec = L2BookDecoder::wrap_and_apply_header(&bytes, 0).unwrap();
         let mut g = dec.into_bids().unwrap();
         let entry = g.next().unwrap();
-        let back: rust_decimal::Decimal = entry.price().unwrap();
+        let back: rust_decimal::Decimal = rust_decimal::Decimal::try_from_sbe(entry.price_value()).unwrap();
         assert_eq!(back, d, "round trip for {text}");
 
         // Byte equivalence with the raw wire model.
-        let (m, e) = d.try_into_sbe().unwrap();
+        let wire = d.try_to_sbe().unwrap();
+        let m = wire.mantissa();
+        let e = wire.exponent();
         let mut buf2 = vec![0u8; inner_len];
         let mut enc = L2BookEncoder::wrap_and_apply_header(&mut buf2, 0).unwrap();
         let _ = enc
@@ -141,13 +144,13 @@ fn convert_error_display_and_wire_decimal_new() -> Result<(), Box<dyn std::error
 #[test]
 fn rust_decimal_adapter_positive_exponent_and_overflow() -> Result<(), Box<dyn std::error::Error>> {
     // Positive exponent scales up exactly.
-    let d: rust_decimal::Decimal = SbeDecimal::try_from_sbe(5, 2).unwrap();
+    let d: rust_decimal::Decimal = TryFromSbe::<Decimal>::try_from_sbe(Decimal::new(5, 2)).unwrap();
     assert_eq!(d, rust_decimal::Decimal::from(500));
-    let d: rust_decimal::Decimal = SbeDecimal::try_from_sbe(-5, 2).unwrap();
+    let d: rust_decimal::Decimal = TryFromSbe::<Decimal>::try_from_sbe(Decimal::new(-5, 2)).unwrap();
     assert_eq!(d, rust_decimal::Decimal::from(-500));
 
     // Overflow: mantissa * 10^30 exceeds the adapter's exact range.
-    let err = <rust_decimal::Decimal as SbeDecimal>::try_from_sbe(i64::MAX, 30).unwrap_err();
+    let err = <rust_decimal::Decimal as TryFromSbe<Decimal>>::try_from_sbe(Decimal::new(i64::MAX, 30)).unwrap_err();
     assert_eq!(err, advanced_bitget::decimal::DecimalConvertError::Overflow);
 
     Ok(())
