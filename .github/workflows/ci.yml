@@ -16,8 +16,6 @@ env:
 
 jobs:
   lint:
-    # workflow_dispatch has no head_commit — short-circuit before contains()
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
