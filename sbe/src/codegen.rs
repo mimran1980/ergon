@@ -528,7 +528,8 @@ fn generate_sbe_rt_src() -> String {
                 InvalidVarDataLength { field: &'static str, length: u32, max_length: u32 },
                 /// Field/group/data was added in a schema version later than the wire message.
                 FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
-                Utf8(core::str::Utf8Error),
+                InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
+                InvalidAscii { field: &'static str },
             }
 
             impl core::fmt::Display for DecodeError {
@@ -540,7 +541,8 @@ fn generate_sbe_rt_src() -> String {
                         Self::UnknownTemplateLength { template_id } => write!(f, "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.", template_id),
                         Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}: length {} exceeds max {}", field, length, max_length),
                         Self::FieldNotInVersion { field, wire_version, since_version } => write!(f, "field '{}' not in wire version {} (added in version {})", field, wire_version, since_version),
-                        Self::Utf8(err) => write!(f, "UTF-8 decode error: {}", err),
+                        Self::InvalidUtf8 { field, error } => write!(f, "field '{}': invalid UTF-8: {}", field, error),
+                        Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
                     }
                 }
             }
@@ -983,6 +985,7 @@ struct MessageVarData {
     description: Option<String>,
     type_name: String,
     max_length: Option<usize>,
+    character_encoding: Option<String>,
 }
 
 fn parse_message_structure(tokens: &[Token], elements: &SchemaElements) -> MessageStructure {
@@ -1187,15 +1190,21 @@ fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
 
     let mut type_name = "varDataEncoding".to_string();
     let mut max_length = None;
+    let mut character_encoding: Option<String> = None;
     if tokens.len() > 2 && tokens[1].signal == Signal::BeginComposite {
         type_name = tokens[1].name.clone();
-        // Scan composite members for the length field's max_value.
+        // Scan composite members for the length field's max_value and any
+        // characterEncoding declaration.
         let comp_end = find_matching_end(tokens, 1, Signal::BeginComposite, Signal::EndComposite);
         let mut i = 2;
         while i < comp_end {
-            if tokens[i].signal == Signal::BeginField && tokens[i].name == "length" {
-                max_length = tokens[i].encoding.max_value.map(|v| v as usize);
-                break;
+            if tokens[i].signal == Signal::BeginField {
+                if tokens[i].name == "length" {
+                    max_length = tokens[i].encoding.max_value.map(|v| v as usize);
+                }
+                if character_encoding.is_none() {
+                    character_encoding = tokens[i].encoding.character_encoding.clone();
+                }
             }
             i += 1;
         }
@@ -1208,6 +1217,7 @@ fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
         description,
         type_name,
         max_length,
+        character_encoding,
     }
 }
 
@@ -2197,6 +2207,7 @@ struct OwnerTailVarData {
     len_field: String,
     max_length: Option<usize>,
     name: String,
+    character_encoding: Option<String>,
 }
 
 /// Core generator for concrete consuming tail stages (DECISIONS.md §3), shared
@@ -2372,6 +2383,35 @@ fn generate_owner_consuming_stages(
             }
         });
 
+        // Text var-data: into_<field>_as_str() for schema-declared characterEncoding.
+        if let Some(ref enc) = vd.character_encoding {
+            let is_text = enc.eq_ignore_ascii_case("UTF-8") || enc.eq_ignore_ascii_case("UTF8")
+                || enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII");
+            if is_text {
+                let as_str_ident = syn::Ident::new(
+                    &format!("into_{}_as_str", vd.accessor_snake), span);
+                let into_ident = syn::Ident::new(
+                    &format!("into_{}", vd.accessor_snake), span);
+                ts.extend(quote::quote! {
+                    impl<'a> #current_stage<'a> {
+                        /// Consume this stage, read the next text var-data field as
+                        /// a validated `&str`, and advance to the following stage.
+                        #[inline]
+                        pub fn #as_str_ident(self) -> Result<(&'a str, #next_stage<'a>), sbe_rt::DecodeError> {
+                            let (bytes, next) = self.#into_ident()?;
+                            let s = core::str::from_utf8(bytes).map_err(|e| {
+                                sbe_rt::DecodeError::InvalidUtf8 {
+                                    field: #vd_name_lit,
+                                    error: e,
+                                }
+                            })?;
+                            Ok((s, next))
+                        }
+                    }
+                });
+            }
+        }
+
         // Nested-message decode convenience: into_<field>_as_message()
         // delegates to into_<field>() then AnyMessage::decode_frame.
         let as_msg_ident = syn::Ident::new(&format!("into_{}_as_message", vd.accessor_snake), span);
@@ -2532,6 +2572,7 @@ fn generate_decoder_consuming_stages(
                 len_field,
                 max_length: vd.max_length,
                 name: vd.name.clone(),
+                character_encoding: vd.character_encoding.clone(),
             }
         })
         .collect();
@@ -2576,6 +2617,7 @@ fn generate_entry_consuming_stages(
                 len_field,
                 max_length: vd.max_length,
                 name: vd.name.clone(),
+                character_encoding: vd.character_encoding.clone(),
             }
         })
         .collect();
@@ -3409,29 +3451,20 @@ fn generate_message_decoder(
             }
         });
 
-        // UTF-8 str accessor
+        // Fallible UTF-8/ASCII str accessor (characterEncoding-aware).
         let str_ident = syn::Ident::new(
             &format!("{vd_snake}_as_str"),
             proc_macro2::Span::call_site(),
         );
+        let vd_snake_str = vd_snake.clone();
         impl_body.extend(quote::quote! {
             #[inline]
             fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
                 let bytes = self.#vd_snake_ident()?;
-                core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
-            }
-        });
-
-        // Infallible UTF-8 accessor with a consistent sentinel — survives
-        // invalid SBE at 3am without panicking.
-        let str_lossy_ident = syn::Ident::new(
-            &format!("{vd_snake}_as_str_lossy"),
-            proc_macro2::Span::call_site(),
-        );
-        impl_body.extend(quote::quote! {
-            #[inline]
-            fn #str_lossy_ident(&self) -> &'a str {
-                self.#str_ident().unwrap_or("<invalid utf-8>")
+                core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                    field: #vd_snake_str,
+                    error: e,
+                })
             }
         });
 

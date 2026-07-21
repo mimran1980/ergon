@@ -27,7 +27,8 @@ pub mod sbe_rt {
         InvalidVarDataLength { field: &'static str, length: u32, max_length: u32 },
         /// Field/group/data was added in a schema version later than the wire message.
         FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
-        Utf8(core::str::Utf8Error),
+        InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
+        InvalidAscii { field: &'static str },
     }
     impl core::fmt::Display for DecodeError {
         #[cold]
@@ -64,7 +65,12 @@ pub mod sbe_rt {
                         field, wire_version, since_version
                     )
                 }
-                Self::Utf8(err) => write!(f, "UTF-8 decode error: {}", err),
+                Self::InvalidUtf8 { field, error } => {
+                    write!(f, "field '{}': invalid UTF-8: {}", field, error)
+                }
+                Self::InvalidAscii { field } => {
+                    write!(f, "field '{}': invalid ASCII", field)
+                }
             }
         }
     }
@@ -1137,11 +1143,11 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     fn manufacturer_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.manufacturer()?;
-        core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
-    }
-    #[inline]
-    fn manufacturer_as_str_lossy(&self) -> &'a str {
-        self.manufacturer_as_str().unwrap_or("<invalid utf-8>")
+        core::str::from_utf8(bytes)
+            .map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                field: "manufacturer",
+                error: e,
+            })
     }
     #[inline]
     fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -1169,11 +1175,11 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     fn model_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.model()?;
-        core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
-    }
-    #[inline]
-    fn model_as_str_lossy(&self) -> &'a str {
-        self.model_as_str().unwrap_or("<invalid utf-8>")
+        core::str::from_utf8(bytes)
+            .map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                field: "model",
+                error: e,
+            })
     }
     #[inline]
     fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -1201,11 +1207,11 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.activation_code()?;
-        core::str::from_utf8(bytes).map_err(sbe_rt::DecodeError::Utf8)
-    }
-    #[inline]
-    fn activation_code_as_str_lossy(&self) -> &'a str {
-        self.activation_code_as_str().unwrap_or("<invalid utf-8>")
+        core::str::from_utf8(bytes)
+            .map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                field: "activation_code",
+                error: e,
+            })
     }
     /// Consume this stage and return a fresh decoder at the initial
     /// message position. The consumed stage cannot be reused.
@@ -1812,6 +1818,24 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             acting_block_length: self.acting_block_length,
         };
         Ok((data, next))
+    }
+}
+impl<'a> FuelFiguresEntryDecoder<'a> {
+    /// Consume this stage, read the next text var-data field as
+    /// a validated `&str`, and advance to the following stage.
+    #[inline]
+    pub fn into_usage_description_as_str(
+        self,
+    ) -> Result<(&'a str, FuelFiguresEntryDecoderComplete<'a>), sbe_rt::DecodeError> {
+        let (bytes, next) = self.into_usage_description()?;
+        let s = core::str::from_utf8(bytes)
+            .map_err(|e| {
+                sbe_rt::DecodeError::InvalidUtf8 {
+                    field: "usageDescription",
+                    error: e,
+                }
+            })?;
+        Ok((s, next))
     }
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
@@ -2684,6 +2708,24 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
+    /// Consume this stage, read the next text var-data field as
+    /// a validated `&str`, and advance to the following stage.
+    #[inline]
+    pub fn into_manufacturer_as_str(
+        self,
+    ) -> Result<(&'a str, CarDecoderAfterManufacturer<'a>), sbe_rt::DecodeError> {
+        let (bytes, next) = self.into_manufacturer()?;
+        let s = core::str::from_utf8(bytes)
+            .map_err(|e| {
+                sbe_rt::DecodeError::InvalidUtf8 {
+                    field: "manufacturer",
+                    error: e,
+                }
+            })?;
+        Ok((s, next))
+    }
+}
+impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     /// Consume this stage, decode the var-data field as a nested
     /// SBE message via `AnyMessage::decode_frame`, and advance
     /// to the next stage.
@@ -2779,6 +2821,24 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     }
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
+    /// Consume this stage, read the next text var-data field as
+    /// a validated `&str`, and advance to the following stage.
+    #[inline]
+    pub fn into_model_as_str(
+        self,
+    ) -> Result<(&'a str, CarDecoderAfterModel<'a>), sbe_rt::DecodeError> {
+        let (bytes, next) = self.into_model()?;
+        let s = core::str::from_utf8(bytes)
+            .map_err(|e| {
+                sbe_rt::DecodeError::InvalidUtf8 {
+                    field: "model",
+                    error: e,
+                }
+            })?;
+        Ok((s, next))
+    }
+}
+impl<'a> CarDecoderAfterManufacturer<'a> {
     /// Consume this stage, decode the var-data field as a nested
     /// SBE message via `AnyMessage::decode_frame`, and advance
     /// to the next stage.
@@ -2862,6 +2922,24 @@ impl<'a> CarDecoderAfterModel<'a> {
             acting_block_length: self.acting_block_length,
         };
         Ok((data, next))
+    }
+}
+impl<'a> CarDecoderAfterModel<'a> {
+    /// Consume this stage, read the next text var-data field as
+    /// a validated `&str`, and advance to the following stage.
+    #[inline]
+    pub fn into_activation_code_as_str(
+        self,
+    ) -> Result<(&'a str, CarDecoderComplete<'a>), sbe_rt::DecodeError> {
+        let (bytes, next) = self.into_activation_code()?;
+        let s = core::str::from_utf8(bytes)
+            .map_err(|e| {
+                sbe_rt::DecodeError::InvalidUtf8 {
+                    field: "activationCode",
+                    error: e,
+                }
+            })?;
+        Ok((s, next))
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {

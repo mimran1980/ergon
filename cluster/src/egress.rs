@@ -6,12 +6,6 @@
 use crate::codecs::session::SessionMessageHeaderEncoder;
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode};
 
-/// Decode var-data bytes as UTF-8 with a consistent sentinel on failure.
-#[inline]
-fn as_utf8_lossy(data: &[u8]) -> &str {
-    std::str::from_utf8(data).unwrap_or("<invalid utf-8>")
-}
-
 /// Callbacks for egress (cluster→client) messages.
 ///
 /// All methods are infallible — errors are buffered and surfaced on
@@ -139,10 +133,7 @@ impl<L: EgressListener> EgressAdapter<L> {
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let code = decoder.code();
-                let detail = decoder
-                    .into_detail()
-                    .map(|(b, _)| as_utf8_lossy(b))
-                    .unwrap_or("<invalid utf-8>");
+                let (detail, _) = decoder.into_detail_as_str()?;
                 self.listener.on_session_event(cid, csid, ltid, lmid, code, detail);
                 Ok(true)
             }
@@ -150,10 +141,7 @@ impl<L: EgressListener> EgressAdapter<L> {
                 let csid = decoder.cluster_session_id();
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
-                let eps = decoder
-                    .into_ingress_endpoints()
-                    .map(|(b, _)| as_utf8_lossy(b))
-                    .unwrap_or("<invalid utf-8>");
+                let (eps, _) = decoder.into_ingress_endpoints_as_str()?;
                 self.listener.on_new_leader(csid, ltid, lmid, eps);
                 Ok(true)
             }
@@ -178,8 +166,11 @@ impl<L: EgressListener> EgressAdapter<L> {
                     .map_err(|e| crate::ClusterError::ProtocolError {
                         reason: format!("admin response payload: {e:?}"),
                     })?;
-                let msg = as_utf8_lossy(msg_bytes).to_string();
-                self.listener.on_admin_response(csid, cid, rt, rc, &msg, payload_bytes);
+                let msg = std::str::from_utf8(msg_bytes)
+                    .map_err(|e| crate::ClusterError::ProtocolError {
+                        reason: format!("admin response message not valid UTF-8: {e}"),
+                    })?;
+                self.listener.on_admin_response(csid, cid, rt, rc, msg, payload_bytes);
                 Ok(true)
             }
             AnyMessage::Unknown { .. } => Ok(false),

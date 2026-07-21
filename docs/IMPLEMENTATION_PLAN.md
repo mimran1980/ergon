@@ -297,12 +297,15 @@ copied into the crate.
 
 ### F. Documentation and packaging
 
-- [ ] Keep this file as the only design record, backlog, and implementation
+- [x] Keep this file as the only design record, backlog, and implementation
   tracker; do not recreate per-task Markdown todos or archived plan trees.
-- [ ] Keep the root and crate READMEs aligned with the four project postures and
+- [x] Keep the root and crate READMEs aligned with the four project postures and
   clearly separate current behaviour from unfinished design.
 - [ ] Add a documentation hygiene gate that rejects new todo directories,
   `*-goal.md` files, archived plan trees, or a second active tracker.
+- [ ] Repoint the two Rust source-documentation references from the temporary
+  `sbe/design/DECISIONS.md` compatibility pointer to this file, then delete the
+  pointer without changing the canonical design location.
 - [ ] Restrict the ErgoSBE package to its manifest, README, and required source.
 - [ ] Restrict the Cluster package to its manifest, README, build script,
   required Aeron schemas, source, and three supported examples.

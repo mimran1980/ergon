@@ -1,278 +1,126 @@
-# ergo-sbe (`sbe/`)
+# ergo-sbe
 
-SBE XML → idiomatic Rust codec generator. Core pillar of the ErgoSBE umbrella.
+> **Experimental prototype. Do not use in production.** The generated interface
+> is intentionally opinionated and will change while its safety, ergonomics, wire
+> compatibility, and performance are evaluated.
 
-## Status
+ErgoSBE parses Simple Binary Encoding XML schemas and generates Rust encoders and
+decoders. It is the primary project in this repository and the most thoroughly
+tested, but it is still research software rather than a supported replacement for
+the official SBE toolchain.
 
-**Experimental product crate.** Maintained ErgoSBE vs Aeron SBE matrix is green
-(10/10 ≤ 1.00 as of 2026-07-18). Not a universal "HFT-ready" claim beyond that set.
+The goal is to prototype generated Rust interfaces that are easier and safer to
+use without giving up low-latency performance. Useful ideas may eventually be
+adapted for the official Java SBE Rust generator.
 
-Verified-open items only: [`../docs/LIVING_BACKLOG.md`](../docs/LIVING_BACKLOG.md).
+## Current capabilities
 
-## Depends on
+- SBE XML parsing, validation, includes, and schema normalization.
+- Rust generation for messages, primitives, enums, sets, composites, repeating
+  groups, and variable data.
+- Acting-version-aware decoding and configurable byte order.
+- Borrowed flyweight decoding and mutable-buffer encoding.
+- Concrete consuming stages for ordered group and variable-data tails.
+- Message dispatch, framing helpers, diagnostics, schema fixtures, allocation
+  tests, and Aeron reference comparisons.
+- Optional `serde` derives and an experimental domain-object layer.
 
-- Rust MSRV **1.95** (workspace)
-- Official SBE semantics / wire shape (see design authority below)
+These capabilities do not mean the planned interface is complete. The current
+review found partial converter emission, bypassable fixed-field completion,
+incomplete recursive domain mapping, incomplete composite symmetry, and
+inconsistent handling of schema-declared text. See the single
+[`implementation plan`](../docs/IMPLEMENTATION_PLAN.md) for the exact design and
+open acceptance criteria.
 
-## Build / test
+## Build and test
+
+From the repository root:
 
 ```sh
-cargo test -p ergo-sbe --lib
-cargo test -p ergo-sbe --test baseline_test
-cargo bench -p ergosbe-benchmarks --no-run   # from repo root
-just bench                                   # Aeron parity matrix
+cargo test -p ergo-sbe --all-features -- --test-threads=1
+cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
+cargo doc -p ergo-sbe --all-features --no-deps
+cargo bench -p ergosbe-benchmarks --no-run
 ```
 
-## Quick start
+Generator and hot-path changes must also run the equal-work performance suite:
 
-```rust
-use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
-
-let xml = std::fs::read_to_string("my_schema.xml")?;
-let ir = parse(&xml)?;
-let schema = Schema::from_ir(ir);
-
-let modules = Generator::new(GenerationConfig::new("my_codec"))
-    .generate(&schema)?;
-
-for m in modules.modules() {
-    std::fs::write(&m.path, &m.source)?;
-}
+```sh
+just bench
 ```
 
-## Public entry points
+Passing tests establish the covered baseline only. They do not close an item in
+the implementation plan unless the item's behavioural, compile-fail, allocation,
+and performance criteria are present and pass.
 
-### Parsing and generation
+## Minimal generation example
 
-| Entry | Role |
-|-------|------|
-| `parse` / `parse_file` | SBE XML → token IR |
-| `Schema::from_ir` | IR → schema for generation |
-| `Generator::new(config)` | Create generator from config |
-| `Generator::generate(&schema)` | → `Result<GeneratedModuleSet, GenerateError>` |
-| `Generator::generate_multi(&[(schema, name)])` | Multi-schema with shared types |
+Add ErgoSBE as a build dependency while working in this repository:
 
-### Configuration builders
-
-```rust
-use ergo_sbe::{GenerationConfig, ConversionSelector};
-
-let config = GenerationConfig::new("my_codec")
-    .enable_domain_objects()                             // owned MsgDomain structs
-    .with_shared_module("common_types")                   // share enums/sets/composites
-    .with_external_sbe_rt("crate::shared::sbe_rt")       // deduplicate runtime
-    .enable_error_from_impls("crate::MyError")            // From impls for ?
-    .with_conversion(ConversionSelector::named_type("Decimal"))        // *_as / *_from
-    .with_conversion(ConversionSelector::semantic_type("UTCTimestamp")) // by semanticType
-    .with_domain_type(                                     // concrete domain type
-        ConversionSelector::named_type("Decimal"),
-        "rust_decimal::Decimal",
-    );
+```toml
+[build-dependencies]
+ergo-sbe = { path = "../sbe" }
 ```
 
-## Generated API
+A build script can parse a schema and write the generated module to `OUT_DIR`:
 
-### Flyweight (zero-copy, no heap)
+```rust,no_run
+use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
 
-```rust
-// Encode
-let mut buf = vec![0u8; 256];
-let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
-enc.serial_number(42);
-enc.model_year(2020);
-enc.available(BooleanType::T);
-enc.code(Model::A);
-enc.some_numbers([0u32; 4]);
-enc.vehicle_code([0u8; 6]);
-enc.extras(OptionalExtras::default());
-enc.engine(Engine::new(1000, 4, [0, 0, 0], 0, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse_file("schemas/messages.xml")?;
+    let schema = Schema::from_ir(ir);
+    let generated = Generator::new(GenerationConfig::new("messages"))
+        .generate(&schema)?;
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
 
-// Consuming tail stages (groups + var-data in wire order)
-let after_fuel = enc.fuel_figures(2, |g| {
-    g.add(|e| {
-        e.speed(30).mpg(35.9);
-        e.usage_description(b"Urban")?;
-        Ok::<_, sbe_rt::EncodeError>(())
-    })?;
-    g.add(|e| {
-        e.speed(55).mpg(49.0);
-        e.usage_description(b"Highway")?;
-        Ok::<_, sbe_rt::EncodeError>(())
-    })
-})?;
-let after_perf = after_fuel.performance_figures(1, |g| {
-    g.add(|e| {
-        e.octane_rating(95);
-        e.acceleration(2, |ag| {
-            ag.add(|ae| { ae.mph(30).seconds(4.0); Ok::<_, sbe_rt::EncodeError>(()) })?;
-            ag.add(|ae| { ae.mph(60).seconds(7.5); Ok::<_, sbe_rt::EncodeError>(()) })
-        })
-    })
-})?;
-let complete = after_perf
-    .manufacturer(b"Honda")?
-    .model(b"Civic")?
-    .activation_code(b"ABC")?;
-let wire: &[u8] = complete.as_bytes();
-
-// Decode
-let dec = CarDecoder::wrap_and_apply_header(wire, 0)?;
-assert_eq!(dec.serial_number(), 42);
-assert_eq!(dec.engine().capacity(), 1000); // flyweight composite view
-
-// Consuming decoder tail stages
-let ff = dec.into_fuel_figures()?;
-for entry in &ff {
-    let e = entry?;
-    println!("speed={} mpg={}", e.speed(), e.mpg());
-}
-```
-
-### Safe encoder with `FixedFields`
-
-```rust
-// Build a complete fixed-field snapshot
-let fixed = CarFixedFields {
-    serial_number: 42,
-    model_year: 2020,
-    available: BooleanType::T,
-    code: Model::A,
-    some_numbers: [0u32; 4],
-    vehicle_code: [0u8; 6],
-    extras: OptionalExtras::default(),
-    engine: Engine::new(1000, 4, [0, 0, 0], 0, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
-};
-
-// Write all fixed fields at once, get encoder for tail stages
-let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
-let enc = enc.fixed(&fixed);
-let complete = enc.fuel_figures(0, |_| {})?;
-let wire = complete.as_bytes();
-
-// Low-level: raw fixed writer (all setters available, no validation)
-let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
-let raw = enc.raw_fixed();
-raw.serial_number(42);
-raw.model_year(2020);
-let tail_buf: &mut [u8] = raw.finish_unchecked();
-```
-
-### Typed conversions (`*_as` / `*_from`)
-
-```rust
-use ergo_sbe::{GenerationConfig, ConversionSelector};
-
-// Enable conversions for Decimal composites:
-let config = GenerationConfig::new("prices")
-    .with_conversion(ConversionSelector::named_type("Decimal"));
-
-// Implement the traits for an application type:
-struct Price(i64); // fixed-scale representation
-
-impl TryFromSbe<Decimal> for Price {
-    type Error = &'static str;
-    fn try_from_sbe(wire: Decimal) -> Result<Self, Self::Error> {
-        Ok(Price(wire.mantissa() * 10i64.pow(wire.exponent() as u32)))
+    for module in generated.modules() {
+        std::fs::write(out.join(&module.path), &module.source)?;
     }
+
+    Ok(())
 }
-impl TryToSbe<Decimal> for Price {
-    type Error = &'static str;
-    fn try_to_sbe(&self) -> Result<Decimal, Self::Error> {
-        Ok(Decimal::new(self.0, 0))
-    }
-}
-
-// Generated methods (statically dispatched, zero-allocation):
-let price: Price = decoder.price_as()?;
-encoder.price_from(&price)?;
-
-// Raw wire access always available:
-let raw: Decimal = decoder.price_wire();
-encoder.price_wire(raw);
 ```
 
-### Domain objects
+Include the generated file from the consuming crate:
 
-```rust
-let config = GenerationConfig::new("my_codec")
-    .enable_domain_objects()
-    .with_domain_type(
-        ConversionSelector::named_type("Decimal"),
-        "rust_decimal::Decimal",
-    );
-
-// Generated: owned MsgDomain struct with From<MsgDecoder>
-let car_domain: CarDomain = CarDomain::from(&decoder);
-// Round-trip: encode from domain
-let complete = CarEncoder::encode_domain(&car_domain, &mut buf)?;
+```rust,ignore
+include!(concat!(env!("OUT_DIR"), "/messages.rs"));
 ```
 
-### Composite value / flyweight symmetry
+Generated surface details are deliberately not duplicated here while the
+pre-release redesign is unfinished. Generated code and tests are the truth for
+current behaviour; the implementation plan is the truth for intended behaviour.
 
-```rust
-// Owned value (latest version):
-let engine: Engine = decoder.engine_value();
+## Design direction
 
-// Zero-copy flyweight (borrows from wire):
-let engine_view: EngineDecoder<'_> = decoder.engine();
-
-// Direct-write encoder flyweight:
-encoder.engine(&engine);          // from owned value
-encoder.engine_mut().capacity(2000); // write through flyweight
-```
-
-## Nested SBE payloads
-
-```rust
-// Sizing
-let inner = L2BookEncoder::compute_encoded_length_with_message_header(n_b, n_a, sym_len);
-let outer = AppMessageEncoder::compute_encoded_length_with_message_header(name_len, inner);
-
-// Encode nested
-let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0)?;
-let after = app.app_name(name)?;
-after.payload_with(inner, |p| {
-    let mut book = L2BookEncoder::wrap_and_apply_header(p, 0)?;
-    book.bids(n_b as u16, |g| {
-        for level in bids {
-            g.add(|e| { e.price_wire(px).size_wire(sz); Ok::<_, sbe_rt::EncodeError>(()) })?;
-        }
-        Ok::<_, sbe_rt::EncodeError>(())
-    })
-})?;
-
-// Decode nested
-let app = AppMessageDecoder::wrap_and_apply_header(buf, 0)?;
-let book = app.into_payload_as_message()?; // AnyMessage dispatch
-```
-
-Full recipe: [`docs/guide/claim-nested-encode.md`](docs/guide/claim-nested-encode.md).
+- Official SBE wire compatibility is non-negotiable.
+- Encoders target the latest schema version; decoders honour the acting version.
+- Required fixed fields will be proven as a phase, while groups and variable data
+  retain consuming wire-order stages.
+- One generic, statically dispatched converter seam will serve boolean, decimal,
+  timestamp, newtype, composite, and domain conversions.
+- Variable data remains bytes at the low-level wire interface. When the schema
+  declares UTF-8 or ASCII, the decoder will additionally provide a fallible,
+  zero-copy `&str` view.
+- Malformed data must remain an error. Lossy or default substitution is not part
+  of the generated protocol interface.
+- Owned domain objects are optional convenience. Flyweights remain the hot-path
+  interface.
 
 ## Layout
 
-| Path | Role |
-|------|------|
-| `src/xml.rs`, `schema.rs` | Parse / validate SBE XML |
-| `src/ir.rs`, `resolve.rs` | Intermediate representation + offsets |
-| `src/config.rs` | `GenerationConfig`, `ConversionSelector`, builders |
-| `src/codegen.rs` | Rust source generation (`syn` / `quote` / `prettyplease`) |
-| `design/DECISIONS.md` | Canonical design authority |
-| `GUIDE.md` | Feature guide + builder reference |
-| `docs/guide/` | Getting started, schema authoring, generated API, claim/nested |
-| `examples/` | `flyweight.rs` (zero-copy) and `domain_objects.rs` (owned) |
-| `tests/` | Wire, golden, compile-fail, allocation, conversion proofs |
+| Path | Purpose |
+|---|---|
+| `src/xml.rs` | Parse and validate SBE XML |
+| `src/ir.rs` and `src/resolve.rs` | Intermediate representation and layout resolution |
+| `src/config.rs` | Generator configuration |
+| `src/codegen.rs` | Rust source generation |
+| `tests/` | Behavioural, parity, regression, allocation, and stability coverage |
 
-## Where truth lives
+## Publication
 
-- Design: [`design/DECISIONS.md`](design/DECISIONS.md)
-- Guide: [`GUIDE.md`](GUIDE.md)
-- Claim / nested: [`docs/guide/claim-nested-encode.md`](docs/guide/claim-nested-encode.md)
-- Perf ledger: [`../ergosbe-performance-optimisation-goal.md`](../ergosbe-performance-optimisation-goal.md)
-- Roadmap: [`../docs/ROADMAP.md`](../docs/ROADMAP.md)
-- Crate rustdoc: `cargo doc -p ergo-sbe --open`
-
-## Non-goals
-
-- Nightly-only APIs, speculative SIMD bulk copy, broad per-field unchecked families
-- Transmute / native-endian casts from wire buffers
-- Hand-editing generated sample codecs instead of regenerating from XML
+`ergo-sbe` is intended for an eventual crates.io `0.x` prototype release. It is
+not ready to publish until every release item in the implementation plan passes,
+the package contents are minimal, and the public documentation describes only
+verified behaviour.

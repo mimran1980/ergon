@@ -31,8 +31,8 @@ pub struct SessionEventView<'a> {
     pub leader_member_id: i32,
     /// Event code.
     pub code: EventCode,
-    /// Detail string bytes (ASCII / UTF-8 as sent by the cluster).
-    pub detail: &'a [u8],
+    /// Detail string (validated UTF-8 from the cluster).
+    pub detail: &'a str,
 }
 
 /// Fields from a `NewLeaderEvent` (template for leadership change).
@@ -44,8 +44,8 @@ pub struct NewLeaderEventView<'a> {
     pub leadership_term_id: i64,
     /// New leader member id.
     pub leader_member_id: i32,
-    /// Ingress endpoints string bytes.
-    pub ingress_endpoints: &'a [u8],
+    /// Ingress endpoints string (validated UTF-8 from the cluster).
+    pub ingress_endpoints: &'a str,
 }
 
 /// Decode a full SessionMessageHeader frame (8-byte SBE header + 24-byte body).
@@ -77,7 +77,8 @@ pub fn decode_session_event(data: &[u8]) -> Result<SessionEventView<'_>, Cluster
     let leadership_term_id = d.leadership_term_id();
     let leader_member_id = d.leader_member_id();
     let code = d.code();
-    let (detail, _) = d.into_detail()?;
+    let (detail, _) = d.into_detail_as_str()
+        .map_err(|e| ClusterError::ProtocolError { reason: e.to_string() })?;
     Ok(SessionEventView {
         correlation_id,
         cluster_session_id,
@@ -99,7 +100,8 @@ pub fn decode_new_leader_event(data: &[u8]) -> Result<NewLeaderEventView<'_>, Cl
     let cluster_session_id = d.cluster_session_id();
     let leadership_term_id = d.leadership_term_id();
     let leader_member_id = d.leader_member_id();
-    let (ingress_endpoints, _) = d.into_ingress_endpoints()?;
+    let (ingress_endpoints, _) = d.into_ingress_endpoints_as_str()
+        .map_err(|e| ClusterError::ProtocolError { reason: e.to_string() })?;
     Ok(NewLeaderEventView {
         cluster_session_id,
         leadership_term_id,
@@ -146,7 +148,7 @@ mod tests {
         assert_eq!(view.cluster_session_id, 1);
         assert_eq!(view.leadership_term_id, 5);
         assert_eq!(view.code, EventCode::OK);
-        assert_eq!(view.detail, b"some-detail");
+        assert_eq!(view.detail, "some-detail");
         Ok(())
     }
 
@@ -161,7 +163,7 @@ mod tests {
         assert_eq!(view.cluster_session_id, 2);
         assert_eq!(view.leadership_term_id, 9);
         assert_eq!(view.leader_member_id, 1);
-        assert_eq!(view.ingress_endpoints, b"0=localhost:9000");
+        assert_eq!(view.ingress_endpoints, "0=localhost:9000");
         Ok(())
     }
 

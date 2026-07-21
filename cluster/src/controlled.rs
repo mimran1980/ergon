@@ -4,11 +4,6 @@
 
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder};
 
-/// Decode var-data bytes as UTF-8 with a consistent sentinel on failure.
-#[inline]
-fn as_utf8_lossy(data: &[u8]) -> &str {
-    std::str::from_utf8(data).unwrap_or("<invalid utf-8>")
-}
 
 /// Map [`ControlledPollAction`] to Aeron C values (ABORT=1, BREAK=2, COMMIT=3, CONTINUE=4).
 #[allow(dead_code)]
@@ -123,9 +118,9 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let lmid = decoder.leader_member_id();
                 let code = decoder.code();
                 let detail = decoder
-                    .into_detail()
-                    .map(|(b, _)| as_utf8_lossy(b))
-                    .unwrap_or("<invalid utf-8>");
+                    .into_detail_as_str()
+                    .map(|(s, _)| s)
+                    .unwrap_or("");
                 self.listener.on_session_event(cid, csid, ltid, lmid, code, detail);
                 ControlledPollAction::Continue
             }
@@ -134,9 +129,9 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let eps = decoder
-                    .into_ingress_endpoints()
-                    .map(|(b, _)| as_utf8_lossy(b))
-                    .unwrap_or("<invalid utf-8>");
+                    .into_ingress_endpoints_as_str()
+                    .map(|(s, _)| s)
+                    .unwrap_or("");
                 self.listener.on_new_leader(csid, ltid, lmid, eps);
                 ControlledPollAction::Continue
             }
@@ -160,7 +155,9 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                     Ok(v) => v,
                     Err(_) => return ControlledPollAction::Continue,
                 };
-                let msg = as_utf8_lossy(msg_bytes).to_string();
+                let Ok(msg) = std::str::from_utf8(msg_bytes) else {
+                    return ControlledPollAction::Continue;
+                };
                 let pl = pl.to_vec();
                 self.listener.on_admin_response(csid, cid, rt, rc, &msg, &pl);
                 ControlledPollAction::Continue
