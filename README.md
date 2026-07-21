@@ -1,287 +1,114 @@
 # ErgoSBE
 
-> **Experimental.** This repository is an experimental umbrella project.
-> APIs, directory layout, and crate names may change without notice.
+> **Experimental hobby repository. Do not use any crate in this repository in
+> production.** Interfaces are deliberately opinionated, incomplete, and subject
+> to breaking changes while the design is explored.
 
-An experimental Rust workspace for low-latency trading infrastructure, built
-around four pillars: SBE code generation, ClickHouse persistence, an Aeron
-Cluster client, and end-to-end samples.
+This repository has two prototype projects and two internal laboratories.
 
-## Start here
+| Directory | Status | Purpose |
+|---|---|---|
+| [`sbe/`](sbe/) | Primary prototype; intended for an eventual `0.x` crates.io release | Explore ergonomic, safe, and very fast Rust code generation for Simple Binary Encoding |
+| [`cluster/`](cluster/) | Hobby prototype; intended for an eventual `0.x` crates.io release | Experiment with an Aeron Cluster client in Rust and exercise ErgoSBE against Aeron's protocol |
+| [`persist/`](persist/) | Unpublished laboratory | Exercise ErgoSBE domain objects and ClickHouse-oriented mappings |
+| [`samples/`](samples/) | Unpublished playground | Try APIs end to end; low-quality code that must not be treated as reference material |
 
-| Goal | Go to |
-|------|--------|
-| Generate codecs / wire API | [`sbe/docs/guide/getting-started.md`](sbe/docs/guide/getting-started.md) |
-| Claim + nested AppMessage encode | [`sbe/docs/guide/claim-nested-encode.md`](sbe/docs/guide/claim-nested-encode.md) |
-| Verified-open work only | [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md) |
-| Full local gate | `just check` |
-| Cluster client | [`cluster/README.md`](cluster/README.md) |
-| Samples map | [`samples/README.md`](samples/README.md) |
+ErgoSBE is the main focus and the most tested part of the repository. Its purpose
+is fast prototyping: find generated Rust interfaces that are pleasant to use,
+hard to misuse, and at least as fast as the maintained Aeron SBE comparison. In
+the best case, useful ideas can later be adapted for the official Java SBE Rust
+generator so the wider SBE community benefits.
 
-Path dependency in this monorepo (`ergo-sbe = { path = "sbe" }`); crates.io
-version numbers in guides are illustrative.
+Ergo Aeron Cluster is intentionally a hobby experiment. The preferable long-term
+solution is for Aeron to provide official Cluster C client bindings and for
+rusteron to expose them. This crate is not a substitute for that work.
 
-## Project layout
+## Current state
 
-| Directory | Crate | Purpose | Docs |
-|-----------|-------|---------|------|
-| `sbe/` | `ergo-sbe` | SBE XML → idiomatic Rust codec generator | [`sbe/README.md`](sbe/README.md) |
-| `persist/` (+ `persist/derive/`) | `ergo-clickhouse-persist` | Auto-persist annotated structs to ClickHouse | [`persist/README.md`](persist/README.md), [`persist/derive/README.md`](persist/derive/README.md) |
-| `cluster/` | `ergo-aeron-cluster` | Aeron Cluster client + optional Java `test-harness` | [`cluster/README.md`](cluster/README.md) |
-| `ergosbe-benchmarks/` | `ergosbe-benchmarks` | Criterion Aeron-parity matrix | [`ergosbe-benchmarks/README.md`](ergosbe-benchmarks/README.md) |
-| `samples/` (excluded) | — | End-to-end demos (IPC + HA) | [`samples/README.md`](samples/README.md) |
+The repository is preparing for its first prototype release; it is not release
+ready today. The corrected design and all verified-open work live in the single
+[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md). Checked historical
+todo files were removed because several described only partial implementations.
 
-| Sample | Transport | Recipe |
-|--------|-----------|--------|
-| [`advanced-bitget`](samples/advanced-bitget/) | Aeron **IPC** (+ multi-schema / Persist DTO) | `just samples-orderbook` / `just test-ipc` |
-| [`cluster-ha-orderbook`](samples/cluster-ha-orderbook/) | Aeron **Cluster** | `just samples-cluster-ha` |
+Important known gaps include:
 
-Two harnesses only (former `exchange-orderbook` merged into advanced-bitget).
-All rusteron crates use **`0.2`** (^0.2 → latest 0.2.x).
+- the generic converter registry is only partially emitted;
+- latest-version fixed-field encoding does not yet prove all required fields;
+- generated domain mappings are incomplete and can hide malformed tails;
+- schema-declared text variable data is not consistently exposed as fallible
+  zero-copy strings;
+- the Cluster client still exposes internal protocol surface and has incomplete
+  error/reconnect handling;
+- samples and package contents still need release cleanup.
 
-```text
-IPC:      AppMessage claims → Aeron IPC → typed/dynamic CH + Persist snapshot DTO
-Cluster:  try_claim → Java cluster → never-stale book + feed_latency DynamicRow
-```
+Do not infer completion from generated method names or passing baseline tests.
 
-Note: cluster dir is `cluster/`, crate name is `ergo-aeron-cluster`. Java
-multi-node helpers live **in that crate** under feature `test-harness`
-(`test_support` module). "Excluded" samples are not workspace members.
+## Repository map
 
-## Submodules
+- [ErgoSBE README](sbe/README.md)
+- [Ergo Aeron Cluster README](cluster/README.md)
+- [Persist laboratory README](persist/README.md)
+- [Samples laboratory README](samples/README.md)
+- [Implementation plan and design](docs/IMPLEMENTATION_PLAN.md)
+- [Contributing and verification](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 
-- `simple-binary-encoding/` — the official SBE reference implementation
-  (wire-compatibility reference and Java tooling).
-- `aeron/` — Aeron pinned at 1.52.2 (`5b62f21d91`): the cluster SBE schema
-  source of truth and the Gradle build for test jars.
+The repository also vendors two upstream submodules:
+
+- `simple-binary-encoding/`: official SBE reference implementation and tooling.
+- `aeron/`: Aeron source, schemas, and Java test infrastructure.
+
+Initialise them with:
 
 ```sh
 git submodule update --init --recursive
 ```
 
-## Gates
+## Development checks
 
-| Command | What it proves | Needs |
-|---------|----------------|-------|
-| `just check` | Hygiene, fmt, clippy, workspace tests, IPC samples, cluster lib | Rust only |
-| `just check-aeron-cluster` | Cluster fmt/clippy/lib tests | Rust only |
-| `just build-aeron-jars` then `just test-aeron-cluster-harness` | Full cluster integration suite | Java 17+ |
-| `just bench` | Aeron perf-parity matrix (ErgoSBE vs Aeron SBE) | Rust only |
-| `just bench-cluster` | Cluster codec encode+decode head-to-head (ErgoSBE vs sbe-tool) | Rust only |
-| `just samples-orderbook` | Live ClickHouse E2E (IPC sample) | Docker |
-| `just samples-cluster-ha` | HA offline + feed_latency CH | Docker |
-| `just samples-cluster-ha-kill-leader` | Multi-node never-stale book | Java + jars |
-**Gotcha (`--all-features` + cluster):** `ergo-aeron-cluster` *is* a workspace
-member. Optional feature `test-harness` compiles the in-crate Java harness
-(Aeron jars). So `just build` / `just check` run:
-
-```text
-cargo … --workspace --all-features --exclude ergo-aeron-cluster
-cargo … -p ergo-aeron-cluster          # default features only (pure Rust)
-```
-
-Never bare `cargo … --workspace --all-features` if you want a Java-free gate.
-Harness: `just build-aeron-jars` then `just test-aeron-cluster-harness`.
-
-**Layout:** pillar directories `sbe/`, `persist/`, `cluster/`, `samples/` are
-permanent names (never rename). Cluster dir names intentionally differ from
-crate names (`ergo-aeron-cluster`).
-
-### Release (crates.io)
-
-Publish **product** crates one-by-one at **default features** (do not enable
-`test-harness` for a publish build):
-
-1. `ergo-sbe` (`sbe/`)
-2. `ergo-clickhouse-persist-derive` then `ergo-clickhouse-persist`
-3. `ergo-aeron-cluster` — default features only (never enable `test-harness` for publish)
-
-**Do not publish:** `ergosbe-benchmarks` (`publish = false`), samples.
-Tag the monorepo after a coordinated release. Downstream apps use crates.io
-versions; in-repo samples keep `path = …`. The Aeron submodule pin is independent
-of crate version numbers.
-
-**Verified-open backlog only:** [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md).  
-Umbrella orientation (historical):
-[`docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md`](docs/superpowers/plans/2026-07-18-ergosbe-experimental-master-plan.md).  
-HA sample:
-[`samples/cluster-ha-orderbook/`](samples/cluster-ha-orderbook/).
-
----
-
-# Pillar: sbe (ErgoSBE codegen)
-
-Opinionated, idiomatic Rust code generation for [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/) (SBE).
-
-ErgoSBE reads SBE XML schemas and produces safe, fast, version-aware Rust codecs.
-The project goal is byte-for-byte compatibility with the official SBE reference
-implementation, with an API shaped for Rust rather than translated from Java.
-
-## Features
-
-These are the implemented/generated capabilities. Release-quality claims such as
-"full Aeron parity", "HFT-ready", and "safe by parse" are gated by
-[`sbe/todos/123-release-quality-gates.md`](sbe/todos/123-release-quality-gates.md).
-
-### Standout features vs Aeron Rust SBE
-
-- **`Display` and `Debug` on every encoder and decoder** — shows actual
-  field values (like Java `toString()`), not raw positions. Decoder `Debug`
-  delegates to Display so both give `Car { serial_number: 42, model_year: 2013 }`.
-  Survives **invalid/truncated SBE** without panicking — each field is
-  bounds-checked against the wire buffer and gracefully skipped when out of
-  range. Encoder stages have structural `Debug` (mid-encode state).
-- **miette-powered error diagnostics** — every parse, resolve, and decode
-  error carries `#[source_code]` + `#[label]` spans. Errors on invalid
-  schemas show the offending XML with annotated positions, not just plain
-  strings. `DecodeError` is a closed enum (field name, needed/available bytes
-  per variant) — actionable at 3am.
-- **Comprehensive test suite** — 25 integration test files (>13k LOC):
-  golden wire-parity against Aeron Java reference (18/18), allocation-count
-  zero-alloc proofs, compile-fail consuming-stage safety proofs, 10
-  error-handler schema fixtures from Aeron, per-field regression coverage
-  (92 baseline tests), display/debug survival on invalid SBE, doc-provenance
-  verification, and per-schema regen stability.
-
-- **XML schema parsing** — parse SBE schemas with XInclude support, miette diagnostics
-- **Encoder/Decoder generation** -- zero-allocation fixed-block views plus concrete consuming tail stages
-- **Infallible field accessors** — scalar, enum, set, and composite accessors are plain `fn(&self) -> T`, no unwrapping
-- **Flat enum generation** — enums are true Rust `enum`s with a `NullVal` variant for unknown wire values (no separate `Kind` type)
-- **Buffer verification** — `Decoder::verify(&[u8])` validates an entire message buffer before decoding, reporting group/vardata bounds
-- **Version-aware decoding** — all accessors respect the wire message version
-- **Repeating groups** -- concrete ordered group/entry stages; runtime counts remain wire-validated
-- **Variable-length data** — var-data with length-prefixed byte slices and optional UTF-8 accessors
-- **AnyMessage dispatch** — `AnyMessage` enum with `Unknown` forwarding for external frames
-- **FrameCursor** — iterate externally-framed SBE feed buffers (length-prefix or fixed-size)
-- **Multi-schema** — `generate_multi` for projects with shared type definitions across schemas
-- **Ordered tail stages** -- encoder and decoder enforce group/var-data order at compile time
-- **Optional/null handling** — `Option<T>` return types for optional and version-gated fields
-- **Feature-gated trusted-input path** -- `bound-check-disabled` keeps accessor names stable while routing validated/trusted inputs through unchecked internals
-- **Compile-time constants** — `FIELD_NULL`, `FIELD_MIN`, `FIELD_MAX` on every decoded field
-
-## Current Status
-
-- **Maintained ErgoSBE/Aeron parity matrix:** 16 ratios across 8 scenarios
-  (checked + unchecked) verified ≤ 1.00. Enforced by `scripts/check-bench-gate.sh`
-  via `just bench`. See [`ergosbe-performance-optimisation-goal.md`](ergosbe-performance-optimisation-goal.md)
-  for the full ledger.
-- Persist + IPC samples (`just samples-orderbook`) green when CH is up; live
-  exchange WebSocket remains a **manual** recipe (not CI).
-- **Cluster:** residual product complete; claim_shaped encode maintained;
-  SessionConnectRequest encode and NewLeader decode are **not** ≤1.00 gates.
-- Open work: [`docs/LIVING_BACKLOG.md`](docs/LIVING_BACKLOG.md) only
-  (`sbe/todos/` is a historical inventory).
-
-## Quick start
-
-### 1. Add dependency (monorepo path)
-
-```toml
-[build-dependencies]
-ergo-sbe = { path = "../sbe" }   # or crates.io "0.1" when published
-```
-
-### 2. Create `build.rs`
-
-```rust
-use ergo_sbe::{parse_file, Generator, GenerationConfig, Schema};
-
-fn main() {
-    // Parse an SBE XML schema file (with XInclude resolution)
-    let ir = parse_file("schemas/my_schema.xml").unwrap();
-    let schema = Schema::from_ir(ir);
-
-    // Configure the generator
-    let config = GenerationConfig::new("my_messages");
-    let generator = Generator::new(config);
-
-    // Generate Rust source
-    let output = generator.generate(&schema);
-
-    // Write to the output directory
-    let out_dir = std::env::var("OUT_DIR").unwrap();
-    for module in output.modules() {
-        std::fs::write(
-            format!("{}/{}", out_dir, module.path),
-            &module.source,
-        ).unwrap();
-    }
-}
-```
-
-### 3. Use generated code
-
-Scalar, enum, set, and composite field accessors are **infallible** -- no `?`, no `unwrap`:
-
-```rust
-// Include the generated module
-include!(concat!(env!("OUT_DIR"), "/my_messages.rs"));
-
-fn decode_message(buf: &[u8]) -> Result<(), sbe_rt::DecodeError> {
-    let car = CarDecoder::wrap_and_apply_header(buf, 0)?;
-    let serial = car.serial_number();           // u64 -- infallible
-    let year = car.model_year();                // u16 -- infallible
-    let model = car.code();                     // Model (flat enum) -- infallible
-    let extras = car.extras();                  // OptionalExtras (set) -- infallible
-    let engine = car.engine();                  // Engine (composite) -- infallible
-    println!("Car #{} ({})", serial, year);
-
-    // Groups and var-data use concrete consuming stages. Later tail
-    // components are unavailable until earlier ones are finished/skipped.
-    let fuel = car.fuel_figures()?;
-    let after_fuel = fuel.finish()?;
-    let _next = after_fuel.performance_figures()?;
-    Ok(())
-}
-```
-
-## Architecture
-
-| Layer | Module | Description |
-|-------|--------|-------------|
-| Schema Input | `xml`, `schema` | Parse SBE XML, resolve includes, validate |
-| Intermediate Repr | `ir`, `resolve` | Token stream, offset/block-length pass |
-| Generation Options | `config` | Module name, wire-compatibility policy |
-| Code Generation | `codegen` | Rust source production |
-
-## Related crates
-
-- **[`ergo-clickhouse-persist`](persist/README.md)** — debugging persistence:
-  auto-persist annotated Rust structs to ClickHouse with automatic schema
-  management. Consumer-side only, never on the hot path.
-
-## Design priorities
-
-1. **Official-SBE wire compatibility is non-negotiable.**
-2. **ErgoSBE must be equal to or faster than Aeron SBE in every maintained,
-   measured scenario.**
-3. **Prefer an easier or safer Rust API** when it is zero-cost or outside the
-   hot path.
-4. **Do not slow a benchmarked hot path** with a safety check, abstraction,
-   branch, or ergonomic wrapper unless it is an explicit opt-in.
-5. **Use simplicity as the tie-breaker** only when compatibility, performance,
-   and safety are equal.
-
-Generated ordered hot paths allocate no heap memory, and all decoding remains
-acting-version/acting-block-length aware. Trusted-input fast paths are explicit
-whole-path opt-ins rather than per-field unchecked API families.
-
-See [`sbe/design/DECISIONS.md`](sbe/design/DECISIONS.md) for the complete design rationale.
-
-## Development
-
-Prefer `just check` (matches CI hygiene). Equivalent manual gates:
+The convenient local entry point is:
 
 ```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+just check
+```
+
+The product-crate checks can also be run directly:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
+cargo test -p ergo-sbe --all-features -- --test-threads=1
 cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
 cargo test -p ergo-aeron-cluster --lib
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Some Cluster integration tests need Java 17+, built Aeron jars, and a local
+Aeron environment. Persist and sample live tests can require ClickHouse, Docker,
+network services, or a multi-node Java Cluster. See the laboratory READMEs before
+running those checks.
+
+## Release posture
+
+Only these crates are candidates for prototype publication:
+
+1. `ergo-sbe`
+2. `ergo-aeron-cluster`
+
+Persist, its derive crate, benchmarks, and samples are not publication targets.
+No publication should happen until every release item and acceptance command in
+the implementation plan passes and the package file lists have been inspected.
+
+## Design priorities
+
+1. Preserve official SBE wire compatibility.
+2. Do not regress maintained hot-path performance or allocation behaviour.
+3. Make the Rust interface easier and safer when the improvement is zero-cost on
+   the hot path or deliberately outside it.
+4. Prefer a small, coherent generated interface over many shallow convenience
+   methods.
+5. Surface malformed protocol data as errors; do not silently substitute default,
+   empty, or lossy values.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+Apache-2.0.
