@@ -4,7 +4,6 @@
 
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder};
 
-
 /// Map [`ControlledPollAction`] to Aeron C values (ABORT=1, BREAK=2, COMMIT=3, CONTINUE=4).
 #[allow(dead_code)]
 pub(crate) const fn action_to_aeron(action: ControlledPollAction) -> i32 {
@@ -101,9 +100,10 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
             AnyMessage::SessionMessageHeader(decoder) => {
                 // Filter: drop messages not addressed to our session.
                 if let Some(expected) = self.expected_session_id
-                    && decoder.cluster_session_id() != expected {
-                        return ControlledPollAction::Continue;
-                    }
+                    && decoder.cluster_session_id() != expected
+                {
+                    return ControlledPollAction::Continue;
+                }
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return ControlledPollAction::Continue;
                 }
@@ -117,10 +117,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let code = decoder.code();
-                let detail = decoder
-                    .into_detail_as_str()
-                    .map(|(s, _)| s)
-                    .unwrap_or("");
+                let detail = decoder.into_detail_as_str().map(|(s, _)| s).unwrap_or("");
                 self.listener.on_session_event(cid, csid, ltid, lmid, code, detail);
                 ControlledPollAction::Continue
             }
@@ -128,10 +125,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 let csid = decoder.cluster_session_id();
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
-                let eps = decoder
-                    .into_ingress_endpoints_as_str()
-                    .map(|(s, _)| s)
-                    .unwrap_or("");
+                let eps = decoder.into_ingress_endpoints_as_str().map(|(s, _)| s).unwrap_or("");
                 self.listener.on_new_leader(csid, ltid, lmid, eps);
                 ControlledPollAction::Continue
             }

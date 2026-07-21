@@ -28,14 +28,14 @@ fn test_udp_pub_sub_loopback_same_driver() -> Result<(), Box<dyn std::error::Err
     // Sub first, then pub. The subscription is held only so a receiver
     // exists on the channel for the publication to connect to.
     let _sub = a.add_subscription(
-        &uri,
+        uri,
         77,
         rusteron_client::Handlers::NONE,
         rusteron_client::Handlers::NONE,
         Duration::from_secs(3),
     )?;
 
-    let p = a.add_publication(&uri, 77, Duration::from_secs(3))?;
+    let p = a.add_publication(uri, 77, Duration::from_secs(3))?;
 
     // Try to send
     let mut sent = false;

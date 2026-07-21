@@ -392,9 +392,10 @@ impl AeronCluster {
         let now = Instant::now();
         if self.state == SessionState::Connected
             && now.saturating_duration_since(self.last_keep_alive) >= Duration::from_millis(self.keep_alive_interval_ms)
-            && self.send_keep_alive().is_ok() {
-                self.last_keep_alive = now;
-            }
+            && self.send_keep_alive().is_ok()
+        {
+            self.last_keep_alive = now;
+        }
     }
 
     /// Send an AdminRequest (e.g. snapshot) on the ingress publication.

@@ -77,7 +77,8 @@ pub fn decode_session_event(data: &[u8]) -> Result<SessionEventView<'_>, Cluster
     let leadership_term_id = d.leadership_term_id();
     let leader_member_id = d.leader_member_id();
     let code = d.code();
-    let (detail, _) = d.into_detail_as_str()
+    let (detail, _) = d
+        .into_detail_as_str()
         .map_err(|e| ClusterError::ProtocolError { reason: e.to_string() })?;
     Ok(SessionEventView {
         correlation_id,
@@ -100,7 +101,8 @@ pub fn decode_new_leader_event(data: &[u8]) -> Result<NewLeaderEventView<'_>, Cl
     let cluster_session_id = d.cluster_session_id();
     let leadership_term_id = d.leadership_term_id();
     let leader_member_id = d.leader_member_id();
-    let (ingress_endpoints, _) = d.into_ingress_endpoints_as_str()
+    let (ingress_endpoints, _) = d
+        .into_ingress_endpoints_as_str()
         .map_err(|e| ClusterError::ProtocolError { reason: e.to_string() })?;
     Ok(NewLeaderEventView {
         cluster_session_id,

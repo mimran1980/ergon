@@ -946,8 +946,7 @@ fn display_shows_group_entry_fields_not_just_count() -> Result<(), Box<dyn std::
 // ── composite flyweight default (todo 112) ───────────────────────────
 
 #[test]
-fn composite_default_is_flyweight_value_is_eager_copy() -> Result<(), Box<dyn std::error::Error>>
-{
+fn composite_default_is_flyweight_value_is_eager_copy() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "composite_api");
     compile_and_run(
         "composite_api",
@@ -2883,7 +2882,6 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-
 // ── Task 3: safe encoder contract (failing tests — API not yet generated) ──
 
 #[test]
@@ -2920,7 +2918,10 @@ fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Err
         !src.contains("finish_unchecked"),
         "finish_unchecked() must NOT be generated (no fixed-phase bypass)"
     );
-    assert!(src.contains("struct CarFixedFields"), "FixedFields struct must exist");
+    assert!(
+        src.contains("struct CarFixedFields"),
+        "FixedFields struct must exist"
+    );
     Ok(())
 }
 
@@ -2943,10 +2944,7 @@ fn composite_value_and_flyweight_symmetry_exists() -> Result<(), Box<dyn std::er
 fn fixed_and_raw_fixed_replace_try_fixed() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_replaces_try");
     // Task 4: fixed() + raw_fixed() dedicated writer replace try_fixed.
-    assert!(
-        src.contains("pub fn fixed("),
-        "fixed() must be generated"
-    );
+    assert!(src.contains("pub fn fixed("), "fixed() must be generated");
     assert!(
         src.contains("pub fn raw_fixed("),
         "raw_fixed() dedicated writer must be generated"

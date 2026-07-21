@@ -96,9 +96,7 @@ impl<L: EgressListener> EgressAdapter<L> {
 
         // Wrap dispatch in catch_unwind — panics must not unwind through
         // the Aeron C fragment handler callback.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.dispatch_unchecked(data, msg)
-        }));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.dispatch_unchecked(data, msg)));
         match result {
             Ok(r) => r,
             Err(_) => Err(crate::ClusterError::ListenerPanicked {
@@ -109,14 +107,14 @@ impl<L: EgressListener> EgressAdapter<L> {
 
     /// Inner dispatch without panic safety (called via catch_unwind).
     fn dispatch_unchecked(&mut self, data: &[u8], msg: AnyMessage<'_>) -> Result<bool, crate::ClusterError> {
-
         match msg {
             AnyMessage::SessionMessageHeader(decoder) => {
                 // Filter: drop messages not addressed to our session.
                 if let Some(expected) = self.expected_session_id
-                    && decoder.cluster_session_id() != expected {
-                        return Ok(true); // handled (dropped), not an error
-                    }
+                    && decoder.cluster_session_id() != expected
+                {
+                    return Ok(true); // handled (dropped), not an error
+                }
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return Err(crate::ClusterError::ProtocolError {
                         reason: "session message too short".into(),
@@ -166,10 +164,9 @@ impl<L: EgressListener> EgressAdapter<L> {
                     .map_err(|e| crate::ClusterError::ProtocolError {
                         reason: format!("admin response payload: {e:?}"),
                     })?;
-                let msg = std::str::from_utf8(msg_bytes)
-                    .map_err(|e| crate::ClusterError::ProtocolError {
-                        reason: format!("admin response message not valid UTF-8: {e}"),
-                    })?;
+                let msg = std::str::from_utf8(msg_bytes).map_err(|e| crate::ClusterError::ProtocolError {
+                    reason: format!("admin response message not valid UTF-8: {e}"),
+                })?;
                 self.listener.on_admin_response(csid, cid, rt, rc, msg, payload_bytes);
                 Ok(true)
             }

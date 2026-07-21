@@ -159,6 +159,26 @@ impl Generator {
         Ok(())
     }
 
+    /// Whether a message field matches any configured conversion selector.
+    fn field_has_conversion(
+        field: &MessageField,
+        conversions: &[crate::ConversionSelector],
+    ) -> bool {
+        let type_name = match &field.field_type {
+            FieldType::Composite { name, .. } => name.clone(),
+            FieldType::Enum { name, .. } => name.clone(),
+            FieldType::Set { name, .. } => name.clone(),
+            FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
+        };
+        conversions.iter().any(|sel| match sel {
+            crate::ConversionSelector::NamedType(n) => n == &type_name,
+            crate::ConversionSelector::SemanticType(st) => {
+                field.semantic_type.as_deref() == Some(st.as_str())
+            }
+            _ => false,
+        })
+    }
+
     /// Whether the config has a conversion selector matching the given type name,
     /// semantic type, or field path. Also returns true for FieldPath selectors
     /// that match `owner_name.field_name`.
@@ -2400,13 +2420,14 @@ fn generate_owner_consuming_stages(
 
         // Text var-data: into_<field>_as_str() for schema-declared characterEncoding.
         if let Some(ref enc) = vd.character_encoding {
-            let is_text = enc.eq_ignore_ascii_case("UTF-8") || enc.eq_ignore_ascii_case("UTF8")
-                || enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII");
+            let is_text = enc.eq_ignore_ascii_case("UTF-8")
+                || enc.eq_ignore_ascii_case("UTF8")
+                || enc.eq_ignore_ascii_case("ASCII")
+                || enc.eq_ignore_ascii_case("US-ASCII");
             if is_text {
-                let as_str_ident = syn::Ident::new(
-                    &format!("into_{}_as_str", vd.accessor_snake), span);
-                let into_ident = syn::Ident::new(
-                    &format!("into_{}", vd.accessor_snake), span);
+                let as_str_ident =
+                    syn::Ident::new(&format!("into_{}_as_str", vd.accessor_snake), span);
+                let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
                 ts.extend(quote::quote! {
                     impl<'a> #current_stage<'a> {
                         /// Consume this stage, read the next text var-data field as
@@ -4648,10 +4669,8 @@ fn generate_group_decoder(
                 });
 
                 // Eager copy accessor (_value)
-                let as_struct_ident = syn::Ident::new(
-                    &format!("{}_value", f_name),
-                    proc_macro2::Span::call_site(),
-                );
+                let as_struct_ident =
+                    syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
                 entry_body.extend(quote::quote! {
                     #[inline]
                     pub fn #as_struct_ident(&self) -> #target_ident {
@@ -5159,12 +5178,24 @@ fn generate_converter_impls(
     let mut encoder_methods = proc_macro2::TokenStream::new();
 
     for f in &msg.fields {
-        let comp_name = match &f.field_type {
-            FieldType::Composite { name, .. } => name,
-            _ => continue,
+        // Determine if this field has a conversion, and what the wire type is.
+        let (type_name, wire_type_ident): (String, syn::Ident) = match &f.field_type {
+            FieldType::Composite { name, .. } => {
+                (name.clone(), syn::Ident::new(&to_pascal_case(name), span))
+            }
+            FieldType::Enum { name, .. } => {
+                (name.clone(), syn::Ident::new(&to_pascal_case(name), span))
+            }
+            FieldType::Set { name, .. } => {
+                (name.clone(), syn::Ident::new(&to_pascal_case(name), span))
+            }
+            FieldType::Primitive(pt, _) => {
+                let rust_name = rust_type(*pt);
+                (rust_name.to_string(), syn::Ident::new(rust_name, span))
+            }
         };
         let has_conversion = conversions.iter().any(|sel| match sel {
-            crate::ConversionSelector::NamedType(n) => n == comp_name,
+            crate::ConversionSelector::NamedType(n) => n == &type_name,
             crate::ConversionSelector::SemanticType(st) => {
                 f.semantic_type.as_deref() == Some(st.as_str())
             }
@@ -5175,26 +5206,35 @@ fn generate_converter_impls(
         }
 
         let field_snake = to_snake_case(&f.name);
-        let wire_ident = syn::Ident::new(&format!("{field_snake}_wire"), span);
-        let as_struct_ident = syn::Ident::new(&format!("{field_snake}_value"), span);
         let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
         let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
-        let comp_type_ident = syn::Ident::new(&to_pascal_case(comp_name), span);
+
+        // Composites rename the raw accessor to _wire when converters are active.
+        // Primitives, enums, and sets keep their primary accessor name.
+        let (decoder_field, encoder_field) = if matches!(f.field_type, FieldType::Composite { .. })
+        {
+            let wire_ident = syn::Ident::new(&format!("{field_snake}_wire"), span);
+            let as_struct_ident = syn::Ident::new(&format!("{field_snake}_value"), span);
+            (as_struct_ident, wire_ident)
+        } else {
+            let field_ident = syn::Ident::new(&field_snake, span);
+            (field_ident.clone(), field_ident)
+        };
 
         decoder_methods.extend(quote::quote! {
             #[inline]
             #[must_use]
-            pub fn #as_ident<T: TryFromSbe<#comp_type_ident>>(&self) -> Result<T, T::Error> {
-                T::try_from_sbe(self.#as_struct_ident())
+            pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<T, T::Error> {
+                T::try_from_sbe(self.#decoder_field())
             }
         });
 
         encoder_methods.extend(quote::quote! {
             #[inline]
             #[must_use]
-            pub fn #from_ident<T: TryToSbe<#comp_type_ident>>(&mut self, value: &T) -> Result<&mut Self, T::Error> {
+            pub fn #from_ident<T: TryToSbe<#wire_type_ident>>(&mut self, value: &T) -> Result<&mut Self, T::Error> {
                 let wire = value.try_to_sbe()?;
-                self.#wire_ident(wire);
+                self.#encoder_field(wire);
                 Ok(self)
             }
         });
@@ -5958,7 +5998,9 @@ fn generate_message_encoder(
             }
             let fname_snake = to_snake_case(&f.name);
             let is_converted = match &f.field_type {
-                FieldType::Composite { name, .. } => conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)),
+                FieldType::Composite { name, .. } => conversions
+                    .iter()
+                    .any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)),
                 _ => false,
             };
             let setter_ident = if is_converted {

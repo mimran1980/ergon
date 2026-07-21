@@ -329,7 +329,7 @@ Another agent should take the unchecked items in this dependency order:
   be omitted and tail methods are unavailable before fixed completion.
 - [x] Add behavioural tests proving optional `None` writes the schema null value
   even when wrapping a buffer containing non-zero bytes.
-- [ ] Cover the same fixed-field proof for fixed-only and tailed group entries.
+- [x] Cover the same fixed-field proof for fixed-only and tailed group entries.
 - [x] Cover selector precedence, every eligible wire kind, nested paths,
   duplicates, conflicts, invalid Rust types, unmatched selectors, and method
   collisions.
@@ -337,13 +337,13 @@ Another agent should take the unchecked items in this dependency order:
   methods, text fields inside groups, and encoder validation before writes.
 - [x] Cover acting-version composite members, nested composite encoding, domain
   conversion errors, malformed groups, and malformed variable data.
-- [ ] Prove owned-message measured length equals the exact prefix returned by
+- [x] Prove owned-message measured length equals the exact prefix returned by
   `encode_into` for fixed messages, nested groups, composites, text, and binary
   variable data; cover overflow, count, and short-buffer errors.
-- [ ] Cover the single header parser for short input, both byte orders, custom
+- [x] Cover the single header parser for short input, both byte orders, custom
   header layouts, and all four standard header values. Add compile-fail coverage
   proving the retired peek/free-function interfaces are absent.
-- [ ] Generate two independent schemas with one shared runtime and prove they
+- [x] Generate two independent schemas with one shared runtime and prove they
   use identical error and conversion-trait types while emitting each runtime
   item exactly once.
 - [x] Cover Cluster listener errors, invalid text, session filtering, keep-alive
@@ -363,15 +363,15 @@ Another agent should take the unchecked items in this dependency order:
 - [x] Complete the latest-version fixed-field and ordered-tail state machine for
   messages and group entries.
 - [x] Complete owned/flyweight/direct-encoder composite symmetry.
-- [ ] Complete recursive fallible domain decoding and encoding.
-- [ ] Add allocation-free `encoded_length_with_header` and `encode_into`
+- [x] Complete recursive fallible domain decoding and encoding.
+- [x] Add allocation-free `encoded_length_with_header` and `encode_into`
   inherent methods to owned latest-version messages. Preallocate decoded domain
   group vectors from their exact entry counts and preserve every conversion
   error.
-- [ ] Consolidate all header peeking into
+- [x] Consolidate all header peeking into
   `MessageHeader::try_from_prefix`; remove raw-offset and overlapping Option
   helpers after migrating consumers.
-- [ ] Add explicit shared-runtime output for `generate_multi`, independent of
+- [x] Add explicit shared-runtime output for `generate_multi`, independent of
   shared schema types. Retain external-runtime support and remove stringifying
   generated application-error conversions.
 - [x] Remove generated comparisons such as `acting_version < 0`.and regenerate
@@ -386,52 +386,52 @@ Another agent should take the unchecked items in this dependency order:
   preserving bytes for binary protocol fields.
 - [x] Propagate decoding, text, listener, polling, keep-alive, and controlled
   callback errors through `ClusterResult`.
-- [ ] Make leader reconnect state replacement atomic and recreate both fragment
+- [x] Make leader reconnect state replacement atomic and recreate both fragment
   assemblers.
-- [ ] Replace the allocating high-level offer buffer with stack header plus
+- [x] Replace the allocating high-level offer buffer with stack header plus
   `offer_parts`.
 - [x] Remove shallow public CString helpers, RFQ/auction protocols, their codecs,
   schemas, examples, and reference-only public exports.
 - [x] Retain and simplify only connect/echo, controlled-polling, and failover
   examples.
-- [ ] Replace manual header offsets and overlapping peek helpers with
+- [x] Replace manual header offsets and overlapping peek helpers with
   `MessageHeader::try_from_prefix`, and use generated exact lengths, completed
   encoded slices, and nested-message helpers throughout Cluster.
 
 ### D. Keep laboratories honest
 
-- [ ] Update Persist to use schema-declared text accessors for table names,
+- [x] Update Persist to use schema-declared text accessors for table names,
   metadata, column names, and string values, while keeping the
   application-defined symbol table binary. Generate its v1/v2 schemas against
   one shared runtime.
-- [ ] Retain `DynamicRecorder`'s runtime row validation and ClickHouse encoding
+- [x] Retain `DynamicRecorder`'s runtime row validation and ClickHouse encoding
   policy in Persist, but remove wrapper code duplicated by generated exact-length
   and caller-buffer encoding APIs.
-- [ ] Update `advanced-bitget` and `cluster-ha-orderbook` to compile against the
+- [x] Update `advanced-bitget` and `cluster-ha-orderbook` to compile against the
   final interface and use `Result`/`?` instead of avoidable unwraps.
-- [ ] Replace local `WireDec`/`WireDecimal`, manual UTF-8 conversion, header-byte
+- [x] Replace local `WireDec`/`WireDecimal`, manual UTF-8 conversion, header-byte
   reads, and nested payload wrappers with configured conversions, generated
   composite/domain values, schema text methods, and existing nested-message
   helpers where applicable.
-- [ ] Use domain objects where they make the laboratories clearer; retain raw
+- [x] Use domain objects where they make the laboratories clearer; retain raw
   flyweights where allocation-free behaviour is what the test exercises.
-- [ ] Do not describe either sample as an example to copy or a reference
+- [x] Do not describe either sample as an example to copy or a reference
   implementation.
-- [ ] Remove sample and Persist code that no longer exercises a unique product
+- [x] Remove sample and Persist code that no longer exercises a unique product
   interface.
 
 ### E. Performance evidence
 
-- [ ] Add equal-work Criterion cases for raw setters versus fixed structs,
+- [x] Add equal-work Criterion cases for raw setters versus fixed structs,
   primitive and composite converters, byte versus borrowed-string variable data,
   domain mapping, owned `encode_into`, header inspection, ordered group entries,
   shared versus duplicated runtime generation, and Cluster `offer_parts`.
-- [ ] Add allocation assertions for fixed encoding, converter helpers, composite
+- [x] Add allocation assertions for fixed encoding, converter helpers, composite
   flyweights, borrowed text, owned measured encoding, fixed-width domain round
   trips, header inspection, and Cluster offer.
-- [ ] Compare generated direct access, safe fixed access, and the maintained Aeron
+- [x] Compare generated direct access, safe fixed access, and the maintained Aeron
   reference using byte-identical work.
-- [ ] Run three benchmark sessions. No maintained runtime median may regress by
+- [x] Run three benchmark sessions. No maintained runtime median may regress by
   more than 3%; generator time may not regress by more than 5%. Investigate and
   fix any larger regression before marking this section complete.
 
@@ -441,20 +441,20 @@ Another agent should take the unchecked items in this dependency order:
   tracker; do not recreate per-task Markdown todos or archived plan trees.
 - [x] Keep the root and crate READMEs aligned with the four project postures and
   clearly separate current behaviour from unfinished design.
-- [ ] Add a documentation hygiene gate that rejects new todo directories,
+- [x] Add a documentation hygiene gate that rejects new todo directories,
   `*-goal.md` files, archived plan trees, or a second active tracker.
-- [ ] Repoint the two Rust source-documentation references from the temporary
+- [x] Repoint the two Rust source-documentation references from the temporary
   `sbe/design/DECISIONS.md` compatibility pointer to this file, then delete the
   pointer without changing the canonical design location.
 - [x] Restrict the ErgoSBE package to its manifest, README, and required source.
 - [x] Restrict the Cluster package to its manifest, README, build script,
   required Aeron schemas, source, and three supported examples.
-- [ ] Move Java harness support into the unpublished laboratory area and remove
+- [x] Move Java harness support into the unpublished laboratory area and remove
   tests, reference codecs, RFQ schemas, and application protocols from the
   published Cluster package.
-- [ ] Complete crates.io metadata for ErgoSBE and Cluster. Persist, its derive
+- [x] Complete crates.io metadata for ErgoSBE and Cluster. Persist, its derive
   crate, benchmarks, and samples remain unpublished.
-- [ ] Add a root changelog and release check that packages and dry-runs both
+- [x] Add a root changelog and release check that packages and dry-runs both
   publishable crates.
 
 ## Acceptance criteria

@@ -104,6 +104,47 @@ release-check: check-products
 	@echo "release-check: product crates pass, benches compile, dry-run publish OK"
 
 # Workspace unit tests only
+# Comprehensive test suite: runs everything possible (unit, integration, IPC,
+# persistence, cluster lib, sample offline tests, and bench compilation).
+# Gated tests (ClickHouse live, Java harness) run only when their services are
+# available — they are skipped if the preflight fails rather than erroring.
+test:
+	@echo "=== 1/6 fmt ==="
+	cargo fmt --all --check
+	@echo "=== 2/6 clippy (workspace products + labs) ==="
+	cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+	cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+	@echo "=== 3/6 unit + integration tests (no external services) ==="
+	cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+	cargo test -p ergo-aeron-cluster --lib
+	@echo "=== 4/6 allocation proofs ==="
+	cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
+	@echo "=== 5/6 sample offline tests ==="
+	cd samples/advanced-bitget && cargo test --lib -- --test-threads=1 --skip clickhouse
+	cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
+	@echo "=== 6/6 bench compilation ==="
+	cargo bench -p ergosbe-benchmarks --no-run
+	@echo ""
+	@echo "=== Gated: ClickHouse live tests ==="
+	@if curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
+	    echo "ClickHouse available — running live tests"; \
+	    cargo test -p ergo-clickhouse-persist --all-features -- --test-threads=1 --include-ignored; \
+	    (cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture); \
+	    (cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture); \
+	else \
+	    echo "ClickHouse not available — skipping live tests (start with: bash persist/tests/run-clickhouse.sh start)"; \
+	fi
+	@echo ""
+	@echo "=== Gated: Aeron Cluster Java harness ==="
+	@if cargo test -p ergo-aeron-cluster --features test-harness --no-run 2>/dev/null; then \
+	    echo "test-harness compiles — running cluster integration tests"; \
+	    cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1; \
+	else \
+	    echo "Java harness not available — skipping (build jars with: just build-aeron-jars)"; \
+	fi
+	@echo ""
+	@echo "=== test: complete ==="
+
 # Workspace unit tests only (same --all-features / cluster exclude pattern as check).
 test-unit:
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
@@ -122,7 +163,7 @@ test-clickhouse-live:
         exit 1; \
     fi
     @echo "Preflight OK — endpoint http://127.0.0.1:8123 (external Docker)."
-    cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
+    (cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
 
 # Alias: IPC sample live CH E2E (typed + Persist DTO snapshot)
 samples-orderbook: test-clickhouse-live
@@ -140,7 +181,7 @@ samples-cluster-ha:
     fi
     @if curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
         echo "=== feed_latency DynamicRow → ClickHouse ==="; \
-        cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture; \
+        (cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture); \
     else \
         echo "WARNING: ClickHouse still unreachable; offline HA tests already ran."; \
         exit 1; \
