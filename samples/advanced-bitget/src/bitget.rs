@@ -215,7 +215,7 @@ fn parse_wire<E>(
     counters: &mut Counters,
 ) -> Result<WireDec, ApplyError<E>> {
     match parse_decimal_exact(s) {
-        Ok((m, e)) => Ok(WireDec::new(m, e)),
+        Ok(wd) => Ok(WireDec::new(wd.mantissa, wd.exponent)),
         Err(error) => {
             counters.malformed_values += 1;
             Err(ApplyError::MalformedDecimal { value_kind, error })

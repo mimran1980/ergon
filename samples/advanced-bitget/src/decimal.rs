@@ -50,21 +50,24 @@ impl std::error::Error for DecimalConvertError {}
 //
 // Generated code never mentions rust_decimal.
 
-/// Macro to implement the generated TryFromSbe trait for rust_decimal::Decimal
+/// Macro to implement the generated conversion traits for rust_decimal::Decimal
 /// in any module that has `normalized_app` in scope.
 #[macro_export]
 macro_rules! impl_sbe_decimal_for_rust_decimal {
     () => {
-        impl normalized_app::TryFromSbe for rust_decimal::Decimal {
+        impl normalized_app::TryFromSbe<normalized_app::Decimal>
+            for rust_decimal::Decimal
+        {
             type Error = $crate::decimal::DecimalConvertError;
 
-            fn try_from_sbe(wire: Decimal) -> Result<Self, Self::Error> {
+            fn try_from_sbe(wire: normalized_app::Decimal) -> Result<Self, Self::Error> {
+                let mantissa = wire.mantissa();
+                let exponent = wire.exponent();
                 if exponent <= 0 {
                     let scale = u32::from(exponent.unsigned_abs());
                     rust_decimal::Decimal::try_new(mantissa, scale)
                         .map_err(|_| $crate::decimal::DecimalConvertError::Overflow)
                 } else {
-                    // Positive exponent: scale the mantissa up exactly.
                     let factor = 10i128
                         .checked_pow(u32::from(exponent.unsigned_abs()))
                         .ok_or($crate::decimal::DecimalConvertError::Overflow)?;
@@ -75,8 +78,14 @@ macro_rules! impl_sbe_decimal_for_rust_decimal {
                         .map_err(|_| $crate::decimal::DecimalConvertError::Overflow)
                 }
             }
+        }
 
-            fn try_to_sbe(&self) -> Result<Decimal, Self::Error> {
+        impl normalized_app::TryToSbe<normalized_app::Decimal>
+            for rust_decimal::Decimal
+        {
+            type Error = $crate::decimal::DecimalConvertError;
+
+            fn try_to_sbe(&self) -> Result<normalized_app::Decimal, Self::Error> {
                 let mantissa: i128 = self.mantissa();
                 let scale = self.scale();
                 if scale > 127 {
@@ -85,7 +94,8 @@ macro_rules! impl_sbe_decimal_for_rust_decimal {
                 let mantissa: i64 = mantissa
                     .try_into()
                     .map_err(|_| $crate::decimal::DecimalConvertError::Overflow)?;
-                Ok((mantissa, -(scale as i8)))
+                let exponent: i8 = -(scale as i8);
+                Ok(normalized_app::Decimal::new(mantissa, exponent))
             }
         }
     };
@@ -144,7 +154,7 @@ fn ten_pow(n: u32) -> Option<i128> {
 
 /// Parse a decimal string exactly using rust_decimal, returning (mantissa, exponent).
 /// Invalid input returns an error — never silently converts to zero.
-pub fn parse_decimal_exact(s: &str) -> Result<Decimal, DecimalConvertError> {
+pub fn parse_decimal_exact(s: &str) -> Result<WireDecimal, DecimalConvertError> {
     let d = rust_decimal::Decimal::from_str(s).map_err(|_| DecimalConvertError::OutOfRange)?;
     let mantissa: i128 = d.mantissa();
     let scale = d.scale();
@@ -154,7 +164,7 @@ pub fn parse_decimal_exact(s: &str) -> Result<Decimal, DecimalConvertError> {
     let mantissa: i64 = mantissa
         .try_into()
         .map_err(|_| DecimalConvertError::Overflow)?;
-    Ok((mantissa, -(scale as i8)))
+    Ok(WireDecimal::new(mantissa, -(scale as i8)))
 }
 
 #[cfg(test)]
@@ -227,9 +237,9 @@ mod tests {
 
     #[test]
     fn parse_exact_valid() -> Result<(), Box<dyn std::error::Error>> {
-        let (m, e) = parse_decimal_exact("50000.00").unwrap();
-        assert_eq!(m, 5000000);
-        assert_eq!(e, -2);
+        let wd = parse_decimal_exact("50000.00").unwrap();
+        assert_eq!(wd.mantissa, 5000000);
+        assert_eq!(wd.exponent, -2);
 
         Ok(())
     }
@@ -243,9 +253,9 @@ mod tests {
 
     #[test]
     fn parse_exact_small_value() -> Result<(), Box<dyn std::error::Error>> {
-        let (m, e) = parse_decimal_exact("0.0015").unwrap();
-        assert_eq!(m, 15);
-        assert_eq!(e, -4);
+        let wd = parse_decimal_exact("0.0015").unwrap();
+        assert_eq!(wd.mantissa, 15);
+        assert_eq!(wd.exponent, -4);
 
         Ok(())
     }
