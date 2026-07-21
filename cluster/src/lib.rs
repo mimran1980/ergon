@@ -80,8 +80,6 @@ pub mod error;
 pub mod idle;
 /// Low-level egress event parse helpers (SessionEvent, NewLeader, redirects).
 pub mod poller;
-/// Session protocol constants derived from ErgoSBE encoder metadata.
-pub mod protocol;
 /// Session object wrappers used during connect/lifecycle.
 pub mod session;
 /// [`SessionState`] machine for connected / new-leader / closed.

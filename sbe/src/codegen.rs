@@ -106,6 +106,48 @@ impl GeneratedModuleSet {
 }
 
 /// SBE-to-Rust generator.
+/// Bundled schema identity + generation config, resolved once per schema.
+/// Replaces the 6–15 parameter lists threaded through every generator function.
+#[allow(missing_docs)]
+pub(crate) struct GenerationContext {
+    pub elements: SchemaElements,
+    pub byte_order: ByteOrder,
+    pub schema_id: u16,
+    pub schema_version: u16,
+    pub header_type: String,
+    pub header_size: usize,
+    pub schema_name: String,
+    pub multi_message: bool,
+    pub conversions: Vec<crate::ConversionSelector>,
+    pub unchecked_companions: bool,
+    pub domain_objects: bool,
+}
+
+impl GenerationContext {
+    fn from_schema(schema: &Schema, config: &GenerationConfig, multi_message: bool) -> Self {
+        let elements = partition_tokens(&schema.ir.tokens);
+        let header_size = elements
+            .composites
+            .iter()
+            .find(|c| c[0].name == schema.ir.header_type)
+            .and_then(|c| c[0].encoding.offset)
+            .unwrap_or(8);
+        Self {
+            elements,
+            byte_order: schema.ir.byte_order,
+            schema_id: schema.ir.id,
+            schema_version: schema.ir.version,
+            header_type: schema.ir.header_type.clone(),
+            header_size,
+            schema_name: schema.ir.package.clone(),
+            multi_message,
+            conversions: config.conversions.clone(),
+            unchecked_companions: config.unchecked_companions,
+            domain_objects: config.domain_objects,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Generator {
     config: GenerationConfig,
@@ -883,7 +925,7 @@ fn find_matching_end(tokens: &[Token], start: usize, begin: Signal, end: Signal)
     tokens.len() - 1
 }
 
-struct SchemaElements {
+pub(crate) struct SchemaElements {
     composites: Vec<Vec<Token>>,
     enums: Vec<Vec<Token>>,
     sets: Vec<Vec<Token>>,
