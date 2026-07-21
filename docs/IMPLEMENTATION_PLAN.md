@@ -228,7 +228,7 @@ copied into the crate.
 - [ ] Cover selector precedence, every eligible wire kind, nested paths,
   duplicates, conflicts, invalid Rust types, unmatched selectors, and method
   collisions.
-- [ ] Cover valid and invalid UTF-8 and ASCII, binary fields without string
+- [x] Cover valid and invalid UTF-8 and ASCII, binary fields without string
   methods, text fields inside groups, and encoder validation before writes.
 - [ ] Cover acting-version composite members, nested composite encoding, domain
   conversion errors, malformed groups, and malformed variable data.
@@ -237,28 +237,28 @@ copied into the crate.
 
 ### B. Complete ErgoSBE generation
 
-- [ ] Build the resolved conversion and character-encoding model once after
+- [x] Build the resolved conversion and character-encoding model once after
   schema normalization and use it from every emitter.
-- [ ] Remove decimal-specific configuration and generated traits, repeated
+- [x] Remove decimal-specific configuration and generated traits, repeated
   selector scans, unused generation helpers, stale comments, and silent `u8`
   fallbacks.
 - [ ] Emit the complete generic conversion interface for primitives, aliases,
   enums, sets, arrays, composites, messages, and recursive group entries.
-- [ ] Emit schema-driven raw and text variable-data methods with strict,
+- [x] Emit schema-driven raw and text variable-data methods with strict,
   field-aware errors and no lossy helpers.
 - [ ] Complete the latest-version fixed-field and ordered-tail state machine for
   messages and group entries.
 - [ ] Complete owned/flyweight/direct-encoder composite symmetry.
 - [ ] Complete recursive fallible domain decoding and encoding.
-- [ ] Remove generated comparisons such as `acting_version < 0`.
+- [x] Remove generated comparisons such as `acting_version < 0`.
 
 ### C. Harden Ergo Aeron Cluster
 
-- [ ] Make protocol codecs and internal modules private and expose only the
+- [x] Make protocol codecs and internal modules private and expose only the
   high-level client interface.
-- [ ] Change textual high-level views and callbacks to borrowed `&str`, while
+- [x] Change textual high-level views and callbacks to borrowed `&str`, while
   preserving bytes for binary protocol fields.
-- [ ] Propagate decoding, text, listener, polling, keep-alive, and controlled
+- [x] Propagate decoding, text, listener, polling, keep-alive, and controlled
   callback errors through `ClusterResult`.
 - [ ] Make leader reconnect state replacement atomic and recreate both fragment
   assemblers.
