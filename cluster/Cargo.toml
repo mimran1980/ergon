@@ -27,18 +27,6 @@ name = "echo_client"
 required-features = ["test-harness"]
 
 [[example]]
-name = "auction_client"
-required-features = ["test-harness"]
-
-[[example]]
-name = "rfq_client"
-required-features = ["test-harness"]
-
-[[example]]
-name = "rfq_roundtrip"
-required-features = ["test-harness"]
-
-[[example]]
 name = "async_connect_demo"
 required-features = ["test-harness"]
 

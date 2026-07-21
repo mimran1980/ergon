@@ -392,7 +392,7 @@ Another agent should take the unchecked items in this dependency order:
   `offer_parts`.
 - [x] Remove shallow public CString helpers, RFQ/auction protocols, their codecs,
   schemas, examples, and reference-only public exports.
-- [ ] Retain and simplify only connect/echo, controlled-polling, and failover
+- [x] Retain and simplify only connect/echo, controlled-polling, and failover
   examples.
 - [ ] Replace manual header offsets and overlapping peek helpers with
   `MessageHeader::try_from_prefix`, and use generated exact lengths, completed
