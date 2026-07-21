@@ -23,7 +23,7 @@ use rusteron_client::{
 
 use crate::uri;
 
-use crate::codecs::session::{
+use crate::proto::{
     AdminRequestEncoder, AdminRequestType, ChallengeResponseEncoder, SessionCloseRequestEncoder,
     SessionConnectRequestEncoder, SessionKeepAliveEncoder, SessionMessageHeaderEncoder,
 };
@@ -226,7 +226,7 @@ impl AeronCluster {
                     detail,
                     ..
                 }) => {
-                    use crate::codecs::session::EventCode;
+                    use crate::proto::EventCode;
                     match code {
                         EventCode::OK => {
                             self.cluster_session_id = cluster_session_id;
@@ -763,7 +763,7 @@ impl AsyncClusterConnect {
                             detail,
                             ..
                         } => {
-                            use crate::codecs::session::EventCode;
+                            use crate::proto::EventCode;
                             match code {
                                 EventCode::OK => {
                                     self.cluster_session_id = cluster_session_id;
@@ -931,7 +931,7 @@ mod tests {
 
     #[test]
     fn test_session_constants() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::codecs::session::{
+        use crate::proto::{
             SessionCloseRequestEncoder, SessionKeepAliveEncoder, SessionMessageHeaderEncoder,
         };
         assert_eq!(SessionMessageHeaderEncoder::TEMPLATE_ID, 1);

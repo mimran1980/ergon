@@ -23,7 +23,7 @@ fn test_udp_pub_sub_loopback_same_driver() -> Result<(), Box<dyn std::error::Err
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let uri = ergo_aeron_cluster::udp_endpoint_cstr("localhost:19999")?;
+    let uri = std::ffi::CString::new(format!("aeron:udp?endpoint=localhost:19999")).unwrap();
 
     // Sub first, then pub. The subscription is held only so a receiver
     // exists on the channel for the publication to connect to.

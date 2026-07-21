@@ -50,7 +50,15 @@ pub mod transport {
 /// High-level cluster client: connect, try_claim, offer, keep-alive, close.
 pub mod client;
 /// SBE codecs: ErgoSBE production modules + residual sbe-tool trees for benches.
-pub mod codecs;
+pub(crate) mod codecs;
+
+// Hidden re-export: generated Aeron protocol codecs for tests/benches only.
+// NOT part of the public high-level client API.
+#[doc(hidden)]
+pub mod proto {
+    pub use crate::codecs::session::*;
+    pub use crate::codecs::mark::*;
+}
 /// [`SessionBuilder`] configuration for connect.
 pub mod config;
 /// Async connect state machine and connect re-offer cadence helpers.
@@ -102,7 +110,7 @@ pub use idle::{
 };
 pub use poller::{EgressEvent, parse_event, parse_redirect_leader};
 pub use state::SessionState;
-pub use uri::{AERON_IPC_STREAM, channel_cstr, udp_endpoint_cstr};
+pub use uri::AERON_IPC_STREAM;
 
 /// Java Aeron Cluster spawn harness (integration tests / examples only).
 ///
