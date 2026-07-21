@@ -333,7 +333,7 @@ Another agent should take the unchecked items in this dependency order:
 - [x] Cover selector precedence, every eligible wire kind, nested paths,
   duplicates, conflicts, invalid Rust types, unmatched selectors, and method
   collisions.
-- [ ] Cover valid and invalid UTF-8 and ASCII, binary fields without string
+- [x] Cover valid and invalid UTF-8 and ASCII, binary fields without string
   methods, text fields inside groups, and encoder validation before writes.
 - [x] Cover acting-version composite members, nested composite encoding, domain
   conversion errors, malformed groups, and malformed variable data.
@@ -346,19 +346,19 @@ Another agent should take the unchecked items in this dependency order:
 - [ ] Generate two independent schemas with one shared runtime and prove they
   use identical error and conversion-trait types while emitting each runtime
   item exactly once.
-- [ ] Cover Cluster listener errors, invalid text, session filtering, keep-alive
+- [x] Cover Cluster listener errors, invalid text, session filtering, keep-alive
   failures, callback panics, and reconnect rollback.
 
 ### B. Complete ErgoSBE generation
 
-- [ ] Build the resolved conversion and character-encoding model once after
+- [x] Build the resolved conversion and character-encoding model once after
   schema normalization and use it from every emitter.
-- [ ] Remove decimal-specific configuration and generated traits, repeated
+- [x] Remove decimal-specific configuration and generated traits, repeated
   selector scans, unused generation helpers, stale comments, and silent `u8`
   fallbacks.
 - [x] Emit the complete generic conversion interface for primitives, aliases,
   enums, sets, arrays, composites, messages, and recursive group entries.
-- [ ] Emit schema-driven raw and text variable-data methods with strict,
+- [x] Emit schema-driven raw and text variable-data methods with strict,
   field-aware errors and no lossy helpers.
 - [x] Complete the latest-version fixed-field and ordered-tail state machine for
   messages and group entries.
@@ -379,18 +379,18 @@ Another agent should take the unchecked items in this dependency order:
 
 ### C. Harden Ergo Aeron Cluster
 
-- [ ] Make protocol codecs and internal modules private and expose only the
+- [x] Make protocol codecs and internal modules private and expose only the
   high-level client interface; a doc-hidden public re-export does not satisfy
   this requirement.
 - [x] Change textual high-level views and callbacks to borrowed `&str`, while
   preserving bytes for binary protocol fields.
-- [ ] Propagate decoding, text, listener, polling, keep-alive, and controlled
+- [x] Propagate decoding, text, listener, polling, keep-alive, and controlled
   callback errors through `ClusterResult`.
 - [ ] Make leader reconnect state replacement atomic and recreate both fragment
   assemblers.
 - [ ] Replace the allocating high-level offer buffer with stack header plus
   `offer_parts`.
-- [ ] Remove shallow public CString helpers, RFQ/auction protocols, their codecs,
+- [x] Remove shallow public CString helpers, RFQ/auction protocols, their codecs,
   schemas, examples, and reference-only public exports.
 - [ ] Retain and simplify only connect/echo, controlled-polling, and failover
   examples.
