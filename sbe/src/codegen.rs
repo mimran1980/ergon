@@ -159,15 +159,30 @@ impl Generator {
         Ok(())
     }
 
-    /// Whether the config has a conversion selector matching the given type name or semantic type.
-    fn has_conversion_for(&self, type_name: &str, _semantic_type: Option<&str>) -> bool {
+    /// Whether the config has a conversion selector matching the given type name,
+    /// semantic type, or field path. Also returns true for FieldPath selectors
+    /// that match `owner_name.field_name`.
+    fn has_conversion_for(
+        &self,
+        type_name: &str,
+        semantic_type: Option<&str>,
+        owner_name: Option<&str>,
+        field_name: &str,
+    ) -> bool {
         for sel in &self.config.conversions {
             match sel {
                 crate::ConversionSelector::NamedType(name) if name == type_name => return true,
                 crate::ConversionSelector::SemanticType(st)
-                    if Some(st.as_str()) == _semantic_type =>
+                    if semantic_type == Some(st.as_str()) =>
                 {
                     return true;
+                }
+                crate::ConversionSelector::FieldPath(path) => {
+                    // Match "Owner.field" or just "field"
+                    let expected = format!("{}.{}", owner_name.unwrap_or(""), field_name);
+                    if path == &expected || path == field_name {
+                        return true;
+                    }
                 }
                 _ => {}
             }

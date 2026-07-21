@@ -330,7 +330,7 @@ Another agent should take the unchecked items in this dependency order:
 - [x] Add behavioural tests proving optional `None` writes the schema null value
   even when wrapping a buffer containing non-zero bytes.
 - [ ] Cover the same fixed-field proof for fixed-only and tailed group entries.
-- [ ] Cover selector precedence, every eligible wire kind, nested paths,
+- [x] Cover selector precedence, every eligible wire kind, nested paths,
   duplicates, conflicts, invalid Rust types, unmatched selectors, and method
   collisions.
 - [ ] Cover valid and invalid UTF-8 and ASCII, binary fields without string
@@ -356,7 +356,7 @@ Another agent should take the unchecked items in this dependency order:
 - [ ] Remove decimal-specific configuration and generated traits, repeated
   selector scans, unused generation helpers, stale comments, and silent `u8`
   fallbacks.
-- [ ] Emit the complete generic conversion interface for primitives, aliases,
+- [x] Emit the complete generic conversion interface for primitives, aliases,
   enums, sets, arrays, composites, messages, and recursive group entries.
 - [ ] Emit schema-driven raw and text variable-data methods with strict,
   field-aware errors and no lossy helpers.
