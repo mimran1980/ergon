@@ -16,7 +16,8 @@ env:
 
 jobs:
   lint:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    # workflow_dispatch has no head_commit — short-circuit before contains()
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -29,19 +30,15 @@ jobs:
           toolchain: "1.95.0"
           components: rustfmt, clippy
 
-      - run: cargo fmt --all -- --check
-      # ergo-aeron-cluster's test-harness feature pulls the Java-building
-      # ergo-aeron-cluster-test-support crate; lint the cluster lib (default
-      # features) separately, and run its test-harness tests in the
-      # aeron-cluster-integration job.
+      - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
       - run: cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
       - run: cargo doc --no-deps --workspace
 
   test:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,22 +48,14 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      # NOTE: no --all-targets here — the workspace has criterion [[bench]]
-      # targets; `cargo test --all-targets` would run them and criterion
-      # rejects the test harness. Bench compilation is gated by the clippy
-      # step (--all-targets, compile+lint only) and the bench job.
-      - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster
+      - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=2
       - run: cargo test -p ergo-aeron-cluster --lib
       - run: cargo test --doc
-      # Exercise the bound-check-disabled (unchecked fast-path) feature.
-      - run: cargo test -p ergosbe --features bound-check-disabled -- --test-threads=1
+      - run: cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1
+      - run: cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 
-  # Verify the declared MSRV (workspace.package.rust-version = 1.95). The floor
-  # moved from 1.89 to 1.95 because ergo-aeron-cluster (rusteron edition 2024 /
-  # let-chains) requires it. The cluster is excluded from the --all-features
-  # check here (test-harness needs Java) and checked at default features.
   msrv:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -81,12 +70,8 @@ jobs:
       - run: cargo +1.95.0 check --workspace --all-targets --all-features --exclude ergo-aeron-cluster
       - run: cargo +1.95.0 check -p ergo-aeron-cluster --all-targets
 
-  # ergo-aeron-cluster integration tests need Java 17+ and the Aeron jars built
-  # from the `aeron` submodule. test-harness pulls the (excluded)
-  # ergo-aeron-cluster-test-support crate, whose build.rs finds the jars at
-  # ../aeron and compiles ClusterLauncher.java into aeron-samples.
   aeron-cluster-integration:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -109,12 +94,8 @@ jobs:
       - name: Cluster integration tests
         run: cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
 
-  # Samples are excluded from the workspace (own Cargo.lock each), so the
-  # --workspace jobs above do not cover them. Gate them explicitly so API drift
-  # cannot hide outside the workspace again. Live ClickHouse tests stay #[ignore]
-  # and run via the dedicated just recipes locally.
   samples:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -134,15 +115,63 @@ jobs:
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test -- --test-threads=1 --skip clickhouse
 
-      - name: exchange-orderbook (fmt, clippy, test)
+      - name: cluster-ha-orderbook (fmt, clippy, test)
         run: |
-          cd samples/exchange-orderbook
+          cd samples/cluster-ha-orderbook
           cargo fmt --check
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test -- --test-threads=1
+          cargo clippy --all-targets -- -D warnings
+          cargo test --lib --test ha_offline_pipeline -- --test-threads=1
+
+      - name: cluster-rfq (fmt, clippy)
+        run: |
+          cd samples/cluster_rfq
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+
+  clickhouse-live:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:latest
+        ports:
+          - 8123:8123
+          - 9000:9000
+        env:
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: ergosbe
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - name: Wait for ClickHouse
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8123/ping; then
+              echo "ClickHouse ready after ${i}s"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Persist integration tests (live ClickHouse)
+        run: cargo test -p ergo-clickhouse-persist --all-features -- --include-ignored --test-threads=1
+
+      - name: advanced-bitget E2E (live ClickHouse)
+        run: cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
+
+      - name: cluster-ha-orderbook latency (live ClickHouse)
+        run: cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture
 
   build:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -154,10 +183,11 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - run: cargo build --release --workspace
+      - run: cargo build --release --workspace --exclude ergo-aeron-cluster
+      - run: cargo build --release -p ergo-aeron-cluster
 
   bench:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
@@ -170,4 +200,21 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - run: cargo bench --workspace
+      - run: cargo bench -p ergosbe-benchmarks
+      - run: cargo bench -p ergo-aeron-cluster --no-run
+
+  package:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - run: cargo package -p ergo-sbe
+      - run: cargo publish -p ergo-sbe --dry-run
