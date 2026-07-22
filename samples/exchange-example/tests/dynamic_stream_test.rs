@@ -9,10 +9,10 @@ use rusteron_client::cformat;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use advanced_bitget::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED};
-use advanced_bitget::market::{Level, NormalizedEventRef, WireDec};
-use advanced_bitget::persistence::{ForegroundPersistor, InMemorySink};
-use advanced_bitget::publication::{AeronPublication, ClaimPublisher, PublishOutcome};
+use exchange_example::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED};
+use exchange_example::market::{Level, NormalizedEventRef, WireDec};
+use exchange_example::persistence::{ForegroundPersistor, InMemorySink};
+use exchange_example::publication::{AeronPublication, ClaimPublisher, PublishOutcome};
 
 static DRIVER_LOCK: Mutex<()> = Mutex::new(());
 

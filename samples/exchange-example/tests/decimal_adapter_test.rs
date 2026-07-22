@@ -5,8 +5,8 @@
 
 use std::str::FromStr;
 
-use advanced_bitget::decimal::parse_decimal_exact;
-use advanced_bitget::normalized_app::{
+use exchange_example::decimal::parse_decimal_exact;
+use exchange_example::normalized_app::{
     AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, Source, sbe_rt,
     TryFromSbe, TryToSbe,
 };
@@ -109,7 +109,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
 
 #[test]
 fn convert_error_display_and_wire_decimal_new() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::decimal::{DecimalConvertError, WireDecimal, to_clickhouse_decimal};
+    use exchange_example::decimal::{DecimalConvertError, WireDecimal, to_clickhouse_decimal};
 
     assert_eq!(
         DecimalConvertError::Overflow.to_string(),
@@ -151,7 +151,7 @@ fn rust_decimal_adapter_positive_exponent_and_overflow() -> Result<(), Box<dyn s
 
     // Overflow: mantissa * 10^30 exceeds the adapter's exact range.
     let err = <rust_decimal::Decimal as TryFromSbe<Decimal>>::try_from_sbe(Decimal::new(i64::MAX, 30)).unwrap_err();
-    assert_eq!(err, advanced_bitget::decimal::DecimalConvertError::Overflow);
+    assert_eq!(err, exchange_example::decimal::DecimalConvertError::Overflow);
 
     Ok(())
 }

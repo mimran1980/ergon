@@ -46,7 +46,7 @@ Laboratory compatibility checks:
 
 ```sh
 cargo test -p ergo-clickhouse-persist --all-features
-(cd samples/advanced-bitget && cargo check --all-targets)
+(cd samples/exchange-example && cargo check --all-targets)
 (cd samples/cluster-ha-orderbook && cargo check --all-targets)
 ```
 

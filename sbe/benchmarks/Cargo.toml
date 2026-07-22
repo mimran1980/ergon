@@ -11,14 +11,14 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-ergo-sbe = { path = "../sbe" }
+ergo-sbe = { path = ".." }
 serde = { version = "1", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [build-dependencies]
-ergo-sbe = { path = "../sbe" }
+ergo-sbe = { path = ".." }
 
 [[bench]]
 name = "decode_bench"

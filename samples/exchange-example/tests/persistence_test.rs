@@ -3,9 +3,9 @@
 //! Bytes are produced by the real `ClaimPublisher` (recording adapter), so
 //! these tests prove the publisher and persistor agree on the wire format.
 
-use advanced_bitget::market::{Level, NormalizedEventRef, WireDec};
-use advanced_bitget::persistence::{ForegroundPersistor, InMemorySink};
-use advanced_bitget::publication::{ClaimPublisher, RecordingPublication};
+use exchange_example::market::{Level, NormalizedEventRef, WireDec};
+use exchange_example::persistence::{ForegroundPersistor, InMemorySink};
+use exchange_example::publication::{ClaimPublisher, RecordingPublication};
 
 fn lvl(pm: i64, pe: i8, sm: i64, se: i8) -> Level {
     Level {
@@ -137,7 +137,7 @@ fn trade_persists_directly() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn recursive_app_message_payload_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::normalized_app::AppMessageEncoder;
+    use exchange_example::normalized_app::AppMessageEncoder;
 
     // AppMessage whose payload is itself an AppMessage.
     let inner_len = AppMessageEncoder::compute_encoded_length_with_message_header(b"x".len(), 0);
@@ -151,7 +151,7 @@ fn recursive_app_message_payload_is_rejected() -> Result<(), Box<dyn std::error:
         let _ = after
             .payload_with(
                 inner_len,
-                |payload| -> Result<(), advanced_bitget::normalized_app::sbe_rt::EncodeError> {
+                |payload| -> Result<(), exchange_example::normalized_app::sbe_rt::EncodeError> {
                     let mut inner = AppMessageEncoder::wrap_and_apply_header(payload, 0)?;
                     let _ = inner.sent_ts(2);
                     let after = inner.app_name(b"x")?;
@@ -215,8 +215,8 @@ fn wrong_template_on_dynamic_stream_is_rejected() -> Result<(), Box<dyn std::err
 
 #[test]
 fn persist_error_display_strings() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::decimal::DecimalConvertError;
-    use advanced_bitget::persistence::PersistError;
+    use exchange_example::decimal::DecimalConvertError;
+    use exchange_example::persistence::PersistError;
 
     assert!(
         PersistError::Decode("x".into())
@@ -244,7 +244,7 @@ fn persist_error_display_strings() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn dec38_18_literals_are_exact() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::persistence::dec38_18;
+    use exchange_example::persistence::dec38_18;
     assert_eq!(dec38_18(0), "0");
     assert_eq!(dec38_18(1_500_000_000_000_000_000), "1.5");
     assert_eq!(dec38_18(-1_500_000_000_000_000_000), "-1.5");
@@ -258,22 +258,22 @@ fn dec38_18_literals_are_exact() -> Result<(), Box<dyn std::error::Error>> {
 #[derive(Default)]
 struct FailingSink;
 
-impl advanced_bitget::persistence::RowSink for FailingSink {
+impl exchange_example::persistence::RowSink for FailingSink {
     fn insert_l2book_typed(
         &mut self,
-        _row: &advanced_bitget::persistence::L2BookRow,
+        _row: &exchange_example::persistence::L2BookRow,
     ) -> Result<(), String> {
         Err("typed down".into())
     }
     fn insert_l2book_dynamic(
         &mut self,
-        _row: &advanced_bitget::persistence::L2BookRow,
+        _row: &exchange_example::persistence::L2BookRow,
     ) -> Result<(), String> {
         Err("dynamic down".into())
     }
     fn insert_trade(
         &mut self,
-        _row: &advanced_bitget::persistence::TradeRow,
+        _row: &exchange_example::persistence::TradeRow,
     ) -> Result<(), String> {
         Err("trade down".into())
     }
@@ -284,7 +284,7 @@ impl advanced_bitget::persistence::RowSink for FailingSink {
 
 #[test]
 fn sink_failures_surface_as_persist_errors() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::persistence::PersistError;
+    use exchange_example::persistence::PersistError;
 
     let bids = [lvl(1, 0, 1, 0)];
     let (typed, dynamic, _) = published_book(1, &bids, &[]);
@@ -355,7 +355,7 @@ fn in_memory_flush_counts() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn unknown_payload_template_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::normalized_app::AppMessageEncoder;
+    use exchange_example::normalized_app::AppMessageEncoder;
 
     // AppMessage whose payload is an 8-byte SBE header with template id 99.
     let payload: [u8; 8] = {
@@ -497,7 +497,7 @@ fn malformed_dynamic_rows_report_structured_decode_errors() -> Result<(), Box<dy
 
 #[test]
 fn clickhouse_connect_fails_cleanly_when_ping_rejects() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::persistence::ClickHouseRowSink;
+    use exchange_example::persistence::ClickHouseRowSink;
     use std::io::{Read, Write};
 
     // A stub HTTP server whose every response is 500.
@@ -611,13 +611,13 @@ fn unexpected_decimal_array_field_and_mismatched_lengths_are_rejected()
 
 #[test]
 fn truncated_l2book_payload_is_a_decode_error() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::normalized_app::AppMessageEncoder;
+    use exchange_example::normalized_app::AppMessageEncoder;
 
     let bids = [lvl(1, 0, 1, 0)];
     let (typed, _, _) = published_book(1, &bids, &[]);
 
     // Extract the intact inner payload, truncate it, and re-wrap it.
-    let dec = advanced_bitget::normalized_app::AppMessageDecoder::wrap_and_apply_header(&typed, 0)
+    let dec = exchange_example::normalized_app::AppMessageDecoder::wrap_and_apply_header(&typed, 0)
         .unwrap();
     let (_, after) = dec.into_app_name().unwrap();
     let (payload, _) = after.into_payload().unwrap();
@@ -637,7 +637,7 @@ fn truncated_l2book_payload_is_a_decode_error() -> Result<(), Box<dyn std::error
     let err = p.on_typed(&buf).unwrap_err();
     assert!(matches!(
         err,
-        advanced_bitget::persistence::PersistError::Decode(_)
+        exchange_example::persistence::PersistError::Decode(_)
     ));
 
     Ok(())
@@ -645,7 +645,7 @@ fn truncated_l2book_payload_is_a_decode_error() -> Result<(), Box<dyn std::error
 
 #[test]
 fn clickhouse_sql_errors_surface_with_status_and_body() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::persistence::ClickHouseRowSink;
+    use exchange_example::persistence::ClickHouseRowSink;
     use std::io::{Read, Write};
     use std::sync::atomic::{AtomicUsize, Ordering};
 

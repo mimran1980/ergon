@@ -157,9 +157,9 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 /// `try_claim_owned` + direct encode + commit — not just Vec encoding.
 #[test]
 fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::config::CHANNEL;
-    use advanced_bitget::market::{Level, NormalizedEventRef, WireDec};
-    use advanced_bitget::publication::{AeronPublication, ClaimPublisher, PublishOutcome};
+    use exchange_example::config::CHANNEL;
+    use exchange_example::market::{Level, NormalizedEventRef, WireDec};
+    use exchange_example::publication::{AeronPublication, ClaimPublisher, PublishOutcome};
     use rusteron_client::cformat;
     use std::time::Duration;
 

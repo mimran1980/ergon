@@ -11,15 +11,15 @@
 use rusteron_client::cformat;
 use std::time::Duration;
 
-use advanced_bitget::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED};
-use advanced_bitget::market::{Level, NormalizedEventRef, WireDec};
-use advanced_bitget::persistence::{ClickHouseRowSink, ForegroundPersistor};
-use advanced_bitget::publication::{AeronPublication, ClaimPublisher};
+use exchange_example::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED};
+use exchange_example::market::{Level, NormalizedEventRef, WireDec};
+use exchange_example::persistence::{ClickHouseRowSink, ForegroundPersistor};
+use exchange_example::publication::{AeronPublication, ClaimPublisher};
 
 const ENDPOINT: &str = "http://127.0.0.1:8123";
 
 fn ch_query(sql: &str) -> String {
-    let (user, password) = advanced_bitget::persistence::clickhouse_credentials();
+    let (user, password) = exchange_example::persistence::clickhouse_credentials();
     let client = reqwest::blocking::Client::new();
     let resp = client
         .post(ENDPOINT)
@@ -190,7 +190,7 @@ fn e2e_ipc_to_clickhouse_exact_rows() -> Result<(), Box<dyn std::error::Error>> 
 #[test]
 #[ignore = "requires live ClickHouse — run via just test-clickhouse-live"]
 fn batched_inserts_flush_on_threshold_and_shutdown() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::persistence::{RowSink, TradeRow};
+    use exchange_example::persistence::{RowSink, TradeRow};
 
     ch_query("DROP TABLE IF EXISTS trade");
     let mut sink = ClickHouseRowSink::connect(ENDPOINT).expect("connect");

@@ -16,16 +16,13 @@ fn generate_car_codec(out_dir: &Path) {
     let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("sbe")
         .join("tests")
         .join("fixtures")
         .join("schemas")
         .join("example-schema.xml");
 
-    let xml = fs::read_to_string(&schema_path)
-        .unwrap_or_else(|e| panic!("Failed to read schema at {}: {e}", schema_path.display()));
-
-    let ir = ergo_sbe::parse(&xml).unwrap_or_else(|e| panic!("Failed to parse schema: {e}"));
+    let ir = ergo_sbe::parse_file(&schema_path)
+        .unwrap_or_else(|e| panic!("Failed to parse schema at {}: {e}", schema_path.display()));
 
     let schema = ergo_sbe::Schema::from_ir(ir);
     // Benchmarks measure flyweights only — no domain objects.
@@ -51,8 +48,8 @@ fn generate_car_codec(out_dir: &Path) {
 
     // Rerun if schema or codegen sources change
     println!("cargo:rerun-if-changed={}", schema_path.display());
-    println!("cargo:rerun-if-changed=../sbe/src/codegen.rs");
-    println!("cargo:rerun-if-changed=../sbe/src/schema.rs");
-    println!("cargo:rerun-if-changed=../sbe/src/ir.rs");
-    println!("cargo:rerun-if-changed=../sbe/src/config.rs");
+    println!("cargo:rerun-if-changed=../src/codegen.rs");
+    println!("cargo:rerun-if-changed=../src/schema.rs");
+    println!("cargo:rerun-if-changed=../src/ir.rs");
+    println!("cargo:rerun-if-changed=../src/config.rs");
 }

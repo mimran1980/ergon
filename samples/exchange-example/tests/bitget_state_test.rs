@@ -3,8 +3,8 @@
 //! All tests drive the ingestor through `apply(event, emit)` only: borrowed
 //! events in, borrowed normalized events out through the callback.
 
-use advanced_bitget::bitget::{ApplyError, BitgetEventRef, BitgetIngestor};
-use advanced_bitget::market::NormalizedEventRef;
+use exchange_example::bitget::{ApplyError, BitgetEventRef, BitgetIngestor};
+use exchange_example::market::NormalizedEventRef;
 
 /// Collected owned snapshot of an emitted book for assertions.
 #[derive(Debug, PartialEq)]
@@ -245,7 +245,7 @@ fn disconnect_clears_state_and_resuppresses_until_snapshot()
 
 // ── WebSocket frame parsing (captured fixtures) ─────────────────────────
 
-use advanced_bitget::bitget::{FrameError, parse_frame};
+use exchange_example::bitget::{FrameError, parse_frame};
 
 #[test]
 fn book_snapshot_fixture_drives_ingestor() -> Result<(), Box<dyn std::error::Error>> {
@@ -350,7 +350,7 @@ fn garbage_text_is_a_frame_error() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn book_deeper_than_max_levels_is_truncated_to_best() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::config::MAX_BOOK_LEVELS;
+    use exchange_example::config::MAX_BOOK_LEVELS;
 
     let deep: Vec<[String; 2]> = (0..MAX_BOOK_LEVELS + 10)
         .map(|i| [format!("{}", 1000 + i), "1".to_string()])

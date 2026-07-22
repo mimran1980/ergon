@@ -35,7 +35,7 @@ clean:
     set -euo pipefail
     echo "=== cargo clean (workspace) ==="
     cargo clean
-    for d in samples/advanced-bitget samples/cluster-ha-orderbook; do
+    for d in samples/exchange-example samples/cluster-ha-orderbook; do
       if [ -f "$d/Cargo.toml" ]; then
         echo "=== cargo clean ($d) ==="
         (cd "$d" && cargo clean)
@@ -58,7 +58,7 @@ clean:
 build:
     cargo build --workspace --all-features --exclude ergo-aeron-cluster
     cargo build -p ergo-aeron-cluster
-    cd samples/advanced-bitget && cargo build
+    cd samples/exchange-example && cargo build
     cd samples/cluster-ha-orderbook && cargo build
 
 # Full local check: hygiene, format, clippy, tests (no external services / no Java).
@@ -71,9 +71,9 @@ check:
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
-    cd samples/advanced-bitget && cargo fmt --check
-    cd samples/advanced-bitget && cargo clippy --all-targets --all-features -- -D warnings
-    cd samples/advanced-bitget && cargo test -- --test-threads=1 --skip clickhouse
+    cd samples/exchange-example && cargo fmt --check
+    cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
+    cd samples/exchange-example && cargo test -- --test-threads=1 --skip clickhouse
     cd samples/cluster-ha-orderbook && cargo fmt --check
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
@@ -91,8 +91,8 @@ check-products:
 check-labs:
 	cargo clippy -p ergo-clickhouse-persist --all-targets --all-features -- -D warnings
 	cargo test -p ergo-clickhouse-persist --all-targets --all-features -- --test-threads=1
-	cd samples/advanced-bitget && cargo clippy --all-targets --all-features -- -D warnings
-	cd samples/advanced-bitget && cargo test -- --test-threads=1 --skip clickhouse
+	cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
+	cd samples/exchange-example && cargo test -- --test-threads=1 --skip clickhouse
 	cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
 	cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
 
@@ -120,7 +120,7 @@ test:
 	@echo "=== 4/6 allocation proofs ==="
 	cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 	@echo "=== 5/6 sample offline tests ==="
-	cd samples/advanced-bitget && cargo test --lib -- --test-threads=1 --skip clickhouse
+	cd samples/exchange-example && cargo test --lib -- --test-threads=1 --skip clickhouse
 	cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
 	@echo "=== 6/6 bench compilation ==="
 	cargo bench -p ergo-sbe-benchmarks --no-run
@@ -129,7 +129,7 @@ test:
 	@if curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
 	    echo "ClickHouse available — running live tests"; \
 	    cargo test -p ergo-clickhouse-persist --all-features -- --test-threads=1 --include-ignored; \
-	    (cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture); \
+	    (cd samples/exchange-example && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture); \
 	    (cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture); \
 	else \
 	    echo "ClickHouse not available — skipping live tests (start with: bash persist/tests/run-clickhouse.sh start)"; \
@@ -152,7 +152,7 @@ test-unit:
 
 # Sample IPC tests (embedded Aeron driver — no external services)
 test-ipc:
-    cd samples/advanced-bitget && cargo test -- --test-threads=1 --skip clickhouse
+    cd samples/exchange-example && cargo test -- --test-threads=1 --skip clickhouse
 
 # Live ClickHouse tests for the IPC sample (requires Docker CH on 127.0.0.1:8123)
 test-clickhouse-live:
@@ -163,7 +163,7 @@ test-clickhouse-live:
         exit 1; \
     fi
     @echo "Preflight OK — endpoint http://127.0.0.1:8123 (external Docker)."
-    (cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
+    (cd samples/exchange-example && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
 
 # Alias: IPC sample live CH E2E (typed + Persist DTO snapshot)
 samples-orderbook: test-clickhouse-live
@@ -200,7 +200,7 @@ docs:
 # Format all handwritten source
 fmt:
     cargo fmt --all
-    cd samples/advanced-bitget && cargo fmt
+    cd samples/exchange-example && cargo fmt
     cd samples/cluster-ha-orderbook && cargo fmt
 
 # Auto-fix: fmt + clippy --fix (same feature split as check).
@@ -208,7 +208,7 @@ fix:
     just fmt
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster --fix --allow-dirty --allow-staged -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets --fix --allow-dirty --allow-staged -- -D warnings
-    cd samples/advanced-bitget && cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings
+    cd samples/exchange-example && cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
 
 # Coverage (requires nightly toolchain)
@@ -226,7 +226,7 @@ run-sample:
     @echo "Waiting for ClickHouse..."
     @until curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; do sleep 2; done
     @echo "ClickHouse ready. Running sample..."
-    cd samples/advanced-bitget && cargo run --quiet
+    cd samples/exchange-example && cargo run --quiet
 
 # Benchmark parity — both checked (default) and bound-check-disabled modes.
 # Uses Criterion's baseline feature for statistically valid cross-mode comparison.
@@ -235,10 +235,10 @@ run-sample:
 # The check-bench-gate.sh script enforces this (exit non-zero on failure).
 bench:
     @echo "=== SBE perf parity: checked mode (save baseline) ==="
-    cd ergo-sbe-benchmarks && cargo bench --bench perf_parity_bench -- --save-baseline checked
+    cd sbe/benchmarks && cargo bench --bench perf_parity_bench -- --save-baseline checked
     @echo ""
     @echo "=== SBE perf parity: unchecked (compare vs checked baseline) ==="
-    cd ergo-sbe-benchmarks && cargo bench --bench perf_parity_bench --features bound-check-disabled -- --baseline checked
+    cd sbe/benchmarks && cargo bench --bench perf_parity_bench --features bound-check-disabled -- --baseline checked
     @echo ""
     @echo "=== Gate ==="
     ./scripts/check-bench-gate.sh target/criterion

@@ -4,9 +4,9 @@
 //! `RecordingPublication` adapter, then decode the captured claim bytes with
 //! the generated consuming decoders.
 
-use advanced_bitget::market::{Level, NormalizedEventRef, WireDec};
-use advanced_bitget::normalized_app::{AnyMessage, AppMessageDecoder, Source};
-use advanced_bitget::publication::{
+use exchange_example::market::{Level, NormalizedEventRef, WireDec};
+use exchange_example::normalized_app::{AnyMessage, AppMessageDecoder, Source};
+use exchange_example::publication::{
     ClaimPublisher, DropReason, PublishOutcome, RecordingPublication,
 };
 use ergo_clickhouse_persist::sbe::v2::DynamicRowV2Decoder;
@@ -323,7 +323,7 @@ fn every_drop_reason_maps_to_its_counter() -> Result<(), Box<dyn std::error::Err
 #[test]
 fn derived_ipc_mtu_covers_the_largest_maintained_message() -> Result<(), Box<dyn std::error::Error>>
 {
-    use advanced_bitget::publication::{derive_ipc_mtu, worst_case_typed_claim_len};
+    use exchange_example::publication::{derive_ipc_mtu, worst_case_typed_claim_len};
     let worst = worst_case_typed_claim_len();
     let mtu = derive_ipc_mtu();
     assert!(mtu >= worst + 32, "claim + data header must fit one MTU");

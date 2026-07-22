@@ -115,8 +115,8 @@
 //! - **Version-aware**: all accessors respect the wire message version.
 //! - **No `unsafe` by default**: `unsafe` is opt-in via `_unchecked` methods.
 //!
-//! See [`design/DECISIONS.md`](https://github.com/mimran1980/ergon/blob/first_cut/sbe/design/DECISIONS.md)
-//! for the full design rationale. Pillar overview: crate README under `sbe/`.
+//! See the [release-readiness implementation plan](https://github.com/mimran1980/ergon/blob/first_cut/.scratch/release-readiness/spec.md)
+//! for the canonical design and backlog. Pillar overview: [`sbe/README.md`](https://github.com/mimran1980/ergon/blob/first_cut/sbe/README.md).
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
 

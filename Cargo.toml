@@ -1,5 +1,5 @@
 [workspace]
-members = ["sbe", "persist", "persist/derive", "ergo-sbe-benchmarks", "cluster"]
+members = ["sbe", "persist", "persist/derive", "sbe/benchmarks", "cluster"]
 exclude = ["samples"]
 resolver = "3"
 

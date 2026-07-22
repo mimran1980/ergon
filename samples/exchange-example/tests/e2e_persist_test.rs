@@ -3,7 +3,7 @@
 #[ignore = "requires live ClickHouse — run via just samples-orderbook"]
 #[test]
 fn e2e_persist_orderbook_snapshot() -> Result<(), Box<dyn std::error::Error>> {
-    use advanced_bitget::snapshot_persist::OrderbookSnapshot;
+    use exchange_example::snapshot_persist::OrderbookSnapshot;
     use chrono::Utc;
     use ergo_clickhouse_persist::ClickhouseSinkBuilder;
     use rust_decimal::Decimal;

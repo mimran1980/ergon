@@ -8,8 +8,8 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use advanced_bitget::config::CHANNEL;
-use advanced_bitget::normalized_app::{
+use exchange_example::config::CHANNEL;
+use exchange_example::normalized_app::{
     AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
 };
 use rusteron_client::cformat;

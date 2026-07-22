@@ -83,10 +83,9 @@ impl<L: EgressListener> EgressAdapter<L> {
     fn dispatch(&mut self, frag: Fragment<'_>) {
         match frag {
             Fragment::Message { cluster_session_id, timestamp, payload } => {
-                if let Some(expected) = self.expected_session_id {
-                    if cluster_session_id != expected {
-                        return;
-                    }
+                if self.expected_session_id.is_some_and(|expected| cluster_session_id != expected)
+                {
+                    return;
                 }
                 self.listener.on_message(cluster_session_id, timestamp, payload);
             }

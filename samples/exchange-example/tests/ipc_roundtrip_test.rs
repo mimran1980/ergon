@@ -16,7 +16,7 @@ mod normalized_app {
 
 use std::time::Duration;
 
-use advanced_bitget::config::CHANNEL;
+use exchange_example::config::CHANNEL;
 use rusteron_client::cformat;
 
 /// Embedded driver launches and pub+sub connect — basic smoke test.

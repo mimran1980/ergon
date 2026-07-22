@@ -1055,7 +1055,6 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
 /// `initial_ident` is the existing decoder (e.g. `CarDecoder`, `BidsEntryDecoder`);
 /// `stage_prefix` is its string form, used to name the `After*`/`Complete` stages.
 /// `header_size` is the message header size for messages (0 for entries).
-
 pub(crate) fn generate_prelude(
     src: &mut String,
     elements: &SchemaElements,

@@ -20,10 +20,10 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
-use advanced_bitget::bitget::{BitgetIngestor, parse_frame};
-use advanced_bitget::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED, SYMBOL, WS_URL};
-use advanced_bitget::persistence::{ClickHouseRowSink, ForegroundPersistor};
-use advanced_bitget::publication::{AeronPublication, ClaimPublisher, derive_ipc_mtu};
+use exchange_example::bitget::{BitgetIngestor, parse_frame};
+use exchange_example::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED, SYMBOL, WS_URL};
+use exchange_example::persistence::{ClickHouseRowSink, ForegroundPersistor};
+use exchange_example::publication::{AeronPublication, ClaimPublisher, derive_ipc_mtu};
 
 fn aeron_client(dir: &str) -> Result<rusteron_client::Aeron, Box<dyn Error + Send + Sync>> {
     let ctx = rusteron_client::AeronContext::new()?;
@@ -138,7 +138,7 @@ async fn ingest(
     let schema_deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         match publisher.publish_schema() {
-            advanced_bitget::publication::PublishOutcome::Published => break,
+            exchange_example::publication::PublishOutcome::Published => break,
             _ if std::time::Instant::now() < schema_deadline => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }

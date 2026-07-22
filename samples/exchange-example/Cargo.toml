@@ -1,8 +1,8 @@
 [package]
-name = "advanced-bitget"
+name = "exchange-example"
 version = "0.1.0"
 edition = "2024"
-description = "IPC sample: AppMessage claims → Aeron IPC → ClickHouse (+ multi-schema / Persist DTO)"
+description = "Multi-exchange IPC sample: Bitget + Binance WebSocket → Aeron IPC → ClickHouse (+ multi-schema / Persist DTO)"
 publish = false
 
 [dependencies]

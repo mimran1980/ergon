@@ -152,6 +152,7 @@ impl GenerationContext {
     }
 }
 
+/// SBE codec generator from a resolved [`Schema`](crate::Schema).
 #[derive(Clone, Debug)]
 pub struct Generator {
     config: GenerationConfig,

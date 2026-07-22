@@ -11,7 +11,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-include = ["src/**/*.rs", "tests/**/*.rs", "tests/**/*.xml", "examples/**/*.rs", "design/**/*.md", "docs/**/*.md", "README.md", "Cargo.toml"]
+include = ["src/**/*.rs", "tests/**/*.rs", "tests/**/*.xml", "examples/**/*.rs", "README.md", "Cargo.toml"]
 
 [lib]
 path = "src/lib.rs"

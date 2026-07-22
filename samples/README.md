@@ -10,17 +10,17 @@ assumptions, and code that is less polished than the two product prototypes.
 
 | Sample | Purpose |
 |---|---|
-| `advanced-bitget` | Exercise Aeron IPC, nested SBE messages, converters, domain objects, and Persist |
+| `exchange-example` | Exercise Aeron IPC, nested SBE messages, converters, domain objects, and Persist |
 | `cluster-ha-orderbook` | Exercise Cluster claims, egress, leader changes, and an HA-shaped data flow |
 
-The current review found interface drift in `advanced-bitget` and generated
+The current review found interface drift in `exchange-example` and generated
 warnings in `cluster-ha-orderbook`. Until the implementation-plan compatibility
 tasks pass, neither crate should be assumed to compile cleanly.
 
 ## Checks
 
 ```sh
-(cd samples/advanced-bitget && cargo check --all-targets)
+(cd samples/exchange-example && cargo check --all-targets)
 (cd samples/cluster-ha-orderbook && cargo check --all-targets)
 ```
 
