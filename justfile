@@ -28,6 +28,10 @@
 # Consumers depend on crates.io versions; monorepo samples keep `path = …`.
 # Tag the repo after publish; Aeron submodule pin is independent of crate release.
 
+# Default: list available commands.
+default:
+    @just --list
+
 # Wipe Cargo build artifacts and reset git submodules to the commits pinned by
 # this repo (fetch origin, hard-reset + clean dirt, force-checkout).
 clean:
