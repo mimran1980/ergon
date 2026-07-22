@@ -6,7 +6,7 @@
 //! Emit assembly (aarch64) for each variant:
 //!   rustc -O --emit asm --edition 2021 repro.rs
 //!
-//! Context: ErgoSBE's generated encoder (struct holds `&mut [u8]`, setters write
+//! Context: ergo-sbe's generated encoder (struct holds `&mut [u8]`, setters write
 //! via `self.buf[off..].copy_from_slice`) compiles to a scalar, un-vectorised,
 //! un-unrolled loop. Aeron's encoder (WriteBuf + header/parent value-move chain)
 //! compiles to an 8x-unrolled, SIMD-vectorised loop for the SAME logical writes
@@ -23,7 +23,7 @@ const HEADER_TEMPLATE: [u8; 8] = [18, 0, 1, 0, 1, 0, 0, 0];
 const SLOT: usize = 64; // bytes per message slot (matches the parity bench)
 const N: usize = 10_000;
 
-// ── Variant A: ErgoSBE shape — struct borrows `&mut [u8]`, setters index it ─
+// ── Variant A: ergon shape — struct borrows `&mut [u8]`, setters index it ─
 
 struct IndexEnc<'a> {
     buf: &'a mut [u8],
@@ -105,7 +105,7 @@ fn encode_bare(buf: &mut [u8]) {
     }
 }
 
-// ── Variant D: faithful ErgoSBE shape — Result return + extra struct fields
+// ── Variant D: faithful ergon shape — Result return + extra struct fields
 //    (message_start, pos) + a bounds branch, exactly as the generated encoder.
 
 #[derive(Debug)]
@@ -175,7 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tp = time_it(encode_pointer);
     let tb = time_it(encode_bare);
     let tf = time_it(encode_faithful);
-    println!("encode_index    (ErgoSBE shape)         : {ti} ns  ({:.0} ps/msg)", ti as f64 / N as f64);
+    println!("encode_index    (ergo-sbe shape)         : {ti} ns  ({:.0} ps/msg)", ti as f64 / N as f64);
     println!("encode_pointer  (Aeron shape)           : {tp} ns  ({:.0} ps/msg)", tp as f64 / N as f64);
     println!("encode_bare     (control)               : {tb} ns  ({:.0} ps/msg)", tb as f64 / N as f64);
     println!("encode_faithful (Result+fields+bounds)  : {tf} ns  ({:.0} ps/msg)", tf as f64 / N as f64);

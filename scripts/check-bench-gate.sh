@@ -42,14 +42,14 @@ echo "=== SBE bench gate ==="
 
 # Maintained SBE parity pairs (group_name/function)
 pairs=(
-    "decode_scalar|ergosbe|aeron"
-    "decode_array|ergosbe|aeron"
-    "decode_composite|ergosbe_engine|aeron_engine"
-    "decode_full_message|ergosbe_consuming|aeron"
-    "decode_entry_point|ergosbe_wrap|aeron_wrap"
-    "encode_scalar|ergosbe_checked|aeron"
-    "encode_throughput_10k|ergosbe_checked|aeron"
-    "throughput_batch_10k|ergosbe|aeron"
+    "decode_scalar|ergo-sbe|aeron"
+    "decode_array|ergo-sbe|aeron"
+    "decode_composite|ergo-sbe_engine|aeron_engine"
+    "decode_full_message|ergo-sbe_consuming|aeron"
+    "decode_entry_point|ergo-sbe_wrap|aeron_wrap"
+    "encode_scalar|ergo-sbe_checked|aeron"
+    "encode_throughput_10k|ergo-sbe_checked|aeron"
+    "throughput_batch_10k|ergo-sbe|aeron"
 )
 
 for pair in "${pairs[@]}"; do
@@ -62,7 +62,7 @@ for pair in "${pairs[@]}"; do
         continue
     fi
 
-    check_ratio "$group (ErgoSBE/Aeron)" "$ergo_med" "$aero_med" || ((failures++))
+    check_ratio "$group (ergo-sbe/Aeron)" "$ergo_med" "$aero_med" || ((failures++))
 done
 
 echo ""
@@ -71,11 +71,11 @@ echo "=== Cluster bench gate ==="
 # Cluster codec bench pairs (under its own target/criterion)
 CRITERION_DIR_CLUSTER="${CRITERION_DIR}"
 cluster_pairs=(
-    "cluster_encode_session_message_header|ergosbe|sbe-tool"
-    "cluster_encode_session_keep_alive|ergosbe|sbe-tool"
-    "cluster_decode_session_message_header|ergosbe|sbe-tool"
-    "cluster_decode_session_event|ergosbe|sbe-tool"
-    "cluster_encode_claim_shaped_header_plus_app|ergosbe|sbe-tool"
+    "cluster_encode_session_message_header|ergo-sbe|sbe-tool"
+    "cluster_encode_session_keep_alive|ergo-sbe|sbe-tool"
+    "cluster_decode_session_message_header|ergo-sbe|sbe-tool"
+    "cluster_decode_session_event|ergo-sbe|sbe-tool"
+    "cluster_encode_claim_shaped_header_plus_app|ergo-sbe|sbe-tool"
 )
 
 for pair in "${cluster_pairs[@]}"; do
@@ -88,7 +88,7 @@ for pair in "${cluster_pairs[@]}"; do
         continue
     fi
 
-    check_ratio "$group (ErgoSBE/sbe-tool)" "$ergo_med" "$sbe_med" || ((failures++))
+    check_ratio "$group (ergo-sbe/sbe-tool)" "$ergo_med" "$sbe_med" || ((failures++))
 done
 
 echo ""

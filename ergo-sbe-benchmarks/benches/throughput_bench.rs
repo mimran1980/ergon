@@ -1,4 +1,4 @@
-//! Throughput benchmarks for ErgoSBE-generated Car message codec.
+//! Throughput benchmarks for ergon-generated Car message codec.
 //!
 //! Measures decode throughput in millions of messages per second across
 //! varying batch sizes.  Compares the checked decode path against a
@@ -18,7 +18,7 @@
 )]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
-use ergosbe_benchmarks::ergo_car::*;
+use ergo_sbe_benchmarks::ergo_car::*;
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 

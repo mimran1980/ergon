@@ -1,4 +1,4 @@
-//! ErgoSBE IPC sample — exercise codegen + Aeron IPC + ClickHouse (not a prod app).
+//! ergon IPC sample — exercise codegen + Aeron IPC + ClickHouse (not a prod app).
 //!
 //! Demonstrates:
 //! - Multi-schema generate (normalized AppMessage + Bitget/Binance spot fixtures)

@@ -1,6 +1,6 @@
 [package]
-name = "ergosbe-benchmarks"
-description = "ErgoSBE benchmarks — generates SBE codecs on-the-fly via build.rs"
+name = "ergo-sbe-benchmarks"
+description = "ergon SBE benchmarks — generates SBE codecs on-the-fly via build.rs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

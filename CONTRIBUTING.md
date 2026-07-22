@@ -2,8 +2,8 @@
 
 This is an experimental hobby repository. Contributions must preserve official
 SBE wire compatibility and must not turn prototype behaviour into a production
-claim. The active design and backlog are in
-[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+claim. The current release-readiness design and backlog are in
+[`.scratch/release-readiness/spec.md`](.scratch/release-readiness/spec.md).
 
 ## Work test-first
 
@@ -86,11 +86,12 @@ Docs-only changes do not require benchmarks.
 
 ## Documentation rules
 
-- Keep one active tracker: `docs/IMPLEMENTATION_PLAN.md`.
-- Do not create per-task todo Markdown files, goal files, completion reports, or
-  archived plan trees.
+- Track specs and implementation issues under `.scratch/<feature-slug>/` using
+  the conventions in `docs/agents/issue-tracker.md`.
+- Do not create standalone per-task todo Markdown files, goal files, completion
+  reports, or archived plan trees.
 - Update the relevant crate README only for current, verified behaviour. Keep
-  unfinished design in the implementation plan.
+  unfinished design in the relevant `.scratch/<feature-slug>/spec.md`.
 - Persist and Samples must always be labelled unpublished laboratories and never
   described as reference implementations.
 - Ergo Aeron Cluster must always be labelled a hobby project unsuitable for
@@ -98,7 +99,7 @@ Docs-only changes do not require benchmarks.
 
 ## Package checks
 
-Only ErgoSBE and Ergo Aeron Cluster are publication candidates:
+Only ergo-sbe and ergo-aeron-cluster are publication candidates:
 
 ```sh
 cargo package -p ergo-sbe --list --allow-dirty

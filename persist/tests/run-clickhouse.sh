@@ -14,7 +14,7 @@ case "${1:-start}" in
       --name "$CONTAINER_NAME" \
       -p "$PORT":8123 \
       -e CLICKHOUSE_USER=default \
-      -e CLICKHOUSE_PASSWORD=ergosbe \
+      -e CLICKHOUSE_PASSWORD=ergon \
       clickhouse/clickhouse-server
     echo "Waiting for ClickHouse to be ready..."
     for i in $(seq 1 30); do

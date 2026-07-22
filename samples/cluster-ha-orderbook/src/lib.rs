@@ -5,7 +5,7 @@
 //! Recipes: `just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`.
 //! See `samples/cluster-ha-orderbook/README.md`.
 
-/// Generated AppMessage / L2Book codecs (ErgoSBE `build.rs` → OUT_DIR).
+/// Generated AppMessage / L2Book codecs (ergon `build.rs` → OUT_DIR).
 #[allow(
     dead_code,
     unused_imports,

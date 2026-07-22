@@ -16,10 +16,10 @@ fn workspace_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap();
     loop {
         if dir.join("Cargo.toml").exists() {
-            // Check known layouts: sbe/, ergosbe/, crates/ergosbe/
+            // Check known layouts: sbe/, ergon/, crates/ergon/
             if dir.join("sbe").exists()
-                || dir.join("ergosbe").exists()
-                || dir.join("crates/ergosbe").exists()
+                || dir.join("ergon").exists()
+                || dir.join("crates/ergon").exists()
             {
                 return dir;
             }
@@ -34,8 +34,8 @@ fn workspace_root() -> PathBuf {
 
 fn crate_root() -> PathBuf {
     let ws = workspace_root();
-    if ws.join("crates/ergosbe").exists() {
-        ws.join("crates/ergosbe")
+    if ws.join("crates/ergon").exists() {
+        ws.join("crates/ergon")
     } else {
         ws.join("sbe")
     }
@@ -282,7 +282,7 @@ fn invalid_enum_encoding_type_returns_invalid_error() -> Result<(), Box<dyn std:
 // ── Useful miette diagnostics for every intentionally-invalid fixture ─────
 //
 // Ops need: non-empty Display, Debug, and (when available) miette Report that
-// names *what* failed — not a bare "error". Confirms ErgoSBE schema diagnostics.
+// names *what* failed — not a bare "error". Confirms ergon schema diagnostics.
 
 #[test]
 fn invalid_schema_fixtures_have_useful_miette_errors() -> Result<(), Box<dyn std::error::Error>> {
@@ -318,7 +318,7 @@ fn invalid_schema_fixtures_have_useful_miette_errors() -> Result<(), Box<dyn std
         }
         let err = match ergo_sbe::parse_file(&path) {
             Ok(_) => {
-                // Some "invalid" issue fixtures are accepted by ErgoSBE; skip those.
+                // Some "invalid" issue fixtures are accepted by ergon; skip those.
                 continue;
             }
             Err(e) => e,

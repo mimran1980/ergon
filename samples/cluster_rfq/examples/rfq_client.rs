@@ -1,7 +1,7 @@
 //! RFQ (Request for Quote) cluster client — ported from the
 //! Aeron Cookbook RFQ example (`aeron-io/aeron-cookbook-code`).
 //!
-//! Uses **ErgoSBE-generated** codecs from vendored `schemas/protocol-codecs.xml`
+//! Uses **ergo-sbe-generated** codecs from vendored `schemas/protocol-codecs.xml`
 //! (schema 101, version 1). Demonstrates the full RFQ lifecycle:
 //! CreateRfq → QuoteRfq → AcceptRfq.
 //!
@@ -22,7 +22,7 @@ fn pad36(s: &str) -> [u8; 36] {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Ergo Aeron Cluster RFQ Client (ErgoSBE codecs) ===\n");
+    println!("=== Ergo Aeron Cluster RFQ Client (ergon codecs) ===\n");
     println!("Schema: protocol-codecs.xml (schema 101, version 1)");
     println!("Source: aeron-io/aeron-cookbook-code (vendored)\n");
 
@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n=== RFQ lifecycle complete ===");
-    println!("Messages encoded with ErgoSBE-generated RFQ codecs");
+    println!("Messages encoded with ergo-sbe-generated RFQ codecs");
     println!(
         "Schema: schema_id={} version={}",
         CreateRfqCommandEncoder::SCHEMA_ID,

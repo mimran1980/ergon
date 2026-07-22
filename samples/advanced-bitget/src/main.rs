@@ -1,4 +1,4 @@
-//! ErgoSBE advanced sample — three-thread SBE pipeline.
+//! ergon advanced sample — three-thread SBE pipeline.
 //!
 //! - Thread 1 (main): Bitget WS → `BitgetIngestor` → `ClaimPublisher`
 //! - Thread 2: SHARED Aeron media driver (Rusteron 0.2 embedded)

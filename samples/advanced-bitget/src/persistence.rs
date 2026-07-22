@@ -490,7 +490,7 @@ fn dec_array(vals: &[i128]) -> String {
 pub fn clickhouse_credentials() -> (String, String) {
     (
         std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".into()),
-        std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergosbe".into()),
+        std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergon".into()),
     )
 }
 

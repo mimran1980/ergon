@@ -1,4 +1,4 @@
-# ErgoSBE
+# ergon
 
 > **Experimental hobby repository. Do not use any crate in this repository in
 > production.** Interfaces are deliberately opinionated, incomplete, and subject
@@ -9,11 +9,11 @@ This repository has two prototype projects and two internal laboratories.
 | Directory | Status | Purpose |
 |---|---|---|
 | [`sbe/`](sbe/) | Primary prototype; intended for an eventual `0.x` crates.io release | Explore ergonomic, safe, and very fast Rust code generation for Simple Binary Encoding |
-| [`cluster/`](cluster/) | Hobby prototype; intended for an eventual `0.x` crates.io release | Experiment with an Aeron Cluster client in Rust and exercise ErgoSBE against Aeron's protocol |
-| [`persist/`](persist/) | Unpublished laboratory | Exercise ErgoSBE domain objects and ClickHouse-oriented mappings |
+| [`cluster/`](cluster/) | Hobby prototype; intended for an eventual `0.x` crates.io release | Experiment with an Aeron Cluster client in Rust and exercise ergon against Aeron's protocol |
+| [`persist/`](persist/) | Unpublished laboratory | Exercise ergon domain objects and ClickHouse-oriented mappings |
 | [`samples/`](samples/) | Unpublished playground | Try APIs end to end; low-quality code that must not be treated as reference material |
 
-ErgoSBE is the main focus and the most tested part of the repository. Its purpose
+ergo-sbe is the main focus and the most tested part of the repository. Its purpose
 is fast prototyping: find generated Rust interfaces that are pleasant to use,
 hard to misuse, and at least as fast as the maintained Aeron SBE comparison. In
 the best case, useful ideas can later be adapted for the official Java SBE Rust
@@ -27,7 +27,7 @@ rusteron to expose them. This crate is not a substitute for that work.
 
 The repository is preparing for its first prototype release; it is not release
 ready today. The corrected design and all verified-open work live in the single
-[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md). Checked historical
+[`release-readiness spec`](.scratch/release-readiness/spec.md). Checked historical
 todo files were removed because several described only partial implementations.
 
 Important known gaps include:
@@ -45,11 +45,11 @@ Do not infer completion from generated method names or passing baseline tests.
 
 ## Repository map
 
-- [ErgoSBE README](sbe/README.md)
+- [ergo-sbe README](sbe/README.md)
 - [Ergo Aeron Cluster README](cluster/README.md)
 - [Persist laboratory README](persist/README.md)
 - [Samples laboratory README](samples/README.md)
-- [Implementation plan and design](docs/IMPLEMENTATION_PLAN.md)
+- [Implementation plan and design](.scratch/release-readiness/spec.md)
 - [Contributing and verification](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 

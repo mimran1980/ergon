@@ -57,10 +57,6 @@ impl Default for SessionBuilder {
 }
 
 impl SessionBuilder {
-    pub fn builder() -> Self {
-        Self::default()
-    }
-
     /// Set the ingress channel URI (validated + stored as [`CString`]).
     pub fn ingress_channel(mut self, channel: impl AsRef<str>) -> Self {
         self.ingress_c = uri::channel_cstr(channel.as_ref()).ok();
@@ -117,12 +113,6 @@ impl SessionBuilder {
     #[inline]
     pub(crate) fn egress_channel_bytes(&self) -> &[u8] {
         self.egress_c.as_ref().map(|c| c.as_bytes()).unwrap_or(b"")
-    }
-
-    /// Multi-member endpoints map as UTF-8, if set.
-    #[inline]
-    pub fn ingress_endpoints_str(&self) -> Option<&str> {
-        self.ingress_endpoints.as_deref()
     }
 
     /// Synchronous connect — equivalent to [`crate::AeronCluster::connect`].
@@ -208,7 +198,7 @@ mod tests {
 
     #[test]
     fn cstr_accessors_borrow_cached_storage() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::builder()
+        let b = SessionBuilder::default()
             .ingress_channel(uri::AERON_IPC_STREAM.to_str()?)
             .egress_channel(uri::AERON_IPC_STREAM.to_str()?);
         b.validate()?;
@@ -220,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_validate_endpoints_without_ingress_channel() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::builder()
+        let b = SessionBuilder::default()
             .ingress_endpoints("0=localhost:9002,1=localhost:9102")
             .egress_channel("aeron:udp?endpoint=localhost:19002");
         b.validate()?;

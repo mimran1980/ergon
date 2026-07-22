@@ -28,7 +28,7 @@ fn pad36(s: &str) -> [u8; 36] {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::var("RFQ_AERON_DIR").unwrap_or_else(|_| AERON_DIR_DEFAULT.to_string());
-    println!("=== RFQ round-trip vs cookbook cluster (ErgoSBE) ===");
+    println!("=== RFQ round-trip vs cookbook cluster (ergon) ===");
     println!("aeron.dir = {dir}");
     println!("ingress   = {INGRESS}\n");
 

@@ -47,7 +47,8 @@ fn publish_l2book_encodes_app_message_on_typed_stream() -> Result<(), Box<dyn st
     // Claim length must exactly equal the encoded message length.
     let app = AppMessageDecoder::wrap_and_apply_header(bytes, 0).unwrap();
     let (name, after) = app.into_app_name().unwrap();
-    assert_eq!(name, b"ergosbe");
+    // ponytail: this is just an assert against the constant in config.rs
+    assert_eq!(name, b"ergon");
     let (frame, _complete) = after.into_payload_as_message().unwrap();
     let AnyMessage::L2Book(book) = frame.message else {
         panic!("payload must dispatch as L2Book");

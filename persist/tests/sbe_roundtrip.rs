@@ -1,7 +1,7 @@
 //! Integration tests: encode/decode roundtrips of DynamicSchema and DynamicRow.
 #![allow(unused_must_use)] // ponytail: encoder builder calls return &mut Self, not used in tests
 //!
-//! These tests verify that the ErgoSBE-generated codecs produce wire-compatible
+//! These tests verify that the ergo-sbe-generated codecs produce wire-compatible
 //! binary representations that decode back to the same values.
 
 use ergo_clickhouse_persist::sbe as persist_sbe;

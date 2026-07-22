@@ -407,7 +407,7 @@ fn parse_with_context(
 /// Resolution order:
 /// 1. Relative to `base_dir` (when provided)
 /// 2. Direct path (CWD-relative)
-/// 3. Well-known submodule paths for the ErgoSBE repo layout
+/// 3. Well-known submodule paths for the ergon repo layout
 ///
 /// Returns `Ok(Some(content))` on success, `Ok(None)` if the file cannot be
 /// found (fails silently), or `Err(Fault)` if a cycle is detected.
@@ -2104,7 +2104,7 @@ mod tests {
 
     #[test]
     fn parse_file_missing_path_is_malformed_xml() -> Result<(), Box<dyn std::error::Error>> {
-        let err = parse_file("/nonexistent/ergosbe/coverage/schema.xml").unwrap_err();
+        let err = parse_file("/nonexistent/ergon/coverage/schema.xml").unwrap_err();
         assert!(matches!(err, ParseError::MalformedXml { .. }));
 
         Ok(())
@@ -4115,7 +4115,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         // The included file's root is <messageSchema>, not <types> — the
         // parser must descend into it and find the nested <types> node.
-        let dir = std::env::temp_dir().join(format!("ergosbe_xml_inc_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ergon_xml_inc_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let inc = dir.join("wrapped-types.xml");
         std::fs::write(
@@ -4404,7 +4404,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         // The included <messageSchema> carries a <message> sibling next to
         // <types>; only the <types> node is imported.
-        let dir = std::env::temp_dir().join(format!("ergosbe_xml_inc2_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ergon_xml_inc2_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let inc = dir.join("wrapped-types-siblings.xml");
         std::fs::write(

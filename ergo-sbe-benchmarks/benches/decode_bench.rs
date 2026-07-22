@@ -1,4 +1,4 @@
-//! Decode benchmarks for ErgoSBE-generated Car message codec.
+//! Decode benchmarks for ergon-generated Car message codec.
 //!
 //! Measures decode latency for the entry point, individual field accessors
 //! (both checked and raw/unchecked variants), group iteration, and HFT-specific
@@ -19,7 +19,7 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use ergosbe_benchmarks::ergo_car::*;
+use ergo_sbe_benchmarks::ergo_car::*;
 
 #[path = "_common.rs"]
 mod common;

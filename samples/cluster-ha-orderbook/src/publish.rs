@@ -65,7 +65,7 @@ impl ClaimIngress for RecordingClaimIngress {
         }
         let total = MSG_HDR_TOTAL + payload_len;
         let mut buf = vec![0u8; total];
-        // Real ErgoSBE SessionMessageHeader (same encoder as AeronCluster::try_claim).
+        // Real ergon SessionMessageHeader (same encoder as AeronCluster::try_claim).
         {
             let mut enc = match SessionMessageHeaderEncoder::wrap_and_apply_header(
                 &mut buf[..MSG_HDR_TOTAL],

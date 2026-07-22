@@ -2,9 +2,9 @@
 name = "ergo-aeron-cluster"
 version = "0.1.0"
 edition = "2024"
-description = "Experimental Ergo Aeron Cluster client (rusteron transport + ErgoSBE codecs)"
+description = "Experimental Ergo Aeron Cluster client (rusteron transport + ergon codecs)"
 license = "Apache-2.0"
-repository = "https://github.com/mimran1980/ErgoSBE"
+repository = "https://github.com/mimran1980/ergon"
 
 [dependencies]
 rusteron-client = { workspace = true }

@@ -1,4 +1,4 @@
-//! Build script: generates `ErgoSBE` Car codec on-the-fly from the example
+//! Build script: generates `ergon` Car codec on-the-fly from the example
 //! schema so benchmarks always measure the latest `codegen`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

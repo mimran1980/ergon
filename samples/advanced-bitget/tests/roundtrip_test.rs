@@ -1,4 +1,4 @@
-//! Roundtrip encode/decode tests for ErgoSBE-generated exchange orderbook codecs.
+//! Roundtrip encode/decode tests for ergo-sbe-generated exchange orderbook codecs.
 #![allow(
     clippy::all,
     clippy::pedantic,

@@ -1,7 +1,7 @@
 //! Port of upstream `simple-binary-encoding/rust/tests/baseline_test.rs`.
 //!
 //! Decodes the Java-generated binary fixture `car_example_baseline_data.sbe`
-//! using ErgoSBE-generated code, then encodes from scratch and verifies
+//! using ergon-generated code, then encodes from scratch and verifies
 //! round-trip decode produces the same logical values.
 //!
 //! Engine composite includes `<ref>` members and nested `BoostType` (SBE-REF):
@@ -2190,7 +2190,7 @@ fn upstream_issue_schemas_parse_or_error_gracefully() -> Result<(), Box<dyn std:
         ("issue505.xml", true),
         ("issue560.xml", true),
         ("issue567-valid.xml", true),
-        ("issue567-invalid.xml", true), // ErgoSBE parser handles this; "invalid" refers to upstream tool behaviour
+        ("issue567-invalid.xml", true), // ergon parser handles this; "invalid" refers to upstream tool behaviour
         ("issue661.xml", true),
         ("issue827.xml", true),
         ("issue835.xml", true),

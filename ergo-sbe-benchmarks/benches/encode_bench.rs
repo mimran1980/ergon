@@ -1,4 +1,4 @@
-//! Encode benchmarks for ErgoSBE-generated Car message codec.
+//! Encode benchmarks for ergon-generated Car message codec.
 //!
 //! Measures encode throughput: scalar-only encode, full end-to-end encode
 //! with the checked API (`wrap_and_apply_header`), and the unchecked path
@@ -18,7 +18,7 @@
 )]
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
-use ergosbe_benchmarks::ergo_car::*;
+use ergo_sbe_benchmarks::ergo_car::*;
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 

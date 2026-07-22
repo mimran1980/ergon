@@ -206,9 +206,6 @@ impl ClusterError {
     }
 }
 
-/// `Result` alias for the public cluster client API.
-pub type ClusterResult<T> = Result<T, ClusterError>;
-
 impl From<crate::codecs::session::sbe_rt::DecodeError> for ClusterError {
     fn from(e: crate::codecs::session::sbe_rt::DecodeError) -> Self {
         ClusterError::ProtocolError {

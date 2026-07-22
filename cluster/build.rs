@@ -1,5 +1,5 @@
 //! Build script: generate the cluster SBE codecs from vendored schemas
-//! using ErgoSBE, writing to OUT_DIR.
+//! using ergo-sbe, writing to OUT_DIR.
 //!
 //! Schemas (vendored under cluster/schemas/):
 //!   cluster/schemas/aeron-cluster-codecs.xml
@@ -38,7 +38,7 @@ fn generate_schema(schema_path: &std::path::Path, module: &str, out_dir: &std::p
 }
 
 fn main() {
-    // Production codecs are ErgoSBE-only (OUT_DIR). Residual sbe-tool trees
+    // Production codecs are ergo-sbe-only (OUT_DIR). Residual sbe-tool trees
     // under src/codecs/{cluster_codecs,rfq_codecs} remain for head-to-head
     // benches only — no sbe-tool regeneration here.
 

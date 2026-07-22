@@ -8,7 +8,7 @@ pub const STREAM_TYPED: i32 = 1001;
 /// Unwrapped DynamicSchemaV2/DynamicRowV2 stream.
 pub const STREAM_DYNAMIC: i32 = 1002;
 /// Envelope application name.
-pub const APP_NAME: &[u8] = b"ergosbe";
+pub const APP_NAME: &[u8] = b"ergon";
 /// Traded instrument.
 pub const SYMBOL: &str = "BTCUSDT";
 /// Bitget public WebSocket endpoint.

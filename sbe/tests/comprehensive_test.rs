@@ -1,4 +1,4 @@
-//! Comprehensive unit tests for all ErgoSBE generated features.
+//! Comprehensive unit tests for all ergon generated features.
 //! Each test encodes, decodes, and verifies every accessor path.
 //! Tests A+B: correctness + edge cases for every todo item.
 

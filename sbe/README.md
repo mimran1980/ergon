@@ -4,7 +4,7 @@
 > is intentionally opinionated and will change while its safety, ergonomics, wire
 > compatibility, and performance are evaluated.
 
-ErgoSBE parses Simple Binary Encoding XML schemas and generates Rust encoders and
+ergo-sbe parses Simple Binary Encoding XML schemas and generates Rust encoders and
 decoders. It is the primary project in this repository and the most thoroughly
 tested, but it is still research software rather than a supported replacement for
 the official SBE toolchain.
@@ -29,7 +29,7 @@ These capabilities do not mean the planned interface is complete. The current
 review found partial converter emission, bypassable fixed-field completion,
 incomplete recursive domain mapping, incomplete composite symmetry, and
 inconsistent handling of schema-declared text. See the single
-[`implementation plan`](../docs/IMPLEMENTATION_PLAN.md) for the exact design and
+[`implementation plan`](../.scratch/release-readiness/spec.md) for the exact design and
 open acceptance criteria.
 
 ## Build and test
@@ -40,7 +40,7 @@ From the repository root:
 cargo test -p ergo-sbe --all-features -- --test-threads=1
 cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
 cargo doc -p ergo-sbe --all-features --no-deps
-cargo bench -p ergosbe-benchmarks --no-run
+cargo bench -p ergo-sbe-benchmarks --no-run
 ```
 
 Generator and hot-path changes must also run the equal-work performance suite:
@@ -55,7 +55,7 @@ and performance criteria are present and pass.
 
 ## Minimal generation example
 
-Add ErgoSBE as a build dependency while working in this repository:
+Add ergo-sbe as a build dependency while working in this repository:
 
 ```toml
 [build-dependencies]

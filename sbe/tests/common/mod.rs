@@ -1,4 +1,4 @@
-//! Shared test helpers for `ErgoSBE` integration tests.
+//! Shared test helpers for `ergon` integration tests.
 //!
 //! # Codegen bug workaround
 //!
@@ -131,7 +131,7 @@ impl Paths {
 
 // ── Code generation helpers ──────────────────────────────────────────
 
-/// Parse a schema XML file and generate `ErgoSBE` Rust source.
+/// Parse a schema XML file and generate `ergon` Rust source.
 pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);

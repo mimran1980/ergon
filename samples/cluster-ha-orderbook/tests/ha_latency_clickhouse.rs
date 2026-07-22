@@ -1,7 +1,7 @@
 //! Live ClickHouse proof: DynamicSchema → DynamicRow → SchemaRegistry decode
 //! → ClickhouseSink (shipped `LatencyPersistor` path). H4/H5.
 //!
-//! Requires ClickHouse at 127.0.0.1:8123 (password `ergosbe`).
+//! Requires ClickHouse at 127.0.0.1:8123 (password `ergon`).
 
 use cluster_ha_orderbook::latency::{FEED_LATENCY_TABLE, LatencyPersistor, LatencySample};
 
@@ -12,7 +12,7 @@ fn ch_query(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     let resp = client
         .post(ENDPOINT)
         .header("X-ClickHouse-User", "default")
-        .header("X-ClickHouse-Key", "ergosbe")
+        .header("X-ClickHouse-Key", "ergon")
         .body(sql.to_string())
         .send()?;
     let status = resp.status();
@@ -38,7 +38,7 @@ fn feed_latency_via_latency_persistor_into_clickhouse() -> Result<(), Box<dyn st
     // Clean slate so SELECT is exact.
     let _ = ch_query(&format!("DROP TABLE IF EXISTS {FEED_LATENCY_TABLE}"));
 
-    let mut persistor = LatencyPersistor::connect(ENDPOINT, "default", "ergosbe")?;
+    let mut persistor = LatencyPersistor::connect(ENDPOINT, "default", "ergon")?;
     // DynamicSchema announcement + registry registration (must run before rows).
     let schema_bytes = persistor.ensure_schema()?;
     assert!(

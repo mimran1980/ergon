@@ -2,7 +2,7 @@
 //!
 //! Each `GOLDEN_*` constant is the exact SBE wire output for a fixed,
 //! deterministic input, originally captured from sbe-tool 1.39.0 and now
-//! re-proven solely via **ErgoSBE** production encoders (`session`).
+//! re-proven solely via **ergon** production encoders (`session`).
 //! Protocol goldens no longer require sbe-tool at runtime.
 //!
 //! Capture provenance: 2026-07-18, aeron submodule 1.52.2, schema id 111 v16.
@@ -57,7 +57,7 @@ const GOLDEN_ADMIN_RESPONSE: [u8; 42] = [
     0x00, 0x00, 0x00, 0x00,
 ];
 
-// ── ErgoSBE production encoders (sole protocol path) ─────────────────────
+// ── ergo-sbe production encoders (sole protocol path) ─────────────────────
 
 use ergo_aeron_cluster::codecs::session::{
     AdminRequestType as ErgoAdminRequestType, AdminResponseCode as ErgoAdminResponseCode,

@@ -4,7 +4,7 @@
 > and do not copy them as reference implementations.**
 
 The sample crates are deliberately outside the workspace. They exist only to try
-ErgoSBE, Persist, rusteron, and Ergo Aeron Cluster interfaces in larger flows.
+ergo-sbe, ergo-clickhouse-persist, and ergo-aeron-cluster interfaces in larger flows.
 They may contain experimental structure, unfinished migrations, external-service
 assumptions, and code that is less polished than the two product prototypes.
 
@@ -36,7 +36,7 @@ not release gates for Persist or Samples.
 - Prefer `Result` and `?` over avoidable `unwrap` or `expect`.
 - Use domain objects when they make an experiment clearer and flyweights when the
   experiment specifically measures zero-copy behaviour.
-- Delete code that no longer exercises a unique ErgoSBE or Cluster interface.
-- Track all future work in
-  [`docs/IMPLEMENTATION_PLAN.md`](../docs/IMPLEMENTATION_PLAN.md), not local todo
-  Markdown files.
+- Delete code that no longer exercises a unique ergo-sbe or ergo-aeron-cluster interface.
+- Track future work in `.scratch/<feature-slug>/spec.md` and its issue files,
+  following [`docs/agents/issue-tracker.md`](../docs/agents/issue-tracker.md),
+  not standalone todo Markdown files.

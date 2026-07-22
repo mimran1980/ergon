@@ -43,21 +43,6 @@ pub fn parse_ingress_endpoints(map: &str) -> Result<Vec<IngressEndpoint>, Cluste
     Ok(out)
 }
 
-/// Round-robin next index after a failed attempt (`start` inclusive).
-#[inline]
-pub fn next_endpoint_index(len: usize, current: usize) -> usize {
-    if len == 0 { 0 } else { (current + 1) % len }
-}
-
-/// Resolve `host:port` for `member_id`, or `None` if missing.
-pub fn endpoint_for_member(map: &str, member_id: i32) -> Option<String> {
-    parse_ingress_endpoints(map)
-        .ok()?
-        .into_iter()
-        .find(|e| e.member_id == member_id)
-        .map(|e| e.endpoint)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,13 +53,6 @@ mod tests {
         assert_eq!(v[0].member_id, 0);
         assert_eq!(v[0].endpoint, "a:1");
         assert_eq!(v[1].member_id, 1);
-        Ok(())
-    }
-
-    #[test]
-    fn round_robin() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(next_endpoint_index(3, 0), 1);
-        assert_eq!(next_endpoint_index(3, 2), 0);
         Ok(())
     }
 }

@@ -93,17 +93,6 @@ pub fn parse_event(data: &[u8]) -> Option<EgressEvent> {
     }
 }
 
-/// Parse a REDIRECT SessionEvent detail into `(leader_member_id, endpoint)`.
-///
-/// Java format: `"0=host:port,1=host:port,2=host:port"` with the leader
-/// first. Returns the leader's (memberId, endpoint).
-pub fn parse_redirect_leader(detail: &str) -> Option<(i32, String)> {
-    let first = detail.split(',').next()?;
-    let (id_str, ep) = first.split_once('=')?;
-    let id: i32 = id_str.trim().parse().ok()?;
-    Some((id, ep.trim().to_string()))
-}
-
 /// Resolve a single member's endpoint from a Java endpoints map.
 ///
 /// `NewLeaderEvent.ingress_endpoints` lists ALL members in id order
@@ -128,33 +117,6 @@ pub fn parse_leader_endpoint(endpoints: &str, leader_member_id: i32) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_redirect_leader() -> Result<(), Box<dyn std::error::Error>> {
-        let d = "0=localhost:9010,1=localhost:9011,2=localhost:9012";
-        let (id, ep) = parse_redirect_leader(d).ok_or("parse")?;
-        assert_eq!(id, 0);
-        assert_eq!(ep, "localhost:9010");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_parse_redirect_leader_single() -> Result<(), Box<dyn std::error::Error>> {
-        let (id, ep) = parse_redirect_leader("3=host:9999").ok_or("parse")?;
-        assert_eq!(id, 3);
-        assert_eq!(ep, "host:9999");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_parse_redirect_leader_malformed() -> Result<(), Box<dyn std::error::Error>> {
-        assert!(parse_redirect_leader("garbage").is_none());
-        assert!(parse_redirect_leader("").is_none());
-
-        Ok(())
-    }
 
     #[test]
     fn test_parse_event_short_returns_none() -> Result<(), Box<dyn std::error::Error>> {

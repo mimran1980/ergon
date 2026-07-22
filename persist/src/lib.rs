@@ -4,7 +4,7 @@
 //! rows) to ClickHouse with automatic schema management.
 //!
 //! Sits on the **consumer** side of a market-data path — never on the encode
-//! hot path. Pair with ErgoSBE-generated codecs for wire DTOs, or use the
+//! hot path. Pair with ergo-sbe-generated codecs for wire DTOs, or use the
 //! dynamic V2 path in [`dynamic`] (`DynamicSchema` / `DynamicRow` + registry /
 //! row decode) as in the HA sample `LatencyPersistor`.
 //!
@@ -22,7 +22,7 @@
 //!
 //! Derive: `ergo-clickhouse-persist-derive` (`#[derive(Persist)]`).
 //!
-//! See the crate [README](https://github.com/mimran1980/ErgoSBE/blob/first_cut/persist/README.md).
+//! See the crate [README](https://github.com/mimran1980/ergon/blob/first_cut/persist/README.md).
 
 /// Feed consumer helpers.
 pub mod consumer;

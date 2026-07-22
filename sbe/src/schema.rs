@@ -38,32 +38,6 @@
 //! - [`Schema::new`] — directly from metadata (when you already have the
 //!   schema identity and will populate the IR separately).
 
-use std::borrow::Cow;
-
-/// Source input for an SBE schema.
-///
-/// Currently only supports XML. The `Cow` variant lets you pass either
-/// borrowed or owned string content without unnecessary cloning.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum SchemaSource<'a> {
-    /// XML schema content held in memory.
-    Xml(Cow<'a, str>),
-}
-
-impl<'a> SchemaSource<'a> {
-    /// Build a schema source from borrowed XML.
-    #[must_use]
-    pub(crate) const fn borrowed_xml(xml: &'a str) -> Self {
-        Self::Xml(Cow::Borrowed(xml))
-    }
-
-    /// Build a schema source from owned XML.
-    #[must_use]
-    pub(crate) const fn owned_xml(xml: String) -> Self {
-        Self::Xml(Cow::Owned(xml))
-    }
-}
-
 use crate::ir::{ByteOrder, Ir};
 
 /// Normalised schema metadata after parsing and resolution.
@@ -129,7 +103,7 @@ impl Schema {
 
 #[cfg(test)]
 mod tests {
-    use super::{Schema, SchemaSource};
+    use super::Schema;
 
     #[test]
     fn schema_metadata_preserves_identity_fields() -> Result<(), Box<dyn std::error::Error>> {
@@ -138,20 +112,6 @@ mod tests {
         assert_eq!(schema.package, "fix.sbe");
         assert_eq!(schema.id, 42);
         assert_eq!(schema.version, 7);
-
-        Ok(())
-    }
-
-    #[test]
-    fn schema_source_constructors_hold_xml() -> Result<(), Box<dyn std::error::Error>> {
-        let borrowed = SchemaSource::borrowed_xml("<messageSchema/>");
-        let owned = SchemaSource::owned_xml("<messageSchema/>".to_string());
-        match &borrowed {
-            SchemaSource::Xml(cow) => assert!(matches!(cow, std::borrow::Cow::Borrowed(_))),
-        }
-        match &owned {
-            SchemaSource::Xml(cow) => assert!(matches!(cow, std::borrow::Cow::Owned(_))),
-        }
 
         Ok(())
     }

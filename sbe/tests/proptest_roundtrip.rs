@@ -5,7 +5,7 @@
 //! round-trips to the logical value that was encoded.
 //!
 //! Because the generated code exists only at test-run time (it is produced by
-//! the ErgoSBE code generator at test time), the actual proptest evaluation
+//! the ergon code generator at test time), the actual proptest evaluation
 //! happens inside a temporary crate that depends on `proptest`.  This file
 //! orchestrates the whole process: generate, patch, compile, run, clean up.
 

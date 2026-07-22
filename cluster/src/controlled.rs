@@ -8,17 +8,6 @@
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};
 use crate::fragment::Fragment;
 
-/// Map [`ControlledPollAction`] to Aeron C values (ABORT=1, BREAK=2, COMMIT=3, CONTINUE=4).
-#[allow(dead_code)]
-pub(crate) const fn action_to_aeron(action: ControlledPollAction) -> i32 {
-    match action {
-        ControlledPollAction::Continue => 4,
-        ControlledPollAction::Abort => 1,
-        ControlledPollAction::Break => 2,
-        ControlledPollAction::Commit => 3,
-    }
-}
-
 /// Action returned by a `ControlledEgressListener`.
 ///
 /// Mirrors Aeron's `ControlledFragmentHandler.Action`:
@@ -142,15 +131,6 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
 mod tests {
     use super::*;
     use crate::codecs::session::SessionMessageHeaderEncoder;
-
-    #[test]
-    fn test_action_values_match_aeron() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(super::action_to_aeron(ControlledPollAction::Abort), 1);
-        assert_eq!(super::action_to_aeron(ControlledPollAction::Break), 2);
-        assert_eq!(super::action_to_aeron(ControlledPollAction::Commit), 3);
-        assert_eq!(super::action_to_aeron(ControlledPollAction::Continue), 4);
-        Ok(())
-    }
 
     #[test]
     fn test_all_actions_are_distinct() -> Result<(), Box<dyn std::error::Error>> {

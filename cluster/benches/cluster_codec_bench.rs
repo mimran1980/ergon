@@ -1,10 +1,10 @@
-//! Head-to-head cluster codec benchmarks: ErgoSBE vs sbe-tool 1.39.0.
+//! Head-to-head cluster codec benchmarks: ergon vs sbe-tool 1.39.0.
 //!
 //! Both codecs encode byte-identical output (proved by 18/18 golden parity
 //! tests); this measures speed on **equal work**. The sbe-tool codecs remain
 //! only for these benches under `reference_sbe/`.
 //!
-//! Acceptance: 5-run median ErgoSBE/sbe-tool ratio ≤ 1.00 on every **maintained**
+//! Acceptance: 5-run median ergon/sbe-tool ratio ≤ 1.00 on every **maintained**
 //! case:
 //! - encode: session message header, keep-alive, **claim_shaped** (header + app)
 //! - decode: session message header, session event (equal-work audit)
@@ -19,11 +19,11 @@ mod reference_sbe;
 
 const HFT_BATCH: usize = 10_000;
 
-/// Encode 10k SessionMessageHeaders via ErgoSBE.
+/// Encode 10k SessionMessageHeaders via ergon.
 fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/session_message_header");
     g.throughput(Throughput::Elements(HFT_BATCH as u64));
-    g.bench_function("ergosbe", |b| {
+    g.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || vec![0u8; HFT_BATCH * 32],
             |mut buf| {
@@ -65,12 +65,12 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     g.finish();
 }
 
-/// Encode 10k SessionKeepAlives via ErgoSBE.
+/// Encode 10k SessionKeepAlives via ergon.
 fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/session_keep_alive");
     g.throughput(Throughput::Elements(HFT_BATCH as u64));
     let sz = 8 + ergo_aeron_cluster::codecs::session::SessionKeepAliveEncoder::BLOCK_LENGTH;
-    g.bench_function("ergosbe", |b| {
+    g.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || vec![0u8; HFT_BATCH * sz],
             |mut buf| {
@@ -117,7 +117,7 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
     let channel = "aeron:udp?endpoint=localhost:9999";
     let creds = b"user:pass";
     g.throughput(Throughput::Elements(HFT_BATCH as u64));
-    g.bench_function("ergosbe", |b| {
+    g.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || vec![0u8; HFT_BATCH * 128],
             |mut buf| {
@@ -170,7 +170,7 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
 
 // ── Decode: SessionMessageHeader (fixed, 32 bytes) ──────────────────────
 //
-// Equal-work audit (2026-07-18): production ErgoSBE `wrap_and_apply_header`
+// Equal-work audit (2026-07-18): production ergon `wrap_and_apply_header`
 // always checks buffer length + template_id + schema_id. sbe-tool's
 // `header()` only `debug_assert`s template_id (elided in release). Without
 // matching release checks the sbe-tool arm was under-worked (~1.17× unfair).
@@ -185,7 +185,7 @@ const MSG_HDR_SCHEMA_ID: u16 = 111;
 
 #[inline(always)]
 fn sbe_tool_header_ok(template_id: u16, schema_id: u16, expected_tid: u16, expected_sid: u16) -> bool {
-    // Same two comparisons ErgoSBE performs in wrap_and_apply_header.
+    // Same two comparisons ergon performs in wrap_and_apply_header.
     // Return value is black_box'd so LLVM cannot DCE the checks.
     black_box(template_id == expected_tid && schema_id == expected_sid)
 }
@@ -193,7 +193,7 @@ fn sbe_tool_header_ok(template_id: u16, schema_id: u16, expected_tid: u16, expec
 fn bench_decode_msg_header(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/decode/session_message_header");
     g.throughput(Throughput::Elements(HFT_BATCH as u64));
-    g.bench_function("ergosbe", |b| {
+    g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             for _ in 0..HFT_BATCH {
                 let d = ergo_aeron_cluster::codecs::session::SessionMessageHeaderDecoder::wrap_and_apply_header(
@@ -250,7 +250,7 @@ const SESSION_EVENT_SCHEMA_ID: u16 = 111;
 fn bench_decode_session_event(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/decode/session_event");
     g.throughput(Throughput::Elements(HFT_BATCH as u64));
-    g.bench_function("ergosbe", |b| {
+    g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             for _ in 0..HFT_BATCH {
                 use ergo_aeron_cluster::codecs::session::SessionEventDecoder;
@@ -326,7 +326,7 @@ fn bench_decode_new_leader(c: &mut Criterion) {
     let fixture = new_leader_fixture();
     let mut g = c.benchmark_group("cluster/decode/new_leader_event");
     g.throughput(Throughput::Elements(HFT_BATCH as u64));
-    g.bench_function("ergosbe", |b| {
+    g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             for _ in 0..HFT_BATCH {
                 use ergo_aeron_cluster::codecs::session::NewLeaderEventDecoder;
@@ -384,7 +384,7 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/claim_shaped_header_plus_app");
     let total = 32 + CLAIM_APP_PAYLOAD.len(); // MSG_HDR_TOTAL + app
     g.throughput(Throughput::Elements(HFT_BATCH as u64));
-    g.bench_function("ergosbe", |b| {
+    g.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || vec![0u8; HFT_BATCH * total],
             |mut buf| {

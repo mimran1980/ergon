@@ -10,7 +10,7 @@
 //! client.close()?;
 //! ```
 //!
-//! Hot path: [`AeronCluster::try_claim`] writes SessionMessageHeader via ErgoSBE
+//! Hot path: [`AeronCluster::try_claim`] writes SessionMessageHeader via ergo-sbe
 //! into the claim; fill app payload then [`ClusterClaim::commit`].
 
 use std::time::{Duration, Instant};
@@ -27,7 +27,11 @@ use crate::codecs::session::{
     AdminRequestEncoder, AdminRequestType, ChallengeResponseEncoder, SessionCloseRequestEncoder,
     SessionConnectRequestEncoder, SessionKeepAliveEncoder, SessionMessageHeaderEncoder,
 };
-use crate::connect::{connect_reoffer_interval_ms, should_reoffer_connect};
+/// Re-offer interval for SessionConnectRequest — roughly `message_timeout / 4`,
+/// clamped to [50, 1000] ms (mirrors Java `AeronCluster.AsyncConnect`).
+fn connect_reoffer_interval_ms(message_timeout_ms: u64) -> u64 {
+    (message_timeout_ms / 4).clamp(50, 1_000)
+}
 use crate::controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 use crate::egress::{EgressAdapter, EgressListener};
 use crate::error::ClusterError;
@@ -271,7 +275,7 @@ impl AeronCluster {
                     // No event: re-offer connect if the interval elapsed so a
                     // pre-election peer that neither leads nor redirects does
                     // not burn the full timeout on a single silent offer.
-                    if should_reoffer_connect(last_offer, Instant::now(), reoffer_ms) {
+                    if last_offer.elapsed() >= Duration::from_millis(reoffer_ms) {
                         match self.try_offer_connect_request(builder, &creds) {
                             Ok(true) => {}
                             Ok(false) => {}
@@ -547,7 +551,7 @@ impl AeronCluster {
     }
 
     /// Zero-copy publish: claim a region of the ingress term buffer,
-    /// write the SessionMessageHeader into the first 32 bytes via ErgoSBE,
+    /// write the SessionMessageHeader into the first 32 bytes via ergon,
     /// and expose the remaining `payload_len` bytes for the caller to fill
     /// directly. Mirrors Java `AeronCluster.tryClaim(length, claim)`.
     ///
@@ -580,7 +584,7 @@ impl AeronCluster {
             .map_err(|e| ClusterError::from_offer_error("try_claim", e))?;
 
         // Write the SessionMessageHeader (schema 111) into the claim's
-        // first 32 bytes via the ErgoSBE encoder.
+        // first 32 bytes via the ergon encoder.
         if claim.data().len() < MSG_HDR_TOTAL {
             return Err(ClusterError::BufferTooSmall {
                 needed: MSG_HDR_TOTAL,
@@ -816,7 +820,7 @@ impl AsyncClusterConnect {
                         }
                         _ => {}
                     }
-                } else if should_reoffer_connect(self.last_connect_offer, Instant::now(), self.reoffer_interval_ms) {
+                } else if self.last_connect_offer.elapsed() >= Duration::from_millis(self.reoffer_interval_ms) {
                     // Pre-election / silent non-leader: re-offer connect.
                     self.connect_sent = false;
                     let _ = self.encode_and_send_connect()?;

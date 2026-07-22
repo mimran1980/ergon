@@ -1,5 +1,5 @@
 [workspace]
-members = ["sbe", "persist", "persist/derive", "ergosbe-benchmarks", "cluster"]
+members = ["sbe", "persist", "persist/derive", "ergo-sbe-benchmarks", "cluster"]
 exclude = ["samples"]
 resolver = "3"
 
@@ -8,8 +8,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
-repository = "https://github.com/mimran1980/ErgoSBE"
-homepage = "https://github.com/mimran1980/ErgoSBE"
+repository = "https://github.com/mimran1980/ergon"
+homepage = "https://github.com/mimran1980/ergon"
 authors = ["Mohammed Imran"]
 
 # Single rusteron line for all members: ^0.2 (latest 0.2.x from crates.io).

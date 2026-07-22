@@ -52,7 +52,7 @@ fn ch_client() -> clickhouse::Client {
     clickhouse::Client::default()
         .with_url("http://localhost:8123")
         .with_user(std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".into()))
-        .with_password(std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergosbe".into()))
+        .with_password(std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergon".into()))
         .with_database("default")
 }
 
@@ -64,7 +64,7 @@ fn ch_client() -> clickhouse::Client {
 fn test_sink() -> ClickhouseSink {
     ClickhouseSinkBuilder::new()
         .user(&std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".into()))
-        .password(&std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergosbe".into()))
+        .password(&std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "ergon".into()))
         .build()
         .expect("failed to build ClickhouseSink")
 }

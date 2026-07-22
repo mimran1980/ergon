@@ -1,4 +1,4 @@
-//! Protocol codec round-trips using **ErgoSBE** production codecs only.
+//! Protocol codec round-trips using **ergon** production codecs only.
 //! sbe-tool trees remain for head-to-head benches only.
 
 use super::rfq::{CreateRfqCommandDecoder, CreateRfqCommandEncoder, Side};
@@ -75,9 +75,9 @@ fn test_challenge_and_new_leader_encode() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// ErgoSBE RFQ CreateRfqCommand vs frozen 77-byte golden (schema 101 wire parity).
+/// ergon RFQ CreateRfqCommand vs frozen 77-byte golden (schema 101 wire parity).
 /// Golden captured 2026-07-20; cross-generator sbe-tool verification replaced
-/// by this frozen reference + ErgoSBE round-trip assertions.
+/// by this frozen reference + ergon round-trip assertions.
 #[test]
 fn test_rfq_create_command_golden_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let mut corr = [b'_'; 36];
@@ -103,7 +103,7 @@ fn test_rfq_create_command_golden_bytes() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(&ergo_bytes[..8], &[69, 0, 106, 0, 101, 0, 1, 0]);
     assert_eq!(&ergo_bytes[ergo_bytes.len() - 4..], &[244, 1, 0, 0]);
 
-    // Decode with ErgoSBE — verify round-trip correctness.
+    // Decode with ergon — verify round-trip correctness.
     let dec = CreateRfqCommandDecoder::wrap_and_apply_header(ergo_bytes, 0)?;
     assert_eq!(dec.correlation(), corr);
     assert_eq!(dec.expire_time_ms(), 60_000);

@@ -1,4 +1,4 @@
-//! Cluster SBE codecs — ErgoSBE-generated from Aeron schemas (OUT_DIR).
+//! Cluster SBE codecs — ergo-sbe-generated from Aeron schemas (OUT_DIR).
 //!
 //! - [`session`] — Aeron cluster session schema 111
 //! - [`mark`]    — cluster mark schema

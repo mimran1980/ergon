@@ -1,4 +1,4 @@
-# ErgoSBE — reproducible workspace gates
+# ergon — reproducible workspace gates
 #
 # ── ergo-aeron-cluster + --all-features ─────────────────────────────────
 # `cluster` IS a workspace member. Commands that pass `--all-features` still
@@ -24,7 +24,7 @@
 #   1. ergo-sbe             (sbe/)
 #   2. ergo-clickhouse-persist-derive  then  ergo-clickhouse-persist
 #   3. ergo-aeron-cluster   with default features only (never require test-harness)
-# Do not publish: ergosbe-benchmarks (publish=false), samples.
+# Do not publish: ergo-sbe-benchmarks (publish=false), samples.
 # Consumers depend on crates.io versions; monorepo samples keep `path = …`.
 # Tag the repo after publish; Aeron submodule pin is independent of crate release.
 
@@ -98,7 +98,7 @@ check-labs:
 
 # Pre-release check: products + bench compile + package verification.
 release-check: check-products
-	cargo bench -p ergosbe-benchmarks --no-run
+	cargo bench -p ergo-sbe-benchmarks --no-run
 	cargo bench -p ergo-aeron-cluster --no-run
 	cargo publish -p ergo-sbe --dry-run --allow-dirty
 	@echo "release-check: product crates pass, benches compile, dry-run publish OK"
@@ -123,7 +123,7 @@ test:
 	cd samples/advanced-bitget && cargo test --lib -- --test-threads=1 --skip clickhouse
 	cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
 	@echo "=== 6/6 bench compilation ==="
-	cargo bench -p ergosbe-benchmarks --no-run
+	cargo bench -p ergo-sbe-benchmarks --no-run
 	@echo ""
 	@echo "=== Gated: ClickHouse live tests ==="
 	@if curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
@@ -221,7 +221,7 @@ run-sample:
     @docker start ergo-clickhouse 2>/dev/null || \
         docker run -d --name ergo-clickhouse \
             -p 8123:8123 -p 9000:9000 \
-            -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=ergosbe \
+            -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=ergon \
             clickhouse/clickhouse-server:latest
     @echo "Waiting for ClickHouse..."
     @until curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; do sleep 2; done
@@ -230,20 +230,20 @@ run-sample:
 
 # Benchmark parity — both checked (default) and bound-check-disabled modes.
 # Uses Criterion's baseline feature for statistically valid cross-mode comparison.
-# Gate: ALL maintained ErgoSBE/Aeron ratios ≤ 1.00 in both modes,
-# AND unchecked ErgoSBE must not regress vs checked ErgoSBE.
+# Gate: ALL maintained ergo-sbe/Aeron ratios ≤ 1.00 in both modes,
+# AND unchecked ergo-sbe must not regress vs checked ergo-sbe.
 # The check-bench-gate.sh script enforces this (exit non-zero on failure).
 bench:
     @echo "=== SBE perf parity: checked mode (save baseline) ==="
-    cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench -- --save-baseline checked
+    cd ergo-sbe-benchmarks && cargo bench --bench perf_parity_bench -- --save-baseline checked
     @echo ""
     @echo "=== SBE perf parity: unchecked (compare vs checked baseline) ==="
-    cd ergosbe-benchmarks && cargo bench --bench perf_parity_bench --features bound-check-disabled -- --baseline checked
+    cd ergo-sbe-benchmarks && cargo bench --bench perf_parity_bench --features bound-check-disabled -- --baseline checked
     @echo ""
     @echo "=== Gate ==="
     ./scripts/check-bench-gate.sh target/criterion
 
-# Cluster codec benchmarks (ErgoSBE vs sbe-tool head-to-head).
+# Cluster codec benchmarks (ergo-sbe vs sbe-tool head-to-head).
 # Gate enforced by check-bench-gate.sh after the run.
 bench-cluster:
     cargo bench -p ergo-aeron-cluster

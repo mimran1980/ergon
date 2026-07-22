@@ -2,7 +2,7 @@
 //!
 //! Port of upstream `simple-binary-encoding/rust/benches/car_benchmark.rs`.
 //! The upstream benchmarks use `criterion` on the upstream Rust codegen's
-//! generated API (pre-compiled modules).  Since `ErgoSBE` generates code on
+//! generated API (pre-compiled modules).  Since `ergon` generates code on
 //! the fly with a fundamentally different API (closure-based group setters,
 //! `wrap_and_apply_header`), we:
 //!

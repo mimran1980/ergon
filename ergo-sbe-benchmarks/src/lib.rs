@@ -1,6 +1,6 @@
-//! ErgoSBE benchmarks — on-the-fly generated codecs.
+//! ergon benchmarks — on-the-fly generated codecs.
 //!
-//! The ErgoSBE Car codec is generated at build time by `build.rs` from the
+//! The ergon Car codec is generated at build time by `build.rs` from the
 //! example schema. This ensures benchmarks always measure the latest codegen,
 //! never stale checked-in generated code.
 //!
@@ -21,7 +21,7 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 #![allow(non_camel_case_types, non_snake_case)]
 
-/// ErgoSBE-generated Car codec (from build.rs).
+/// ergon-generated Car codec (from build.rs).
 pub mod ergo_car {
     include!(concat!(env!("OUT_DIR"), "/car_bench.rs"));
 }

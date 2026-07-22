@@ -134,7 +134,7 @@ jobs:
           - 9000:9000
         env:
           CLICKHOUSE_USER: default
-          CLICKHOUSE_PASSWORD: ergosbe
+          CLICKHOUSE_PASSWORD: ergon
           CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     steps:
       - uses: actions/checkout@v4
@@ -194,7 +194,7 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - run: cargo bench -p ergosbe-benchmarks
+      - run: cargo bench -p ergo-sbe-benchmarks
       - run: cargo bench -p ergo-aeron-cluster --no-run
 
   package:
