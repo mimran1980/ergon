@@ -12,6 +12,7 @@ assumptions, and code that is less polished than the two product prototypes.
 |---|---|
 | `exchange-example` | Exercise Aeron IPC, nested SBE messages, converters, domain objects, and Persist |
 | `cluster-ha-orderbook` | Exercise Cluster claims, egress, leader changes, and an HA-shaped data flow |
+| `cluster-rfq` | Historical RFQ/auction protocol experiments (not a reference implementation) |
 
 The current review found interface drift in `exchange-example` and generated
 warnings in `cluster-ha-orderbook`. Until the implementation-plan compatibility
@@ -22,6 +23,7 @@ tasks pass, neither crate should be assumed to compile cleanly.
 ```sh
 (cd samples/exchange-example && cargo check --all-targets)
 (cd samples/cluster-ha-orderbook && cargo check --all-targets)
+(cd samples/cluster-rfq && cargo check --all-targets)
 ```
 
 Additional recipes can require Docker, ClickHouse, network access, Java 17+, built

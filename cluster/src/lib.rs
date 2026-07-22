@@ -61,13 +61,13 @@ pub mod controlled;
 pub mod credentials;
 /// Egress adapter + listener dispatch for session and app messages.
 pub mod egress;
-/// Shared fragment decode — canonical AnyMessage dispatch used by egress,
-/// controlled, and poller paths. Not public API.
-pub(crate) mod fragment;
 /// Multi-member ingress endpoint maps (`0=host:port,…`).
 pub mod endpoints;
 /// Cluster client error type.
 pub mod error;
+/// Shared fragment decode — canonical AnyMessage dispatch used by egress,
+/// controlled, and poller paths. Not public API.
+pub(crate) mod fragment;
 /// Poll-loop idle helpers ([`rusteron_client::IdleStrategy`]).
 pub mod idle;
 /// Low-level egress event parse helpers (SessionEvent, NewLeader, redirects).

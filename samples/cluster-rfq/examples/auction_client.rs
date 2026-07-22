@@ -4,7 +4,9 @@
 //! cargo run --example auction_client --features test-harness
 //! ```
 
-use ergo_aeron_cluster::codecs::session::{SessionConnectRequestEncoder, SessionMessageHeaderEncoder};
+use ergo_aeron_cluster::codecs::session::{
+    SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
+};
 use rusteron_client::cformat;
 use std::time::Duration;
 
@@ -28,8 +30,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = cformat!("{}", cluster.ingress_channel)?;
-    let egr = cformat!("{}", cluster.egress_channel)?;
+    let ing = cformat!("{}", cluster.ingress_channel);
+    let egr = cformat!("{}", cluster.egress_channel);
     let egress = a.add_subscription(
         &egr,
         102,
@@ -96,9 +98,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .timestamp(0);
         let hdr_len = enc.as_ref().len();
         // Write bid payload after header
-        msg[hdr_len + CORRELATION_ID_OFFSET..hdr_len + CORRELATION_ID_OFFSET + 8].copy_from_slice(&cid.to_le_bytes());
-        msg[hdr_len + CUSTOMER_ID_OFFSET..hdr_len + CUSTOMER_ID_OFFSET + 8].copy_from_slice(&customer_id.to_le_bytes());
-        msg[hdr_len + PRICE_OFFSET..hdr_len + PRICE_OFFSET + 8].copy_from_slice(&price.to_le_bytes());
+        msg[hdr_len + CORRELATION_ID_OFFSET..hdr_len + CORRELATION_ID_OFFSET + 8]
+            .copy_from_slice(&cid.to_le_bytes());
+        msg[hdr_len + CUSTOMER_ID_OFFSET..hdr_len + CUSTOMER_ID_OFFSET + 8]
+            .copy_from_slice(&customer_id.to_le_bytes());
+        msg[hdr_len + PRICE_OFFSET..hdr_len + PRICE_OFFSET + 8]
+            .copy_from_slice(&price.to_le_bytes());
         let total = hdr_len + BID_MESSAGE_LENGTH;
 
         println!("Bid {bid_num}: cid={cid} customer={customer_id} price={price}");
@@ -123,7 +128,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let r_cid = u64::from_le_bytes(app[0..8].try_into().unwrap());
                                 if r_cid == cid {
                                     let r_cust = u64::from_le_bytes(app[8..16].try_into().unwrap());
-                                    let r_price = u64::from_le_bytes(app[16..24].try_into().unwrap());
+                                    let r_price =
+                                        u64::from_le_bytes(app[16..24].try_into().unwrap());
                                     println!("  Echoed: cid={r_cid} cust={r_cust} price={r_price}");
                                     last_bid_price = r_price;
                                     got_response = true;

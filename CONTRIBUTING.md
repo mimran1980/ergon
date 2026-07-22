@@ -48,6 +48,7 @@ Laboratory compatibility checks:
 cargo test -p ergo-clickhouse-persist --all-features
 (cd samples/exchange-example && cargo check --all-targets)
 (cd samples/cluster-ha-orderbook && cargo check --all-targets)
+(cd samples/cluster-rfq && cargo check --all-targets)
 ```
 
 Some all-feature Cluster tests require Java 17+ and locally built Aeron jars.

@@ -9,8 +9,12 @@
 //! cargo run --example rfq_client --features test-harness
 //! ```
 
-use ergo_aeron_cluster::codecs::rfq::{AcceptRfqCommandEncoder, CreateRfqCommandEncoder, QuoteRfqCommandEncoder, Side};
-use ergo_aeron_cluster::codecs::session::{SessionConnectRequestEncoder, SessionMessageHeaderEncoder};
+use ergo_aeron_cluster::codecs::rfq::{
+    AcceptRfqCommandEncoder, CreateRfqCommandEncoder, QuoteRfqCommandEncoder, Side,
+};
+use ergo_aeron_cluster::codecs::session::{
+    SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
+};
 use rusteron_client::cformat;
 use std::time::Duration;
 
@@ -33,8 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = cformat!("{}", cluster.ingress_channel)?;
-    let egr = cformat!("{}", cluster.egress_channel)?;
+    let ing = cformat!("{}", cluster.ingress_channel);
+    let egr = cformat!("{}", cluster.egress_channel);
     let egress = a.add_subscription(
         &egr,
         102,
@@ -99,11 +103,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = CreateRfqCommandEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
-            let _ = sh.leadership_term_id(ltid).cluster_session_id(csid).timestamp(0);
+            let mut sh =
+                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let _ = sh
+                .leadership_term_id(ltid)
+                .cluster_session_id(csid)
+                .timestamp(0);
         }
         {
-            let mut enc = CreateRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+            let mut enc =
+                CreateRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc
                 .correlation(correlation)
                 .expire_time_ms(60_000)
@@ -132,11 +142,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = QuoteRfqCommandEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
-            let _ = sh.leadership_term_id(ltid).cluster_session_id(csid).timestamp(0);
+            let mut sh =
+                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let _ = sh
+                .leadership_term_id(ltid)
+                .cluster_session_id(csid)
+                .timestamp(0);
         }
         {
-            let mut enc = QuoteRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+            let mut enc =
+                QuoteRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc
                 .correlation(quote_corr)
                 .rfq_id(1)
@@ -161,11 +177,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = AcceptRfqCommandEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
-            let _ = sh.leadership_term_id(ltid).cluster_session_id(csid).timestamp(0);
+            let mut sh =
+                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let _ = sh
+                .leadership_term_id(ltid)
+                .cluster_session_id(csid)
+                .timestamp(0);
         }
         {
-            let mut enc = AcceptRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+            let mut enc =
+                AcceptRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc.correlation(accept_corr).rfq_id(1).accept_user_id(500);
         }
         for _ in 0..10 {

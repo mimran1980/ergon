@@ -55,9 +55,7 @@ impl std::error::Error for DecimalConvertError {}
 #[macro_export]
 macro_rules! impl_sbe_decimal_for_rust_decimal {
     () => {
-        impl normalized_app::TryFromSbe<normalized_app::Decimal>
-            for rust_decimal::Decimal
-        {
+        impl normalized_app::TryFromSbe<normalized_app::Decimal> for rust_decimal::Decimal {
             type Error = $crate::decimal::DecimalConvertError;
 
             fn try_from_sbe(wire: normalized_app::Decimal) -> Result<Self, Self::Error> {
@@ -80,9 +78,7 @@ macro_rules! impl_sbe_decimal_for_rust_decimal {
             }
         }
 
-        impl normalized_app::TryToSbe<normalized_app::Decimal>
-            for rust_decimal::Decimal
-        {
+        impl normalized_app::TryToSbe<normalized_app::Decimal> for rust_decimal::Decimal {
             type Error = $crate::decimal::DecimalConvertError;
 
             fn try_to_sbe(&self) -> Result<normalized_app::Decimal, Self::Error> {

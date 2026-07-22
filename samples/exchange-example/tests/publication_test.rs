@@ -4,12 +4,12 @@
 //! `RecordingPublication` adapter, then decode the captured claim bytes with
 //! the generated consuming decoders.
 
+use ergo_clickhouse_persist::sbe::v2::DynamicRowV2Decoder;
 use exchange_example::market::{Level, NormalizedEventRef, WireDec};
 use exchange_example::normalized_app::{AnyMessage, AppMessageDecoder, Source};
 use exchange_example::publication::{
     ClaimPublisher, DropReason, PublishOutcome, RecordingPublication,
 };
-use ergo_clickhouse_persist::sbe::v2::DynamicRowV2Decoder;
 
 fn lvl(pm: i64, pe: i8, sm: i64, se: i8) -> Level {
     Level {

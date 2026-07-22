@@ -324,7 +324,12 @@ pub(crate) fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
     tokens
 }
 
-pub(crate) fn find_matching_end(tokens: &[Token], start: usize, begin: Signal, end: Signal) -> usize {
+pub(crate) fn find_matching_end(
+    tokens: &[Token],
+    start: usize,
+    begin: Signal,
+    end: Signal,
+) -> usize {
     let mut depth = 1;
     for j in (start + 1)..tokens.len() {
         if tokens[j].signal == begin {
@@ -338,7 +343,6 @@ pub(crate) fn find_matching_end(tokens: &[Token], start: usize, begin: Signal, e
     }
     tokens.len() - 1
 }
-
 
 pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     let raw_name = &tokens[0].name;
@@ -1045,7 +1049,6 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     src.push_str(&decoder_ts.to_string());
     src.push('\n');
 }
-
 
 /// Core generator for concrete consuming tail stages (DECISIONS.md §3), shared
 /// by message-level and entry-level tails. Emits non-`Copy` stage structs plus
@@ -1861,4 +1864,3 @@ pub(crate) fn generate_message_field_meta(src: &mut String, msg: &MessageStructu
     src.push_str(&formatted);
     src.push('\n');
 }
-

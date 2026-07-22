@@ -5,8 +5,8 @@
 //! The code generator reads these structures; it never walks raw tokens
 //! directly.
 
-use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal, Token};
 use crate::codegen::{find_matching_end, to_pascal_case, to_snake_case};
+use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal, Token};
 
 pub(crate) struct SchemaElements {
     pub(crate) composites: Vec<Vec<Token>>,
@@ -148,7 +148,10 @@ pub(crate) struct MessageVarData {
     pub(crate) character_encoding: Option<String>,
 }
 
-pub(crate) fn parse_message_structure(tokens: &[Token], elements: &SchemaElements) -> MessageStructure {
+pub(crate) fn parse_message_structure(
+    tokens: &[Token],
+    elements: &SchemaElements,
+) -> MessageStructure {
     let begin_token = &tokens[0];
     let name = begin_token.name.clone();
     let id = begin_token.id.unwrap_or(0);
@@ -576,7 +579,10 @@ pub(crate) fn get_dimension_info(
 /// composite. The primitive drives the encoder's `count` parameter width so a
 /// schema whose dimensionType declares numInGroup as uint32 (e.g. Binance's
 /// default `groupSizeEncoding`) writes all 4 bytes, not just 2.
-pub(crate) fn get_dim_num_layout(elements: &SchemaElements, dim_type: &str) -> (usize, usize, PrimitiveType) {
+pub(crate) fn get_dim_num_layout(
+    elements: &SchemaElements,
+    dim_type: &str,
+) -> (usize, usize, PrimitiveType) {
     let raw_name = dim_type;
     let mut offset = 2;
     let mut size = 2;

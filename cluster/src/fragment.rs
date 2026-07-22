@@ -5,9 +5,7 @@
 //! provides the single canonical dispatch with proper error propagation.
 //! Callers decide how to route the result.
 
-use crate::codecs::session::{
-    AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder,
-};
+use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder};
 use crate::error::ClusterError;
 
 /// A fully-decoded egress fragment, ready for listener dispatch.
@@ -84,10 +82,8 @@ impl<'a> Fragment<'a> {
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let code = decoder.code();
-                let (detail, _) = decoder.into_detail_as_str().map_err(|e| {
-                    ClusterError::ProtocolError {
-                        reason: format!("session event detail: {e}"),
-                    }
+                let (detail, _) = decoder.into_detail_as_str().map_err(|e| ClusterError::ProtocolError {
+                    reason: format!("session event detail: {e}"),
                 })?;
                 Self::SessionEvent {
                     correlation_id: cid,
@@ -103,11 +99,11 @@ impl<'a> Fragment<'a> {
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let (ingress_endpoints, _) =
-                    decoder.into_ingress_endpoints_as_str().map_err(|e| {
-                        ClusterError::ProtocolError {
+                    decoder
+                        .into_ingress_endpoints_as_str()
+                        .map_err(|e| ClusterError::ProtocolError {
                             reason: format!("new leader endpoints: {e}"),
-                        }
-                    })?;
+                        })?;
                 Self::NewLeader {
                     cluster_session_id: csid,
                     leadership_term_id: ltid,
@@ -119,10 +115,7 @@ impl<'a> Fragment<'a> {
                 let cid = decoder.correlation_id();
                 let csid = decoder.cluster_session_id();
                 // Challenges are binary — raw bytes.
-                let chal = decoder
-                    .into_encoded_challenge()
-                    .map(|(b, _)| b)
-                    .unwrap_or(&[]);
+                let chal = decoder.into_encoded_challenge().map(|(b, _)| b).unwrap_or(&[]);
                 Self::Challenge {
                     correlation_id: cid,
                     cluster_session_id: csid,
@@ -134,19 +127,14 @@ impl<'a> Fragment<'a> {
                 let cid = decoder.correlation_id();
                 let rt = decoder.request_type();
                 let rc = decoder.response_code();
-                let (msg_bytes, after_msg) =
-                    decoder.into_message().map_err(|e| ClusterError::ProtocolError {
-                        reason: format!("admin response message: {e:?}"),
-                    })?;
-                let (payload_bytes, _) = after_msg
-                    .into_payload()
-                    .map_err(|e| ClusterError::ProtocolError {
-                        reason: format!("admin response payload: {e:?}"),
-                    })?;
-                let msg = std::str::from_utf8(msg_bytes).map_err(|e| {
-                    ClusterError::ProtocolError {
-                        reason: format!("admin response not UTF-8: {e}"),
-                    }
+                let (msg_bytes, after_msg) = decoder.into_message().map_err(|e| ClusterError::ProtocolError {
+                    reason: format!("admin response message: {e:?}"),
+                })?;
+                let (payload_bytes, _) = after_msg.into_payload().map_err(|e| ClusterError::ProtocolError {
+                    reason: format!("admin response payload: {e:?}"),
+                })?;
+                let msg = std::str::from_utf8(msg_bytes).map_err(|e| ClusterError::ProtocolError {
+                    reason: format!("admin response not UTF-8: {e}"),
                 })?;
                 Self::AdminResponse {
                     cluster_session_id: csid,

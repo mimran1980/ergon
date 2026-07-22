@@ -85,7 +85,9 @@ fn bench_decode_entry_point(c: &mut Criterion) {
             let car =
                 ergo_sbe_benchmarks::aeron_car::aeron::car_codec::decoder::CarDecoder::default()
                     .wrap(
-                        black_box(ergo_sbe_benchmarks::aeron_car::aeron::ReadBuf::new(BASELINE)),
+                        black_box(ergo_sbe_benchmarks::aeron_car::aeron::ReadBuf::new(
+                            BASELINE,
+                        )),
                         0,
                         bl,
                         ver,
@@ -256,15 +258,16 @@ fn bench_throughput_batch(c: &mut Criterion) {
             let mut off = 0;
             for _ in 0..HFT_BATCH {
                 let car =
-                    ergo_sbe_benchmarks::aeron_car::aeron::car_codec::decoder::CarDecoder::default()
-                        .wrap(
-                            ergo_sbe_benchmarks::aeron_car::aeron::ReadBuf::new(
-                                &buf[off..off + msg_len],
-                            ),
-                            0,
-                            bl,
-                            ver,
-                        );
+                    ergo_sbe_benchmarks::aeron_car::aeron::car_codec::decoder::CarDecoder::default(
+                    )
+                    .wrap(
+                        ergo_sbe_benchmarks::aeron_car::aeron::ReadBuf::new(
+                            &buf[off..off + msg_len],
+                        ),
+                        0,
+                        bl,
+                        ver,
+                    );
                 total += car.serial_number() as u64;
                 total_year += car.model_year() as u64;
                 off += msg_len;
@@ -322,13 +325,12 @@ fn bench_encode_scalar(c: &mut Criterion) {
                 // Fair: write the header (4 fields) like ergon's wrap_and_apply_header,
                 // then reclaim the CarEncoder via parent() and write 2 scalars.
                 let car =
-                    ergo_sbe_benchmarks::aeron_car::aeron::car_codec::encoder::CarEncoder::default()
-                        .wrap(
-                            ergo_sbe_benchmarks::aeron_car::aeron::WriteBuf::new(black_box(
-                                &mut buf,
-                            )),
-                            0,
-                        );
+                    ergo_sbe_benchmarks::aeron_car::aeron::car_codec::encoder::CarEncoder::default(
+                    )
+                    .wrap(
+                        ergo_sbe_benchmarks::aeron_car::aeron::WriteBuf::new(black_box(&mut buf)),
+                        0,
+                    );
                 let mut hdr = car.header(0);
                 let mut car = hdr.parent().unwrap();
                 car.serial_number(1234);

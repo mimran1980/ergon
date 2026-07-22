@@ -29,12 +29,12 @@ use std::collections::HashSet;
 use std::fmt::Write;
 
 use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
-use crate::{GenerationConfig, Schema};
 use crate::structured_ir::*;
+use crate::{GenerationConfig, Schema};
 
 pub(crate) mod runtime;
-pub(crate) use runtime::*;
 use quote::format_ident;
+pub(crate) use runtime::*;
 use sha2::{Digest, Sha256};
 
 /// A single generated Rust module.

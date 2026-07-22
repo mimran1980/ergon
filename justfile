@@ -63,7 +63,7 @@ check:
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
     cd samples/cluster-rfq && cargo fmt --check
-    cd samples/cluster-rfq && cargo check --all-targets
+    cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
 
 # Product-only gate: fmt, clippy, and tests for the two publishable prototype crates only.
 check-products:

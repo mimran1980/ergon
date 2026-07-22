@@ -26,30 +26,35 @@ pub enum ControlledPollAction {
 /// Controlled variant of `EgressListener`. Only `on_message` returns an
 /// action — lifecycle, challenge, and admin callbacks default to no-ops.
 pub trait ControlledEgressListener {
-    fn on_message(
-        &mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8],
-    ) -> ControlledPollAction;
+    fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]) -> ControlledPollAction;
 
     fn on_session_event(
-        &mut self, _correlation_id: i64, _cluster_session_id: i64,
-        _leadership_term_id: i64, _leader_member_id: i32,
-        _code: EventCode, _detail: &str,
+        &mut self,
+        _correlation_id: i64,
+        _cluster_session_id: i64,
+        _leadership_term_id: i64,
+        _leader_member_id: i32,
+        _code: EventCode,
+        _detail: &str,
     ) {
     }
     fn on_new_leader(
-        &mut self, _cluster_session_id: i64, _leadership_term_id: i64,
-        _leader_member_id: i32, _ingress_endpoints: &str,
+        &mut self,
+        _cluster_session_id: i64,
+        _leadership_term_id: i64,
+        _leader_member_id: i32,
+        _ingress_endpoints: &str,
     ) {
     }
-    fn on_challenge(
-        &mut self, _correlation_id: i64, _cluster_session_id: i64,
-        _encoded_challenge: &[u8],
-    ) {
-    }
+    fn on_challenge(&mut self, _correlation_id: i64, _cluster_session_id: i64, _encoded_challenge: &[u8]) {}
     fn on_admin_response(
-        &mut self, _cluster_session_id: i64, _correlation_id: i64,
-        _request_type: AdminRequestType, _response_code: AdminResponseCode,
-        _message: &str, _payload: &[u8],
+        &mut self,
+        _cluster_session_id: i64,
+        _correlation_id: i64,
+        _request_type: AdminRequestType,
+        _response_code: AdminResponseCode,
+        _message: &str,
+        _payload: &[u8],
     ) {
     }
 }
@@ -62,11 +67,17 @@ pub struct ControlledEgressAdapter<L: ControlledEgressListener> {
 
 impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
     pub fn new(listener: L) -> Self {
-        Self { listener, expected_session_id: None }
+        Self {
+            listener,
+            expected_session_id: None,
+        }
     }
 
     pub fn with_session_filter(listener: L, session_id: i64) -> Self {
-        Self { listener, expected_session_id: Some(session_id) }
+        Self {
+            listener,
+            expected_session_id: Some(session_id),
+        }
     }
 
     pub fn set_expected_session_id(&mut self, id: i64) {
@@ -90,7 +101,11 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         };
 
         match frag {
-            Fragment::Message { cluster_session_id, timestamp, payload } => {
+            Fragment::Message {
+                cluster_session_id,
+                timestamp,
+                payload,
+            } => {
                 if let Some(expected) = self.expected_session_id
                     && cluster_session_id != expected
                 {
@@ -98,28 +113,62 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 }
                 self.listener.on_message(cluster_session_id, timestamp, payload)
             }
-            Fragment::SessionEvent { correlation_id, cluster_session_id, leadership_term_id, leader_member_id, code, detail } => {
+            Fragment::SessionEvent {
+                correlation_id,
+                cluster_session_id,
+                leadership_term_id,
+                leader_member_id,
+                code,
+                detail,
+            } => {
                 self.listener.on_session_event(
-                    correlation_id, cluster_session_id, leadership_term_id,
-                    leader_member_id, code, detail,
+                    correlation_id,
+                    cluster_session_id,
+                    leadership_term_id,
+                    leader_member_id,
+                    code,
+                    detail,
                 );
                 ControlledPollAction::Continue
             }
-            Fragment::NewLeader { cluster_session_id, leadership_term_id, leader_member_id, ingress_endpoints } => {
+            Fragment::NewLeader {
+                cluster_session_id,
+                leadership_term_id,
+                leader_member_id,
+                ingress_endpoints,
+            } => {
                 self.listener.on_new_leader(
-                    cluster_session_id, leadership_term_id, leader_member_id,
+                    cluster_session_id,
+                    leadership_term_id,
+                    leader_member_id,
                     ingress_endpoints,
                 );
                 ControlledPollAction::Continue
             }
-            Fragment::Challenge { correlation_id, cluster_session_id, encoded_challenge } => {
-                self.listener.on_challenge(correlation_id, cluster_session_id, encoded_challenge);
+            Fragment::Challenge {
+                correlation_id,
+                cluster_session_id,
+                encoded_challenge,
+            } => {
+                self.listener
+                    .on_challenge(correlation_id, cluster_session_id, encoded_challenge);
                 ControlledPollAction::Continue
             }
-            Fragment::AdminResponse { cluster_session_id, correlation_id, request_type, response_code, message, payload } => {
+            Fragment::AdminResponse {
+                cluster_session_id,
+                correlation_id,
+                request_type,
+                response_code,
+                message,
+                payload,
+            } => {
                 self.listener.on_admin_response(
-                    cluster_session_id, correlation_id, request_type,
-                    response_code, message, payload,
+                    cluster_session_id,
+                    correlation_id,
+                    request_type,
+                    response_code,
+                    message,
+                    payload,
                 );
                 ControlledPollAction::Continue
             }
@@ -174,7 +223,11 @@ mod tests {
             }
         }
 
-        let mut adapter = ControlledEgressAdapter::new(Rec { session_id: 0, ts: 0, pl: vec![] });
+        let mut adapter = ControlledEgressAdapter::new(Rec {
+            session_id: 0,
+            ts: 0,
+            pl: vec![],
+        });
         let action = adapter.on_fragment(&full);
         assert_eq!(action, ControlledPollAction::Continue);
         assert_eq!(adapter.listener.session_id, 42);
@@ -199,8 +252,7 @@ mod tests {
             }
         }
 
-        let mut adapter =
-            ControlledEgressAdapter::with_session_filter(Rec(false), 42);
+        let mut adapter = ControlledEgressAdapter::with_session_filter(Rec(false), 42);
         let action = adapter.on_fragment(&full);
         assert_eq!(action, ControlledPollAction::Continue);
         assert!(!adapter.listener.0, "foreign session message must be dropped");

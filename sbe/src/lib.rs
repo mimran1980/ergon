@@ -122,8 +122,6 @@
 
 /// Rust source generation from a resolved [`Schema`].
 pub mod codegen;
-/// Structured IR: typed message/group/field structures built from token IR.
-pub(crate) mod structured_ir;
 /// Generation options (module name, compatibility mode).
 pub mod config;
 /// Intermediate representation of SBE tokens and encodings.
@@ -132,6 +130,8 @@ pub mod ir;
 pub mod resolve;
 /// High-level schema model built from IR.
 pub mod schema;
+/// Structured IR: typed message/group/field structures built from token IR.
+pub(crate) mod structured_ir;
 /// SBE XML parse + XInclude resolution.
 pub mod xml;
 

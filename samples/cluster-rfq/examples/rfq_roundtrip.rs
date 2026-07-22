@@ -11,8 +11,12 @@
 //!
 //! Then: RFQ_AERON_DIR=<dir> cargo run --example rfq_roundtrip --features test-harness
 
-use ergo_aeron_cluster::codecs::rfq::{AddInstrumentEncoder, BooleanType, CreateRfqCommandEncoder, Side};
-use ergo_aeron_cluster::codecs::session::{SessionConnectRequestEncoder, SessionMessageHeaderEncoder};
+use ergo_aeron_cluster::codecs::rfq::{
+    AddInstrumentEncoder, BooleanType, CreateRfqCommandEncoder, Side,
+};
+use ergo_aeron_cluster::codecs::session::{
+    SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
+};
 use rusteron_client::cformat;
 use std::time::{Duration, Instant};
 
@@ -38,8 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = ergo_aeron_cluster::channel_cstr(INGRESS)?;
-    let egr = ergo_aeron_cluster::channel_cstr(INGRESS)?;
+    let ing = cformat!("{INGRESS}");
+    let egr = cformat!("{INGRESS}");
     let egress = a.add_subscription(
         &egr,
         102,
@@ -103,11 +107,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = AddInstrumentEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
-            let _ = sh.leadership_term_id(ltid).cluster_session_id(csid).timestamp(0);
+            let mut sh =
+                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let _ = sh
+                .leadership_term_id(ltid)
+                .cluster_session_id(csid)
+                .timestamp(0);
         }
         {
-            let mut enc = AddInstrumentEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+            let mut enc =
+                AddInstrumentEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
             let _ = enc
                 .correlation(pad36("add-instr-001"))
                 .cusip(cusip)
@@ -120,7 +129,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        println!("Sent AddInstrument cusip={:?}", std::str::from_utf8(&cusip).unwrap());
+        println!(
+            "Sent AddInstrument cusip={:?}",
+            std::str::from_utf8(&cusip).unwrap()
+        );
     }
 
     // Send CreateRfq (RFQ schema 101)
@@ -129,11 +141,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = CreateRfqCommandEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
-            let _ = sh.leadership_term_id(ltid).cluster_session_id(csid).timestamp(0);
+            let mut sh =
+                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let _ = sh
+                .leadership_term_id(ltid)
+                .cluster_session_id(csid)
+                .timestamp(0);
         }
         {
-            let mut enc = CreateRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+            let mut enc =
+                CreateRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc
                 .correlation(pad36("create-rfq-001"))
                 .expire_time_ms(60_000)
@@ -169,7 +187,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let schema = u16::from_le_bytes([rfq[4], rfq[5]]);
                             let tid = u16::from_le_bytes([rfq[2], rfq[3]]);
                             if schema == 101 && (tid == 120 || tid == 122 || tid == 112) {
-                                println!("  RFQ response: schema={schema} template={tid} len={}", rfq.len());
+                                println!(
+                                    "  RFQ response: schema={schema} template={tid} len={}",
+                                    rfq.len()
+                                );
                                 got_rfq = true;
                             }
                         }

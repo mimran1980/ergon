@@ -14,22 +14,30 @@ use crate::fragment::Fragment;
 pub trait EgressListener {
     fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]);
     fn on_session_event(
-        &mut self, correlation_id: i64, cluster_session_id: i64,
-        leadership_term_id: i64, leader_member_id: i32, code: EventCode,
+        &mut self,
+        correlation_id: i64,
+        cluster_session_id: i64,
+        leadership_term_id: i64,
+        leader_member_id: i32,
+        code: EventCode,
         detail: &str,
     );
     fn on_new_leader(
-        &mut self, cluster_session_id: i64, leadership_term_id: i64,
-        leader_member_id: i32, ingress_endpoints: &str,
+        &mut self,
+        cluster_session_id: i64,
+        leadership_term_id: i64,
+        leader_member_id: i32,
+        ingress_endpoints: &str,
     );
-    fn on_challenge(
-        &mut self, correlation_id: i64, cluster_session_id: i64,
-        encoded_challenge: &[u8],
-    );
+    fn on_challenge(&mut self, correlation_id: i64, cluster_session_id: i64, encoded_challenge: &[u8]);
     fn on_admin_response(
-        &mut self, cluster_session_id: i64, correlation_id: i64,
-        request_type: AdminRequestType, response_code: AdminResponseCode,
-        message: &str, payload: &[u8],
+        &mut self,
+        cluster_session_id: i64,
+        correlation_id: i64,
+        request_type: AdminRequestType,
+        response_code: AdminResponseCode,
+        message: &str,
+        payload: &[u8],
     );
 }
 
@@ -41,11 +49,17 @@ pub struct EgressAdapter<L: EgressListener> {
 
 impl<L: EgressListener> EgressAdapter<L> {
     pub fn new(listener: L) -> Self {
-        Self { listener, expected_session_id: None }
+        Self {
+            listener,
+            expected_session_id: None,
+        }
     }
 
     pub fn with_session_filter(listener: L, session_id: i64) -> Self {
-        Self { listener, expected_session_id: Some(session_id) }
+        Self {
+            listener,
+            expected_session_id: Some(session_id),
+        }
     }
 
     pub fn set_expected_session_id(&mut self, id: i64) {
@@ -82,32 +96,72 @@ impl<L: EgressListener> EgressAdapter<L> {
 
     fn dispatch(&mut self, frag: Fragment<'_>) {
         match frag {
-            Fragment::Message { cluster_session_id, timestamp, payload } => {
-                if self.expected_session_id.is_some_and(|expected| cluster_session_id != expected)
+            Fragment::Message {
+                cluster_session_id,
+                timestamp,
+                payload,
+            } => {
+                if self
+                    .expected_session_id
+                    .is_some_and(|expected| cluster_session_id != expected)
                 {
                     return;
                 }
                 self.listener.on_message(cluster_session_id, timestamp, payload);
             }
-            Fragment::SessionEvent { correlation_id, cluster_session_id, leadership_term_id, leader_member_id, code, detail } => {
+            Fragment::SessionEvent {
+                correlation_id,
+                cluster_session_id,
+                leadership_term_id,
+                leader_member_id,
+                code,
+                detail,
+            } => {
                 self.listener.on_session_event(
-                    correlation_id, cluster_session_id, leadership_term_id,
-                    leader_member_id, code, detail,
+                    correlation_id,
+                    cluster_session_id,
+                    leadership_term_id,
+                    leader_member_id,
+                    code,
+                    detail,
                 );
             }
-            Fragment::NewLeader { cluster_session_id, leadership_term_id, leader_member_id, ingress_endpoints } => {
+            Fragment::NewLeader {
+                cluster_session_id,
+                leadership_term_id,
+                leader_member_id,
+                ingress_endpoints,
+            } => {
                 self.listener.on_new_leader(
-                    cluster_session_id, leadership_term_id, leader_member_id,
+                    cluster_session_id,
+                    leadership_term_id,
+                    leader_member_id,
                     ingress_endpoints,
                 );
             }
-            Fragment::Challenge { correlation_id, cluster_session_id, encoded_challenge } => {
-                self.listener.on_challenge(correlation_id, cluster_session_id, encoded_challenge);
+            Fragment::Challenge {
+                correlation_id,
+                cluster_session_id,
+                encoded_challenge,
+            } => {
+                self.listener
+                    .on_challenge(correlation_id, cluster_session_id, encoded_challenge);
             }
-            Fragment::AdminResponse { cluster_session_id, correlation_id, request_type, response_code, message, payload } => {
+            Fragment::AdminResponse {
+                cluster_session_id,
+                correlation_id,
+                request_type,
+                response_code,
+                message,
+                payload,
+            } => {
                 self.listener.on_admin_response(
-                    cluster_session_id, correlation_id, request_type,
-                    response_code, message, payload,
+                    cluster_session_id,
+                    correlation_id,
+                    request_type,
+                    response_code,
+                    message,
+                    payload,
                 );
             }
         }

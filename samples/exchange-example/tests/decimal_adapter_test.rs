@@ -7,8 +7,7 @@ use std::str::FromStr;
 
 use exchange_example::decimal::parse_decimal_exact;
 use exchange_example::normalized_app::{
-    AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, Source, sbe_rt,
-    TryFromSbe, TryToSbe,
+    AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, Source, TryFromSbe, TryToSbe, sbe_rt,
 };
 
 #[test]
@@ -30,7 +29,8 @@ fn parse_decimal_exact_matrix() -> Result<(), Box<dyn std::error::Error>> {
         ("92233720368.54775807", i64::MAX, -8),
     ];
     for &(input, m, e) in cases {
-        let wd = parse_decimal_exact(input).unwrap(); assert_eq!((wd.mantissa, wd.exponent), (m, e), "input {input}");
+        let wd = parse_decimal_exact(input).unwrap();
+        assert_eq!((wd.mantissa, wd.exponent), (m, e), "input {input}");
     }
 
     // Malformed and out-of-range inputs are rejected, never zeroed.
@@ -71,7 +71,8 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let dec = L2BookDecoder::wrap_and_apply_header(&bytes, 0).unwrap();
         let mut g = dec.into_bids().unwrap();
         let entry = g.next().unwrap();
-        let back: rust_decimal::Decimal = rust_decimal::Decimal::try_from_sbe(entry.price_value()).unwrap();
+        let back: rust_decimal::Decimal =
+            rust_decimal::Decimal::try_from_sbe(entry.price_value()).unwrap();
         assert_eq!(back, d, "round trip for {text}");
 
         // Byte equivalence with the raw wire model.
@@ -146,12 +147,18 @@ fn rust_decimal_adapter_positive_exponent_and_overflow() -> Result<(), Box<dyn s
     // Positive exponent scales up exactly.
     let d: rust_decimal::Decimal = TryFromSbe::<Decimal>::try_from_sbe(Decimal::new(5, 2)).unwrap();
     assert_eq!(d, rust_decimal::Decimal::from(500));
-    let d: rust_decimal::Decimal = TryFromSbe::<Decimal>::try_from_sbe(Decimal::new(-5, 2)).unwrap();
+    let d: rust_decimal::Decimal =
+        TryFromSbe::<Decimal>::try_from_sbe(Decimal::new(-5, 2)).unwrap();
     assert_eq!(d, rust_decimal::Decimal::from(-500));
 
     // Overflow: mantissa * 10^30 exceeds the adapter's exact range.
-    let err = <rust_decimal::Decimal as TryFromSbe<Decimal>>::try_from_sbe(Decimal::new(i64::MAX, 30)).unwrap_err();
-    assert_eq!(err, exchange_example::decimal::DecimalConvertError::Overflow);
+    let err =
+        <rust_decimal::Decimal as TryFromSbe<Decimal>>::try_from_sbe(Decimal::new(i64::MAX, 30))
+            .unwrap_err();
+    assert_eq!(
+        err,
+        exchange_example::decimal::DecimalConvertError::Overflow
+    );
 
     Ok(())
 }
