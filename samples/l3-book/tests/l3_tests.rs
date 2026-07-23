@@ -298,9 +298,9 @@ fn dto_reencode_byte_identical() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut re_buf = vec![0u8; 4096];
-    let enc = L3BookEncoder::wrap_and_apply_header(&mut re_buf, 0)?;
-    let enc = enc.fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 42 });
-    let ab = enc.bids(db.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
+    let ab = L3BookEncoder::wrap_and_apply_header(&mut re_buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 42 })
+        .bids(db.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
         for lvl in &db { g.add(|e| { e.price(lvl.price); e.size(lvl.size);
             e.orders(lvl.orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
                 for o in &lvl.orders { og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(o.oid); oe.quantity(o.qty); oe.price(o.price); Ok::<(), sbe_rt::EncodeError>(()) })?; }

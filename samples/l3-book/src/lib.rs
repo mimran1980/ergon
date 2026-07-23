@@ -14,10 +14,9 @@ pub fn encode_book(
     asks: &[(i64, i64, &[(u64, u64, i64)])],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let enc = L3BookEncoder::wrap_and_apply_header(buf, 0)?;
-    let enc = enc.fixed(&L3BookFixedFields { exchange_timestamp: TS, sequence: 42 });
-
-    let after_bids = enc.bids(bids.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
+    let after_bids = L3BookEncoder::wrap_and_apply_header(buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: TS, sequence: 42 })
+        .bids(bids.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
         for (price, size, orders) in bids {
             g.add(|e| {
                 e.price(*price); e.size(*size);
