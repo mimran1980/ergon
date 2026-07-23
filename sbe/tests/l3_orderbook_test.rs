@@ -102,24 +102,32 @@ fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
             bids.add(|level| {
                 level.price(50000i64).qty(10i64);
                 level.orders(2, |orders| {
-                    orders.add(|o| { o.order_qty(5i64); o.order_id(b"ORD-001").unwrap(); }).unwrap();
-                    orders.add(|o| { o.order_qty(5i64); o.order_id(b"ORD-002").unwrap(); }).unwrap();
-                }).unwrap();
-            }).unwrap();
+                    orders.add(|o| { o.order_qty(5i64); o.order_id(b"ORD-001").unwrap(); Ok(()) })?;
+                    orders.add(|o| { o.order_qty(5i64); o.order_id(b"ORD-002").unwrap(); Ok(()) })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
             bids.add(|level| {
                 level.price(49999i64).qty(3i64);
                 level.orders(1, |orders| {
-                    orders.add(|o| { o.order_qty(3i64); o.order_id(b"ORD-003").unwrap(); }).unwrap();
-                }).unwrap();
-            }).unwrap();
+                    orders.add(|o| { o.order_qty(3i64); o.order_id(b"ORD-003").unwrap(); Ok(()) })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
         }).unwrap();
         let complete = after_bids.asks(1, |asks| {
             asks.add(|level| {
                 level.price(50001i64).qty(8i64);
                 level.orders(1, |orders| {
-                    orders.add(|o| { o.order_qty(8i64); o.order_id(b"ORD-004").unwrap(); }).unwrap();
-                }).unwrap();
-            }).unwrap();
+                    orders.add(|o| { o.order_qty(8i64); o.order_id(b"ORD-004").unwrap(); Ok(()) })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
         }).unwrap();
         let encoded = complete.as_bytes();
         let decoder = L3BookDecoder::try_from(encoded).unwrap();
