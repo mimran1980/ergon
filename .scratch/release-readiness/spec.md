@@ -1,498 +1,144 @@
-# ergon Release-Readiness Implementation Plan
-
-This is the release-readiness effort's design record, backlog, and implementation
-handoff. It is stored as the effort's local-tracker spec. Historical todo files,
-phase plans, and completion reports were removed because their checked boxes did
-not reliably describe the implementation.
-
-Do not mark a task complete because generated source contains a method name. A task
-is complete only when its behavioural, compile-fail, allocation, performance, and
-release acceptance criteria pass where applicable.
-
-## Project posture
-
-- **ergon** is the primary project: an experimental, opinionated Rust SBE
-  generator used to explore safer and faster generated interfaces.
-- **Ergo Aeron Cluster** is a hobby experiment. Do not use it in production. The
-  preferred long-term solution is official Aeron Cluster C client bindings with
-  support in rusteron.
-- **Persist** and **Samples** are unpublished, low-quality laboratories used to
-  exercise ergon, domain objects, and transport integrations. They are not
-  reference implementations.
-- ergo-sbe and ergo-aeron-cluster may eventually be published to crates.io as
-  prototype `0.x` crates. Breaking interface changes are acceptable before the
-  first release.
-- Official SBE wire compatibility comes first. Maintained hot paths must be at
-  least as fast as the equivalent Aeron SBE path and must not allocate.
-
-## Verified baseline and corrected status
-
-The following observations were verified during the 2026-07-21 review. They are
-baseline facts, not completed implementation tasks:
-
-- ergo-sbe tests pass with all features.
-- ergo-sbe and ergo-aeron-cluster pass their strict Clippy commands.
-- Ergo Aeron Cluster's 75 library tests pass.
-- Persist tests pass with all features.
-- Benchmark targets compile.
-- Workspace formatting does not pass.
-- `samples/exchange-example` does not compile against the current converter
-  interface.
-- `samples/cluster-ha-orderbook` checks with warnings that fail under strict
-  Clippy because generated version-zero comparisons are useless.
-- The ergon and Cluster package file lists contain substantial test, fixture,
-  reference-codec, application-protocol, and harness material.
-- The first text-variable-data pass preserves `characterEncoding` and adds an
-  ordered UTF-8 accessor, but the non-consuming accessor is still emitted for
-  binary fields, ASCII is not validated, encoder string methods are absent, and
-  owned domains do not yet distinguish `String` from `Vec<u8>`.
-- Cluster's generated codec namespace is still public: hiding `pub mod codecs`
-  from rustdoc (or placing the same types under a public `proto` re-export) does
-  not remove those types from the crate interface. Its connect poller still uses
-  lossy text and drops decode errors through `Option`.
-- The latest raw fixed-field change creates a consuming writer without generated
-  setters or a validated completion transition; optional `None` still skips the
-  write instead of writing the schema null sentinel. Checked-in golden output
-  also still contains version-zero comparisons.
-
-Areas previously marked complete must be treated as follows:
-
-| Area | Correct status | Evidence still required |
-|---|---|---|
-| Converter registry | Partial | All documented selectors, validation, precedence, collisions, and all emission sites |
-| Latest-version safe encoder | Incomplete | Required-field proof, null writes, group-entry proof, and compile-fail ordering |
-| Domain mapper | Not implemented | Configured types in generated domains and lossless fallible recursion |
-| Composite symmetry | Partial | Named values, versioned members, direct encoders, and nested symmetry |
-| Text variable data | Partial | Gate every accessor by schema metadata, validate ASCII, add encoder/domain support, and prove strict errors |
-| Cluster hardening | Partial | Error propagation, atomic reconnect, private codecs, and allocation-free offer |
-| Examples and samples | Incomplete | No RFQ/auction reference examples, no raw offers, no avoidable unwraps, both labs compiling |
-| Performance proof | Incomplete | Equal-work benchmarks and allocation assertions for the new interfaces |
-| Documentation and packaging | Incomplete | Honest READMEs, minimal Markdown inventory, and minimal crate packages |
-
-## Canonical design
-
-### 1. Generic conversion seam
-
-Remove all decimal-specific generator knowledge. Decimal, boolean, timestamp,
-enum, newtype, composite, and domain conversions use the same two traits in the
-shared generated `sbe_rt` module:
-
-```rust
-pub trait TryFromSbe<Wire>: Sized {
-    type Error: core::fmt::Debug + core::fmt::Display;
-
-    fn try_from_sbe(wire: Wire) -> Result<Self, Self::Error>;
-}
-
-pub trait TryToSbe<Wire> {
-    type Error: core::fmt::Debug + core::fmt::Display;
-
-    fn try_to_sbe(&self) -> Result<Wire, Self::Error>;
-}
-```
-
-The generator resolves configuration once into a private `ConversionBinding`
-model. Decoder, encoder, fixed-field, composite, group-entry, and domain emitters
-all consume that same model. Generated hot paths use static dispatch only: no
-trait objects, boxing, heap-backed registries, or runtime selector lookups.
-
-Supported selectors:
-
-1. Exact field path, including recursively nested group paths.
-2. SBE `semanticType`.
-3. Named primitive alias, enum, set, fixed array, or composite.
-
-That order is also the deterministic precedence. Repeating an identical mapping
-is idempotent. Conflicting targets, invalid Rust types, ineligible selectors,
-unmatched selectors, or generated method collisions are generation errors. Rust
-type strings are parsed as `syn::Type`.
-
-Mapped decoder fields expose `field_as::<T>()`; mapped encoders expose
-`field_from(&T)`. Primitive-like wire values are copied. Composite decoding passes
-a flyweight view so conversion does not first copy an owned composite. The same
-seam is used internally for `BooleanType` to and from `bool`. Decimal and timestamp
-types are examples supplied by applications, not dependencies known by ergon.
-
-### 2. Schema-driven text variable data
-
-Variable data is binary unless the effective payload member declares
-`characterEncoding`. Composite names such as `varStringEncoding` are not semantic
-evidence by themselves.
-
-The supported built-in text encodings are `UTF-8`/`UTF8` and
-`US-ASCII`/`ASCII`, matched case-insensitively. Other encodings remain byte
-oriented and may use a configured converter.
-
-The ordered decoder always retains its zero-copy raw method:
-
-```rust
-let (detail_bytes, next) = decoder.into_detail()?;
-```
-
-For schema-declared supported text it also emits:
-
-```rust
-let (detail, next) = decoder.into_detail_as_str()?;
-```
-
-This returns `Result<(&str, NextStage), DecodeError>` and allocates nothing. A
-non-consuming decoder interface that exposes `detail()` also exposes
-`detail_as_str()`. Binary credentials, principals, challenges, application
-payloads, and nested SBE payloads do not receive string helpers.
-
-The raw encoder continues accepting `&[u8]`. Supported text fields additionally
-receive `detail_str(&str)`. UTF-8 input needs no validation; ASCII input is
-validated before any tail bytes are committed. Decoding uses field-aware
-`InvalidUtf8` and `InvalidAscii` errors. Do not generate lossy string methods or
-replace corrupt input with a sentinel.
-
-Owned generated domains use `String` for supported text variable data and
-`Vec<u8>` for binary variable data. Invalid text makes domain conversion fail.
-The same rules apply inside repeating-group entries.
-
-Ergo Aeron Cluster's high-level `SessionEventView.detail` and
-`NewLeaderEventView.ingress_endpoints` are borrowed `&str`. Credentials and
-application payloads remain borrowed bytes.
-
-### 3. Latest-version safe encoding
-
-Encoders target only the schema's latest version. Decoders remain acting-version
-aware.
-
-Every non-constant, latest-version required fixed field, including required
-`sinceVersion` fields, appears as a required member of `<Message>FixedFields`.
-Only fields declared `presence="optional"` use `Option`. `fixed(&fields)` performs
-all fallible conversions before writing, writes schema null sentinels for `None`,
-and returns the first ordered tail stage.
-
-The initial encoder exposes only `fixed(&fields)` and `raw_fixed(self)`. The raw
-transition returns a dedicated consuming writer with individual fixed setters.
-Completing that writer returns the same ordered tail stage. The initial stage has
-no completion bypass and no `finish_unchecked`.
-
-Concrete consuming stages enforce group and variable-data order. Only the final
-complete stage exposes the complete encoded bytes or length. Apply the same fixed
-phase to repeating-group entries. For a fixed-only group, adding an entry accepts
-its fixed struct; entries with tails transition from fixed fields into their first
-tail stage.
-
-Fixed structs derive `Debug`, `Clone`, and `PartialEq`, and derive `Copy` only if
-all members are `Copy`. Do not generate `Default` where it could hide missing
-required data.
-
-### 4. Composite and domain symmetry
-
-Generate a named latest-version owned value for every composite, plus an
-acting-version-aware flyweight decoder and direct encoder. A composite field
-offers a zero-copy flyweight and an explicit owned-value accessor. Nested
-composites follow the same rule. Members absent from the acting version produce
-`FieldNotInVersion` rather than fabricated values.
-
-Configured domain mappings apply recursively to message fields, composites,
-groups, and variable data. Domain decoding uses `TryFrom<Decoder>` and a concrete
-generated message error. It never uses `filter_map`, `unwrap_or_default`, empty
-strings, or empty collections to hide malformed input. Domain encoding travels
-through the same latest-version safe encoder and conversion bindings.
-
-Borrowed and fixed-width conversions remain allocation-free unless the selected
-domain type inherently allocates.
-
-### 5. Downstream-proven ergon conveniences
-
-Promote a helper into ergon only when it expresses SBE mechanics, removes the
-same boilerplate from at least two consumers, and can remain allocation-free on
-the hot path. The public interface should use inherent methods and concrete
-errors; do not introduce a generic transport trait until multiple independent
-transports need one.
-
-#### Exact owned-message encoding
-
-Every generated owned latest-version message exposes:
-
-```rust
-let len = value.encoded_length_with_header()?;
-let encoded = value.encode_into(&mut destination[..len])?;
-```
-
-`encoded_length_with_header` validates length and count bounds and recursively
-measures nested groups, composites, and variable data without allocating.
-`encode_into` uses the safe ordered encoder, includes the message header, and
-returns only the exact encoded prefix as `&[u8]`. It never allocates a `Vec` or
-silently truncates a count. Existing group-entry domain values retain their
-`encode_into(&mut EntryEncoder)` method.
-
-This is the reusable part of Persist's `compute_encoded_length`/`record_into`
-shape and lets Cluster and samples encode directly into caller-owned buffers or
-Aeron claims. Persist's runtime heterogeneous row validation remains
-Persist-specific.
-
-#### One header-inspection interface
-
-Replace `peek_header`, `peek_template_id`, `peek_for_schema`, and the free
-`schema_id_from_header` function with one checked operation:
-
-```rust
-let header = MessageHeader::try_from_prefix(frame)?;
-let template_id = header.template_id();
-let schema_id = header.schema_id();
-```
-
-The returned fixed-size value also exposes block length and version. It performs
-no allocation, reports a short header as a typed decode error, and respects the
-schema byte order and header layout. Consumers compare its values with generated
-constants instead of reading byte offsets or collapsing malformed and
-wrong-schema frames into the same `None`.
-
-#### One runtime for multiple schemas
-
-Add an explicit `with_shared_runtime("sbe_rt")` generation option.
-`generate_multi` then emits one `sbe_rt.rs` module and makes each otherwise
-independent schema module re-export that runtime. This is separate from
-`with_shared_module`, which shares schema types. Reject output-name collisions
-and incompatible per-schema runtime configuration at generation time.
-
-Keep `with_external_sbe_rt(path)` for a runtime owned by another module or crate.
-Remove `enable_error_from_impls`: it stringifies typed errors and assumes an
-application `From<String>` implementation. With one runtime, downstream errors
-can transparently wrap the same concrete `sbe_rt::DecodeError` and
-`sbe_rt::EncodeError`.
-
-#### Adopt before adding
-
-Persist, Cluster, and Samples should use existing generated
-`into_*_as_str`, `into_*_as_message`, `payload_with`, `ENCODED_LENGTH`,
-`after_this_message`, ordered tail stages, and conversion/domain APIs wherever
-their schemas support them. Delete local aliases and byte-offset parsing rather
-than generating a second spelling for the same operation. Domain group decoding
-preallocates from the declared entry count and propagates every entry error.
-
-Do not promote ClickHouse type tags, SQL formatting, symbol-table layout,
-registry or retry policy, Aeron URI/C-string handling, endpoint selection,
-publication status, claims, reconnect policy, fragment assembly, order books,
-exchange parsing, or market decimal types. Those are persistence, transport, or
-application policy rather than SBE mechanics.
-
-### 6. Ergo Aeron Cluster interface
-
-Generated Aeron protocol codecs and implementation modules are private. Only
-deliberate high-level types are re-exported. Public `channel_cstr` and
-`udp_endpoint_cstr` helpers are removed; constant FFI inputs use C literals and
-dynamic values are converted locally and fallibly at the FFI seam.
-
-High-level `offer` returns the typed Cluster result and uses rusteron's
-scatter/gather `offer_parts` with a stack session header, avoiding the current
-per-call `Vec`. Raw Aeron status handling remains private. `try_claim` stays the
-explicit zero-copy path.
-
-Listener callbacks, polling, controlled polling, keep-alive, and lifecycle
-transitions return `ClusterResult`. Malformed frames, invalid text, callback
-errors, and panics at an FFI callback seam are surfaced rather than converted to
-`Ok(false)`, `Continue`, or placeholder strings. Session filtering applies to
-every session-bearing event.
-
-A leader transition first constructs the endpoint, publication, and both fragment
-assemblers. Only after all fallible preparation succeeds does it replace the
-client's term, member, publication, assemblers, and state.
-
-RFQ, auction, topic routing, order workflows, and application schemas do not
-belong in this generic crate. Retain only connect/echo, controlled-polling, and
-failover examples. They use the high-level client, SBE or domain values, typed
-`offer`, `Result`, and `?`; they do not use public generated protocol codecs or
-`offer_raw`.
-
-Generic lifecycle, reconnect, validation, and observability ideas may be learned
-from `reverb-sys/aeron-cluster-client-cpp`, but application protocols are not
-copied into the crate.
-
-## Execution order
-
-Another agent should take the unchecked items in this dependency order:
-
-1. Add the contract and compile-fail tests in A without weakening existing
-   assertions.
-2. Build the resolved conversion/text model, shared runtime, and single header
-   interface before changing downstream crates.
-3. Finish latest-version ordered encoding, composite symmetry, fallible domains,
-   and exact caller-buffer encoding; regenerate and compile every golden codec.
-4. Migrate Persist and Samples to the completed APIs, deleting only duplicated
-   helpers and keeping their application policy local.
-5. Finish Cluster privacy, error propagation, reconnect, and allocation-free
-   offer work against the stable ergon interface.
-6. Run equal-work performance gates, then complete documentation, package-file,
-   and crates.io dry-run gates. Do not mark a phase complete while a listed
-   acceptance command fails.
-
-## Implementation backlog
-
-### A. Lock the contracts with tests
-
-- [x] Add compile-fail tests proving required latest-version fixed fields cannot
-  be omitted and tail methods are unavailable before fixed completion.
-- [x] Add behavioural tests proving optional `None` writes the schema null value
-  even when wrapping a buffer containing non-zero bytes.
-- [x] Cover the same fixed-field proof for fixed-only and tailed group entries.
-- [x] Cover selector precedence, every eligible wire kind, nested paths,
-  duplicates, conflicts, invalid Rust types, unmatched selectors, and method
-  collisions.
-- [x] Cover valid and invalid UTF-8 and ASCII, binary fields without string
-  methods, text fields inside groups, and encoder validation before writes.
-- [x] Cover acting-version composite members, nested composite encoding, domain
-  conversion errors, malformed groups, and malformed variable data.
-- [x] Prove owned-message measured length equals the exact prefix returned by
-  `encode_into` for fixed messages, nested groups, composites, text, and binary
-  variable data; cover overflow, count, and short-buffer errors.
-- [x] Cover the single header parser for short input, both byte orders, custom
-  header layouts, and all four standard header values. Add compile-fail coverage
-  proving the retired peek/free-function interfaces are absent.
-- [x] Generate two independent schemas with one shared runtime and prove they
-  use identical error and conversion-trait types while emitting each runtime
-  item exactly once.
-- [x] Cover Cluster listener errors, invalid text, session filtering, keep-alive
-  failures, callback panics, and reconnect rollback.
-
-### B. Complete ergon generation
-
-- [x] Build the resolved conversion and character-encoding model once after
-  schema normalization and use it from every emitter.
-- [x] Remove decimal-specific configuration and generated traits, repeated
-  selector scans, unused generation helpers, stale comments, and silent `u8`
-  fallbacks.
-- [x] Emit the complete generic conversion interface for primitives, aliases,
-  enums, sets, arrays, composites, messages, and recursive group entries.
-- [x] Emit schema-driven raw and text variable-data methods with strict,
-  field-aware errors and no lossy helpers.
-- [x] Complete the latest-version fixed-field and ordered-tail state machine for
-  messages and group entries.
-- [x] Complete owned/flyweight/direct-encoder composite symmetry.
-- [x] Complete recursive fallible domain decoding and encoding.
-- [x] Add allocation-free `encoded_length_with_header` and `encode_into`
-  inherent methods to owned latest-version messages. Preallocate decoded domain
-  group vectors from their exact entry counts and preserve every conversion
-  error.
-- [x] Consolidate all header peeking into
-  `MessageHeader::try_from_prefix`; remove raw-offset and overlapping Option
-  helpers after migrating consumers.
-- [x] Add explicit shared-runtime output for `generate_multi`, independent of
-  shared schema types. Retain external-runtime support and remove stringifying
-  generated application-error conversions.
-- [x] Remove generated comparisons such as `acting_version < 0`.and regenerate
-  every checked-in golden codec before treating the warning as fixed.
-
-### C. Harden Ergo Aeron Cluster
-
-- [x] Make protocol codecs and internal modules private and expose only the
-  high-level client interface; a doc-hidden public re-export does not satisfy
-  this requirement.
-- [x] Change textual high-level views and callbacks to borrowed `&str`, while
-  preserving bytes for binary protocol fields.
-- [x] Propagate decoding, text, listener, polling, keep-alive, and controlled
-  callback errors through `ClusterResult`.
-- [x] Make leader reconnect state replacement atomic and recreate both fragment
-  assemblers.
-- [x] Replace the allocating high-level offer buffer with stack header plus
-  `offer_parts`.
-- [x] Remove shallow public CString helpers, RFQ/auction protocols, their codecs,
-  schemas, examples, and reference-only public exports.
-- [x] Retain and simplify only connect/echo, controlled-polling, and failover
-  examples.
-- [x] Replace manual header offsets and overlapping peek helpers with
-  `MessageHeader::try_from_prefix`, and use generated exact lengths, completed
-  encoded slices, and nested-message helpers throughout Cluster.
-
-### D. Keep laboratories honest
-
-- [x] Update Persist to use schema-declared text accessors for table names,
-  metadata, column names, and string values, while keeping the
-  application-defined symbol table binary. Generate its v1/v2 schemas against
-  one shared runtime.
-- [x] Retain `DynamicRecorder`'s runtime row validation and ClickHouse encoding
-  policy in Persist, but remove wrapper code duplicated by generated exact-length
-  and caller-buffer encoding APIs.
-- [x] Update `exchange-example` and `cluster-ha-orderbook` to compile against the
-  final interface and use `Result`/`?` instead of avoidable unwraps.
-- [x] Replace local `WireDec`/`WireDecimal`, manual UTF-8 conversion, header-byte
-  reads, and nested payload wrappers with configured conversions, generated
-  composite/domain values, schema text methods, and existing nested-message
-  helpers where applicable.
-- [x] Use domain objects where they make the laboratories clearer; retain raw
-  flyweights where allocation-free behaviour is what the test exercises.
-- [x] Do not describe either sample as an example to copy or a reference
-  implementation.
-- [x] Remove sample and Persist code that no longer exercises a unique product
-  interface.
-
-### E. Performance evidence
-
-- [x] Add equal-work Criterion cases for raw setters versus fixed structs,
-  primitive and composite converters, byte versus borrowed-string variable data,
-  domain mapping, owned `encode_into`, header inspection, ordered group entries,
-  shared versus duplicated runtime generation, and Cluster `offer_parts`.
-- [x] Add allocation assertions for fixed encoding, converter helpers, composite
-  flyweights, borrowed text, owned measured encoding, fixed-width domain round
-  trips, header inspection, and Cluster offer.
-- [x] Compare generated direct access, safe fixed access, and the maintained Aeron
-  reference using byte-identical work.
-- [x] Run three benchmark sessions. No maintained runtime median may regress by
-  more than 3%; generator time may not regress by more than 5%. Investigate and
-  fix any larger regression before marking this section complete.
-
-### F. Documentation and packaging
-
-- [x] Keep this release-readiness effort in one spec; do not recreate per-task
-  Markdown todos or archived plan trees.
-- [x] Keep the root and crate READMEs aligned with the four project postures and
-  clearly separate current behaviour from unfinished design.
-- [x] Add a documentation hygiene gate that rejects new todo directories,
-  `*-goal.md` files, archived plan trees, or a second active tracker.
-- [x] Repoint the two Rust source-documentation references from the temporary
-  `sbe/design/DECISIONS.md` compatibility pointer to this file, then delete the
-  pointer without changing the canonical design location.
-- [x] Restrict the ergon package to its manifest, README, and required source.
-- [x] Restrict the Cluster package to its manifest, README, build script,
-  required Aeron schemas, source, and three supported examples.
-- [x] Move Java harness support into the unpublished laboratory area and remove
-  tests, reference codecs, RFQ schemas, and application protocols from the
-  published Cluster package.
-- [x] Complete crates.io metadata for ergon and Cluster. Persist, its derive
-  crate, benchmarks, and samples remain unpublished.
-- [x] Add a root changelog and release check that packages and dry-runs both
-  publishable crates.
-
-## Acceptance criteria
-
-Text-specific acceptance:
-
-- Valid UTF-8 and ASCII return a borrowed `&str` and the correct next stage.
-- Invalid UTF-8 and non-ASCII data return field-specific errors.
-- Binary variable data has no generated `into_*_as_str` method.
-- Text and binary variable data follow the same rules inside group entries.
-- ASCII encoder rejection occurs before tail bytes are modified.
-- Cluster event views borrow strings; credentials and payloads borrow bytes.
-- Borrowed text decoding performs zero allocations.
-- Owned message sizing and caller-buffer encoding perform zero allocations and
-  return an exact header-inclusive prefix.
-- Multi-schema generation can share one runtime without forcing schemas to share
-  wire types.
-
-Release commands:
-
-```sh
-cargo fmt --all -- --check
-cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
-cargo test -p ergo-sbe --all-features -- --test-threads=1
-cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-cargo test -p ergo-aeron-cluster --all-targets
-cargo test -p ergo-clickhouse-persist --all-features
-cargo bench -p ergo-sbe-benchmarks --no-run
-(cd samples/exchange-example && cargo check --all-targets)
-(cd samples/cluster-ha-orderbook && cargo check --all-targets)
-cargo package -p ergo-sbe --allow-dirty
-cargo package -p ergo-aeron-cluster --allow-dirty
-cargo publish -p ergo-sbe --dry-run --allow-dirty
-cargo publish -p ergo-aeron-cluster --dry-run --allow-dirty
-```
-
-Before release, inspect both package file lists and confirm that they contain no
-historical plans, fixture inventories, Java harness, RFQ/auction material, or
-reference codecs. Preserve the existing dirty `simple-binary-encoding` submodule
-untouched.
+# ergon 0.1 Release Specification
+
+Status: ready-for-agent
+
+## Problem Statement
+
+ergon does not currently have a trustworthy path from the repository state to its first crates.io release. The previous release plan marked every task complete even though its baseline, documentation, public interfaces, package contents, CI configuration, and release commands contradicted those claims.
+
+The live audit established that the core crates have substantial working behavior, but release evidence is fragmented:
+
+- `ergo-sbe` has strong tests and benchmarks, but its published payload, public documentation, interface boundary, and release claims still need verification against the actual package.
+- `ergo-aeron-cluster` passes default formatting, lint, test, and maintained benchmark gates, but its advertised harness feature does not compile, strict rustdoc fails, implementation modules and generated protocols remain public, several failure paths contradict the intended contract, and its package contains unpublished test and harness material.
+- The automated release check does not verify both crates despite claiming that it does.
+- GitHub Actions jobs cannot currently start, and some workflow commands reference directories that were renamed.
+- The Cluster dry-run cannot resolve `ergo-sbe` until `ergo-sbe` has been published and indexed by crates.io.
+- A diagnostic benchmark falsely reported slow `NewLeaderEvent` decoding because the reference arm used a stale template identifier and skipped the decode body.
+
+Without a corrected release boundary and one evidence-producing gate, a maintainer cannot tell whether `0.1.0` is honest, reproducible, installable, or safe to announce even as experimental software.
+
+## Solution
+
+Release `ergo-sbe 0.1.0` and `ergo-aeron-cluster 0.1.0` as explicitly experimental crates from the ergon repository. The release standard is **experimental but reliable within the documented scope**: documented behavior must work, malformed inputs and operational failures must be surfaced consistently, public interfaces must be intentional, packaged examples must compile as external consumers, and every declared release gate must produce fresh evidence.
+
+The crates will be published in dependency order:
+
+1. Verify and publish `ergo-sbe 0.1.0`.
+2. Wait until crates.io resolves that compatible version.
+3. Verify and publish `ergo-aeron-cluster 0.1.0`.
+4. Create the repository release only after both crates are visible and installable.
+
+Persist, its derive crate, benchmarks, samples, Java harness support, and application protocols remain unpublished. They may prove the product crates but must not expand the published surface.
+
+A single release gate will orchestrate the approved testing seams: strict product checks, strict rustdoc, packaged-consumer examples, the Java interoperability harness, public-contract tests, allocation proofs, maintained equal-work benchmarks, package inspection, and dependency-ordered publication preflight. CI must run the same contract and must actually start and pass.
+
+## User Stories
+
+1. As a Rust SBE developer, I want to install `ergo-sbe 0.1.0` from crates.io, so that I can generate codecs without depending on a Git checkout.
+2. As an Aeron client developer, I want to install `ergo-aeron-cluster 0.1.0` after `ergo-sbe`, so that Cargo resolves the complete dependency graph from crates.io.
+3. As a prospective adopter, I want both crates labelled experimental, so that I understand they do not carry production guarantees.
+4. As a prospective adopter, I want documented capabilities to match executable behavior, so that I do not design against planned or removed APIs.
+5. As a schema author, I want generated codecs to remain wire-compatible with official SBE, so that messages interoperate with existing systems.
+6. As a low-latency developer, I want maintained codec paths to meet declared performance and allocation gates, so that ergonomic APIs do not conceal regressions.
+7. As a decoder user, I want malformed headers, fields, text, groups, and variable data to return typed errors, so that corruption is never mistaken for an unknown message.
+8. As a text-field user, I want schema-declared UTF-8 and ASCII decoded strictly, so that invalid protocol text is never silently replaced.
+9. As a binary-field user, I want credentials and payloads preserved as bytes, so that binary protocol data is not forced through text conversion.
+10. As an encoder user, I want required fixed fields and ordered tails enforced by the generated interface, so that incomplete messages are difficult to construct.
+11. As a domain-object user, I want conversion failures propagated recursively, so that malformed nested messages cannot become defaults.
+12. As a Cluster client user, I want the high-level client to be the supported entry point, so that generated protocol internals do not become accidental contracts.
+13. As a Cluster client user, I want malformed egress messages reported as errors, so that protocol failures are observable.
+14. As a Cluster listener author, I want callback panics and failures contained at the FFI boundary, so that unwinding cannot cross into Aeron callbacks.
+15. As a controlled-polling user, I want decode and callback failures surfaced separately from backpressure actions, so that corruption is not disguised as `Abort` or `Continue`.
+16. As a connected client, I want events filtered by the active Cluster session wherever the protocol carries a session identifier, so that another session cannot mutate my state.
+17. As a connected client, I want keep-alive failures returned to the polling caller, so that a dying session is not silently treated as healthy.
+18. As a failover user, I want a leader transition prepared completely before client state changes, so that a failed reconnect leaves the previous coherent state intact.
+19. As a failover user, I want both fragment assemblers reset on a successful transition, so that fragments from different leaders cannot be combined.
+20. As a publisher, I want the normal Cluster offer path to avoid a temporary payload allocation, so that the convenient interface does not impose a hot-path copy.
+21. As a latency-sensitive publisher, I want the explicit claim path retained, so that I can write directly into Aeron-owned memory.
+22. As a Cluster integrator, I want connect, authentication, fragmentation, keep-alive, failover, restart, and controlled polling exercised against Java Aeron Cluster, so that the crate proves real interoperability.
+23. As an example reader, I want every published example to compile against the packaged public API, so that examples cannot rely on workspace-only internals.
+24. As a crate consumer, I want internal codecs, Java harness code, tests, reference codecs, and application protocols excluded from packages, so that artifacts remain focused.
+25. As a docs.rs reader, I want strict rustdoc to build without broken or private links, so that API documentation is navigable.
+26. As a maintainer, I want both crates to declare consistent metadata and MSRV, so that crates.io and users receive accurate compatibility information.
+27. As a maintainer, I want a captured `0.1.0` public-interface baseline, so that later breaking changes can be identified deliberately.
+28. As a contributor, I want one release command that fails on any unsatisfied product gate, so that local and CI readiness cannot drift.
+29. As a reviewer, I want package file lists enforced by an allow-list, so that repository-only artifacts cannot silently enter a crate.
+30. As a reviewer, I want benchmark comparisons to derive identifiers from the codecs, so that stale literals cannot create unequal work.
+31. As a reviewer, I want every maintained benchmark represented in the enforcement script, so that Criterion output and the release verdict cover the same cases.
+32. As a release operator, I want publication to stop if `ergo-sbe` is not indexed, so that Cluster cannot be published with an unresolvable dependency.
+33. As a release operator, I want the repository release created only after both crates are visible, so that an announcement cannot precede usable artifacts.
+34. As a repository owner, I want CI jobs to start and pass on the release commit, so that local success is independently reproduced.
+35. As a repository owner, I want laboratories to remain unpublished and non-authoritative, so that exploratory code cannot be mistaken for supported examples.
+36. As a future maintainer, I want the release spec to contain unresolved requirements and verified decisions, so that checkboxes cannot substitute for evidence.
+
+## Implementation Decisions
+
+- **Vocabulary:** ergon is the repository; `ergo-sbe` is the SBE generator crate; `ergo-aeron-cluster` is the experimental Cluster client crate. Persist and Samples are laboratories.
+- **Release scope:** both product crates target `0.1.0`. They share a milestone but publish sequentially because Cluster depends on `ergo-sbe`.
+- **Quality bar:** `0.1.0` promises reliable documented behavior within a deliberately experimental scope, not production suitability, support, or long-term stability.
+- **MSRV:** both crates declare and continuously check Rust `1.95.0` until a separate compatibility decision changes it.
+- **ergo-sbe surface:** expose generator, configuration, schema, diagnostic, and documented wire-model contracts intentionally. Generation internals are not public merely for tests.
+- **Generated-code contract:** encoders target the latest schema version; decoders honor the acting version; required fields and ordered tails are structurally enforced; malformed data returns typed errors.
+- **Text contract:** variable data remains bytes unless the schema declares supported text. UTF-8 and ASCII views are strict and borrowed.
+- **Conversion contract:** configured conversions use static dispatch and propagate failures. Domain mapping cannot replace malformed values with defaults.
+- **Cluster surface:** publish a deliberate high-level client API covering configuration, lifecycle, listeners, polling, errors, offer, and claim. Implementation modules and generated protocol codecs remain private.
+- **Application protocols:** RFQ, auction, topic routing, order workflows, and other application schemas are removed from the generic Cluster crate.
+- **URI construction:** C-string construction helpers are internal. Configuration validates channels and caches the FFI representation required by rusteron.
+- **Harness boundary:** Java process management and integration infrastructure move to unpublished support code. Published examples do not require a repository-only harness to compile.
+- **Error semantics:** malformed frames, invalid text, callback failures, keep-alive failures, polling failures, and reconnect failures remain distinguishable typed errors. Unknown templates may be ignored only after a valid frame is established.
+- **Controlled polling:** protocol errors are observable independently of backpressure actions. Callback panics are contained as in regular polling.
+- **Session isolation:** every session-bearing event is checked against the active session before it affects listeners or client state.
+- **Atomic failover:** endpoint parsing, publication creation, and both new fragment assemblers are prepared first. Term, leader, publication, assemblers, and state are replaced together only after success.
+- **Publishing paths:** normal offer uses scatter/gather or equivalent caller-owned slices without allocating a combined payload. Explicit zero-copy claim remains available.
+- **Package policy:** each crate uses an explicit allow-list. Product source, required schemas, build support, README, manifest, license, and supported examples are included; repository tests, Java support, reference implementations, benchmarks, and laboratories are excluded.
+- **Metadata policy:** both crates provide version, MSRV, license, repository, homepage, documentation target, README, categories, keywords, and docs.rs settings.
+- **Public-interface baseline:** final packaged `0.1.0` APIs are captured before publication. Later checks compare against that baseline while respecting `0.x` semantics.
+- **Benchmark equality:** benchmark identifiers come from codec constants or are asserted against them. Both arms perform the same validation and payload work.
+- **Maintained performance:** hot-path comparisons are release gates. Connect and leader-change paths are correctness-gated cold paths; diagnostic timings remain equal-work but do not block parity.
+- **Single gate:** one release command orchestrates all local evidence and identifies the exact failed product, harness, package, documentation, performance, or publication precondition.
+- **CI parity:** required CI jobs execute the same gates. A workflow that exists but cannot start is a failed gate.
+- **Release automation:** publication names both crates explicitly, publishes `ergo-sbe`, waits for registry resolution, then verifies and publishes Cluster before tagging.
+- **Evidence policy:** completion comes from fresh command output and inspected package artifacts, not historical checkboxes.
+
+## Testing Decisions
+
+- Tests assert external behavior at the highest available seam. Internal structure is tested only when no stable public or package seam can reproduce the contract.
+- The primary acceptance seam is the single release command. It fails on any strict product check, documentation build, package consumer, interoperability suite, maintained performance gate, or publication precondition.
+- A packaged-consumer test builds documented examples against exact package artifacts. Workspace path resolution is not sufficient.
+- Strict rustdoc runs with warnings denied for both crates and validates public examples and intra-doc links.
+- `ergo-sbe` contract tests cover wire parity, acting versions, required-field phases, ordered tails, text validation, conversion failures, recursive domain mapping, short buffers, allocation behavior, and shared runtime generation.
+- Cluster unit and property tests cover codec parity, malformed frames, session filtering, listener panic containment, controlled errors, keep-alive propagation, offer status, and reconnect rollback.
+- Cluster integration tests use Java Aeron for connect, authentication, fragmentation, UDP transport, keep-alive, failover, restart, and controlled polling. All advertised features compile before these run.
+- Atomic failover tests inject endpoint and publication failures, assert rollback, and prove both assemblers are replaced on success.
+- Allocation tests prove maintained generated hot paths, Cluster offer, and Cluster claim meet their contracts.
+- Maintained Criterion cases perform byte-identical work with equivalent validation and are enforced by the benchmark gate. Diagnostic cases remain equal-work.
+- A benchmark guard fails if fixture, generated codec, reference codec, or expected identifiers disagree, preventing the diagnosed skipped decode.
+- Package tests enforce allow-lists and reject Java sources, harnesses, reference codecs, benchmarks, application protocols, and plans.
+- CI verifies the declared MSRV and current stable toolchain where dependencies permit. Linux Java interoperability is required.
+- The release preflight verifies `ergo-sbe` independently. Cluster's final crates.io dry run occurs only after the registry resolves `ergo-sbe`.
+- Release completes only after both crates can be fetched from crates.io and the repository tag points at the verified commit.
+
+## Out of Scope
+
+- Production-readiness, safety certification, formal support, service-level objectives, or compatibility guarantees.
+- A Rust Cluster service, consensus module, archive replacement, or replacement for official Aeron Cluster bindings.
+- Tokio or another async runtime abstraction; Cluster connection remains poll-driven.
+- Application-level RFQ, auction, topic, order, exchange, or ClickHouse APIs.
+- Publication of Persist, its derive crate, benchmarks, samples, Java infrastructure, or reference codecs.
+- Stabilizing every experimental interface before `0.1.0`.
+- Performance parity for cold-path connection, authentication, and leader-change operations; these remain correctness-gated.
+- Exhaustive operating-system, architecture, network-topology, or Aeron-version certification beyond the tested matrix.
+- A formal security audit or claim that unsafe behavior in rusteron/Aeron has been eliminated.
+- Lowering the current MSRV as part of this effort.
+
+## Further Notes
+
+- Default Cluster formatting, strict Clippy, 28 library tests, 45 default-feature all-target tests, benchmark compilation, and all five maintained Cluster ratios currently pass.
+- Strict Cluster rustdoc currently fails on fourteen broken or private links.
+- The advertised Cluster harness currently fails to compile because examples and integration tests use removed or changed APIs.
+- The current Cluster package contains forty-nine files, including Java harness, tests, benchmark, and test-support material.
+- Cluster's publication dry run fails because `ergo-sbe 0.1.0` is not in the crates.io index.
+- GitHub reports that CI cannot start because of an account billing/spending-limit condition. Resolving it is a release prerequisite.
+- The `NewLeaderEvent` slowdown was a benchmark expecting template ID `3` while both codecs declared `6`. The reference arm skipped decoding; changing that one value moved the median ratio from roughly `2.23` to `0.85`.
+- The dirty `simple-binary-encoding` submodule is unrelated and must remain untouched.
+- This spec authorizes implementation and verification, but not publishing, tagging, or announcing a release without explicit release-time approval.
