@@ -16,13 +16,13 @@ pub fn encode_book(
 ) -> Result<usize, sbe_rt::EncodeError> {
     let after_bids = L3BookEncoder::wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: TS, sequence: 42 })
-        .bids_unknown_size(|g| -> Result<(), sbe_rt::EncodeError> {
+        .bids_unknown_size(|g| {
         for (price, size, orders) in bids {
             g.add(|e| {
                 e.price(*price).size(*size);
-                e.orders(orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
+                e.orders(orders.len() as u16, |og| {
                     for (oid, qty, o_price) in *orders {
-                        og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(*oid).quantity(*qty).price(*o_price); Ok(()) })?;
+                        og.add(|oe| { oe.order_id(*oid).quantity(*qty).price(*o_price); Ok(()) })?;
                     }
                     Ok(())
                 })?;
@@ -32,13 +32,13 @@ pub fn encode_book(
         Ok(())
     })?;
 
-    let after_asks = after_bids.asks_unknown_size(|g| -> Result<(), sbe_rt::EncodeError> {
+    let after_asks = after_bids.asks_unknown_size(|g| {
         for (price, size, orders) in asks {
             g.add(|e| {
                 e.price(*price).size(*size);
-                e.orders(orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
+                e.orders(orders.len() as u16, |og| {
                     for (oid, qty, o_price) in *orders {
-                        og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(*oid).quantity(*qty).price(*o_price); Ok(()) })?;
+                        og.add(|oe| { oe.order_id(*oid).quantity(*qty).price(*o_price); Ok(()) })?;
                     }
                     Ok(())
                 })?;

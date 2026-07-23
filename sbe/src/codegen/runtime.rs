@@ -107,51 +107,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 pub trait Sealed {}
             }
 
-            pub trait EncodeGroupEntry<E> {
-                fn encode(self, entry: &mut E);
-            }
-
-            impl<E, F> EncodeGroupEntry<E> for F
-            where
-                F: FnOnce(&mut E),
-            {
-                #[inline]
-                fn encode(self, entry: &mut E) {
-                    self(entry);
-                }
-            }
-
-            /// Closure return type for group encode (`add`, `bids`, …).
-            ///
-            /// Both unit `()` and `Result<(), E>` work under one method name so
-            /// callers do not need a parallel `try_*` family just to `?` inside
-            /// the body. Method-level buffer/count errors still use `Result`.
-            pub trait GroupEncodeResult {
-                type Error: From<EncodeError>;
-                fn into_group_result(self) -> Result<(), Self::Error>;
-            }
-
-            impl GroupEncodeResult for () {
-                type Error = EncodeError;
-                #[inline]
-                fn into_group_result(self) -> Result<(), EncodeError> {
-                    Ok(())
-                }
-            }
-
-            impl<E> GroupEncodeResult for Result<(), E>
-            where
-                E: From<EncodeError>,
-            {
-                type Error = E;
-                #[inline]
-                fn into_group_result(self) -> Result<(), E> {
-                    self
-                }
-            }
-
-            /// Shorthand for closures passed to group `add`:
-            /// `|e| -> GroupResult { ... Ok(()) }`.
+            /// Return type for group closures (`add`, `bids`, …).
+            /// Closures return `Result<(), EncodeError>`; `?` just works.
             pub type GroupResult = Result<(), EncodeError>;
         }
     };

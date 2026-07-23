@@ -129,7 +129,7 @@ enc.fixed(&CarFixedFields {
 });
 
 // Groups consume `enc` and return a new tail stage. Pass the count up front:
-let after_group = enc.fuel_figures(2, |g| -> Result<(), EncodeError> {
+let after_group = enc.fuel_figures(2, |g| {
     g.add(|e| { e.speed(220).mpg(35); })?;
     g.add(|e| { e.speed(240).mpg(33); })?;
     Ok(())
@@ -138,7 +138,7 @@ let after_group = enc.fuel_figures(2, |g| -> Result<(), EncodeError> {
 // When you don't know the count up front, use `_unknown_size`. The
 // dimension header is written with a zero placeholder; the actual count
 // is back-patched when the group is dropped.
-let after_group = enc.fuel_figures_unknown_size(|g| -> Result<(), EncodeError> {
+let after_group = enc.fuel_figures_unknown_size(|g| {
     for item in some_iterator {
         g.add(|e| { e.speed(item.speed).mpg(item.mpg); })?;
     }
@@ -478,7 +478,7 @@ enc.fixed(&L3BookFixedFields {
 });
 
 // Bids: repeating group. Entry encoder has price/size/orders setters.
-let after_bids = enc.bids(3, |g| -> Result<(), EncodeError> {
+let after_bids = enc.bids(3, |g| {
     g.add(|e| { e.price(50800); e.size(15); e.orders(3); })?;
     g.add(|e| { e.price(50750); e.size(40); e.orders(8); })?;
     g.add(|e| { e.price(50700); e.size(10); e.orders(1); })?;
@@ -486,7 +486,7 @@ let after_bids = enc.bids(3, |g| -> Result<(), EncodeError> {
 })?;
 
 // Asks: second group, required after bids (wire order enforced).
-let after_asks = after_bids.asks(4, |g| -> Result<(), EncodeError> {
+let after_asks = after_bids.asks(4, |g| {
     g.add(|e| { e.price(50850); e.size(20); e.orders(5); })?;
     g.add(|e| { e.price(50900); e.size(30); e.orders(7); })?;
     g.add(|e| { e.price(50950); e.size(50); e.orders(12); })?;

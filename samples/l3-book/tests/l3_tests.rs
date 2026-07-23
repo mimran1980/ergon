@@ -300,18 +300,18 @@ fn dto_reencode_byte_identical() -> Result<(), Box<dyn std::error::Error>> {
     let mut re_buf = vec![0u8; 4096];
     let ab = L3BookEncoder::wrap_and_apply_header(&mut re_buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 42 })
-        .bids(db.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
+        .bids(db.len() as u16, |g| {
         for lvl in &db { g.add(|e| { e.price(lvl.price).size(lvl.size);
-            e.orders(lvl.orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
-                for o in &lvl.orders { og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok(()) })?; }
+            e.orders(lvl.orders.len() as u16, |og| {
+                for o in &lvl.orders { og.add(|oe| { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok(()) })?; }
                 Ok(())
             })?; Ok(())
         })?; } Ok(())
     })?;
-    let aa = ab.asks(da.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
+    let aa = ab.asks(da.len() as u16, |g| {
         for lvl in &da { g.add(|e| { e.price(lvl.price).size(lvl.size);
-            e.orders(lvl.orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
-                for o in &lvl.orders { og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok(()) })?; }
+            e.orders(lvl.orders.len() as u16, |og| {
+                for o in &lvl.orders { og.add(|oe| { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok(()) })?; }
                 Ok(())
             })?; Ok(())
         })?; } Ok(())

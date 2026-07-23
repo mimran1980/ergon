@@ -4459,7 +4459,7 @@ fn generate_message_encoder(
                 impl<'a> #current_stage<'a> {
                     /// Encode this group with a known count up front. Closure may
                     /// return `()` or `Result<(), E>` (via
-                    /// [`sbe_rt::GroupEncodeResult`]) so `?` works without a
+                    /// Closures return `GroupResult`; `?` just works. a
                     /// separate `try_*` method name.
                     #[must_use]
                     pub fn #g_snake<F>(
