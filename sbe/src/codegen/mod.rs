@@ -3818,6 +3818,7 @@ fn has_nested_dynamic_tail(msg: &MessageStructure) -> bool {
 /// When `header_size > 0` the builder is message-level (staged, consumes
 /// `self`).  When `header_size == 0` it is entry-level (flat, `&mut self`
 /// methods — used for repeating group entries).
+#[allow(clippy::only_used_in_recursion)]
 fn generate_encoded_length_builder(
     name_prefix: &str,
     block_length: usize,
@@ -3865,20 +3866,15 @@ fn generate_encoded_length_builder(
         // Nested-group methods on the entry-level builder
         for (gi, ng) in groups.iter().enumerate() {
             let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
-            let ng_snake_unknown = syn::Ident::new(
-                &format!("{}_unknown_size", to_snake_case(&ng.name)), span,
-            );
+            let ng_snake_unknown =
+                syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&ng.name)), span);
             let scoped_ng = &scoped_group_names[gi];
-            let ng_len_ident = syn::Ident::new(
-                &format!("{}EncodedLength", scoped_ng), span,
-            );
+            let ng_len_ident = syn::Ident::new(&format!("{}EncodedLength", scoped_ng), span);
             let (_dim_name, dim_size, _bl_field, _num_field) =
                 get_dimension_info(elements, &ng.dimension_type);
             let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
-            let (_num_off, _num_sz, ng_num_prim) =
-                get_dim_num_layout(elements, &ng.dimension_type);
-            let ng_count_ty: syn::Type =
-                syn::parse_str(rust_type(ng_num_prim)).unwrap();
+            let (_num_off, _num_sz, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
+            let ng_count_ty: syn::Type = syn::parse_str(rust_type(ng_num_prim)).unwrap();
 
             ts.extend(quote::quote! {
                 impl #prefix_ident {
@@ -4034,21 +4030,15 @@ fn generate_encoded_length_builder(
             let next_stage = &stage_idents[tail_idx + 1];
 
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
-            let g_snake_unknown = syn::Ident::new(
-                &format!("{}_unknown_size", to_snake_case(&g.name)),
-                span,
-            );
+            let g_snake_unknown =
+                syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&g.name)), span);
             let scoped_ng = &scoped_group_names[gi];
-            let g_len_ident = syn::Ident::new(
-                &format!("{}EncodedLength", scoped_ng), span,
-            );
+            let g_len_ident = syn::Ident::new(&format!("{}EncodedLength", scoped_ng), span);
             let (_dim_name, dim_size, _bl_field, _num_field) =
                 get_dimension_info(elements, &g.dimension_type);
             let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
-            let (_num_off, _num_sz, num_prim) =
-                get_dim_num_layout(elements, &g.dimension_type);
-            let count_ty: syn::Type =
-                syn::parse_str(rust_type(num_prim)).unwrap();
+            let (_num_off, _num_sz, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
+            let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
             ts.extend(quote::quote! {
                 impl #current_stage {
@@ -4182,13 +4172,17 @@ fn generate_encoded_length_builder(
     // ── Recursively generate nested entry-level builders ──
     for (gi, g) in groups.iter().enumerate() {
         let scoped_name = &scoped_group_names[gi];
-        let nested_group_names: Vec<String> = g.groups.iter().map(|ng| {
-            let ng_raw = to_pascal_case(&ng.name);
-            // Always prefix nested group names with the parent group scoped name
-            // to avoid collisions when sibling groups have identically-named
-            // sub-groups (e.g. L3Book: bids.orders vs asks.orders).
-            format!("{}{}", scoped_name, ng_raw)
-        }).collect();
+        let nested_group_names: Vec<String> = g
+            .groups
+            .iter()
+            .map(|ng| {
+                let ng_raw = to_pascal_case(&ng.name);
+                // Always prefix nested group names with the parent group scoped name
+                // to avoid collisions when sibling groups have identically-named
+                // sub-groups (e.g. L3Book: bids.orders vs asks.orders).
+                format!("{}{}", scoped_name, ng_raw)
+            })
+            .collect();
 
         let sub_ts = generate_encoded_length_builder(
             scoped_name,
@@ -5215,14 +5209,18 @@ fn generate_message_encoder(
 
     // ── Generate staged length builder for messages with dynamic tails ──
     if total_tail > 0 {
-        let group_scoped_names: Vec<String> = msg.groups.iter().map(|g| {
-            let raw = to_pascal_case(&g.name);
-            if multi_message {
-                format!("{}{}", &name, raw)
-            } else {
-                raw
-            }
-        }).collect();
+        let group_scoped_names: Vec<String> = msg
+            .groups
+            .iter()
+            .map(|g| {
+                let raw = to_pascal_case(&g.name);
+                if multi_message {
+                    format!("{}{}", &name, raw)
+                } else {
+                    raw
+                }
+            })
+            .collect();
         let lb_ts = generate_encoded_length_builder(
             &name,
             block_length,
