@@ -283,7 +283,20 @@ fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>>
         "l3_len",
         &src,
         r#"
-        let computed = L3BookEncoder::compute_encoded_length(2, 1);
+        let computed = L3BookEncodedLength::new()
+            .bids(2, |bids| {
+                bids.add()?;
+                bids.orders(0, |_| Ok(()))?;
+                bids.add()?;
+                bids.orders(0, |_| Ok(()))?;
+                Ok(())
+            }).unwrap()
+            .asks(1, |asks| {
+                asks.add()?;
+                asks.orders(0, |_| Ok(()))?;
+                Ok(())
+            }).unwrap()
+            .encoded_length();
         let mut buf = vec![0u8; 4096];
         let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(0).sequence(0);
@@ -293,7 +306,7 @@ fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>>
         }).unwrap().asks(1, |asks| {
             asks.add(|l| { l.price(0).qty(0); l.orders(0, |_| {}).unwrap(); }).unwrap();
         }).unwrap();
-        assert!(computed > 0 && complete.encoded_length() > 0, "both must be positive: {} vs {}", computed, complete.encoded_length());
+        assert_eq!(computed, complete.encoded_length(), "computed length must match actual encoding");
         println!("l3_compute_encoded_length_matches: PASSED ({} == {})", computed, complete.encoded_length());
     "#,
     );
