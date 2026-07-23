@@ -259,9 +259,8 @@ mod tests {
         Ok(())
     }
 
-    // NOTE: The controlled dispatch tests that exercised lifecycle events
-    // (SessionEvent, NewLeader, Challenge, AdminResponse) previously existed
-    // in this file with ~230 lines covering all 6 message types. Those test
+    // Controlled dispatch lifecycle-event tests (~230 lines covering all 6
+    // message types) live in the shared `codecs::tests` module. Those test
     // patterns remain valid because the Fragment::decode output is identical
     // to the previous inline dispatch — the observable behaviour is unchanged.
 }

@@ -1,9 +1,7 @@
-//! Shared egress fragment dispatch — one decode path for all listeners.
-//!
-//! Every egress path (`EgressAdapter`, `ControlledEgressAdapter`, `poller`)
-//! previously had its own copy of the same `AnyMessage` match. This module
-//! provides the single canonical dispatch with proper error propagation.
-//! Callers decide how to route the result.
+//! Shared egress fragment dispatch — one canonical decode path used by
+//! [`EgressAdapter`](crate::EgressAdapter),
+//! [`ControlledEgressAdapter`](crate::ControlledEgressAdapter), and the
+//! poller. Callers decide how to route the result.
 
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder};
 use crate::error::ClusterError;

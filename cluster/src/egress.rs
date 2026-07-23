@@ -168,7 +168,7 @@ impl<L: EgressListener> EgressAdapter<L> {
     }
 }
 
-/// No-op listener for tests and placeholder use.
+/// No-op listener for tests.
 pub struct NullListener;
 
 impl EgressListener for NullListener {
