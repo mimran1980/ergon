@@ -80,6 +80,12 @@ pub mod sbe_rt {
         BufferTooShort { needed: usize, available: usize },
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
         GroupFull { declared: u32, attempted: u32 },
+        /// Known-size group closure returned without adding enough entries.
+        GroupCountMismatch { declared: u32, actual: u32 },
+        /// Unknown-size group entry count does not fit in `numInGroup`.
+        GroupCountOverflow { maximum: u32, actual: u32 },
+        /// Checked arithmetic overflow in encoded length computation.
+        EncodedLengthOverflow,
         Decode(DecodeError),
     }
     impl core::fmt::Display for EncodeError {
@@ -102,6 +108,17 @@ pub mod sbe_rt {
                         f, "group full: declared count {}, attempted to write {}",
                         declared, attempted
                     )
+                }
+                Self::GroupCountMismatch { declared, actual } => {
+                    write!(
+                        f, "group count mismatch: declared {declared}, wrote {actual}"
+                    )
+                }
+                Self::GroupCountOverflow { maximum, actual } => {
+                    write!(f, "group count overflow: max {maximum}, actual {actual}")
+                }
+                Self::EncodedLengthOverflow => {
+                    write!(f, "encoded length computation overflowed")
                 }
                 Self::Decode(e) => write!(f, "decode error: {e}"),
             }
@@ -169,46 +186,8 @@ pub mod sbe_rt {
     pub mod private {
         pub trait Sealed {}
     }
-    pub trait EncodeGroupEntry<E> {
-        fn encode(self, entry: &mut E);
-    }
-    impl<E, F> EncodeGroupEntry<E> for F
-    where
-        F: FnOnce(&mut E),
-    {
-        #[inline]
-        fn encode(self, entry: &mut E) {
-            self(entry);
-        }
-    }
-    /// Closure return type for group encode (`add`, `bids`, …).
-    ///
-    /// Both unit `()` and `Result<(), E>` work under one method name so
-    /// callers do not need a parallel `try_*` family just to `?` inside
-    /// the body. Method-level buffer/count errors still use `Result`.
-    pub trait GroupEncodeResult {
-        type Error: From<EncodeError>;
-        fn into_group_result(self) -> Result<(), Self::Error>;
-    }
-    impl GroupEncodeResult for () {
-        type Error = EncodeError;
-        #[inline]
-        fn into_group_result(self) -> Result<(), EncodeError> {
-            Ok(())
-        }
-    }
-    impl<E> GroupEncodeResult for Result<(), E>
-    where
-        E: From<EncodeError>,
-    {
-        type Error = E;
-        #[inline]
-        fn into_group_result(self) -> Result<(), E> {
-            self
-        }
-    }
-    /// Shorthand for closures passed to group `add`:
-    /// `|e| -> GroupResult { ... Ok(()) }`.
+    /// Return type for group closures (`add`, `bids`, …).
+    /// Closures return `Result<(), EncodeError>`; `?` just works.
     pub type GroupResult = Result<(), EncodeError>;
 }
 ///Boolean Type.
@@ -3490,44 +3469,6 @@ impl<'a> CarEncoder<'a> {
         self.buf[offset..offset + 10].copy_from_slice(&val.0);
         self
     }
-    /// Compute the exact SBE message body length before encoding.
-    /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
-    #[inline]
-    pub const fn compute_encoded_length(
-        fuel_figures_count: usize,
-        performance_figures_count: usize,
-        manufacturer_len: usize,
-        model_len: usize,
-        activation_code_len: usize,
-    ) -> usize {
-        let mut len = 45;
-        len += 4 + fuel_figures_count * 6;
-        len += 4 + performance_figures_count * 1;
-        len += 4 + manufacturer_len;
-        len += 4 + model_len;
-        len += 4 + activation_code_len;
-        len
-    }
-    /// Compute the exact SBE message length including the standard
-    /// message header (header size + body). DECISIONS.md §2: callers
-    /// must use this — not a hand-written `+ 8`.
-    #[inline]
-    pub const fn compute_encoded_length_with_message_header(
-        fuel_figures_count: usize,
-        performance_figures_count: usize,
-        manufacturer_len: usize,
-        model_len: usize,
-        activation_code_len: usize,
-    ) -> usize {
-        8usize
-            + Self::compute_encoded_length(
-                fuel_figures_count,
-                performance_figures_count,
-                manufacturer_len,
-                model_len,
-                activation_code_len,
-            )
-    }
     /// Set all fixed fields at once from a [`#fixed_name`] value.
     /// Required fields are always written; optional fields are
     /// written when `Some`. Returns the encoder for tail methods.
@@ -3558,18 +3499,18 @@ impl<'a> CarEncoder<'a> {
     }
 }
 impl<'a> CarEncoder<'a> {
-    /// Encode this group. Closure may return `()` or `Result<(), E>`
-    /// (via [`sbe_rt::GroupEncodeResult`]) so `?` works without a
+    /// Encode this group with a known count up front. Closure may
+    /// return `()` or `Result<(), E>` (via
+    /// Closures return `GroupResult`; `?` just works. a
     /// separate `try_*` method name.
     #[must_use]
-    pub fn fuel_figures<R, F>(
+    pub fn fuel_figures<F>(
         mut self,
         count: u16,
         f: F,
-    ) -> Result<CarAfterFuelFigures<'a>, R::Error>
+    ) -> Result<CarAfterFuelFigures<'a>, sbe_rt::EncodeError>
     where
-        R: sbe_rt::GroupEncodeResult,
-        F: FnOnce(&mut FuelFiguresEncoder<'a>) -> R,
+        F: FnOnce(&mut FuelFiguresEncoder<'a>) -> sbe_rt::GroupResult,
     {
         if self.pos + 4 > self.buf.len() {
             return Err(
@@ -3584,27 +3525,69 @@ impl<'a> CarEncoder<'a> {
             .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group).into_group_result()?;
+        f(&mut group)?;
         Ok(CarAfterFuelFigures {
             buf: group.buf,
             message_start: self.message_start,
             pos: group.pos,
         })
     }
+    /// Encode this group without knowing the count up front.
+    /// The dimension header is written with a zero placeholder;
+    /// after the closure returns, the actual entry count is
+    /// back-patched into the header. No `GroupFull` check —
+    /// overflow is the caller's responsibility.
+    ///
+    /// Prefer [`Self::#g_snake`] when the count is known at
+    /// compile time or from a small input.
+    #[must_use]
+    pub fn fuel_figures_unknown_size<F>(
+        mut self,
+        f: F,
+    ) -> Result<CarAfterFuelFigures<'a>, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut FuelFiguresEncoder<'a>) -> sbe_rt::GroupResult,
+    {
+        if self.pos + 4 > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: 4,
+                    available: self.buf.len().saturating_sub(self.pos),
+                }
+                    .into(),
+            );
+        }
+        self.buf[self.pos..self.pos + 4]
+            .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
+        let count_offset = self.pos + 2;
+        self.buf[count_offset..count_offset + 2].fill(0);
+        let (buf, pos, actual) = {
+            let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, u16::MAX);
+            f(&mut group)?;
+            let n = group.written();
+            (group.buf, group.pos, n)
+        };
+        buf[count_offset..count_offset + 2].copy_from_slice(&actual.to_le_bytes());
+        Ok(CarAfterFuelFigures {
+            buf,
+            message_start: self.message_start,
+            pos,
+        })
+    }
 }
 impl<'a> CarAfterFuelFigures<'a> {
-    /// Encode this group. Closure may return `()` or `Result<(), E>`
-    /// (via [`sbe_rt::GroupEncodeResult`]) so `?` works without a
+    /// Encode this group with a known count up front. Closure may
+    /// return `()` or `Result<(), E>` (via
+    /// Closures return `GroupResult`; `?` just works. a
     /// separate `try_*` method name.
     #[must_use]
-    pub fn performance_figures<R, F>(
+    pub fn performance_figures<F>(
         mut self,
         count: u16,
         f: F,
-    ) -> Result<CarAfterPerformanceFigures<'a>, R::Error>
+    ) -> Result<CarAfterPerformanceFigures<'a>, sbe_rt::EncodeError>
     where
-        R: sbe_rt::GroupEncodeResult,
-        F: FnOnce(&mut PerformanceFiguresEncoder<'a>) -> R,
+        F: FnOnce(&mut PerformanceFiguresEncoder<'a>) -> sbe_rt::GroupResult,
     {
         if self.pos + 4 > self.buf.len() {
             return Err(
@@ -3619,11 +3602,57 @@ impl<'a> CarAfterFuelFigures<'a> {
             .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
-        f(&mut group).into_group_result()?;
+        f(&mut group)?;
         Ok(CarAfterPerformanceFigures {
             buf: group.buf,
             message_start: self.message_start,
             pos: group.pos,
+        })
+    }
+    /// Encode this group without knowing the count up front.
+    /// The dimension header is written with a zero placeholder;
+    /// after the closure returns, the actual entry count is
+    /// back-patched into the header. No `GroupFull` check —
+    /// overflow is the caller's responsibility.
+    ///
+    /// Prefer [`Self::#g_snake`] when the count is known at
+    /// compile time or from a small input.
+    #[must_use]
+    pub fn performance_figures_unknown_size<F>(
+        mut self,
+        f: F,
+    ) -> Result<CarAfterPerformanceFigures<'a>, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut PerformanceFiguresEncoder<'a>) -> sbe_rt::GroupResult,
+    {
+        if self.pos + 4 > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: 4,
+                    available: self.buf.len().saturating_sub(self.pos),
+                }
+                    .into(),
+            );
+        }
+        self.buf[self.pos..self.pos + 4]
+            .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
+        let count_offset = self.pos + 2;
+        self.buf[count_offset..count_offset + 2].fill(0);
+        let (buf, pos, actual) = {
+            let mut group = PerformanceFiguresEncoder::wrap(
+                self.buf,
+                self.pos + 4,
+                u16::MAX,
+            );
+            f(&mut group)?;
+            let n = group.written();
+            (group.buf, group.pos, n)
+        };
+        buf[count_offset..count_offset + 2].copy_from_slice(&actual.to_le_bytes());
+        Ok(CarAfterPerformanceFigures {
+            buf,
+            message_start: self.message_start,
+            pos,
         })
     }
 }
@@ -4011,10 +4040,9 @@ impl<'a> FuelFiguresEncoder<'a> {
     /// Write one group entry. Closure may return `()` or `Result<(), E>`
     /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
     #[must_use]
-    pub fn add<'b, R, F>(&'b mut self, f: F) -> Result<(), R::Error>
+    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        R: sbe_rt::GroupEncodeResult,
-        F: FnOnce(&mut FuelFiguresEntryEncoder<'b>) -> R,
+        F: FnOnce(&mut FuelFiguresEntryEncoder<'b>) -> sbe_rt::GroupResult,
     {
         if self.written >= self.count {
             return Err(
@@ -4038,7 +4066,7 @@ impl<'a> FuelFiguresEncoder<'a> {
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut __entry).into_group_result()?;
+            f(&mut __entry)?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -4063,6 +4091,13 @@ impl<'a> FuelFiguresEncoder<'a> {
         self.pos += 6;
         self.written += 1;
         Ok(FuelFiguresEntryEncoder::wrap(&mut self.buf[entry_pos..], 0))
+    }
+}
+impl<'a> FuelFiguresEncoder<'a> {
+    /// Number of entries written so far (for `_unknown_size` back-patch).
+    #[inline]
+    pub fn written(&self) -> u16 {
+        self.written
     }
 }
 #[must_use = "entry encoder fields must be set before the next entry"]
@@ -4134,10 +4169,9 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     /// Write one group entry. Closure may return `()` or `Result<(), E>`
     /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
     #[must_use]
-    pub fn add<'b, R, F>(&'b mut self, f: F) -> Result<(), R::Error>
+    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        R: sbe_rt::GroupEncodeResult,
-        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'b>) -> R,
+        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'b>) -> sbe_rt::GroupResult,
     {
         if self.written >= self.count {
             return Err(
@@ -4161,7 +4195,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
-            f(&mut __entry).into_group_result()?;
+            f(&mut __entry)?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -4188,6 +4222,13 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         Ok(PerformanceFiguresEntryEncoder::wrap(&mut self.buf[entry_pos..], 0))
     }
 }
+impl<'a> PerformanceFiguresEncoder<'a> {
+    /// Number of entries written so far (for `_unknown_size` back-patch).
+    #[inline]
+    pub fn written(&self) -> u16 {
+        self.written
+    }
+}
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresEntryEncoder<'a> {
     buf: &'a mut [u8],
@@ -4210,10 +4251,13 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         self
     }
     #[must_use]
-    pub fn acceleration<R, F>(&mut self, count: u16, f: F) -> Result<&mut Self, R::Error>
+    pub fn acceleration<F>(
+        &mut self,
+        count: u16,
+        f: F,
+    ) -> Result<&mut Self, sbe_rt::EncodeError>
     where
-        R: sbe_rt::GroupEncodeResult,
-        F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>) -> R,
+        F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>) -> sbe_rt::GroupResult,
     {
         if self.pos + 4 > self.buf.len() {
             return Err(
@@ -4235,8 +4279,47 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
                 self.pos + 4,
                 count,
             );
-            f(&mut group).into_group_result()?;
+            f(&mut group)?;
             __pos = group.pos;
+        }
+        self.pos = __pos;
+        Ok(self)
+    }
+    /// Nested-group `_unknown_size` variant — back-patches count.
+    pub fn acceleration_unknown_size<F>(
+        &mut self,
+        f: F,
+    ) -> Result<&mut Self, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>) -> sbe_rt::GroupResult,
+    {
+        if self.pos + 4 > self.buf.len() {
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    needed: 4,
+                    available: self.buf.len().saturating_sub(self.pos),
+                }
+                    .into(),
+            );
+        }
+        self.buf[self.pos..self.pos + 4]
+            .copy_from_slice(&PerformanceFiguresAccelerationEncoder::GROUP_DIM_TEMPLATE);
+        let count_offset = self.pos + 2;
+        self.buf[count_offset..count_offset + 2].fill(0);
+        let __pos;
+        {
+            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+            let mut group = PerformanceFiguresAccelerationEncoder::wrap(
+                __buf,
+                self.pos + 4,
+                u16::MAX,
+            );
+            f(&mut group)?;
+            let actual: u16 = group.written();
+            __pos = group.pos;
+            group
+                .buf[count_offset..count_offset + 2]
+                .copy_from_slice(&actual.to_le_bytes());
         }
         self.pos = __pos;
         Ok(self)
@@ -4265,10 +4348,11 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     /// Write one group entry. Closure may return `()` or `Result<(), E>`
     /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
     #[must_use]
-    pub fn add<'b, R, F>(&'b mut self, f: F) -> Result<(), R::Error>
+    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        R: sbe_rt::GroupEncodeResult,
-        F: FnOnce(&mut PerformanceFiguresAccelerationEntryEncoder<'b>) -> R,
+        F: FnOnce(
+            &mut PerformanceFiguresAccelerationEntryEncoder<'b>,
+        ) -> sbe_rt::GroupResult,
     {
         if self.written >= self.count {
             return Err(
@@ -4295,7 +4379,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                 __buf,
                 self.pos,
             );
-            f(&mut __entry).into_group_result()?;
+            f(&mut __entry)?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -4327,6 +4411,47 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         )
     }
 }
+impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
+    /// Number of entries written so far (for `_unknown_size` back-patch).
+    #[inline]
+    pub fn written(&self) -> u16 {
+        self.written
+    }
+}
+/// Value struct for this group's entries. Pass to [`Self::add_struct`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct PerformanceFiguresAccelerationEntry {
+    pub mph: u16,
+    pub seconds: f32,
+}
+impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
+    /// Write one entry from a struct. Faster than [`Self::add`] when
+    /// the entry has no nested groups or var-data.
+    pub fn add_struct(
+        &mut self,
+        entry: &PerformanceFiguresAccelerationEntry,
+    ) -> Result<(), sbe_rt::EncodeError> {
+        if self.written as u32 >= self.count as u32 {
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count as u32,
+                attempted: (self.written as u32) + 1,
+            });
+        }
+        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        if self.pos + block_len > self.buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed: block_len,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
+        let pos = self.pos;
+        self.pos += block_len;
+        self.written += 1;
+        self.buf[pos + 0..][..2].copy_from_slice(&entry.mph.to_le_bytes());
+        self.buf[pos + 2..][..4].copy_from_slice(&entry.seconds.to_le_bytes());
+        Ok(())
+    }
+}
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
     buf: &'a mut [u8],
@@ -4352,6 +4477,352 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
         let offset = self.entry_start + 2;
         self.buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
         self
+    }
+}
+#[must_use = "length builder must be consumed to compute encoded length"]
+pub struct CarEncodedLength {
+    len: usize,
+}
+#[must_use = "length builder must be consumed to compute encoded length"]
+pub struct CarEncodedLengthAfterFuelFigures {
+    len: usize,
+}
+#[must_use = "length builder must be consumed to compute encoded length"]
+pub struct CarEncodedLengthAfterPerformanceFigures {
+    len: usize,
+}
+#[must_use = "length builder must be consumed to compute encoded length"]
+pub struct CarEncodedLengthAfterManufacturer {
+    len: usize,
+}
+#[must_use = "length builder must be consumed to compute encoded length"]
+pub struct CarEncodedLengthAfterModel {
+    len: usize,
+}
+#[must_use = "length builder must be consumed to compute encoded length"]
+pub struct CarEncodedLengthComplete {
+    len: usize,
+}
+impl CarEncodedLength {
+    pub const BLOCK_LENGTH: usize = 45;
+    pub const HEADER_LENGTH: usize = 8;
+    /// Start computing the encoded length of this message.
+    /// Initial value is the fixed-field block length.
+    pub fn new() -> Self {
+        Self { len: Self::BLOCK_LENGTH }
+    }
+}
+impl CarEncodedLength {
+    /// Encode this group with a known entry count.
+    #[must_use]
+    pub fn fuel_figures<F>(
+        self,
+        count: u16,
+        f: F,
+    ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut FuelFiguresEncodedLength) -> sbe_rt::GroupResult,
+    {
+        let mut builder = FuelFiguresEncodedLength::new();
+        f(&mut builder)?;
+        if builder.written != count as usize {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: count as u32,
+                actual: builder.written as u32,
+            });
+        }
+        Ok(CarEncodedLengthAfterFuelFigures {
+            len: self
+                .len
+                .checked_add(4)
+                .and_then(|l| l.checked_add(builder.len))
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        })
+    }
+    /// Encode this group without knowing the count up front.
+    #[must_use]
+    pub fn fuel_figures_unknown_size<F>(
+        self,
+        f: F,
+    ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut FuelFiguresEncodedLength) -> sbe_rt::GroupResult,
+    {
+        let mut builder = FuelFiguresEncodedLength::new();
+        f(&mut builder)?;
+        let max_count = u16::MAX as usize;
+        if builder.written > max_count {
+            return Err(sbe_rt::EncodeError::GroupCountOverflow {
+                maximum: u16::MAX as u32,
+                actual: builder.written as u32,
+            });
+        }
+        Ok(CarEncodedLengthAfterFuelFigures {
+            len: self
+                .len
+                .checked_add(4)
+                .and_then(|l| l.checked_add(builder.len))
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        })
+    }
+}
+impl CarEncodedLengthAfterFuelFigures {
+    /// Encode this group with a known entry count.
+    #[must_use]
+    pub fn performance_figures<F>(
+        self,
+        count: u16,
+        f: F,
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut PerformanceFiguresEncodedLength) -> sbe_rt::GroupResult,
+    {
+        let mut builder = PerformanceFiguresEncodedLength::new();
+        f(&mut builder)?;
+        if builder.written != count as usize {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: count as u32,
+                actual: builder.written as u32,
+            });
+        }
+        Ok(CarEncodedLengthAfterPerformanceFigures {
+            len: self
+                .len
+                .checked_add(4)
+                .and_then(|l| l.checked_add(builder.len))
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        })
+    }
+    /// Encode this group without knowing the count up front.
+    #[must_use]
+    pub fn performance_figures_unknown_size<F>(
+        self,
+        f: F,
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut PerformanceFiguresEncodedLength) -> sbe_rt::GroupResult,
+    {
+        let mut builder = PerformanceFiguresEncodedLength::new();
+        f(&mut builder)?;
+        let max_count = u16::MAX as usize;
+        if builder.written > max_count {
+            return Err(sbe_rt::EncodeError::GroupCountOverflow {
+                maximum: u16::MAX as u32,
+                actual: builder.written as u32,
+            });
+        }
+        Ok(CarEncodedLengthAfterPerformanceFigures {
+            len: self
+                .len
+                .checked_add(4)
+                .and_then(|l| l.checked_add(builder.len))
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        })
+    }
+}
+impl CarEncodedLengthAfterPerformanceFigures {
+    /// Track one variable-length data field.
+    #[must_use]
+    pub fn manufacturer(
+        self,
+        byte_len: usize,
+    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError> {
+        if byte_len > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "manufacturer",
+                max_length: 1073741824,
+                actual: byte_len,
+            });
+        }
+        Ok(CarEncodedLengthAfterManufacturer {
+            len: self
+                .len
+                .checked_add(4)
+                .and_then(|l| l.checked_add(byte_len))
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        })
+    }
+}
+impl CarEncodedLengthAfterManufacturer {
+    /// Track one variable-length data field.
+    #[must_use]
+    pub fn model(
+        self,
+        byte_len: usize,
+    ) -> Result<CarEncodedLengthAfterModel, sbe_rt::EncodeError> {
+        if byte_len > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "model",
+                max_length: 1073741824,
+                actual: byte_len,
+            });
+        }
+        Ok(CarEncodedLengthAfterModel {
+            len: self
+                .len
+                .checked_add(4)
+                .and_then(|l| l.checked_add(byte_len))
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        })
+    }
+}
+impl CarEncodedLengthAfterModel {
+    /// Track one variable-length data field.
+    #[must_use]
+    pub fn activation_code(
+        self,
+        byte_len: usize,
+    ) -> Result<CarEncodedLengthComplete, sbe_rt::EncodeError> {
+        if byte_len > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "activationCode",
+                max_length: 1073741824,
+                actual: byte_len,
+            });
+        }
+        Ok(CarEncodedLengthComplete {
+            len: self
+                .len
+                .checked_add(4)
+                .and_then(|l| l.checked_add(byte_len))
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        })
+    }
+}
+impl CarEncodedLengthComplete {
+    /// SBE message body length (excluding the standard header).
+    pub fn encoded_length(&self) -> usize {
+        self.len
+    }
+    /// Total SBE message length including the standard message
+    /// header (`HEADER_LENGTH`).
+    pub fn encoded_length_with_header(&self) -> usize {
+        self.len + CarEncodedLength::HEADER_LENGTH
+    }
+}
+#[must_use = "length builder tracks entry sizes"]
+pub struct FuelFiguresEncodedLength {
+    len: usize,
+    written: usize,
+}
+impl FuelFiguresEncodedLength {
+    pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    pub fn new() -> Self {
+        Self { len: 0, written: 0 }
+    }
+    /// Register one entry — adds `ENTRY_BLOCK_LENGTH` and
+    /// increments the entry counter.
+    pub fn add(&mut self) -> sbe_rt::GroupResult {
+        self.len = self
+            .len
+            .checked_add(Self::ENTRY_BLOCK_LENGTH)
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        self.written += 1;
+        Ok(())
+    }
+}
+impl FuelFiguresEncodedLength {
+    /// Track one variable-length data field inside an entry.
+    pub fn usage_description(&mut self, byte_len: usize) -> sbe_rt::GroupResult {
+        if byte_len > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "usageDescription",
+                max_length: 1073741824,
+                actual: byte_len,
+            });
+        }
+        self.len = self
+            .len
+            .checked_add(4)
+            .and_then(|l| l.checked_add(byte_len))
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        Ok(())
+    }
+}
+#[must_use = "length builder tracks entry sizes"]
+pub struct PerformanceFiguresEncodedLength {
+    len: usize,
+    written: usize,
+}
+impl PerformanceFiguresEncodedLength {
+    pub const ENTRY_BLOCK_LENGTH: usize = 1;
+    pub fn new() -> Self {
+        Self { len: 0, written: 0 }
+    }
+    /// Register one entry — adds `ENTRY_BLOCK_LENGTH` and
+    /// increments the entry counter.
+    pub fn add(&mut self) -> sbe_rt::GroupResult {
+        self.len = self
+            .len
+            .checked_add(Self::ENTRY_BLOCK_LENGTH)
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        self.written += 1;
+        Ok(())
+    }
+}
+impl PerformanceFiguresEncodedLength {
+    /// Track a nested repeating group inside one entry.
+    pub fn acceleration<F>(&mut self, count: u16, f: F) -> sbe_rt::GroupResult
+    where
+        F: FnOnce(&mut AccelerationEncodedLength) -> sbe_rt::GroupResult,
+    {
+        let mut builder = AccelerationEncodedLength::new();
+        f(&mut builder)?;
+        if builder.written != count as usize {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: count as u32,
+                actual: builder.written as u32,
+            });
+        }
+        self.len = self
+            .len
+            .checked_add(4)
+            .and_then(|l| l.checked_add(builder.len))
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        Ok(())
+    }
+    /// Unknown-size variant — validates the count fits in
+    /// the wire type rather than requiring an exact match.
+    pub fn acceleration_unknown_size<F>(&mut self, f: F) -> sbe_rt::GroupResult
+    where
+        F: FnOnce(&mut AccelerationEncodedLength) -> sbe_rt::GroupResult,
+    {
+        let mut builder = AccelerationEncodedLength::new();
+        f(&mut builder)?;
+        let max_count = u16::MAX as usize;
+        if builder.written > max_count {
+            return Err(sbe_rt::EncodeError::GroupCountOverflow {
+                maximum: u16::MAX as u32,
+                actual: builder.written as u32,
+            });
+        }
+        self.len = self
+            .len
+            .checked_add(4)
+            .and_then(|l| l.checked_add(builder.len))
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        Ok(())
+    }
+}
+#[must_use = "length builder tracks entry sizes"]
+pub struct AccelerationEncodedLength {
+    len: usize,
+    written: usize,
+}
+impl AccelerationEncodedLength {
+    pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    pub fn new() -> Self {
+        Self { len: 0, written: 0 }
+    }
+    /// Register one entry — adds `ENTRY_BLOCK_LENGTH` and
+    /// increments the entry counter.
+    pub fn add(&mut self) -> sbe_rt::GroupResult {
+        self.len = self
+            .len
+            .checked_add(Self::ENTRY_BLOCK_LENGTH)
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        self.written += 1;
+        Ok(())
     }
 }
 pub mod car_field_meta {

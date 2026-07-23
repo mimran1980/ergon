@@ -143,8 +143,8 @@ fn warm_up_all() {
     enc.some_numbers([1u32, 2, 3, 4]);
     enc.vehicle_code([97, 98, 99, 100, 101, 102]);
     enc.extras(OptionalExtras(0));
-    let enc = enc.fuel_figures(0, |_g| ()).unwrap();
-    let enc = enc.performance_figures(0, |_g| ()).unwrap();
+    let enc = enc.fuel_figures(0, |_g| Ok(())).unwrap();
+    let enc = enc.performance_figures(0, |_g| Ok(())).unwrap();
     let enc = enc.manufacturer(b"Honda").unwrap();
     let enc = enc.model(b"Civic").unwrap();
     let _encoded = enc.activation_code(b"abc").unwrap();
@@ -318,8 +318,8 @@ fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Erro
     car.vehicle_code([97, 98, 99, 100, 101, 102]);
     car.extras(OptionalExtras(0));
 
-    let car = car.fuel_figures(0, |_g| ()).unwrap();
-    let car = car.performance_figures(0, |_g| ()).unwrap();
+    let car = car.fuel_figures(0, |_g| Ok(())).unwrap();
+    let car = car.performance_figures(0, |_g| Ok(())).unwrap();
     let car = car.manufacturer(b"Honda").unwrap();
     let car = car.model(b"Civic").unwrap();
     let encoded = car.activation_code(b"abc").unwrap();

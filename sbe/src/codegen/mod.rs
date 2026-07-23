@@ -3800,6 +3800,413 @@ fn generate_raw_fixed_impls(
     ts
 }
 
+/// Returns true when the message or any of its groups contains nested groups
+/// or entry-level varData — i.e. when the flat `compute_encoded_length` helper
+/// cannot give an exact answer.
+fn has_nested_dynamic_tail(msg: &MessageStructure) -> bool {
+    for g in &msg.groups {
+        if !g.groups.is_empty() || !g.var_data.is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Generate the staged zero-allocation length builder for a message
+/// or group entry with a dynamic tail. Returns TokenStream.
+///
+/// When `header_size > 0` the builder is message-level (staged, consumes
+/// `self`).  When `header_size == 0` it is entry-level (flat, `&mut self`
+/// methods — used for repeating group entries).
+fn generate_encoded_length_builder(
+    name_prefix: &str,
+    block_length: usize,
+    header_size: usize,
+    groups: &[MessageGroup],
+    var_data: &[MessageVarData],
+    elements: &SchemaElements,
+    multi_message: bool,
+    scoped_group_names: &[String],
+) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let prefix_ident = syn::Ident::new(&format!("{}EncodedLength", name_prefix), span);
+    let total_tail = groups.len() + var_data.len();
+    let is_entry_level = header_size == 0;
+    let mut ts = proc_macro2::TokenStream::new();
+    let block_length_lit = syn::LitInt::new(&block_length.to_string(), span);
+
+    if is_entry_level {
+        // ── Entry-level builder (flat, &mut self methods) ──
+        ts.extend(quote::quote! {
+            #[must_use = "length builder tracks entry sizes"]
+            pub struct #prefix_ident {
+                len: usize,
+                written: usize,
+            }
+
+            impl #prefix_ident {
+                pub const ENTRY_BLOCK_LENGTH: usize = #block_length_lit;
+
+                pub fn new() -> Self {
+                    Self { len: 0, written: 0 }
+                }
+
+                /// Register one entry — adds `ENTRY_BLOCK_LENGTH` and
+                /// increments the entry counter.
+                pub fn add(&mut self) -> sbe_rt::GroupResult {
+                    self.len = self.len.checked_add(Self::ENTRY_BLOCK_LENGTH)
+                        .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    self.written += 1;
+                    Ok(())
+                }
+            }
+        });
+
+        // Nested-group methods on the entry-level builder
+        for (gi, ng) in groups.iter().enumerate() {
+            let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
+            let ng_snake_unknown = syn::Ident::new(
+                &format!("{}_unknown_size", to_snake_case(&ng.name)), span,
+            );
+            let scoped_ng = &scoped_group_names[gi];
+            let ng_len_ident = syn::Ident::new(
+                &format!("{}EncodedLength", scoped_ng), span,
+            );
+            let (_dim_name, dim_size, _bl_field, _num_field) =
+                get_dimension_info(elements, &ng.dimension_type);
+            let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
+            let (_num_off, _num_sz, ng_num_prim) =
+                get_dim_num_layout(elements, &ng.dimension_type);
+            let ng_count_ty: syn::Type =
+                syn::parse_str(rust_type(ng_num_prim)).unwrap();
+
+            ts.extend(quote::quote! {
+                impl #prefix_ident {
+                    /// Track a nested repeating group inside one entry.
+                    pub fn #ng_snake<F>(
+                        &mut self, count: #ng_count_ty, f: F,
+                    ) -> sbe_rt::GroupResult
+                    where
+                        F: FnOnce(&mut #ng_len_ident) -> sbe_rt::GroupResult,
+                    {
+                        let mut builder = #ng_len_ident::new();
+                        f(&mut builder)?;
+                        if builder.written != count as usize {
+                            return Err(
+                                sbe_rt::EncodeError::GroupCountMismatch {
+                                    declared: count as u32,
+                                    actual: builder.written as u32,
+                                },
+                            );
+                        }
+                        self.len = self
+                            .len
+                            .checked_add(#dim_size_lit)
+                            .and_then(|l| l.checked_add(builder.len))
+                            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                        Ok(())
+                    }
+
+                    /// Unknown-size variant — validates the count fits in
+                    /// the wire type rather than requiring an exact match.
+                    pub fn #ng_snake_unknown<F>(
+                        &mut self, f: F,
+                    ) -> sbe_rt::GroupResult
+                    where
+                        F: FnOnce(&mut #ng_len_ident) -> sbe_rt::GroupResult,
+                    {
+                        let mut builder = #ng_len_ident::new();
+                        f(&mut builder)?;
+                        let max_count = #ng_count_ty::MAX as usize;
+                        if builder.written > max_count {
+                            return Err(
+                                sbe_rt::EncodeError::GroupCountOverflow {
+                                    maximum: #ng_count_ty::MAX as u32,
+                                    actual: builder.written as u32,
+                                },
+                            );
+                        }
+                        self.len = self
+                            .len
+                            .checked_add(#dim_size_lit)
+                            .and_then(|l| l.checked_add(builder.len))
+                            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                        Ok(())
+                    }
+                }
+            });
+        }
+
+        // Entry-level var-data methods
+        for vd in var_data {
+            let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
+            let (_vd_name, prefix_size, _len_field, _prim) =
+                get_vardata_info(elements, &vd.type_name);
+            let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+
+            let mut check = quote::quote! {};
+            if let Some(max) = vd.max_length {
+                let max_lit = syn::LitInt::new(&max.to_string(), span);
+                let field_str = &vd.name;
+                check.extend(quote::quote! {
+                    if byte_len > #max_lit {
+                        return Err(sbe_rt::EncodeError::VarDataTooLong {
+                            field: #field_str,
+                            max_length: #max_lit,
+                            actual: byte_len,
+                        });
+                    }
+                });
+            }
+
+            ts.extend(quote::quote! {
+                impl #prefix_ident {
+                    /// Track one variable-length data field inside an entry.
+                    pub fn #vd_snake(
+                        &mut self, byte_len: usize,
+                    ) -> sbe_rt::GroupResult {
+                        #check
+                        self.len = self
+                            .len
+                            .checked_add(#prefix_size_lit)
+                            .and_then(|l| l.checked_add(byte_len))
+                            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                        Ok(())
+                    }
+                }
+            });
+        }
+    } else {
+        // ── Message-level builder (staged, consumes self) ──
+        let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
+
+        // Tail field names in wire order (groups then var-data)
+        let tail_pascal: Vec<String> = groups
+            .iter()
+            .map(|g| to_pascal_case(&g.name))
+            .chain(var_data.iter().map(|vd| to_pascal_case(&vd.name)))
+            .collect();
+
+        // Stage struct names
+        let mut stage_idents = vec![prefix_ident.clone()];
+        for (i, field) in tail_pascal.iter().enumerate() {
+            if i < total_tail - 1 {
+                stage_idents.push(syn::Ident::new(
+                    &format!("{}EncodedLengthAfter{}", name_prefix, field),
+                    span,
+                ));
+            } else {
+                stage_idents.push(syn::Ident::new(
+                    &format!("{}EncodedLengthComplete", name_prefix),
+                    span,
+                ));
+            }
+        }
+
+        // Struct definitions (identical layout, non-generic)
+        for stage in &stage_idents {
+            ts.extend(quote::quote! {
+                #[must_use = "length builder must be consumed to compute encoded length"]
+                pub struct #stage {
+                    len: usize,
+                }
+            });
+        }
+
+        // new() on the initial stage — starts at the fixed-field block length
+        ts.extend(quote::quote! {
+            impl #prefix_ident {
+                pub const BLOCK_LENGTH: usize = #block_length_lit;
+                pub const HEADER_LENGTH: usize = #header_size_lit;
+
+                /// Start computing the encoded length of this message.
+                /// Initial value is the fixed-field block length.
+                pub fn new() -> Self {
+                    Self { len: Self::BLOCK_LENGTH }
+                }
+            }
+        });
+
+        // ── Group transition methods ──
+        let mut tail_idx = 0usize;
+        for (gi, g) in groups.iter().enumerate() {
+            let current_stage = &stage_idents[tail_idx];
+            let next_stage = &stage_idents[tail_idx + 1];
+
+            let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
+            let g_snake_unknown = syn::Ident::new(
+                &format!("{}_unknown_size", to_snake_case(&g.name)),
+                span,
+            );
+            let scoped_ng = &scoped_group_names[gi];
+            let g_len_ident = syn::Ident::new(
+                &format!("{}EncodedLength", scoped_ng), span,
+            );
+            let (_dim_name, dim_size, _bl_field, _num_field) =
+                get_dimension_info(elements, &g.dimension_type);
+            let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
+            let (_num_off, _num_sz, num_prim) =
+                get_dim_num_layout(elements, &g.dimension_type);
+            let count_ty: syn::Type =
+                syn::parse_str(rust_type(num_prim)).unwrap();
+
+            ts.extend(quote::quote! {
+                impl #current_stage {
+                    /// Encode this group with a known entry count.
+                    #[must_use]
+                    pub fn #g_snake<F>(
+                        self, count: #count_ty, f: F,
+                    ) -> Result<#next_stage, sbe_rt::EncodeError>
+                    where
+                        F: FnOnce(&mut #g_len_ident) -> sbe_rt::GroupResult,
+                    {
+                        let mut builder = #g_len_ident::new();
+                        f(&mut builder)?;
+                        if builder.written != count as usize {
+                            return Err(
+                                sbe_rt::EncodeError::GroupCountMismatch {
+                                    declared: count as u32,
+                                    actual: builder.written as u32,
+                                },
+                            );
+                        }
+                        Ok(#next_stage {
+                            len: self
+                                .len
+                                .checked_add(#dim_size_lit)
+                                .and_then(|l| l.checked_add(builder.len))
+                                .ok_or(
+                                    sbe_rt::EncodeError::EncodedLengthOverflow,
+                                )?,
+                        })
+                    }
+
+                    /// Encode this group without knowing the count up front.
+                    #[must_use]
+                    pub fn #g_snake_unknown<F>(
+                        self, f: F,
+                    ) -> Result<#next_stage, sbe_rt::EncodeError>
+                    where
+                        F: FnOnce(&mut #g_len_ident) -> sbe_rt::GroupResult,
+                    {
+                        let mut builder = #g_len_ident::new();
+                        f(&mut builder)?;
+                        let max_count = #count_ty::MAX as usize;
+                        if builder.written > max_count {
+                            return Err(
+                                sbe_rt::EncodeError::GroupCountOverflow {
+                                    maximum: #count_ty::MAX as u32,
+                                    actual: builder.written as u32,
+                                },
+                            );
+                        }
+                        Ok(#next_stage {
+                            len: self
+                                .len
+                                .checked_add(#dim_size_lit)
+                                .and_then(|l| l.checked_add(builder.len))
+                                .ok_or(
+                                    sbe_rt::EncodeError::EncodedLengthOverflow,
+                                )?,
+                        })
+                    }
+                }
+            });
+            tail_idx += 1;
+        }
+
+        // ── Var-data transition methods ──
+        for vd in var_data {
+            let current_stage = &stage_idents[tail_idx];
+            let next_stage = &stage_idents[tail_idx + 1];
+
+            let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
+            let (_vd_name, prefix_size, _len_field, _prim) =
+                get_vardata_info(elements, &vd.type_name);
+            let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+
+            let mut check = quote::quote! {};
+            if let Some(max) = vd.max_length {
+                let max_lit = syn::LitInt::new(&max.to_string(), span);
+                let field_str = &vd.name;
+                check.extend(quote::quote! {
+                    if byte_len > #max_lit {
+                        return Err(sbe_rt::EncodeError::VarDataTooLong {
+                            field: #field_str,
+                            max_length: #max_lit,
+                            actual: byte_len,
+                        });
+                    }
+                });
+            }
+
+            ts.extend(quote::quote! {
+                impl #current_stage {
+                    /// Track one variable-length data field.
+                    #[must_use]
+                    pub fn #vd_snake(
+                        self, byte_len: usize,
+                    ) -> Result<#next_stage, sbe_rt::EncodeError> {
+                        #check
+                        Ok(#next_stage {
+                            len: self
+                                .len
+                                .checked_add(#prefix_size_lit)
+                                .and_then(|l| l.checked_add(byte_len))
+                                .ok_or(
+                                    sbe_rt::EncodeError::EncodedLengthOverflow,
+                                )?,
+                        })
+                    }
+                }
+            });
+            tail_idx += 1;
+        }
+
+        // ── Complete stage ──
+        let complete_ident = &stage_idents[total_tail];
+        ts.extend(quote::quote! {
+            impl #complete_ident {
+                /// SBE message body length (excluding the standard header).
+                pub fn encoded_length(&self) -> usize { self.len }
+
+                /// Total SBE message length including the standard message
+                /// header (`HEADER_LENGTH`).
+                pub fn encoded_length_with_header(&self) -> usize {
+                    self.len + #prefix_ident::HEADER_LENGTH
+                }
+            }
+        });
+    }
+
+    // ── Recursively generate nested entry-level builders ──
+    for (gi, g) in groups.iter().enumerate() {
+        let scoped_name = &scoped_group_names[gi];
+        let nested_group_names: Vec<String> = g.groups.iter().map(|ng| {
+            let ng_raw = to_pascal_case(&ng.name);
+            if multi_message {
+                format!("{}{}", scoped_name, ng_raw)
+            } else {
+                ng_raw
+            }
+        }).collect();
+
+        let sub_ts = generate_encoded_length_builder(
+            scoped_name,
+            g.block_length,
+            0,
+            &g.groups,
+            &g.var_data,
+            elements,
+            multi_message,
+            &nested_group_names,
+        );
+        ts.extend(sub_ts);
+    }
+
+    ts
+}
+
 fn generate_message_encoder(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -4239,7 +4646,9 @@ fn generate_message_encoder(
     // name such as `written_prefix()`."
 
     // Pre-encoding length calculator for messages with tails
-    if total_tail > 0 {
+    // Not generated when groups have nested dynamic tails — the flat
+    // helper cannot account for their variable contribution.
+    if total_tail > 0 && !has_nested_dynamic_tail(msg) {
         let mut params = Vec::<proc_macro2::TokenStream>::new();
         let mut param_names = Vec::<syn::Ident>::new();
         let mut sum_body = Vec::<proc_macro2::TokenStream>::new();
@@ -4798,6 +5207,29 @@ fn generate_message_encoder(
         });
     }
 
+    // ── Generate staged length builder for messages with dynamic tails ──
+    if total_tail > 0 {
+        let group_scoped_names: Vec<String> = msg.groups.iter().map(|g| {
+            let raw = to_pascal_case(&g.name);
+            if multi_message {
+                format!("{}{}", &name, raw)
+            } else {
+                raw
+            }
+        }).collect();
+        let lb_ts = generate_encoded_length_builder(
+            &name,
+            block_length,
+            header_size,
+            &msg.groups,
+            &msg.var_data,
+            elements,
+            multi_message,
+            &group_scoped_names,
+        );
+        ts.extend(lb_ts);
+    }
+
     ts
 }
 
@@ -5135,7 +5567,8 @@ fn generate_group_encoder(
     for ng in &g.groups {
         let ng_pascal_scoped = format!("{}{}", name, to_pascal_case(&ng.name));
         let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
-        let ng_snake_unknown = syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&ng.name)), span);
+        let ng_snake_unknown =
+            syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&ng.name)), span);
         let ng_enc = syn::Ident::new(&format!("{ng_pascal_scoped}Encoder"), span);
         let (_dim_name, ng_dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
         let (num_off, num_sz, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
