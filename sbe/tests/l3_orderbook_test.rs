@@ -253,10 +253,14 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
                         orders.add(|o| {
                             o.order_qty(10i64);
                             o.order_id(id.as_bytes()).unwrap();
-                        }).unwrap();
+                            Ok(())
+                        })?;
                     }
-                }).unwrap();
-            }).unwrap();
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
         }).unwrap().asks(1, |asks| {
             asks.add(|level| {
                 level.price(201i64).qty(120i64);
@@ -266,10 +270,14 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
                         orders.add(|o| {
                             o.order_qty(10i64);
                             o.order_id(id.as_bytes()).unwrap();
-                        }).unwrap();
+                            Ok(())
+                        })?;
                     }
-                }).unwrap();
-            }).unwrap();
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
         }).unwrap();
         let encoded = complete.as_bytes();
         let dec = L3BookDecoder::try_from(encoded).unwrap();
