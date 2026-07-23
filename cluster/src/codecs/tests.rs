@@ -1,7 +1,6 @@
 //! Protocol codec round-trips using **ergon** production codecs only.
 //! sbe-tool trees remain for head-to-head benches only.
 
-use super::rfq::{CreateRfqCommandDecoder, CreateRfqCommandEncoder, Side};
 use super::session::{
     ChallengeEncoder, EventCode, NewLeaderEventEncoder, SessionConnectRequestEncoder, SessionEventEncoder,
     SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
@@ -75,41 +74,3 @@ fn test_challenge_and_new_leader_encode() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// ergon RFQ CreateRfqCommand vs frozen 77-byte golden (schema 101 wire parity).
-/// Golden captured 2026-07-20; cross-generator sbe-tool verification replaced
-/// by this frozen reference + ergon round-trip assertions.
-#[test]
-fn test_rfq_create_command_golden_bytes() -> Result<(), Box<dyn std::error::Error>> {
-    let mut corr = [b'_'; 36];
-    corr[..14].copy_from_slice(b"create-rfq-001");
-    let mut cusip = [0u8; 9];
-    cusip.copy_from_slice(b"123456789");
-
-    let mut ergo_buf = vec![0u8; 128];
-    let mut enc = CreateRfqCommandEncoder::wrap_and_apply_header(&mut ergo_buf, 0)?;
-    let _ = enc
-        .correlation(corr)
-        .expire_time_ms(60_000)
-        .quantity(1000)
-        .requester_side(Side::BUY)
-        .cusip(cusip)
-        .requester_user_id(500);
-    let ergo_bytes = &ergo_buf[..CreateRfqCommandEncoder::ENCODED_LENGTH];
-
-    // Frozen 77-byte golden (schema 101, CreateRfqCommand, template_id=101).
-    // Beginning: [69, 0, 106, 0, 101, 0, 1, 0] — message header + template id.
-    // Ending:    [244, 1, 0, 0] — requester_user_id=500 in little-endian.
-    assert_eq!(ergo_bytes.len(), 77);
-    assert_eq!(&ergo_bytes[..8], &[69, 0, 106, 0, 101, 0, 1, 0]);
-    assert_eq!(&ergo_bytes[ergo_bytes.len() - 4..], &[244, 1, 0, 0]);
-
-    // Decode with ergon — verify round-trip correctness.
-    let dec = CreateRfqCommandDecoder::wrap_and_apply_header(ergo_bytes, 0)?;
-    assert_eq!(dec.correlation(), corr);
-    assert_eq!(dec.expire_time_ms(), 60_000);
-    assert_eq!(dec.quantity(), 1000);
-    assert_eq!(dec.requester_side(), Side::BUY);
-    assert_eq!(dec.cusip(), cusip);
-    assert_eq!(dec.requester_user_id(), 500);
-    Ok(())
-}

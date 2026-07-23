@@ -68,7 +68,7 @@ fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], _hdr: 
         leader_member_id,
         ingress_endpoints,
         ..
-    }) = crate::poller::parse_event(data)
+    }) = crate::poller::parse_event(data).ok().flatten()
         && ctx.new_leader.is_none()
     {
         *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
@@ -90,7 +90,7 @@ fn dispatch_controlled<L: ControlledEgressListener>(
         leader_member_id,
         ingress_endpoints,
         ..
-    }) = crate::poller::parse_event(data)
+    }) = crate::poller::parse_event(data).ok().flatten()
         && ctx.new_leader.is_none()
     {
         *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
@@ -215,7 +215,7 @@ impl AeronCluster {
             let _ = self.egress.poll_fn(
                 |data, _hdr| {
                     if captured.is_none() {
-                        captured = crate::poller::parse_event(data);
+                        captured = crate::poller::parse_event(data).ok().flatten();
                     }
                 },
                 1,
@@ -908,15 +908,22 @@ impl AsyncClusterConnect {
 
     fn poll_one_event(&mut self) -> Result<Option<crate::poller::EgressEvent>, ClusterError> {
         let mut ev: Option<crate::poller::EgressEvent> = None;
+        let mut err: Option<ClusterError> = None;
         if let Some(egress) = &self.egress {
             let _ = egress.poll_fn(
                 |data, _hdr| {
-                    if ev.is_none() {
-                        ev = crate::poller::parse_event(data);
+                    if ev.is_none() && err.is_none() {
+                        match crate::poller::parse_event(data) {
+                            Ok(e) => ev = e,
+                            Err(e) => err = Some(e),
+                        }
                     }
                 },
                 1,
             );
+        }
+        if let Some(e) = err {
+            return Err(e);
         }
         Ok(ev)
     }

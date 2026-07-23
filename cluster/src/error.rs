@@ -142,6 +142,12 @@ pub enum ClusterError {
         /// What was being dispatched when the panic occurred.
         context: &'static str,
     },
+    /// Schema-declared text field contained invalid UTF-8.
+    #[error("invalid UTF-8 in field '{field}'")]
+    InvalidUtf8 {
+        /// Field name from the schema.
+        field: &'static str,
+    },
 }
 
 impl ClusterError {
