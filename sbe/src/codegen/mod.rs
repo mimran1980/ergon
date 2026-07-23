@@ -4184,11 +4184,10 @@ fn generate_encoded_length_builder(
         let scoped_name = &scoped_group_names[gi];
         let nested_group_names: Vec<String> = g.groups.iter().map(|ng| {
             let ng_raw = to_pascal_case(&ng.name);
-            if multi_message {
-                format!("{}{}", scoped_name, ng_raw)
-            } else {
-                ng_raw
-            }
+            // Always prefix nested group names with the parent group scoped name
+            // to avoid collisions when sibling groups have identically-named
+            // sub-groups (e.g. L3Book: bids.orders vs asks.orders).
+            format!("{}{}", scoped_name, ng_raw)
         }).collect();
 
         let sub_ts = generate_encoded_length_builder(
