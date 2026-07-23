@@ -1,7 +1,7 @@
 #![warn(missing_docs)]
-#![allow(unused)] // ponytail: pre-existing in 5600-line codegen.rs
-#![allow(clippy::pedantic)] // ponytail: pre-existing in codegen (3000+ line file)
-#![allow(clippy::nursery)] // ponytail: experimental lints on stable code
+#![allow(unused)] // pre-existing in 5600-line codegen.rs
+#![allow(clippy::pedantic)] // pre-existing in codegen (3000+ line file)
+#![allow(clippy::nursery)] // experimental lints on stable code
 #![allow(clippy::panic)] // codegen uses panic/expect for irrecoverable states
 #![allow(clippy::too_many_arguments)] // codegen functions need many params
 #![allow(clippy::manual_memcpy)] // explicit loop in codegen is intentional

@@ -7,7 +7,7 @@
     unused,
     warnings
 )]
-#![allow(unused_must_use)] // ponytail: encoder builder calls return &mut Self in tests, remove when builder API uses unit return
+#![allow(unused_must_use)] // encoder builder calls return &mut Self in tests, remove when builder API uses unit return
 //!
 //! Tests that encoding a message and decoding the resulting bytes yields the
 //! original field values. Each exchange schema gets at least one message type.

@@ -9,7 +9,7 @@
 
 /// Generated SBE codecs for the normalized application schema
 /// (AppMessage/L2Book/Trade). Generated at build time into `OUT_DIR`.
-// ponytail: generated code carries benign unused/mut warnings; suppress at
+// generated code carries benign unused/mut warnings; suppress at
 // the include boundary until the templates themselves are warning-clean.
 #[allow(
     dead_code,
