@@ -4,10 +4,9 @@
 //! Schemas (vendored under cluster/schemas/):
 //!   cluster/schemas/aeron-cluster-codecs.xml
 //!   cluster/schemas/aeron-cluster-mark-codecs.xml
-//!   cluster/schemas/protocol-codecs.xml
 //!
 //! The generated files are `include!`d from `src/codecs/mod.rs` as public
-//! modules `session`, `mark`, and `rfq`.
+//! modules `session` and `mark`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,7 +48,6 @@ fn main() {
     for (xml, module) in [
         ("aeron-cluster-codecs.xml", "session"),
         ("aeron-cluster-mark-codecs.xml", "mark"),
-        ("protocol-codecs.xml", "rfq"),
     ] {
         generate_schema(&schema_dir.join(xml), module, &out_dir);
     }

@@ -18,5 +18,9 @@ name = "auction_client"
 path = "examples/auction_client.rs"
 
 [dependencies]
+ergo-sbe = { path = "../../sbe" }
 ergo-aeron-cluster = { path = "../../cluster", features = ["test-harness"] }
 rusteron-client = "0.2"
+
+[build-dependencies]
+ergo-sbe = { path = "../../sbe" }

@@ -11,7 +11,7 @@
 //!
 //! Then: RFQ_AERON_DIR=<dir> cargo run --example rfq_roundtrip --features test-harness
 
-use ergo_aeron_cluster::codecs::rfq::{
+use cluster_rfq::rfq_codec::{
     AddInstrumentEncoder, BooleanType, CreateRfqCommandEncoder, Side,
 };
 use ergo_aeron_cluster::codecs::session::{

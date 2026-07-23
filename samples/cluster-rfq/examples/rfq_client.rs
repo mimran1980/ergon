@@ -9,7 +9,7 @@
 //! cargo run --example rfq_client --features test-harness
 //! ```
 
-use ergo_aeron_cluster::codecs::rfq::{
+use cluster_rfq::rfq_codec::{
     AcceptRfqCommandEncoder, CreateRfqCommandEncoder, QuoteRfqCommandEncoder, Side,
 };
 use ergo_aeron_cluster::codecs::session::{

@@ -10,3 +10,4 @@ tmp/
 
 # Aeron Cluster test-run node dirs (written into crate CWD by harness tests)
 aeron-cluster-[0-9]/
+.idea/
