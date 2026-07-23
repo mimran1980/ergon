@@ -43,18 +43,22 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         extras.set_sports_pack(true);
         car.extras(extras);
         car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(2, |g| {
-            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban").unwrap(); }).unwrap();
-            g.add(|e| { e.speed(60).mpg(25.0); e.usage_description(b"Highway").unwrap(); }).unwrap();
+        let car = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
+            g.add(|e| { e.speed(60).mpg(25.0); e.usage_description(b"Highway")?; Ok(()) })?;
+            Ok(())
         }).unwrap();
-        let car = car.performance_figures(1, |g| {
-            g.add(|e| {
+        let car = car.performance_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|e| -> Result<(), sbe_rt::EncodeError> {
                 e.octane_rating(95);
-                e.acceleration(2, |a| {
-                    a.add(|x| { x.mph(30).seconds(4.0); }).unwrap();
-                    a.add(|x| { x.mph(60).seconds(7.5); }).unwrap();
-                }).unwrap();
-            }).unwrap();
+                e.acceleration(2, |a| -> Result<(), sbe_rt::EncodeError> {
+                    a.add(|x| { x.mph(30).seconds(4.0); Ok(()) })?;
+                    a.add(|x| { x.mph(60).seconds(7.5); Ok(()) })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
         }).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic VTi").unwrap();
@@ -111,8 +115,8 @@ fn car_domain_clone_eq_debug() -> Result<(), Box<dyn std::error::Error>> {
         car.some_numbers([5; 4]).vehicle_code([b'Z'; 6]);
         car.extras(OptionalExtras::default());
         car.engine(Engine::new(300, 6, [1; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let c = car.fuel_figures(0, |_| {}).unwrap()
-            .performance_figures(0, |_| {}).unwrap()
+        let c = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap()
+            .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap()
             .manufacturer(b"X").unwrap()
             .model(b"Y").unwrap()
             .activation_code(b"Z").unwrap();
@@ -145,8 +149,8 @@ fn car_domain_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         car.some_numbers([0; 4]).vehicle_code([0; 6]);
         car.extras(OptionalExtras::default());
         car.engine(Engine::new(0, 0, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let c = car.fuel_figures(0, |_| {}).unwrap()
-            .performance_figures(0, |_| {}).unwrap()
+        let c = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap()
+            .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap()
             .manufacturer(b"").unwrap()
             .model(b"").unwrap()
             .activation_code(b"").unwrap();
@@ -175,29 +179,37 @@ fn l3_domain_nested_groups_vardata() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 8192];
         let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(111).sequence(222);
-        let complete = book.bids(2, |bids| {
-            bids.add(|level| {
+        let complete = book.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
+            bids.add(|level| -> Result<(), sbe_rt::EncodeError> {
                 level.price(100).qty(50);
-                level.orders(3, |orders| {
-                    orders.add(|o| { o.order_qty(10); o.order_id(b"A1").unwrap(); }).unwrap();
-                    orders.add(|o| { o.order_qty(20); o.order_id(b"A2").unwrap(); }).unwrap();
-                    orders.add(|o| { o.order_qty(20); o.order_id(b"A3").unwrap(); }).unwrap();
-                }).unwrap();
-            }).unwrap();
-            bids.add(|level| {
+                level.orders(3, |orders| -> Result<(), sbe_rt::EncodeError> {
+                    orders.add(|o| { o.order_qty(10); o.order_id(b"A1")?; Ok(()) })?;
+                    orders.add(|o| { o.order_qty(20); o.order_id(b"A2")?; Ok(()) })?;
+                    orders.add(|o| { o.order_qty(20); o.order_id(b"A3")?; Ok(()) })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            bids.add(|level| -> Result<(), sbe_rt::EncodeError> {
                 level.price(99).qty(30);
-                level.orders(1, |orders| {
-                    orders.add(|o| { o.order_qty(30); o.order_id(b"B1").unwrap(); }).unwrap();
-                }).unwrap();
-            }).unwrap();
-        }).unwrap().asks(1, |asks| {
-            asks.add(|level| {
+                level.orders(1, |orders| -> Result<(), sbe_rt::EncodeError> {
+                    orders.add(|o| { o.order_qty(30); o.order_id(b"B1")?; Ok(()) })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        }).unwrap().asks(1, |asks| -> Result<(), sbe_rt::EncodeError> {
+            asks.add(|level| -> Result<(), sbe_rt::EncodeError> {
                 level.price(101).qty(40);
-                level.orders(2, |orders| {
-                    orders.add(|o| { o.order_qty(20); o.order_id(b"S1").unwrap(); }).unwrap();
-                    orders.add(|o| { o.order_qty(20); o.order_id(b"S2").unwrap(); }).unwrap();
-                }).unwrap();
-            }).unwrap();
+                level.orders(2, |orders| -> Result<(), sbe_rt::EncodeError> {
+                    orders.add(|o| { o.order_qty(20); o.order_id(b"S1")?; Ok(()) })?;
+                    orders.add(|o| { o.order_qty(20); o.order_id(b"S2")?; Ok(()) })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
         }).unwrap();
         let encoded = complete.as_bytes();
         let d: L3BookDomain = L3BookDecoder::try_from(&encoded[..]).unwrap().into();
@@ -245,17 +257,20 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 32768];
         let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(333).sequence(444);
-        let complete = book.bids(1, |bids| {
-            bids.add(|level| {
+        let complete = book.bids(1, |bids| -> Result<(), sbe_rt::EncodeError> {
+            bids.add(|level| -> Result<(), sbe_rt::EncodeError> {
                 level.price(50000).qty(120);
-                level.orders(12, |orders| {
+                level.orders(12, |orders| -> Result<(), sbe_rt::EncodeError> {
                     for i in 0..12u64 {
                         let id = format!("ORD-{:03}", i);
-                        orders.add(|o| { o.order_qty((i+1) as i64); o.order_id(id.as_bytes()).unwrap(); }).unwrap();
+                        orders.add(|o| { o.order_qty((i+1) as i64); o.order_id(id.as_bytes())?; Ok(()) })?;
                     }
-                }).unwrap();
-            }).unwrap();
-        }).unwrap().asks(0, |_| {}).unwrap();
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        }).unwrap().asks(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap();
         let encoded = complete.as_bytes();
         let d: L3BookDomain = L3BookDecoder::try_from(&encoded[..]).unwrap().into();
 
@@ -328,11 +343,13 @@ fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 4096];
         let mut d = DepthResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         d.last_update_id(123456).price_exponent(-8).qty_exponent(-8);
-        let complete = d.bids(2, |bids| {
-            bids.add(|l| { l.price(50001).qty(150); }).unwrap();
-            bids.add(|l| { l.price(50000).qty(200); }).unwrap();
-        }).unwrap().asks(1, |asks| {
-            asks.add(|l| { l.price(50100).qty(300); }).unwrap();
+        let complete = d.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
+            bids.add(|l| { l.price(50001).qty(150); Ok(()) })?;
+            bids.add(|l| { l.price(50000).qty(200); Ok(()) })?;
+            Ok(())
+        }).unwrap().asks(1, |asks| -> Result<(), sbe_rt::EncodeError> {
+            asks.add(|l| { l.price(50100).qty(300); Ok(()) })?;
+            Ok(())
         }).unwrap();
         let encoded = complete.as_bytes().to_vec();
 
@@ -378,10 +395,11 @@ fn car_serde_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         extras.set_cruise_control(true);
         car.extras(extras);
         car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(1, |g| {
-            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban").unwrap(); }).unwrap();
+        let car = car.fuel_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
+            Ok(())
         }).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
         let complete = car.model(b"Civic").unwrap().activation_code(b"abc").unwrap();
         let encoded = complete.as_bytes().to_vec();
