@@ -56,16 +56,17 @@ fn encode_checked(buf: &mut [u8]) -> usize {
         .fuel_figures(3, |g| {
             g.add(|e| {
                 e.speed(30).mpg(35.9);
-            })
-            .unwrap();
+                Ok(())
+            })?;
             g.add(|e| {
                 e.speed(45).mpg(28.4);
-            })
-            .unwrap();
+                Ok(())
+            })?;
             g.add(|e| {
                 e.speed(55).mpg(23.7);
-            })
-            .unwrap();
+                Ok(())
+            })?;
+            Ok(())
         })
         .unwrap();
 
@@ -76,20 +77,21 @@ fn encode_checked(buf: &mut [u8]) -> usize {
                 e.acceleration(3, |a| {
                     a.add(|x| {
                         x.mph(30).seconds(4.0);
-                    })
-                    .unwrap();
+                        Ok(())
+                    })?;
                     a.add(|x| {
                         x.mph(60).seconds(7.5);
-                    })
-                    .unwrap();
+                        Ok(())
+                    })?;
                     a.add(|x| {
                         x.mph(100).seconds(12.2);
-                    })
-                    .unwrap();
-                })
-                .unwrap();
-            })
-            .unwrap();
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
         })
         .unwrap();
 
@@ -131,16 +133,17 @@ fn encode_full(buf: &mut [u8]) -> usize {
         .fuel_figures(3, |g| {
             g.add(|e| {
                 e.speed(30).mpg(35.9);
-            })
-            .unwrap();
+                Ok(())
+            })?;
             g.add(|e| {
                 e.speed(45).mpg(28.4);
-            })
-            .unwrap();
+                Ok(())
+            })?;
             g.add(|e| {
                 e.speed(55).mpg(23.7);
-            })
-            .unwrap();
+                Ok(())
+            })?;
+            Ok(())
         })
         .unwrap();
 
@@ -151,20 +154,21 @@ fn encode_full(buf: &mut [u8]) -> usize {
                 e.acceleration(3, |a| {
                     a.add(|x| {
                         x.mph(30).seconds(4.0);
-                    })
-                    .unwrap();
+                        Ok(())
+                    })?;
                     a.add(|x| {
                         x.mph(60).seconds(7.5);
-                    })
-                    .unwrap();
+                        Ok(())
+                    })?;
                     a.add(|x| {
                         x.mph(100).seconds(12.2);
-                    })
-                    .unwrap();
-                })
-                .unwrap();
-            })
-            .unwrap();
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
         })
         .unwrap();
 

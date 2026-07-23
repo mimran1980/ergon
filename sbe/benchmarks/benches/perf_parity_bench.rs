@@ -535,13 +535,15 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
                 let after_fuel = car
                     .fuel_figures(3, |g| {
                         for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
-                            let _ = g.add(|e| {
-                                let _ = e.speed(s).mpg(m);
-                            });
+                            g.add(|e| {
+                                e.speed(s).mpg(m);
+                                Ok(())
+                            })?;
                         }
+                        Ok(())
                     })
                     .unwrap();
-                let after_perf = after_fuel.performance_figures(0, |_| {}).unwrap();
+                let after_perf = after_fuel.performance_figures(0, |_| Ok(())).unwrap();
                 let complete = after_perf
                     .manufacturer(b"Honda")
                     .unwrap()
@@ -567,6 +569,7 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
                         for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
                             g.add(|e| {
                                 e.speed(s).mpg(m);
+                                Ok(())
                             })?;
                         }
                         Ok(())
@@ -627,23 +630,25 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
                     Booster::new(BoostType::TURBO, 0),
                 ));
                 let car = car
-                    .fuel_figures(3, |g| {
+                    .fuel_figures(2, |g| {
                         g.add(|e| {
                             e.speed(30).mpg(35.9);
-                        })
-                        .unwrap();
+                            Ok(())
+                        })?;
                         g.add(|e| {
                             e.speed(55).mpg(40.0);
-                        })
-                        .unwrap();
+                            Ok(())
+                        })?;
+                        Ok(())
                     })
                     .unwrap();
                 let car = car
                     .performance_figures(1, |g| {
                         g.add(|e| {
                             e.octane_rating(95);
-                        })
-                        .unwrap();
+                            Ok(())
+                        })?;
+                        Ok(())
                     })
                     .unwrap();
                 let car = car.manufacturer(b"Honda").unwrap();
