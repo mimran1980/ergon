@@ -153,6 +153,42 @@ assert_eq!(complete.encoded_length(), len);
 let wire = complete.as_bytes();                     // &[u8] — no alloc
 ```
 
+### `add_struct` — write whole fixed entries at once
+
+When a group entry has no nested groups or var-data (pure fixed fields), the
+generator produces a value struct and an `add_struct` method — write the whole
+entry in one call, faster than per-field setters.
+
+```rust
+// Generated struct (auto-named after the group):
+// struct FuelFiguresEntry { speed: u16, mpg: f32 }
+
+g.add_struct(&FuelFiguresEntry { speed: 220, mpg: 35.0 })?;
+g.add_struct(&FuelFiguresEntry { speed: 240, mpg: 33.0 })?;
+
+// For nested fixed groups, add_struct chains naturally:
+og.add_struct(&BidsOrdersEntry { order_id: 1, quantity: 5, price: 50800 })?;
+```
+
+### `_unknown_size` for nested groups
+
+Every group method has a `_unknown_size` variant — outer groups on encoder
+stages AND nested groups inside entries:
+
+```rust
+g.add(|e| {
+    e.price(50800).size(15);
+    // Nested group count back-patched after the closure:
+    e.orders_unknown_size(|og| {
+        for o in &orders {
+            og.add_struct(&BidsOrdersEntry { order_id: o.id, quantity: o.qty, price: o.px })?;
+        }
+        Ok(())
+    })?;
+    Ok(())
+})?;
+```
+
 ### raw_fixed — individual setter escape hatch
 
 When you need per-field setters instead of a struct, `raw_fixed()` returns a

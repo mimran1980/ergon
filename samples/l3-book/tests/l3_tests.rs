@@ -319,3 +319,216 @@ fn dto_reencode_byte_identical() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(aa.symbol(symbol)?.as_bytes(), &buf[..actual]);
     Ok(())
 }
+
+// ── API combination tests ────────────────────────────────────────────
+
+#[test]
+fn explicit_count_with_add_per_field() -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0u8; 4096];
+    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids(1, |g| {
+            g.add(|e| { e.price(100).size(10); Ok(()) })
+        })?
+        .asks(0, |g| Ok(()))?
+        .symbol(b"X")?
+        .encoded_length();
+    assert!(actual > 0);
+    Ok(())
+}
+
+#[test]
+fn unknown_size_with_add_per_field() -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0u8; 4096];
+    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids_unknown_size(|g| {
+            g.add(|e| { e.price(100).size(10); Ok(()) })
+        })?
+        .asks_unknown_size(|g| Ok(()))?
+        .symbol(b"X")?
+        .encoded_length();
+    let dec = L3BookDecoder::try_from(&buf[..actual])?;
+    assert_eq!(dec.into_bids()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn explicit_count_with_add_struct_for_pure_fixed_nested() -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0u8; 4096];
+    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids(1, |g| {
+            g.add(|e| {
+                e.price(100).size(10);
+                e.orders(2, |og| {
+                    og.add_struct(&BidsOrdersEntry { order_id: 1, quantity: 5, price: 100 })?;
+                    og.add_struct(&BidsOrdersEntry { order_id: 2, quantity: 3, price: 101 })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })
+        })?
+        .asks(0, |g| Ok(()))?
+        .symbol(b"X")?
+        .encoded_length();
+    let dec = L3BookDecoder::try_from(&buf[..actual])?;
+    let e = dec.into_bids()?.next().transpose()?.unwrap();
+    let mut og = e.into_orders()?;
+    assert_eq!(og.next().unwrap().order_id(), 1);
+    assert_eq!(og.next().unwrap().order_id(), 2);
+    assert!(og.next().is_none());
+    Ok(())
+}
+
+#[test]
+fn unknown_size_outer_with_add_struct_nested() -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0u8; 4096];
+    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids_unknown_size(|g| {
+            for i in 0..3 {
+                g.add(|e| {
+                    e.price(100 + i * 10).size(10 + i);
+                    e.orders_unknown_size(|og| {
+                        og.add_struct(&BidsOrdersEntry { order_id: i as u64, quantity: 5, price: 100 + i * 10 })?;
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .asks_unknown_size(|g| Ok(()))?
+        .symbol(b"X")?
+        .encoded_length();
+    let dec = L3BookDecoder::try_from(&buf[..actual])?;
+    assert_eq!(dec.into_bids()?.len(), 3);
+    Ok(())
+}
+
+#[test]
+fn mixed_known_and_unknown_across_groups() -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0u8; 4096];
+    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids(2, |g| {
+            // explicit count for outer, _unknown_size for inner
+            g.add(|e| {
+                e.price(100).size(10);
+                e.orders_unknown_size(|og| {
+                    og.add_struct(&BidsOrdersEntry { order_id: 1, quantity: 1, price: 100 })?;
+                    og.add_struct(&BidsOrdersEntry { order_id: 2, quantity: 2, price: 101 })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            g.add(|e| {
+                e.price(200).size(20);
+                e.orders(1, |og| {
+                    og.add_struct(&BidsOrdersEntry { order_id: 3, quantity: 3, price: 200 })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        })?
+        .asks_unknown_size(|g| Ok(()))?
+        .symbol(b"XY")?
+        .encoded_length();
+    let dec = L3BookDecoder::try_from(&buf[..actual])?;
+    let mut b = dec.into_bids()?;
+    assert_eq!(b.len(), 2);
+    let e1 = b.next().transpose()?.unwrap();
+    let mut o1 = e1.into_orders()?;
+    assert_eq!(o1.next().unwrap().order_id(), 1);
+    assert_eq!(o1.next().unwrap().order_id(), 2);
+    assert!(o1.next().is_none());
+    Ok(())
+}
+
+#[test]
+fn add_struct_vs_add_per_field_produce_identical_output() -> Result<(), Box<dyn std::error::Error>> {
+    // Encode same data with add_struct and with per-field add
+    let data = [(1u64, 2u64, 100i64), (3, 4, 101), (5, 6, 102)];
+
+    let mut buf1 = vec![0u8; 4096];
+    let len1 = L3BookEncoder::wrap_and_apply_header(&mut buf1, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids(0, |g| Ok(()))?
+        .asks(1, |g| {
+            g.add(|e| {
+                e.price(500).size(100);
+                e.orders(3, |og| {
+                    for (id, qty, price) in &data {
+                        og.add_struct(&AsksOrdersEntry { order_id: *id, quantity: *qty, price: *price })?;
+                    }
+                    Ok(())
+                })?;
+                Ok(())
+            })
+        })?
+        .symbol(b"T")?
+        .encoded_length();
+
+    let mut buf2 = vec![0u8; 4096];
+    let len2 = L3BookEncoder::wrap_and_apply_header(&mut buf2, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids(0, |g| Ok(()))?
+        .asks(1, |g| {
+            g.add(|e| {
+                e.price(500).size(100);
+                e.orders(3, |og| {
+                    for (id, qty, price) in &data {
+                        og.add(|oe| { oe.order_id(*id).quantity(*qty).price(*price); Ok(()) })?;
+                    }
+                    Ok(())
+                })?;
+                Ok(())
+            })
+        })?
+        .symbol(b"T")?
+        .encoded_length();
+
+    assert_eq!(len1, len2);
+    assert_eq!(&buf1[..len1], &buf2[..len2]);
+    Ok(())
+}
+
+#[test]
+fn zero_entries_with_unknown_size() -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0u8; 4096];
+    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids_unknown_size(|g| Ok(()))?
+        .asks_unknown_size(|g| Ok(()))?
+        .symbol(b"")?
+        .encoded_length();
+    let dec = L3BookDecoder::try_from(&buf[..actual])?;
+    assert_eq!(dec.into_bids()?.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn many_entries_with_unknown_size() -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0u8; 8192];
+    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .bids_unknown_size(|g| {
+            for i in 0..100 {
+                g.add(|e| { e.price(i).size(i * 2); Ok(()) })?;
+            }
+            Ok(())
+        })?
+        .asks_unknown_size(|g| {
+            for i in 0..50 {
+                g.add(|e| { e.price(i + 1000).size(i * 3); Ok(()) })?;
+            }
+            Ok(())
+        })?
+        .symbol(b"MANY")?
+        .encoded_length();
+    let dec = L3BookDecoder::try_from(&buf[..actual])?;
+    assert_eq!(dec.into_bids()?.len(), 100);
+    Ok(())
+}

@@ -5135,6 +5135,7 @@ fn generate_group_encoder(
     for ng in &g.groups {
         let ng_pascal_scoped = format!("{}{}", name, to_pascal_case(&ng.name));
         let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
+        let ng_snake_unknown = syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&ng.name)), span);
         let ng_enc = syn::Ident::new(&format!("{ng_pascal_scoped}Encoder"), span);
         let (_dim_name, ng_dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
         let (num_off, num_sz, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
@@ -5171,6 +5172,34 @@ fn generate_group_encoder(
                     let mut group = #ng_enc::wrap(__buf, self.pos + #ng_dim, count);
                     f(&mut group)?;
                     __pos = group.pos;
+                }
+                self.pos = __pos;
+                Ok(self)
+            }
+
+            /// Nested-group `_unknown_size` variant — back-patches count.
+            pub fn #ng_snake_unknown<F>(&mut self, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
+            where
+                F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
+            {
+                if self.pos + #ng_dim > self.buf.len() {
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        needed: #ng_dim,
+                        available: self.buf.len().saturating_sub(self.pos),
+                    }.into());
+                }
+                self.buf[self.pos..self.pos + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
+                let count_offset = self.pos + #num_off_idx;
+                self.buf[count_offset..count_offset + #num_sz_lit].fill(0);
+                let __pos;
+                {
+                    let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+                    let mut group = #ng_enc::wrap(__buf, self.pos + #ng_dim, #ng_count_ty::MAX);
+                    f(&mut group)?;
+                    let actual: #ng_count_ty = group.written();
+                    __pos = group.pos;
+                    group.buf[count_offset..count_offset + #num_sz_lit]
+                        .copy_from_slice(&actual.#to_endian());
                 }
                 self.pos = __pos;
                 Ok(self)

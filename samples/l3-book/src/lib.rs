@@ -38,7 +38,7 @@ pub fn encode_book(
                 e.price(*price).size(*size);
                 e.orders(orders.len() as u16, |og| {
                     for (oid, qty, o_price) in *orders {
-                        og.add_struct(&BidsOrdersEntry { order_id: *oid, quantity: *qty, price: *o_price })?;
+                        og.add_struct(&AsksOrdersEntry { order_id: *oid, quantity: *qty, price: *o_price })?;
                     }
                     Ok(())
                 })?;
