@@ -106,8 +106,8 @@ fn encoder_as_bytes_and_encoded_length() -> Result<(), Box<dyn std::error::Error
     let mut buf = vec![0u8; 256];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
-        .bids(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
-        .asks(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
         .symbol(b"XYZ")?;
     assert!(complete.encoded_length() > 0);
     assert!(complete.as_bytes().len() == complete.encoded_length());
@@ -119,8 +119,8 @@ fn max_value_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; 256];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: u64::MAX, sequence: u64::MAX })
-        .bids(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
-        .asks(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
         .symbol(b"")?;
     let dec = L3BookDecoder::try_from(complete.as_bytes())?;
     assert_eq!(dec.exchange_timestamp(), u64::MAX);
@@ -133,8 +133,8 @@ fn zero_value_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; 256];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: 0, sequence: 0 })
-        .bids(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
-        .asks(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
         .symbol(b"")?;
     let dec = L3BookDecoder::try_from(complete.as_bytes())?;
     assert_eq!(dec.exchange_timestamp(), 0);
@@ -189,8 +189,8 @@ fn complete_stage_as_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; 256];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 5 })
-        .bids(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
-        .asks(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
         .symbol(b"HI")?;
     assert!(complete.as_bytes().len() >= 36);
     Ok(())
@@ -201,13 +201,13 @@ fn two_encodes_different_data() -> Result<(), Box<dyn std::error::Error>> {
     let mut b1 = vec![0u8; 256]; let mut b2 = vec![0u8; 256];
     let c1 = L3BookEncoder::wrap_and_apply_header(&mut b1, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: 1000, sequence: 1 })
-        .bids(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
-        .asks(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
         .symbol(b"A")?;
     let c2 = L3BookEncoder::wrap_and_apply_header(&mut b2, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: 2000, sequence: 2 })
-        .bids(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
-        .asks(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
         .symbol(b"B")?;
     assert_ne!(c1.as_bytes(), c2.as_bytes());
     assert_eq!(L3BookDecoder::try_from(c1.as_bytes())?.exchange_timestamp(), 1000);
@@ -250,8 +250,8 @@ fn empty_symbol() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; 256];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
-        .bids(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
-        .asks(0, |_| Ok::<(), sbe_rt::EncodeError>(()))?
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
         .symbol(b"")?;
     let dec = L3BookDecoder::try_from(complete.as_bytes())?;
     let (sym, _) = dec.into_bids()?.finish()?.into_asks()?.finish()?.into_symbol()?;
@@ -303,18 +303,18 @@ fn dto_reencode_byte_identical() -> Result<(), Box<dyn std::error::Error>> {
         .bids(db.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
         for lvl in &db { g.add(|e| { e.price(lvl.price).size(lvl.size);
             e.orders(lvl.orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
-                for o in &lvl.orders { og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok::<(), sbe_rt::EncodeError>(()) })?; }
-                Ok::<(), sbe_rt::EncodeError>(())
-            })?; Ok::<(), sbe_rt::EncodeError>(())
-        })?; } Ok::<(), sbe_rt::EncodeError>(())
+                for o in &lvl.orders { og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok(()) })?; }
+                Ok(())
+            })?; Ok(())
+        })?; } Ok(())
     })?;
     let aa = ab.asks(da.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
         for lvl in &da { g.add(|e| { e.price(lvl.price).size(lvl.size);
             e.orders(lvl.orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
-                for o in &lvl.orders { og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok::<(), sbe_rt::EncodeError>(()) })?; }
-                Ok::<(), sbe_rt::EncodeError>(())
-            })?; Ok::<(), sbe_rt::EncodeError>(())
-        })?; } Ok::<(), sbe_rt::EncodeError>(())
+                for o in &lvl.orders { og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok(()) })?; }
+                Ok(())
+            })?; Ok(())
+        })?; } Ok(())
     })?;
     assert_eq!(aa.symbol(symbol)?.as_bytes(), &buf[..actual]);
     Ok(())

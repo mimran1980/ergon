@@ -22,14 +22,14 @@ pub fn encode_book(
                 e.price(*price).size(*size);
                 e.orders(orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
                     for (oid, qty, o_price) in *orders {
-                        og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(*oid).quantity(*qty).price(*o_price); Ok::<(), sbe_rt::EncodeError>(()) })?;
+                        og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(*oid).quantity(*qty).price(*o_price); Ok(()) })?;
                     }
-                    Ok::<(), sbe_rt::EncodeError>(())
+                    Ok(())
                 })?;
-                Ok::<(), sbe_rt::EncodeError>(())
+                Ok(())
             })?;
         }
-        Ok::<(), sbe_rt::EncodeError>(())
+        Ok(())
     })?;
 
     let after_asks = after_bids.asks_unknown_size(|g| -> Result<(), sbe_rt::EncodeError> {
@@ -38,14 +38,14 @@ pub fn encode_book(
                 e.price(*price).size(*size);
                 e.orders(orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
                     for (oid, qty, o_price) in *orders {
-                        og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(*oid).quantity(*qty).price(*o_price); Ok::<(), sbe_rt::EncodeError>(()) })?;
+                        og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(*oid).quantity(*qty).price(*o_price); Ok(()) })?;
                     }
-                    Ok::<(), sbe_rt::EncodeError>(())
+                    Ok(())
                 })?;
-                Ok::<(), sbe_rt::EncodeError>(())
+                Ok(())
             })?;
         }
-        Ok::<(), sbe_rt::EncodeError>(())
+        Ok(())
     })?;
 
     let complete = after_asks.symbol(symbol)?;

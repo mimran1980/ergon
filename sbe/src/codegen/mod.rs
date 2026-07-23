@@ -4462,14 +4462,13 @@ fn generate_message_encoder(
                     /// [`sbe_rt::GroupEncodeResult`]) so `?` works without a
                     /// separate `try_*` method name.
                     #[must_use]
-                    pub fn #g_snake<R, F>(
+                    pub fn #g_snake<F>(
                         mut self,
                         count: #count_ty,
                         f: F,
-                    ) -> Result<#next_stage<'a>, R::Error>
+                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
                     where
-                        R: sbe_rt::GroupEncodeResult,
-                        F: FnOnce(&mut #g_pascal_enc<'a>) -> R,
+                                                F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
                         if self.pos + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -4485,7 +4484,7 @@ fn generate_message_encoder(
                             .copy_from_slice(&count.#to_endian());
                         let mut group =
                             #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
-                        f(&mut group).into_group_result()?;
+                        f(&mut group)?;
                         Ok(#next_stage {
                             buf: group.buf,
                             message_start: self.message_start,
@@ -4502,13 +4501,12 @@ fn generate_message_encoder(
                     /// Prefer [`Self::#g_snake`] when the count is known at
                     /// compile time or from a small input.
                     #[must_use]
-                    pub fn #g_snake_unknown<R, F>(
+                    pub fn #g_snake_unknown<F>(
                         mut self,
                         f: F,
-                    ) -> Result<#next_stage<'a>, R::Error>
+                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
                     where
-                        R: sbe_rt::GroupEncodeResult,
-                        F: FnOnce(&mut #g_pascal_enc<'a>) -> R,
+                                                F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
                         if self.pos + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -4529,7 +4527,7 @@ fn generate_message_encoder(
                             let mut group = #g_pascal_enc::wrap(
                                 self.buf, self.pos + #dim_size_lit, #count_ty::MAX,
                             );
-                            f(&mut group).into_group_result()?;
+                            f(&mut group)?;
                             let n = group.written();
                             (group.buf, group.pos, n)
                         };
@@ -4885,7 +4883,7 @@ fn generate_group_encoder(
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
-            f(&mut __entry).into_group_result()?;
+            f(&mut __entry)?;
             self.pos = __entry.pos;
         }
         self.written += 1;
@@ -4915,10 +4913,9 @@ fn generate_group_encoder(
             /// Write one group entry. Closure may return `()` or `Result<(), E>`
             /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
             #[must_use]
-            pub fn add<'b, R, F>(&'b mut self, f: F) -> Result<(), R::Error>
+            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
             where
-                R: sbe_rt::GroupEncodeResult,
-                F: FnOnce(&mut #entry_enc_ident<'b>) -> R,
+                F: FnOnce(&mut #entry_enc_ident<'b>) -> sbe_rt::GroupResult,
             {
                 #add_body
             }
@@ -5087,10 +5084,9 @@ fn generate_group_encoder(
 
         entry_methods.extend(quote::quote! {
             #[must_use]
-            pub fn #ng_snake<R, F>(&mut self, count: #ng_count_ty, f: F) -> Result<&mut Self, R::Error>
+            pub fn #ng_snake<F>(&mut self, count: #ng_count_ty, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
             where
-                R: sbe_rt::GroupEncodeResult,
-                F: FnOnce(&mut #ng_enc<'a>) -> R,
+                F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
             {
                 if self.pos + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -5112,7 +5108,7 @@ fn generate_group_encoder(
                 {
                     let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
                     let mut group = #ng_enc::wrap(__buf, self.pos + #ng_dim, count);
-                    f(&mut group).into_group_result()?;
+                    f(&mut group)?;
                     __pos = group.pos;
                 }
                 self.pos = __pos;
