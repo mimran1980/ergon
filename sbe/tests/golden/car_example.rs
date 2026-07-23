@@ -3078,6 +3078,23 @@ impl CarFuelFiguresEntryDomain {
         let enc = enc.usage_description(&self.usage_description)?;
         Ok(())
     }
+    /// Compute this entry's contribution to the total encoded length
+    /// (entry block + nested groups + entry var-data).
+    pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
+        let mut len: usize = 6;
+        if self.usage_description.len() > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "usageDescription",
+                max_length: 1073741824,
+                actual: self.usage_description.len(),
+            });
+        }
+        len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        len = len
+            .checked_add(self.usage_description.len())
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        Ok(len)
+    }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
 /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
@@ -3105,6 +3122,12 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
         enc.mph(self.mph);
         enc.seconds(self.seconds);
         Ok(())
+    }
+    /// Compute this entry's contribution to the total encoded length
+    /// (entry block + nested groups + entry var-data).
+    pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
+        let mut len: usize = 6;
+        Ok(len)
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
@@ -3150,6 +3173,18 @@ impl CarPerformanceFiguresEntryDomain {
                 },
             )?;
         Ok(())
+    }
+    /// Compute this entry's contribution to the total encoded length
+    /// (entry block + nested groups + entry var-data).
+    pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
+        let mut len: usize = 6;
+        len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        for entry in &self.acceleration {
+            len = len
+                .checked_add(entry.length_contribution()?)
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        }
+        Ok(len)
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
@@ -3246,6 +3281,62 @@ impl CarDomain {
         let enc = enc.model(&self.model)?;
         let enc = enc.activation_code(&self.activation_code)?;
         Ok(enc.encoded_length_with_header())
+    }
+    /// Compute the exact SBE message body length from this domain object.
+    /// Matches the length returned by [`Self::encode`].
+    pub fn encoded_length(&self) -> Result<usize, sbe_rt::EncodeError> {
+        let mut len: usize = 45;
+        len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        for entry in &self.fuel_figures {
+            len = len
+                .checked_add(entry.length_contribution()?)
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        }
+        len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        for entry in &self.performance_figures {
+            len = len
+                .checked_add(entry.length_contribution()?)
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        }
+        if self.manufacturer.len() > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "manufacturer",
+                max_length: 1073741824,
+                actual: self.manufacturer.len(),
+            });
+        }
+        len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        len = len
+            .checked_add(self.manufacturer.len())
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        if self.model.len() > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "model",
+                max_length: 1073741824,
+                actual: self.model.len(),
+            });
+        }
+        len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        len = len
+            .checked_add(self.model.len())
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        if self.activation_code.len() > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "activationCode",
+                max_length: 1073741824,
+                actual: self.activation_code.len(),
+            });
+        }
+        len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        len = len
+            .checked_add(self.activation_code.len())
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        Ok(len)
+    }
+    /// Compute the exact SBE message length including the message header.
+    /// Matches `encode()` return value for non-fixed messages.
+    pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::EncodeError> {
+        Ok(self.encoded_length()? + CarEncoder::HEADER_LENGTH)
     }
 }
 ///Description of a basic Car
@@ -3526,6 +3617,13 @@ impl<'a> CarEncoder<'a> {
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = FuelFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group)?;
+        let written = group.written();
+        if written != count {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: count as u32,
+                actual: written as u32,
+            });
+        }
         Ok(CarAfterFuelFigures {
             buf: group.buf,
             message_start: self.message_start,
@@ -3603,6 +3701,13 @@ impl<'a> CarAfterFuelFigures<'a> {
         self.buf[self.pos + 2..self.pos + 2 + 2].copy_from_slice(&count.to_le_bytes());
         let mut group = PerformanceFiguresEncoder::wrap(self.buf, self.pos + 4, count);
         f(&mut group)?;
+        let written = group.written();
+        if written != count {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: count as u32,
+                actual: written as u32,
+            });
+        }
         Ok(CarAfterPerformanceFigures {
             buf: group.buf,
             message_start: self.message_start,
@@ -4280,6 +4385,13 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
                 count,
             );
             f(&mut group)?;
+            let written = group.written();
+            if written != count {
+                return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                    declared: count as u32,
+                    actual: written as u32,
+                });
+            }
             __pos = group.pos;
         }
         self.pos = __pos;
@@ -4764,7 +4876,9 @@ impl PerformanceFiguresEncodedLength {
     /// Track a nested repeating group inside one entry.
     pub fn acceleration<F>(&mut self, count: u16, f: F) -> sbe_rt::GroupResult
     where
-        F: FnOnce(&mut PerformanceFiguresAccelerationEncodedLength) -> sbe_rt::GroupResult,
+        F: FnOnce(
+            &mut PerformanceFiguresAccelerationEncodedLength,
+        ) -> sbe_rt::GroupResult,
     {
         let mut builder = PerformanceFiguresAccelerationEncodedLength::new();
         f(&mut builder)?;
@@ -4785,7 +4899,9 @@ impl PerformanceFiguresEncodedLength {
     /// the wire type rather than requiring an exact match.
     pub fn acceleration_unknown_size<F>(&mut self, f: F) -> sbe_rt::GroupResult
     where
-        F: FnOnce(&mut PerformanceFiguresAccelerationEncodedLength) -> sbe_rt::GroupResult,
+        F: FnOnce(
+            &mut PerformanceFiguresAccelerationEncodedLength,
+        ) -> sbe_rt::GroupResult,
     {
         let mut builder = PerformanceFiguresAccelerationEncodedLength::new();
         f(&mut builder)?;

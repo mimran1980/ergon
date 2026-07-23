@@ -2400,6 +2400,54 @@ fn generate_domain_recursive(
                 Ok(())
             }
         };
+
+        // Build entry-level length_contribution
+        let entry_block_len = groups.iter().fold(
+            fields.iter().fold(0usize, |acc, f| {
+                let size = f.field_type.size();
+                acc.max(f.offset + size)
+            }),
+            |acc, g| acc.max(g.block_length),
+        );
+        let entry_bl_lit = syn::LitInt::new(&entry_block_len.to_string(), span);
+        let mut len_stmts = quote::quote! {
+            let mut len: usize = #entry_bl_lit;
+        };
+        for ng in groups {
+            let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
+            let (_, dim_size, _, _) = get_dimension_info(elements, &ng.dimension_type);
+            let ds_lit = syn::LitInt::new(&dim_size.to_string(), span);
+            len_stmts.extend(quote::quote! {
+                len = len.checked_add(#ds_lit).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                for entry in &self.#ng_snake {
+                    len = len.checked_add(entry.length_contribution()?).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                }
+            });
+        }
+        for vd in var_data {
+            let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
+            let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
+            let ps_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+            if let Some(max) = vd.max_length {
+                let max_lit = syn::LitInt::new(&max.to_string(), span);
+                let vd_name = &vd.name;
+                len_stmts.extend(quote::quote! {
+                    if self.#vd_snake.len() > #max_lit {
+                        return Err(sbe_rt::EncodeError::VarDataTooLong {
+                            field: #vd_name,
+                            max_length: #max_lit,
+                            actual: self.#vd_snake.len(),
+                        });
+                    }
+                });
+            }
+            len_stmts.extend(quote::quote! {
+                len = len.checked_add(#ps_lit).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                len = len.checked_add(self.#vd_snake.len()).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+            });
+        }
+        len_stmts.extend(quote::quote! { Ok(len) });
+
         ts.extend(quote::quote! {
             impl #domain_ident {
                 /// Encode this entry into a group entry encoder.
@@ -2408,6 +2456,12 @@ fn generate_domain_recursive(
                     enc: &mut #entry_encoder_ident<'a>,
                 ) -> Result<(), sbe_rt::EncodeError> {
                     #encode_body
+                }
+
+                /// Compute this entry's contribution to the total encoded length
+                /// (entry block + nested groups + entry var-data).
+                pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
+                    #len_stmts
                 }
             }
         });
@@ -2421,6 +2475,49 @@ fn generate_domain_recursive(
         } else {
             quote::quote! {}
         };
+        // Build message-level encoded_length computation
+        let block_len = fields.iter().fold(0usize, |acc, f| {
+            let size = f.field_type.size();
+            acc.max(f.offset + size)
+        });
+        let bl_lit = syn::LitInt::new(&block_len.to_string(), span);
+        let mut msg_len_stmts = quote::quote! {
+            let mut len: usize = #bl_lit;
+        };
+        for g in groups {
+            let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
+            let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+            let ds_lit = syn::LitInt::new(&dim_size.to_string(), span);
+            msg_len_stmts.extend(quote::quote! {
+                len = len.checked_add(#ds_lit).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                for entry in &self.#g_snake {
+                    len = len.checked_add(entry.length_contribution()?).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                }
+            });
+        }
+        for vd in var_data {
+            let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
+            let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
+            let ps_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+            if let Some(max) = vd.max_length {
+                let max_lit = syn::LitInt::new(&max.to_string(), span);
+                let vd_name = &vd.name;
+                msg_len_stmts.extend(quote::quote! {
+                    if self.#vd_snake.len() > #max_lit {
+                        return Err(sbe_rt::EncodeError::VarDataTooLong {
+                            field: #vd_name,
+                            max_length: #max_lit,
+                            actual: self.#vd_snake.len(),
+                        });
+                    }
+                });
+            }
+            msg_len_stmts.extend(quote::quote! {
+                len = len.checked_add(#ps_lit).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                len = len.checked_add(self.#vd_snake.len()).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+            });
+        }
+        msg_len_stmts.extend(quote::quote! { Ok(len) });
         let has_tail = !group_encode_stmts.is_empty() || !vardata_encode_stmts.is_empty();
         let encode_body = if has_tail {
             quote::quote! {
@@ -2445,6 +2542,18 @@ fn generate_domain_recursive(
                 /// Encode this domain object into a byte buffer.
                 pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
                     #encode_body
+                }
+
+                /// Compute the exact SBE message body length from this domain object.
+                /// Matches the length returned by [`Self::encode`].
+                pub fn encoded_length(&self) -> Result<usize, sbe_rt::EncodeError> {
+                    #msg_len_stmts
+                }
+
+                /// Compute the exact SBE message length including the message header.
+                /// Matches `encode()` return value for non-fixed messages.
+                pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::EncodeError> {
+                    Ok(self.encoded_length()? + #encoder_ident::HEADER_LENGTH)
                 }
             }
         });
