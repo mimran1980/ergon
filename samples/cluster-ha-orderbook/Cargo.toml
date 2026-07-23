@@ -2,16 +2,13 @@
 name = "cluster-ha-orderbook"
 version = "0.1.0"
 edition = "2024"
-description = "HA sample: AppMessage books via ergo-aeron-cluster try_claim + never-stale book + feed_latency DynamicRow"
+description = "HA sample: AppMessage books via ergo-aeron-cluster try_claim + never-stale book"
 publish = false
 
 [dependencies]
 ergo-sbe = { path = "../../sbe" }
-ergo-clickhouse-persist = { path = "../../persist" }
-ergo-clickhouse-persist-derive = { path = "../../persist/derive" }
 ergo-aeron-cluster = { path = "../../cluster" }
 serde = { version = "1", features = ["derive"] }
-reqwest = { version = "0.12", features = ["blocking"] }
 
 [features]
 default = []
@@ -25,10 +22,7 @@ test-harness = [
 [build-dependencies]
 ergo-sbe = { path = "../../sbe" }
 
-# Optional harness deps (kill-leader only).
-
 [dependencies.rusteron-media-driver]
-# Same ^0.2 line as cluster / workspace (latest 0.2.x).
 version = "0.2"
 optional = true
 
@@ -40,10 +34,6 @@ optional = true
 [[test]]
 name = "ha_offline_pipeline"
 path = "tests/ha_offline_pipeline.rs"
-
-[[test]]
-name = "ha_latency_clickhouse"
-path = "tests/ha_latency_clickhouse.rs"
 
 [[test]]
 name = "ha_kill_leader"

@@ -2,17 +2,13 @@
 name = "exchange-example"
 version = "0.1.0"
 edition = "2024"
-description = "Multi-exchange IPC sample: Bitget + Binance WebSocket → Aeron IPC → ClickHouse (+ multi-schema / Persist DTO)"
+description = "Multi-exchange IPC sample: Bitget + Binance WebSocket → Aeron IPC (+ domain objects / DTOs)"
 publish = false
 
 [dependencies]
 ergo-sbe = { path = "../../sbe", features = ["serde"] }
-ergo-clickhouse-persist = { path = "../../persist", features = ["rust_decimal", "chrono"] }
-ergo-clickhouse-persist-derive = { path = "../../persist/derive" }
-# Same ^0.2 line as cluster / workspace (latest 0.2.x).
 rusteron-client = "0.2"
 rusteron-media-driver = "0.2"
-chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,14 +33,6 @@ name = "allocation_test"
 path = "tests/allocation_test.rs"
 
 [[test]]
-name = "clickhouse_e2e_test"
-path = "tests/clickhouse_e2e_test.rs"
-
-[[test]]
-name = "dynamic_stream_test"
-path = "tests/dynamic_stream_test.rs"
-
-[[test]]
 name = "e2e_deterministic_test"
 path = "tests/e2e_deterministic_test.rs"
 
@@ -57,16 +45,8 @@ name = "publication_test"
 path = "tests/publication_test.rs"
 
 [[test]]
-name = "persistence_test"
-path = "tests/persistence_test.rs"
-
-[[test]]
 name = "decimal_adapter_test"
 path = "tests/decimal_adapter_test.rs"
-
-[[test]]
-name = "e2e_persist_test"
-path = "tests/e2e_persist_test.rs"
 
 [features]
 default = []

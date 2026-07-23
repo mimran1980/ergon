@@ -4,19 +4,15 @@
 > and do not copy them as reference implementations.**
 
 The sample crates are deliberately outside the workspace. They exist only to try
-ergo-sbe, ergo-clickhouse-persist, and ergo-aeron-cluster interfaces in larger flows.
-They may contain experimental structure, unfinished migrations, external-service
-assumptions, and code that is less polished than the two product prototypes.
+ergo-sbe and ergo-aeron-cluster interfaces in larger flows. They may contain
+experimental structure, unfinished migrations, external-service assumptions, and
+code that is less polished than the two product prototypes.
 
 | Sample | Purpose |
 |---|---|
-| `exchange-example` | Exercise Aeron IPC, nested SBE messages, converters, domain objects, and Persist |
+| `exchange-example` | Exercise Aeron IPC, nested SBE messages, converters, domain objects |
 | `cluster-ha-orderbook` | Exercise Cluster claims, egress, leader changes, and an HA-shaped data flow |
 | `cluster-rfq` | Historical RFQ/auction protocol experiments (not a reference implementation) |
-
-The current review found interface drift in `exchange-example` and generated
-warnings in `cluster-ha-orderbook`. Until the implementation-plan compatibility
-tasks pass, neither crate should be assumed to compile cleanly.
 
 ## Checks
 
@@ -26,13 +22,12 @@ tasks pass, neither crate should be assumed to compile cleanly.
 (cd samples/cluster-rfq && cargo check --all-targets)
 ```
 
-Additional recipes can require Docker, ClickHouse, network access, Java 17+, built
-Aeron jars, or a local multi-node Cluster. They are optional laboratory checks,
-not release gates for Persist or Samples.
+Additional recipes can require Java 17+, built Aeron jars, or a local multi-node
+Cluster. They are optional laboratory checks, not release gates.
 
 ## Rules
 
-- Keep `publish = false` and keep both crates outside the workspace.
+- Keep `publish = false` and keep crates outside the workspace.
 - Use the product interfaces being tested; do not create sample-only public
   abstractions and then document them as recommended design.
 - Prefer `Result` and `?` over avoidable `unwrap` or `expect`.

@@ -42,19 +42,17 @@ cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
 cargo test -p ergo-aeron-cluster --all-targets
 ```
 
-Laboratory compatibility checks:
+Sample compatibility checks:
 
 ```sh
-cargo test -p ergo-clickhouse-persist --all-features
 (cd samples/exchange-example && cargo check --all-targets)
 (cd samples/cluster-ha-orderbook && cargo check --all-targets)
 (cd samples/cluster-rfq && cargo check --all-targets)
 ```
 
 Some all-feature Cluster tests require Java 17+ and locally built Aeron jars.
-Persist and sample integration tests may require ClickHouse, Docker, or a running
-Cluster. Do not convert a missing external dependency into a product success
-claim.
+Sample integration tests may require a running Cluster. Do not convert a missing
+external dependency into a product success claim.
 
 ## Performance rules
 
@@ -93,7 +91,7 @@ Docs-only changes do not require benchmarks.
   reports, or archived plan trees.
 - Update the relevant crate README only for current, verified behaviour. Keep
   unfinished design in the relevant `.scratch/<feature-slug>/spec.md`.
-- Persist and Samples must always be labelled unpublished laboratories and never
+- Samples must always be labelled unpublished laboratories and never
   described as reference implementations.
 - Ergo Aeron Cluster must always be labelled a hobby project unsuitable for
   production.
@@ -117,5 +115,5 @@ reference codecs.
 
 - Preserve unrelated changes and dirty submodules.
 - Stage paths explicitly; do not use `git add -A` in this repository.
-- Do not rename the `sbe`, `cluster`, `persist`, or `samples` directories.
+- Do not rename the `sbe`, `cluster`, or `samples` directories.
 - Use a one-line conventional commit subject such as `docs:`, `fix:`, or `feat:`.

@@ -1,8 +1,8 @@
-//! Exact Decimal adapters: wire SBE Decimal ↔ rust_decimal::Decimal ↔ ClickHouse Decimal(38,18).
+//! Exact Decimal adapters: wire SBE Decimal ↔ rust_decimal::Decimal.
 //!
 //! Implements the generated `TryFromSbe` trait for `rust_decimal::Decimal`,
-//! providing exact, fallible, allocation-free conversion. Also provides the
-//! exact ClickHouse `Decimal(38,18)` scaled-integer adapter.
+//! providing exact, fallible, allocation-free conversion. Also provides a
+//! scaled-integer adapter as a domain-mapping example.
 
 use std::str::FromStr;
 

@@ -1,7 +1,6 @@
 # ── housekeeping recipes ──────────────────────────────────────────────────
 
-# Wipe Cargo build artifacts and reset git submodules to the commits pinned by
-# this repo (fetch origin, hard-reset + clean dirt, force-checkout).
+# Wipe Cargo build artifacts and reset git submodules.
 clean:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -22,12 +21,11 @@ clean:
       git clean -fdx
     '
     git submodule update --init --recursive --force
-    echo "clean: done (targets removed; submodules hard-reset to parent pins)"
+    echo "clean: done"
 
-# Build rustdoc for the three main product crates (no deps).
+# Build rustdoc for the two product crates (no deps).
 docs:
     cargo doc -p ergo-sbe --no-deps
-    cargo doc -p ergo-clickhouse-persist --no-deps
     cargo doc -p ergo-aeron-cluster --no-deps
 
 # Coverage (requires nightly toolchain).

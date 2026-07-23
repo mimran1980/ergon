@@ -196,8 +196,7 @@ fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
 
-    let mut publisher = ClaimPublisher::new(AeronPublication(pub_typed), AeronPublication(pub_dyn))
-        .expect("publisher");
+    let mut publisher = ClaimPublisher::new(AeronPublication(pub_typed));
 
     let bids = [
         Level {

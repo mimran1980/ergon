@@ -20,10 +20,8 @@
 #
 # ── Release (crates.io) ─────────────────────────────────────────────────
 # Publish product crates individually; do NOT `--all-features` for release.
-# Suggested order (path deps first):
 #   1. ergo-sbe             (sbe/)
-#   2. ergo-clickhouse-persist-derive  then  ergo-clickhouse-persist
-#   3. ergo-aeron-cluster   with default features only (never require test-harness)
+#   2. ergo-aeron-cluster   with default features only (never require test-harness)
 # Do not publish: ergo-sbe-benchmarks (publish=false), samples.
 # Consumers depend on crates.io versions; monorepo samples keep `path = …`.
 # Tag the repo after publish; Aeron submodule pin is independent of crate release.
@@ -58,7 +56,7 @@ check:
     cargo test -p ergo-aeron-cluster --lib
     cd samples/exchange-example && cargo fmt --check
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
-    cd samples/exchange-example && cargo test -- --test-threads=1 --skip clickhouse
+    cd samples/exchange-example && cargo test -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo fmt --check
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
@@ -73,12 +71,10 @@ check-products:
     cargo test -p ergo-sbe --all-features -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
 
-# Lab-only gate: persist and sample crates (unpublished).
-check-labs:
-    cargo clippy -p ergo-clickhouse-persist --all-targets --all-features -- -D warnings
-    cargo test -p ergo-clickhouse-persist --all-targets --all-features -- --test-threads=1
+# Sample crates gate (unpublished).
+check-samples:
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
-    cd samples/exchange-example && cargo test -- --test-threads=1 --skip clickhouse
+    cd samples/exchange-example && cargo test -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
     cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
@@ -92,36 +88,23 @@ release-check: check-products
 
 # ── test ──────────────────────────────────────────────────────────────────
 
-# Comprehensive test suite: runs everything possible (unit, integration, IPC,
-# persistence, cluster lib, sample offline tests, and bench compilation).
-# Gated tests (ClickHouse live, Java harness) run only when their services are
-# available — they are skipped if the preflight fails rather than erroring.
+# Comprehensive test suite: runs everything possible (unit, integration,
+# cluster lib, sample offline tests, and bench compilation).
+# Gated tests (Java harness) run only when their services are available.
 test:
-    @echo "=== 1/6 fmt ==="
+    @echo "=== 1/5 fmt ==="
     cargo fmt --all --check
-    @echo "=== 2/6 clippy (workspace products + labs) ==="
+    @echo "=== 2/5 clippy (workspace + samples) ==="
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    @echo "=== 3/6 unit + integration tests (no external services) ==="
+    @echo "=== 3/5 unit + integration tests ==="
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
-    @echo "=== 4/6 allocation proofs ==="
-    cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
-    @echo "=== 5/6 sample offline tests ==="
-    cd samples/exchange-example && cargo test --lib -- --test-threads=1 --skip clickhouse
+    @echo "=== 4/5 sample offline tests ==="
+    cd samples/exchange-example && cargo test --lib -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
-    @echo "=== 6/6 bench compilation ==="
+    @echo "=== 5/5 bench compilation ==="
     cargo bench -p ergo-sbe-benchmarks --no-run
-    @echo ""
-    @echo "=== Gated: ClickHouse live tests ==="
-    @if curl -sf http://127.0.0.1:8123/ping >/dev/null 2>&1; then \
-        echo "ClickHouse available — running live tests"; \
-        cargo test -p ergo-clickhouse-persist --all-features -- --test-threads=1 --include-ignored; \
-        (cd samples/exchange-example && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture); \
-        (cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture); \
-    else \
-        echo "ClickHouse not available — skipping live tests (start with: bash persist/tests/run-clickhouse.sh start)"; \
-    fi
     @echo ""
     @echo "=== Gated: Aeron Cluster Java harness ==="
     @if cargo test -p ergo-aeron-cluster --features test-harness --no-run 2>/dev/null; then \
@@ -133,7 +116,7 @@ test:
     @echo ""
     @echo "=== test: complete ==="
 
-# Workspace unit tests only (same --all-features / cluster exclude pattern as check).
+# Workspace unit tests only.
 test-unit:
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib

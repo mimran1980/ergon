@@ -7,9 +7,18 @@
 
 use std::collections::BTreeMap;
 
-use crate::counters::Counters;
 use crate::decimal::{DecimalConvertError, parse_decimal_exact};
 use crate::market::{Level, NormalizedEventRef, WireDec};
+
+/// Simple ingest counters.
+#[derive(Default)]
+pub struct Counters {
+    pub books_emitted: u64,
+    pub trades_emitted: u64,
+    pub malformed_values: u64,
+    pub reconnects: u64,
+    pub updates_before_snapshot: u64,
+}
 
 /// Borrowed Bitget event at the WebSocket seam. Price/size values stay as
 /// text until `apply` parses them exactly.

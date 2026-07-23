@@ -1,18 +1,15 @@
-//! ergon advanced sample — three-thread SBE pipeline.
+//! ergon exchange example — IPC ingestion pipeline.
 //!
 //! - Thread 1 (main): Bitget WS → `BitgetIngestor` → `ClaimPublisher`
 //! - Thread 2: SHARED Aeron media driver (Rusteron 0.2 embedded)
-//! - Thread 3: subscriptions 1001+1002 → `ForegroundPersistor`
 //!
-//! Startup order: driver, then persistor (readiness-signalled), then
-//! ingestion. Shutdown order: ingestion stops, persistor drains and joins,
-//! the driver stops last (RAII drop).
+//! Demonstrates: SBE codec generation, Aeron IPC claim-based publishing,
+//! domain-object conversion, and orderbook maintenance.
 
 use rusteron_client::cformat;
 use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -21,8 +18,7 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 use exchange_example::bitget::{BitgetIngestor, parse_frame};
-use exchange_example::config::{CHANNEL, STREAM_DYNAMIC, STREAM_TYPED, SYMBOL, WS_URL};
-use exchange_example::persistence::{ClickHouseRowSink, ForegroundPersistor};
+use exchange_example::config::{CHANNEL, STREAM_TYPED, SYMBOL, WS_URL};
 use exchange_example::publication::{AeronPublication, ClaimPublisher, derive_ipc_mtu};
 
 fn aeron_client(dir: &str) -> Result<rusteron_client::Aeron, Box<dyn Error + Send + Sync>> {
@@ -43,86 +39,6 @@ fn add_pub(
         .poll_blocking(Duration::from_secs(5))?)
 }
 
-fn add_sub(
-    aeron: &rusteron_client::Aeron,
-    stream: i32,
-) -> Result<rusteron_client::AeronSubscription, Box<dyn Error + Send + Sync>> {
-    let ch = CHANNEL;
-    Ok(aeron
-        .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
-            ch, stream, None, None,
-        )?
-        .poll_blocking(Duration::from_secs(5))?)
-}
-
-/// Thread 3: subscribe to both streams and persist in the foreground.
-fn persistence_thread(
-    dir: String,
-    running: Arc<AtomicBool>,
-    ready: mpsc::Sender<()>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // ponytail: endpoint fixed to the local sample container; env-driven
-    // credentials live in ClickHouseRowSink::connect.
-    let aeron = aeron_client(&dir)?;
-    let sub_typed = add_sub(&aeron, STREAM_TYPED)?;
-    let sub_dynamic = add_sub(&aeron, STREAM_DYNAMIC)?;
-    // Connect to the already-running ClickHouse (never auto-starts Docker);
-    // table creation happens here. Readiness is signalled only after both
-    // subscriptions and the database are up.
-    let sink = ClickHouseRowSink::connect("http://127.0.0.1:8123")?;
-    let mut persistor = ForegroundPersistor::new(sink);
-    let mut asm = rusteron_client::AeronFragmentClosureAssembler::new()?;
-    ready.send(())?;
-
-    fn handle_typed(
-        p: &mut ForegroundPersistor<ClickHouseRowSink>,
-        buf: &[u8],
-        _h: rusteron_client::AeronHeader,
-    ) {
-        if let Err(e) = p.on_typed(buf) {
-            eprintln!("[persist] typed decode error: {e}");
-        }
-    }
-    fn handle_dynamic(
-        p: &mut ForegroundPersistor<ClickHouseRowSink>,
-        buf: &[u8],
-        _h: rusteron_client::AeronHeader,
-    ) {
-        if let Err(e) = p.on_dynamic(buf) {
-            eprintln!("[persist] dynamic decode error: {e}");
-        }
-    }
-
-    let mut last_flush = std::time::Instant::now();
-    while running.load(Ordering::SeqCst) {
-        let mut idle = true;
-        let n = asm.poll(&sub_typed, &mut persistor, handle_typed, 16)?;
-        idle &= n == 0;
-        let n = asm.poll(&sub_dynamic, &mut persistor, handle_dynamic, 16)?;
-        idle &= n == 0;
-        if last_flush.elapsed() >= Duration::from_secs(1) {
-            persistor.flush()?;
-            last_flush = std::time::Instant::now();
-        }
-        if idle {
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-    // Shutdown drain: flush remaining batches before the driver stops.
-    persistor.flush()?;
-    let c = persistor.counters();
-    eprintln!(
-        "[persist] typed={} dynamic={} trades={} unmatched={} compare_fail={} decode_fail={}",
-        c.persisted_typed,
-        c.persisted_dynamic,
-        c.persisted_trades,
-        c.unmatched_dropped,
-        c.compare_failures,
-        c.decode_failures,
-    );
-    Ok(())
-}
-
 /// Thread 1 (main): Bitget WebSocket ingestion with capped reconnect backoff.
 async fn ingest(
     dir: String,
@@ -131,21 +47,7 @@ async fn ingest(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let aeron = aeron_client(&dir)?;
     let typed = AeronPublication(add_pub(&aeron, STREAM_TYPED)?);
-    let dynamic = AeronPublication(add_pub(&aeron, STREAM_DYNAMIC)?);
-    let mut publisher = ClaimPublisher::new(typed, dynamic)?;
-    // Announce the dynamic schema after both subscribers are connected and
-    // before live ingestion (retry briefly while the image attaches).
-    let schema_deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match publisher.publish_schema() {
-            exchange_example::publication::PublishOutcome::Published => break,
-            _ if std::time::Instant::now() < schema_deadline => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            other => return Err(format!("dynamic schema publish failed: {other:?}").into()),
-        }
-    }
-    eprintln!("[ingest] dynamic schema announced on stream {STREAM_DYNAMIC}");
+    let mut publisher = ClaimPublisher::new(typed);
     let mut ingestor = BitgetIngestor::new();
     let mut backoff = Duration::from_secs(1);
 
@@ -183,9 +85,6 @@ async fn ingest(
                 Ok(Some(Ok(Message::Text(text)))) => match parse_frame(&text) {
                     Ok(frame) => {
                         let r = frame.apply_to(&mut ingestor, |ev| {
-                            // Claim outcomes (including drops) are classified
-                            // in the publisher's counters; emission itself
-                            // never fails.
                             publisher.publish(&ev);
                             Ok::<(), std::convert::Infallible>(())
                         });
@@ -201,7 +100,6 @@ async fn ingest(
                 Ok(Some(Ok(_))) => {}
                 Ok(Some(Err(_))) | Ok(None) => break,
                 Err(_) => {
-                    // Heartbeat: Bitget expects a client ping under idle.
                     if tx.send(Message::Text("ping".into())).await.is_err() {
                         break;
                     }
@@ -249,46 +147,9 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         driver.dir()
     );
 
-    // ── Thread 3: persistence (readiness-signalled) ───────────────────
-    let (ready_tx, ready_rx) = mpsc::channel();
-    let dir3 = driver.dir().to_string();
-    let running3 = running.clone();
-    let t3 = thread::Builder::new()
-        .name("persist".into())
-        .spawn(move || persistence_thread(dir3, running3, ready_tx))?;
-    ready_rx
-        .recv_timeout(Duration::from_secs(10))
-        .map_err(|_| "persistence thread never signalled readiness")?;
-    eprintln!("[main] persistence ready; starting ingestion for {run_secs}s");
-
-    // ── Thread census diagnostic ───────────────────────────────────────
-    // Exactly three approved long-lived application threads: main
-    // (ingestion), the SHARED driver thread, and the persistence thread.
-    // The OS total additionally includes Aeron-internal threads (driver
-    // agents, client conductors) — reported for observability.
-    let app_threads = 1 /* main */ + 1 /* driver */ + 1 /* persist */;
-    assert_eq!(
-        app_threads, 3,
-        "exactly three long-lived application threads are approved"
-    );
-    let os_threads = std::process::Command::new("ps")
-        .args(["-M", "-p", &std::process::id().to_string()])
-        .output()
-        .ok()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .count()
-                .saturating_sub(1)
-        })
-        .unwrap_or(0);
-    eprintln!(
-        "[main] thread census: {app_threads} application threads (main/driver/persist), \
-         {os_threads} OS threads total (incl. Aeron internals)"
-    );
+    eprintln!("[main] starting ingestion for {run_secs}s");
 
     // ── Thread 1 (main): current-thread Tokio runtime ─────────────────
-    // The run window is enforced inside the ingest loop (no fourth thread).
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -296,7 +157,6 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     rt.block_on(ingest(driver.dir().to_string(), running.clone(), deadline))?;
 
     running.store(false, Ordering::SeqCst);
-    t3.join().map_err(|_| "persistence thread panicked")??;
     eprintln!("[main] shutdown complete (driver stops last)");
     Ok(())
 }

@@ -7,8 +7,6 @@ Cargo.lock
 CLAUDE.md
 .claude/
 tmp/
-# Generated SBE codecs (built into OUT_DIR at compile time)
-persist/src/gen/
 
 # Aeron Cluster test-run node dirs (written into crate CWD by harness tests)
 aeron-cluster-[0-9]/

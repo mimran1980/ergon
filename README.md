@@ -4,13 +4,12 @@
 > production.** Interfaces are deliberately opinionated, incomplete, and subject
 > to breaking changes while the design is explored.
 
-This repository has two prototype projects and two internal laboratories.
+This repository has two prototype crates and a sample playground.
 
 | Directory | Status | Purpose |
 |---|---|---|
 | [`sbe/`](sbe/) | Primary prototype; intended for an eventual `0.x` crates.io release | Explore ergonomic, safe, and very fast Rust code generation for Simple Binary Encoding |
-| [`cluster/`](cluster/) | Hobby prototype; intended for an eventual `0.x` crates.io release | Experiment with an Aeron Cluster client in Rust and exercise ergon against Aeron's protocol |
-| [`persist/`](persist/) | Unpublished laboratory | Exercise ergon domain objects and ClickHouse-oriented mappings |
+| [`cluster/`](cluster/) | Hobby prototype; intended for an eventual `0.x` crates.io release | Experiment with an Aeron Cluster client in Rust and exercise ergo-sbe against Aeron's protocol |
 | [`samples/`](samples/) | Unpublished playground | Try APIs end to end; low-quality code that must not be treated as reference material |
 
 ergo-sbe is the main focus and the most tested part of the repository. Its purpose
@@ -30,24 +29,12 @@ ready today. The corrected design and all verified-open work live in the single
 [`release-readiness spec`](.scratch/release-readiness/spec.md). Checked historical
 todo files were removed because several described only partial implementations.
 
-Important known gaps include:
-
-- the generic converter registry is only partially emitted;
-- latest-version fixed-field encoding does not yet prove all required fields;
-- generated domain mappings are incomplete and can hide malformed tails;
-- schema-declared text variable data is not consistently exposed as fallible
-  zero-copy strings;
-- the Cluster client still exposes internal protocol surface and has incomplete
-  error/reconnect handling;
-- samples and package contents still need release cleanup.
-
 Do not infer completion from generated method names or passing baseline tests.
 
 ## Repository map
 
 - [ergo-sbe README](sbe/README.md)
-- [Ergo Aeron Cluster README](cluster/README.md)
-- [Persist laboratory README](persist/README.md)
+- [ergo-aeron-cluster README](cluster/README.md)
 - [Samples laboratory README](samples/README.md)
 - [Implementation plan and design](.scratch/release-readiness/spec.md)
 - [Contributing and verification](CONTRIBUTING.md)
@@ -83,9 +70,8 @@ cargo test -p ergo-aeron-cluster --lib
 ```
 
 Some Cluster integration tests need Java 17+, built Aeron jars, and a local
-Aeron environment. Persist and sample live tests can require ClickHouse, Docker,
-network services, or a multi-node Java Cluster. See the laboratory READMEs before
-running those checks.
+Aeron environment. Sample live tests can require a multi-node Java Cluster.
+See the laboratory READMEs before running those checks.
 
 ## Release posture
 
@@ -94,7 +80,7 @@ Only these crates are candidates for prototype publication:
 1. `ergo-sbe`
 2. `ergo-aeron-cluster`
 
-Persist, its derive crate, benchmarks, and samples are not publication targets.
+Benchmarks and samples are not publication targets.
 No publication should happen until every release item and acceptance command in
 the implementation plan passes and the package file lists have been inspected.
 

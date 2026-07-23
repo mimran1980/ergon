@@ -13,14 +13,6 @@ if [ -n "$tracked_targets" ]; then
   errors=$((errors + 1))
 fi
 
-# Check for tracked generated SBE codecs under persist/src/gen
-tracked_gen=$(git ls-files 'persist/src/gen/*.rs')
-if [ -n "$tracked_gen" ]; then
-  echo "ERROR: tracked generated SBE codecs:" >&2
-  echo "$tracked_gen" >&2
-  errors=$((errors + 1))
-fi
-
 if [ "$errors" -gt 0 ]; then
   echo "Hygiene check FAILED with $errors issue(s)." >&2
   exit 1
