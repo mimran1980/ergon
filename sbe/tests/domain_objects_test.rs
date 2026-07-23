@@ -301,10 +301,12 @@ fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>>
         let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(0).sequence(0);
         let complete = book.bids(2, |bids| {
-            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| {}).unwrap(); }).unwrap();
-            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| {}).unwrap(); }).unwrap();
+            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) }).unwrap();
+            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) }).unwrap();
+            Ok(())
         }).unwrap().asks(1, |asks| {
-            asks.add(|l| { l.price(0).qty(0); l.orders(0, |_| {}).unwrap(); }).unwrap();
+            asks.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) }).unwrap();
+            Ok(())
         }).unwrap();
         assert_eq!(computed, complete.encoded_length(), "computed length must match actual encoding");
         println!("l3_compute_encoded_length_matches: PASSED ({} == {})", computed, complete.encoded_length());
