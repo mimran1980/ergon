@@ -212,7 +212,7 @@ fn bench_decode_composite(c: &mut Criterion) {
 
 // ── HFT batch decode throughput ──────────────────────────────────────
 
-const HFT_BATCH: usize = 10_000;
+const BATCH_SIZE: usize = 10_000;
 
 fn replicate_baseline(count: usize) -> Vec<u8> {
     let msg_len = BASELINE.len();
@@ -225,7 +225,7 @@ fn replicate_baseline(count: usize) -> Vec<u8> {
 }
 
 fn bench_throughput_batch(c: &mut Criterion) {
-    let buf = replicate_baseline(HFT_BATCH);
+    let buf = replicate_baseline(BATCH_SIZE);
     let msg_len = BASELINE.len();
     let bl = aeron_block_length();
     let ver = aeron_version();
@@ -233,14 +233,14 @@ fn bench_throughput_batch(c: &mut Criterion) {
     let (bl_e, ver_e) = ergo_sbe_header_fields();
 
     let mut group = c.benchmark_group("parity/throughput/batch_10k");
-    group.throughput(Throughput::Elements(HFT_BATCH as u64));
+    group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
     group.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             let mut total: u64 = 0;
             let mut total_year: u64 = 0;
             let mut off = 0;
-            for _ in 0..HFT_BATCH {
+            for _ in 0..BATCH_SIZE {
                 // Fast path: header validated once above, per-message wrap is lean.
                 let car = CarDecoder::wrap(&buf[off..off + msg_len], 8, bl_e, ver_e);
                 total += car.serial_number();
@@ -256,7 +256,7 @@ fn bench_throughput_batch(c: &mut Criterion) {
             let mut total: u64 = 0;
             let mut total_year: u64 = 0;
             let mut off = 0;
-            for _ in 0..HFT_BATCH {
+            for _ in 0..BATCH_SIZE {
                 let car =
                     ergo_sbe_benchmarks::aeron_car::aeron::car_codec::decoder::CarDecoder::default(
                     )
@@ -348,13 +348,13 @@ fn bench_encode_scalar(c: &mut Criterion) {
 
 fn bench_encode_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/throughput_10k");
-    group.throughput(Throughput::Elements(HFT_BATCH as u64));
+    group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
     group.bench_function("ergo-sbe_checked", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * 64],
+            || vec![0u8; BATCH_SIZE * 64],
             |mut buf| {
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * 64;
                     let mut car: CarEncoder<'_> =
                         CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0).unwrap();
@@ -369,9 +369,9 @@ fn bench_encode_throughput(c: &mut Criterion) {
 
     group.bench_function("ergo-sbe_unchecked", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * 64],
+            || vec![0u8; BATCH_SIZE * 64],
             |mut buf| {
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * 64;
                     let mut car: CarEncoder<'_> =
                         CarEncoder::wrap_and_apply_header_unchecked(&mut buf[off..off + 64], 0);
@@ -386,9 +386,9 @@ fn bench_encode_throughput(c: &mut Criterion) {
 
     group.bench_function("aeron", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * 64],
+            || vec![0u8; BATCH_SIZE * 64],
             |mut buf| {
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * 64;
                     // Body at offset 8 (after the 8-byte message header), header at 0.
                     // Wrapping the body at 0 would overlap the header (serial_number

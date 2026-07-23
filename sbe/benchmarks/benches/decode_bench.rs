@@ -26,7 +26,7 @@ mod common;
 use common::BASELINE;
 
 /// Number of messages in the tight-loop / batch benchmarks.
-const HFT_BATCH: usize = 10_000;
+const BATCH_SIZE: usize = 10_000;
 
 /// Pre-allocate a buffer containing `count` copies of the baseline message.
 fn replicate_baseline(count: usize) -> Vec<u8> {
@@ -180,11 +180,11 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
 // Each iteration decodes one message and reads a few key fields.
 
 fn bench_hft_tight_loop(c: &mut Criterion) {
-    let batch = replicate_baseline(HFT_BATCH);
+    let batch = replicate_baseline(BATCH_SIZE);
     let msg_len = BASELINE.len();
 
     let mut group = c.benchmark_group("decode/hft/tight_loop");
-    group.throughput(Throughput::Elements(HFT_BATCH as u64));
+    group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
     group.bench_function("10k_messages", |b| {
         b.iter(|| {

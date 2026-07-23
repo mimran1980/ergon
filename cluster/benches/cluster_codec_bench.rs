@@ -17,17 +17,17 @@ use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_mai
 /// sbe-tool 1.39.0 reference runtime — Criterion-private (forbid production imports).
 mod reference_sbe;
 
-const HFT_BATCH: usize = 10_000;
+const BATCH_SIZE: usize = 10_000;
 
 /// Encode 10k SessionMessageHeaders via ergon.
 fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/session_message_header");
-    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * 32],
+            || vec![0u8; BATCH_SIZE * 32],
             |mut buf| {
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * 32;
                     let _ = ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder::wrap_and_apply_header(
                         &mut buf[off..off + 32],
@@ -45,10 +45,10 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     });
     g.bench_function("sbe-tool", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * 32],
+            || vec![0u8; BATCH_SIZE * 32],
             |mut buf| {
                 use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * 32;
                     let wb = WriteBuf::new(&mut buf[off..off + 32]);
                     let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
@@ -68,13 +68,13 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
 /// Encode 10k SessionKeepAlives via ergon.
 fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/session_keep_alive");
-    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     let sz = 8 + ergo_aeron_cluster::codecs::session::SessionKeepAliveEncoder::BLOCK_LENGTH;
     g.bench_function("ergo-sbe", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * sz],
+            || vec![0u8; BATCH_SIZE * sz],
             |mut buf| {
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * sz;
                     let _ = ergo_aeron_cluster::codecs::session::SessionKeepAliveEncoder::wrap_and_apply_header(
                         &mut buf[off..off + sz],
@@ -91,10 +91,10 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
     });
     g.bench_function("sbe-tool", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * sz],
+            || vec![0u8; BATCH_SIZE * sz],
             |mut buf| {
                 use reference_sbe::{WriteBuf, session_keep_alive_codec::SessionKeepAliveEncoder};
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * sz;
                     let wb = WriteBuf::new(&mut buf[off..off + sz]);
                     let mut enc = SessionKeepAliveEncoder::default().wrap(wb, 8);
@@ -116,12 +116,12 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/session_connect_request");
     let channel = "aeron:udp?endpoint=localhost:9999";
     let creds = b"user:pass";
-    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * 128],
+            || vec![0u8; BATCH_SIZE * 128],
             |mut buf| {
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * 128;
                     let mut enc =
                         ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder::wrap_and_apply_header(
@@ -145,10 +145,10 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
     });
     g.bench_function("sbe-tool", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * 128],
+            || vec![0u8; BATCH_SIZE * 128],
             |mut buf| {
                 use reference_sbe::{WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder};
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * 128;
                     let wb = WriteBuf::new(&mut buf[off..off + 128]);
                     let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
@@ -192,10 +192,10 @@ fn sbe_tool_header_ok(template_id: u16, schema_id: u16, expected_tid: u16, expec
 
 fn bench_decode_msg_header(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/decode/session_message_header");
-    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
-            for _ in 0..HFT_BATCH {
+            for _ in 0..BATCH_SIZE {
                 let d = ergo_aeron_cluster::codecs::session::SessionMessageHeaderDecoder::wrap_and_apply_header(
                     black_box(&MSG_HDR_FIXTURE[..]),
                     0,
@@ -211,7 +211,7 @@ fn bench_decode_msg_header(c: &mut Criterion) {
                 ReadBuf, message_header_codec::MessageHeaderDecoder,
                 session_message_header_codec::SessionMessageHeaderDecoder,
             };
-            for _ in 0..HFT_BATCH {
+            for _ in 0..BATCH_SIZE {
                 let buf = black_box(&MSG_HDR_FIXTURE[..]);
                 // Equal bounds gate (Ergo checks pos+8 <= len before reading).
                 if buf.len() < 8 {
@@ -249,10 +249,10 @@ const SESSION_EVENT_SCHEMA_ID: u16 = 111;
 
 fn bench_decode_session_event(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/decode/session_event");
-    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
-            for _ in 0..HFT_BATCH {
+            for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::codecs::session::SessionEventDecoder;
                 let dec = SessionEventDecoder::wrap_and_apply_header(black_box(&SESSION_EVENT_FIXTURE[..]), 0).unwrap();
                 let cid = dec.correlation_id();
@@ -270,7 +270,7 @@ fn bench_decode_session_event(c: &mut Criterion) {
             use reference_sbe::{
                 ReadBuf, message_header_codec::MessageHeaderDecoder, session_event_codec::SessionEventDecoder,
             };
-            for _ in 0..HFT_BATCH {
+            for _ in 0..BATCH_SIZE {
                 let buf = black_box(&SESSION_EVENT_FIXTURE[..]);
                 if buf.len() < 8 {
                     continue;
@@ -325,10 +325,10 @@ fn new_leader_fixture() -> Vec<u8> {
 fn bench_decode_new_leader(c: &mut Criterion) {
     let fixture = new_leader_fixture();
     let mut g = c.benchmark_group("cluster/decode/new_leader_event");
-    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
-            for _ in 0..HFT_BATCH {
+            for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::codecs::session::NewLeaderEventDecoder;
                 let dec = NewLeaderEventDecoder::wrap_and_apply_header(black_box(fixture.as_slice()), 0).unwrap();
                 let csid = dec.cluster_session_id();
@@ -344,7 +344,7 @@ fn bench_decode_new_leader(c: &mut Criterion) {
             use reference_sbe::{
                 ReadBuf, message_header_codec::MessageHeaderDecoder, new_leader_event_codec::NewLeaderEventDecoder,
             };
-            for _ in 0..HFT_BATCH {
+            for _ in 0..BATCH_SIZE {
                 let buf = black_box(fixture.as_slice());
                 if buf.len() < 8 {
                     continue;
@@ -383,12 +383,12 @@ const CLAIM_APP_PAYLOAD: [u8; 32] = [0xABu8; 32];
 fn bench_claim_shaped_write(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/claim_shaped_header_plus_app");
     let total = 32 + CLAIM_APP_PAYLOAD.len(); // MSG_HDR_TOTAL + app
-    g.throughput(Throughput::Elements(HFT_BATCH as u64));
+    g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * total],
+            || vec![0u8; BATCH_SIZE * total],
             |mut buf| {
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * total;
                     let slot = &mut buf[off..off + total];
                     let _ = ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder::wrap_and_apply_header(
@@ -408,10 +408,10 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
     });
     g.bench_function("sbe-tool", |b| {
         b.iter_batched(
-            || vec![0u8; HFT_BATCH * total],
+            || vec![0u8; BATCH_SIZE * total],
             |mut buf| {
                 use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
-                for i in 0..HFT_BATCH {
+                for i in 0..BATCH_SIZE {
                     let off = i * total;
                     let slot = &mut buf[off..off + total];
                     let wb = WriteBuf::new(&mut slot[..32]);
