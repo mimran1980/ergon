@@ -608,6 +608,10 @@ These are current capabilities. The interface is still evolving — see the
 [`implementation plan`](../.scratch/release-readiness/spec.md) for open acceptance
 criteria and design rationale.
 
+## Benchmarks
+
+See [`BENCHMARKS.md`](BENCHMARKS.md) for parity results and API combination timings.
+
 ## Build and test
 
 From the repository root:
