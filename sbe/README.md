@@ -365,6 +365,199 @@ let dec = CarDecoder::try_from(bytes)?;                // now infallible-ish
 
 ---
 
+### Nested groups — groups within groups
+
+Each level of nesting produces its own entry decoder. The outer `finish()`
+returns the next sibling stage, not the parent.
+
+```rust
+let fuel = dec.into_fuel_figures()?;
+while let Some(entry) = fuel.next() {
+    let speed = entry.speed();
+    // Nested group: performanceFigures inside each fuel figure entry.
+    let perf = entry.into_performance_figures()?;
+    while let Some(perf_entry) = perf.next() {
+        let accel = perf_entry.into_acceleration()?;
+        while let Some(a) = accel.next() {
+            println!("0-100: {}s", a.mph_0_100());
+        }
+        let after_accel = accel.finish()?;
+        // ... more fields on performance figure entry ...
+    }
+    let after_perf = perf.finish()?;    // back to fuel figure entry tail
+}
+let after_fuel = fuel.finish()?;        // back to Car tail
+```
+
+### Nested SBE messages — `_as_message`
+
+Fields containing other SBE messages expose `into_<field>_as_message()` which
+returns a `DecodedFrame` — a header + payload pair ready for `AnyMessage`
+dispatch.
+
+```rust
+let (frame, next_stage) = dec.into_payload_as_message()?;
+match frame.message {
+    AnyMessage::L2Book(book) => handle_book(&book),
+    AnyMessage::Trade(trade) => handle_trade(&trade),
+}
+```
+
+### Fixed-size arrays — `[T; N]`
+
+SBE fixed-length array fields return `[T; N]` — stack-allocated, no heap.
+
+```rust
+let codes: [u8; 3] = dec.manufacturer_code();     // [u8; 3]
+let nums: [u64; 5] = dec.some_numbers();           // [u64; 5]
+```
+
+### Constant fields
+
+Schema-declared constants are compile-time values, not wire bytes. The
+accessor returns the schema constant directly.
+
+```rust
+assert_eq!(dec.message_type(), 1);                   // always 1 per schema
+```
+
+---
+
+## Worked example — L3 order book
+
+This is a complete encode/decode round-trip for a market-data L3 order book
+message with two repeating groups (bids, asks), a symbol string, and an
+exchange timestamp. It shows the full pattern end to end.
+
+Schema (simplified):
+```xml
+<message name="L3Book" id="100">
+  <field name="exchange_ts"  id="1" type="uint64"  offset="0"/>
+  <field name="sequence"     id="2" type="uint64"  offset="8"/>
+  <group  name="bids"        id="3" dimensionType="groupSizeEncoding"/>
+    <field name="price"      id="4" type="int64"   offset="0"/>
+    <field name="size"       id="5" type="int64"   offset="8"/>
+    <field name="orders"     id="6" type="uint16"  offset="16"/>
+  </group>
+  <group  name="asks"        id="7" dimensionType="groupSizeEncoding"/>
+    <field name="price"      id="8" type="int64"   offset="0"/>
+    <field name="size"       id="9" type="int64"   offset="8"/>
+    <field name="orders"     id="10" type="uint16" offset="16"/>
+  </group>
+  <data   name="symbol"      id="11" type="varAsciiEncoding" characterEncoding="ASCII"/>
+</message>
+```
+
+### Encoding
+
+```rust
+// Pre-compute exact buffer size — zero guesswork.
+let len = L3BookEncoder::compute_encoded_length_with_message_header(
+    3,   // bid count
+    4,   // ask count
+    7,   // symbol: "BTCUSDT"
+);
+let mut buf = vec![0u8; len];
+
+let enc = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?;
+
+// Fixed fields via struct — single call, no per-field method chain.
+enc.fixed(&L3BookFixedFields {
+    exchange_ts: 1_720_000_000_000_000_000,
+    sequence: 42,
+});
+
+// Bids: repeating group. Entry encoder has price/size/orders setters.
+let after_bids = enc.bids(3, |g| -> Result<(), EncodeError> {
+    g.add(|e| { e.price(50800); e.size(15); e.orders(3); })?;
+    g.add(|e| { e.price(50750); e.size(40); e.orders(8); })?;
+    g.add(|e| { e.price(50700); e.size(10); e.orders(1); })?;
+    Ok(())
+})?;
+
+// Asks: second group, required after bids (wire order enforced).
+let after_asks = after_bids.asks(4, |g| -> Result<(), EncodeError> {
+    g.add(|e| { e.price(50850); e.size(20); e.orders(5); })?;
+    g.add(|e| { e.price(50900); e.size(30); e.orders(7); })?;
+    g.add(|e| { e.price(50950); e.size(50); e.orders(12); })?;
+    g.add(|e| { e.price(51000); e.size(80); e.orders(20); })?;
+    Ok(())
+})?;
+
+// Var-data: schema-declared ASCII → validated &str.
+let complete = after_asks.symbol_str("BTCUSDT")?;
+
+// Prove exact fit.
+assert_eq!(complete.encoded_length(), len);
+let wire = complete.as_bytes();
+```
+
+### Decoding
+
+```rust
+let dec = L3BookDecoder::try_from(wire)?;
+println!("{dec}");
+// L3Book { exchange_ts: 1720000000000000000, sequence: 42,
+//   bids: [Bid { price: 50800, size: 15, orders: 3 },
+//          Bid { price: 50750, size: 40, orders: 8 },
+//          Bid { price: 50700, size: 10, orders: 1 }],
+//   asks: [Ask { price: 50850, size: 20, orders: 5 }, …],
+//   symbol: BTCUSDT }
+
+assert_eq!(dec.exchange_ts(), 1_720_000_000_000_000_000);
+assert_eq!(dec.sequence(), 42);
+
+// Bids: group decoder, entries in wire order.
+let bids = dec.into_bids()?;
+let mut bid_prices = Vec::new();
+while let Some(entry) = bids.next() {
+    bid_prices.push((entry.price(), entry.size(), entry.orders()));
+}
+let after_bids = bids.finish()?;
+
+// Asks: consumes the AfterBids stage.
+let asks = after_bids.into_asks()?;
+let mut ask_prices = Vec::new();
+while let Some(entry) = asks.next() {
+    ask_prices.push((entry.price(), entry.size(), entry.orders()));
+}
+let after_asks = asks.finish()?;
+
+// Symbol: zero-copy &str → ASCII validated.
+let (symbol, complete) = after_asks.into_symbol_as_str()?;
+assert_eq!(symbol, "BTCUSDT");
+
+assert_eq!(bid_prices, vec![
+    (50800, 15, 3), (50750, 40, 8), (50700, 10, 1)
+]);
+assert_eq!(ask_prices, vec![
+    (50850, 20, 5), (50900, 30, 7), (50950, 50, 12), (51000, 80, 20)
+]);
+```
+
+### Owned domain object round-trip
+
+```rust
+// Build owned value from decoded fields.
+let book = L3BookOwned {
+    exchange_ts: dec.exchange_ts(),
+    sequence: dec.sequence(),
+    bids: bid_prices.into_iter().map(|(p, s, o)| BidLevel { price: p, size: s, orders: o }).collect(),
+    asks: ask_prices.into_iter().map(|(p, s, o)| AskLevel { price: p, size: s, orders: o }).collect(),
+    symbol: symbol.to_string(),
+};
+
+// Re-encode from owned value.
+let len = book.encoded_length_with_header()?;
+let mut buf2 = vec![0u8; len];
+let re_encoded: &[u8] = book.encode_into(&mut buf2)?;
+
+// Byte-identical.
+assert_eq!(wire, re_encoded);
+```
+
+---
+
 These are current capabilities. The interface is still evolving — see the
 [`implementation plan`](../.scratch/release-readiness/spec.md) for open acceptance
 criteria and design rationale.
