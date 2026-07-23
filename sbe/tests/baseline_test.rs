@@ -465,28 +465,34 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         ));
 
         let car = car.fuel_figures(3, |g| {
-            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();
-            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Combined Cycle").unwrap(); }).unwrap();
-            g.add(|e| { e.speed(75).mpg(40.0); e.usage_description(b"Highway Cycle").unwrap(); }).unwrap();
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); Ok(()) }).unwrap();
+            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Combined Cycle").unwrap(); Ok(()) }).unwrap();
+            g.add(|e| { e.speed(75).mpg(40.0); e.usage_description(b"Highway Cycle").unwrap(); Ok(()) }).unwrap();
+            Ok(())
         }).unwrap();
 
         let car = car.performance_figures(2, |g| {
             g.add(|e| {
                 e.octane_rating(95);
                 e.acceleration(3, |a| {
-                    a.add(|x| { x.mph(30).seconds(4.0); }).unwrap();
-                    a.add(|x| { x.mph(60).seconds(7.5); }).unwrap();
-                    a.add(|x| { x.mph(100).seconds(12.2); }).unwrap();
+                    a.add(|x| { x.mph(30).seconds(4.0); Ok(()) }).unwrap();
+                    a.add(|x| { x.mph(60).seconds(7.5); Ok(()) }).unwrap();
+                    a.add(|x| { x.mph(100).seconds(12.2); Ok(()) }).unwrap();
+                    Ok(())
                 }).unwrap();
+                Ok(())
             }).unwrap();
             g.add(|e| {
                 e.octane_rating(99);
                 e.acceleration(3, |a| {
-                    a.add(|x| { x.mph(30).seconds(3.8); }).unwrap();
-                    a.add(|x| { x.mph(60).seconds(7.1); }).unwrap();
-                    a.add(|x| { x.mph(100).seconds(11.8); }).unwrap();
+                    a.add(|x| { x.mph(30).seconds(3.8); Ok(()) }).unwrap();
+                    a.add(|x| { x.mph(60).seconds(7.1); Ok(()) }).unwrap();
+                    a.add(|x| { x.mph(100).seconds(11.8); Ok(()) }).unwrap();
+                    Ok(())
                 }).unwrap();
+                Ok(())
             }).unwrap();
+            Ok(())
         }).unwrap();
 
         let car = car.manufacturer(b"Honda").unwrap();
@@ -826,8 +832,8 @@ fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Err
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         car.extras(OptionalExtras::default());
         car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(0, |_| {}).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.fuel_figures(0, |_| Ok(())).unwrap();
+        let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civc").unwrap();
         let car = car.activation_code(b"abc123").unwrap();
