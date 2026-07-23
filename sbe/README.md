@@ -39,12 +39,13 @@ let dec = CarDecoder::wrap_and_apply_header(buffer, pos)?;
 ### Encoder entry point — wrap_and_apply_header
 
 The encoder writes the SBE message header (block length, template ID, schema
-ID, version) into the buffer, then returns the fixed-field stage.
+ID, version) into the buffer and returns the encoder. Call `fixed(&fields)`
+to write the fixed block, or `raw_fixed()` for individual setters.
 
 ```rust
 let mut buf = vec![0u8; 512];
 let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
-// Header written. enc is the fixed-field stage — ready for .fixed() or .raw_fixed().
+// Header written. Next: enc.fixed(&fields) or enc.raw_fixed().
 ```
 
 ### Exact buffer sizing — compute_encoded_length_with_message_header
@@ -108,52 +109,81 @@ let after = dec2.into_fuel_figures()?
 let (mfr, _) = after.into_manufacturer_as_str()?;
 ```
 
-### Safe encoder — fixed struct + ordered tail
+### Safe encoder — struct for fixed fields, consuming stages for tail
 
-Encoders use a type-state pattern. You must write the fixed fields before
-reaching the tail. `FixedFields` is a struct; passing it to `fixed()` is the
-only way to advance.
+Fixed fields use a struct (`fixed(&fields)`) — no per-field method chain, no
+allocation, better optimisation. The tail (groups, var-data) uses consuming
+stages to enforce wire order at compile time.
 
 ```rust
-let mut buf = vec![0u8; CarEncoder::compute_encoded_length_with_message_header(
-    2, 10
-)];
-let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
+let len = CarEncoder::compute_encoded_length_with_message_header(2, 10);
+let mut buf = vec![0u8; len];
+let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
 
-// All required fixed fields in one struct — no forgotten setter.
-let fixed = CarFixedFields {
+// All required fixed fields in one struct — single call, no chained setters.
+enc.fixed(&CarFixedFields {
     serial_number: 1234,
     model_year: 2024,
     available: BooleanType::TRUE,
     code: Model::A,
-};
-let after_fixed = enc.fixed(&fixed);               // → CarFuelFiguresGroupEncoder
+});
 
-// Groups use a closure that accepts &mut EntryEncoder.
-let after_group = after_fixed.fuel_figures(2, |g| -> Result<(), EncodeError> {
+// Groups consume `enc` and return a new tail stage.
+let after_group = enc.fuel_figures(2, |g| -> Result<(), EncodeError> {
     g.add(|e| { e.speed(220); e.mpg(35); })?;
     g.add(|e| { e.speed(240); e.mpg(33); })?;
     Ok(())
-})?;                                                // → AfterFuelFiguresEncoder
+})?;                                                // → CarAfterFuelFigures
 
+// Var-data consumes the group stage, returns the complete stage.
 let complete = after_group.manufacturer_str("Aston Martin")?;
 
-// Exact header-inclusive length, no guessing.
-assert_eq!(complete.encoded_length(), buf.len());
+// Only the complete stage exposes length and bytes.
+assert_eq!(complete.encoded_length(), len);
 let wire = complete.as_bytes();                     // &[u8] — no alloc
 ```
 
-### raw_fixed — escape hatch
+### raw_fixed — individual setter escape hatch
 
-When you need individual fixed-field setters instead of a struct:
+When you need per-field setters instead of a struct, `raw_fixed()` returns a
+dedicated writer. Call `finish()` to return to the encoder for tail stages.
 
 ```rust
-let mut writer = enc.raw_fixed();
+let mut writer = enc.raw_fixed();                   // consumes enc
 writer.serial_number(1234);
 writer.model_year(2024);
 writer.available(BooleanType::TRUE);
 writer.code(Model::A);
-let after_fixed = writer.finish_unchecked();        // manual transition
+let enc = writer.finish();                          // back to CarEncoder for tail
+```
+
+### Display / to_string
+
+Every generated decoder, encoder stage, and entry has a `Display` impl.
+It renders field names and values, handles version-aware fields, and
+traverses groups — useful for logging and debugging.
+
+```rust
+let dec = CarDecoder::try_from(bytes)?;
+println!("{dec}");
+// Car { serial_number: 1234, model_year: 2024, available: TRUE, code: A,
+//        some_numbers: [1, 2, 3, 4, 5], fuel_figures: [FuelFigure { speed: 220, mpg: 35 },
+//        FuelFigure { speed: 240, mpg: 33 }], manufacturer: 12 bytes }
+```
+
+### Booleans
+
+SBE `BooleanType` is a proper enum, not a raw `u8`. `From<bool>` and
+`From<u8>` conversions are generated automatically.
+
+```rust
+let available: BooleanType = dec.available();
+assert_eq!(available, BooleanType::TRUE);
+let raw: u8 = available.raw();
+assert_eq!(raw, 1);
+
+// Convert back from Rust bool:
+let flag: BooleanType = true.into();                // BooleanType::TRUE
 ```
 
 ### Version-aware decoding
@@ -289,6 +319,36 @@ let raw: u8 = code.raw();                              // 0x01
 let flags = dec.options();
 assert!(flags.contains(Options::Sunroof));
 let raw: u32 = flags.raw();
+```
+
+### Multi-schema generation with shared runtime
+
+When you generate codecs for multiple schemas in one crate, use
+`generate_multi` and `with_shared_runtime` to emit the error types and
+conversion traits once, shared across all schema modules.
+
+```rust
+let config1 = GenerationConfig::new("market_data")
+    .with_shared_runtime("sbe_rt");
+let config2 = GenerationConfig::new("orders")
+    .with_shared_runtime("sbe_rt");
+
+let modules = Generator::generate_multi(&[
+    (&schema1, &config1),
+    (&schema2, &config2),
+])?;
+
+// Output:
+//   sbe_rt.rs        — shared DecodeError, EncodeError, TryFromSbe, TryToSbe
+//   market_data.rs   — re-exports sbe_rt
+//   orders.rs        — re-exports the same sbe_rt
+```
+
+When the runtime is provided by another crate, use `with_external_sbe_rt`:
+
+```rust
+let config = GenerationConfig::new("my_messages")
+    .with_external_sbe_rt("crate::sbe_rt");
 ```
 
 ### Verification — header + bounds check
