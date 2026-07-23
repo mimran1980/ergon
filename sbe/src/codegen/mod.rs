@@ -4453,10 +4453,13 @@ fn generate_message_encoder(
             let num_size_lit = syn::LitInt::new(&num_size.to_string(), span);
             let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
+            let g_snake_unknown = syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&g.name)), span);
+
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
-                    /// Encode this group. Closure may return `()` or `Result<(), E>`
-                    /// (via [`sbe_rt::GroupEncodeResult`]) so `?` works without a
+                    /// Encode this group with a known count up front. Closure may
+                    /// return `()` or `Result<(), E>` (via
+                    /// [`sbe_rt::GroupEncodeResult`]) so `?` works without a
                     /// separate `try_*` method name.
                     #[must_use]
                     pub fn #g_snake<R, F>(
@@ -4487,6 +4490,56 @@ fn generate_message_encoder(
                             buf: group.buf,
                             message_start: self.message_start,
                             pos: group.pos,
+                        })
+                    }
+
+                    /// Encode this group without knowing the count up front.
+                    /// The dimension header is written with a zero placeholder;
+                    /// after the closure returns, the actual entry count is
+                    /// back-patched into the header. No `GroupFull` check —
+                    /// overflow is the caller's responsibility.
+                    ///
+                    /// Prefer [`Self::#g_snake`] when the count is known at
+                    /// compile time or from a small input.
+                    #[must_use]
+                    pub fn #g_snake_unknown<R, F>(
+                        mut self,
+                        f: F,
+                    ) -> Result<#next_stage<'a>, R::Error>
+                    where
+                        R: sbe_rt::GroupEncodeResult,
+                        F: FnOnce(&mut #g_pascal_enc<'a>) -> R,
+                    {
+                        if self.pos + #dim_size_lit > self.buf.len() {
+                            return Err(sbe_rt::EncodeError::BufferTooShort {
+                                needed: #dim_size_lit,
+                                available: self.buf.len().saturating_sub(self.pos),
+                            }
+                            .into());
+                        }
+                        // Write dimension template + zero placeholder count.
+                        self.buf[self.pos..self.pos + #dim_size_lit]
+                            .copy_from_slice(&#g_pascal_enc::GROUP_DIM_TEMPLATE);
+                        let count_offset = self.pos + #num_offset_lit;
+                        self.buf[count_offset..count_offset + #num_size_lit].fill(0);
+                        // Use MAX count to skip GroupFull checks during add().
+                        // Run in a block so group's reborrow of self.buf ends
+                        // before we back-patch the count.
+                        let (buf, pos, actual) = {
+                            let mut group = #g_pascal_enc::wrap(
+                                self.buf, self.pos + #dim_size_lit, #count_ty::MAX,
+                            );
+                            f(&mut group).into_group_result()?;
+                            let n = group.written();
+                            (group.buf, group.pos, n)
+                        };
+                        // Back-patch the actual count.
+                        buf[count_offset..count_offset + #num_size_lit]
+                            .copy_from_slice(&actual.#to_endian());
+                        Ok(#next_stage {
+                            buf,
+                            message_start: self.message_start,
+                            pos,
                         })
                     }
                 }
@@ -4887,6 +4940,17 @@ fn generate_group_encoder(
                 self.pos += #block_len_lit;
                 self.written += 1;
                 Ok(#entry_enc_ident::wrap(&mut self.buf[entry_pos..], 0))
+            }
+        }
+    });
+
+    // written() accessor — used by _unknown_size to back-patch the count.
+    ts.extend(quote::quote! {
+        impl<'a> #group_enc_ident<'a> {
+            /// Number of entries written so far (for `_unknown_size` back-patch).
+            #[inline]
+            pub fn written(&self) -> #count_ty {
+                self.written
             }
         }
     });

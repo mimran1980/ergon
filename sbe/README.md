@@ -128,12 +128,22 @@ enc.fixed(&CarFixedFields {
     code: Model::A,
 });
 
-// Groups consume `enc` and return a new tail stage.
+// Groups consume `enc` and return a new tail stage. Pass the count up front:
 let after_group = enc.fuel_figures(2, |g| -> Result<(), EncodeError> {
-    g.add(|e| { e.speed(220); e.mpg(35); })?;
-    g.add(|e| { e.speed(240); e.mpg(33); })?;
+    g.add(|e| { e.speed(220).mpg(35); })?;
+    g.add(|e| { e.speed(240).mpg(33); })?;
     Ok(())
 })?;                                                // → CarAfterFuelFigures
+
+// When you don't know the count up front, use `_unknown_size`. The
+// dimension header is written with a zero placeholder; the actual count
+// is back-patched when the group is dropped.
+let after_group = enc.fuel_figures_unknown_size(|g| -> Result<(), EncodeError> {
+    for item in some_iterator {
+        g.add(|e| { e.speed(item.speed).mpg(item.mpg); })?;
+    }
+    Ok(())
+})?;
 
 // Var-data consumes the group stage, returns the complete stage.
 let complete = after_group.manufacturer_str("Aston Martin")?;

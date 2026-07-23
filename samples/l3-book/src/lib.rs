@@ -16,7 +16,7 @@ pub fn encode_book(
 ) -> Result<usize, sbe_rt::EncodeError> {
     let after_bids = L3BookEncoder::wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: TS, sequence: 42 })
-        .bids(bids.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
+        .bids_unknown_size(|g| -> Result<(), sbe_rt::EncodeError> {
         for (price, size, orders) in bids {
             g.add(|e| {
                 e.price(*price).size(*size);
@@ -32,7 +32,7 @@ pub fn encode_book(
         Ok::<(), sbe_rt::EncodeError>(())
     })?;
 
-    let after_asks = after_bids.asks(asks.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
+    let after_asks = after_bids.asks_unknown_size(|g| -> Result<(), sbe_rt::EncodeError> {
         for (price, size, orders) in asks {
             g.add(|e| {
                 e.price(*price).size(*size);
