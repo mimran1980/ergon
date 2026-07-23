@@ -4895,6 +4895,13 @@ fn generate_message_encoder(
                         let mut group =
                             #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
                         f(&mut group)?;
+                        let written = group.written();
+                        if written != count {
+                            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                                declared: count as u32,
+                                actual: written as u32,
+                            });
+                        }
                         Ok(#next_stage {
                             buf: group.buf,
                             message_start: self.message_start,
@@ -5604,6 +5611,13 @@ fn generate_group_encoder(
                     let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
                     let mut group = #ng_enc::wrap(__buf, self.pos + #ng_dim, count);
                     f(&mut group)?;
+                    let written = group.written();
+                    if written != count {
+                        return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                            declared: count as u32,
+                            actual: written as u32,
+                        });
+                    }
                     __pos = group.pos;
                 }
                 self.pos = __pos;
