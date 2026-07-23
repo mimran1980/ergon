@@ -45,6 +45,12 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 BufferTooShort { needed: usize, available: usize },
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
                 GroupFull { declared: u32, attempted: u32 },
+                /// Known-size group closure returned without adding enough entries.
+                GroupCountMismatch { declared: u32, actual: u32 },
+                /// Unknown-size group entry count does not fit in `numInGroup`.
+                GroupCountOverflow { maximum: u32, actual: u32 },
+                /// Checked arithmetic overflow in encoded length computation.
+                EncodedLengthOverflow,
                 Decode(DecodeError),
             }
 
@@ -55,6 +61,9 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
                         Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
                         Self::GroupFull { declared, attempted } => write!(f, "group full: declared count {}, attempted to write {}", declared, attempted),
+                        Self::GroupCountMismatch { declared, actual } => write!(f, "group count mismatch: declared {declared}, wrote {actual}"),
+                        Self::GroupCountOverflow { maximum, actual } => write!(f, "group count overflow: max {maximum}, actual {actual}"),
+                        Self::EncodedLengthOverflow => write!(f, "encoded length computation overflowed"),
                         Self::Decode(e) => write!(f, "decode error: {e}"),
                     }
                 }
