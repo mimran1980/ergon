@@ -1505,7 +1505,7 @@ fn generate_message_decoder(
                     });
                 }
 
-                // ponytail: _lazy alias removed — the base accessor is the canonical path
+                // ponytail: no lazy alias generated, base accessor is canonical; delete branch if lazy aliases never return
             }
             FieldType::Enum {
                 name: enum_name,
@@ -1798,7 +1798,7 @@ fn generate_message_decoder(
             proc_macro2::Span::call_site(),
         );
 
-        // ponytail: resolver (resolve.rs:188-189) fills default_max for every
+        // ponytail: resolver fills default_max for every group; generator trusts it, add validation if resolver ever skips a group
         // primitive, so max_length is always Some. The else branch can't fire.
         let max = vd.max_length.unwrap_or(0);
         let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
@@ -2111,7 +2111,7 @@ fn generate_domain_objects(
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
     let _has_conversion = domain_has_conversion(&msg.fields, &msg.groups, &conversions);
-    // ponytail: generic Domain<D: SbeDecimal> scaffolded (detection, plumbing)
+    // ponytail: Domain<D> detection scaffolded but conversion not emitted, complete when domain mapping is implemented
     // but not yet emitted — the identity escape hatch (SbeDecimal for Decimal)
     // is already emitted by generate_converter_impls; users get raw
     // Decimal in DTOs today and can convert in app code. Full generic DTO
@@ -2481,7 +2481,7 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                     continue;
                 }
                 let fmt_str = format!("{sep}{snake}: {{:?}}");
-                // ponytail: use {:?} so Option<T> always renders regardless of T: Display
+                // ponytail: {:?} renders Option<T> without T: Display bound, switch to {} if all field types gain Display
                 body.extend(quote::quote! {
                     if #in_bounds {
                         let v = self.#f_ident();
@@ -3035,7 +3035,7 @@ fn generate_group_decoder(
                     }
                 });
 
-                // ponytail: _lazy alias removed — the base accessor is the canonical path
+                // ponytail: no lazy alias, base accessor is canonical; delete branch if lazy aliases never return
             }
             FieldType::Enum {
                 name: enum_name,
@@ -3789,7 +3789,7 @@ fn generate_raw_fixed_impls(
             #[inline]
             #[must_use]
             pub fn finish_unchecked(self) -> &'a mut [u8] {
-                // ponytail: caller guarantees the fixed block is valid;
+                // ponytail: no validation of fixed block here — caller guarantees validity, add a debug_assert! if callers regress
                 // returns the tail portion of the buffer for manual use.
                 let body_start = self.message_start + #header_size;
                 let tail_start = body_start + #block_length;

@@ -69,7 +69,7 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         src.contains("#[allow(dead_code)]"),
         "generated code must suppress dead_code"
     );
-    // ponytail: #[allow(unused_unsafe)] removed along with scalar raw_* methods —
+    // ponytail: unused_unsafe suppressors removed with raw_* methods; if raw methods return, re-add allow(unused_unsafe) to generated output
     // enum/set/composite raw_* return the underlying repr directly without wrapping unsafe
     Ok(())
 }

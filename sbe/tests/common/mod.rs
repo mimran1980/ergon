@@ -156,7 +156,7 @@ pub fn assert_source_ok(src: &str, expected: &[&str]) {
 
 /// Apply surgical patches for known codegen bugs.
 pub fn patch_source(src: &str) -> String {
-    // ponytail: all patches are dead — codegen now produces correct code.
+    // ponytail: no patches needed currently; if a new codegen bug requires patching, add the patch here and record the bug; delete this function if it stays empty two releases
     // Entry encoders use the unsafe borrow split directly.
     // Message encoders take `mut self` by value so no borrow conflict.
     src.to_string()

@@ -232,7 +232,7 @@ pub(crate) fn to_upper_snake_case(s: &str) -> String {
 
 pub(crate) fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
     match prim {
-        // ponytail: parser validates single-char char constants (xml.rs:252,658).
+        // ponytail: parser validates single-char constants, generator trusts it; add a debug_assert! if parser ever skips validation
         PrimitiveType::Char => format!("b'{}'", val),
         PrimitiveType::Float => {
             format!("{}f32", val)
@@ -811,7 +811,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         }
     }
 
-    // ponytail: refactor ctor_params into proper syn::FnArg when polishing
+    // ponytail: manual String param parsing instead of syn::FnArg, refactor when generated code interface stabilises
 
     // Emit composite doc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {

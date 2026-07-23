@@ -245,7 +245,7 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
                 return (0, end_idx + 1);
             }
             // Size is the size of the contents
-            // ponytail: constant fields don't occupy wire space, always return 0
+            // ponytail: constant fields return 0 size (no wire footprint), add schema validation if runtime constants ever change
             if tokens[start].encoding.presence == crate::ir::Presence::Constant {
                 return (0, end_idx + 1);
             }
@@ -298,7 +298,7 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
                 .map_or(0, |p| p.size());
             (size, end_idx + 1)
         }
-        // ponytail: composite children are always Begin* signals; Encoding
+        // ponytail: composite children always Begin* signals (Encoding never Composite), add Composite check if schema validation weakens
         // tokens are nested inside BeginEnum/BeginSet/EndEnum/EndSet and
         // never appear as direct children.
         _ => (0, start + 1),
