@@ -19,6 +19,51 @@ All examples assume the standard Car schema (message `Car` with fields
 `serialNumber`, `modelYear`, `available`, `code`, plus a `fuelFigures` group
 and a `manufacturer` var-data field).
 
+### Decoder entry point — try_from / wrap_and_apply_header
+
+Decoding starts from a byte slice. `try_from` is the infallible-ish entry
+(it verifies header + block length). `wrap_and_apply_header` gives you
+control over the starting offset for framed protocols.
+
+```rust
+// Simplest entry: verify header and decode.
+let dec = CarDecoder::try_from(bytes)?;
+assert_eq!(dec.serial_number(), 1234);
+
+// Offset-aware: decode a message at position `pos` within a larger buffer.
+// The header at `pos` tells the decoder the template ID, schema ID, version,
+// and acting block length.
+let dec = CarDecoder::wrap_and_apply_header(buffer, pos)?;
+```
+
+### Encoder entry point — wrap_and_apply_header
+
+The encoder writes the SBE message header (block length, template ID, schema
+ID, version) into the buffer, then returns the fixed-field stage.
+
+```rust
+let mut buf = vec![0u8; 512];
+let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
+// Header written. enc is the fixed-field stage — ready for .fixed() or .raw_fixed().
+```
+
+### Exact buffer sizing — compute_encoded_length_with_message_header
+
+Never guess the buffer size. The generated `compute_encoded_length_with_message_header`
+method calculates the exact byte count including the message header, fixed fields,
+group dimensions, and variable data — zero allocation.
+
+```rust
+// For a Car with 3 fuel figures and a 12-byte manufacturer:
+let len = CarEncoder::compute_encoded_length_with_message_header(3, 12);
+let mut buf = vec![0u8; len];                              // exactly right
+
+let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
+// ... encode groups and var-data ...
+let complete = /* ... */;
+assert_eq!(complete.encoded_length(), len);                // proves it fits
+```
+
 ### Consuming decoder — ordered tail stages
 
 Groups and variable data are decoded in wire order. The type system enforces
