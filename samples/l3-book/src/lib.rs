@@ -1,0 +1,54 @@
+//! L3 order book codecs — generated from schemas/l3-book.xml.
+
+#[allow(dead_code, unused_imports, unused_variables, clippy::all)]
+mod l3_codec {
+    include!(concat!(env!("OUT_DIR"), "/l3_codec.rs"));
+}
+pub use l3_codec::*;
+
+const TS: u64 = 1_720_000_000_000_000_000;
+
+pub fn encode_book(
+    buf: &mut [u8],
+    bids: &[(i64, i64, &[(u64, u64, i64)])],
+    asks: &[(i64, i64, &[(u64, u64, i64)])],
+    symbol: &[u8],
+) -> Result<usize, sbe_rt::EncodeError> {
+    let enc = L3BookEncoder::wrap_and_apply_header(buf, 0)?;
+    let enc = enc.fixed(&L3BookFixedFields { exchange_timestamp: TS, sequence: 42 });
+
+    let after_bids = enc.bids(bids.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
+        for (price, size, orders) in bids {
+            g.add(|e| {
+                e.price(*price); e.size(*size);
+                e.orders(orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
+                    for (oid, qty, o_price) in *orders {
+                        og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(*oid); oe.quantity(*qty); oe.price(*o_price); Ok::<(), sbe_rt::EncodeError>(()) })?;
+                    }
+                    Ok::<(), sbe_rt::EncodeError>(())
+                })?;
+                Ok::<(), sbe_rt::EncodeError>(())
+            })?;
+        }
+        Ok::<(), sbe_rt::EncodeError>(())
+    })?;
+
+    let after_asks = after_bids.asks(asks.len() as u16, |g| -> Result<(), sbe_rt::EncodeError> {
+        for (price, size, orders) in asks {
+            g.add(|e| {
+                e.price(*price); e.size(*size);
+                e.orders(orders.len() as u16, |og| -> Result<(), sbe_rt::EncodeError> {
+                    for (oid, qty, o_price) in *orders {
+                        og.add(|oe| -> Result<(), sbe_rt::EncodeError> { oe.order_id(*oid); oe.quantity(*qty); oe.price(*o_price); Ok::<(), sbe_rt::EncodeError>(()) })?;
+                    }
+                    Ok::<(), sbe_rt::EncodeError>(())
+                })?;
+                Ok::<(), sbe_rt::EncodeError>(())
+            })?;
+        }
+        Ok::<(), sbe_rt::EncodeError>(())
+    })?;
+
+    let complete = after_asks.symbol(symbol)?;
+    Ok(complete.encoded_length())
+}

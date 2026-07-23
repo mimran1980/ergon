@@ -1,0 +1,12 @@
+[package]
+name = "l3-book"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "L3 order book sample — nested groups encode/decode with dummy data"
+
+[dependencies]
+ergo-sbe = { path = "../../sbe" }
+
+[build-dependencies]
+ergo-sbe = { path = "../../sbe" }

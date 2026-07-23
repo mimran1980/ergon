@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="ergo.samples.l3" id="200" version="0"
+               byteOrder="littleEndian"
+               xsi:noNamespaceSchemaLocation="sbe.xsd"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId"   primitiveType="uint16"/>
+      <type name="schemaId"     primitiveType="uint16"/>
+      <type name="version"      primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup"  primitiveType="uint16"/>
+    </composite>
+    <composite name="varAsciiEncoding">
+      <type name="length"   primitiveType="uint32"/>
+      <type name="varData"  primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="L3Book" id="1">
+    <field name="exchangeTimestamp" id="1" type="uint64" offset="0"/>
+    <field name="sequence"          id="2" type="uint64" offset="8"/>
+    <group name="bids" id="3" dimensionType="groupSizeEncoding">
+      <field name="price" id="4" type="int64"  offset="0"/>
+      <field name="size"  id="5" type="int64"  offset="8"/>
+      <group name="orders" id="6" dimensionType="groupSizeEncoding">
+        <field name="orderId"  id="7"  type="uint64" offset="0"/>
+        <field name="quantity" id="8"  type="uint64" offset="8"/>
+        <field name="price"    id="9"  type="int64"  offset="16"/>
+      </group>
+    </group>
+    <group name="asks" id="10" dimensionType="groupSizeEncoding">
+      <field name="price" id="11" type="int64"  offset="0"/>
+      <field name="size"  id="12" type="int64"  offset="8"/>
+      <group name="orders" id="13" dimensionType="groupSizeEncoding">
+        <field name="orderId"  id="14" type="uint64" offset="0"/>
+        <field name="quantity" id="15" type="uint64" offset="8"/>
+        <field name="price"    id="16" type="int64"  offset="16"/>
+      </group>
+    </group>
+    <data name="symbol" id="17" type="varAsciiEncoding" characterEncoding="ASCII"/>
+  </message>
+</messageSchema>
