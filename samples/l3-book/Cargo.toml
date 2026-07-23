@@ -8,5 +8,12 @@ description = "L3 order book sample — nested groups encode/decode with dummy d
 [dependencies]
 ergo-sbe = { path = "../../sbe" }
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [build-dependencies]
 ergo-sbe = { path = "../../sbe" }
+
+[[bench]]
+name = "api_combinations"
+harness = false
