@@ -13,24 +13,256 @@ The goal is to prototype generated Rust interfaces that are easier and safer to
 use without giving up low-latency performance. Useful ideas may eventually be
 adapted for the official Java SBE Rust generator.
 
-## Current capabilities
+## Feature tour
 
-- SBE XML parsing, validation, includes, and schema normalization.
-- Rust generation for messages, primitives, enums, sets, composites, repeating
-  groups, and variable data.
-- Acting-version-aware decoding and configurable byte order.
-- Borrowed flyweight decoding and mutable-buffer encoding.
-- Concrete consuming stages for ordered group and variable-data tails.
-- Message dispatch, framing helpers, diagnostics, schema fixtures, allocation
-  tests, and Aeron reference comparisons.
-- Optional `serde` derives and an experimental domain-object layer.
+All examples assume the standard Car schema (message `Car` with fields
+`serialNumber`, `modelYear`, `available`, `code`, plus a `fuelFigures` group
+and a `manufacturer` var-data field).
 
-These capabilities do not mean the planned interface is complete. The current
-review found partial converter emission, bypassable fixed-field completion,
-incomplete recursive domain mapping, incomplete composite symmetry, and
-inconsistent handling of schema-declared text. See the single
-[`implementation plan`](../.scratch/release-readiness/spec.md) for the exact design and
-open acceptance criteria.
+### Consuming decoder — ordered tail stages
+
+Groups and variable data are decoded in wire order. The type system enforces
+the schema sequence: you cannot read `manufacturer` before `fuelFigures`.
+
+```rust
+let dec = CarDecoder::try_from(bytes)?;
+let serial = dec.serial_number();
+let year = dec.model_year();
+
+// Groups consume the current stage — finish() advances to the next.
+let fuel = dec.into_fuel_figures()?;             // → FuelFiguresGroupDecoder
+let mut speeds = Vec::new();
+while let Some(e) = fuel.next() {
+    speeds.push(e.speed());                       // entry-level accessor
+}
+let after_group = fuel.finish()?;                 // → AfterFuelFigures stage
+
+// Var-data comes next. Schema-declared ASCII → fallible &str.
+let (manufacturer, complete) = after_group.into_manufacturer_as_str()?;
+assert_eq!(manufacturer, "Aston Martin");
+
+// Only the complete stage exposes the full buffer view.
+let raw_bytes = complete.as_bytes();
+```
+
+### Decoder lifecycle — rewind, skip_remaining
+
+Decoders are `Copy` flyweights. `rewind()` returns to the initial stage so
+you can re-decode the same buffer. `skip_remaining()` fast-forwards past an
+unwanted tail.
+
+```rust
+let dec = CarDecoder::try_from(bytes)?;
+// ... partial decode ...
+let fresh = dec.rewind();                         // back to CarDecoder stage
+assert_eq!(fresh.serial_number(), serial);
+
+let dec2 = CarDecoder::try_from(bytes)?;
+let after = dec2.into_fuel_figures()?
+    .skip_remaining()?;                           // skip all entries
+let (mfr, _) = after.into_manufacturer_as_str()?;
+```
+
+### Safe encoder — fixed struct + ordered tail
+
+Encoders use a type-state pattern. You must write the fixed fields before
+reaching the tail. `FixedFields` is a struct; passing it to `fixed()` is the
+only way to advance.
+
+```rust
+let mut buf = vec![0u8; CarEncoder::compute_encoded_length_with_message_header(
+    2, 10
+)];
+let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
+
+// All required fixed fields in one struct — no forgotten setter.
+let fixed = CarFixedFields {
+    serial_number: 1234,
+    model_year: 2024,
+    available: BooleanType::TRUE,
+    code: Model::A,
+};
+let after_fixed = enc.fixed(&fixed);               // → CarFuelFiguresGroupEncoder
+
+// Groups use a closure that accepts &mut EntryEncoder.
+let after_group = after_fixed.fuel_figures(2, |g| -> Result<(), EncodeError> {
+    g.add(|e| { e.speed(220); e.mpg(35); })?;
+    g.add(|e| { e.speed(240); e.mpg(33); })?;
+    Ok(())
+})?;                                                // → AfterFuelFiguresEncoder
+
+let complete = after_group.manufacturer_str("Aston Martin")?;
+
+// Exact header-inclusive length, no guessing.
+assert_eq!(complete.encoded_length(), buf.len());
+let wire = complete.as_bytes();                     // &[u8] — no alloc
+```
+
+### raw_fixed — escape hatch
+
+When you need individual fixed-field setters instead of a struct:
+
+```rust
+let mut writer = enc.raw_fixed();
+writer.serial_number(1234);
+writer.model_year(2024);
+writer.available(BooleanType::TRUE);
+writer.code(Model::A);
+let after_fixed = writer.finish_unchecked();        // manual transition
+```
+
+### Version-aware decoding
+
+Decoders honour the wire message version. Fields added in a later schema
+version return `FieldNotInVersion` when absent from the acting version.
+
+```rust
+let dec = CarDecoder::try_from(bytes)?;
+assert_eq!(dec.acting_version(), 0);                // wire message version
+
+// Optional/sinceVersion fields expose their presence:
+match dec.some_new_field() {
+    Ok(val) => println!("present: {val}"),
+    Err(DecodeError::FieldNotInVersion { .. }) => println!("not in v0"),
+    Err(e) => return Err(e.into()),
+}
+```
+
+### Text variable data — zero-copy &str
+
+When the schema declares `characterEncoding="UTF-8"` or `ASCII`, the decoder
+emits a fallible `&str` accessor. Invalid bytes are a typed error — never a
+silent lossy substitution.
+
+```rust
+let (mfr_str, next) = after_fixed.into_manufacturer_as_str()?;
+// mfr_str: &str — zero-copy, zero-alloc
+
+// Binary var-data stays as &[u8]:
+let (payload, next) = after.into_payload()?;
+// payload: &[u8]
+```
+
+### Message dispatch — AnyMessage + FrameCursor
+
+Multi-message schemas get an `AnyMessage` enum and a `FrameCursor` for
+decoding byte streams without knowing the template ahead of time.
+
+```rust
+let header = MessageHeader::try_from_prefix(frame)?;
+match header.template_id() {
+    CarDecoder::TEMPLATE_ID => {
+        let car = CarDecoder::try_from(frame)?;
+        // ...
+    }
+    MotorcycleDecoder::TEMPLATE_ID => {
+        let bike = MotorcycleDecoder::try_from(frame)?;
+        // ...
+    }
+    _ => println!("unknown template {}", header.template_id()),
+}
+
+// Or with the generated AnyMessage dispatcher:
+let cursor = FrameCursor::new(bytes);
+while let Some(decoded) = cursor.next()? {
+    match decoded.message {
+        AnyMessage::Car(car) => handle_car(&car),
+        AnyMessage::Motorcycle(bike) => handle_bike(&bike),
+    }
+}
+```
+
+### Exact-length encoding — encode_into
+
+Every generated owned message has `encoded_length_with_header()` and
+`encode_into()` for zero-alloc caller-buffer encoding.
+
+```rust
+let msg = CarOwned {
+    serial_number: 55,
+    model_year: 2025,
+    manufacturer: "Lotus".into(),
+    fuel_figures: vec![FuelFigure { speed: 220, mpg: 35 }],
+};
+
+let len = msg.encoded_length_with_header()?;
+let mut buf = vec![0u8; len];
+let encoded: &[u8] = msg.encode_into(&mut buf)?;     // exact prefix
+assert_eq!(encoded.len(), len);
+```
+
+### GroupEncodeResult — try_? inside group closures
+
+Group `add` closures can return `Result`, letting you use `?` inside
+without a separate `try_add` method.
+
+```rust
+after_fixed.fuel_figures(2, |g| -> Result<(), MyError> {
+    g.add(|e| {
+        e.speed(parse_speed()?);                     // ? works
+        e.mpg(35);
+        Ok::<(), MyError>(())
+    })?;
+    Ok(())
+})?;
+```
+
+### Domain converters — TryFromSbe / TryToSbe
+
+Configure field-level or type-level converters. The generator emits
+`field_as::<T>()` on decoders and `field_from(&T)` on encoders.
+
+```rust
+// Generator config:
+//   config.with_conversion(ConversionSelector::SemanticType("Decimal"));
+
+// Generated decoder:
+let dec = CarDecoder::try_from(bytes)?;
+let price: rust_decimal::Decimal = dec.price_as()?;    // automatic conversion
+
+// Generated encoder:
+enc.price_from(&rust_decimal::Decimal::new(50000, 2));
+```
+
+### Composites, enums, and sets
+
+Named composites get flyweight views and owned values with direct encoders.
+Enums and sets expose `raw()` and symbolic accessors.
+
+```rust
+// Composite fuel figure:
+let e = fuel.next().unwrap();
+let speed = e.speed();                                 // u16 accessor
+let ffig = e.value();                                  // FuelFigure owned value
+
+// Enum:
+let code = dec.code();                                 // Model enum
+assert_eq!(code, Model::A);
+let raw: u8 = code.raw();                              // 0x01
+
+// Set (bitmap):
+let flags = dec.options();
+assert!(flags.contains(Options::Sunroof));
+let raw: u32 = flags.raw();
+```
+
+### Verification — header + bounds check
+
+`verify()` does a structural sanity check without decoding every field.
+
+```rust
+if let Err(e) = CarDecoder::verify(bytes) {
+    eprintln!("malformed Car frame: {e}");
+    return Err(e.into());
+}
+let dec = CarDecoder::try_from(bytes)?;                // now infallible-ish
+```
+
+---
+
+These are current capabilities. The interface is still evolving — see the
+[`implementation plan`](../.scratch/release-readiness/spec.md) for open acceptance
+criteria and design rationale.
 
 ## Build and test
 
@@ -87,10 +319,6 @@ Include the generated file from the consuming crate:
 ```rust,ignore
 include!(concat!(env!("OUT_DIR"), "/messages.rs"));
 ```
-
-Generated surface details are deliberately not duplicated here while the
-pre-release redesign is unfinished. Generated code and tests are the truth for
-current behaviour; the implementation plan is the truth for intended behaviour.
 
 ## Design direction
 
