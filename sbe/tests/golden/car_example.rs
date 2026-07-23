@@ -4764,9 +4764,9 @@ impl PerformanceFiguresEncodedLength {
     /// Track a nested repeating group inside one entry.
     pub fn acceleration<F>(&mut self, count: u16, f: F) -> sbe_rt::GroupResult
     where
-        F: FnOnce(&mut AccelerationEncodedLength) -> sbe_rt::GroupResult,
+        F: FnOnce(&mut PerformanceFiguresAccelerationEncodedLength) -> sbe_rt::GroupResult,
     {
-        let mut builder = AccelerationEncodedLength::new();
+        let mut builder = PerformanceFiguresAccelerationEncodedLength::new();
         f(&mut builder)?;
         if builder.written != count as usize {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
@@ -4785,9 +4785,9 @@ impl PerformanceFiguresEncodedLength {
     /// the wire type rather than requiring an exact match.
     pub fn acceleration_unknown_size<F>(&mut self, f: F) -> sbe_rt::GroupResult
     where
-        F: FnOnce(&mut AccelerationEncodedLength) -> sbe_rt::GroupResult,
+        F: FnOnce(&mut PerformanceFiguresAccelerationEncodedLength) -> sbe_rt::GroupResult,
     {
-        let mut builder = AccelerationEncodedLength::new();
+        let mut builder = PerformanceFiguresAccelerationEncodedLength::new();
         f(&mut builder)?;
         let max_count = u16::MAX as usize;
         if builder.written > max_count {
@@ -4805,11 +4805,11 @@ impl PerformanceFiguresEncodedLength {
     }
 }
 #[must_use = "length builder tracks entry sizes"]
-pub struct AccelerationEncodedLength {
+pub struct PerformanceFiguresAccelerationEncodedLength {
     len: usize,
     written: usize,
 }
-impl AccelerationEncodedLength {
+impl PerformanceFiguresAccelerationEncodedLength {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     pub fn new() -> Self {
         Self { len: 0, written: 0 }
