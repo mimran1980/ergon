@@ -4453,7 +4453,8 @@ fn generate_message_encoder(
             let num_size_lit = syn::LitInt::new(&num_size.to_string(), span);
             let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
-            let g_snake_unknown = syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&g.name)), span);
+            let g_snake_unknown =
+                syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&g.name)), span);
 
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
@@ -4951,6 +4952,66 @@ fn generate_group_encoder(
             }
         }
     });
+
+    // add_struct: when the entry has no nested groups or var-data, generate
+    // a named value struct so callers can write whole entries in one call.
+    if g.groups.is_empty() && g.var_data.is_empty() {
+        let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
+        let mut struct_fields = proc_macro2::TokenStream::new();
+        let mut struct_write = proc_macro2::TokenStream::new();
+        for f in &g.fields {
+            if f.presence == Presence::Constant {
+                continue;
+            }
+            let f_name = syn::Ident::new(&to_snake_case(&f.name), span);
+            let f_ty = field_type_ident(&f.field_type, span);
+            let f_offset = syn::Index::from(f.offset);
+            let f_size = syn::LitInt::new(&f.field_type.size().to_string(), span);
+            struct_fields.extend(quote::quote! { pub #f_name: #f_ty, });
+            if let FieldType::Composite { .. } = &f.field_type {
+                struct_write.extend(quote::quote! {
+                    self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name.0);
+                });
+            } else {
+                struct_write.extend(quote::quote! {
+                    self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name.#to_endian());
+                });
+            }
+        }
+        ts.extend(quote::quote! {
+            /// Value struct for this group's entries. Pass to [`Self::add_struct`].
+            #[derive(Debug, Clone, PartialEq)]
+            pub struct #entry_struct_ident {
+                #struct_fields
+            }
+        });
+        ts.extend(quote::quote! {
+            impl<'a> #group_enc_ident<'a> {
+                /// Write one entry from a struct. Faster than [`Self::add`] when
+                /// the entry has no nested groups or var-data.
+                pub fn add_struct(&mut self, entry: &#entry_struct_ident) -> Result<(), sbe_rt::EncodeError> {
+                    if self.written as u32 >= self.count as u32 {
+                        return Err(sbe_rt::EncodeError::GroupFull {
+                            declared: self.count as u32,
+                            attempted: (self.written as u32) + 1,
+                        });
+                    }
+                    let block_len = Self::ENTRY_BLOCK_LENGTH;
+                    if self.pos + block_len > self.buf.len() {
+                        return Err(sbe_rt::EncodeError::BufferTooShort {
+                            needed: block_len,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        });
+                    }
+                    let pos = self.pos;
+                    self.pos += block_len;
+                    self.written += 1;
+                    #struct_write
+                    Ok(())
+                }
+            }
+        });
+    }
 
     // Entry encoder struct + all methods in a single impl block
     let mut entry_methods = proc_macro2::TokenStream::new();

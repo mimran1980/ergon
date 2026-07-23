@@ -9,10 +9,7 @@ fn main() {
     let schema_path = manifest_dir.join("schemas").join("protocol-codecs.xml");
 
     if !schema_path.exists() {
-        panic!(
-            "RFQ schema not found at {}",
-            schema_path.display()
-        );
+        panic!("RFQ schema not found at {}", schema_path.display());
     }
 
     let xml_src = fs::read_to_string(&schema_path)
@@ -32,8 +29,7 @@ fn main() {
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let out_path = out_dir.join("rfq_codec.rs");
-    fs::write(&out_path, &m.source)
-        .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+    fs::write(&out_path, &m.source).unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
 
     println!("cargo::rerun-if-changed={}", schema_path.display());
 }

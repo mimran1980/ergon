@@ -122,7 +122,10 @@ fn backpressure_drops_once_without_retry_and_counts() -> Result<(), Box<dyn std:
     assert_eq!(p.counters().dropped_backpressure, 1);
 
     let typed = p.into_adapter();
-    assert_eq!(typed.claim_attempts, 1, "exactly one claim attempt, no retry");
+    assert_eq!(
+        typed.claim_attempts, 1,
+        "exactly one claim attempt, no retry"
+    );
     assert!(typed.committed.is_empty());
 
     Ok(())
@@ -196,7 +199,8 @@ fn every_drop_reason_maps_to_its_counter() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
-fn derived_ipc_mtu_covers_the_largest_maintained_message() -> Result<(), Box<dyn std::error::Error>> {
+fn derived_ipc_mtu_covers_the_largest_maintained_message() -> Result<(), Box<dyn std::error::Error>>
+{
     use exchange_example::publication::{derive_ipc_mtu, worst_case_typed_claim_len};
     let worst = worst_case_typed_claim_len();
     let mtu = derive_ipc_mtu();

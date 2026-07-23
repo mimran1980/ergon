@@ -49,14 +49,17 @@ pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
 
     match tid {
         SessionEventEncoder::TEMPLATE_ID => {
-            let decoder = SessionEventDecoder::wrap_and_apply_header(data, 0)
-                .map_err(|_| ClusterError::ProtocolError { reason: "short SessionEvent".into() })?;
+            let decoder =
+                SessionEventDecoder::wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
+                    reason: "short SessionEvent".into(),
+                })?;
             let cid = decoder.correlation_id();
             let csid = decoder.cluster_session_id();
             let ltid = decoder.leadership_term_id();
             let lmid = decoder.leader_member_id();
             let code = decoder.code();
-            let (detail_str, _) = decoder.into_detail_as_str()
+            let (detail_str, _) = decoder
+                .into_detail_as_str()
                 .map_err(|_| ClusterError::InvalidUtf8 { field: "detail" })?;
             Ok(Some(EgressEvent::SessionEvent {
                 correlation_id: cid,
@@ -68,12 +71,17 @@ pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
             }))
         }
         ChallengeEncoder::TEMPLATE_ID => {
-            let decoder = ChallengeDecoder::wrap_and_apply_header(data, 0)
-                .map_err(|_| ClusterError::ProtocolError { reason: "short Challenge".into() })?;
+            let decoder =
+                ChallengeDecoder::wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
+                    reason: "short Challenge".into(),
+                })?;
             let cid = decoder.correlation_id();
             let csid = decoder.cluster_session_id();
-            let (chal, _) = decoder.into_encoded_challenge()
-                .map_err(|_| ClusterError::ProtocolError { reason: "short challenge payload".into() })?;
+            let (chal, _) = decoder
+                .into_encoded_challenge()
+                .map_err(|_| ClusterError::ProtocolError {
+                    reason: "short challenge payload".into(),
+                })?;
             Ok(Some(EgressEvent::Challenge {
                 correlation_id: cid,
                 cluster_session_id: csid,
@@ -81,13 +89,18 @@ pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
             }))
         }
         NewLeaderEventEncoder::TEMPLATE_ID => {
-            let decoder = NewLeaderEventDecoder::wrap_and_apply_header(data, 0)
-                .map_err(|_| ClusterError::ProtocolError { reason: "short NewLeaderEvent".into() })?;
+            let decoder =
+                NewLeaderEventDecoder::wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
+                    reason: "short NewLeaderEvent".into(),
+                })?;
             let csid = decoder.cluster_session_id();
             let ltid = decoder.leadership_term_id();
             let lmid = decoder.leader_member_id();
-            let (eps_str, _) = decoder.into_ingress_endpoints_as_str()
-                .map_err(|_| ClusterError::InvalidUtf8 { field: "ingress_endpoints" })?;
+            let (eps_str, _) = decoder
+                .into_ingress_endpoints_as_str()
+                .map_err(|_| ClusterError::InvalidUtf8 {
+                    field: "ingress_endpoints",
+                })?;
             Ok(Some(EgressEvent::NewLeader {
                 cluster_session_id: csid,
                 leadership_term_id: ltid,

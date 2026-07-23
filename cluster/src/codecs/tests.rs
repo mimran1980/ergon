@@ -73,4 +73,3 @@ fn test_challenge_and_new_leader_encode() -> Result<(), Box<dyn std::error::Erro
     assert!(complete2.as_bytes_with_header().len() > 8);
     Ok(())
 }
-
