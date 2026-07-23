@@ -41,8 +41,8 @@ fn l3_schema_generates_and_compiles() -> Result<(), Box<dyn std::error::Error>> 
     );
     assert!(src.contains("L3BookEncoder"), "missing L3BookEncoder");
     assert!(
-        src.contains("compute_encoded_length"),
-        "missing compute_encoded_length"
+        src.contains("L3BookEncodedLength"),
+        "missing L3BookEncodedLength"
     );
 
     Ok(())
@@ -157,9 +157,22 @@ fn l3_compute_encoded_length_positive() -> Result<(), Box<dyn std::error::Error>
         "l3_len",
         &src,
         r#"
-        let body_len = L3BookEncoder::compute_encoded_length(2, 1);
+        let body_len = L3BookEncodedLength::new()
+            .bids(2, |bids| {
+                bids.add()?;
+                bids.orders(0, |_| Ok(()))?;
+                bids.add()?;
+                bids.orders(0, |_| Ok(()))?;
+                Ok(())
+            }).unwrap()
+            .asks(1, |asks| {
+                asks.add()?;
+                asks.orders(0, |_| Ok(()))?;
+                Ok(())
+            }).unwrap()
+            .encoded_length();
         assert!(body_len > 0, "computed length must be positive: {}", body_len);
-        println!("compute_encoded_length(2 bids, 1 ask): {} bytes", body_len);
+        println!("L3BookEncodedLength(2 bids, 1 ask): {} bytes", body_len);
         "#,
     );
 
