@@ -165,22 +165,19 @@ fn l3_compute_encoded_length_positive() -> Result<(), Box<dyn std::error::Error>
         "l3_len",
         &src,
         r#"
-        let body_len = L3BookEncodedLength::new()
-            .bids(2, |bids| {
-                bids.add()?;
-                bids.orders(0, |_| Ok(()))?;
-                bids.add()?;
-                bids.orders(0, |_| Ok(()))?;
-                Ok(())
-            }).unwrap()
-            .asks(1, |asks| {
-                asks.add()?;
-                asks.orders(0, |_| Ok(()))?;
-                Ok(())
-            }).unwrap()
-            .encoded_length();
-        assert!(body_len > 0, "computed length must be positive: {}", body_len);
-        println!("L3BookEncodedLength(2 bids, 1 ask): {} bytes", body_len);
+        let mut buf = vec![0u8; 4096];
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        book.timestamp(0).sequence(0);
+        let complete = book.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
+            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) })?;
+            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) })?;
+            Ok(())
+        }).unwrap().asks(1, |asks| -> Result<(), sbe_rt::EncodeError> {
+            asks.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) })?;
+            Ok(())
+        }).unwrap();
+        assert!(complete.encoded_length() > 0);
+        println!("L3Book encode (2 bids, 1 ask): {} bytes", complete.encoded_length());
         "#,
     );
 

@@ -520,7 +520,10 @@ impl Generator {
         // 6c. Emit EncodedLengthAccumulator if any message needs staged builder
         {
             let has_staged = messages.iter().any(|m| {
-                matches!(encoded_length::strategy(m), encoded_length::LengthStrategy::Staged)
+                matches!(
+                    encoded_length::strategy(m),
+                    encoded_length::LengthStrategy::Staged
+                )
             });
             if has_staged {
                 let support_ts = encoded_length::generate_support();
@@ -4618,8 +4621,7 @@ fn generate_message_encoder(
     let total_tail = msg.groups.len() + msg.var_data.len();
     let is_fixed = total_tail == 0;
     // Classify and generate encoded-length support.
-    let encoded_len_gen =
-        encoded_length::generate(msg, block_length, header_size, elements);
+    let encoded_len_gen = encoded_length::generate(msg, block_length, header_size, elements);
     let encoded_length = header_size + block_length;
     let mut max_tail = 0usize;
     for g in &msg.groups {

@@ -5,7 +5,10 @@
 //! - `Direct`: flat groups + message varData → checked const-fn helpers.
 //! - `Staged`: nested groups or entry varData → staged builder types.
 
-use crate::structured_ir::{MessageStructure, MessageGroup, MessageVarData, SchemaElements, get_dimension_info, get_dim_num_layout, get_vardata_info, rust_type};
+use crate::structured_ir::{
+    MessageGroup, MessageStructure, MessageVarData, SchemaElements, get_dim_num_layout,
+    get_dimension_info, get_vardata_info, rust_type,
+};
 use proc_macro2::TokenStream;
 use quote::format_ident;
 
@@ -34,7 +37,11 @@ pub(super) fn strategy(message: &MessageStructure) -> LengthStrategy {
         .groups
         .iter()
         .any(|group| !group.groups.is_empty() || !group.var_data.is_empty());
-    if has_dynamic_entry { LengthStrategy::Staged } else { LengthStrategy::Direct }
+    if has_dynamic_entry {
+        LengthStrategy::Staged
+    } else {
+        LengthStrategy::Direct
+    }
 }
 
 /// Generate encoded-length support for one message.
@@ -51,9 +58,7 @@ pub(super) fn generate(
             standalone: TokenStream::new(),
         },
         LengthStrategy::Direct => generate_direct(message, block_length, header_size, elements),
-        LengthStrategy::Staged => {
-            generate_staged(message, block_length, header_size, elements)
-        }
+        LengthStrategy::Staged => generate_staged(message, block_length, header_size, elements),
     }
 }
 
@@ -149,11 +154,11 @@ fn generate_staged(
             let next_pascal = if tail_after_group < msg.groups.len() {
                 crate::codegen::to_pascal_case(&msg.groups[tail_after_group].name)
             } else {
-                crate::codegen::to_pascal_case(&msg.var_data[tail_after_group - msg.groups.len()].name)
+                crate::codegen::to_pascal_case(
+                    &msg.var_data[tail_after_group - msg.groups.len()].name,
+                )
             };
-            syn::Ident::new(
-                &format!("{msg_name}EncodedLengthAfter{next_pascal}"), span,
-            )
+            syn::Ident::new(&format!("{msg_name}EncodedLengthAfter{next_pascal}"), span)
         } else {
             syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
         };
@@ -163,8 +168,11 @@ fn generate_staged(
         if has_dynamic_entry {
             // Generate nested-group methods and varData methods on a pending uniform stage.
             let pending_ident = syn::Ident::new(
-                &format!("{msg_name}{}UniformEncodedLength",
-                    crate::codegen::to_pascal_case(&g.name)), span,
+                &format!(
+                    "{msg_name}{}UniformEncodedLength",
+                    crate::codegen::to_pascal_case(&g.name)
+                ),
+                span,
             );
 
             // Pending uniform stage struct
@@ -204,9 +212,12 @@ fn generate_staged(
                 } else {
                     // Nested group with entry varData: enter group, return nested pending stage.
                     let nested_pending = syn::Ident::new(
-                        &format!("{msg_name}{}{}UniformEncodedLength",
+                        &format!(
+                            "{msg_name}{}{}UniformEncodedLength",
                             crate::codegen::to_pascal_case(&g.name),
-                            crate::codegen::to_pascal_case(&ng.name)), span,
+                            crate::codegen::to_pascal_case(&ng.name)
+                        ),
+                        span,
                     );
 
                     standalone.extend(quote::quote! {
@@ -235,9 +246,8 @@ fn generate_staged(
 
                     // VarData on the nested pending stage — fallible
                     for nvd in &ng.var_data {
-                        let nvd_snake = syn::Ident::new(
-                            &crate::codegen::to_snake_case(&nvd.name), span,
-                        );
+                        let nvd_snake =
+                            syn::Ident::new(&crate::codegen::to_snake_case(&nvd.name), span);
                         let (_, nvd_prefix, _, _) = get_vardata_info(elements, &nvd.type_name);
                         let nvd_ps = syn::LitInt::new(&nvd_prefix.to_string(), span);
                         let nvd_field = &nvd.name;
@@ -375,7 +385,8 @@ fn generate_staged(
 
         let tail_after = tail_idx + 1;
         let next_name = if tail_after < total_tail {
-            let next_pascal = crate::codegen::to_pascal_case(&msg.var_data[tail_after - msg.groups.len()].name);
+            let next_pascal =
+                crate::codegen::to_pascal_case(&msg.var_data[tail_after - msg.groups.len()].name);
             syn::Ident::new(&format!("{msg_name}EncodedLengthAfter{next_pascal}"), span)
         } else {
             syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
@@ -674,7 +685,7 @@ pub(super) fn generate_support() -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::{strategy, LengthStrategy};
+    use super::{LengthStrategy, strategy};
     use crate::structured_ir::{parse_message_structure, partition_tokens};
     use std::path::PathBuf;
 
