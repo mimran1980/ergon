@@ -1,39 +1,63 @@
 use l3_book::*;
+fn d(m: i64, e: i8) -> Decimal { Decimal::new(m, e) }
 const T: u64 = 1_720_000_000_000_000_000;
 
 #[test]
 fn fixed_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookEncoder::compute_encoded_length_with_message_header(0, 0, 0);
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
     let mut buf = vec![0u8; len];
-    encode_book(&mut buf, &[], &[], b"")?;
+    let actual = encode_book(&mut buf, &[], &[], b"")?;
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..])?;
     assert_eq!(dec.exchange_timestamp(), T);
     assert_eq!(dec.sequence(), 42);
+    assert!(dec.is_active_bool());
     Ok(())
 }
 
 #[test]
 fn nested_orders_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    let o1 = [(1001u64, 5u64, 50800i64), (1002, 10, 50801)];
-    let o2 = [(1003u64, 25u64, 50750i64)];
-    let o3 = [(2001u64, 10u64, 50850i64)];
-    let bids = [(50800i64, 15i64, o1.as_slice()), (50750, 40, o2.as_slice())];
-    let asks = [(50850i64, 20i64, o3.as_slice())];
-    let mut buf = vec![0u8; 4096];
+    let o1 = [(1001u64, d(5, 0)), (1002, d(10, 0))];
+    let o2 = [(1003u64, d(25, 0))];
+    let o3 = [(2001u64, d(10, 0))];
+    let bids = [(d(50800, 0), d(15, 0), o1.as_slice()), (d(50750, 0), d(40, 0), o2.as_slice())];
+    let asks = [(d(50850, 0), d(20, 0), o3.as_slice())];
+    let len = L3BookEncodedLength::new()
+        .bids(bids.len() as u16, |b| {
+            for (_, _, orders) in &bids {
+                b.add()?;
+                b.orders(orders.len() as u16, |o| { for _ in *orders { o.add()?; } Ok(()) })?;
+            }
+            Ok(())
+        })?
+        .asks(asks.len() as u16, |a| {
+            for (_, _, orders) in &asks {
+                a.add()?;
+                a.orders(orders.len() as u16, |o| { for _ in *orders { o.add()?; } Ok(()) })?;
+            }
+            Ok(())
+        })?
+        .symbol(7)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = encode_book(&mut buf, &bids, &asks, b"BTCUSDT")?;
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     let mut b = dec.into_bids()?;
     assert_eq!(b.len(), 2);
-    for (i, (price, size, orders)) in bids.iter().enumerate() {
+    for (price, size, orders) in &bids {
         let e = b.next().transpose()?.unwrap();
-        assert_eq!(e.price(), *price);
-        assert_eq!(e.size(), *size);
+        assert_eq!(e.price_value(), *price);
+        assert_eq!(e.size_value(), *size);
         let mut og = e.into_orders()?;
-        for (j, (oid, qty, oprice)) in orders.iter().enumerate() {
+        for (oid, qty) in *orders {
             let oe = og.next().unwrap();
             assert_eq!(oe.order_id(), *oid);
-            assert_eq!(oe.quantity(), *qty);
-            assert_eq!(oe.price(), *oprice);
+            assert_eq!(oe.quantity_value(), *qty);
         }
         assert!(og.next().is_none());
         let _ = og.finish()?;
@@ -42,7 +66,7 @@ fn nested_orders_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let ab = b.finish()?;
     let mut a = ab.into_asks()?;
     let e = a.next().transpose()?.unwrap();
-    assert_eq!(e.price(), 50850);
+    assert_eq!(e.price_value(), d(50850, 0));
     let mut og = e.into_orders()?;
     assert_eq!(og.next().unwrap().order_id(), 2001);
     assert!(og.next().is_none());
@@ -55,7 +79,11 @@ fn nested_orders_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn display_contains_values() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookEncoder::compute_encoded_length_with_message_header(0, 0, 7);
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(7)?
+        .encoded_length_with_header();
     let mut buf = vec![0u8; len];
     encode_book(&mut buf, &[], &[], b"BTCUSDT")?;
     let d = format!("{}", L3BookDecoder::try_from(&buf[..])?);
@@ -66,7 +94,11 @@ fn display_contains_values() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn verify_ok() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookEncoder::compute_encoded_length_with_message_header(0, 0, 0);
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
     let mut buf = vec![0u8; len];
     encode_book(&mut buf, &[], &[], b"")?;
     assert!(L3BookDecoder::verify(&buf[..]).is_ok());
@@ -78,47 +110,62 @@ fn verify_truncated_fails() { assert!(L3BookDecoder::verify(&[0u8; 4]).is_err())
 
 #[test]
 fn empty_groups() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookEncoder::compute_encoded_length_with_message_header(0, 0, 0);
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
     let mut buf = vec![0u8; len];
     encode_book(&mut buf, &[], &[], b"")?;
     let dec = L3BookDecoder::try_from(&buf[..])?;
-    let mut b = dec.into_bids()?;
-    assert_eq!(b.len(), 0);
-    assert!(b.next().transpose()?.is_none());
+    assert_eq!(dec.into_bids()?.len(), 0);
     Ok(())
 }
 
 #[test]
 fn decoder_individual_field_accessors() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookEncoder::compute_encoded_length_with_message_header(0, 0, 0);
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
     let mut buf = vec![0u8; len];
     encode_book(&mut buf, &[], &[], b"")?;
     let dec = L3BookDecoder::try_from(&buf[..])?;
     assert_eq!(dec.exchange_timestamp(), T);
     assert_eq!(dec.sequence(), 42);
     assert_eq!(dec.acting_version(), 0);
-    let _ = dec.acting_block_length();
     Ok(())
 }
 
 #[test]
 fn encoder_as_bytes_and_encoded_length() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 256];
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(3)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::True })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
         .symbol(b"XYZ")?;
-    assert!(complete.encoded_length() > 0);
-    assert!(complete.as_bytes().len() == complete.encoded_length());
+    assert_eq!(complete.encoded_length_with_header(), len);
+    assert_eq!(complete.as_bytes().len(), len);
     Ok(())
 }
 
 #[test]
 fn max_value_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 256];
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: u64::MAX, sequence: u64::MAX })
+        .fixed(&L3BookFixedFields { exchange_timestamp: u64::MAX, sequence: u64::MAX, is_active: BooleanType::False })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
         .symbol(b"")?;
@@ -130,9 +177,14 @@ fn max_value_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn zero_value_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 256];
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: 0, sequence: 0 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: 0, sequence: 0, is_active: BooleanType::False })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
         .symbol(b"")?;
@@ -144,15 +196,17 @@ fn zero_value_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn try_from_short_buffer() {
-    let s: &[u8] = &[0u8; 2];
-    assert!(L3BookDecoder::try_from(s).is_err());
-    let s: &[u8] = &[0u8; 12];
-    assert!(L3BookDecoder::try_from(s).is_err());
+    assert!(L3BookDecoder::try_from(&[0u8; 2][..]).is_err());
+    assert!(L3BookDecoder::try_from(&[0u8; 12][..]).is_err());
 }
 
 #[test]
 fn rewind_returns_initial_decoder() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookEncoder::compute_encoded_length_with_message_header(0, 0, 0);
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
     let mut buf = vec![0u8; len];
     encode_book(&mut buf, &[], &[], b"")?;
     let dec = L3BookDecoder::try_from(&buf[..])?;
@@ -163,9 +217,17 @@ fn rewind_returns_initial_decoder() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn skip_remaining_on_group() -> Result<(), Box<dyn std::error::Error>> {
-    let o = [(1u64, 2u64, 50000i64), (3, 4, 50001), (5, 6, 50002)];
-    let bids = [(50000i64, 10i64, o.as_slice())];
-    let mut buf = vec![0u8; 4096];
+    let o = [(1u64, d(2, 0)), (3, d(4, 0)), (5, d(6, 0))];
+    let bids = [(d(50000, 0), d(10, 0), o.as_slice())];
+    let len = L3BookEncodedLength::new()
+        .bids(bids.len() as u16, |b| {
+            b.add()?; b.orders(o.len() as u16, |og| { for _ in &o { og.add()?; } Ok(()) })?;
+            Ok(())
+        })?
+        .asks(0, |_| Ok(()))?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     encode_book(&mut buf, &bids, &[], b"X")?;
     let dec = L3BookDecoder::try_from(&buf[..])?;
     let after = dec.into_bids()?.skip_remaining()?;
@@ -175,9 +237,17 @@ fn skip_remaining_on_group() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn group_len_accessor() -> Result<(), Box<dyn std::error::Error>> {
-    let o = [(1u64, 2u64, 3i64)];
-    let bids = [(1i64, 2i64, o.as_slice()), (3, 4, o.as_slice()), (5, 6, o.as_slice())];
-    let mut buf = vec![0u8; 4096];
+    let o = [(1u64, d(3, 0))];
+    let bids = [(d(1, 0), d(2, 0), o.as_slice()), (d(3, 0), d(4, 0), o.as_slice()), (d(5, 0), d(6, 0), o.as_slice())];
+    let len = L3BookEncodedLength::new()
+        .bids(bids.len() as u16, |b| {
+            for _ in &bids { b.add()?; b.orders(o.len() as u16, |og| { for _ in &o { og.add()?; } Ok(()) })?; }
+            Ok(())
+        })?
+        .asks(0, |_| Ok(()))?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     encode_book(&mut buf, &bids, &[], b"X")?;
     let dec = L3BookDecoder::try_from(&buf[..])?;
     assert_eq!(dec.into_bids()?.len(), 3);
@@ -186,26 +256,36 @@ fn group_len_accessor() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn complete_stage_as_bytes() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 256];
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(2)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 5 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 5, is_active: BooleanType::True })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
         .symbol(b"HI")?;
-    assert!(complete.as_bytes().len() >= 36);
+    assert_eq!(complete.as_bytes().len(), len);
     Ok(())
 }
 
 #[test]
 fn two_encodes_different_data() -> Result<(), Box<dyn std::error::Error>> {
-    let mut b1 = vec![0u8; 256]; let mut b2 = vec![0u8; 256];
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut b1 = vec![0u8; len]; let mut b2 = vec![0u8; len];
     let c1 = L3BookEncoder::wrap_and_apply_header(&mut b1, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: 1000, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: 1000, sequence: 1, is_active: BooleanType::False })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
         .symbol(b"A")?;
     let c2 = L3BookEncoder::wrap_and_apply_header(&mut b2, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: 2000, sequence: 2 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: 2000, sequence: 2, is_active: BooleanType::True })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
         .symbol(b"B")?;
@@ -217,24 +297,43 @@ fn two_encodes_different_data() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn negative_prices_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    let o = [(1u64, 2u64, -500i64)];
-    let bids = [(-100i64, 5i64, o.as_slice())];
-    let asks = [(-200i64, 3i64, o.as_slice())];
-    let mut buf = vec![0u8; 4096];
+    let o = [(1u64, d(2, 0))];
+    let bids = [(d(-100, 0), d(5, 0), o.as_slice())];
+    let asks = [(d(-200, 0), d(3, 0), o.as_slice())];
+    let len = L3BookEncodedLength::new()
+        .bids(bids.len() as u16, |b| {
+            b.add()?; b.orders(o.len() as u16, |og| { og.add()?; Ok(()) })?;
+            Ok(())
+        })?
+        .asks(asks.len() as u16, |a| {
+            a.add()?; a.orders(o.len() as u16, |og| { og.add()?; Ok(()) })?;
+            Ok(())
+        })?
+        .symbol(3)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = encode_book(&mut buf, &bids, &asks, b"OIL")?;
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     let e = dec.into_bids()?.next().transpose()?.unwrap();
-    assert_eq!(e.price(), -100);
-    let o = e.into_orders()?.next().unwrap();
-    assert_eq!(o.price(), -500);
+    assert_eq!(e.price_value(), d(-100, 0));
     Ok(())
 }
 
 #[test]
 fn large_order_count() -> Result<(), Box<dyn std::error::Error>> {
-    let orders: Vec<(u64, u64, i64)> = (0..50).map(|i| (i, i * 2, 50000 + i as i64)).collect();
-    let bids = [(50000i64, 100i64, orders.as_slice())];
-    let mut buf = vec![0u8; 8192];
+    let orders: Vec<(u64, Decimal)> = (0..50).map(|i| (i as u64, d(i * 2, 0))).collect();
+    let bids = [(d(50000, 0), d(100, 0), orders.as_slice())];
+    let len = L3BookEncodedLength::new()
+        .bids(bids.len() as u16, |b| {
+            b.add()?;
+            b.orders(orders.len() as u16, |o| { for _ in &orders { o.add()?; } Ok(()) })?;
+            Ok(())
+        })?
+        .asks(0, |_| Ok(()))?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     encode_book(&mut buf, &bids, &[], b"X")?;
     let dec = L3BookDecoder::try_from(&buf[..])?;
     let e = dec.into_bids()?.next().transpose()?.unwrap();
@@ -247,9 +346,14 @@ fn large_order_count() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn empty_symbol() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 256];
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::True })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
         .symbol(b"")?;
@@ -262,7 +366,11 @@ fn empty_symbol() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn long_symbol() -> Result<(), Box<dyn std::error::Error>> {
     let sym = b"ETHBTC-PERP-2024Q3";
-    let len = L3BookEncoder::compute_encoded_length_with_message_header(0, 0, sym.len());
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(sym.len())?
+        .encoded_length_with_header();
     let mut buf = vec![0u8; len];
     encode_book(&mut buf, &[], &[], sym)?;
     let (got, _) = L3BookDecoder::try_from(&buf[..])?.into_bids()?.finish()?.into_asks()?.finish()?.into_symbol()?;
@@ -271,107 +379,69 @@ fn long_symbol() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn dto_reencode_byte_identical() -> Result<(), Box<dyn std::error::Error>> {
-    let o1 = [(1001u64, 5u64, 50800i64)]; let o2 = [(1003u64, 25u64, 50750i64)];
-    let o3 = [(2001u64, 10u64, 50850i64)]; let o4 = [(2002u64, 20u64, 50900i64)];
-    let bids = [(50800, 15, o1.as_slice()), (50750, 40, o2.as_slice())];
-    let asks = [(50850, 20, o3.as_slice()), (50900, 30, o4.as_slice())];
-    let symbol = b"BTCUSDT";
-    let mut buf = vec![0u8; 4096];
-    let actual = encode_book(&mut buf, &bids, &asks, symbol)?;
-
-    #[derive(Debug, Clone)] struct O { oid: u64, qty: u64, price: i64 }
-    #[derive(Debug, Clone)] struct L { price: i64, size: i64, orders: Vec<O> }
-
-    let dec = L3BookDecoder::try_from(&buf[..actual])?;
-    let mut db = Vec::new(); let mut b = dec.into_bids()?;
-    while let Some(e) = b.next().transpose()? { let price = e.price(); let size = e.size();
-        let mut orders = Vec::new(); let mut og = e.into_orders()?;
-        while let Some(oe) = og.next() { orders.push(O { oid: oe.order_id(), qty: oe.quantity(), price: oe.price() }); }
-        let _ = og.finish()?; db.push(L { price, size, orders });
-    }
-    let ab = b.finish()?; let mut da = Vec::new(); let mut a = ab.into_asks()?;
-    while let Some(e) = a.next().transpose()? { let price = e.price(); let size = e.size();
-        let mut orders = Vec::new(); let mut og = e.into_orders()?;
-        while let Some(oe) = og.next() { orders.push(O { oid: oe.order_id(), qty: oe.quantity(), price: oe.price() }); }
-        let _ = og.finish()?; da.push(L { price, size, orders });
-    }
-
-    let mut re_buf = vec![0u8; 4096];
-    let ab = L3BookEncoder::wrap_and_apply_header(&mut re_buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 42 })
-        .bids(db.len() as u16, |g| {
-        for lvl in &db { g.add(|e| { e.price(lvl.price).size(lvl.size);
-            e.orders(lvl.orders.len() as u16, |og| {
-                for o in &lvl.orders { og.add(|oe| { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok(()) })?; }
-                Ok(())
-            })?; Ok(())
-        })?; } Ok(())
-    })?;
-    let aa = ab.asks(da.len() as u16, |g| {
-        for lvl in &da { g.add(|e| { e.price(lvl.price).size(lvl.size);
-            e.orders(lvl.orders.len() as u16, |og| {
-                for o in &lvl.orders { og.add(|oe| { oe.order_id(o.oid).quantity(o.qty).price(o.price); Ok(()) })?; }
-                Ok(())
-            })?; Ok(())
-        })?; } Ok(())
-    })?;
-    assert_eq!(aa.symbol(symbol)?.as_bytes(), &buf[..actual]);
-    Ok(())
-}
-
-// ── API combination tests ────────────────────────────────────────────
-
-#[test]
 fn explicit_count_with_add_per_field() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 4096];
+    let len = L3BookEncodedLength::new()
+        .bids(1, |b| { b.add()?; Ok(()) })?
+        .asks(0, |_| Ok(()))?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
-        .bids(1, |g| {
-            g.add(|e| { e.price(100).size(10); Ok(()) })
-        })?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
+        .bids(1, |g| { g.add(|e| { e.price(d(100, 0)).size(d(10, 0)); Ok(()) }) })?
         .asks(0, |g| Ok(()))?
         .symbol(b"X")?
-        .encoded_length();
-    assert!(actual > 0);
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
     Ok(())
 }
 
 #[test]
 fn unknown_size_with_add_per_field() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 4096];
+    let len = L3BookEncodedLength::new()
+        .bids_unknown_size(|b| { b.add()?; Ok(()) })?
+        .asks_unknown_size(|_| Ok(()))?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
-        .bids_unknown_size(|g| {
-            g.add(|e| { e.price(100).size(10); Ok(()) })
-        })?
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
+        .bids_unknown_size(|g| { g.add(|e| { e.price(d(100, 0)).size(d(10, 0)); Ok(()) }) })?
         .asks_unknown_size(|g| Ok(()))?
         .symbol(b"X")?
-        .encoded_length();
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     assert_eq!(dec.into_bids()?.len(), 1);
     Ok(())
 }
 
 #[test]
-fn explicit_count_with_add_struct_for_pure_fixed_nested() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 4096];
+fn explicit_count_with_add_struct() -> Result<(), Box<dyn std::error::Error>> {
+    let len = L3BookEncodedLength::new()
+        .bids(1, |b| { b.add()?; b.orders(2, |o| { o.add()?; o.add()?; Ok(()) })?; Ok(()) })?
+        .asks(0, |_| Ok(()))?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
         .bids(1, |g| {
             g.add(|e| {
-                e.price(100).size(10);
-                e.orders(2, |og| {
-                    og.add_struct(&BidsOrdersEntry { order_id: 1, quantity: 5, price: 100 })?;
-                    og.add_struct(&BidsOrdersEntry { order_id: 2, quantity: 3, price: 101 })?;
-                    Ok(())
-                })?;
+                e.price(d(100, 0))
+                    .size(d(10, 0))
+                    .orders(2, |og| {
+                        og.add_struct(&BidsOrdersEntry { order_id: 1, quantity: d(5, 0) })?;
+                        og.add_struct(&BidsOrdersEntry { order_id: 2, quantity: d(3, 0) })?;
+                        Ok(())
+                    })?;
                 Ok(())
             })
         })?
         .asks(0, |g| Ok(()))?
         .symbol(b"X")?
-        .encoded_length();
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     let e = dec.into_bids()?.next().transpose()?.unwrap();
     let mut og = e.into_orders()?;
@@ -383,17 +453,23 @@ fn explicit_count_with_add_struct_for_pure_fixed_nested() -> Result<(), Box<dyn 
 
 #[test]
 fn unknown_size_outer_with_add_struct_nested() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 4096];
+    let len = L3BookEncodedLength::new()
+        .bids_unknown_size(|b| { for _ in 0..3 { b.add()?; b.orders(1, |o| { o.add()?; Ok(()) })?; } Ok(()) })?
+        .asks_unknown_size(|_| Ok(()))?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
         .bids_unknown_size(|g| {
             for i in 0..3 {
                 g.add(|e| {
-                    e.price(100 + i * 10).size(10 + i);
-                    e.orders_unknown_size(|og| {
-                        og.add_struct(&BidsOrdersEntry { order_id: i as u64, quantity: 5, price: 100 + i * 10 })?;
-                        Ok(())
-                    })?;
+                    e.price(d(100 + i * 10, 0))
+                        .size(d(10 + i, 0))
+                        .orders_unknown_size(|og| {
+                            og.add_struct(&BidsOrdersEntry { order_id: i as u64, quantity: d(5, 0) })?;
+                            Ok(())
+                        })?;
                     Ok(())
                 })?;
             }
@@ -401,7 +477,8 @@ fn unknown_size_outer_with_add_struct_nested() -> Result<(), Box<dyn std::error:
         })?
         .asks_unknown_size(|g| Ok(()))?
         .symbol(b"X")?
-        .encoded_length();
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     assert_eq!(dec.into_bids()?.len(), 3);
     Ok(())
@@ -409,33 +486,40 @@ fn unknown_size_outer_with_add_struct_nested() -> Result<(), Box<dyn std::error:
 
 #[test]
 fn mixed_known_and_unknown_across_groups() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 4096];
+    let len = L3BookEncodedLength::new()
+        .bids(2, |b| {
+            b.add()?; b.orders_unknown_size(|o| { o.add()?; o.add()?; Ok(()) })?;
+            b.add()?; b.orders(1, |o| { o.add()?; Ok(()) })?;
+            Ok(())
+        })?
+        .asks_unknown_size(|_| Ok(()))?
+        .symbol(2)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
         .bids(2, |g| {
-            // explicit count for outer, _unknown_size for inner
             g.add(|e| {
-                e.price(100).size(10);
+                e.price(d(100, 0)).size(d(10, 0));
                 e.orders_unknown_size(|og| {
-                    og.add_struct(&BidsOrdersEntry { order_id: 1, quantity: 1, price: 100 })?;
-                    og.add_struct(&BidsOrdersEntry { order_id: 2, quantity: 2, price: 101 })?;
+                    og.add_struct(&BidsOrdersEntry { order_id: 1, quantity: d(1, 0) })?;
+                    og.add_struct(&BidsOrdersEntry { order_id: 2, quantity: d(2, 0) })?;
                     Ok(())
                 })?;
                 Ok(())
             })?;
             g.add(|e| {
-                e.price(200).size(20);
-                e.orders(1, |og| {
-                    og.add_struct(&BidsOrdersEntry { order_id: 3, quantity: 3, price: 200 })?;
-                    Ok(())
-                })?;
+                e.price(d(200, 0))
+                    .size(d(20, 0))
+                    .orders(1, |og| { og.add_struct(&BidsOrdersEntry { order_id: 3, quantity: d(3, 0) })?; Ok(()) })?;
                 Ok(())
             })?;
             Ok(())
         })?
         .asks_unknown_size(|g| Ok(()))?
         .symbol(b"XY")?
-        .encoded_length();
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     let mut b = dec.into_bids()?;
     assert_eq!(b.len(), 2);
@@ -449,61 +533,71 @@ fn mixed_known_and_unknown_across_groups() -> Result<(), Box<dyn std::error::Err
 
 #[test]
 fn add_struct_vs_add_per_field_produce_identical_output() -> Result<(), Box<dyn std::error::Error>> {
-    // Encode same data with add_struct and with per-field add
-    let data = [(1u64, 2u64, 100i64), (3, 4, 101), (5, 6, 102)];
-
-    let mut buf1 = vec![0u8; 4096];
+    let data = [(1u64, d(2, 0)), (3, d(4, 0)), (5, d(6, 0))];
+    let len = L3BookEncodedLength::new()
+        .bids(0, |_| Ok(()))?
+        .asks(1, |a| { a.add()?; a.orders(data.len() as u16, |o| { for _ in &data { o.add()?; } Ok(()) })?; Ok(()) })?
+        .symbol(1)?
+        .encoded_length_with_header();
+    let mut buf1 = vec![0u8; len];
     let len1 = L3BookEncoder::wrap_and_apply_header(&mut buf1, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
         .bids(0, |g| Ok(()))?
         .asks(1, |g| {
             g.add(|e| {
-                e.price(500).size(100);
-                e.orders(3, |og| {
-                    for (id, qty, price) in &data {
-                        og.add_struct(&AsksOrdersEntry { order_id: *id, quantity: *qty, price: *price })?;
-                    }
-                    Ok(())
-                })?;
+                e.price(d(500, 0))
+                    .size(d(100, 0))
+                    .orders(data.len() as u16, |og| {
+                        for (id, qty) in &data {
+                            og.add_struct(&AsksOrdersEntry { order_id: *id, quantity: *qty })?;
+                        }
+                        Ok(())
+                    })?;
                 Ok(())
             })
         })?
         .symbol(b"T")?
-        .encoded_length();
-
-    let mut buf2 = vec![0u8; 4096];
+        .encoded_length_with_header();
+    let mut buf2 = vec![0u8; len];
     let len2 = L3BookEncoder::wrap_and_apply_header(&mut buf2, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
         .bids(0, |g| Ok(()))?
         .asks(1, |g| {
             g.add(|e| {
-                e.price(500).size(100);
-                e.orders(3, |og| {
-                    for (id, qty, price) in &data {
-                        og.add(|oe| { oe.order_id(*id).quantity(*qty).price(*price); Ok(()) })?;
-                    }
-                    Ok(())
-                })?;
+                e.price(d(500, 0))
+                    .size(d(100, 0))
+                    .orders(data.len() as u16, |og| {
+                        for (id, qty) in &data {
+                            og.add(|oe| { oe.order_id(*id).quantity(*qty); Ok(()) })?;
+                        }
+                        Ok(())
+                    })?;
                 Ok(())
             })
         })?
         .symbol(b"T")?
-        .encoded_length();
-
+        .encoded_length_with_header();
     assert_eq!(len1, len2);
+    assert_eq!(len1, len);
     assert_eq!(&buf1[..len1], &buf2[..len2]);
     Ok(())
 }
 
 #[test]
 fn zero_entries_with_unknown_size() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 4096];
+    let len = L3BookEncodedLength::new()
+        .bids_unknown_size(|_| Ok(()))?
+        .asks_unknown_size(|_| Ok(()))?
+        .symbol(0)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
         .bids_unknown_size(|g| Ok(()))?
         .asks_unknown_size(|g| Ok(()))?
         .symbol(b"")?
-        .encoded_length();
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     assert_eq!(dec.into_bids()?.len(), 0);
     Ok(())
@@ -511,23 +605,25 @@ fn zero_entries_with_unknown_size() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn many_entries_with_unknown_size() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 8192];
+    let len = L3BookEncodedLength::new()
+        .bids_unknown_size(|b| { for _ in 0..100 { b.add()?; } Ok(()) })?
+        .asks_unknown_size(|a| { for _ in 0..50 { a.add()?; } Ok(()) })?
+        .symbol(4)?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1 })
+        .fixed(&L3BookFixedFields { exchange_timestamp: T, sequence: 1, is_active: BooleanType::False })
         .bids_unknown_size(|g| {
-            for i in 0..100 {
-                g.add(|e| { e.price(i).size(i * 2); Ok(()) })?;
-            }
+            for i in 0..100 { g.add(|e| { e.price(d(i, 0)).size(d(i * 2, 0)); Ok(()) })?; }
             Ok(())
         })?
         .asks_unknown_size(|g| {
-            for i in 0..50 {
-                g.add(|e| { e.price(i + 1000).size(i * 3); Ok(()) })?;
-            }
+            for i in 0..50 { g.add(|e| { e.price(d(i + 1000, 0)).size(d(i * 3, 0)); Ok(()) })?; }
             Ok(())
         })?
         .symbol(b"MANY")?
-        .encoded_length();
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     assert_eq!(dec.into_bids()?.len(), 100);
     Ok(())

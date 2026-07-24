@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="ergo.samples.l3" id="200" version="0"
                byteOrder="littleEndian"
-               xsi:noNamespaceSchemaLocation="sbe.xsd"
+               xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/real-logic/simple-binary-encoding/master/sbe-tool/src/main/resources/sbe.xsd"
                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <types>
     <composite name="messageHeader">
@@ -18,28 +18,35 @@
       <type name="length"   primitiveType="uint32"/>
       <type name="varData"  primitiveType="uint8" length="0"/>
     </composite>
+    <composite name="Decimal">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8"/>
+    </composite>
+    <enum name="BooleanType" encodingType="uint8">
+      <validValue name="False">0</validValue>
+      <validValue name="True">1</validValue>
+    </enum>
   </types>
   <message name="L3Book" id="1">
-    <field name="exchangeTimestamp" id="1" type="uint64" offset="0"/>
-    <field name="sequence"          id="2" type="uint64" offset="8"/>
-    <group name="bids" id="3" dimensionType="groupSizeEncoding">
-      <field name="price" id="4" type="int64"  offset="0"/>
-      <field name="size"  id="5" type="int64"  offset="8"/>
-      <group name="orders" id="6" dimensionType="groupSizeEncoding">
-        <field name="orderId"  id="7"  type="uint64" offset="0"/>
-        <field name="quantity" id="8"  type="uint64" offset="8"/>
-        <field name="price"    id="9"  type="int64"  offset="16"/>
+    <field name="exchangeTimestamp" id="1" type="uint64" semanticType="UTCTimestamp"/>
+    <field name="sequence"          id="2" type="uint64"/>
+    <field name="isActive"          id="3" type="BooleanType"/>
+    <group name="bids" id="4" dimensionType="groupSizeEncoding">
+      <field name="price" id="5" type="Decimal" semanticType="Price"/>
+      <field name="size"  id="6" type="Decimal" semanticType="Qty"/>
+      <group name="orders" id="7" dimensionType="groupSizeEncoding">
+        <field name="orderId"  id="8"  type="uint64"/>
+        <field name="quantity" id="9"  type="Decimal" semanticType="Qty"/>
       </group>
     </group>
     <group name="asks" id="10" dimensionType="groupSizeEncoding">
-      <field name="price" id="11" type="int64"  offset="0"/>
-      <field name="size"  id="12" type="int64"  offset="8"/>
+      <field name="price" id="11" type="Decimal" semanticType="Price"/>
+      <field name="size"  id="12" type="Decimal" semanticType="Qty"/>
       <group name="orders" id="13" dimensionType="groupSizeEncoding">
-        <field name="orderId"  id="14" type="uint64" offset="0"/>
-        <field name="quantity" id="15" type="uint64" offset="8"/>
-        <field name="price"    id="16" type="int64"  offset="16"/>
+        <field name="orderId"  id="14" type="uint64"/>
+        <field name="quantity" id="15" type="Decimal" semanticType="Qty"/>
       </group>
     </group>
-    <data name="symbol" id="17" type="varAsciiEncoding" characterEncoding="ASCII"/>
+    <data name="symbol" id="16" type="varAsciiEncoding" characterEncoding="ASCII"/>
   </message>
 </messageSchema>

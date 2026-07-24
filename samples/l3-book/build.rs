@@ -10,11 +10,17 @@ fn main() {
     let ir = ergo_sbe::parse(&xml)
         .unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
     let schema = ergo_sbe::Schema::from_ir(ir);
+    // ponytail: converters configured but current codegen emits generic *_as::<T>()
+    // rather than direct rust_decimal/bool accessors. Re-enable when converter
+    // codegen supports non-generic domain-type accessors.
     let config = ergo_sbe::GenerationConfig::new("l3_codec");
     let generator = ergo_sbe::Generator::new(config);
-    let modules = generator.generate(&schema)
+    let modules = generator
+        .generate(&schema)
         .unwrap_or_else(|e| panic!("generate {}: {e}", schema_path.display()));
-    let m = modules.modules().next()
+    let m = modules
+        .modules()
+        .next()
         .unwrap_or_else(|| panic!("no module generated"));
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());

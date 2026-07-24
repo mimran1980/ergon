@@ -8,46 +8,58 @@ pub use l3_codec::*;
 
 const TS: u64 = 1_720_000_000_000_000_000;
 
+/// Encode an L3 order book into `buf`. Returns the header-inclusive encoded length.
+///
+/// Uses known-size group construction — counts are known from slice lengths,
+/// so no back-patching is needed.
 pub fn encode_book(
     buf: &mut [u8],
-    bids: &[(i64, i64, &[(u64, u64, i64)])],
-    asks: &[(i64, i64, &[(u64, u64, i64)])],
+    bids: &[(Decimal, Decimal, &[(u64, Decimal)])],
+    asks: &[(Decimal, Decimal, &[(u64, Decimal)])],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let after_bids = L3BookEncoder::wrap_and_apply_header(buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: TS, sequence: 42 })
-        .bids_unknown_size(|g| {
-        for (price, size, orders) in bids {
-            g.add(|e| {
-                e.price(*price).size(*size);
-                e.orders(orders.len() as u16, |og| {
-                    for (oid, qty, o_price) in *orders {
-                        og.add_struct(&BidsOrdersEntry { order_id: *oid, quantity: *qty, price: *o_price })?;
-                    }
+    let complete = L3BookEncoder::wrap_and_apply_header(buf, 0)?
+        .fixed(&L3BookFixedFields {
+            exchange_timestamp: TS,
+            sequence: 42,
+            is_active: BooleanType::True,
+        })
+        .bids(bids.len() as u16, |g| {
+            for (price, size, orders) in bids {
+                g.add(|e| {
+                    e.price(*price).size(*size);
+                    e.orders(orders.len() as u16, |og| {
+                        for (oid, qty) in *orders {
+                            og.add_struct(&BidsOrdersEntry {
+                                order_id: *oid,
+                                quantity: *qty,
+                            })?;
+                        }
+                        Ok(())
+                    })?;
                     Ok(())
                 })?;
-                Ok(())
-            })?;
-        }
-        Ok(())
-    })?;
-
-    let after_asks = after_bids.asks_unknown_size(|g| {
-        for (price, size, orders) in asks {
-            g.add(|e| {
-                e.price(*price).size(*size);
-                e.orders(orders.len() as u16, |og| {
-                    for (oid, qty, o_price) in *orders {
-                        og.add_struct(&AsksOrdersEntry { order_id: *oid, quantity: *qty, price: *o_price })?;
-                    }
+            }
+            Ok(())
+        })?
+        .asks(asks.len() as u16, |g| {
+            for (price, size, orders) in asks {
+                g.add(|e| {
+                    e.price(*price).size(*size);
+                    e.orders(orders.len() as u16, |og| {
+                        for (oid, qty) in *orders {
+                            og.add_struct(&AsksOrdersEntry {
+                                order_id: *oid,
+                                quantity: *qty,
+                            })?;
+                        }
+                        Ok(())
+                    })?;
                     Ok(())
                 })?;
-                Ok(())
-            })?;
-        }
-        Ok(())
-    })?;
-
-    let complete = after_asks.symbol(symbol)?;
-    Ok(complete.encoded_length())
+            }
+            Ok(())
+        })?
+        .symbol(symbol)?;
+    Ok(complete.encoded_length_with_header())
 }
