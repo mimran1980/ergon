@@ -109,6 +109,49 @@ let complete = /* ... */;
 assert_eq!(complete.encoded_length_with_header(), len);    // proves it fits
 ```
 
+For ragged entries (different shapes per entry), use `_ragged`:
+
+```rust
+let len = CarEncodedLength::new()
+    .fuel_figures_ragged(2, |ff| {
+        ff.usage_description(5)?;  // entry 1
+        ff.usage_description(7)?;  // entry 2 — different length
+        Ok(())
+    })?
+    .performance_figures(0)
+    .acceleration(0)?
+    .manufacturer(12)?
+    .model(9)?
+    .activation_code(6)?
+    .encoded_length_with_header();
+```
+
+For unknown counts, use `_unknown_size`:
+
+```rust
+let len = CarEncodedLength::new()
+    .fuel_figures_unknown_size(|ff| {
+        ff.usage_description(5)?;  // count discovered automatically
+        Ok(())
+    })?
+    // ...
+```
+
+For zero-count groups, call `finish_empty()` or let the next
+method auto-forward:
+
+```rust
+let len = CarEncodedLength::new()
+    .fuel_figures(0)
+    .finish_empty()?              // explicit zero completion
+    .performance_figures(0)
+    .finish_empty()?
+    .manufacturer(0)?
+    .model(0)?
+    .activation_code(0)?
+    .encoded_length_with_header();
+```
+
 ### Consuming decoder — ordered tail stages
 
 Groups and variable data are decoded in wire order. The type system enforces
