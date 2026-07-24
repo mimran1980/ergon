@@ -64,18 +64,28 @@ ragged-staged / `add_struct` generator evolution), not by any client change
 here. They are recorded against the SBE performance gate for the generator
 owner to address; they are out of scope for the client-parity work.
 
-### Still genuinely blocked (need the Java process / human approval)
+### Package allow-list — RESOLVED (2026-07-24)
 
-- `cargo package -p ergo-aeron-cluster --list` currently ships `tests/`,
-  `benches/`, and `src/test_support/` (incl. `ClusterLauncher.java`). Adding a
-  package `exclude` for those violates the `test-harness` feature's compile in
-  the published tarball, so this needs the "move Java harness behind an
-  unpublished boundary" decision (release-readiness issue 10), not a quick
-  `exclude`.
+`cargo package -p ergo-aeron-cluster --list` now ships product code only
+(`src/`, `schemas/`, `build.rs`, `README.md`, `Cargo.toml`) — `tests/`,
+`benches/`, `examples/`, `reference_sbe/`, and `src/test_support/` (incl.
+`ClusterLauncher.java`) are excluded via `[package] exclude`. The declared
+`[[test]]` / `[[bench]]` / `[[example]]` targets are gracefully ignored in the
+published tarball (they all require the repo-only `test-harness` feature);
+default features are empty, so the published crate compiles without the
+excluded tree. No Java, tests, benches, or reference code ship.
+
+### Still genuinely blocked (need external resources / human approval)
+
+- `cargo package` / `cargo publish --dry-run` now fail **only** on the
+  `ergo-sbe` prerequisite — it is declared as `path = "../sbe"` with a
+  `version = "0.1.0"` but is not yet on crates.io, so registry validation
+  reports `no matching package named ergo-sbe`. Publish order is
+  `ergo-sbe → wait for crates.io index → ergo-aeron-cluster`; publishing
+  `ergo-sbe` is a human crates.io action gated on explicit release approval.
 - Java interop matrix (connect / auth / echo / failover / snapshot) — needs
-  `just build-aeron-jars` + a running Java cluster.
-- `cargo publish --dry-run` — gated on `ergo-sbe 0.1.x` being on crates.io and
-  on explicit human release approval.
+  `just build-aeron-jars` + a running Java cluster. You run the Java side; this
+  can't be driven headless without the jars built.
 
 **Prerequisite:** `ergo-sbe 0.1.x` is published to crates.io and installable
 (or is about to be; Cluster publish is sequenced after sbe is indexed).
