@@ -10,10 +10,19 @@ fn main() {
     let ir = ergo_sbe::parse(&xml)
         .unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
     let schema = ergo_sbe::Schema::from_ir(ir);
-    // ponytail: converters configured but current codegen emits generic *_as::<T>()
-    // rather than direct rust_decimal/bool accessors. Re-enable when converter
-    // codegen supports non-generic domain-type accessors.
-    let config = ergo_sbe::GenerationConfig::new("l3_codec");
+    let config = ergo_sbe::GenerationConfig::new("l3_codec")
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal"),
+            "rust_decimal::Decimal",
+        )
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("BooleanType"),
+            "bool",
+        )
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>",
+        );
     let generator = ergo_sbe::Generator::new(config);
     let modules = generator
         .generate(&schema)
