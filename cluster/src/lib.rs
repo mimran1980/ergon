@@ -38,9 +38,25 @@
 //!
 //! # Quick connect
 //!
+//! ```rust
+//! use std::sync::Arc;
+//! use ergo_aeron_cluster::{
+//!     SessionBuilder,
+//!     NullCredentialsSupplier,
+//!     StaticCredentials,
+//! };
+//! // Build a session configuration (no Aeron / network needed).
+//! let builder = SessionBuilder::default()
+//!     .ingress_channel("aeron:udp?endpoint=localhost:9010")
+//!     .egress_channel("aeron:udp?endpoint=localhost:9020")
+//!     .credentials(Arc::new(StaticCredentials::from_utf8("user:pass")))
+//!     .message_timeout(std::time::Duration::from_secs(5));
+//! builder.validate().expect("valid config");
+//! ```
+//!
 //! ```rust,ignore
 //! use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
-//! // SessionBuilder::builder().ingress_channel(...).egress_channel(...)
+//! // SessionBuilder::default().ingress_channel(...).egress_channel(...)
 //! // AeronCluster::connect(&builder, aeron_dir)
 //! // client.try_claim(payload_len)?; fill payload; commit
 //! // client.poll_egress(&mut adapter, limit)?;
