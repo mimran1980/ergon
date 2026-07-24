@@ -115,7 +115,7 @@ pub use error::{ClusterError, PublicationFailure};
 pub use idle::{default_idle, poll_connect_until_done};
 pub use poller::{EgressEvent, parse_event};
 pub use state::SessionState;
-pub use uri::AERON_IPC_STREAM;
+pub use uri::{AERON_IPC_STREAM, channel_cstr, udp_endpoint_cstr};
 
 /// Java Aeron Cluster spawn harness (integration tests / examples only).
 ///
