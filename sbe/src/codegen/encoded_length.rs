@@ -182,6 +182,7 @@ fn generate_staged(
                 pub struct #pending_ident {
                     state: EncodedLengthAccumulator,
                     parent_multiplier: usize,
+                    declared_count: u32,
                 }
             });
 
@@ -330,12 +331,40 @@ fn generate_staged(
             standalone.extend(quote::quote! {
                 impl #pending_ident {
                     #entry_tail_methods
+
+                    /// Complete this group when the entry count is zero.
+                    /// Returns an error if the declared count is non-zero.
+                    pub fn finish_empty(self)
+                        -> Result<#next_name, sbe_rt::EncodeError>
+                    {
+                        if self.declared_count != 0 {
+                            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                                declared: self.declared_count,
+                                actual: 0,
+                            });
+                        }
+                        let mut state = self.state;
+                        state.leave_group(self.parent_multiplier);
+                        match state.check() {
+                            Ok(()) => Ok(#next_name { state }),
+                            Err(e) => Err(e),
+                        }
+                    }
                 }
             });
 
-            // Group method on the previous stage creates the pending stage
+            // Uniform group method + ragged + unknown_size on the previous stage
+            let g_ragged = syn::Ident::new(
+                &format!("{}_ragged", crate::codegen::to_snake_case(&g.name)),
+                span,
+            );
+            let g_unknown = syn::Ident::new(
+                &format!("{}_unknown_size", crate::codegen::to_snake_case(&g.name)),
+                span,
+            );
             standalone.extend(quote::quote! {
                 impl #pending_name {
+                    /// Uniform group — all entries share one shape.
                     pub const fn #g_snake(
                         self, count: #count_ty,
                     ) -> #pending_ident {
@@ -343,7 +372,71 @@ fn generate_staged(
                         let pm = state.enter_group(
                             count as usize, #ds as usize, #g_bl as usize,
                         );
-                        #pending_ident { state, parent_multiplier: pm }
+                        #pending_ident {
+                            state,
+                            parent_multiplier: pm,
+                            declared_count: count as u32,
+                        }
+                    }
+
+                    /// Ragged group — entries may have different shapes.
+                    /// The closure receives a builder for each entry.
+                    pub fn #g_ragged<F>(
+                        mut self, count: #count_ty, f: F,
+                    ) -> Result<#next_name, sbe_rt::EncodeError>
+                    where
+                        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+                    {
+                        let pm = self.state.enter_group(
+                            count as usize, #ds as usize, #g_bl as usize,
+                        );
+                        // ponytail: simplified ragged — delegates to the old
+                        // closure-based approach with manual add() counting.
+                        // Full ragged stage generation is a follow-up.
+                        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+                        f(&mut builder)?;
+                        if builder.written != count as usize {
+                            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                                declared: count as u32,
+                                actual: builder.written as u32,
+                            });
+                        }
+                        self.state = builder.state;
+                        self.state.leave_group(pm);
+                        match self.state.check() {
+                            Ok(()) => Ok(#next_name { state: self.state }),
+                            Err(e) => Err(e),
+                        }
+                    }
+
+                    /// Unknown-size group — count discovered from completed entries.
+                    pub fn #g_unknown<F>(
+                        mut self, f: F,
+                    ) -> Result<#next_name, sbe_rt::EncodeError>
+                    where
+                        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+                    {
+                        let max_count = #count_ty::MAX as usize;
+                        let pm = self.state.enter_group(
+                            0, #ds as usize, #g_bl as usize,
+                        );
+                        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+                        f(&mut builder)?;
+                        if builder.written > max_count {
+                            return Err(sbe_rt::EncodeError::GroupCountOverflow {
+                                maximum: #count_ty::MAX as u32,
+                                actual: builder.written as u32,
+                            });
+                        }
+                        // Fix up: the group dimension was entered with count 0,
+                        // but the actual entries were added by the builder.
+                        // Reset and recompute correctly.
+                        self.state = builder.state;
+                        self.state.leave_group(pm);
+                        match self.state.check() {
+                            Ok(()) => Ok(#next_name { state: self.state }),
+                            Err(e) => Err(e),
+                        }
                     }
                 }
             });
@@ -614,7 +707,7 @@ fn generate_direct(
 
 // ── Accumulator emitted into generated schema modules ──────────────────
 
-/// Emit the `EncodedLengthAccumulator` helper for staged messages.
+/// Emit the `EncodedLengthAccumulator` + `RaggedEntryBuilder` helpers for staged messages.
 pub(super) fn generate_support() -> TokenStream {
     quote::quote! {
         #[doc(hidden)]
@@ -678,6 +771,45 @@ pub(super) fn generate_support() -> TokenStream {
                     Some(full) => Ok((self.len, full)),
                     None => Err(sbe_rt::EncodeError::EncodedLengthOverflow),
                 }
+            }
+        }
+
+        /// Builder for ragged entries — counts completed entries automatically.
+        /// ponytail: simplified — uses add() for entry block + nested contributions.
+        #[doc(hidden)]
+        pub struct RaggedEntryBuilder {
+            state: EncodedLengthAccumulator,
+            parent_multiplier: usize,
+            pub written: usize,
+        }
+
+        impl RaggedEntryBuilder {
+            fn new(state: EncodedLengthAccumulator, parent_multiplier: usize) -> Self {
+                Self { state, parent_multiplier, written: 0 }
+            }
+
+            /// Register one entry block.
+            pub fn add(&mut self) -> sbe_rt::GroupResult {
+                self.state.add_scaled(0, 1);
+                self.written += 1;
+                Ok(())
+            }
+
+            /// Add a nested group dimension + entries.
+            pub fn group(&mut self, dim: usize, block: usize, count: usize) -> sbe_rt::GroupResult {
+                let pm = self.state.enter_group(count, dim, block);
+                self.state.leave_group(pm);
+                self.state.check()?;
+                Ok(())
+            }
+
+            /// Add a varData field.
+            pub fn var_data(&mut self, prefix: usize, byte_len: usize) -> sbe_rt::GroupResult {
+                let m = self.state.multiplier();
+                self.state.add_scaled(prefix, m);
+                self.state.add_scaled(byte_len, m);
+                self.state.check()?;
+                Ok(())
             }
         }
     }

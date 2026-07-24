@@ -4750,6 +4750,7 @@ pub struct CarEncodedLengthComplete {
 pub struct CarFuelFiguresUniformEncodedLength {
     state: EncodedLengthAccumulator,
     parent_multiplier: usize,
+    declared_count: u32,
 }
 impl CarFuelFiguresUniformEncodedLength {
     pub const fn usage_description(
@@ -4782,14 +4783,97 @@ impl CarFuelFiguresUniformEncodedLength {
             Err(e) => Err(e),
         }
     }
+    /// Complete this group when the entry count is zero.
+    /// Returns an error if the declared count is non-zero.
+    pub fn finish_empty(
+        self,
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
+        if self.declared_count != 0 {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: self.declared_count,
+                actual: 0,
+            });
+        }
+        let mut state = self.state;
+        state.leave_group(self.parent_multiplier);
+        match state.check() {
+            Ok(()) => {
+                Ok(CarEncodedLengthAfterPerformanceFigures {
+                    state,
+                })
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 impl CarEncodedLength {
+    /// Uniform group — all entries share one shape.
     pub const fn fuel_figures(self, count: u16) -> CarFuelFiguresUniformEncodedLength {
         let mut state = self.state;
         let pm = state.enter_group(count as usize, 4 as usize, 6 as usize);
         CarFuelFiguresUniformEncodedLength {
             state,
             parent_multiplier: pm,
+            declared_count: count as u32,
+        }
+    }
+    /// Ragged group — entries may have different shapes.
+    /// The closure receives a builder for each entry.
+    pub fn fuel_figures_ragged<F>(
+        mut self,
+        count: u16,
+        f: F,
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+    {
+        let pm = self.state.enter_group(count as usize, 4 as usize, 6 as usize);
+        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+        f(&mut builder)?;
+        if builder.written != count as usize {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: count as u32,
+                actual: builder.written as u32,
+            });
+        }
+        self.state = builder.state;
+        self.state.leave_group(pm);
+        match self.state.check() {
+            Ok(()) => {
+                Ok(CarEncodedLengthAfterPerformanceFigures {
+                    state: self.state,
+                })
+            }
+            Err(e) => Err(e),
+        }
+    }
+    /// Unknown-size group — count discovered from completed entries.
+    pub fn fuel_figures_unknown_size<F>(
+        mut self,
+        f: F,
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+    {
+        let max_count = u16::MAX as usize;
+        let pm = self.state.enter_group(0, 4 as usize, 6 as usize);
+        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+        f(&mut builder)?;
+        if builder.written > max_count {
+            return Err(sbe_rt::EncodeError::GroupCountOverflow {
+                maximum: u16::MAX as u32,
+                actual: builder.written as u32,
+            });
+        }
+        self.state = builder.state;
+        self.state.leave_group(pm);
+        match self.state.check() {
+            Ok(()) => {
+                Ok(CarEncodedLengthAfterPerformanceFigures {
+                    state: self.state,
+                })
+            }
+            Err(e) => Err(e),
         }
     }
 }
@@ -4798,6 +4882,7 @@ impl CarEncodedLength {
 pub struct CarPerformanceFiguresUniformEncodedLength {
     state: EncodedLengthAccumulator,
     parent_multiplier: usize,
+    declared_count: u32,
 }
 impl CarPerformanceFiguresUniformEncodedLength {
     pub const fn acceleration(
@@ -4815,8 +4900,31 @@ impl CarPerformanceFiguresUniformEncodedLength {
             Err(e) => Err(e),
         }
     }
+    /// Complete this group when the entry count is zero.
+    /// Returns an error if the declared count is non-zero.
+    pub fn finish_empty(
+        self,
+    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError> {
+        if self.declared_count != 0 {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: self.declared_count,
+                actual: 0,
+            });
+        }
+        let mut state = self.state;
+        state.leave_group(self.parent_multiplier);
+        match state.check() {
+            Ok(()) => {
+                Ok(CarEncodedLengthAfterManufacturer {
+                    state,
+                })
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 impl CarEncodedLengthAfterPerformanceFigures {
+    /// Uniform group — all entries share one shape.
     pub const fn performance_figures(
         self,
         count: u16,
@@ -4826,6 +4934,66 @@ impl CarEncodedLengthAfterPerformanceFigures {
         CarPerformanceFiguresUniformEncodedLength {
             state,
             parent_multiplier: pm,
+            declared_count: count as u32,
+        }
+    }
+    /// Ragged group — entries may have different shapes.
+    /// The closure receives a builder for each entry.
+    pub fn performance_figures_ragged<F>(
+        mut self,
+        count: u16,
+        f: F,
+    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+    {
+        let pm = self.state.enter_group(count as usize, 4 as usize, 1 as usize);
+        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+        f(&mut builder)?;
+        if builder.written != count as usize {
+            return Err(sbe_rt::EncodeError::GroupCountMismatch {
+                declared: count as u32,
+                actual: builder.written as u32,
+            });
+        }
+        self.state = builder.state;
+        self.state.leave_group(pm);
+        match self.state.check() {
+            Ok(()) => {
+                Ok(CarEncodedLengthAfterManufacturer {
+                    state: self.state,
+                })
+            }
+            Err(e) => Err(e),
+        }
+    }
+    /// Unknown-size group — count discovered from completed entries.
+    pub fn performance_figures_unknown_size<F>(
+        mut self,
+        f: F,
+    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError>
+    where
+        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+    {
+        let max_count = u16::MAX as usize;
+        let pm = self.state.enter_group(0, 4 as usize, 1 as usize);
+        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+        f(&mut builder)?;
+        if builder.written > max_count {
+            return Err(sbe_rt::EncodeError::GroupCountOverflow {
+                maximum: u16::MAX as u32,
+                actual: builder.written as u32,
+            });
+        }
+        self.state = builder.state;
+        self.state.leave_group(pm);
+        match self.state.check() {
+            Ok(()) => {
+                Ok(CarEncodedLengthAfterManufacturer {
+                    state: self.state,
+                })
+            }
+            Err(e) => Err(e),
         }
     }
 }
@@ -5117,6 +5285,49 @@ impl EncodedLengthAccumulator {
             Some(full) => Ok((self.len, full)),
             None => Err(sbe_rt::EncodeError::EncodedLengthOverflow),
         }
+    }
+}
+/// Builder for ragged entries — counts completed entries automatically.
+/// ponytail: simplified — uses add() for entry block + nested contributions.
+#[doc(hidden)]
+pub struct RaggedEntryBuilder {
+    state: EncodedLengthAccumulator,
+    parent_multiplier: usize,
+    pub written: usize,
+}
+impl RaggedEntryBuilder {
+    fn new(state: EncodedLengthAccumulator, parent_multiplier: usize) -> Self {
+        Self {
+            state,
+            parent_multiplier,
+            written: 0,
+        }
+    }
+    /// Register one entry block.
+    pub fn add(&mut self) -> sbe_rt::GroupResult {
+        self.state.add_scaled(0, 1);
+        self.written += 1;
+        Ok(())
+    }
+    /// Add a nested group dimension + entries.
+    pub fn group(
+        &mut self,
+        dim: usize,
+        block: usize,
+        count: usize,
+    ) -> sbe_rt::GroupResult {
+        let pm = self.state.enter_group(count, dim, block);
+        self.state.leave_group(pm);
+        self.state.check()?;
+        Ok(())
+    }
+    /// Add a varData field.
+    pub fn var_data(&mut self, prefix: usize, byte_len: usize) -> sbe_rt::GroupResult {
+        let m = self.state.multiplier();
+        self.state.add_scaled(prefix, m);
+        self.state.add_scaled(byte_len, m);
+        self.state.check()?;
+        Ok(())
     }
 }
 pub const SEMANTIC_VERSION: &str = "5.2";
