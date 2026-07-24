@@ -1115,4 +1115,56 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_encoded_length_matches_encode_connect_request() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::codecs::session::SessionConnectRequestEncoder;
+
+        let ch = b"aeron:udp?endpoint=localhost:9999";
+        let creds = b"user:pass";
+        let len =
+            SessionConnectRequestEncoder::compute_encoded_length_with_message_header(ch.len(), creds.len(), 0);
+        let mut buf = vec![0u8; len];
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
+        enc.correlation_id(0).response_stream_id(102).version(0);
+        let complete = enc
+            .response_channel(ch)?
+            .encoded_credentials(creds)?
+            .client_info(b"")?;
+        assert_eq!(
+            complete.as_bytes_with_header().len(),
+            len,
+            "EncodedLength compute must equal as_bytes_with_header for connect request"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_encoded_length_matches_encode_challenge_response() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::codecs::session::ChallengeResponseEncoder;
+
+        let creds = b"challenge-response-bytes";
+        let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(creds.len());
+        let mut buf = vec![0u8; len];
+        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+        enc.correlation_id(1).cluster_session_id(2);
+        let complete = enc.encoded_credentials(creds)?;
+        assert_eq!(
+            complete.as_bytes_with_header().len(),
+            len,
+            "EncodedLength compute must equal as_bytes_with_header for challenge response"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_keep_alive_buffer_is_stack_sized_by_encoded_length() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::codecs::session::SessionKeepAliveEncoder;
+        // Fixed message — the stack array must use the generated ENCODED_LENGTH.
+        assert_eq!(
+            SessionKeepAliveEncoder::ENCODED_LENGTH,
+            8 + SessionKeepAliveEncoder::BLOCK_LENGTH,
+        );
+        Ok(())
+    }
 }
