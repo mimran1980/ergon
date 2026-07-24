@@ -79,13 +79,18 @@ mod tests {
     #[test]
     fn test_static_credentials_answer_connect_and_challenge() -> Result<(), Box<dyn std::error::Error>> {
         let supplier = StaticCredentials::from_utf8("user:pass");
-        let connect = supplier.encoded_credentials().ok_or("static creds missing on connect")?;
+        let connect = supplier
+            .encoded_credentials()
+            .ok_or("static creds missing on connect")?;
         let challenge = supplier
             .on_challenge(b"server-challenge")
             .ok_or("static creds missing on challenge")?;
         assert_eq!(connect, b"user:pass");
         assert_eq!(challenge, b"user:pass", "challenge must reuse the same bytes");
-        assert_eq!(StaticCredentials::new(vec![1, 2, 3]).encoded_credentials(), Some(vec![1, 2, 3]));
+        assert_eq!(
+            StaticCredentials::new(vec![1, 2, 3]).encoded_credentials(),
+            Some(vec![1, 2, 3])
+        );
         Ok(())
     }
 }

@@ -305,7 +305,99 @@ fn matrix_runner_rejects_empty_name() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-// ── Section 6: Production schema generation (Task 10) ──────────────────
+// ── Section 6: Acceptance checklist tests ──────────────────────────────
+
+#[test]
+fn one_byte_short_buffer_fails() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&conformance_path(), "short_buf");
+    compile_and_run(
+        "short_buf_test",
+        &src,
+        r#"
+        let len = FlatGroupEncoder::try_compute_encoded_length_with_header(1u16, 0u16, 0)?;
+        let mut buf = vec![0u8; len];
+        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        enc.symbol(42);
+        let complete = enc.bids(1, |g| {
+            g.add(|e| { e.price(1i64).qty(1i32); Ok(()) })?;
+            Ok(())
+        })?
+        .asks(0, |_| Ok(()))?
+        .description(b"")?;
+        assert_eq!(len, complete.as_bytes().len());
+
+        // Buffer too short for header+block must fail
+        let mut tiny = vec![0u8; 4]; // header=8, block=8 — 4 is too short
+        let result = FlatGroupEncoder::try_wrap_and_apply_header(&mut tiny, 0);
+        assert!(result.is_err(), "too-short buffer must fail");
+        println!("PASS: one_byte_short_buffer_fails");
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn endianness_generates_identical_structure() -> Result<(), Box<dyn std::error::Error>> {
+    let (_s_le, src_le) = generate(&fixture("example-schema.xml"), "le_end");
+    let (_s_be, src_be) = generate(&fixture("example-bigendian-test-schema.xml"), "be_end");
+    syn::parse_file(&src_le)?;
+    syn::parse_file(&src_be)?;
+    let le_count = src_le.matches("EncodedLength").count();
+    let be_count = src_be.matches("EncodedLength").count();
+    assert_eq!(
+        le_count, be_count,
+        "LE and BE schemas must generate same number of EncodedLength references"
+    );
+    println!("PASS: endianness_generates_identical_structure");
+    Ok(())
+}
+
+#[test]
+fn ragged_too_few_entries_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&fixture("example-schema.xml"), "ragged_few");
+    compile_and_run(
+        "ragged_few_test",
+        &src,
+        r#"
+        let result = CarEncodedLength::new()
+            .fuel_figures_ragged(3, |ff| {
+                ff.add()?;
+                ff.var_data(4, 5)?;
+                ff.add()?;
+                ff.var_data(4, 7)?;
+                Ok(())
+            });
+        assert!(result.is_err(), "too few ragged entries must fail");
+        if let Err(sbe_rt::EncodeError::GroupCountMismatch { declared, actual }) = result {
+            assert_eq!(declared, 3);
+            assert_eq!(actual, 2);
+        } else {
+            panic!("expected GroupCountMismatch");
+        }
+        println!("PASS: ragged_too_few_entries_rejected");
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn direct_helper_overflow_detected() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&conformance_path(), "direct_overflow");
+    compile_and_run(
+        "direct_overflow_test",
+        &src,
+        r#"
+        let result = FlatGroupEncoder::try_compute_encoded_length_with_header(
+            u16::MAX, u16::MAX, usize::MAX,
+        );
+        assert!(result.is_err(), "checked arithmetic overflow must return Err");
+        println!("PASS: direct_helper_overflow_detected");
+        "#,
+    );
+    Ok(())
+}
+
+// ── Section 7: Production schema generation (Task 10) ──────────────────
 
 #[test]
 fn production_schemas_generate_valid_rust() -> Result<(), Box<dyn std::error::Error>> {
