@@ -407,7 +407,7 @@ let length = L3BookEncoder::encoded_length_builder()
     .encoded_length_with_header();
 // Verify against actual encode
 let mut buf = vec![0u8; length];
-let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .bids(2, |bids| { ... })?
     .asks(1, |asks| { ... })?
     .symbol(b"IBM.NYSE".as_ref())?;

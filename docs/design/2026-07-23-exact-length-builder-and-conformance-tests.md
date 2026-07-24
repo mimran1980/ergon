@@ -216,7 +216,7 @@ The runtime matrix covers:
 5. Empty, singleton, ragged, and many-entry group shapes.
 6. Empty, short, Unicode UTF-8, binary, and varied-length varData at nested
    entry, parent entry, and message levels.
-7. `try_from`, offset-aware `wrap_and_apply_header`, random-access fixed
+7. `try_from`, offset-aware `try_wrap_and_apply_header`, random-access fixed
    fields, sequential group iteration, `finish`, `skip_remaining`, `rewind`,
    raw varData, string varData, and complete-stage byte access.
 8. Flyweight-to-domain conversion, domain length calculation, exact-buffer

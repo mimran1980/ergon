@@ -1233,8 +1233,7 @@ fn generate_message_decoder(
         }
     });
 
-    // 4. wrap_and_apply_header — uses read_bytes internally
-    // (feature flag gating is inside read_bytes, not duplicated here)
+    // 4. try_wrap_and_apply_header — validates schema_id + template_id
     {
         let hs = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
         let hp = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
@@ -1245,7 +1244,7 @@ fn generate_message_decoder(
         let en = syn::LitStr::new(&schema_name, proc_macro2::Span::call_site());
         impl_body.extend(quote::quote! {
             #[inline]
-            pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+            pub fn try_wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // Decoder trust boundary: validate buffer bounds + schema_id + template_id.
                 // This is the one place the decoder checks — all field accessors
                 // after this are infallible (offsets are within the validated block).
@@ -2074,7 +2073,7 @@ fn generate_message_decoder(
             type Error = sbe_rt::DecodeError;
 
             fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-                Self::wrap_and_apply_header(buf, 0)
+                Self::try_wrap_and_apply_header(buf, 0)
             }
         }
 
@@ -2583,7 +2582,7 @@ fn generate_domain_recursive(
         let has_tail = !group_encode_stmts.is_empty() || !vardata_encode_stmts.is_empty();
         let encode_body = if has_tail {
             quote::quote! {
-                let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
+                let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
                 #(#group_encode_stmts)*
@@ -2593,7 +2592,7 @@ fn generate_domain_recursive(
         } else {
             // Fixed-only message: encoder implements AsRef<[u8]>
             quote::quote! {
-                let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
+                let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
                 Ok(enc.as_ref().len())
@@ -4744,10 +4743,11 @@ fn generate_message_encoder(
     impl_contents.extend(cold_check);
 
     let wrap_fn = quote::quote! {
-        /// Wrap a mutable buffer for encoding. Returns an error if the buffer
-        /// is too short for the header + fixed block.
+        /// Wrap a mutable buffer for encoding with bounds validation.
+        /// Returns an error if the buffer is too short.
+        /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
         #[inline]
-        pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
+        pub fn try_wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
             if pos.wrapping_add(#needed_lit) > buf.len() {
                 return Err(Self::buffer_too_short(buf, pos, #needed_lit));
             }
@@ -4770,10 +4770,11 @@ fn generate_message_encoder(
         Ok(Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit })
     };
     let wrap_apply_fn = quote::quote! {
-        /// Wrap a mutable buffer and write the SBE message header.
+        /// Wrap a mutable buffer, write the header, with bounds validation.
         /// Returns an error if the buffer is too short.
+        /// Prefer [`Self::wrap_and_apply_header`] for the fast path.
         #[inline]
-        pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
+        pub fn try_wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
             #wrap_apply_body
         }
     };
@@ -4794,7 +4795,7 @@ fn generate_message_encoder(
                         available: buf.len(),
                     });
                 }
-                Self::wrap_and_apply_header(buf, 0)
+                Self::try_wrap_and_apply_header(buf, 0)
             }
         });
     }
@@ -5365,7 +5366,7 @@ fn generate_message_encoder(
                     /// ```ignore
                     /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
                     /// after.payload_with(inner, |p| {
-                    ///     let mut enc = InnerEncoder::wrap_and_apply_header(p, 0)?;
+                    ///     let mut enc = InnerEncoder::try_wrap_and_apply_header(p, 0)?;
                     ///     // set fields / groups / var-data …
                     ///     Ok(())
                     /// })?;
@@ -5514,17 +5515,19 @@ fn generate_message_encoder(
         let hs_lit = syn::LitInt::new(&header_size.to_string(), span);
         ts.extend(quote::quote! {
             impl<'a> #name_encoder_ident<'a> {
-                /// Unchecked companion to [`wrap`] — no bounds check, no Result.
+                /// Wrap a mutable buffer for encoding — no bounds check.
                 /// Caller guarantees the buffer is large enough.
+                /// This is the default fast path (matching sbe-tool's `wrap`).
                 #[inline]
-                pub fn wrap_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
+                pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
                     Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit }
                 }
 
-                /// Unchecked companion to [`wrap_and_apply_header`] — no bounds
-                /// check, no Result. Caller guarantees the buffer is large enough.
+                /// Wrap a mutable buffer, write the header, and return the encoder.
+                /// No bounds check — caller guarantees the buffer is large enough.
+                /// This is the default fast path (matching sbe-tool's `wrap`).
                 #[inline]
-                pub fn wrap_and_apply_header_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
+                pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Self {
                     buf[pos..pos + #hs_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
                     Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit }
                 }

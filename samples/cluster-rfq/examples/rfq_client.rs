@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect
     {
         let mut buf = vec![0u8; 512];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
         let _ = enc.correlation_id(1).response_stream_id(102).version(0);
         let _ = enc
             .response_channel(cluster.egress_channel.as_bytes())
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut msg = vec![0u8; hdr + body];
         {
             let mut sh =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -112,8 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                CreateRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
-                    .unwrap();
+                CreateRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0);
             let _ = enc
                 .correlation(correlation)
                 .expire_time_ms(60_000)
@@ -143,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut msg = vec![0u8; hdr + body];
         {
             let mut sh =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -151,8 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                QuoteRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
-                    .unwrap();
+                QuoteRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0);
             let _ = enc
                 .correlation(quote_corr)
                 .rfq_id(1)
@@ -178,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut msg = vec![0u8; hdr + body];
         {
             let mut sh =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -186,8 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                AcceptRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
-                    .unwrap();
+                AcceptRfqCommandEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0);
             let _ = enc.correlation(accept_corr).rfq_id(1).accept_user_id(500);
         }
         for _ in 0..10 {

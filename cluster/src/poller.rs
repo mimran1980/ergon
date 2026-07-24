@@ -50,7 +50,7 @@ pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
     match tid {
         SessionEventEncoder::TEMPLATE_ID => {
             let decoder =
-                SessionEventDecoder::wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
+                SessionEventDecoder::try_wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
                     reason: "short SessionEvent".into(),
                 })?;
             let cid = decoder.correlation_id();
@@ -72,7 +72,7 @@ pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
         }
         ChallengeEncoder::TEMPLATE_ID => {
             let decoder =
-                ChallengeDecoder::wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
+                ChallengeDecoder::try_wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
                     reason: "short Challenge".into(),
                 })?;
             let cid = decoder.correlation_id();
@@ -90,7 +90,7 @@ pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
         }
         NewLeaderEventEncoder::TEMPLATE_ID => {
             let decoder =
-                NewLeaderEventDecoder::wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
+                NewLeaderEventDecoder::try_wrap_and_apply_header(data, 0).map_err(|_| ClusterError::ProtocolError {
                     reason: "short NewLeaderEvent".into(),
                 })?;
             let csid = decoder.cluster_session_id();

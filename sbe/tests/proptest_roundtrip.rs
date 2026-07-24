@@ -125,7 +125,7 @@ proptest! {
         let engine = Engine::new(capacity, num_cylinders, mc, 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0));
 
         let mut buf = vec![0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(serial_number);
         car.model_year(model_year);
         car.available(available);
@@ -135,14 +135,14 @@ proptest! {
         car.extras(extras);
         car.engine(engine);
 
-        let car = car.fuel_figures(0, |_| {}).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.fuel_figures(0, |_| Ok(())).unwrap();
+        let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
 
         let encoded = car.as_bytes();
-        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
         prop_assert_eq!(serial_number, decoded.serial_number());
         prop_assert_eq!(model_year, decoded.model_year());
@@ -187,7 +187,7 @@ proptest! {
         activation in proptest::collection::vec(32u8..=126, 0..100),
     ) {
         let mut buf = vec![0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(0);
         car.model_year(2000);
         car.available(BooleanType::F);
@@ -196,14 +196,14 @@ proptest! {
         car.vehicle_code([0u8; 6]);
         car.extras(OptionalExtras::default());
         car.engine(Engine::new(1000, 4, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(0, |_| {}).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.fuel_figures(0, |_| Ok(())).unwrap();
+        let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(&manufacturer).unwrap();
         let car = car.model(&model).unwrap();
         let car = car.activation_code(&activation).unwrap();
 
         let encoded = car.as_bytes();
-        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let after_perf = decoded
             .into_fuel_figures()
             .unwrap()
@@ -249,7 +249,7 @@ proptest! {
         ),
     ) {
         let mut buf = vec![0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(0);
         car.model_year(2000);
         car.available(BooleanType::F);
@@ -266,17 +266,19 @@ proptest! {
                     e.speed(*speed);
                     e.mpg(*mpg);
                     e.usage_description(usage).unwrap();
+                    Ok(())
                 }).unwrap();
             }
+            Ok(())
         }).unwrap();
 
-        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
 
         let encoded = car.as_bytes();
-        let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
         let mut fuel_iter = decoded.into_fuel_figures().unwrap();
         let fuel: Vec<_> = fuel_iter
@@ -311,7 +313,7 @@ use prop_car_example::*;
 #[test]
 fn zero_length_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; 512];
-    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
     car.serial_number(0);
     car.model_year(0);
     car.available(BooleanType::F);
@@ -320,14 +322,14 @@ fn zero_length_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     car.vehicle_code([0u8; 6]);
     car.extras(OptionalExtras::default());
     car.engine(Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-    let car = car.fuel_figures(0, |_| {}).unwrap();
-    let car = car.performance_figures(0, |_| {}).unwrap();
+    let car = car.fuel_figures(0, |_| Ok(())).unwrap();
+    let car = car.performance_figures(0, |_| Ok(())).unwrap();
     let car = car.manufacturer(b"").unwrap();
     let car = car.model(b"").unwrap();
     let car = car.activation_code(b"").unwrap();
 
     let encoded = car.as_bytes();
-    let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+    let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
     assert_eq!(0, decoded.serial_number());
     let fuel = decoded.into_fuel_figures().unwrap();
@@ -362,7 +364,7 @@ use prop_car_example::*;
 #[test]
 fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; 512];
-    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
     car.serial_number(u64::MAX);
     car.model_year(u16::MAX);
     car.available(BooleanType::T);
@@ -377,15 +379,16 @@ fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     car.engine(Engine::new(u16::MAX, u8::MAX, [u8::MAX; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
 
     let car = car.fuel_figures(1, |g| {
-        g.add(|e| { e.speed(u16::MAX); e.mpg(f32::MAX); e.usage_description(b"").unwrap(); }).unwrap();
+        g.add(|e| { e.speed(u16::MAX); e.mpg(f32::MAX); e.usage_description(b"").unwrap(); Ok(()) }).unwrap();
+        Ok(())
     }).unwrap();
-    let car = car.performance_figures(0, |_| {}).unwrap();
+    let car = car.performance_figures(0, |_| Ok(())).unwrap();
     let car = car.manufacturer(b"MAX").unwrap();
     let car = car.model(b"MAX").unwrap();
     let car = car.activation_code(b"MAX").unwrap();
 
     let encoded = car.as_bytes();
-    let decoded = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+    let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
     assert_eq!(u64::MAX, decoded.serial_number());
     assert_eq!(u16::MAX, decoded.model_year());

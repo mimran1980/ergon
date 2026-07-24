@@ -819,7 +819,7 @@ impl<'a> CarDecoder<'a> {
         }
     }
     #[inline]
-    pub fn wrap_and_apply_header(
+    pub fn try_wrap_and_apply_header(
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -1381,7 +1381,7 @@ impl<'a> CarDecoder<'a> {
 impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
     type Error = sbe_rt::DecodeError;
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        Self::wrap_and_apply_header(buf, 0)
+        Self::try_wrap_and_apply_header(buf, 0)
     }
 }
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}
@@ -3340,7 +3340,7 @@ impl<'a> From<CarDecoder<'a>> for CarDomain {
 impl CarDomain {
     /// Encode this domain object into a byte buffer.
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
-        let mut enc = CarEncoder::wrap_and_apply_header(buf, 0)?;
+        let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0)?;
         enc.serial_number(self.serial_number);
         enc.model_year(self.model_year);
         enc.available_bool(self.available);
@@ -3571,10 +3571,11 @@ impl<'a> CarEncoder<'a> {
             available: buf.len().saturating_sub(pos),
         }
     }
-    /// Wrap a mutable buffer for encoding. Returns an error if the buffer
-    /// is too short for the header + fixed block.
+    /// Wrap a mutable buffer for encoding with bounds validation.
+    /// Returns an error if the buffer is too short.
+    /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
+    pub fn try_wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
         if pos.wrapping_add(53) > buf.len() {
             return Err(Self::buffer_too_short(buf, pos, 53));
         }
@@ -3584,10 +3585,11 @@ impl<'a> CarEncoder<'a> {
             pos: 53,
         })
     }
-    /// Wrap a mutable buffer and write the SBE message header.
+    /// Wrap a mutable buffer, write the header, with bounds validation.
     /// Returns an error if the buffer is too short.
+    /// Prefer [`Self::wrap_and_apply_header`] for the fast path.
     #[inline]
-    pub fn wrap_and_apply_header(
+    pub fn try_wrap_and_apply_header(
         buf: &'a mut [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::EncodeError> {
@@ -4684,20 +4686,22 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
     }
 }
 impl<'a> CarEncoder<'a> {
-    /// Unchecked companion to [`wrap`] — no bounds check, no Result.
+    /// Wrap a mutable buffer for encoding — no bounds check.
     /// Caller guarantees the buffer is large enough.
+    /// This is the default fast path (matching sbe-tool's `wrap`).
     #[inline]
-    pub fn wrap_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf: &mut buf[pos..],
             message_start: 0,
             pos: 53,
         }
     }
-    /// Unchecked companion to [`wrap_and_apply_header`] — no bounds
-    /// check, no Result. Caller guarantees the buffer is large enough.
+    /// Wrap a mutable buffer, write the header, and return the encoder.
+    /// No bounds check — caller guarantees the buffer is large enough.
+    /// This is the default fast path (matching sbe-tool's `wrap`).
     #[inline]
-    pub fn wrap_and_apply_header_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
+    pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Self {
         buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
         Self {
             buf: &mut buf[pos..],

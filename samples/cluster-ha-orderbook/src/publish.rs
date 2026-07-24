@@ -67,13 +67,10 @@ impl ClaimIngress for RecordingClaimIngress {
         let mut buf = vec![0u8; total];
         // Real ergon SessionMessageHeader (same encoder as AeronCluster::try_claim).
         {
-            let mut enc = match SessionMessageHeaderEncoder::wrap_and_apply_header(
+            let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(
                 &mut buf[..MSG_HDR_TOTAL],
                 0,
-            ) {
-                Ok(e) => e,
-                Err(_) => return PublishOutcome::EncodeFailed,
-            };
+            );
             let _ = enc
                 .leadership_term_id(self.leadership_term_id)
                 .cluster_session_id(self.cluster_session_id)
@@ -157,13 +154,13 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
             inner_len,
         );
         self.ingress.try_claim_app(outer_len, |app_buf| {
-            let mut app = AppMessageEncoder::wrap_and_apply_header(app_buf, 0)?;
+            let mut app = AppMessageEncoder::try_wrap_and_apply_header(app_buf, 0)?;
             let _ = app.sent_ts(receive_ts_ns);
             let after = app.app_name(APP_NAME.as_bytes())?;
             // Nested SBE: exact inner header-inclusive length + encode into var-data.
             let _ =
                 after.payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                    let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
+                    let mut enc = L2BookEncoder::try_wrap_and_apply_header(payload, 0)?;
                     let _ = enc
                         .source(Source::Bitget)
                         .exchange_timestamp(exchange_ts_ns)

@@ -713,7 +713,7 @@ fn conformance_error_group_full() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = vec![0u8; 256];
-        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.symbol(42);
         let result = enc.bids(1, |bids| {
             bids.add(|e| { e.price(1).qty(2); Ok(()) })?;
@@ -775,7 +775,7 @@ fn conformance_error_wrong_schema() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = vec![0u8; 256];
-        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.symbol(1);
         let complete = enc.bids(0, |_| Ok(())).unwrap()
             .asks(0, |_| Ok(())).unwrap()

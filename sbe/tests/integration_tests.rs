@@ -49,7 +49,7 @@ fn test_fixed_entry_group_access() -> Result<(), Box<dyn std::error::Error>> {
         r#"
         fn encode_car() -> Vec<u8> {
             let mut buf = vec![0u8; 512];
-            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
             car.serial_number(1234);
             car.model_year(2013);
             car.available(BooleanType::T);
@@ -83,7 +83,7 @@ fn test_fixed_entry_group_access() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let encoded = encode_car();
-        let car = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+        let car = CarDecoder::try_wrap_and_apply_header(&encoded, 0).unwrap();
 
         // Navigate to acceleration group. Wire order is fuel_figures then
         // performance_figures; traverse fuel first via the consuming stages.

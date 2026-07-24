@@ -7,7 +7,7 @@
 //! Note: sbe-tool uses a different API pattern (mutable self, parent
 //! references, advance()-based group iteration). These benchmarks compare
 //! semantically equivalent operations — same fields, same buffer, same count.
-//! Fair comparison uses `wrap_unchecked` (sbe-tool's `wrap` does no bounds check).
+//! Fair comparison uses `wrap` (sbe-tool's `wrap` does no bounds check).
 
 #![allow(
     unsafe_code,
@@ -291,14 +291,14 @@ fn bench_encode_scalar(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/scalar");
     group.throughput(Throughput::Elements(1));
 
-    // Fair: Aeron wrap() does no bounds check — use wrap_unchecked.
+    // Fair: Aeron wrap() does no bounds check — use wrap.
     // Also avoids black_box hiding buffer size for bounds check elision.
     group.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || [0u8; 512],
             |mut buf| {
                 let mut car: CarEncoder<'_> =
-                    CarEncoder::wrap_unchecked(black_box(&mut buf), 0);
+                    CarEncoder::wrap(black_box(&mut buf), 0);
                 car.serial_number(1234);
                 car.model_year(2013);
                 black_box(car);
@@ -339,7 +339,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/throughput_10k");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
-    // Fair: Aeron does no bounds check — use wrap_unchecked for parity.
+    // Fair: Aeron does no bounds check — use wrap for parity.
     group.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || vec![0u8; BATCH_SIZE * 64],
@@ -347,7 +347,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
                 for i in 0..BATCH_SIZE {
                     let off = i * 64;
                     let mut car: CarEncoder<'_> =
-                        CarEncoder::wrap_unchecked(&mut buf[off..off + 64], 0);
+                        CarEncoder::wrap(&mut buf[off..off + 64], 0);
                     car.serial_number(i as u64);
                     car.model_year(2013);
                 }
@@ -479,7 +479,7 @@ fn bench_decode_skip_rewind(c: &mut Criterion) {
 
     group.bench_function("rewind_then_scalar", |b| {
         b.iter(|| {
-            let car = CarDecoder::wrap_and_apply_header(BASELINE, 0).unwrap();
+            let car = CarDecoder::try_wrap_and_apply_header(BASELINE, 0).unwrap();
             black_box(car.serial_number())
         });
     });
@@ -502,7 +502,7 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
         b.iter_batched(
             || vec![0u8; 512],
             |mut buf| {
-                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
                 car.serial_number(42);
                 car.model_year(2013);
                 let after_fuel = car
@@ -534,7 +534,7 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
         b.iter_batched(
             || vec![0u8; 512],
             |mut buf| {
-                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
                 car.serial_number(42);
                 car.model_year(2013);
                 let after_fuel = car
@@ -586,7 +586,7 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
         b.iter_batched(
             || vec![0u8; 512],
             |mut buf| {
-                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+                let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
                 car.serial_number(1234);
                 car.model_year(2013);
                 car.available(BooleanType::T);

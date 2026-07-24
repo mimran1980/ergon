@@ -38,17 +38,17 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
         let car = car.fuel_figures(3, |g| {
-            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();
-            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Combined Cycle").unwrap(); }).unwrap();
-            g.add(|e| { e.speed(75).mpg(40.0); e.usage_description(b"Highway Cycle").unwrap(); }).unwrap();
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); Ok(()) }).unwrap();
+            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Combined Cycle").unwrap(); Ok(()) }).unwrap();
+            g.add(|e| { e.speed(75).mpg(40.0); e.usage_description(b"Highway Cycle").unwrap(); Ok(()) }).unwrap();
         }).unwrap();
         let car = car.performance_figures(2, |g| {
-            g.add(|e| { e.octane_rating(95).acceleration(0, |_| {}).unwrap(); }).unwrap();
-            g.add(|e| { e.octane_rating(99).acceleration(0, |_| {}).unwrap(); }).unwrap();
+            g.add(|e| { e.octane_rating(95).acceleration(0, |_| Ok(())).unwrap(); Ok(()) }).unwrap();
+            g.add(|e| { e.octane_rating(99).acceleration(0, |_| Ok(())).unwrap(); Ok(()) }).unwrap();
         }).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic VTi").unwrap();
@@ -57,7 +57,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         let total_len = encoded.len();
 
         // ── Decode through consuming stages, in wire order ──
-        let dec = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert_eq!(dec.serial_number(), 1234);
         assert_eq!(dec.model_year(), 2013);
 
@@ -113,20 +113,20 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(7);
         let car = car.fuel_figures(3, |g| {
-            g.add(|e| { e.speed(10).mpg(1.0); e.usage_description(b"aaa").unwrap(); }).unwrap();
-            g.add(|e| { e.speed(20).mpg(2.0); e.usage_description(b"bbbb").unwrap(); }).unwrap();
-            g.add(|e| { e.speed(30).mpg(3.0); e.usage_description(b"ccccc").unwrap(); }).unwrap();
+            g.add(|e| { e.speed(10).mpg(1.0); e.usage_description(b"aaa").unwrap(); Ok(()) }).unwrap();
+            g.add(|e| { e.speed(20).mpg(2.0); e.usage_description(b"bbbb").unwrap(); Ok(()) }).unwrap();
+            g.add(|e| { e.speed(30).mpg(3.0); e.usage_description(b"ccccc").unwrap(); Ok(()) }).unwrap();
         }).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"M").unwrap();
         let car = car.model(b"N").unwrap();
         let complete = car.activation_code(b"P").unwrap();
         let encoded = complete.as_bytes();
 
-        let dec = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let mut fuel = dec.into_fuel_figures().unwrap();
         // Read only the first entry, then explicitly skip the rest.
         let first = fuel.next().unwrap().unwrap();
@@ -159,16 +159,16 @@ fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Err
         &src,
         r#"
         let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1);
-        let car = car.fuel_figures(0, |_| {}).unwrap();
-        let car = car.performance_figures(0, |_| {}).unwrap();
+        let car = car.fuel_figures(0, |_| Ok(())).unwrap();
+        let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let complete = car.activation_code(b"").unwrap();
         let encoded = complete.as_bytes();
 
-        let dec = CarDecoder::wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let fuel = dec.into_fuel_figures().unwrap();
         assert!(fuel.is_empty());
         let after_fuel = fuel.finish().unwrap();

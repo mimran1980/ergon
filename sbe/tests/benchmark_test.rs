@@ -38,7 +38,7 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
         // ── Build reference encoded Car, return a Vec so ownership is clean ──
         fn encode_car_vec() -> Vec<u8> {
             let mut buf = vec![0u8; 512];
-            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
             car.serial_number(1234);
             car.model_year(2013);
             car.available(BooleanType::T);
@@ -85,7 +85,7 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
         // ── Timed decode ──
         let decode_start = std::time::Instant::now();
         for _ in 0..50 {
-            let car2 = CarDecoder::wrap_and_apply_header(&encoded, 0).unwrap();
+            let car2 = CarDecoder::try_wrap_and_apply_header(&encoded, 0).unwrap();
             assert_eq!(1234, car2.serial_number());
             assert_eq!(2013, car2.model_year());
             assert_eq!(BooleanType::T, car2.available());

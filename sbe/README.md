@@ -19,59 +19,66 @@ All examples assume the standard Car schema (message `Car` with fields
 `serialNumber`, `modelYear`, `available`, `code`, plus a `fuelFigures` group
 and a `manufacturer` var-data field).
 
-### Decoder entry point — try_from / wrap_and_apply_header
+### Decoder entry point — try_from / try_wrap_and_apply_header
 
-Decoding starts from a byte slice. `try_from` is the infallible-ish entry
-(it verifies header + block length). `wrap_and_apply_header` gives you
-control over the starting offset for framed protocols.
+Decoding starts from a byte slice. `try_from` verifies the header + block length.
+`try_wrap_and_apply_header` validates the message at a given offset within a
+larger buffer.
 
 ```rust
-// Simplest entry: verify header and decode.
+// Verify header and decode:
 let dec = CarDecoder::try_from(bytes)?;
 assert_eq!(dec.serial_number(), 1234);
 
-// Offset-aware: decode a message at position `pos` within a larger buffer.
-// The header at `pos` tells the decoder the template ID, schema ID, version,
-// and acting block length.
-let dec = CarDecoder::wrap_and_apply_header(buffer, pos)?;
+// Offset-aware: decode at position `pos` within a larger framed buffer:
+let dec = CarDecoder::try_wrap_and_apply_header(buffer, pos)?;
 ```
 
-### Encoder entry point — wrap_unchecked (fast) or wrap_and_apply_header (safe)
+### Encoder entry point — wrap (default) / try_wrap_and_apply_header (safe)
 
-Two entry points: `wrap_and_apply_header` validates the buffer size and returns
-a `Result`. `wrap_unchecked` skips validation — caller guarantees the buffer is
-large enough. This is what the sbe-tool (Java) reference implementation does:
-its `wrap()` does no bounds check. Use `wrap_unchecked` in hot paths where you
-already know the buffer size.
+`wrap` is the default fast path — no bounds check, matching what sbe-tool's
+`wrap()` does. `try_wrap_and_apply_header` validates the buffer and returns a
+`Result`. Use `wrap` when you know the buffer size; use the `try_` variant at
+trust boundaries.
 
 ```rust
-// Fast path — skip bounds check, return encoder directly:
-let enc = CarEncoder::wrap_unchecked(&mut buf, 0);
-// Safe path — validates buffer, returns Result:
-let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
-// Header written. Next: enc.fixed(&fields) or enc.raw_fixed().
+// Default — fast, no validation (matching sbe-tool):
+let complete = CarEncoder::wrap_and_apply_header(&mut buf, 0)
+    .fixed(&fields)
+    .fuel_figures(3, |g| {
+        g.add(|e| { e.speed(30).mpg(35.9); Ok(()) })?;
+        g.add(|e| { e.speed(55).mpg(40.0); Ok(()) })?;
+        g.add(|e| { e.speed(70).mpg(22.5); Ok(()) })?;
+        Ok(())
+    })?
+    .manufacturer(b"Aston Martin")?;
+
+// Safe — validates buffer, returns Result:
+let enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
 ```
 
 When the buffer is a stack-allocated `[u8; N]` with a visible size, LLVM
-elides the bounds check in `wrap_and_apply_header` and both paths produce
-identical assembly. The unchecked variant matters when the buffer size is
-opaque to the compiler (e.g. `&mut [u8]` from a `Vec` or dynamic allocation).
+elides the bounds check and both paths produce identical assembly.
 
-### Exact buffer sizing — compute_encoded_length_with_message_header
+### Exact buffer sizing — the staged length builder
 
-Never guess the buffer size. The generated `compute_encoded_length_with_message_header`
-method calculates the exact byte count including the message header, fixed fields,
-group dimensions, and variable data — zero allocation.
+Never guess the buffer size. The generated `{Msg}EncodedLength` builder computes
+the exact byte count including the message header, fixed fields, group dimensions,
+nested groups, and variable data — zero allocation, no buffer needed.
 
 ```rust
-// For a Car with 3 fuel figures and a 12-byte manufacturer:
-let len = CarEncoder::compute_encoded_length_with_message_header(3, 12);
-let mut buf = vec![0u8; len];                              // exactly right
+let len = CarEncodedLength::new()
+    .fuel_figures(3, |g| {
+        g.add()?; g.add()?; g.add()?;
+        Ok(())
+    })?
+    .manufacturer(12)?
+    .encoded_length_with_header();
 
-let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
-// ... encode groups and var-data ...
+let mut buf = vec![0u8; len];                              // exactly right
+// ... encode ...
 let complete = /* ... */;
-assert_eq!(complete.encoded_length(), len);                // proves it fits
+assert_eq!(complete.encoded_length_with_header(), len);    // proves it fits
 ```
 
 ### Consuming decoder — ordered tail stages
@@ -118,48 +125,53 @@ let after = dec2.into_fuel_figures()?
 let (mfr, _) = after.into_manufacturer_as_str()?;
 ```
 
-### Safe encoder — struct for fixed fields, consuming stages for tail
+### Safe encoder — exact sizing, method chaining, consuming tail stages
 
-Fixed fields use a struct (`fixed(&fields)`) — no per-field method chain, no
-allocation, better optimisation. The tail (groups, var-data) uses consuming
-stages to enforce wire order at compile time.
+Pre-compute the exact buffer size with the zero-allocation length builder.
+Then chain the encoder — `fixed()`, groups, and var-data flow top-to-bottom
+in wire order.
 
 ```rust
-let len = CarEncoder::compute_encoded_length_with_message_header(2, 10);
+// 1. Pre-compute exact buffer size (zero alloc, no buffer needed).
+let len = CarEncodedLength::new()
+    .fuel_figures(2, |g| { g.add()?; g.add()?; Ok(()) })?
+    .manufacturer(12)?
+    .encoded_length_with_header();
+
+// 2. Allocate exactly the right size.
 let mut buf = vec![0u8; len];
-let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
 
-// All required fixed fields in one struct — single call, no chained setters.
-enc.fixed(&CarFixedFields {
-    serial_number: 1234,
-    model_year: 2024,
-    available: BooleanType::TRUE,
-    code: Model::A,
-});
+// 3. Encode — method chain reads top-to-bottom in wire order.
+let complete = CarEncoder::wrap_and_apply_header(&mut buf, 0)
+    .fixed(&CarFixedFields {
+        serial_number: 1234,
+        model_year: 2024,
+        available: BooleanType::True,
+        code: Model::A,
+    })
+    .fuel_figures(2, |g| {
+        g.add(|e| { e.speed(220).mpg(35.0); Ok(()) })?;
+        g.add(|e| { e.speed(240).mpg(33.0); Ok(()) })?;
+        Ok(())
+    })?
+    .manufacturer(b"Aston Martin")?;
 
-// Groups consume `enc` and return a new tail stage. Pass the count up front:
-let after_group = enc.fuel_figures(2, |g| {
-    g.add(|e| { e.speed(220).mpg(35); })?;
-    g.add(|e| { e.speed(240).mpg(33); })?;
-    Ok(())
-})?;                                                // → CarAfterFuelFigures
+// 4. Verify the length matches what we pre-computed.
+assert_eq!(complete.encoded_length_with_header(), len);
+let wire = complete.as_bytes();                     // &[u8] — no alloc
+```
 
-// When you don't know the count up front, use `_unknown_size`. The
-// dimension header is written with a zero placeholder; the actual count
-// is back-patched when the group is dropped.
-let after_group = enc.fuel_figures_unknown_size(|g| {
-    for item in some_iterator {
-        g.add(|e| { e.speed(item.speed).mpg(item.mpg); })?;
+When you don't know the group count up front, use `_unknown_size` — the
+dimension header is back-patched with the actual count after the closure
+returns:
+
+```rust
+.fuel_figures_unknown_size(|g| {
+    for item in &items {
+        g.add(|e| { e.speed(item.speed).mpg(item.mpg); Ok(()) })?;
     }
     Ok(())
-})?;
-
-// Var-data consumes the group stage, returns the complete stage.
-let complete = after_group.manufacturer_str("Aston Martin")?;
-
-// Only the complete stage exposes length and bytes.
-assert_eq!(complete.encoded_length(), len);
-let wire = complete.as_bytes();                     // &[u8] — no alloc
+})?
 ```
 
 ### `add_struct` — write whole fixed entries at once
@@ -517,32 +529,40 @@ Schema (simplified):
 ### Encoding
 
 ```rust
-// Pre-compute exact buffer size — zero guesswork.
-let len = L3BookEncoder::compute_encoded_length_with_message_header(
-    3,   // bid count
-    4,   // ask count
-    7,   // symbol: "BTCUSDT"
-);
+// 1. Pre-compute exact buffer size with the staged length builder.
+let len = L3BookEncodedLength::new()
+    .bids(3, |b| { b.add()?; b.add()?; b.add()?; Ok(()) })?
+    .asks(4, |a| { a.add()?; a.add()?; a.add()?; a.add()?; Ok(()) })?
+    .symbol(7)?
+    .encoded_length_with_header();
 let mut buf = vec![0u8; len];
 
-let enc = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?;
-
-// Fixed fields via struct — single call, no per-field method chain.
-enc.fixed(&L3BookFixedFields {
-    exchange_ts: 1_720_000_000_000_000_000,
-    sequence: 42,
-});
-
-// Bids: repeating group. Entry encoder has price/size/orders setters.
-let after_bids = enc.bids(3, |g| {
-    g.add(|e| { e.price(50800); e.size(15); e.orders(3); })?;
-    g.add(|e| { e.price(50750); e.size(40); e.orders(8); })?;
-    g.add(|e| { e.price(50700); e.size(10); e.orders(1); })?;
-    Ok(())
-})?;
-
-// Asks: second group, required after bids (wire order enforced).
-let after_asks = after_bids.asks(4, |g| {
+// 2. Encode — method chain reads top-to-bottom in wire order.
+let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)
+    .fixed(&L3BookFixedFields {
+        exchange_timestamp: 1_720_000_000_000_000_000u64,
+        sequence: 42,
+        is_active: BooleanType::True,
+    })
+    .bids(3, |g| {
+        g.add(|e| {
+            e.price(d(50800)).size(d(15))
+                .orders(3, |og| { og.add()?; og.add()?; og.add()?; Ok(()) })?;
+            Ok(())
+        })?;
+        g.add(|e| {
+            e.price(d(50750)).size(d(40))
+                .orders(8, |og| { for _ in 0..8 { og.add()?; } Ok(()) })?;
+            Ok(())
+        })?;
+        g.add(|e| {
+            e.price(d(50700)).size(d(10))
+                .orders(1, |og| { og.add()?; Ok(()) })?;
+            Ok(())
+        })?;
+        Ok(())
+    })?
+    .asks(4, |g| {
     g.add(|e| { e.price(50850); e.size(20); e.orders(5); })?;
     g.add(|e| { e.price(50900); e.size(30); e.orders(7); })?;
     g.add(|e| { e.price(50950); e.size(50); e.orders(12); })?;
@@ -554,7 +574,7 @@ let after_asks = after_bids.asks(4, |g| {
 let complete = after_asks.symbol_str("BTCUSDT")?;
 
 // Prove exact fit.
-assert_eq!(complete.encoded_length(), len);
+assert_eq!(complete.encoded_length_with_header(), len);
 let wire = complete.as_bytes();
 ```
 
@@ -563,21 +583,20 @@ let wire = complete.as_bytes();
 ```rust
 let dec = L3BookDecoder::try_from(wire)?;
 println!("{dec}");
-// L3Book { exchange_ts: 1720000000000000000, sequence: 42,
-//   bids: [Bid { price: 50800, size: 15, orders: 3 },
-//          Bid { price: 50750, size: 40, orders: 8 },
-//          Bid { price: 50700, size: 10, orders: 1 }],
+// L3Book { exchange_timestamp: 2024-07-03T09:46:40Z, sequence: 42, …,
+//   bids: [Bid { price: 50800, size: 15, orders: 3 }, …],
 //   asks: [Ask { price: 50850, size: 20, orders: 5 }, …],
 //   symbol: BTCUSDT }
 
-assert_eq!(dec.exchange_ts(), 1_720_000_000_000_000_000);
+assert_eq!(dec.exchange_timestamp_wire(), 1_720_000_000_000_000_000u64);
 assert_eq!(dec.sequence(), 42);
+assert!(dec.is_active());
 
 // Bids: group decoder, entries in wire order.
 let bids = dec.into_bids()?;
 let mut bid_prices = Vec::new();
-while let Some(entry) = bids.next() {
-    bid_prices.push((entry.price(), entry.size(), entry.orders()));
+while let Some(entry) = bids.next().transpose()? {
+    bid_prices.push((entry.price(), entry.size()));
 }
 let after_bids = bids.finish()?;
 

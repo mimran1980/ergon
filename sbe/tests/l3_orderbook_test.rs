@@ -95,7 +95,7 @@ fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = vec![0u8; 4096];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
         book.timestamp(12345u64);
         book.sequence(1u64);
         let after_bids = book.bids(2, |bids| {
@@ -195,7 +195,7 @@ fn l3_roundtrip_3_orders_per_level() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = vec![0u8; 8192];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
         book.timestamp(999u64).sequence(7u64);
         let complete = book.bids(1, |bids| {
             bids.add(|level| {
@@ -242,7 +242,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = vec![0u8; 16384];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
         book.timestamp(555u64).sequence(42u64);
         let complete = book.bids(1, |bids| {
             bids.add(|level| {

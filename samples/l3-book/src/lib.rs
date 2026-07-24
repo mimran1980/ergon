@@ -19,7 +19,7 @@ pub fn encode_book(
     asks: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(u64, rust_decimal::Decimal)])],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let complete = L3BookEncoder::wrap_and_apply_header(buf, 0)?
+    let complete = L3BookEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,

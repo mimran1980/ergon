@@ -6,7 +6,7 @@ matches or beats sbe-tool on every maintained scenario.**
 
 ## SBE encode/decode parity (ergo-sbe vs sbe-tool)
 
-`just bench` — byte-identical work. Benchmarks use `wrap_unchecked` for fair comparison
+`just bench` — byte-identical work. Benchmarks use `wrap` (previously `wrap_unchecked`) for fair comparison
 (sbe-tool's `wrap` does no bounds check). Both tools decode the same Java-produced binary
 fixture.
 
@@ -14,7 +14,7 @@ fixture.
 
 | Benchmark | ErgoSBE | sbe-tool | Ratio | Notes |
 |-----------|---------|-------|-------|-------|
-| entry_point (wrap) | 932 ps | 1,108 ps | **0.841** | Lean `wrap` with pre-computed header fields |
+| entry_point (try_wrap_and_apply_header) | 932 ps | 1,108 ps | **0.841** | Lean `try_wrap_and_apply_header` with pre-computed header fields |
 | entry_point (try_from) | 1,039 ps | — | — | Full validation every call (informational) |
 | scalar accessor | 435 ps | 435 ps | 1.000 | `serial_number()` + `model_year()` |
 | array accessor | 332 ps | 333 ps | 0.999 | `some_numbers(): [u32; 4]` — bulk read |
@@ -25,14 +25,14 @@ fixture.
 
 | Benchmark | ErgoSBE | sbe-tool | Ratio | Notes |
 |-----------|---------|-------|-------|-------|
-| scalar (wrap + 2 fields) | ~11 ns | ~11 ns | ~1.00 | `wrap_unchecked` + `serial_number` + `model_year`. High variance at this scale (system noise dominates 11 ns). |
+| scalar (wrap + 2 fields) | ~11 ns | ~11 ns | ~1.00 | `wrap` + `serial_number` + `model_year`. High variance at this scale (system noise dominates 11 ns). |
 | throughput 10k | 6,029 ns | 6,521 ns | **0.925** | 10k messages, 2 scalars each |
 | batch 10k | 8,282 ns | 8,300 ns | 0.998 | Decode + encode 10k messages |
 
 ### Head-to-head summary
 
 ErgoSBE is faster or tied on every maintained scenario. The largest wins are
-`entry_point` (17% faster — lean `wrap` vs sbe-tool's `default()` + `wrap()` dance)
+`entry_point` (17% faster — lean `try_wrap_and_apply_header` vs sbe-tool's `default()` + `wrap()` dance)
 and `decode_full_message` (14% faster). Encode paths are at parity —
 the difference is header-write strategy (bulk copy vs individual field writes),
 which is a wash at the nanosecond scale.
@@ -58,7 +58,7 @@ Key takeaways:
 ## Generated code optimizations
 
 The decoder uses `read_bytes_unchecked` for all fixed-field accessors
-(bounds are validated once at `wrap_and_apply_header`, not per-field).
+(bounds are validated once at `try_wrap_and_apply_header`, not per-field).
 Encoder 1-byte setters (`u8`, `i8`, `bool`) use direct byte writes
 instead of `copy_from_slice` + `to_le_bytes`. Group `next()` for
 fixed-size entries uses `acting_block_length` directly, skipping
@@ -66,14 +66,15 @@ fixed-size entries uses `acting_block_length` directly, skipping
 
 ## Checked vs unchecked
 
-The `_unchecked` companions (`wrap_unchecked`, `read_bytes_unchecked`,
-`write_bytes_unchecked`) skip bounds checks for callers who have already
-validated buffer sizes. Generated unconditionally — no feature flag needed.
+`wrap` (previously `wrap_unchecked`) is the default fast path — no bounds
+check, matching sbe-tool's `wrap()`. Internal helpers `read_bytes_unchecked`
+and `write_bytes_unchecked` also skip validation for callers who have already
+validated buffer sizes.
 
 | Variant | Time | Notes |
 |---------|------|-------|
-| `wrap_unchecked` + scalars | 8.38 ns | Skip validation (fair vs sbe-tool) |
-| `wrap_and_apply_header` + scalars | ~10.9 ns | With bounds check (`black_box` defeats elision) |
+| `wrap` + scalars | 8.38 ns | Skip validation (fair vs sbe-tool) |
+| `try_wrap_and_apply_header` + scalars | ~10.9 ns | With bounds check (`black_box` defeats elision) |
 
 In real code with visible stack buffers (`let mut buf = [0u8; 256]`),
 LLVM elides the bounds check and both paths produce identical assembly.
