@@ -1,18 +1,23 @@
 //! Credential suppliers for cluster authentication.
 
+use std::borrow::Cow;
+
 /// Supplies credentials for cluster authentication.
 ///
-/// Returning `None` from `encoded_credentials()` means no authentication
-/// is attempted. Returning `None` from `on_challenge()` means the
+/// Methods return `Option<Cow<'_, [u8]>>` so that [`StaticCredentials`] (which
+/// owns its bytes) can lend them by reference with no clone, while bespoke
+/// suppliers that derive credentials on the fly can return `Cow::Owned`.
+/// Returning `None` from [`Self::encoded_credentials`] means no authentication
+/// is attempted; returning `None` from [`Self::on_challenge`] means the
 /// challenge cannot be answered and the session will be rejected.
 pub trait CredentialsSupplier: Send + Sync {
     /// Credentials to include in the SessionConnectRequest.
     /// `None` = no auth (NullCredentialsSupplier behaviour).
-    fn encoded_credentials(&self) -> Option<Vec<u8>>;
+    fn encoded_credentials(&self) -> Option<Cow<'_, [u8]>>;
 
     /// Credentials to send in response to an auth challenge.
     /// `None` = cannot answer; session will be rejected.
-    fn on_challenge(&self, encoded_challenge: &[u8]) -> Option<Vec<u8>> {
+    fn on_challenge(&self, encoded_challenge: &[u8]) -> Option<Cow<'_, [u8]>> {
         let _ = encoded_challenge;
         None
     }
@@ -23,7 +28,7 @@ pub trait CredentialsSupplier: Send + Sync {
 pub struct NullCredentialsSupplier;
 
 impl CredentialsSupplier for NullCredentialsSupplier {
-    fn encoded_credentials(&self) -> Option<Vec<u8>> {
+    fn encoded_credentials(&self) -> Option<Cow<'_, [u8]>> {
         None
     }
 }
@@ -55,12 +60,12 @@ impl StaticCredentials {
 }
 
 impl CredentialsSupplier for StaticCredentials {
-    fn encoded_credentials(&self) -> Option<Vec<u8>> {
-        Some(self.credentials.clone())
+    fn encoded_credentials(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Borrowed(&self.credentials))
     }
 
-    fn on_challenge(&self, _encoded_challenge: &[u8]) -> Option<Vec<u8>> {
-        Some(self.credentials.clone())
+    fn on_challenge(&self, _encoded_challenge: &[u8]) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Borrowed(&self.credentials))
     }
 }
 
@@ -85,11 +90,13 @@ mod tests {
         let challenge = supplier
             .on_challenge(b"server-challenge")
             .ok_or("static creds missing on challenge")?;
-        assert_eq!(connect, b"user:pass");
-        assert_eq!(challenge, b"user:pass", "challenge must reuse the same bytes");
+        assert_eq!(&*connect, b"user:pass");
+        assert_eq!(&*challenge, b"user:pass", "challenge must reuse the same bytes");
         assert_eq!(
-            StaticCredentials::new(vec![1, 2, 3]).encoded_credentials(),
-            Some(vec![1, 2, 3])
+            &*StaticCredentials::new(vec![1, 2, 3])
+                .encoded_credentials()
+                .unwrap(),
+            &[1u8, 2, 3][..]
         );
         Ok(())
     }

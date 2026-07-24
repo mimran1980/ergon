@@ -257,7 +257,7 @@ impl AeronCluster {
         let creds: Vec<u8> = builder
             .credentials
             .as_ref()
-            .and_then(|c| c.encoded_credentials())
+            .and_then(|c| c.encoded_credentials().map(|cow| cow.into_owned()))
             .unwrap_or_default();
 
         self.send_connect_request(builder, &creds)?;
@@ -322,7 +322,7 @@ impl AeronCluster {
                     let resp: Vec<u8> = builder
                         .credentials
                         .as_ref()
-                        .and_then(|c| c.on_challenge(&encoded_challenge))
+                        .and_then(|c| c.on_challenge(&encoded_challenge).map(|cow| cow.into_owned()))
                         .unwrap_or_default();
                     self.send_challenge_response(correlation_id, cluster_session_id, &resp)?;
                     // keep polling for the resulting SessionEvent
@@ -941,7 +941,7 @@ impl AsyncClusterConnect {
         let creds = builder
             .credentials
             .as_ref()
-            .and_then(|c| c.encoded_credentials())
+            .and_then(|c| c.encoded_credentials().map(|cow| cow.into_owned()))
             .unwrap_or_default();
         // Epoch-like past so the first SendConnect is not blocked by re-offer gate.
         let past = Instant::now()
@@ -1084,7 +1084,7 @@ impl AsyncClusterConnect {
                                 .builder
                                 .credentials
                                 .as_ref()
-                                .and_then(|c| c.on_challenge(&encoded_challenge))
+                                .and_then(|c| c.on_challenge(&encoded_challenge).map(|cow| cow.into_owned()))
                                 .unwrap_or_default();
                             self.send_challenge_response(correlation_id, cluster_session_id, &resp)?;
                         }
