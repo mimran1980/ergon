@@ -560,71 +560,47 @@ impl Generator {
         let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
             /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
             ///
-            /// Safe path uses slice indexing (bounds-checked, equivalent to Aeron's
-            /// `slice[index..index+N].try_into()`). With `bound-check-disabled`,
-            /// uses `core::ptr::read_unaligned` for zero-overhead access.
+            /// Bounds-checked slice indexing. LLVM elides the check when the
+            /// slice length is known (stack buffer with visible size).
+            /// Prefer [`read_bytes_unchecked`] when the caller has already
+            /// validated bounds.
             #[inline]
             pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
-                #[cfg(not(feature = "bound-check-disabled"))]
-                {
-                    buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
-                }
-                #[cfg(feature = "bound-check-disabled")]
+                buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
+            }
+
+            /// Write `N` bytes from `bytes` into `buf` at `offset`.
+            #[inline]
+            pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
+                buf[offset..offset + N].copy_from_slice(bytes);
+            }
+        };
+        src.push_str(&read_bytes_ts.to_string());
+
+        // Unchecked byte I/O — always generated for zero-validation fast paths.
+        // Caller guarantees offset + N <= buf.len().
+        let uc = quote::quote! {
+            /// Unchecked companion to [`read_bytes`] — zero bounds checks.
+            /// Caller guarantees `offset + N <= buf.len()`.
+            #[inline]
+            pub fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
                 // SAFETY: caller guarantees offset + N <= buf.len().
-                // read_unaligned is safe for [u8; N] regardless of alignment.
                 unsafe {
                     core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N])
                 }
             }
 
-            /// Write `N` bytes from `bytes` into `buf` at `offset`.
-            ///
-            /// Safe path uses `copy_from_slice`. With `bound-check-disabled`,
-            /// uses `core::ptr::write_unaligned` for zero-overhead write.
+            /// Unchecked companion to [`write_bytes`] — zero bounds checks.
+            /// Caller guarantees `offset + N <= buf.len()`.
             #[inline]
-            pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
-                #[cfg(not(feature = "bound-check-disabled"))]
-                {
-                    buf[offset..offset + N].copy_from_slice(bytes);
-                }
-                #[cfg(feature = "bound-check-disabled")]
+            pub fn write_bytes_unchecked<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
                 // SAFETY: caller guarantees offset + N <= buf.len().
-                // write_unaligned is safe for [u8; N] regardless of alignment.
                 unsafe {
-                    core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes);
+                    core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes)
                 }
             }
         };
-        src.push_str(&read_bytes_ts.to_string());
-
-        // Unchecked companions for single-binary Criterion comparison.
-        // When bound-check-disabled is NOT set, these provide the unchecked
-        // code path alongside the checked originals so Ergo checked vs
-        // Ergo unchecked is measured in one Criterion session (zero cross-
-        // session noise).
-        if self.config.unchecked_companions {
-            let uc = quote::quote! {
-                /// Unchecked companion to [`read_bytes`] — zero bounds checks.
-                /// For benchmarking only; prefer the checked default in production.
-                #[inline]
-                pub fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
-                    // SAFETY: caller guarantees offset + N <= buf.len().
-                    unsafe {
-                        core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N])
-                    }
-                }
-
-                /// Unchecked companion to [`write_bytes`] — zero bounds checks.
-                #[inline]
-                pub fn write_bytes_unchecked<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
-                    // SAFETY: caller guarantees offset + N <= buf.len().
-                    unsafe {
-                        core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes)
-                    }
-                }
-            };
-            src.push_str(&uc.to_string());
-        }
+        src.push_str(&uc.to_string());
         src.push('\n');
         // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
@@ -2927,7 +2903,7 @@ fn generate_group_decoder(
             impl<'a> #decoder_ident<'a> {
                 #[inline]
                 pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-                    if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
+                    if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: n * self.acting_block_length,
@@ -2945,7 +2921,7 @@ fn generate_group_decoder(
             impl<'a> #decoder_ident<'a> {
                 #[inline]
                 pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-                    if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
+                    if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: n * Self::ENTRY_BLOCK_LENGTH,
@@ -2954,11 +2930,7 @@ fn generate_group_decoder(
                     }
                     for _ in 0..n {
                         let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_block_length, self.acting_version);
-                        if cfg!(not(feature = "bound-check-disabled")) {
-                            self.pos += entry.encoded_length()?;
-                        } else {
-                            self.pos += entry.encoded_length().unwrap();
-                        }
+                        self.pos += entry.encoded_length()?;
                         self.count -= 1;
                     }
                     Ok(())
@@ -3025,7 +2997,6 @@ fn generate_group_decoder(
                         return None;
                     }
                     let entry = #entry_decoder_ident::wrap(self.buf, self.pos, self.acting_block_length, self.acting_version);
-                    #[cfg(not(feature = "bound-check-disabled"))]
                     let size = match entry.encoded_length() {
                         Ok(s) => s,
                         Err(e) => {
@@ -3033,8 +3004,6 @@ fn generate_group_decoder(
                             return Some(Err(e));
                         }
                     };
-                    #[cfg(feature = "bound-check-disabled")]
-                    let size = entry.encoded_length().unwrap();
                     self.pos += size;
                     self.count -= 1;
                     Some(Ok(entry))
@@ -4794,7 +4763,6 @@ fn generate_message_encoder(
     let wrap_apply_body = quote::quote! {
         // Optional-field nullification is NOT applied by default — call
         // `apply_nulls()` if you want null sentinels.
-        #[cfg(not(feature = "bound-check-disabled"))]
         if pos.wrapping_add(#needed_lit) > buf.len() {
             return Err(Self::buffer_too_short(buf, pos, #needed_lit));
         }
@@ -5532,22 +5500,22 @@ fn generate_message_encoder(
         ts.extend(group_ts);
     }
 
-    // ── Unchecked companions (single-binary Criterion comparison) ──
-    if unchecked_companions {
+    // ── Unchecked companions — always generated for zero-validation fast path ──
+    {
         let needed: usize = header_size + block_length;
         let needed_lit = syn::LitInt::new(&needed.to_string(), span);
         let hs_lit = syn::LitInt::new(&header_size.to_string(), span);
         ts.extend(quote::quote! {
             impl<'a> #name_encoder_ident<'a> {
                 /// Unchecked companion to [`wrap`] — no bounds check, no Result.
-                /// For single-binary Criterion comparison.
+                /// Caller guarantees the buffer is large enough.
                 #[inline]
                 pub fn wrap_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
                     Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit }
                 }
 
                 /// Unchecked companion to [`wrap_and_apply_header`] — no bounds
-                /// check, no Result. For single-binary Criterion comparison.
+                /// check, no Result. Caller guarantees the buffer is large enough.
                 #[inline]
                 pub fn wrap_and_apply_header_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
                     buf[pos..pos + #hs_lit].copy_from_slice(&Self::HEADER_TEMPLATE);

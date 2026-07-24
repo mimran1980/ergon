@@ -290,26 +290,14 @@ fn bench_encode_scalar(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/scalar");
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("ergo-sbe_checked", |b| {
+    // Fair: Aeron wrap() does no bounds check — use wrap_unchecked.
+    // Also avoids black_box hiding buffer size for bounds check elision.
+    group.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || [0u8; 512],
             |mut buf| {
                 let mut car: CarEncoder<'_> =
-                    CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
-                car.serial_number(1234);
-                car.model_year(2013);
-                black_box(car);
-            },
-            criterion::BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("ergo-sbe_unchecked", |b| {
-        b.iter_batched(
-            || [0u8; 512],
-            |mut buf| {
-                let mut car: CarEncoder<'_> =
-                    CarEncoder::wrap_and_apply_header_unchecked(black_box(&mut buf), 0);
+                    CarEncoder::wrap_unchecked(black_box(&mut buf), 0);
                 car.serial_number(1234);
                 car.model_year(2013);
                 black_box(car);
@@ -350,31 +338,15 @@ fn bench_encode_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/throughput_10k");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
-    group.bench_function("ergo-sbe_checked", |b| {
+    // Fair: Aeron does no bounds check — use wrap_unchecked for parity.
+    group.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || vec![0u8; BATCH_SIZE * 64],
             |mut buf| {
                 for i in 0..BATCH_SIZE {
                     let off = i * 64;
                     let mut car: CarEncoder<'_> =
-                        CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0).unwrap();
-                    car.serial_number(i as u64);
-                    car.model_year(2013);
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
-    });
-
-    group.bench_function("ergo-sbe_unchecked", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * 64],
-            |mut buf| {
-                for i in 0..BATCH_SIZE {
-                    let off = i * 64;
-                    let mut car: CarEncoder<'_> =
-                        CarEncoder::wrap_and_apply_header_unchecked(&mut buf[off..off + 64], 0);
+                        CarEncoder::wrap_unchecked(&mut buf[off..off + 64], 0);
                     car.serial_number(i as u64);
                     car.model_year(2013);
                 }

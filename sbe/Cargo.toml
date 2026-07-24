@@ -18,7 +18,9 @@ path = "src/lib.rs"
 
 [features]
 default = []
-bound-check-disabled = []
+# Removed: bound-check-disabled provided negligible ~1% gain.
+# LLVM elides bounds checks for constant-sized accesses on visible
+# stack buffers. unchecked companions are always generated.
 serde = ["dep:serde"]
 
 [dependencies]

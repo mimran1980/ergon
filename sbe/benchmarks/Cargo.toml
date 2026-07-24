@@ -38,7 +38,6 @@ harness = false
 
 [features]
 default = []
-bound-check-disabled = []
 serde = ["dep:serde", "ergo-sbe/serde"]
 
 [lints]

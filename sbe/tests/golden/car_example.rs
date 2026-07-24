@@ -1568,7 +1568,7 @@ impl<'a> FuelFiguresDecoder<'a> {
 impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-        if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
+        if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
                 needed: n * Self::ENTRY_BLOCK_LENGTH,
@@ -1582,11 +1582,7 @@ impl<'a> FuelFiguresDecoder<'a> {
                 self.acting_block_length,
                 self.acting_version,
             );
-            if cfg!(not(feature = "bound-check-disabled")) {
-                self.pos += entry.encoded_length()?;
-            } else {
-                self.pos += entry.encoded_length().unwrap();
-            }
+            self.pos += entry.encoded_length()?;
             self.count -= 1;
         }
         Ok(())
@@ -1635,7 +1631,6 @@ impl<'a> Iterator for FuelFiguresDecoder<'a> {
             self.acting_block_length,
             self.acting_version,
         );
-        #[cfg(not(feature = "bound-check-disabled"))]
         let size = match entry.encoded_length() {
             Ok(s) => s,
             Err(e) => {
@@ -1643,8 +1638,6 @@ impl<'a> Iterator for FuelFiguresDecoder<'a> {
                 return Some(Err(e));
             }
         };
-        #[cfg(feature = "bound-check-disabled")]
-        let size = entry.encoded_length().unwrap();
         self.pos += size;
         self.count -= 1;
         Some(Ok(entry))
@@ -2037,7 +2030,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
 impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-        if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
+        if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
                 needed: n * Self::ENTRY_BLOCK_LENGTH,
@@ -2051,11 +2044,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
                 self.acting_block_length,
                 self.acting_version,
             );
-            if cfg!(not(feature = "bound-check-disabled")) {
-                self.pos += entry.encoded_length()?;
-            } else {
-                self.pos += entry.encoded_length().unwrap();
-            }
+            self.pos += entry.encoded_length()?;
             self.count -= 1;
         }
         Ok(())
@@ -2104,7 +2093,6 @@ impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
             self.acting_block_length,
             self.acting_version,
         );
-        #[cfg(not(feature = "bound-check-disabled"))]
         let size = match entry.encoded_length() {
             Ok(s) => s,
             Err(e) => {
@@ -2112,8 +2100,6 @@ impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
                 return Some(Err(e));
             }
         };
-        #[cfg(feature = "bound-check-disabled")]
-        let size = entry.encoded_length().unwrap();
         self.pos += size;
         self.count -= 1;
         Some(Ok(entry))
@@ -2351,7 +2337,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-        if cfg!(not(feature = "bound-check-disabled")) && n > self.count {
+        if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
                 needed: n * self.acting_block_length,
@@ -3603,7 +3589,6 @@ impl<'a> CarEncoder<'a> {
         buf: &'a mut [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::EncodeError> {
-        #[cfg(not(feature = "bound-check-disabled"))]
         if pos.wrapping_add(53) > buf.len() {
             return Err(Self::buffer_too_short(buf, pos, 53));
         }
@@ -4699,6 +4684,29 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
         self
     }
 }
+impl<'a> CarEncoder<'a> {
+    /// Unchecked companion to [`wrap`] — no bounds check, no Result.
+    /// Caller guarantees the buffer is large enough.
+    #[inline]
+    pub fn wrap_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
+        Self {
+            buf: &mut buf[pos..],
+            message_start: 0,
+            pos: 53,
+        }
+    }
+    /// Unchecked companion to [`wrap_and_apply_header`] — no bounds
+    /// check, no Result. Caller guarantees the buffer is large enough.
+    #[inline]
+    pub fn wrap_and_apply_header_unchecked(buf: &'a mut [u8], pos: usize) -> Self {
+        buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
+        Self {
+            buf: &mut buf[pos..],
+            message_start: 0,
+            pos: 53,
+        }
+    }
+}
 #[must_use = "length builder must be consumed to compute encoded length"]
 pub struct CarEncodedLength {
     len: usize,
@@ -5186,29 +5194,35 @@ pub mod prelude {
 }
 /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
 ///
-/// Safe path uses slice indexing (bounds-checked, equivalent to Aeron's
-/// `slice[index..index+N].try_into()`). With `bound-check-disabled`,
-/// uses `core::ptr::read_unaligned` for zero-overhead access.
+/// Bounds-checked slice indexing. LLVM elides the check when the
+/// slice length is known (stack buffer with visible size).
+/// Prefer [`read_bytes_unchecked`] when the caller has already
+/// validated bounds.
 #[inline]
 pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
-    #[cfg(not(feature = "bound-check-disabled"))]
-    { buf[offset..offset + N].try_into().expect("read_bytes: buffer too short") }
-    #[cfg(feature = "bound-check-disabled")]
-    unsafe { core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N]) }
+    buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
 }
 /// Write `N` bytes from `bytes` into `buf` at `offset`.
-///
-/// Safe path uses `copy_from_slice`. With `bound-check-disabled`,
-/// uses `core::ptr::write_unaligned` for zero-overhead write.
 #[inline]
 pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
-    #[cfg(not(feature = "bound-check-disabled"))]
-    {
-        buf[offset..offset + N].copy_from_slice(bytes);
-    }
-    #[cfg(feature = "bound-check-disabled")]
+    buf[offset..offset + N].copy_from_slice(bytes);
+}
+/// Unchecked companion to [`read_bytes`] — zero bounds checks.
+/// Caller guarantees `offset + N <= buf.len()`.
+#[inline]
+pub fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
+    unsafe { core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N]) }
+}
+/// Unchecked companion to [`write_bytes`] — zero bounds checks.
+/// Caller guarantees `offset + N <= buf.len()`.
+#[inline]
+pub fn write_bytes_unchecked<const N: usize>(
+    buf: &mut [u8],
+    offset: usize,
+    bytes: &[u8; N],
+) {
     unsafe {
-        core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes);
+        core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes)
     }
 }
 #[inline]

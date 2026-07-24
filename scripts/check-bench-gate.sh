@@ -47,15 +47,17 @@ pairs=(
     "decode_composite|ergo-sbe_engine|aeron_engine"
     "decode_full_message|ergo-sbe_consuming|aeron"
     "decode_entry_point|ergo-sbe_wrap|aeron_wrap"
-    "encode_scalar|ergo-sbe_checked|aeron"
-    "encode_throughput_10k|ergo-sbe_checked|aeron"
-    "throughput_batch_10k|ergo-sbe|aeron"
+    "encode/scalar|ergo-sbe|aeron"
+    "encode/throughput_10k|ergo-sbe|aeron"
+    "throughput/batch_10k|ergo-sbe|aeron"
 )
 
 for pair in "${pairs[@]}"; do
     IFS='|' read -r group ergo_fn aero_fn <<< "$pair"
-    ergo_med=$(get_median "parity_${group}/${ergo_fn}" 2>/dev/null) || true
-    aero_med=$(get_median "parity_${group}/${aero_fn}" 2>/dev/null) || true
+    # Criterion converts '/' to '_' in directory names
+    dir_group="${group//\//_}"
+    ergo_med=$(get_median "parity_${dir_group}/${ergo_fn}" 2>/dev/null) || true
+    aero_med=$(get_median "parity_${dir_group}/${aero_fn}" 2>/dev/null) || true
 
     if [ -z "$ergo_med" ] || [ -z "$aero_med" ]; then
         echo "  SKIP $group (missing estimates — run bench first)"

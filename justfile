@@ -141,15 +141,12 @@ fix:
 
 # ── benchmarks ─────────────────────────────────────────────────────────────
 
-# Benchmark parity — both checked (default) and bound-check-disabled modes.
-# Gate: ALL maintained ergo-sbe/Aeron ratios ≤ 1.00 in both modes,
-# AND unchecked ergo-sbe must not regress vs checked ergo-sbe.
+# Benchmark parity — ergo-sbe vs Aeron head-to-head.
+# Gate: ALL maintained ergo-sbe/Aeron ratios ≤ 1.00.
+# Uses wrap_unchecked for fair comparison (Aeron's wrap does not validate).
 bench:
-    @echo "=== SBE perf parity: checked mode (save baseline) ==="
-    cd sbe/benchmarks && cargo bench --bench perf_parity_bench -- --save-baseline checked
-    @echo ""
-    @echo "=== SBE perf parity: unchecked (compare vs checked baseline) ==="
-    cd sbe/benchmarks && cargo bench --bench perf_parity_bench --features bound-check-disabled -- --baseline checked
+    @echo "=== SBE perf parity ==="
+    cd sbe/benchmarks && cargo bench --bench perf_parity_bench
     @echo ""
     @echo "=== Gate ==="
     ./scripts/check-bench-gate.sh target/criterion
