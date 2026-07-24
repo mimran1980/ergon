@@ -7,8 +7,10 @@
 //! convenience: do not convert to `String`/`&str` and back for FFI.
 
 use std::ffi::{CStr, CString};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use rusteron_client::IdleStrategy;
 
 use crate::uri;
 use crate::{ClusterError, CredentialsSupplier};
@@ -43,6 +45,16 @@ pub struct SessionBuilder {
     pub(crate) credentials: Option<Arc<dyn CredentialsSupplier>>,
     /// Multi-member ingress endpoints: `"0=host:port,1=host:port,..."`.
     pub(crate) ingress_endpoints: Option<String>,
+    /// Ingress publication mode — always exclusive (`true`) for now; shared
+    /// ingress is deferred (Java default: exclusive). See the parity matrix.
+    pub(crate) is_ingress_exclusive: bool,
+    /// Owns the Aeron client — always `true` for now; external-Aeron injection
+    /// is deferred (Java default: `true`). See the parity matrix.
+    pub(crate) owns_aeron: bool,
+    /// Idle strategy for the sync-connect retry loop (Java
+    /// `Context.idleStrategy`). `None` = default `thread::sleep(50ms)`;
+    /// `Some` = adaptive backoff-on-idle during offer/poll retry.
+    pub(crate) idle: Option<Arc<Mutex<dyn IdleStrategy + Send + Sync>>>,
 }
 
 impl Default for SessionBuilder {
@@ -56,6 +68,9 @@ impl Default for SessionBuilder {
             new_leader_timeout_ms: 5_000,
             credentials: None,
             ingress_endpoints: None,
+            is_ingress_exclusive: true,
+            owns_aeron: true,
+            idle: None,
         }
     }
 }
@@ -94,6 +109,30 @@ impl SessionBuilder {
     /// session to [`crate::ClusterError::Disconnected`].
     pub fn new_leader_timeout(mut self, timeout: Duration) -> Self {
         self.new_leader_timeout_ms = timeout.as_millis() as u64;
+        self
+    }
+
+    /// Ingress publication mode (Java `Context.isIngressExclusive`). Deferred to
+    /// a future release — shared ingress (`false`) is not yet supported;
+    /// [`Self::validate`] rejects it. Keep the default (`true`).
+    pub fn is_ingress_exclusive(mut self, v: bool) -> Self {
+        self.is_ingress_exclusive = v;
+        self
+    }
+
+    /// Owns the Aeron client (Java `Context.ownsAeronClient`). Deferred to a
+    /// future release — external-Aeron injection (`false`) is not yet supported;
+    /// [`Self::validate`] rejects it. Keep the default (`true`).
+    pub fn owns_aeron(mut self, v: bool) -> Self {
+        self.owns_aeron = v;
+        self
+    }
+
+    /// Idle strategy for the connect retry loop (Java `Context.idleStrategy`).
+    /// Replaces the default `thread::sleep(50ms)` with adaptive backoff during
+    /// the sync handshake's offer/poll retry logic.
+    pub fn idle_strategy(mut self, strategy: impl IdleStrategy + Send + Sync + 'static) -> Self {
+        self.idle = Some(Arc::new(Mutex::new(strategy)));
         self
     }
 
@@ -152,6 +191,16 @@ impl SessionBuilder {
         }
         if has_endpoints {
             let _ = crate::endpoints::parse_ingress_endpoints(self.ingress_endpoints.as_deref().unwrap_or(""))?;
+        }
+        if !self.is_ingress_exclusive {
+            return Err(ClusterError::connect(
+                "shared ingress (is_ingress_exclusive = false) is not yet supported",
+            ));
+        }
+        if !self.owns_aeron {
+            return Err(ClusterError::connect(
+                "external Aeron injection (owns_aeron = false) is not yet supported",
+            ));
         }
         Ok(())
     }

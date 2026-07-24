@@ -220,6 +220,7 @@ impl AeronCluster {
         let reoffer_ms = connect_reoffer_interval_ms(builder.message_timeout_ms);
 
         let deadline = Instant::now() + Duration::from_millis(builder.message_timeout_ms);
+        let idle_clone = builder.idle.clone();
         let mut captured: Option<crate::poller::EgressEvent> = None;
         while Instant::now() < deadline {
             let _ = self.egress.poll_fn(
@@ -296,7 +297,11 @@ impl AeronCluster {
                     }
                 }
             }
-            std::thread::sleep(Duration::from_millis(50));
+            if let Some(ref idle) = idle_clone {
+                idle.lock().unwrap().idle(0);
+            } else {
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
 
         Err(ClusterError::ConnectFailed {
@@ -312,11 +317,16 @@ impl AeronCluster {
     ) -> Result<(), ClusterError> {
         let buf = Self::encode_connect_request(builder, credentials)?;
         let deadline = Instant::now() + Duration::from_millis(builder.message_timeout_ms);
+        let idle_clone = builder.idle.clone();
         while Instant::now() < deadline {
             if self.ingress.offer_raw(&buf, Handlers::NONE) > 0 {
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(50));
+            if let Some(ref idle) = idle_clone {
+                idle.lock().unwrap().idle(0);
+            } else {
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
         Err(ClusterError::ConnectFailed {
             reason: "connect request offer timed out".into(),
