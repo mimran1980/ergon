@@ -511,37 +511,51 @@ assert_eq!(dec.message_type(), 1);                   // always 1 per schema
 
 ## Worked example — L3 order book
 
-This is a complete encode/decode round-trip for a market-data L3 order book
-message with two repeating groups (bids, asks), a symbol string, and an
-exchange timestamp. It shows the full pattern end to end.
+A complete encode/decode round-trip for a market-data L3 order book with
+nested repeating groups. See [`samples/l3-book/`](../samples/l3-book/) for
+the full runnable code, schema, and domain-type converters.
 
-Schema (simplified):
 ```xml
-<message name="L3Book" id="100">
-  <field name="exchange_ts"  id="1" type="uint64"  offset="0"/>
-  <field name="sequence"     id="2" type="uint64"  offset="8"/>
-  <group  name="bids"        id="3" dimensionType="groupSizeEncoding"/>
-    <field name="price"      id="4" type="int64"   offset="0"/>
-    <field name="size"       id="5" type="int64"   offset="8"/>
-    <field name="orders"     id="6" type="uint16"  offset="16"/>
+<!-- bids → orders (nested repeating group), entry varData, message varData -->
+<message name="L3Book" id="1">
+  <field name="exchangeTimestamp" id="1" type="uint64" semanticType="UTCTimestamp"/>
+  <field name="sequence"          id="2" type="uint64"/>
+  <field name="isActive"          id="3" type="BooleanType"/>
+  <group name="bids" id="4" dimensionType="groupSizeEncoding">
+    <field name="price" id="5" type="Decimal" semanticType="Price"/>
+    <field name="size"  id="6" type="Decimal" semanticType="Qty"/>
+    <group name="orders" id="7" dimensionType="groupSizeEncoding">    <!-- nested group -->
+      <field name="orderId"  id="8"  type="uint64"/>
+      <field name="quantity" id="9"  type="Decimal" semanticType="Qty"/>
+    </group>
   </group>
-  <group  name="asks"        id="7" dimensionType="groupSizeEncoding"/>
-    <field name="price"      id="8" type="int64"   offset="0"/>
-    <field name="size"       id="9" type="int64"   offset="8"/>
-    <field name="orders"     id="10" type="uint16" offset="16"/>
+  <group name="asks" id="10" dimensionType="groupSizeEncoding">
+    <field name="price" id="11" type="Decimal" semanticType="Price"/>
+    <field name="size"  id="12" type="Decimal" semanticType="Qty"/>
+    <group name="orders" id="13" dimensionType="groupSizeEncoding">
+      <field name="orderId"  id="14" type="uint64"/>
+      <field name="quantity" id="15" type="Decimal" semanticType="Qty"/>
+    </group>
   </group>
-  <data   name="symbol"      id="11" type="varAsciiEncoding" characterEncoding="ASCII"/>
+  <data name="symbol" id="16" type="varAsciiEncoding" characterEncoding="ASCII"/>
 </message>
 ```
 
 ### Encoding
 
 ```rust
-// 1. Pre-compute exact buffer size with the staged length builder.
+// 1. Pre-compute exact buffer size — nested groups need the closure.
 let len = L3BookEncodedLength::new()
-    .bids(3, |b| { b.add()?; b.add()?; b.add()?; Ok(()) })?
-    .asks(4, |a| { a.add()?; a.add()?; a.add()?; a.add()?; Ok(()) })?
-    .symbol(7)?
+    .bids(2, |b| {
+        b.add()?; b.orders(2, |o| { o.add()?; o.add()?; Ok(()) })?; b.venue(4)?;
+        b.add()?; b.orders(1, |o| { o.add()?; Ok(()) })?; b.venue(3)?;
+        Ok(())
+    })?
+    .asks(1, |a| {
+        a.add()?; a.orders(2, |o| { o.add()?; o.add()?; Ok(()) })?; a.venue(4)?;
+        Ok(())
+    })?
+    .comment(12)?
     .encoded_length_with_header();
 let mut buf = vec![0u8; len];
 
@@ -552,36 +566,40 @@ let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)
         sequence: 42,
         is_active: BooleanType::True,
     })
-    .bids(3, |g| {
+    .bids(2, |g| {
         g.add(|e| {
-            e.price(d(50800)).size(d(15))
-                .orders(3, |og| { og.add()?; og.add()?; og.add()?; Ok(()) })?;
+            e.price(Decimal::new(50800, 0)).size(Decimal::new(15, 0))
+                .orders(2, |og| {
+                    og.add_struct(&BidsOrdersEntry { order_id: 1001, quantity: Decimal::new(5, 0) })?;
+                    og.add_struct(&BidsOrdersEntry { order_id: 1002, quantity: Decimal::new(10, 0) })?;
+                    Ok(())
+                })?;
             Ok(())
         })?;
         g.add(|e| {
-            e.price(d(50750)).size(d(40))
-                .orders(8, |og| { for _ in 0..8 { og.add()?; } Ok(()) })?;
-            Ok(())
-        })?;
-        g.add(|e| {
-            e.price(d(50700)).size(d(10))
-                .orders(1, |og| { og.add()?; Ok(()) })?;
+            e.price(Decimal::new(50750, 0)).size(Decimal::new(40, 0))
+                .orders(1, |og| {
+                    og.add_struct(&BidsOrdersEntry { order_id: 1003, quantity: Decimal::new(25, 0) })?;
+                    Ok(())
+                })?;
             Ok(())
         })?;
         Ok(())
     })?
-    .asks(4, |g| {
-    g.add(|e| { e.price(50850); e.size(20); e.orders(5); })?;
-    g.add(|e| { e.price(50900); e.size(30); e.orders(7); })?;
-    g.add(|e| { e.price(50950); e.size(50); e.orders(12); })?;
-    g.add(|e| { e.price(51000); e.size(80); e.orders(20); })?;
-    Ok(())
-})?;
+    .asks(1, |g| {
+        g.add(|e| {
+            e.price(Decimal::new(50850, 0)).size(Decimal::new(20, 0))
+                .orders(2, |og| {
+                    og.add_struct(&AsksOrdersEntry { order_id: 2001, quantity: Decimal::new(10, 0) })?;
+                    og.add_struct(&AsksOrdersEntry { order_id: 2002, quantity: Decimal::new(20, 0) })?;
+                    Ok(())
+                })?;
+            Ok(())
+        })?;
+        Ok(())
+    })?
+    .symbol(b"BTCUSDT")?;
 
-// Var-data: schema-declared ASCII → validated &str.
-let complete = after_asks.symbol_str("BTCUSDT")?;
-
-// Prove exact fit.
 assert_eq!(complete.encoded_length_with_header(), len);
 let wire = complete.as_bytes();
 ```
@@ -590,64 +608,37 @@ let wire = complete.as_bytes();
 
 ```rust
 let dec = L3BookDecoder::try_from(wire)?;
-println!("{dec}");
-// L3Book { exchange_timestamp: 2024-07-03T09:46:40Z, sequence: 42, …,
-//   bids: [Bid { price: 50800, size: 15, orders: 3 }, …],
-//   asks: [Ask { price: 50850, size: 20, orders: 5 }, …],
-//   symbol: BTCUSDT }
 
-assert_eq!(dec.exchange_timestamp_wire(), 1_720_000_000_000_000_000u64);
-assert_eq!(dec.sequence(), 42);
+// Concrete converter accessors — no turbofish needed.
+let _ts: chrono::DateTime<chrono::Utc> = dec.exchange_timestamp();
 assert!(dec.is_active());
 
-// Bids: group decoder, entries in wire order.
+// Bids: group decoder, nested orders in wire order.
 let bids = dec.into_bids()?;
-let mut bid_prices = Vec::new();
+let mut levels = Vec::new();
 while let Some(entry) = bids.next().transpose()? {
-    bid_prices.push((entry.price(), entry.size()));
+    let price = entry.price();      // rust_decimal::Decimal
+    let size  = entry.size();
+    let mut orders = entry.into_orders()?;
+    let mut ords = Vec::new();
+    while let Some(o) = orders.next() {
+        ords.push((o.order_id(), o.quantity()));
+    }
+    levels.push((price, size, ords));
+    let _ = orders.finish()?;
 }
 let after_bids = bids.finish()?;
 
-// Asks: consumes the AfterBids stage.
+// Asks and symbol follow the same pattern — see the sample for the full code.
 let asks = after_bids.into_asks()?;
-let mut ask_prices = Vec::new();
-while let Some(entry) = asks.next() {
-    ask_prices.push((entry.price(), entry.size(), entry.orders()));
-}
-let after_asks = asks.finish()?;
-
-// Symbol: zero-copy &str → ASCII validated.
-let (symbol, complete) = after_asks.into_symbol_as_str()?;
-assert_eq!(symbol, "BTCUSDT");
-
-assert_eq!(bid_prices, vec![
-    (50800, 15, 3), (50750, 40, 8), (50700, 10, 1)
-]);
-assert_eq!(ask_prices, vec![
-    (50850, 20, 5), (50900, 30, 7), (50950, 50, 12), (51000, 80, 20)
-]);
+// ...
+let (symbol_bytes, _complete) = asks.finish()?.into_symbol()?;
+assert_eq!(symbol_bytes, b"BTCUSDT");
 ```
 
-### Owned domain object round-trip
-
-```rust
-// Build owned value from decoded fields.
-let book = L3BookOwned {
-    exchange_ts: dec.exchange_ts(),
-    sequence: dec.sequence(),
-    bids: bid_prices.into_iter().map(|(p, s, o)| BidLevel { price: p, size: s, orders: o }).collect(),
-    asks: ask_prices.into_iter().map(|(p, s, o)| AskLevel { price: p, size: s, orders: o }).collect(),
-    symbol: symbol.to_string(),
-};
-
-// Re-encode from owned value.
-let len = book.encoded_length_with_header()?;
-let mut buf2 = vec![0u8; len];
-let re_encoded: &[u8] = book.encode_into(&mut buf2)?;
-
-// Byte-identical.
-assert_eq!(wire, re_encoded);
-```
+> See [`samples/l3-book/`](../samples/l3-book/) for the full runnable example with
+> domain-type converters (Decimal → rust_decimal, BooleanType → bool,
+> UTCTimestamp → chrono::DateTime&lt;Utc&gt;), exact-length buffer sizing, and tests.
 
 ---
 
