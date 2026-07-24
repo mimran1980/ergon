@@ -390,10 +390,11 @@ impl AeronCluster {
 
     fn encode_connect_request(builder: &crate::SessionBuilder, credentials: &[u8]) -> Result<Vec<u8>, ClusterError> {
         let ch = builder.egress_channel_bytes();
+        let info = client_info_bytes();
         let len = SessionConnectRequestEncoder::compute_encoded_length_with_message_header(
             ch.len(),
             credentials.len(),
-            0,
+            info.len(),
         );
         let mut buf = vec![0u8; len];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -1125,10 +1126,11 @@ impl AsyncClusterConnect {
             return Ok(true);
         }
         let ch = self.builder.egress_channel_bytes();
+        let info = client_info_bytes();
         let len = SessionConnectRequestEncoder::compute_encoded_length_with_message_header(
             ch.len(),
             self.credentials.len(),
-            0,
+            info.len(),
         );
         let mut buf = vec![0u8; len];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -1217,15 +1219,16 @@ mod tests {
 
         let ch = b"aeron:udp?endpoint=localhost:9999";
         let creds = b"user:pass";
+        let info = client_info_bytes();
         let len =
-            SessionConnectRequestEncoder::compute_encoded_length_with_message_header(ch.len(), creds.len(), 0);
+            SessionConnectRequestEncoder::compute_encoded_length_with_message_header(ch.len(), creds.len(), info.len());
         let mut buf = vec![0u8; len];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(0).response_stream_id(102).version(0);
         let complete = enc
             .response_channel(ch)?
             .encoded_credentials(creds)?
-            .client_info(&client_info_bytes())?;
+            .client_info(&info)?;
         assert_eq!(
             complete.as_bytes_with_header().len(),
             len,
