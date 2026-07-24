@@ -35,6 +35,7 @@ fn connect_reoffer_interval_ms(message_timeout_ms: u64) -> u64 {
 use crate::controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 use crate::egress::{EgressAdapter, EgressListener};
 use crate::error::ClusterError;
+use crate::error::PublicationFailure;
 use crate::state::SessionState;
 
 /// Header-inclusive SessionMessageHeader (prefer generated `ENCODED_LENGTH`).
@@ -400,6 +401,26 @@ impl AeronCluster {
         claim.commit()
     }
 
+    /// Publish a sub-range of application data — equivalent to Java
+    /// `offer(DirectBuffer, int offset, int length)`. The slice
+    /// `payload[offset..offset+length]` is bounds-checked then published
+    /// via the allocation-free [`Self::offer`] path.
+    pub fn offer_range(&mut self, payload: &[u8], offset: usize, length: usize) -> Result<i64, ClusterError> {
+        let Some(end) = offset.checked_add(length) else {
+            return Err(ClusterError::BufferTooSmall {
+                needed: offset.saturating_add(length),
+                actual: payload.len(),
+            });
+        };
+        if end > payload.len() {
+            return Err(ClusterError::BufferTooSmall {
+                needed: end,
+                actual: payload.len(),
+            });
+        }
+        self.offer(&payload[offset..end])
+    }
+
     /// Send a SessionKeepAlive to hold the session open.
     ///
     /// Encoded into a stack array sized to the generated
@@ -423,6 +444,32 @@ impl AeronCluster {
         {
             self.last_keep_alive = now;
         }
+    }
+
+    /// Classify an ingress publication result (raw offer/try_claim return
+    /// or commit position). On a fatal sentinel — [`PublicationFailure::Closed`]
+    /// or [`PublicationFailure::MaxPositionExceeded`] — the session is
+    /// transitioned to `AwaitingNewLeader` so a subsequent
+    /// `NewLeaderEvent` can reconnect. Java `trackIngressPublicationResult`
+    /// analogue. Non-fatal retryable sentinels (NotConnected/BackPressured)
+    /// are returned as an error but do not change session state.
+    pub fn track_ingress_publication_result(&mut self, result: i64) -> Result<i64, ClusterError> {
+        if result > 0 {
+            return Ok(result);
+        }
+        let failure = PublicationFailure::from_raw(result);
+        if matches!(
+            failure,
+            PublicationFailure::Closed | PublicationFailure::MaxPositionExceeded
+        ) && self.state == SessionState::Connected
+        {
+            self.state = SessionState::AwaitingNewLeader;
+            self.awaiting_leader_since = Some(Instant::now());
+        }
+        Err(ClusterError::Publication {
+            failure,
+            context: "track_ingress",
+        })
     }
 
     /// Send an AdminRequest (e.g. snapshot) on the ingress publication.

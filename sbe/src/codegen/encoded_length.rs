@@ -353,6 +353,77 @@ fn generate_staged(
                 }
             });
 
+            // ── Zero-count forwarding: forward the next tail component's
+            //     method so bids(0).asks(0) works without finish_empty() ──
+            // Only forward if the next component's method name doesn't
+            // collide with the pending stage's own methods.
+            {
+                let next_tail_idx = tail_idx + 1;
+                if next_tail_idx < total_tail {
+                    let (next_method_name, next_param_ty, next_param_name) =
+                        if next_tail_idx < msg.groups.len() {
+                            let ng = &msg.groups[next_tail_idx];
+                            let (_, _, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
+                            let ng_count_ty: syn::Type = syn::parse_str(rust_type(ng_num_prim)).unwrap();
+                            (
+                                syn::Ident::new(&crate::codegen::to_snake_case(&ng.name), span),
+                                ng_count_ty,
+                                syn::Ident::new("count", span),
+                            )
+                        } else {
+                            let vdi = next_tail_idx - msg.groups.len();
+                            let vd = &msg.var_data[vdi];
+                            (
+                                syn::Ident::new(&crate::codegen::to_snake_case(&vd.name), span),
+                                syn::parse_str::<syn::Type>("usize").unwrap(),
+                                syn::Ident::new("byte_len", span),
+                            )
+                        };
+
+                    // Check for name collision with pending stage methods
+                    let method_name_str = next_method_name.to_string();
+                    let has_collision = g.groups.iter().any(|ng| {
+                        crate::codegen::to_snake_case(&ng.name) == method_name_str
+                    }) || g.var_data.iter().any(|vd| {
+                        crate::codegen::to_snake_case(&vd.name) == method_name_str
+                    });
+
+                    if !has_collision {
+                        // Generate forwarding: on error, store in accumulator
+                        // and continue the chain. Error surfaces at next fallible boundary.
+                        standalone.extend(quote::quote! {
+                            impl #pending_ident {
+                                pub fn #next_method_name(
+                                    self, #next_param_name: #next_param_ty,
+                                ) -> #next_name {
+                                    if self.declared_count != 0 {
+                                        let mut state = self.state;
+                                        state.fail(sbe_rt::EncodeError::GroupCountMismatch {
+                                            declared: self.declared_count,
+                                            actual: 0,
+                                        });
+                                        return #next_name { state };
+                                    }
+                                    // Zero-count: advance state in-place rather than
+                                    // calling finish_empty(self), which would consume
+                                    // self and make .state unreachable in the Err
+                                    // branch (E0382 use after move).
+                                    let mut state = self.state;
+                                    state.leave_group(self.parent_multiplier);
+                                    match state.check() {
+                                        Ok(()) => #next_name { state },
+                                        Err(e) => {
+                                            state.fail(e);
+                                            #next_name { state }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+
             // Uniform group method + ragged + unknown_size on the previous stage
             let g_ragged = syn::Ident::new(
                 &format!("{}_ragged", crate::codegen::to_snake_case(&g.name)),
