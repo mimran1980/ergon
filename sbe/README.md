@@ -36,17 +36,26 @@ assert_eq!(dec.serial_number(), 1234);
 let dec = CarDecoder::wrap_and_apply_header(buffer, pos)?;
 ```
 
-### Encoder entry point — wrap_and_apply_header
+### Encoder entry point — wrap_unchecked (fast) or wrap_and_apply_header (safe)
 
-The encoder writes the SBE message header (block length, template ID, schema
-ID, version) into the buffer and returns the encoder. Call `fixed(&fields)`
-to write the fixed block, or `raw_fixed()` for individual setters.
+Two entry points: `wrap_and_apply_header` validates the buffer size and returns
+a `Result`. `wrap_unchecked` skips validation — caller guarantees the buffer is
+large enough. This is what the sbe-tool (Java) reference implementation does:
+its `wrap()` does no bounds check. Use `wrap_unchecked` in hot paths where you
+already know the buffer size.
 
 ```rust
-let mut buf = vec![0u8; 512];
+// Fast path — skip bounds check, return encoder directly:
+let enc = CarEncoder::wrap_unchecked(&mut buf, 0);
+// Safe path — validates buffer, returns Result:
 let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
 // Header written. Next: enc.fixed(&fields) or enc.raw_fixed().
 ```
+
+When the buffer is a stack-allocated `[u8; N]` with a visible size, LLVM
+elides the bounds check in `wrap_and_apply_header` and both paths produce
+identical assembly. The unchecked variant matters when the buffer size is
+opaque to the compiler (e.g. `&mut [u8]` from a `Vec` or dynamic allocation).
 
 ### Exact buffer sizing — compute_encoded_length_with_message_header
 

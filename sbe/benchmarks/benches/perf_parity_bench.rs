@@ -1,12 +1,13 @@
-//! Performance parity: ergon vs Aeron Rust SBE head-to-head.
+//! Performance parity: ergon vs sbe-tool (Java reference) head-to-head.
 //!
 //! Both codecs generated from the same Car schema, decoding the same
 //! Java-produced binary fixture. If ergon is slower in any scenario,
 //! that is a blocking v1 release bug (todo 105).
 //!
-//! Note: Aeron SBE uses a different API pattern (mutable self, parent
+//! Note: sbe-tool uses a different API pattern (mutable self, parent
 //! references, advance()-based group iteration). These benchmarks compare
 //! semantically equivalent operations — same fields, same buffer, same count.
+//! Fair comparison uses `wrap_unchecked` (sbe-tool's `wrap` does no bounds check).
 
 #![allow(
     unsafe_code,

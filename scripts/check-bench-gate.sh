@@ -64,7 +64,7 @@ for pair in "${pairs[@]}"; do
         continue
     fi
 
-    check_ratio "$group (ergo-sbe/Aeron)" "$ergo_med" "$aero_med" || ((failures++))
+    check_ratio "$group (ergo-sbe/sbe-tool)" "$ergo_med" "$aero_med" || ((failures++))
 done
 
 echo ""

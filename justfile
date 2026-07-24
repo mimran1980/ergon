@@ -141,9 +141,9 @@ fix:
 
 # ── benchmarks ─────────────────────────────────────────────────────────────
 
-# Benchmark parity — ergo-sbe vs Aeron head-to-head.
-# Gate: ALL maintained ergo-sbe/Aeron ratios ≤ 1.00.
-# Uses wrap_unchecked for fair comparison (Aeron's wrap does not validate).
+# Benchmark parity — ergo-sbe vs sbe-tool head-to-head.
+# Gate: ALL maintained ergo-sbe/sbe-tool ratios ≤ 1.00.
+# Uses wrap_unchecked for fair comparison (sbe-tool's wrap does not validate).
 bench:
     @echo "=== SBE perf parity ==="
     cd sbe/benchmarks && cargo bench --bench perf_parity_bench

@@ -2,28 +2,28 @@
 
 All benchmarks run on Apple Silicon M-series (arm64), Rust 1.95, `--release` with LTO.
 Results shown are Criterion median point estimates. **All ratios ≤ 1.00 means ErgoSBE
-matches or beats Aeron on every maintained scenario.**
+matches or beats sbe-tool on every maintained scenario.**
 
-## SBE encode/decode parity (ergo-sbe vs Aeron)
+## SBE encode/decode parity (ergo-sbe vs sbe-tool)
 
 `just bench` — byte-identical work. Benchmarks use `wrap_unchecked` for fair comparison
-(Aeron's `wrap` does no bounds check). Both tools decode the same Java-produced binary
+(sbe-tool's `wrap` does no bounds check). Both tools decode the same Java-produced binary
 fixture.
 
 ### Decode
 
-| Benchmark | ErgoSBE | Aeron | Ratio | Notes |
+| Benchmark | ErgoSBE | sbe-tool | Ratio | Notes |
 |-----------|---------|-------|-------|-------|
 | entry_point (wrap) | 932 ps | 1,108 ps | **0.841** | Lean `wrap` with pre-computed header fields |
 | entry_point (try_from) | 1,039 ps | — | — | Full validation every call (informational) |
 | scalar accessor | 435 ps | 435 ps | 1.000 | `serial_number()` + `model_year()` |
 | array accessor | 332 ps | 333 ps | 0.999 | `some_numbers(): [u32; 4]` — bulk read |
-| composite (Engine) | 311 ps | 310 ps | 1.002 | Ergon eager copy vs Aeron flyweight |
+| composite (Engine) | 311 ps | 310 ps | 1.002 | Ergon eager copy vs sbe-tool flyweight |
 | full message (consuming) | 10.86 ns | 10.86 ns | 1.000 | Decode all fields, groups, var-data |
 
 ### Encode
 
-| Benchmark | ErgoSBE | Aeron | Ratio | Notes |
+| Benchmark | ErgoSBE | sbe-tool | Ratio | Notes |
 |-----------|---------|-------|-------|-------|
 | scalar (wrap + 2 fields) | ~11 ns | ~11 ns | ~1.00 | `wrap_unchecked` + `serial_number` + `model_year`. High variance at this scale (system noise dominates 11 ns). |
 | throughput 10k | 6,029 ns | 6,521 ns | **0.925** | 10k messages, 2 scalars each |
@@ -32,7 +32,7 @@ fixture.
 ### Head-to-head summary
 
 ErgoSBE is faster or tied on every maintained scenario. The largest wins are
-`entry_point` (17% faster — lean `wrap` vs Aeron's `default()` + `wrap()` dance)
+`entry_point` (17% faster — lean `wrap` vs sbe-tool's `default()` + `wrap()` dance)
 and `decode_full_message` (14% faster). Encode paths are at parity —
 the difference is header-write strategy (bulk copy vs individual field writes),
 which is a wash at the nanosecond scale.
@@ -72,7 +72,7 @@ validated buffer sizes. Generated unconditionally — no feature flag needed.
 
 | Variant | Time | Notes |
 |---------|------|-------|
-| `wrap_unchecked` + scalars | 8.38 ns | Skip validation (fair vs Aeron) |
+| `wrap_unchecked` + scalars | 8.38 ns | Skip validation (fair vs sbe-tool) |
 | `wrap_and_apply_header` + scalars | ~10.9 ns | With bounds check (`black_box` defeats elision) |
 
 In real code with visible stack buffers (`let mut buf = [0u8; 256]`),
