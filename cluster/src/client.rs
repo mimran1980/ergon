@@ -475,7 +475,7 @@ impl AeronCluster {
     pub fn offer(&mut self, payload: &[u8]) -> Result<i64, ClusterError> {
         let mut claim = self.try_claim(payload.len())?;
         claim.payload_mut().copy_from_slice(payload);
-        claim.commit()
+        claim.commit().map_err(|e| self.track_publication_error(e))
     }
 
     /// Publish a sub-range of application data — equivalent to Java
@@ -547,6 +547,26 @@ impl AeronCluster {
             failure,
             context: "track_ingress",
         })
+    }
+
+    /// Mirror [`Self::track_ingress_publication_result`] for the typed
+    /// `ClusterError::Publication` path used by `offer` / `try_claim`: on a
+    /// fatal sentinel (Closed / MaxPositionExceeded) transition a Connected
+    /// session to `AwaitingNewLeader` so a `NewLeaderEvent` can recover it.
+    /// Retryable sentinels (NotConnected / BackPressured / AdminAction) leave
+    /// the session intact.
+    fn track_publication_error(&mut self, err: ClusterError) -> ClusterError {
+        if let ClusterError::Publication { failure, .. } = &err
+            && self.state == SessionState::Connected
+            && matches!(
+                *failure,
+                PublicationFailure::Closed | PublicationFailure::MaxPositionExceeded
+            )
+        {
+            self.state = SessionState::AwaitingNewLeader;
+            self.awaiting_leader_since = Some(Instant::now());
+        }
+        err
     }
 
     /// Send an AdminRequest (e.g. snapshot) on the ingress publication.
@@ -795,7 +815,7 @@ impl AeronCluster {
         let mut claim = self
             .ingress
             .try_claim_owned(total)
-            .map_err(|e| ClusterError::from_offer_error("try_claim", e))?;
+            .map_err(|e| self.track_publication_error(ClusterError::from_offer_error("try_claim", e)))?;
 
         // Write the SessionMessageHeader (schema 111) into the claim's
         // first 32 bytes via the ergon encoder.
