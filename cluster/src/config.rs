@@ -282,4 +282,44 @@ mod tests {
         assert!(s.contains("localhost:9002"), "{s}");
         Ok(())
     }
+
+    #[test]
+    fn test_validate_rejects_missing_ingress() -> Result<(), Box<dyn std::error::Error>> {
+        let b = SessionBuilder::default()
+            .egress_channel("aeron:udp?endpoint=localhost:19002");
+        let err = b.validate().unwrap_err();
+        assert!(err.to_string().contains("ingress"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_rejects_missing_egress() -> Result<(), Box<dyn std::error::Error>> {
+        let b = SessionBuilder::default()
+            .ingress_channel("aeron:udp?endpoint=localhost:9010");
+        let err = b.validate().unwrap_err();
+        assert!(err.to_string().contains("egress"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_rejects_shared_ingress() -> Result<(), Box<dyn std::error::Error>> {
+        let b = SessionBuilder::default()
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")
+            .egress_channel("aeron:udp?endpoint=localhost:19002")
+            .is_ingress_exclusive(false);
+        let err = b.validate().unwrap_err();
+        assert!(err.to_string().contains("shared ingress"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_rejects_external_aeron_injection() -> Result<(), Box<dyn std::error::Error>> {
+        let b = SessionBuilder::default()
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")
+            .egress_channel("aeron:udp?endpoint=localhost:19002")
+            .owns_aeron(false);
+        let err = b.validate().unwrap_err();
+        assert!(err.to_string().contains("external Aeron"), "{err}");
+        Ok(())
+    }
 }
