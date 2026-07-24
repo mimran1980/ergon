@@ -354,3 +354,5 @@ pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let module = ms.modules().next().unwrap();
     (schema, module.source.clone())
 }
+
+pub mod encoded_length_matrix;
