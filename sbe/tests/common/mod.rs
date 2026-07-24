@@ -240,7 +240,8 @@ fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&st
 
     let main = format!(
         "#![allow(dead_code,unused_imports,unused_variables)]\n\
-         mod {module_name};\nuse {module_name}::*;\nfn main() {{\n{code}\n}}\n"
+         mod {module_name};\nuse {module_name}::*;\n\
+         fn main() -> Result<(), Box<dyn std::error::Error>> {{\n{code}\nOk(())\n}}\n"
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
@@ -316,7 +317,8 @@ pub fn compile_and_run_two_modules(
 
     let main = format!(
         "#![allow(dead_code,unused_imports,unused_variables)]\n\
-         mod {module_a};\nmod {module_b};\nfn main() {{\n{code}\n}}\n"
+         mod {module_a};\nmod {module_b};\n\
+         fn main() -> Result<(), Box<dyn std::error::Error>> {{\n{code}\nOk(())\n}}\n"
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
