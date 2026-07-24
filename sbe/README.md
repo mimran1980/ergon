@@ -60,19 +60,50 @@ let enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
 When the buffer is a stack-allocated `[u8; N]` with a visible size, LLVM
 elides the bounds check and both paths produce identical assembly.
 
-### Exact buffer sizing — the staged length builder
+### Exact buffer sizing — three strategies
 
-Never guess the buffer size. The generated `{Msg}EncodedLength` builder computes
-the exact byte count including the message header, fixed fields, group dimensions,
-nested groups, and variable data — zero allocation, no buffer needed.
+ergo-sbe classifies each message and generates the simplest interface that can
+compute its exact wire length:
+
+```
+Fixed fields only
+    → Encoder::ENCODED_LENGTH
+
+Only flat groups and/or message varData
+    → Encoder::try_compute_encoded_length_with_header(counts..., byte_len)?
+
+Any group entry containing a nested group or entry varData
+    → MsgEncodedLength::new().group(count).nested(count).var_data(len)?
+```
+
+**Strategy A: Fixed-only** — use the existing constant:
 
 ```rust
+let len = FixedMsgEncoder::ENCODED_LENGTH;
+```
+
+**Strategy B: Directly computable** — checked helper with typed counts:
+
+```rust
+let len = FlatGroupEncoder::try_compute_encoded_length_with_header(2u16, 1u16, 17)?;
+let mut buf = vec![0u8; len];
+```
+
+**Strategy C: Staged builder** — for nested groups and entry varData:
+
+```rust
+// Uniform shape — no closure, no add():
 let len = CarEncodedLength::new()
-    .fuel_figures(3)?
+    .fuel_figures(3)
+    .usage_description(5)?
+    .performance_figures(1)
+    .acceleration(2)?
     .manufacturer(12)?
+    .model(9)?
+    .activation_code(6)?
     .encoded_length_with_header();
 
-let mut buf = vec![0u8; len];                              // exactly right
+let mut buf = vec![0u8; len];
 // ... encode ...
 let complete = /* ... */;
 assert_eq!(complete.encoded_length_with_header(), len);    // proves it fits
