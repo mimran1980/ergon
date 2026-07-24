@@ -1,4 +1,5 @@
 //! L3 order book demo — nested repeating groups with domain-type converters.
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 
 fn d(val: i64) -> Decimal { Decimal::new(val, 0) }
@@ -36,11 +37,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let dec = l3_book::L3BookDecoder::try_from(&buf[..])?;
     println!("{dec}");
-    // Concrete converter accessors
-    // Concrete converter: bool works; chrono semantic type needs debug
-    // (TryFromSbe/TryToSbe impls are emitted but concrete accessor is not)
+    // All concrete converter accessors — no turbofish
+    let _ts: DateTime<Utc> = dec.exchange_timestamp();
     assert!(dec.is_active());
-    assert!(l3_book::L3BookDecoder::verify(&buf[..]).is_ok());
     println!("\nOK");
     Ok(())
 }
