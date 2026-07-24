@@ -8,6 +8,467 @@
 
 **Tech Stack:** Rust 2024, stable Rust, `syn`, `quote`, `proc_macro2`, `prettyplease`, `roxmltree`, SBE XML fixtures, Cargo integration tests, Criterion/Aeron parity benchmarks
 
+## Implementation audit — 2026-07-24
+
+This section records the review of the implementation in commits
+`0380323..f6899f9`, using `644f93d` as the pre-implementation baseline. It
+supersedes commit-message claims about completed tasks. The detailed task
+instructions later in this document remain the implementation playbook, but a
+task is complete only when the evidence and acceptance checks in this audit are
+green.
+
+No product implementation was changed during this audit. The only intended
+edit is this plan.
+
+### Audit conclusion
+
+The three-strategy foundation is useful and should be retained:
+
+- fixed-only messages omit length builders;
+- directly computable tails use encoder helpers and omit length builders;
+- structurally dynamic messages receive a stack-only staged builder;
+- the checked accumulator is emitted once per generated schema module;
+- the narrow uniform case represented by one dynamic entry tail is concise and
+  uses weighted accumulation.
+
+The feature is **not implementation-complete or merge-ready**. Known ragged and
+unknown-size builders can return incorrect lengths, recursive entry-tail
+generation does not cover the repository's actual schema combinations, and the
+new test matrix does not execute any staged length-builder chain. Several
+existing exact-length assertions were replaced with oversized buffers or
+positivity checks, hiding the missing behavior. The mandatory performance gate
+also fails.
+
+The next implementation pass must begin with failing behavioral and
+compile-and-run tests for the advertised staged APIs. Do not extend or document
+the current generic `RaggedEntryBuilder` as if it were the final design.
+
+### Task status at the audit point
+
+| Task | Status | Verified implementation | Remaining work |
+|---|---|---|---|
+| 1. Length-strategy classifier | **Complete** | `LengthStrategy::{Fixed, Direct, Staged}` and representative repository-shape unit tests exist in `sbe/src/codegen/encoded_length.rs`. | Add new classifier cases only when new structural fixtures expose a missed shape. |
+| 2. Direct helpers | **Partial** | Direct-only generation, typed group counts, checked arithmetic, varData validation, and one exact direct encode comparison exist. | Make both checked helpers const-capable; add custom-header, endian, boundary, decoder, DTO, and exact-buffer coverage. |
+| 3. Checked accumulator | **Partial** | The stack-only accumulator is emitted once and uses checked multiply/add internally. | Add direct accumulator behavior tests; use or remove the currently unused `finish`; prevent unchecked header addition at the complete stage. |
+| 4. Uniform staged path | **Partial** | One-level uniform entry varData and one nested-tail shape use concise closure-free transitions. | Generate the complete ordered entry-tail graph recursively: nested group followed by parent varData, multiple varData fields, sibling groups, and depth-three or deeper nesting. Add real compile-and-run and exact-wire tests. |
+| 5. Known ragged path | **Not done** | A method named `*_ragged` exists. | Replace the placeholder generic builder with borrowed, schema-specific, field-named entry stages; remove `add()`; count only completed entry chains; validate too few and too many entries. |
+| 6. Unknown-size paths | **Not done** | Methods named `*_unknown_size` exist. | Correct the arithmetic and automatic counting; add fixed-width `entries(n)`; validate the wire count type; test all known/unknown outer/inner combinations. |
+| 7. Empty forwarding and collisions | **Partial** | `finish_empty()` exists and rejects a non-zero declared count. | Make it const; add normal zero forwarding; suppress forwarding on actual method collisions; compile and run the collision fixture; add zero-pending terminals. |
+| 8. Comprehensive conformance matrix | **Partial foundation** | The one-temp-crate/many-tests runner exists and the direct flat case encodes once. | Build the full staged matrix. Current staged tests only search source text and do not call a generated builder. Add codec/DTO/decoder cross-products, exact buffers, compile-fail cases, error cases, allocation proof, and matrix cardinality assertions. |
+| 9. Caller migration | **Partial with regressions** | Old staged calls no longer block compilation. | Restore the removed exact-size calculations and equality assertions. The L3 sample must again allocate the computed exact length and compare builder, encoder, bytes, decoder, and DTO results. |
+| 10. Production schemas | **Partial** | Five sources are parsed with `syn`. | Fail when required fixtures are missing; include L3, conformance, cluster, and custom-header schemas; type-check generated crates rather than merely parsing their syntax. |
+| 11. Clean API audit | **Partial** | Basic substring audits and formatting idempotence exist. | Implement the promised `syn` method/visibility index, compile-pass/fail snippets, const audit, collision audit, and a real automatically compared API golden. Delete the unused legacy length-builder generator. |
+| 12. Car golden | **Partial** | The generated Car source is stable against its golden. | Regenerate after the staged redesign; add length-specific allocation and API checks. The separate signature golden is currently inaccurate and untested. |
+| 13. Documentation | **Partial and currently misleading** | The three-strategy decision tree is documented. | Replace examples only after mirrored snippets compile. Current ragged/unknown examples call methods the generated closure type does not have, and zero auto-forwarding is claimed but absent. |
+| 14. Full gates | **Not done; currently failing** | Formatting, focused API tests, conformance, L3, stability, ordered decoder tests, allocation tests, and the L3 sample were run during this audit. | Make the complete suite, strict Clippy, domain-object suite, all samples, product gate, and three clean benchmark sessions pass. `just bench` currently fails a maintained ratio. |
+
+### Critical correctness findings
+
+#### P0. Known ragged arithmetic is incorrect
+
+Current code enters the outer group with its full declared count before the
+closure:
+
+```text
+outer multiplier = parent multiplier × declared outer count
+```
+
+Every subsequent generic `group(...)` or `var_data(...)` operation for an
+individual ragged entry is therefore scaled by the entire outer count. For two
+entries with different shapes, the current calculation is effectively:
+
+```text
+outer_count × (entry_1_dynamic_tail + entry_2_dynamic_tail)
+```
+
+The required calculation is:
+
+```text
+entry_1_dynamic_tail + entry_2_dynamic_tail
+```
+
+`RaggedEntryBuilder::add()` increments `written` but adds zero bytes. The
+already-added outer fixed-block contribution happens to cover fixed entry
+blocks for a known count, but the entry-specific dynamic contributions are
+wrong.
+
+Required redesign:
+
+- retain the parent multiplier while entering a single ragged entry;
+- add that entry's fixed block exactly once;
+- expose its ordered nested groups and varData through schema-specific borrowed
+  stages;
+- increment the outer group's completed-entry count only when the entry reaches
+  its terminal stage;
+- add each entry's dynamic tail at the parent multiplier, not at
+  `parent × declared_count`;
+- compare completed entries with the declared count when the closure returns.
+
+#### P0. Unknown-size arithmetic omits entry bytes
+
+Current code calls `enter_group(0, ...)`. This sets the multiplier to zero.
+`add()` then contributes no fixed block, while nested groups and varData are
+also multiplied by zero. The method can return success with only the group
+dimension contribution included.
+
+Unknown-size must use the same completed-entry state machine as known ragged:
+
+- add the group dimension once;
+- start each entry with the parent multiplier;
+- add the fixed entry block and all completed dynamic tails once;
+- increment a checked `written` count only at terminal completion;
+- reject `written > <wire count type>::MAX`;
+- for flat fixed-width entries, provide `entries(n)` so callers do not loop or
+  call `add()`.
+
+#### P0. Uniform generation does not model complete entry tail order
+
+The current implementation special-cases immediate children rather than
+recursively generating an owner-tail state graph:
+
+- a flat nested group returns directly to the next message-level stage, so a
+  parent entry shaped `orders → venue` cannot express both tails;
+- each of several parent-entry varData methods independently returns to the
+  outer continuation, so two varData fields cannot be chained;
+- a dynamic nested group generates only its immediate varData methods and
+  ignores deeper nested groups;
+- a child nested group followed by parent-entry varData cannot return to the
+  correct parent-entry continuation;
+- depth-three `x → y → z` structures dead-end before completion.
+
+Replace these special cases with one recursive generator operating on an
+ordered owner-tail model shared conceptually with encoder/decoder generation.
+Every owner—message or group entry—needs:
+
+1. an initial stage;
+2. one transition for each nested group in wire order;
+3. one transition for each varData field in wire order;
+4. a complete stage that returns to its owning parent with the correct
+   multiplier and completion action.
+
+#### P0. Complete-stage header addition bypasses checked arithmetic
+
+`EncodedLengthAccumulator` has a checked `finish(header_length)`, but generated
+complete stages perform plain `self.state.len + HEADER_LENGTH`. An extreme
+length can panic in debug or wrap in release at the final operation.
+
+Choose one consistent terminal contract:
+
+- preferably validate the header-inclusive total before constructing the
+  infallible complete stage, retaining non-fallible
+  `encoded_length_with_header()`; or
+- make terminal retrieval fallible everywhere.
+
+The first option preserves the requested fluent API. Test body overflow and
+header-only overflow separately.
+
+### Test audit
+
+The focused command
+
+```sh
+cargo test -p ergo-sbe --test encoded_length_api_test -- --test-threads=1
+```
+
+passes 18 tests, but that does not prove the staged feature:
+
+- the only runtime exact encode comparison uses the simple direct helper;
+- uniform Car, L3, and nested-group cases only check that source contains type
+  names;
+- no test invokes `{Message}EncodedLength::new()` outside generated golden
+  source;
+- no ragged or unknown-size result is compared with encoder output;
+- no staged exact-size buffer is allocated;
+- no staged DTO/domain or decoder length is compared;
+- no compile-fail type-state proof exists;
+- no length-calculation allocation count is measured;
+- the collision fixture is not referenced;
+- production sources are parsed but not compiled;
+- the API signature golden is never loaded by a test and lists direct Car
+  helpers that are not generated.
+
+The `no_add_or_add_n_in_staged_builders` check is also insufficient. It is a
+line-neighbor substring scan and explicitly permits `RaggedEntryBuilder::add()`,
+which is the boilerplate this design is meant to remove.
+
+### Required conformance matrix
+
+Implement the matrix test-first. Each applicable row must execute generated
+consumer code; source-presence assertions may supplement but never replace
+behavior.
+
+| Axis | Required cases |
+|---|---|
+| Length interface | fixed constant; compatibility direct helper; checked direct helper; uniform known-size builder; known ragged builder; unknown-size builder; zero forwarding; `finish_empty()` |
+| Fixed-field encoder mode | `fixed(&FixedFields)`; `raw_fixed()` with individual setters; any supported whole-entry struct/add-struct encoder path |
+| Tail encoder mode | known-size closures; encoder `*_unknown_size`; fixed leaf `add_struct`; individual field setters; mixed known/unknown nested groups |
+| Decoder verification | initial decoder; consuming stages; nested entry decoder; decoder-reported full length; exact consumed tail order |
+| DTO/domain verification | domain length; encode from domain; decode into domain; byte identity against flyweight encoding |
+| Shape | fixed-only; message varData; one and multiple flat groups; entry varData; multiple entry varData; nested fixed; nested dynamic; nested + parent varData; sibling nested groups; depth three; two top-level staged groups |
+| Cardinality | zero; one; several; maximum practical `u8`; `u8` overflow; known count too few; known count too many |
+| VarData | zero; one byte; differing ragged lengths; declared maximum; one over maximum; non-`u32` length prefix |
+| Schema metadata | default header; custom header; little endian; big endian; single-message and multi-message generated modules |
+
+For every successful logical payload, assert all applicable invariants:
+
+```text
+precomputed body length
+    == encoder encoded_length()
+    == decoder body length
+    == DTO/domain body length
+
+precomputed header-inclusive length
+    == encoder encoded_length_with_header()
+    == encoder as_bytes().len()
+    == decoder header-inclusive length
+    == DTO/domain full length
+    == exact allocated buffer length
+```
+
+Also require:
+
+- an exact buffer succeeds;
+- a one-byte-short buffer returns `BufferTooShort`;
+- a one-byte-long buffer encodes the same message length and `as_bytes()` does
+  not expose the unused byte;
+- exact wire bytes match between `fixed`, `raw_fixed`, individual field,
+  entry-struct, and domain-object paths where all are applicable;
+- compile-fail cases prove incomplete and out-of-order length stages cannot
+  report a complete length;
+- measured length calculation performs zero heap allocations;
+- the generated number of logical cases is asserted so a loop/filter mistake
+  cannot silently shrink the matrix.
+
+### First tests to add before changing the generator
+
+Add these as named `GeneratedRustTest` cases, grouped into a small number of
+temporary crates:
+
+- `uniform_l3_fixed_orders_exact`;
+- `uniform_l3_vardata_orders_exact`;
+- `uniform_nested_group_then_parent_vardata_exact`;
+- `uniform_two_entry_vardata_fields_exact`;
+- `uniform_child_vardata_then_parent_vardata_exact`;
+- `uniform_depth_three_exact`;
+- `ragged_outer_entries_exact`;
+- `ragged_inner_entries_exact`;
+- `ragged_known_too_few`;
+- `ragged_known_too_many`;
+- `unknown_outer_entries_exact`;
+- `unknown_inner_entries_exact`;
+- `unknown_u8_count_max`;
+- `unknown_u8_count_overflow`;
+- `unknown_flat_entries_bulk_exact`;
+- `zero_forward_to_next_group`;
+- `zero_forward_to_message_vardata`;
+- `zero_finish_empty_exact`;
+- `zero_nonempty_finish_rejected`;
+- `zero_forward_collision_requires_finish_empty`;
+- `custom_header_exact`;
+- `big_endian_structural_length_matches_little_endian`;
+- `exact_buffer_and_one_short`;
+- `fixed_raw_domain_decoder_equivalence`;
+- `length_builder_allocates_zero`.
+
+Each “exact” test must encode and compare lengths. A test that only checks
+`len > 0` is not an encoded-length conformance test.
+
+### Revised remaining implementation sequence
+
+This sequence replaces the optimistic “Tasks 1–9 complete” claim in commit
+`02ee223`. Preserve the completed classifier and direct-helper seam while
+reworking the staged internals.
+
+#### Phase A — establish red tests
+
+- [ ] Add the compile-and-run cases listed above for all representative
+  repository schemas.
+- [ ] Restore the removed L3 exact-length tests before changing arithmetic.
+- [ ] Make README examples mirror named compile tests.
+- [ ] Add explicit expected-failure evidence for current ragged,
+  unknown-size, multi-tail, and depth-three behavior.
+- [ ] Add a structural matrix cardinality assertion.
+
+#### Phase B — generate an ordered recursive stage graph
+
+- [ ] Introduce one internal owner-tail description for nested groups and
+  varData in wire order.
+- [ ] Generate uniform stages recursively for arbitrary depth.
+- [ ] Return from a completed child group to the next parent-entry tail, not
+  directly to the next message tail.
+- [ ] Support multiple sibling nested groups and multiple varData fields.
+- [ ] Keep all generated state stack-only and concrete; do not allocate a
+  runtime descriptor tree.
+- [ ] Give stages names based on the component actually consumed
+  (`AfterFuelFigures`), rather than the next component not yet processed.
+
+#### Phase C — replace the ragged placeholder
+
+- [ ] Delete the public generic `RaggedEntryBuilder` API.
+- [ ] Generate group-specific borrowed entry stages with field-named methods.
+- [ ] Start an entry automatically when its first required shape method is
+  called.
+- [ ] Add the entry fixed block once.
+- [ ] Mark an entry complete only when its final nested/varData tail completes.
+- [ ] Validate known declared counts after the closure.
+- [ ] Prove outer-ragged/inner-uniform and outer-uniform/inner-ragged cases.
+- [ ] Prove differing nested counts and differing varData lengths in the same
+  outer group.
+
+#### Phase D — implement unknown-size and zero behavior
+
+- [ ] Reuse the completed-entry mechanism for `*_unknown_size`.
+- [ ] Add checked count accumulation using the resolved wire count primitive.
+- [ ] Add `entries(n)` for fixed-width unknown-size groups.
+- [ ] Emit const zero-forwarding methods only when no method-name collision
+  exists.
+- [ ] Keep `finish_empty()` always available and make it `const fn`.
+- [ ] Add fallible pending terminals so a skipped non-empty shape cannot
+  silently succeed.
+- [ ] Compile and run
+  `sbe/tests/fixtures/schemas/encoded-length-method-collision.xml`.
+
+#### Phase E — finish checked and const behavior
+
+- [ ] Mark `try_compute_encoded_length` as `const fn`.
+- [ ] Rewrite `try_compute_encoded_length_with_header` with explicit
+  `match`/early return and mark it `const fn`.
+- [ ] Route completion through checked header-inclusive finalization.
+- [ ] Add const compile proofs for direct, uniform nested, zero-forward, and
+  `finish_empty()` chains.
+- [ ] Keep closure-taking ragged/unknown methods runtime-only.
+- [ ] Remove unused accumulator methods or exercise them in the final design.
+
+#### Phase F — restore and expand integrations
+
+- [ ] Restore exact-size allocation in the L3 sample `main`.
+- [ ] Restore exact builder equality in L3 fixed-order and nested-varData
+  tests.
+- [ ] Restore exact builder equality in baseline, conformance, ordered-decoder,
+  and domain-object tests changed by this branch.
+- [ ] Cross the length modes with `fixed`, `raw_fixed`, individual field,
+  decoder, and domain-object paths.
+- [ ] Compile representative production schemas as external crates.
+- [ ] Fail rather than silently skip a required production fixture.
+
+#### Phase G — clean generated and documented interfaces
+
+- [ ] Remove the unused legacy `generate_encoded_length_builder()` and
+  `has_nested_dynamic_tail()` code from `sbe/src/codegen/mod.rs`.
+- [ ] Build a real inherent-method and visibility index with `syn`.
+- [ ] Assert no generated length type exposes `add()` or `add_n()`.
+- [ ] Assert plumbing is `#[doc(hidden)]` and entry/complete surfaces are
+  intentional.
+- [ ] Generate `encoded_length_api.txt` from the AST and compare it in a normal
+  test.
+- [ ] Provide an ignored updater test whose name and command actually exist.
+- [ ] Correct README examples only after their mirrored compile tests pass.
+- [ ] Re-run formatting idempotence and the Car stability golden.
+
+#### Phase H — acceptance gates
+
+- [ ] Run every focused test in Task 14.
+- [ ] Run the complete all-feature SBE suite.
+- [ ] Run strict Clippy for the crate and sample.
+- [ ] Run all offline sample checks.
+- [ ] Run the product gate.
+- [ ] Run three clean SBE benchmark sessions and require every maintained
+  ergon/Aeron ratio to be `<= 1.00`.
+- [ ] Record the exact toolchain, host, medians, confidence intervals, and
+  ratios.
+- [ ] Review the final public generated API diff separately from encoder and
+  decoder output.
+
+### Const-method audit
+
+The requested constification is only partially implemented.
+
+| Method/category | Current state | Plan |
+|---|---|---|
+| Existing unchecked compatibility `compute_encoded_length*` | const | Keep const for compatibility. |
+| Checked direct `try_compute_encoded_length` | runtime despite const-compatible body | Mark `const fn`; retain explicit checked matches. |
+| Checked direct header helper | runtime and uses `?` | Replace `?` with `match`, then mark `const fn`. |
+| Accumulator `new`, `multiplier`, `add_scaled`, `enter_group`, `leave_group`, `fail`, `check`, `finish` | const | Keep const; ensure every retained method is used or tested. |
+| Builder `new` | const | Keep const. |
+| Uniform known-size group transitions | const | Keep const after recursive redesign. |
+| Uniform varData and flat nested completion | const | Keep const and add compile proofs. |
+| `finish_empty()` | runtime though implementation is const-compatible | Mark `const fn`. |
+| Zero-forward and pending terminal methods | absent | Generate as const-capable methods. |
+| Complete length getters | const, but header addition unchecked | Preserve const after moving overflow validation before complete-stage construction. |
+| Ragged and unknown closure-taking methods | runtime | Keep runtime-only. |
+| Borrowed ragged entry methods | runtime-only path | Const qualification is not a user benefit; prioritize correctness and typed API. |
+| Domain-object length methods | runtime iteration | Keep runtime-only. |
+
+Do not broaden this work into unrelated encoder/decoder constification.
+
+### Generated-code and documentation improvements
+
+- Remove stale generator code rather than keeping two encoded-length
+  implementations in `sbe/src/codegen/mod.rs` and
+  `sbe/src/codegen/encoded_length.rs`.
+- Replace comments containing “simplified”, “follow-up”, or internal scratch
+  language with finished API documentation only after behavior exists.
+- Avoid generic public methods that require callers to supply wire dimensions
+  or block sizes (`group(dim, block, count)` and
+  `var_data(prefix, byte_len)`). Those are generator facts, not user inputs.
+- Narrow broad `#![allow(clippy::all, ...)]` usage in new tests.
+- Make new matrix-runner unit tests return `Result` and use `?` consistently.
+- Stop silently skipping required fixture files in production-schema tests.
+- Make API-stage names describe completed work so compiler diagnostics are
+  understandable.
+- Reconcile this plan's location with the newer repository contribution rule
+  that active feature specs live under `.scratch/<feature>/spec.md`; do not
+  create a duplicate plan during the implementation pass.
+
+### Verification evidence from this audit
+
+Environment:
+
+```text
+Date: 2026-07-24
+Host: macmini.local, Apple arm64, Darwin 25.5.0
+Rust: rustc 1.95.0 (59807616e 2026-04-14)
+Baseline: 644f93d
+Reviewed HEAD: f6899f9
+```
+
+Passed:
+
+- `git diff --check 644f93d...HEAD`
+- `cargo fmt --all -- --check`
+- encoded-length classifier unit test: 1 passed
+- `encoded_length_api_test`: 18 passed
+- `stability_test`: 4 passed, 1 ignored updater
+- `conformance_test`: 19 passed
+- `l3_orderbook_test`: 9 passed
+- `allocation_count_test`: 7 passed, but none measures length calculation
+- `ordered_decoder_stages_test`: 6 passed
+- L3 sample tests: 4 passed
+
+Failed or incomplete:
+
+- full `cargo test -p ergo-sbe --all-features -- --test-threads=1` stops at the
+  pre-existing `bounds_checking_switch` assertion: 98 passed, 1 failed in that
+  integration target;
+- `domain_objects_test`: 14 passed, 1 pre-existing Binance generated-domain
+  compile failure;
+- strict Clippy stops on pre-existing Rust-2024
+  `unsafe_op_in_unsafe_fn` warnings promoted to errors;
+- the L3 sample passes but emits warnings and no longer verifies a staged
+  precomputed length;
+- `just bench` exits 1. The gate reports
+  `throughput/batch_10k = 8348.03 / 8083.79 = 1.0327`, above the allowed
+  ratio; the strict local policy would also require rechecking the
+  `decode_composite` ratio reported as `1.0032`;
+- commit `02ee223` itself records only “7/8 bench ratios pass”, which is failure
+  evidence rather than acceptance evidence;
+- no three-session acceptance run has been completed; repeat three clean,
+  uncontended sessions after correctness is restored.
+
+These broader pre-existing failures must be tracked separately from the new
+encoded-length defects, but Task 14 cannot be marked complete while the
+repository gate remains red.
+
 ## Global Constraints
 
 - Planning scope only for this document; implementation begins only in a separately authorised execution session.
@@ -956,7 +1417,7 @@ results.
 
 ## 5. Implementation tasks
 
-### Task 1: Lock the length-strategy classifier with repository-schema tests
+### Task 1: Lock the length-strategy classifier with repository-schema tests — audited complete
 
 **Files:**
 
@@ -1106,7 +1567,7 @@ git add sbe/src/codegen/mod.rs sbe/src/codegen/encoded_length.rs
 git commit -m "refactor: classify encoded length strategies"
 ```
 
-### Task 2: Make direct helpers the only generated interface for simple tails
+### Task 2: Make direct helpers the only generated interface for simple tails — audited partial
 
 **Files:**
 
@@ -1283,7 +1744,7 @@ git add sbe/src/codegen/mod.rs sbe/src/codegen/encoded_length.rs sbe/tests/encod
 git commit -m "feat: use direct lengths for simple SBE tails"
 ```
 
-### Task 3: Add the checked stack-only accumulator
+### Task 3: Add the checked stack-only accumulator — audited partial
 
 **Files:**
 
@@ -1375,7 +1836,7 @@ git add sbe/src/codegen/encoded_length.rs sbe/tests/encoded_length_api_test.rs
 git commit -m "feat: add checked encoded length accumulator"
 ```
 
-### Task 4: Generate the concise uniform nested-group path
+### Task 4: Generate the concise uniform nested-group path — audited partial
 
 **Files:**
 
@@ -1547,7 +2008,7 @@ git add sbe/src/codegen/encoded_length.rs sbe/tests/encoded_length_api_test.rs s
 git commit -m "feat: simplify uniform nested length building"
 ```
 
-### Task 5: Generate known ragged stages without `add()` boilerplate
+### Task 5: Generate known ragged stages without `add()` boilerplate — audited not done
 
 **Files:**
 
@@ -1687,7 +2148,7 @@ git add sbe/src/codegen/encoded_length.rs sbe/tests/encoded_length_api_test.rs s
 git commit -m "feat: add ragged encoded length stages"
 ```
 
-### Task 6: Add unknown-size and flat-entry bulk count paths
+### Task 6: Add unknown-size and flat-entry bulk count paths — audited not done
 
 **Files:**
 
@@ -1809,7 +2270,7 @@ git add sbe/src/codegen/encoded_length.rs sbe/tests/encoded_length_api_test.rs s
 git commit -m "feat: simplify unknown size length groups"
 ```
 
-### Task 7: Handle empty dynamic groups and forwarding collisions
+### Task 7: Handle empty dynamic groups and forwarding collisions — audited partial
 
 **Files:**
 
@@ -1940,7 +2401,7 @@ git add sbe/src/codegen/encoded_length.rs sbe/tests/encoded_length_api_test.rs s
 git commit -m "feat: handle empty nested length groups"
 ```
 
-### Task 8: Build the comprehensive exact-length conformance matrix
+### Task 8: Build the comprehensive exact-length conformance matrix — audited partial foundation
 
 **Files:**
 
@@ -2203,7 +2664,7 @@ git add sbe/tests/common/mod.rs sbe/tests/common/encoded_length_matrix.rs sbe/te
 git commit -m "test: cover encoded length interface matrix"
 ```
 
-### Task 9: Migrate existing length-builder callers without touching codec calls
+### Task 9: Migrate existing length-builder callers without touching codec calls — audited partial with regressions
 
 **Files:**
 
@@ -2325,7 +2786,7 @@ git add sbe/tests/baseline_test.rs sbe/tests/conformance_test.rs sbe/tests/domai
 git commit -m "refactor: migrate encoded length callers"
 ```
 
-### Task 10: Prove production-scale schema generation
+### Task 10: Prove production-scale schema generation — audited partial
 
 **Files:**
 
@@ -2386,7 +2847,7 @@ git add sbe/tests/baseline_test.rs sbe/tests/schema_edge_cases_test.rs
 git commit -m "test: verify length APIs across production schemas"
 ```
 
-### Task 11: Audit generated interface cleanliness and usability
+### Task 11: Audit generated interface cleanliness and usability — audited partial
 
 **Files:**
 
@@ -2581,7 +3042,7 @@ git add sbe/tests/encoded_length_api_test.rs sbe/tests/golden/encoded_length_api
 git commit -m "test: audit encoded length interface"
 ```
 
-### Task 12: Regenerate the golden source and review the public interface diff
+### Task 12: Regenerate the golden source and review the public interface diff — audited partial
 
 **Files:**
 
@@ -2645,7 +3106,7 @@ git add sbe/tests/golden/car_example.rs
 git commit -m "test: update encoded length golden output"
 ```
 
-### Task 13: Update user documentation around the three strategies
+### Task 13: Update user documentation around the three strategies — audited partial; examples require correction
 
 **Files:**
 
@@ -2709,7 +3170,7 @@ git add sbe/README.md samples/l3-book/README.md docs/design/2026-07-23-exact-len
 git commit -m "docs: explain encoded length strategy selection"
 ```
 
-### Task 14: Run the full correctness and performance gates
+### Task 14: Run the full correctness and performance gates — audited not done; gates currently red
 
 **Files:**
 

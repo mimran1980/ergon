@@ -334,6 +334,72 @@ fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+// ── Length builder zero allocation (Task 8 Step 12) ─────────────────
+
+#[test]
+fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    warm_up_all();
+
+    let guard = AllocGuard::after_warmup();
+    let len = CarEncodedLength::new()
+        .fuel_figures(2)
+        .usage_description(5)
+        .unwrap()
+        .performance_figures(0)
+        .acceleration(0)
+        .unwrap()
+        .manufacturer(5)
+        .unwrap()
+        .model(4)
+        .unwrap()
+        .activation_code(3)
+        .unwrap()
+        .encoded_length_with_header();
+    black_box(len);
+    assert_eq!(
+        guard.diff(),
+        0,
+        "uniform length builder allocated {} times",
+        guard.diff()
+    );
+    Ok(())
+}
+
+#[test]
+fn ragged_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    warm_up_all();
+
+    let guard = AllocGuard::after_warmup();
+    // RaggedEntryBuilder uses add() + var_data() for entry contributions
+    let len = CarEncodedLength::new()
+        .fuel_figures_ragged(2, |ff| {
+            ff.add()?;
+            ff.var_data(4, 5)?; // usageDescription: prefix=4 + 5 bytes
+            ff.add()?;
+            ff.var_data(4, 7)?; // second entry: prefix=4 + 7 bytes
+            Ok(())
+        })
+        .unwrap()
+        .performance_figures(0)
+        .acceleration(0)
+        .unwrap()
+        .manufacturer(5)
+        .unwrap()
+        .model(4)
+        .unwrap()
+        .activation_code(3)
+        .unwrap()
+        .encoded_length_with_header();
+    black_box(len);
+    assert_eq!(
+        guard.diff(),
+        0,
+        "ragged length builder allocated {} times",
+        guard.diff()
+    );
+    Ok(())
+}
+
 // ── Var-data decode ─────────────────────────────────────────────────
 
 #[test]
