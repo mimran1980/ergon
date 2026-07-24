@@ -41,6 +41,7 @@
 #![allow(clippy::fn_params_excessive_bools)] // codegen parameter style
 #![allow(clippy::cast_enum_constructor)] // SBE value construction
 #![allow(clippy::ptr_as_ptr)] // pointer casts are explicit
+#![allow(clippy::only_used_in_recursion)] // domain_types threaded through recursive codegen
 
 //! Opinionated, idiomatic Rust code generation for Simple Binary Encoding (SBE).
 //!

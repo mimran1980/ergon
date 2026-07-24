@@ -297,8 +297,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
         b.iter_batched(
             || [0u8; 512],
             |mut buf| {
-                let mut car: CarEncoder<'_> =
-                    CarEncoder::wrap(black_box(&mut buf), 0);
+                let mut car: CarEncoder<'_> = CarEncoder::wrap(black_box(&mut buf), 0);
                 car.serial_number(1234);
                 car.model_year(2013);
                 black_box(car);
@@ -346,8 +345,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
             |mut buf| {
                 for i in 0..BATCH_SIZE {
                     let off = i * 64;
-                    let mut car: CarEncoder<'_> =
-                        CarEncoder::wrap(&mut buf[off..off + 64], 0);
+                    let mut car: CarEncoder<'_> = CarEncoder::wrap(&mut buf[off..off + 64], 0);
                     car.serial_number(i as u64);
                     car.model_year(2013);
                 }

@@ -494,7 +494,12 @@ impl Generator {
             // Decimal composite, emit raw *_wire aliases and generic converted
             // methods. Only emitted when converter mode is active.
             if !&self.config.conversions.is_empty() {
-                let converter_ts = generate_converter_impls(msg, &self.config.conversions, &self.config.domain_types, multi);
+                let converter_ts = generate_converter_impls(
+                    msg,
+                    &self.config.conversions,
+                    &self.config.domain_types,
+                    multi,
+                );
                 src.push_str(&converter_ts);
             }
             src.push('\n');
@@ -813,7 +818,8 @@ fn generate_owner_consuming_stages(
                 });
 
                 let as_str_unchecked = syn::Ident::new(
-                    &format!("into_{}_as_str_unchecked", vd.accessor_snake), span,
+                    &format!("into_{}_as_str_unchecked", vd.accessor_snake),
+                    span,
                 );
                 ts.extend(quote::quote! {
                     impl<'a> #current_stage<'a> {
@@ -1289,8 +1295,8 @@ fn generate_message_decoder(
         // In converter mode, raw accessors are suffixed _wire when a domain
         // type is configured so the concrete converted method takes the
         // original name.
-        let wire_name = field_has_conversion_free(f, conversions)
-            .then(|| format!("{fname_snake}_wire"));
+        let wire_name =
+            field_has_conversion_free(f, conversions).then(|| format!("{fname_snake}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
         let fname_ident = syn::Ident::new(method_name, proc_macro2::Span::call_site());
 
@@ -3050,8 +3056,7 @@ fn generate_group_decoder(
         // In converter mode, Decimal-composite-backed raw entry accessors are
         // suffixed _wire when a conversion is configured (same rule as
         // message-level fields).
-        let wire_name = field_has_conversion_free(f, conversions)
-            .then(|| format!("{f_name}_wire"));
+        let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{f_name}_wire"));
         let accessor_name = wire_name.as_deref().unwrap_or(&f_name);
         let f_name_ident = syn::Ident::new(accessor_name, proc_macro2::Span::call_site());
         let raw_ident = syn::Ident::new(&format!("raw_{}", f_name), proc_macro2::Span::call_site());
@@ -3682,9 +3687,9 @@ fn generate_conversion_impl_blocks(
     let has_bool_conv = domain_types.iter().any(|(sel, ty)| {
         ty == "bool" && matches!(sel, crate::ConversionSelector::NamedType(n) if n == "BooleanType")
     });
-    let has_decimal_conv = domain_types.iter().any(|(sel, _)| {
-        matches!(sel, crate::ConversionSelector::NamedType(n) if n == "Decimal")
-    });
+    let has_decimal_conv = domain_types
+        .iter()
+        .any(|(sel, _)| matches!(sel, crate::ConversionSelector::NamedType(n) if n == "Decimal"));
     let has_chrono_conv = domain_types.iter().any(|(sel, _)| {
         matches!(sel, crate::ConversionSelector::SemanticType(st) if st == "UTCTimestamp")
     });
@@ -3826,9 +3831,8 @@ fn generate_converter_impls(
 
         if let Some(dt) = domain_type_path {
             // Concrete methods using the configured domain type
-            let dt_ty: syn::Type = syn::parse_str(dt).unwrap_or_else(|_| {
-                panic!("invalid domain type path: {dt}")
-            });
+            let dt_ty: syn::Type =
+                syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
             let domain_ident = syn::Ident::new(&field_snake, span);
 
             decoder_methods.extend(quote::quote! {
@@ -3896,18 +3900,10 @@ fn generate_converter_impls(
             }
             let field_snake = to_snake_case(&f.name);
             let wire_type_ident = match &f.field_type {
-                FieldType::Composite { name, .. } => {
-                    syn::Ident::new(&to_pascal_case(name), span)
-                }
-                FieldType::Enum { name, .. } => {
-                    syn::Ident::new(&to_pascal_case(name), span)
-                }
-                FieldType::Set { name, .. } => {
-                    syn::Ident::new(&to_pascal_case(name), span)
-                }
-                FieldType::Primitive(pt, _) => {
-                    syn::Ident::new(rust_type(*pt), span)
-                }
+                FieldType::Composite { name, .. } => syn::Ident::new(&to_pascal_case(name), span),
+                FieldType::Enum { name, .. } => syn::Ident::new(&to_pascal_case(name), span),
+                FieldType::Set { name, .. } => syn::Ident::new(&to_pascal_case(name), span),
+                FieldType::Primitive(pt, _) => syn::Ident::new(rust_type(*pt), span),
             };
             let raw_decoder_getter = if matches!(f.field_type, FieldType::Composite { .. }) {
                 syn::Ident::new(&format!("{field_snake}_value"), span)
@@ -3917,8 +3913,8 @@ fn generate_converter_impls(
             let wire_setter = syn::Ident::new(&format!("{field_snake}_wire"), span);
 
             if let Some(dt) = find_domain_type(f, domain_types) {
-                let dt_ty: syn::Type = syn::parse_str(dt)
-                    .unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
+                let dt_ty: syn::Type =
+                    syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
                 let domain_ident = syn::Ident::new(&field_snake, span);
                 dec_methods.extend(quote::quote! {
                     #[inline]
@@ -3982,7 +3978,13 @@ fn generate_converter_impls(
         String::new()
     };
     for g in &msg.groups {
-        emit_group_entry_impls(&group_scope, g, &conversions, domain_types, &mut entry_impls);
+        emit_group_entry_impls(
+            &group_scope,
+            g,
+            &conversions,
+            domain_types,
+            &mut entry_impls,
+        );
     }
 
     if decoder_methods.is_empty() && entry_impls.is_empty() {
@@ -4143,7 +4145,6 @@ fn has_nested_dynamic_tail(msg: &MessageStructure) -> bool {
 /// When `header_size > 0` the builder is message-level (staged, consumes
 /// `self`).  When `header_size == 0` it is entry-level (flat, `&mut self`
 /// methods — used for repeating group entries).
-#[allow(clippy::only_used_in_recursion)]
 fn generate_encoded_length_builder(
     name_prefix: &str,
     block_length: usize,
@@ -4885,8 +4886,7 @@ fn generate_message_encoder(
         // In converter mode, raw setters are suffixed _wire when a domain
         // Raw setters become *_wire when a conversion is configured so the
         // converted setter takes the original name.
-        let wire_name = field_has_conversion_free(f, conversions)
-            .then(|| format!("{f_name}_wire"));
+        let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{f_name}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&f_name);
         let f_ident = syn::Ident::new(method_name, span);
 
@@ -5842,8 +5842,8 @@ fn generate_group_encoder(
     for f in &g.fields {
         let f_snake = to_snake_case(&f.name);
         // Raw entry setters become *_wire when a conversion is configured.
-        let wire_name = field_has_conversion_free(f, conversions)
-            .then(|| format!("{f_snake}_wire"));
+        let wire_name =
+            field_has_conversion_free(f, conversions).then(|| format!("{f_snake}_wire"));
         let setter_name = wire_name.as_deref().unwrap_or(&f_snake);
         let f_ident = syn::Ident::new(&setter_name, span);
         let f_offset = syn::Index::from(f.offset);
@@ -6069,7 +6069,15 @@ fn generate_group_encoder(
     // Recursively generate nested Repeating Groups encoders
     for ng in &g.groups {
         let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
-        generate_group_encoder(src, ng, elements, byte_order, &nested_name, &conversions, domain_types);
+        generate_group_encoder(
+            src,
+            ng,
+            elements,
+            byte_order,
+            &nested_name,
+            &conversions,
+            domain_types,
+        );
     }
 }
 
@@ -6337,9 +6345,7 @@ mod tests {
             constant_value: None,
             field_type: FieldType::Primitive(PrimitiveType::UInt64, None),
         };
-        let conversions = vec![
-            crate::ConversionSelector::semantic_type("UTCTimestamp"),
-        ];
+        let conversions = vec![crate::ConversionSelector::semantic_type("UTCTimestamp")];
         assert!(
             super::field_has_conversion_free(&field, &conversions),
             "SemanticType should match primitive u64 with semanticType=UTCTimestamp"
@@ -6377,11 +6383,10 @@ mod tests {
         </sbe:messageSchema>"#;
         let ir = crate::parse(xml)?;
         let schema = crate::Schema::from_ir(ir);
-        let config = crate::GenerationConfig::new("test_chrono")
-            .with_domain_type(
-                crate::ConversionSelector::semantic_type("UTCTimestamp"),
-                "chrono::DateTime<chrono::Utc>",
-            );
+        let config = crate::GenerationConfig::new("test_chrono").with_domain_type(
+            crate::ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>",
+        );
         let generator = crate::Generator::new(config);
         let modules = generator.generate(&schema)?;
         let src = modules.modules().next().unwrap().source.clone();
