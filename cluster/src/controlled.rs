@@ -287,4 +287,59 @@ mod tests {
     // message types) live in the shared `codecs::tests` module. Those test
     // patterns remain valid because the Fragment::decode output is identical
     // to the previous inline dispatch — the observable behaviour is unchanged.
+
+    #[test]
+    fn test_invalid_frame_returns_err() -> Result<(), Box<dyn std::error::Error>> {
+        // T2: Controlled adapter must return Err on malformed frames, not
+        // silently Continue.  Craft a SessionMessageHeader with correct
+        // template_id but truncated data (< ENCODED_LENGTH = 32).
+        let hdr: [u8; 8] = [16, 0, 1, 0, 111, 0, 16, 0]; // template=1 schema=111
+        let short = &hdr[..]; // 8 bytes, well below ENCODED_LENGTH (32)
+        struct Rec;
+        impl ControlledEgressListener for Rec {
+            fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledPollAction {
+                ControlledPollAction::Continue
+            }
+        }
+        let mut adapter = ControlledEgressAdapter::new(Rec);
+        let result = adapter.on_fragment(short);
+        assert!(result.is_err(), "truncated frame must yield Err, got {result:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_foreign_session_new_leader_ignored() -> Result<(), Box<dyn std::error::Error>> {
+        // T3: Wrong-session NewLeader must not call listener or affect state.
+        // Encode a real NewLeaderEvent (enc, ingress_endpoints)
+        use crate::codecs::session::NewLeaderEventEncoder;
+        let eps = b"0=localhost:9000";
+        let len = NewLeaderEventEncoder::compute_encoded_length_with_message_header(eps.len());
+        let mut buf = vec![0u8; len];
+        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
+        enc.leadership_term_id(1).cluster_session_id(99).leader_member_id(0);
+        let _ = enc.ingress_endpoints(eps)?;
+        struct Rec {
+            called: bool,
+        }
+        impl ControlledEgressListener for Rec {
+            fn on_new_leader(
+                &mut self,
+                _csid: i64,
+                _ltid: i64,
+                _lmid: i32,
+                _eps: &str,
+            ) {
+                self.called = true;
+            }
+            fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledPollAction {
+                ControlledPollAction::Continue
+            }
+        }
+        // Expect session 42 — actual is 99 → filter must drop.
+        let mut adapter = ControlledEgressAdapter::with_session_filter(Rec { called: false }, 42);
+        let action = adapter.on_fragment(&buf)?;
+        assert_eq!(action, ControlledPollAction::Continue);
+        assert!(!adapter.listener.called, "wrong-session NewLeader must be dropped");
+        Ok(())
+    }
 }

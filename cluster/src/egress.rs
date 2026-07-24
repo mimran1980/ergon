@@ -202,3 +202,60 @@ impl EgressListener for NullListener {
     fn on_challenge(&mut self, _: i64, _: i64, _: &[u8]) {}
     fn on_admin_response(&mut self, _: i64, _: i64, _: AdminRequestType, _: AdminResponseCode, _: &str, _: &[u8]) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codecs::session::SessionEventEncoder;
+    use crate::codecs::session::EventCode;
+
+    #[test]
+    fn test_foreign_session_session_event_ignored() -> Result<(), Box<dyn std::error::Error>> {
+        // T4: Wrong-session SessionEvent must not call listener.
+        let detail = b"ok";
+        let len = SessionEventEncoder::compute_encoded_length_with_message_header(detail.len());
+        let mut buf = vec![0u8; len];
+        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0);
+        enc.cluster_session_id(99)
+            .correlation_id(1)
+            .leadership_term_id(5)
+            .leader_member_id(0)
+            .code(EventCode::OK)
+            .version(1);
+        let _ = enc.detail(detail)?;
+        struct Rec {
+            called: bool,
+        }
+        impl EgressListener for Rec {
+            fn on_message(&mut self, _: i64, _: i64, _: &[u8]) {}
+            fn on_session_event(
+                &mut self,
+                _cid: i64,
+                _csid: i64,
+                _ltid: i64,
+                _lmid: i32,
+                _code: EventCode,
+                _detail: &str,
+            ) {
+                self.called = true;
+            }
+            fn on_new_leader(&mut self, _: i64, _: i64, _: i32, _: &str) {}
+            fn on_challenge(&mut self, _: i64, _: i64, _: &[u8]) {}
+            fn on_admin_response(
+                &mut self,
+                _: i64,
+                _: i64,
+                _: AdminRequestType,
+                _: AdminResponseCode,
+                _: &str,
+                _: &[u8],
+            ) {
+            }
+        }
+        // Expect session 42 — actual is 99 → filter must drop.
+        let mut adapter = EgressAdapter::with_session_filter(Rec { called: false }, 42);
+        adapter.on_fragment(&buf)?;
+        assert!(!adapter.listener.called, "wrong-session SessionEvent must be dropped");
+        Ok(())
+    }
+}
