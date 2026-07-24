@@ -158,6 +158,48 @@ pub struct Generator {
     config: GenerationConfig,
 }
 
+/// Whether a message field matches any configured conversion selector.
+fn field_has_conversion_free(
+    field: &MessageField,
+    conversions: &[crate::ConversionSelector],
+) -> bool {
+    let type_name = match &field.field_type {
+        FieldType::Composite { name, .. } => name.clone(),
+        FieldType::Enum { name, .. } => name.clone(),
+        FieldType::Set { name, .. } => name.clone(),
+        FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
+    };
+    conversions.iter().any(|sel| match sel {
+        crate::ConversionSelector::NamedType(n) => n == &type_name,
+        crate::ConversionSelector::SemanticType(st) => {
+            field.semantic_type.as_deref() == Some(st.as_str())
+        }
+        _ => false,
+    })
+}
+
+/// Look up the domain type path for a field, if one is configured.
+fn find_domain_type<'a>(
+    field: &MessageField,
+    domain_types: &'a [(crate::ConversionSelector, String)],
+) -> Option<&'a str> {
+    let type_name = match &field.field_type {
+        FieldType::Composite { name, .. } => name.clone(),
+        FieldType::Enum { name, .. } => name.clone(),
+        FieldType::Set { name, .. } => name.clone(),
+        FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
+    };
+    domain_types.iter().find_map(|(sel, ty)| match sel {
+        crate::ConversionSelector::NamedType(n) if n == &type_name => Some(ty.as_str()),
+        crate::ConversionSelector::SemanticType(st)
+            if field.semantic_type.as_deref() == Some(st.as_str()) =>
+        {
+            Some(ty.as_str())
+        }
+        _ => None,
+    })
+}
+
 impl Generator {
     /// Create a generator with the supplied configuration.
     #[must_use]
@@ -211,19 +253,7 @@ impl Generator {
         field: &MessageField,
         conversions: &[crate::ConversionSelector],
     ) -> bool {
-        let type_name = match &field.field_type {
-            FieldType::Composite { name, .. } => name.clone(),
-            FieldType::Enum { name, .. } => name.clone(),
-            FieldType::Set { name, .. } => name.clone(),
-            FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
-        };
-        conversions.iter().any(|sel| match sel {
-            crate::ConversionSelector::NamedType(n) => n == &type_name,
-            crate::ConversionSelector::SemanticType(st) => {
-                field.semantic_type.as_deref() == Some(st.as_str())
-            }
-            _ => false,
-        })
+        field_has_conversion_free(field, conversions)
     }
 
     /// Whether the config has a conversion selector matching the given type name,
@@ -439,6 +469,7 @@ impl Generator {
                 multi,
                 self.config.domain_objects,
                 &self.config.conversions,
+                &self.config.domain_types,
                 self.config.unchecked_companions,
             );
             src.push_str(&decoder_ts.to_string());
@@ -452,6 +483,7 @@ impl Generator {
                 &ir.header_type,
                 multi,
                 &self.config.conversions,
+                &self.config.domain_types,
                 self.config.unchecked_companions,
             );
             src.push_str(&encoder_ts.to_string());
@@ -460,11 +492,21 @@ impl Generator {
             // Decimal composite, emit raw *_wire aliases and generic converted
             // methods. Only emitted when converter mode is active.
             if !&self.config.conversions.is_empty() {
-                let converter_ts = generate_converter_impls(msg, &self.config.conversions, multi);
+                let converter_ts = generate_converter_impls(msg, &self.config.conversions, &self.config.domain_types, multi);
                 src.push_str(&converter_ts);
             }
             src.push('\n');
             generate_message_field_meta(&mut src, msg);
+        }
+
+        // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions
+        if self.config.has_conversions() {
+            let impl_blocks = generate_conversion_impl_blocks(
+                &elements,
+                &self.config.conversions,
+                &self.config.domain_types,
+            );
+            src.push_str(&impl_blocks);
         }
 
         // 7. Generate schema-level constants — SEMANTIC_VERSION, SCHEMA_HASH, SCHEMA_SHA256, SCHEMA_SHA256_HEX
@@ -1017,6 +1059,7 @@ fn generate_message_decoder(
     multi_message: bool,
     domain_objects: bool,
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
     _unchecked_companions: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
@@ -1243,17 +1286,13 @@ fn generate_message_decoder(
         let fname_snake = to_snake_case(&f.name);
         let offset = f.offset;
         let since = f.since_version;
-        // In converter mode, Decimal-composite-backed raw accessors are
-        // suffixed _wire so the generic converted method can take the
+        // In converter mode, raw accessors are suffixed _wire when a domain
+        // type is configured so the concrete converted method takes the
         // original name.
-        let is_decimal = matches!(&f.field_type,
-            FieldType::Composite { name, .. } if conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)));
-        let method_name = if is_decimal {
-            format!("{fname_snake}_wire")
-        } else {
-            fname_snake.clone()
-        };
-        let fname_ident = syn::Ident::new(&method_name, proc_macro2::Span::call_site());
+        let wire_name = field_has_conversion_free(f, conversions)
+            .then(|| format!("{fname_snake}_wire"));
+        let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
+        let fname_ident = syn::Ident::new(method_name, proc_macro2::Span::call_site());
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -2052,6 +2091,7 @@ fn generate_message_decoder(
             byte_order,
             unique,
             &conversions,
+            domain_types,
         ));
     }
 
@@ -2706,6 +2746,7 @@ fn generate_group_decoder(
     byte_order: ByteOrder,
     scoped_name: &str,
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
     let name = scoped_name.to_string();
@@ -2993,16 +3034,12 @@ fn generate_group_decoder(
     for f in &g.fields {
         let f_name = to_snake_case(&f.name);
         // In converter mode, Decimal-composite-backed raw entry accessors are
-        // suffixed _wire so the generic converted method takes the original
-        // name (same rule as message-level fields).
-        let is_decimal_field = matches!(&f.field_type,
-            FieldType::Composite { name, .. } if conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)));
-        let accessor_name = if is_decimal_field {
-            format!("{f_name}_wire")
-        } else {
-            f_name.clone()
-        };
-        let f_name_ident = syn::Ident::new(&accessor_name, proc_macro2::Span::call_site());
+        // suffixed _wire when a conversion is configured (same rule as
+        // message-level fields).
+        let wire_name = field_has_conversion_free(f, conversions)
+            .then(|| format!("{f_name}_wire"));
+        let accessor_name = wire_name.as_deref().unwrap_or(&f_name);
+        let f_name_ident = syn::Ident::new(accessor_name, proc_macro2::Span::call_site());
         let raw_ident = syn::Ident::new(&format!("raw_{}", f_name), proc_macro2::Span::call_site());
         let offset_lit = syn::LitInt::new(&f.offset.to_string(), proc_macro2::Span::call_site());
         let f_name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
@@ -3547,6 +3584,7 @@ fn generate_group_decoder(
             byte_order,
             &nested_name,
             &conversions,
+            domain_types,
         ));
     }
 
@@ -3616,12 +3654,118 @@ fn emit_conversion_traits(src: &mut String) {
     );
 }
 
+/// Emit `TryFromSbe` / `TryToSbe` impls for well-known domain-type mappings
+/// (bool ↔ BooleanType, rust_decimal ↔ Decimal, chrono ↔ u64/UTCTimestamp).
+fn generate_conversion_impl_blocks(
+    elements: &SchemaElements,
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+) -> String {
+    let mut out = String::new();
+    let span = proc_macro2::Span::call_site();
+
+    // Check which conversions are active
+    let has_bool_conv = domain_types.iter().any(|(sel, ty)| {
+        ty == "bool" && matches!(sel, crate::ConversionSelector::NamedType(n) if n == "BooleanType")
+    });
+    let has_decimal_conv = domain_types.iter().any(|(sel, _)| {
+        matches!(sel, crate::ConversionSelector::NamedType(n) if n == "Decimal")
+    });
+    let has_chrono_conv = domain_types.iter().any(|(sel, _)| {
+        matches!(sel, crate::ConversionSelector::SemanticType(st) if st == "UTCTimestamp")
+    });
+
+    if has_bool_conv {
+        // Find the BooleanType enum name (may be scoped per-schema)
+        let bt_name = elements
+            .enums
+            .iter()
+            .find(|e| e[0].name == "BooleanType")
+            .map(|e| to_pascal_case(&e[0].name))
+            .unwrap_or_else(|| "BooleanType".to_string());
+        let bt_ident = syn::Ident::new(&bt_name, span);
+        let ts = quote::quote! {
+            impl TryFromSbe<#bt_ident> for bool {
+                type Error = &'static str;
+                fn try_from_sbe(wire: #bt_ident) -> Result<Self, Self::Error> {
+                    Ok(bool::from(wire))
+                }
+            }
+            impl TryToSbe<#bt_ident> for bool {
+                type Error = &'static str;
+                fn try_to_sbe(&self) -> Result<#bt_ident, Self::Error> {
+                    Ok(#bt_ident::from(*self))
+                }
+            }
+        };
+        out.push_str(&ts.to_string());
+    }
+
+    if has_decimal_conv {
+        let dec_name = elements
+            .composites
+            .iter()
+            .find(|c| c[0].name == "Decimal")
+            .map(|c| to_pascal_case(&c[0].name))
+            .unwrap_or_else(|| "Decimal".to_string());
+        let dec_ident = syn::Ident::new(&dec_name, span);
+        let ts = quote::quote! {
+            impl TryFromSbe<#dec_ident> for rust_decimal::Decimal {
+                type Error = &'static str;
+                fn try_from_sbe(wire: #dec_ident) -> Result<Self, Self::Error> {
+                    let mantissa = wire.mantissa() as i128;
+                    let exponent = wire.exponent();
+                    rust_decimal::Decimal::from_i128_with_scale(mantissa, exponent as u32)
+                        .try_into()
+                        .map_err(|_| "Decimal overflow")
+                }
+            }
+            impl TryToSbe<#dec_ident> for rust_decimal::Decimal {
+                type Error = &'static str;
+                fn try_to_sbe(&self) -> Result<#dec_ident, Self::Error> {
+                    let mantissa: i64 = self.mantissa()
+                        .try_into()
+                        .map_err(|_| "Decimal mantissa overflow i64")?;
+                    Ok(#dec_ident::new(mantissa, -(self.scale() as i8)))
+                }
+            }
+        };
+        out.push_str(&ts.to_string());
+    }
+
+    if has_chrono_conv {
+        let ts = quote::quote! {
+            impl TryFromSbe<u64> for chrono::DateTime<chrono::Utc> {
+                type Error = &'static str;
+                fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> {
+                    let secs = (wire / 1_000_000_000) as i64;
+                    let nsec = (wire % 1_000_000_000) as u32;
+                    chrono::DateTime::from_timestamp(secs, nsec)
+                        .ok_or("timestamp out of range for DateTime<Utc>")
+                }
+            }
+            impl TryToSbe<u64> for chrono::DateTime<chrono::Utc> {
+                type Error = &'static str;
+                fn try_to_sbe(&self) -> Result<u64, Self::Error> {
+                    let total_nanos = self.timestamp_nanos_opt()
+                        .ok_or("timestamp_nanos overflow")?;
+                    Ok(total_nanos as u64)
+                }
+            }
+        };
+        out.push_str(&ts.to_string());
+    }
+
+    out
+}
+
 /// Generate `*_as`/`*_from` conversion methods for fields matching the
 /// configured conversion selectors. Also emits raw `*_wire` aliases if the
 /// field would otherwise shadow them.
 fn generate_converter_impls(
     msg: &MessageStructure,
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
     _multi_message: bool,
 ) -> String {
     let span = proc_macro2::Span::call_site();
@@ -3649,58 +3793,81 @@ fn generate_converter_impls(
                 (rust_name.to_string(), syn::Ident::new(rust_name, span))
             }
         };
-        let has_conversion = conversions.iter().any(|sel| match sel {
-            crate::ConversionSelector::NamedType(n) => n == &type_name,
-            crate::ConversionSelector::SemanticType(st) => {
-                f.semantic_type.as_deref() == Some(st.as_str())
-            }
-            _ => false,
-        });
+        let has_conversion = field_has_conversion_free(f, conversions);
         if !has_conversion {
             continue;
         }
 
         let field_snake = to_snake_case(&f.name);
-        let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
-        let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
+        let domain_type_path = find_domain_type(f, domain_types);
 
-        // Composites rename the raw accessor to _wire when converters are active.
-        // Primitives, enums, and sets keep their primary accessor name.
-        let (decoder_field, encoder_field) = if matches!(f.field_type, FieldType::Composite { .. })
-        {
-            let wire_ident = syn::Ident::new(&format!("{field_snake}_wire"), span);
-            let as_struct_ident = syn::Ident::new(&format!("{field_snake}_value"), span);
-            (as_struct_ident, wire_ident)
+        // Determine which raw accessor to call. Composites have _value()
+        // for the owned wire value; everything else uses the _wire getter.
+        let raw_decoder_getter = if matches!(f.field_type, FieldType::Composite { .. }) {
+            syn::Ident::new(&format!("{field_snake}_value"), span)
         } else {
-            let field_ident = syn::Ident::new(&field_snake, span);
-            (field_ident.clone(), field_ident)
+            syn::Ident::new(&format!("{field_snake}_wire"), span)
         };
+        let wire_setter = syn::Ident::new(&format!("{field_snake}_wire"), span);
 
-        decoder_methods.extend(quote::quote! {
-            #[inline]
-            #[must_use]
-            pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<T, T::Error> {
-                T::try_from_sbe(self.#decoder_field())
-            }
-        });
+        if let Some(dt) = domain_type_path {
+            // Concrete methods using the configured domain type
+            let dt_ty: syn::Type = syn::parse_str(dt).unwrap_or_else(|_| {
+                panic!("invalid domain type path: {dt}")
+            });
+            let domain_ident = syn::Ident::new(&field_snake, span);
 
-        encoder_methods.extend(quote::quote! {
-            #[inline]
-            #[must_use]
-            pub fn #from_ident<T: TryToSbe<#wire_type_ident>>(&mut self, value: &T) -> Result<&mut Self, T::Error> {
-                let wire = value.try_to_sbe()?;
-                self.#encoder_field(wire);
-                Ok(self)
-            }
-        });
+            decoder_methods.extend(quote::quote! {
+                #[inline]
+                #[must_use]
+                pub fn #domain_ident(&self) -> #dt_ty {
+                    <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
+                        self.#raw_decoder_getter()
+                    ).expect(concat!("conversion of ", stringify!(#domain_ident)))
+                }
+            });
+
+            encoder_methods.extend(quote::quote! {
+                #[inline]
+                #[must_use]
+                pub fn #domain_ident(&mut self, value: #dt_ty) -> &mut Self {
+                    let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)
+                        .expect(concat!("conversion of ", stringify!(#domain_ident)));
+                    self.#wire_setter(wire)
+                }
+            });
+        } else {
+            // Generic *_as / *_from methods
+            let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
+            let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
+
+            decoder_methods.extend(quote::quote! {
+                #[inline]
+                #[must_use]
+                pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<T, T::Error> {
+                    T::try_from_sbe(self.#raw_decoder_getter())
+                }
+            });
+
+            encoder_methods.extend(quote::quote! {
+                #[inline]
+                #[must_use]
+                pub fn #from_ident<T: TryToSbe<#wire_type_ident>>(&mut self, value: &T) -> Result<&mut Self, T::Error> {
+                    let wire = value.try_to_sbe()?;
+                    self.#wire_setter(wire);
+                    Ok(self)
+                }
+            });
+        }
     }
 
-    // Group entries (recursively): same generic-plus-*_wire rule as
-    // ordinary fields, on the scoped entry decoder/encoder types.
+    // Group entries (recursively): concrete methods when domain type is
+    // configured, generic *_as/*_from otherwise.
     fn emit_group_entry_impls(
         scope: &str,
         g: &MessageGroup,
         conversions: &[crate::ConversionSelector],
+        domain_types: &[(crate::ConversionSelector, String)],
         out: &mut String,
     ) {
         let span = proc_macro2::Span::call_site();
@@ -3710,38 +3877,73 @@ fn generate_converter_impls(
         let mut dec_methods = proc_macro2::TokenStream::new();
         let mut enc_methods = proc_macro2::TokenStream::new();
         for f in &g.fields {
-            let comp_name = match &f.field_type {
-                FieldType::Composite { name, .. } => name,
-                _ => continue,
-            };
-            if !conversions
-                .iter()
-                .any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == comp_name))
-            {
+            if !field_has_conversion_free(f, conversions) {
                 continue;
             }
             let field_snake = to_snake_case(&f.name);
-            let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
-            let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
-            let wire_ident = syn::Ident::new(&format!("{field_snake}_wire"), span);
-            let as_struct_ident = syn::Ident::new(&format!("{field_snake}_value"), span);
-            let comp_type_ident = syn::Ident::new(&to_pascal_case(comp_name), span);
-            dec_methods.extend(quote::quote! {
-                #[inline]
-                #[must_use]
-                pub fn #as_ident<T: TryFromSbe<#comp_type_ident>>(&self) -> Result<T, T::Error> {
-                    T::try_from_sbe(self.#as_struct_ident())
+            let wire_type_ident = match &f.field_type {
+                FieldType::Composite { name, .. } => {
+                    syn::Ident::new(&to_pascal_case(name), span)
                 }
-            });
-            enc_methods.extend(quote::quote! {
-                #[inline]
-                #[must_use]
-                pub fn #from_ident<T: TryToSbe<#comp_type_ident>>(&mut self, value: &T) -> Result<&mut Self, T::Error> {
-                    let wire = value.try_to_sbe()?;
-                    let _ = self.#wire_ident(wire);
-                    Ok(self)
+                FieldType::Enum { name, .. } => {
+                    syn::Ident::new(&to_pascal_case(name), span)
                 }
-            });
+                FieldType::Set { name, .. } => {
+                    syn::Ident::new(&to_pascal_case(name), span)
+                }
+                FieldType::Primitive(pt, _) => {
+                    syn::Ident::new(rust_type(*pt), span)
+                }
+            };
+            let raw_decoder_getter = if matches!(f.field_type, FieldType::Composite { .. }) {
+                syn::Ident::new(&format!("{field_snake}_value"), span)
+            } else {
+                syn::Ident::new(&format!("{field_snake}_wire"), span)
+            };
+            let wire_setter = syn::Ident::new(&format!("{field_snake}_wire"), span);
+
+            if let Some(dt) = find_domain_type(f, domain_types) {
+                let dt_ty: syn::Type = syn::parse_str(dt)
+                    .unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
+                let domain_ident = syn::Ident::new(&field_snake, span);
+                dec_methods.extend(quote::quote! {
+                    #[inline]
+                    #[must_use]
+                    pub fn #domain_ident(&self) -> #dt_ty {
+                        <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
+                            self.#raw_decoder_getter()
+                        ).expect(concat!("conversion of ", stringify!(#domain_ident)))
+                    }
+                });
+                enc_methods.extend(quote::quote! {
+                    #[inline]
+                    #[must_use]
+                    pub fn #domain_ident(&mut self, value: #dt_ty) -> &mut Self {
+                        let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)
+                            .expect(concat!("conversion of ", stringify!(#domain_ident)));
+                        self.#wire_setter(wire)
+                    }
+                });
+            } else {
+                let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
+                let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
+                dec_methods.extend(quote::quote! {
+                    #[inline]
+                    #[must_use]
+                    pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<T, T::Error> {
+                        T::try_from_sbe(self.#raw_decoder_getter())
+                    }
+                });
+                enc_methods.extend(quote::quote! {
+                    #[inline]
+                    #[must_use]
+                    pub fn #from_ident<T: TryToSbe<#wire_type_ident>>(&mut self, value: &T) -> Result<&mut Self, T::Error> {
+                        let wire = value.try_to_sbe()?;
+                        let _ = self.#wire_setter(wire);
+                        Ok(self)
+                    }
+                });
+            }
         }
         if !dec_methods.is_empty() {
             let ts = quote::quote! {
@@ -3755,7 +3957,7 @@ fn generate_converter_impls(
             out.push_str(&ts.to_string());
         }
         for ng in &g.groups {
-            emit_group_entry_impls(&scoped, ng, &conversions, out);
+            emit_group_entry_impls(&scoped, ng, &conversions, domain_types, out);
         }
     }
 
@@ -3766,7 +3968,7 @@ fn generate_converter_impls(
         String::new()
     };
     for g in &msg.groups {
-        emit_group_entry_impls(&group_scope, g, &conversions, &mut entry_impls);
+        emit_group_entry_impls(&group_scope, g, &conversions, domain_types, &mut entry_impls);
     }
 
     if decoder_methods.is_empty() && entry_impls.is_empty() {
@@ -4318,6 +4520,7 @@ fn generate_message_encoder(
     header_type: &str,
     multi_message: bool,
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
     unchecked_companions: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
@@ -4620,17 +4823,13 @@ fn generate_message_encoder(
         let f_name = to_snake_case(&f.name);
         let body_offset = header_size + f.offset;
         let body_offset_lit = syn::LitInt::new(&body_offset.to_string(), span);
-        // In converter mode, Decimal-composite-backed raw setters are
-        // suffixed _wire so the generic converted setter takes the
-        // original name.
-        let is_decimal = matches!(&f.field_type,
-            FieldType::Composite { name, .. } if conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)));
-        let method_name = if is_decimal {
-            format!("{f_name}_wire")
-        } else {
-            f_name.clone()
-        };
-        let f_ident = syn::Ident::new(&method_name, span);
+        // In converter mode, raw setters are suffixed _wire when a domain
+        // Raw setters become *_wire when a conversion is configured so the
+        // converted setter takes the original name.
+        let wire_name = field_has_conversion_free(f, conversions)
+            .then(|| format!("{f_name}_wire"));
+        let method_name = wire_name.as_deref().unwrap_or(&f_name);
+        let f_ident = syn::Ident::new(method_name, span);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -4854,12 +5053,7 @@ fn generate_message_encoder(
                 continue;
             }
             let fname_snake = to_snake_case(&f.name);
-            let is_converted = match &f.field_type {
-                FieldType::Composite { name, .. } => conversions
-                    .iter()
-                    .any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)),
-                _ => false,
-            };
+            let is_converted = field_has_conversion_free(f, conversions);
             let setter_ident = if is_converted {
                 syn::Ident::new(&format!("{fname_snake}_wire"), span)
             } else {
@@ -5282,6 +5476,7 @@ fn generate_message_encoder(
             byte_order,
             &enc_group_names[gi],
             &conversions,
+            domain_types,
         );
     }
     if !group_buf.is_empty() {
@@ -5353,6 +5548,7 @@ fn generate_group_encoder(
     byte_order: ByteOrder,
     scoped_name: &str,
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
 ) {
     let name = scoped_name.to_string();
     let order_suffix = match byte_order {
@@ -5577,14 +5773,10 @@ fn generate_group_encoder(
     // Field setters
     for f in &g.fields {
         let f_snake = to_snake_case(&f.name);
-        // Converter mode: Decimal-composite raw entry setters become *_wire.
-        let is_decimal_field = matches!(&f.field_type,
-            FieldType::Composite { name, .. } if conversions.iter().any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == name)));
-        let setter_name = if is_decimal_field {
-            format!("{f_snake}_wire")
-        } else {
-            f_snake.clone()
-        };
+        // Raw entry setters become *_wire when a conversion is configured.
+        let wire_name = field_has_conversion_free(f, conversions)
+            .then(|| format!("{f_snake}_wire"));
+        let setter_name = wire_name.as_deref().unwrap_or(&f_snake);
         let f_ident = syn::Ident::new(&setter_name, span);
         let f_offset = syn::Index::from(f.offset);
 
@@ -5804,7 +5996,7 @@ fn generate_group_encoder(
     // Recursively generate nested Repeating Groups encoders
     for ng in &g.groups {
         let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
-        generate_group_encoder(src, ng, elements, byte_order, &nested_name, &conversions);
+        generate_group_encoder(src, ng, elements, byte_order, &nested_name, &conversions, domain_types);
     }
 }
 
