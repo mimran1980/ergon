@@ -1248,6 +1248,29 @@ mod tests {
     }
 
     #[test]
+    fn test_offer_path_has_no_combined_heap_buffer() -> Result<(), Box<dyn std::error::Error>> {
+        // T9: Structural proof — the `offer` method body must delegate to
+        // `try_claim` (claim-based, allocation-free), never allocate a
+        // combined header+payload `vec!`.
+        let src = include_str!("client.rs");
+        // Find the `pub fn offer` body — search from its signature to the
+        // next `pub fn` (or the closing `}` at the same indent level).
+        let off_start = src.find("pub fn offer(&mut self, payload: &[u8])")
+            .ok_or("offer signature not found")?;
+        let body_snippet = &src[off_start..];
+        // The body must not contain `vec!` (the only `vec!` in this file
+        // uses `compute_encoded_length_with_message_header`, not a magic N).
+        let next_pub = body_snippet[20..].find("pub fn ").unwrap_or(body_snippet.len());
+        let offer_body = &body_snippet[..next_pub + 20];
+        assert!(
+            !offer_body.contains("vec!["),
+            "offer body must not allocate a combined heap buffer — use try_claim"
+        );
+        assert!(offer_body.contains("self.try_claim"), "offer must delegate to try_claim");
+        Ok(())
+    }
+
+    #[test]
     fn test_new_leader_timeout_not_yet_elapsed_keeps_awaiting() -> Result<(), Box<dyn std::error::Error>> {
         let mut state = SessionState::AwaitingNewLeader;
         let mut awaiting = Some(Instant::now());
