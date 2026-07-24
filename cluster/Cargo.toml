@@ -5,7 +5,20 @@ edition = "2024"
 description = "Experimental Ergo Aeron Cluster client (rusteron transport + ergon codecs)"
 license = "Apache-2.0"
 repository = "https://github.com/mimran1980/ergon"
-exclude = ["reference_sbe/", "Cargo.lock"]
+# Published package = product code only. Tests, benches, the Java test-harness
+# (src/test_support, incl. ClusterLauncher.java), examples (all require the
+# test-harness feature), and the reference sbe-tool tree are repo-only and not
+# shipped. `test-harness` is a repo convenience feature; the published crate's
+# default features are empty.
+exclude = [
+    "reference_sbe/",
+    "Cargo.lock",
+    "tests/",
+    "benches/",
+    "examples/",
+    "src/test_support/",
+    "test-jars.sha256",
+]
 
 [dependencies]
 rusteron-client = { workspace = true }
