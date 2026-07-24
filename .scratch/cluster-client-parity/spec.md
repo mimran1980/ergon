@@ -112,17 +112,28 @@ gated behind the repo-only `test-harness` feature).
 | `poll_connect_until_done` | `idle` | Poll async connect to completion |
 | `AERON_IPC_STREAM` | `uri` | IPC channel constant |
 
-### Still genuinely blocked (need external resources / human approval)
+### Gate-blocker status (2026-07-24, fresh command evidence)
 
-- `cargo package` / `cargo publish --dry-run` now fail **only** on the
-  `ergo-sbe` prerequisite — it is declared as `path = "../sbe"` with a
-  `version = "0.1.0"` but is not yet on crates.io, so registry validation
-  reports `no matching package named ergo-sbe`. Publish order is
-  `ergo-sbe → wait for crates.io index → ergo-aeron-cluster`; publishing
-  `ergo-sbe` is a human crates.io action gated on explicit release approval.
-- Java interop matrix (connect / auth / echo / failover / snapshot) — needs
-  `just build-aeron-jars` + a running Java cluster. You run the Java side; this
-  can't be driven headless without the jars built.
+- **`ergo-sbe publish` — ready, just needs your token.**
+  `cargo publish -p ergo-sbe --dry-run` → **rc=0** (165 files / 2.2 MiB,
+  verification build passes). Your next action: `cargo publish -p ergo-sbe`
+  with a crates.io token. After the index updates,
+  `cargo publish -p ergo-aeron-cluster --dry-run` should succeed (gate #3).
+
+- **Java interop — connect + echo verified; full matrix pending.**
+  `cargo test -p ergo-aeron-cluster --test harness_cluster_spawn --features test-harness`
+  → **2 passed** (single-node spawn-and-drop, port isolation). These test
+  the full session handshake + lifecycle against a real Java Aeron cluster
+  (pre-built jars v1.52.2). Remaining interop targets (auth challenge,
+  leader failover, keep-alive, admin snapshot) need dedicated
+  failure-injection tests, for which the harness infrastructure already
+  exists.
+
+- **Maintained bench ratios — 2 generator-level failures (`sbe/` codec).**
+  See the ratios table above. Both are in the generated ergo-sbe codec,
+  owned by the `sbe/` generator, not caused by any client change here.
+  Addressed by the generator plan at
+  `docs/design/2026-07-24-simplified-encoded-length-api-implementation-plan.md`.
 
 **Prerequisite:** `ergo-sbe 0.1.x` is published to crates.io and installable
 (or is about to be; Cluster publish is sequenced after sbe is indexed).
