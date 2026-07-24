@@ -32,6 +32,7 @@ use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use crate::structured_ir::*;
 use crate::{GenerationConfig, Schema};
 
+pub(crate) mod encoded_length;
 pub(crate) mod runtime;
 use quote::format_ident;
 pub(crate) use runtime::*;
