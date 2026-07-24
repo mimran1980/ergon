@@ -38,6 +38,12 @@ use crate::error::ClusterError;
 use crate::error::PublicationFailure;
 use crate::state::SessionState;
 
+/// Populate the `clientInfo` field in `SessionConnectRequest` matching
+/// Java's `"name=<clientName> <versionInfo>"` pattern.
+fn client_info_bytes() -> Vec<u8> {
+    format!("name={} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")).into_bytes()
+}
+
 /// Header-inclusive SessionMessageHeader (prefer generated `ENCODED_LENGTH`).
 const MSG_HDR_TOTAL: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
 
@@ -397,7 +403,7 @@ impl AeronCluster {
         let _ = enc
             .response_channel(ch)?
             .encoded_credentials(credentials)?
-            .client_info(b"")?;
+            .client_info(&client_info_bytes())?;
         Ok(buf)
     }
 
@@ -1132,7 +1138,7 @@ impl AsyncClusterConnect {
         let _ = enc
             .response_channel(ch)?
             .encoded_credentials(&self.credentials)?
-            .client_info(b"")?;
+            .client_info(&client_info_bytes())?;
         // Always stamp the attempt so re-offer cadence advances even under
         // backpressure (avoids tight spin when publication is not connected).
         self.last_connect_offer = Instant::now();
@@ -1219,7 +1225,7 @@ mod tests {
         let complete = enc
             .response_channel(ch)?
             .encoded_credentials(creds)?
-            .client_info(b"")?;
+            .client_info(&client_info_bytes())?;
         assert_eq!(
             complete.as_bytes_with_header().len(),
             len,
