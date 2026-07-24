@@ -205,7 +205,10 @@ in wire order.
 ```rust
 // 1. Pre-compute exact buffer size (zero alloc, no buffer needed).
 let len = CarEncodedLength::new()
-    .fuel_figures(2, |g| { g.add()?; g.add()?; Ok(()) })?
+    .fuel_figures(2)
+    .usage_description(5)?
+    .performance_figures(0)
+    .acceleration(0)?
     .manufacturer(12)?
     .encoded_length_with_header();
 
