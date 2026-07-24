@@ -49,4 +49,26 @@
     </group>
     <data name="symbol" id="16" type="varAsciiEncoding" characterEncoding="ASCII"/>
   </message>
+  <message name="L3BookVarData" id="2">
+    <field name="exchangeTimestamp" id="1" type="uint64" semanticType="UTCTimestamp"/>
+    <field name="sequence"          id="2" type="uint64"/>
+    <field name="isActive"          id="3" type="BooleanType"/>
+    <group name="bids" id="4" dimensionType="groupSizeEncoding">
+      <field name="price" id="5" type="Decimal" semanticType="Price"/>
+      <field name="size"  id="6" type="Decimal" semanticType="Qty"/>
+      <group name="orders" id="7" dimensionType="groupSizeEncoding">
+        <field name="quantity" id="9"  type="Decimal" semanticType="Qty"/>
+        <data name="orderId"  id="8"  type="varAsciiEncoding"/>
+      </group>
+    </group>
+    <group name="asks" id="10" dimensionType="groupSizeEncoding">
+      <field name="price" id="11" type="Decimal" semanticType="Price"/>
+      <field name="size"  id="12" type="Decimal" semanticType="Qty"/>
+      <group name="orders" id="13" dimensionType="groupSizeEncoding">
+        <field name="quantity" id="15" type="Decimal" semanticType="Qty"/>
+        <data name="orderId"  id="14" type="varAsciiEncoding"/>
+      </group>
+    </group>
+    <data name="symbol" id="16" type="varAsciiEncoding" characterEncoding="ASCII"/>
+  </message>
 </messageSchema>
