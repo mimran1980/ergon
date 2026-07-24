@@ -91,6 +91,45 @@ fn generate_staged(
         }
     });
 
+    // ── Pre-emit all stage structs (except entry and uniform pending) ──
+    let mut stage_names: Vec<String> = Vec::new();
+    let total_tail = msg.groups.len() + msg.var_data.len();
+    {
+        let mut idx = 0;
+        for g in &msg.groups {
+            idx += 1;
+            if idx < total_tail {
+                let next_pascal = if idx < msg.groups.len() {
+                    crate::codegen::to_pascal_case(&msg.groups[idx].name)
+                } else {
+                    crate::codegen::to_pascal_case(&msg.var_data[idx - msg.groups.len()].name)
+                };
+                stage_names.push(format!("{msg_name}EncodedLengthAfter{next_pascal}"));
+            } else {
+                stage_names.push(format!("{msg_name}EncodedLengthComplete"));
+            }
+        }
+        for (vi, _vd) in msg.var_data.iter().enumerate() {
+            let gi = msg.groups.len() + vi;
+            idx = gi + 1;
+            if idx < total_tail {
+                let next_pascal = crate::codegen::to_pascal_case(&msg.var_data[vi + 1].name);
+                stage_names.push(format!("{msg_name}EncodedLengthAfter{next_pascal}"));
+            } else {
+                stage_names.push(format!("{msg_name}EncodedLengthComplete"));
+            }
+        }
+    }
+    for sn in &stage_names {
+        let sid = syn::Ident::new(sn, span);
+        standalone.extend(quote::quote! {
+            #[doc(hidden)]
+            pub struct #sid {
+                state: EncodedLengthAccumulator,
+            }
+        });
+    }
+
     // ── Walk tail groups + varData, emitting uniform stages ──
     let mut pending_name = entry_ident.clone();
     let total_tail = msg.groups.len() + msg.var_data.len();
@@ -532,7 +571,7 @@ fn generate_direct(
         /// Group counts use the wire type (`u16` or `u8`); var-data lengths
         /// use `usize`.
         #[inline]
-        pub const fn try_compute_encoded_length(
+        pub fn try_compute_encoded_length(
             #(#checked_param_decls),*
         ) -> Result<usize, sbe_rt::EncodeError> {
             let mut len: usize = #block_len_lit;
@@ -543,14 +582,12 @@ fn generate_direct(
         /// Compute the exact SBE message length including the header, with
         /// checked arithmetic.
         #[inline]
-        pub const fn try_compute_encoded_length_with_header(
+        pub fn try_compute_encoded_length_with_header(
             #(#checked_param_decls),*
         ) -> Result<usize, sbe_rt::EncodeError> {
             let body = Self::try_compute_encoded_length(#(#checked_param_names),*)?;
-            match body.checked_add(#header_size) {
-                Some(v) => Ok(v),
-                None => Err(sbe_rt::EncodeError::EncodedLengthOverflow),
-            }
+            body.checked_add(#header_size)
+                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)
         }
     };
 

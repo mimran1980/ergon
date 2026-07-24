@@ -4726,6 +4726,26 @@ impl CarEncodedLength {
     }
 }
 #[doc(hidden)]
+pub struct CarEncodedLengthAfterPerformanceFigures {
+    state: EncodedLengthAccumulator,
+}
+#[doc(hidden)]
+pub struct CarEncodedLengthAfterManufacturer {
+    state: EncodedLengthAccumulator,
+}
+#[doc(hidden)]
+pub struct CarEncodedLengthAfterModel {
+    state: EncodedLengthAccumulator,
+}
+#[doc(hidden)]
+pub struct CarEncodedLengthAfterActivationCode {
+    state: EncodedLengthAccumulator,
+}
+#[doc(hidden)]
+pub struct CarEncodedLengthComplete {
+    state: EncodedLengthAccumulator,
+}
+#[doc(hidden)]
 #[must_use = "complete the nested shape or call finish_empty()"]
 pub struct CarFuelFiguresUniformEncodedLength {
     state: EncodedLengthAccumulator,
