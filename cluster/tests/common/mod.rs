@@ -54,7 +54,7 @@ pub fn connect_own_driver(
         .map_err(|e| ergo_aeron_cluster::ClusterError::ConnectFailed {
             reason: format!("egress URI utf8: {e}"),
         })?;
-    let builder = SessionBuilder::builder()
+    let builder = SessionBuilder::default()
         .ingress_channel(cluster_ingress)
         .egress_channel(egress_uri)
         .ingress_stream_id(101)
