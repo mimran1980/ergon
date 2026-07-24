@@ -1,7 +1,7 @@
 //! [`SessionBuilder`] — channel/stream/timeout configuration for connect.
 //!
 //! Mirrors Java `AeronCluster.Context`. Defaults: ingress stream 101, egress
-//! stream 102, 10s message timeout.
+//! stream 102, 5s message timeout.
 //!
 //! Channels are stored as **`CString`** (rusteron-ready). Performance over
 //! convenience: do not convert to `String`/`&str` and back for FFI.
@@ -64,7 +64,7 @@ impl Default for SessionBuilder {
             egress_c: None,
             ingress_stream_id: 101,
             egress_stream_id: 102,
-            message_timeout_ms: 10_000,
+            message_timeout_ms: 5_000,
             new_leader_timeout_ms: 5_000,
             credentials: None,
             ingress_endpoints: None,
@@ -236,7 +236,7 @@ mod tests {
         let b = SessionBuilder::default();
         assert_eq!(b.ingress_stream_id, 101);
         assert_eq!(b.egress_stream_id, 102);
-        assert_eq!(b.message_timeout_ms, 10_000);
+        assert_eq!(b.message_timeout_ms, 5_000);
         assert_eq!(b.new_leader_timeout_ms, 5_000);
         Ok(())
     }
