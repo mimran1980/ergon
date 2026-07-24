@@ -6,13 +6,60 @@
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};
 use crate::fragment::Fragment;
 
-/// Callbacks for egress (cluster→client) messages.
+/// Callbacks for egress (cluster→client) messages received via
+/// [`crate::AeronCluster::poll_egress`]. Implement this trait and pass it to an
+/// [`EgressAdapter`].
 ///
-/// All methods are infallible — errors are buffered and surfaced on
-/// the next `poll()` return. Panics must never unwind through this
-/// trait; the adapter wraps dispatch in `catch_unwind`.
+/// # Lifecycle
+///
+/// - **`on_session_event`** delivers the cluster's response to connect,
+///   keep-alive, and close requests via [`EventCode`] (OK, ERROR, REDIRECT,
+///   AUTHENTICATION_REJECTED, CLOSED). The `detail` field is validated ASCII
+///   text from the schema and carries human-readable context (e.g. the
+///   redirect leader endpoint list).
+/// - **`on_new_leader`** fires when the cluster elects a new leader. The
+///   `ingress_endpoints` CSV is the same format that
+///   [`SessionBuilder::ingress_endpoints`](crate::SessionBuilder::ingress_endpoints)
+///   accepts. The client handles reconnection internally — implement this to
+///   observe leadership changes.
+/// - **`on_challenge`** delivers an auth challenge from the cluster.
+///   Respond with credentials via
+///   [`CredentialsSupplier::on_challenge`](crate::CredentialsSupplier::on_challenge);
+///   the client handles the protocol-level `ChallengeResponse` send.
+/// - **`on_admin_response`** carries the cluster's reply to an admin request
+///   (e.g. snapshot) initiated by
+///   [`AeronCluster::send_admin_request_to_take_snapshot`](crate::AeronCluster::send_admin_request_to_take_snapshot).
+/// - **`on_message`** delivers application payloads from the clustered
+///   service. Filter by `cluster_session_id` if your process manages multiple
+///   sessions; the adapter already drops message for foreign sessions when
+///   `expected_session_id` is set, so this callback only sees messages for
+///   the configured session.
+///
+/// # Error handling
+///
+/// All methods are **infallible** — they return `()`. Protocol decode errors
+/// and listener panics are buffered and surfaced as
+/// [`ClusterError`](crate::ClusterError) on the next
+/// [`poll_egress`](crate::AeronCluster::poll_egress) return. Do not `panic!`
+/// inside these callbacks; the adapter wraps dispatch in `catch_unwind` and
+/// returns [`ClusterError::ListenerPanicked`](crate::ClusterError::ListenerPanicked).
+///
+/// # Session filtering
+///
+/// When you call
+/// [`EgressAdapter::with_session_filter`] or
+/// [`set_expected_session_id`](EgressAdapter::set_expected_session_id),
+/// the adapter drops **all** event types (messages, session events,
+/// new-leader notifications, challenges, admin responses) that carry a
+/// `cluster_session_id` different from the configured one. This prevents a
+/// multi-tenant process from acting on another session's lifecycle events.
 pub trait EgressListener {
+    /// Application message from the clustered service. `buffer` is the raw
+    /// payload bytes after the `SessionMessageHeader` (no SBE framing).
     fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]);
+
+    /// Cluster→client session lifecycle event. See [`EventCode`] for the
+    /// possible codes. `detail` is validated ASCII text.
     fn on_session_event(
         &mut self,
         correlation_id: i64,
@@ -22,6 +69,10 @@ pub trait EgressListener {
         code: EventCode,
         detail: &str,
     );
+
+    /// A new leader was elected. `ingress_endpoints` is a CSV of
+    /// `member_id=host:port` pairs. The client reconnects automatically;
+    /// implement this to observe the transition.
     fn on_new_leader(
         &mut self,
         cluster_session_id: i64,
@@ -29,7 +80,14 @@ pub trait EgressListener {
         leader_member_id: i32,
         ingress_endpoints: &str,
     );
+
+    /// An auth challenge from the cluster. `encoded_challenge` is the
+    /// opaque challenge bytes from the `Challenge` SBE message.
     fn on_challenge(&mut self, correlation_id: i64, cluster_session_id: i64, encoded_challenge: &[u8]);
+
+    /// Response to an admin request (e.g. snapshot). `message` is
+    /// validated UTF-8 text; `payload` is raw bytes after the message
+    /// field.
     fn on_admin_response(
         &mut self,
         cluster_session_id: i64,

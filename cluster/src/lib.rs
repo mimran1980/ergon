@@ -78,9 +78,20 @@ pub mod transport {
 /// High-level cluster client: connect, try_claim, offer, keep-alive, close.
 pub mod client;
 /// SBE codecs: ergo-sbe production modules + residual sbe-tool trees for benches.
-/// Generated Aeron protocol codecs — hidden from docs, not part of the public API.
+pub(crate) mod codecs;
+
+/// Generated codec types re-exported for integration tests and benches only.
+/// These are not a stable consumer API — use `AeronCluster` for normal usage.
 #[doc(hidden)]
-pub mod codecs;
+pub mod cluster_codec_types {
+    pub use crate::codecs::session::{
+        AdminResponseEncoder, AdminRequestType, AdminResponseCode, AnyMessage,
+        ChallengeDecoder, ChallengeEncoder, ChallengeResponseEncoder, EventCode,
+        NewLeaderEventDecoder, NewLeaderEventEncoder, SessionCloseRequestEncoder,
+        SessionConnectRequestEncoder, SessionEventDecoder, SessionEventEncoder,
+        SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+    };
+}
 /// [`SessionBuilder`] configuration for connect.
 pub mod config;
 /// Controlled egress poll (Java `ControlledEgressAdapter` analogue).

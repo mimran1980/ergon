@@ -57,6 +57,7 @@ struct PollCtx<'a, L: EgressListener> {
     new_leader: &'a mut Option<(i64, i32, String)>,
     decode_err: &'a mut Option<ClusterError>,
     expected_session_id: i64,
+    session_closed: &'a mut bool,
 }
 
 struct ControlledPollCtx<'a, L: ControlledEgressListener> {
@@ -64,20 +65,32 @@ struct ControlledPollCtx<'a, L: ControlledEgressListener> {
     new_leader: &'a mut Option<(i64, i32, String)>,
     decode_err: &'a mut Option<ClusterError>,
     expected_session_id: i64,
+    session_closed: &'a mut bool,
 }
 
 fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], _hdr: rusteron_client::AeronHeader) {
-    if let Some(crate::poller::EgressEvent::NewLeader {
-        leadership_term_id,
-        leader_member_id,
-        ingress_endpoints,
-        cluster_session_id,
-        ..
-    }) = crate::poller::parse_event(data).ok().flatten()
-        && ctx.new_leader.is_none()
-        && cluster_session_id == ctx.expected_session_id
-    {
-        *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
+    if let Some(ref ev) = crate::poller::parse_event(data).ok().flatten() {
+        if let crate::poller::EgressEvent::NewLeader {
+            leadership_term_id,
+            leader_member_id,
+            ingress_endpoints,
+            cluster_session_id,
+            ..
+        } = ev
+            && ctx.new_leader.is_none()
+            && *cluster_session_id == ctx.expected_session_id
+        {
+            *ctx.new_leader = Some((*leadership_term_id, *leader_member_id, ingress_endpoints.clone()));
+        }
+        if let crate::poller::EgressEvent::SessionEvent {
+            code: crate::codecs::session::EventCode::CLOSED,
+            cluster_session_id,
+            ..
+        } = ev
+            && *cluster_session_id == ctx.expected_session_id
+        {
+            *ctx.session_closed = true;
+        }
     }
     if let Err(e) = ctx.adapter.on_fragment(data)
         && ctx.decode_err.is_none()
@@ -91,17 +104,28 @@ fn dispatch_controlled<L: ControlledEgressListener>(
     data: &[u8],
     _hdr: rusteron_client::AeronHeader,
 ) -> AeronAction {
-    if let Some(crate::poller::EgressEvent::NewLeader {
-        leadership_term_id,
-        leader_member_id,
-        ingress_endpoints,
-        cluster_session_id,
-        ..
-    }) = crate::poller::parse_event(data).ok().flatten()
-        && ctx.new_leader.is_none()
-        && cluster_session_id == ctx.expected_session_id
-    {
-        *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
+    if let Some(ref ev) = crate::poller::parse_event(data).ok().flatten() {
+        if let crate::poller::EgressEvent::NewLeader {
+            leadership_term_id,
+            leader_member_id,
+            ingress_endpoints,
+            cluster_session_id,
+            ..
+        } = ev
+            && ctx.new_leader.is_none()
+            && *cluster_session_id == ctx.expected_session_id
+        {
+            *ctx.new_leader = Some((*leadership_term_id, *leader_member_id, ingress_endpoints.clone()));
+        }
+        if let crate::poller::EgressEvent::SessionEvent {
+            code: crate::codecs::session::EventCode::CLOSED,
+            cluster_session_id,
+            ..
+        } = ev
+            && *cluster_session_id == ctx.expected_session_id
+        {
+            *ctx.session_closed = true;
+        }
     }
     match ctx.adapter.on_fragment(data) {
         Ok(action) => to_aeron_action(action),
@@ -477,7 +501,7 @@ impl AeronCluster {
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id);
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
-        offer_result("keep_alive", r).map(|_| ())
+        self.track_ingress_publication_result(r).map(|_| ())
     }
 
     /// Send keep-alive if the interval has elapsed since the last send.
@@ -579,11 +603,13 @@ impl AeronCluster {
         self.keep_alive_if_due();
         let mut new_leader: Option<(i64, i32, String)> = None;
         let mut decode_err: Option<ClusterError> = None;
+        let mut session_closed = false;
         let mut ctx = PollCtx {
             adapter,
             new_leader: &mut new_leader,
             decode_err: &mut decode_err,
             expected_session_id: self.cluster_session_id,
+            session_closed: &mut session_closed,
         };
         let n = self
             .regular_assembler
@@ -594,6 +620,9 @@ impl AeronCluster {
         }
         if let Some(e) = decode_err {
             return Err(e);
+        }
+        if session_closed && self.state == SessionState::Connected {
+            self.state = SessionState::PendingClose;
         }
         self.poll_state_changes()?;
         Ok(n)
@@ -612,11 +641,13 @@ impl AeronCluster {
         self.keep_alive_if_due();
         let mut new_leader: Option<(i64, i32, String)> = None;
         let mut decode_err: Option<ClusterError> = None;
+        let mut session_closed = false;
         let mut ctx = ControlledPollCtx {
             adapter,
             new_leader: &mut new_leader,
             decode_err: &mut decode_err,
             expected_session_id: self.cluster_session_id,
+            session_closed: &mut session_closed,
         };
         let n = self
             .controlled_assembler
@@ -627,6 +658,9 @@ impl AeronCluster {
         }
         if let Some(e) = decode_err {
             return Err(e);
+        }
+        if session_closed && self.state == SessionState::Connected {
+            self.state = SessionState::PendingClose;
         }
         self.poll_state_changes()?;
         Ok(n)
