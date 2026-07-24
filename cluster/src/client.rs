@@ -56,12 +56,14 @@ struct PollCtx<'a, L: EgressListener> {
     adapter: &'a mut EgressAdapter<L>,
     new_leader: &'a mut Option<(i64, i32, String)>,
     decode_err: &'a mut Option<ClusterError>,
+    expected_session_id: i64,
 }
 
 struct ControlledPollCtx<'a, L: ControlledEgressListener> {
     adapter: &'a mut ControlledEgressAdapter<L>,
     new_leader: &'a mut Option<(i64, i32, String)>,
     decode_err: &'a mut Option<ClusterError>,
+    expected_session_id: i64,
 }
 
 fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], _hdr: rusteron_client::AeronHeader) {
@@ -69,9 +71,11 @@ fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], _hdr: 
         leadership_term_id,
         leader_member_id,
         ingress_endpoints,
+        cluster_session_id,
         ..
     }) = crate::poller::parse_event(data).ok().flatten()
         && ctx.new_leader.is_none()
+        && cluster_session_id == ctx.expected_session_id
     {
         *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
     }
@@ -91,9 +95,11 @@ fn dispatch_controlled<L: ControlledEgressListener>(
         leadership_term_id,
         leader_member_id,
         ingress_endpoints,
+        cluster_session_id,
         ..
     }) = crate::poller::parse_event(data).ok().flatten()
         && ctx.new_leader.is_none()
+        && cluster_session_id == ctx.expected_session_id
     {
         *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
     }
@@ -550,6 +556,7 @@ impl AeronCluster {
             adapter,
             new_leader: &mut new_leader,
             decode_err: &mut decode_err,
+            expected_session_id: self.cluster_session_id,
         };
         let n = self
             .regular_assembler
@@ -582,6 +589,7 @@ impl AeronCluster {
             adapter,
             new_leader: &mut new_leader,
             decode_err: &mut decode_err,
+            expected_session_id: self.cluster_session_id,
         };
         let n = self
             .controlled_assembler

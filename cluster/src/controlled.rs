@@ -121,6 +121,12 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 code,
                 detail,
             } => {
+                if self
+                    .expected_session_id
+                    .is_some_and(|expected| cluster_session_id != expected)
+                {
+                    return Ok(ControlledPollAction::Continue);
+                }
                 self.listener.on_session_event(
                     correlation_id,
                     cluster_session_id,
@@ -137,6 +143,12 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 leader_member_id,
                 ingress_endpoints,
             } => {
+                if self
+                    .expected_session_id
+                    .is_some_and(|expected| cluster_session_id != expected)
+                {
+                    return Ok(ControlledPollAction::Continue);
+                }
                 self.listener.on_new_leader(
                     cluster_session_id,
                     leadership_term_id,
@@ -150,6 +162,12 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 cluster_session_id,
                 encoded_challenge,
             } => {
+                if self
+                    .expected_session_id
+                    .is_some_and(|expected| cluster_session_id != expected)
+                {
+                    return Ok(ControlledPollAction::Continue);
+                }
                 self.listener
                     .on_challenge(correlation_id, cluster_session_id, encoded_challenge);
                 ControlledPollAction::Continue
@@ -162,6 +180,12 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 message,
                 payload,
             } => {
+                if self
+                    .expected_session_id
+                    .is_some_and(|expected| cluster_session_id != expected)
+                {
+                    return Ok(ControlledPollAction::Continue);
+                }
                 self.listener.on_admin_response(
                     cluster_session_id,
                     correlation_id,
