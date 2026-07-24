@@ -42,12 +42,15 @@ non-exclusive (shared) ingress; an `idleStrategy` knob for the connect retry
 loop; `cargo doc -D warnings`, `cargo publish --dry-run`, the Java interop
 matrix, and maintained codec bench ratios.
 
-## Gate status (2026-07-24, host macOS Darwin 25.5, fresh command evidence)
+## Gate status (2026-07-25, host macOS Darwin 25.5, fresh command evidence)
 
-- `cargo test -p ergo-aeron-cluster --lib` → **28 passed**.
+- `cargo test -p ergo-aeron-cluster --lib` → **46 passed**.
 - `cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings` → **rc=0**.
-- `RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps` → **rc=0** (intra-doc links repaired).
+- `RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps` → **rc=0**.
 - `cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench --no-run` → **rc=0**.
+- Java interop (test-harness): **15 suites green** — connect, auth (Null/Static),
+  failover (own-driver UDP, 3-node), egress fragmentation (regular + controlled),
+  pub/sub, archive coexist, harness spawn, and admin snapshot round-trip.
 
 ### Maintained codec bench ratios (median, ergo-sbe ÷ sbe-tool)
 
