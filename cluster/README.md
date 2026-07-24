@@ -13,6 +13,23 @@ The preferred long-term solution is for Aeron to release official Cluster C
 client bindings and for rusteron to expose them. This hobby crate should not be
 treated as a replacement for such support.
 
+## Scope: client-only (the Java process is the cluster)
+
+`ergo-aeron-cluster` is a **client** library, full stop. It speaks the Aeron
+Cluster *client* protocol — connect, publish (`offer` / `try_claim`), poll
+egress (regular + controlled), follow leader changes, send keep-alives, request
+snapshots, and answer auth challenges. It does **not** implement the cluster
+itself: there is no consensus module (Raft), no clustered-service container, no
+leader election, no snapshot/recovery, no archive, no backup node, and no
+`ClusterTool` CLI in this crate, and none are planned.
+
+**You run the Java Aeron process for everything server-side** — the media
+driver, consensus module, clustered services, and archive — and this Rust
+client connects to it over the standard Aeron wire protocol. The consensus /
+control / service-side SBE message types that exist under
+`cluster/benches/reference_sbe/` are reference-only codec benchmarks, not wired
+into any client logic.
+
 ## Current scope
 
 The current prototype explores:
@@ -24,11 +41,17 @@ The current prototype explores:
 - Aeron Cluster SBE schema generation through ergo-sbe;
 - optional Java-backed integration and failover tests.
 
-The implementation is not release ready. Known gaps include incomplete error
-propagation, non-atomic leader reconnect state, allocation in high-level offer,
-public internal codec surface, lossy text handling, and application-specific
-RFQ/auction material that still needs removal. The corrected work is tracked in
-the repository's single [`implementation plan`](../.scratch/release-readiness/spec.md).
+The implementation is not release ready. Recently addressed: leader reconnect
+is now **atomic** (new publication + assemblers are prepared before any session
+field swaps), the high-level `offer` is **allocation-free** (claim-based), and
+connect/challenge frames are sized exactly via the ergo-sbe encoders rather
+than a fixed buffer. Remaining client-side gaps are documented in the
+[`cluster-client-parity` spec](../.scratch/cluster-client-parity/spec.md):
+external-Aeron injection / `owns_aeron`, non-exclusive (shared) ingress, an
+idle-strategy knob for the connect retry loop, and the Java interop + publish
+gates (Phase 5, which requires the Aeron jars and explicit release approval).
+Server-side features (consensus, service container, archive, backup, CLI) are
+**out of scope** — see above.
 
 ## Build and test
 

@@ -1,13 +1,26 @@
 //! # ergo-aeron-cluster
 //!
-//! Experimental pure-Rust [Aeron Cluster](https://github.com/real-logic/aeron)
-//! *client* on [`rusteron_client`] **0.2** (latest 0.2.x), with
-//! **ergo-sbe-generated** session (schema 111) and RFQ (schema 101) codecs.
+//! Experimental Rust **client** for [Aeron Cluster](https://github.com/real-logic/aeron)
+//! on [`rusteron_client`] **0.2** (latest 0.2.x), using **ergo-sbe-generated**
+//! session codecs (schema 111).
 //!
 //! ⚠️ **Prototype.** LLM-assisted and less tested than the Java reference.
 //! Bugs in Rusteron pub/sub **or** this reimplementation may cause undefined
 //! behaviour, segfaults, or data loss. Replace when official Cluster C client
 //! bindings are suitable for your deployment.
+//!
+//! ## Client-only — the Java process *is* the cluster
+//!
+//! This crate implements the **client** side of the Aeron Cluster protocol
+//! only — parity with Java
+//! [`io.aeron.cluster.client`](https://github.com/real-logic/aeron/tree/master/aeron-cluster/src/main/java/io/aeron/cluster/client)
+//! (connect, offer/`try_claim`, poll egress, leader failover, keep-alive,
+//! admin snapshot, challenge-response auth). It does **not** implement — and
+//! never will — the cluster **server**: no consensus module (Raft), no
+//! clustered-service container, no leader election, no snapshots/recovery, no
+//! archive, no backup node, no `ClusterTool` CLI. You run all of that as the
+//! **Java Aeron process**; this client connects to it over the standard Aeron
+//! wire protocol.
 //!
 //! # Hot path
 //!
@@ -18,11 +31,10 @@
 //!
 //! # Codecs
 //!
-//! Production modules: [`codecs::session`], [`codecs::mark`],
-//! [`codecs::rfq`] (generated in `build.rs` from the Aeron submodule
-//! and vendored RFQ XML). sbe-tool reference runtime lives at
-//! `cluster/benches/reference_sbe/` (Criterion-private — never imported
-//! from library, test, or example code).
+//! Production modules: [`codecs::session`] (schema 111) and [`codecs::mark`],
+//! generated in `build.rs` from the vendored Aeron schemas. The sbe-tool
+//! reference runtime lives at `cluster/benches/reference_sbe/`
+//! (Criterion-private — never imported from library, test, or example code).
 //!
 //! # Quick connect
 //!
