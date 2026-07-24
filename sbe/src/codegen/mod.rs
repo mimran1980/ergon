@@ -835,6 +835,29 @@ fn generate_owner_consuming_stages(
                         }
                     }
                 });
+
+                let as_str_unchecked = syn::Ident::new(
+                    &format!("into_{}_as_str_unchecked", vd.accessor_snake), span,
+                );
+                ts.extend(quote::quote! {
+                    impl<'a> #current_stage<'a> {
+                        /// Consume this stage, read the next text var-data field as
+                        /// a `&str` without UTF-8 validation, and advance to the
+                        /// following stage.
+                        ///
+                        /// # Safety
+                        ///
+                        /// The wire bytes must be valid UTF-8. For schema-declared
+                        /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+                        #[inline]
+                        pub unsafe fn #as_str_unchecked(self) -> (&'a str, #next_stage<'a>) {
+                            let (bytes, next) = self.#into_ident().unwrap_unchecked();
+                            // SAFETY: caller guarantees valid UTF-8
+                            let s = unsafe { core::str::from_utf8_unchecked(bytes) };
+                            (s, next)
+                        }
+                    }
+                });
             }
         }
 
@@ -1888,6 +1911,27 @@ fn generate_message_decoder(
                     field: #vd_snake_str,
                     error: e,
                 })
+            }
+        });
+
+        // Unchecked str accessor — zero validation, trusts the wire.
+        let str_unchecked = syn::Ident::new(
+            &format!("{vd_snake}_as_str_unchecked"),
+            proc_macro2::Span::call_site(),
+        );
+        impl_body.extend(quote::quote! {
+            /// View this text var-data field as `&str` without UTF-8
+            /// validation.
+            ///
+            /// # Safety
+            ///
+            /// The wire bytes must be valid UTF-8. For schema-declared
+            /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+            #[inline]
+            pub unsafe fn #str_unchecked(&self) -> &'a str {
+                let bytes = self.#vd_snake_ident().unwrap_unchecked();
+                // SAFETY: caller guarantees valid UTF-8
+                unsafe { core::str::from_utf8_unchecked(bytes) }
             }
         });
 

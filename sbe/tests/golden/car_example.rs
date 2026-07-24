@@ -1128,6 +1128,18 @@ impl<'a> CarDecoder<'a> {
                 error: e,
             })
     }
+    /// View this text var-data field as `&str` without UTF-8
+    /// validation.
+    ///
+    /// # Safety
+    ///
+    /// The wire bytes must be valid UTF-8. For schema-declared
+    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    #[inline]
+    pub unsafe fn manufacturer_as_str_unchecked(&self) -> &'a str {
+        let bytes = self.manufacturer().unwrap_unchecked();
+        unsafe { core::str::from_utf8_unchecked(bytes) }
+    }
     #[inline]
     fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         if self.acting_version < 0 {
@@ -1160,6 +1172,18 @@ impl<'a> CarDecoder<'a> {
                 error: e,
             })
     }
+    /// View this text var-data field as `&str` without UTF-8
+    /// validation.
+    ///
+    /// # Safety
+    ///
+    /// The wire bytes must be valid UTF-8. For schema-declared
+    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    #[inline]
+    pub unsafe fn model_as_str_unchecked(&self) -> &'a str {
+        let bytes = self.model().unwrap_unchecked();
+        unsafe { core::str::from_utf8_unchecked(bytes) }
+    }
     #[inline]
     fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         if self.acting_version < 0 {
@@ -1191,6 +1215,18 @@ impl<'a> CarDecoder<'a> {
                 field: "activation_code",
                 error: e,
             })
+    }
+    /// View this text var-data field as `&str` without UTF-8
+    /// validation.
+    ///
+    /// # Safety
+    ///
+    /// The wire bytes must be valid UTF-8. For schema-declared
+    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    #[inline]
+    pub unsafe fn activation_code_as_str_unchecked(&self) -> &'a str {
+        let bytes = self.activation_code().unwrap_unchecked();
+        unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     /// Consume this stage and return a fresh decoder at the initial
     /// message position. The consumed stage cannot be reused.
@@ -1815,6 +1851,24 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
                 }
             })?;
         Ok((s, next))
+    }
+}
+impl<'a> FuelFiguresEntryDecoder<'a> {
+    /// Consume this stage, read the next text var-data field as
+    /// a `&str` without UTF-8 validation, and advance to the
+    /// following stage.
+    ///
+    /// # Safety
+    ///
+    /// The wire bytes must be valid UTF-8. For schema-declared
+    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    #[inline]
+    pub unsafe fn into_usage_description_as_str_unchecked(
+        self,
+    ) -> (&'a str, FuelFiguresEntryDecoderComplete<'a>) {
+        let (bytes, next) = self.into_usage_description().unwrap_unchecked();
+        let s = unsafe { core::str::from_utf8_unchecked(bytes) };
+        (s, next)
     }
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
@@ -2705,6 +2759,24 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
+    /// Consume this stage, read the next text var-data field as
+    /// a `&str` without UTF-8 validation, and advance to the
+    /// following stage.
+    ///
+    /// # Safety
+    ///
+    /// The wire bytes must be valid UTF-8. For schema-declared
+    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    #[inline]
+    pub unsafe fn into_manufacturer_as_str_unchecked(
+        self,
+    ) -> (&'a str, CarDecoderAfterManufacturer<'a>) {
+        let (bytes, next) = self.into_manufacturer().unwrap_unchecked();
+        let s = unsafe { core::str::from_utf8_unchecked(bytes) };
+        (s, next)
+    }
+}
+impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     /// Consume this stage, decode the var-data field as a nested
     /// SBE message via `AnyMessage::decode_frame`, and advance
     /// to the next stage.
@@ -2818,6 +2890,24 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     }
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
+    /// Consume this stage, read the next text var-data field as
+    /// a `&str` without UTF-8 validation, and advance to the
+    /// following stage.
+    ///
+    /// # Safety
+    ///
+    /// The wire bytes must be valid UTF-8. For schema-declared
+    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    #[inline]
+    pub unsafe fn into_model_as_str_unchecked(
+        self,
+    ) -> (&'a str, CarDecoderAfterModel<'a>) {
+        let (bytes, next) = self.into_model().unwrap_unchecked();
+        let s = unsafe { core::str::from_utf8_unchecked(bytes) };
+        (s, next)
+    }
+}
+impl<'a> CarDecoderAfterManufacturer<'a> {
     /// Consume this stage, decode the var-data field as a nested
     /// SBE message via `AnyMessage::decode_frame`, and advance
     /// to the next stage.
@@ -2919,6 +3009,24 @@ impl<'a> CarDecoderAfterModel<'a> {
                 }
             })?;
         Ok((s, next))
+    }
+}
+impl<'a> CarDecoderAfterModel<'a> {
+    /// Consume this stage, read the next text var-data field as
+    /// a `&str` without UTF-8 validation, and advance to the
+    /// following stage.
+    ///
+    /// # Safety
+    ///
+    /// The wire bytes must be valid UTF-8. For schema-declared
+    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    #[inline]
+    pub unsafe fn into_activation_code_as_str_unchecked(
+        self,
+    ) -> (&'a str, CarDecoderComplete<'a>) {
+        let (bytes, next) = self.into_activation_code().unwrap_unchecked();
+        let s = unsafe { core::str::from_utf8_unchecked(bytes) };
+        (s, next)
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {
