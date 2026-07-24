@@ -64,8 +64,8 @@ fn conformance_flat_group_known_known() -> Result<(), Box<dyn std::error::Error>
         &src,
         r#"
         let body_len = FlatGroupEncodedLength::new()
-            .bids(2, |b| { b.add()?; b.add()?; Ok(()) })?
-            .asks(1, |a| { a.add()?; Ok(()) })?
+            .bids(2)?
+            .asks(1)?
             .description(18)?
             .encoded_length_with_header();
         let mut buf = vec![0u8; body_len];
@@ -122,7 +122,7 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
         &src,
         r#"
         let body_len = FlatGroupEncodedLength::new()
-            .bids(1, |b| { b.add()?; Ok(()) })?
+            .bids(1)?
             .asks_unknown_size(|a| { a.add()?; Ok(()) })?
             .description(2)?
             .encoded_length_with_header();
@@ -224,8 +224,8 @@ fn conformance_length_builder_invariants() -> Result<(), Box<dyn std::error::Err
         r#"
         // FlatGroup: verify length builder computes positive values
         let body_len = FlatGroupEncodedLength::new()
-            .bids(2, |b| { b.add()?; b.add()?; Ok(()) })?
-            .asks(1, |a| { a.add()?; Ok(()) })?
+            .bids(2)?
+            .asks(1)?
             .description(18)?
             .encoded_length_with_header();
         assert!(body_len > 0, "FlatGroup body_len > 0");
@@ -393,7 +393,7 @@ fn conformance_all_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let body_len = AllTypesEncodedLength::new()
-            .entries(2, |e| { e.add()?; e.add()?; Ok(()) })?
+            .entries(2)?
             .payload(19)?
             .encoded_length_with_header();
         let mut buf = vec![0u8; body_len];
@@ -546,8 +546,8 @@ fn conformance_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let body_len = FlatGroupEncodedLength::new()
-            .bids(0, |_| Ok(()))?
-            .asks(0, |_| Ok(()))?
+            .bids(0)?
+            .asks(0)?
             .description(0)?
             .encoded_length_with_header();
         let mut buf = vec![0u8; body_len];
@@ -584,8 +584,8 @@ fn conformance_var_data_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
         r#"
         // Empty description
         let body_len_0 = FlatGroupEncodedLength::new()
-            .bids(0, |_| Ok(()))?
-            .asks(0, |_| Ok(()))?
+            .bids(0)?
+            .asks(0)?
             .description(0)?
             .encoded_length_with_header();
         let mut buf1 = vec![0u8; body_len_0];
@@ -606,8 +606,8 @@ fn conformance_var_data_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
 
         // UTF-8 string via varStringEncoding
         let body_len_2 = FlatGroupEncodedLength::new()
-            .bids(0, |_| Ok(()))?
-            .asks(0, |_| Ok(()))?
+            .bids(0)?
+            .asks(0)?
             .description(14)?
             .encoded_length_with_header();
         let mut buf2 = vec![0u8; body_len_2];
@@ -806,8 +806,8 @@ fn conformance_error_var_data_too_long() -> Result<(), Box<dyn std::error::Error
         r#"
         // The complete types lack Debug, so match without formatting the Ok variant.
         let result = FlatGroupEncodedLength::new()
-            .bids(0, |_| Ok(())).unwrap()
-            .asks(0, |_| Ok(())).unwrap()
+            .bids(0).unwrap()
+            .asks(0).unwrap()
             .description(70000);
         match result {
             Err(sbe_rt::EncodeError::VarDataTooLong { field, max_length, actual }) => {

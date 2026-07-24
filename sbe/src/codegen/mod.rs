@@ -4177,12 +4177,22 @@ fn generate_encoded_length_builder(
                     Self { len: 0, written: 0 }
                 }
 
-                /// Register one entry — adds `ENTRY_BLOCK_LENGTH` and
-                /// increments the entry counter.
+                /// Register one entry.
                 pub fn add(&mut self) -> sbe_rt::GroupResult {
                     self.len = self.len.checked_add(Self::ENTRY_BLOCK_LENGTH)
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     self.written += 1;
+                    Ok(())
+                }
+
+                /// Register `n` entries at once — equivalent to calling
+                /// [`add`](Self::add) `n` times.
+                pub fn add_n(&mut self, n: usize) -> sbe_rt::GroupResult {
+                    self.len = self.len
+                        .checked_add(Self::ENTRY_BLOCK_LENGTH.checked_mul(n)
+                            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?)
+                        .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    self.written += n;
                     Ok(())
                 }
             }
@@ -4365,7 +4375,36 @@ fn generate_encoded_length_builder(
             let (_num_off, _num_sz, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
             let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
-            ts.extend(quote::quote! {
+            let is_flat_group = g.groups.is_empty() && g.var_data.is_empty();
+
+            if is_flat_group {
+                // Flat group — no nested dynamics, count alone is enough.
+                let entry_bl = syn::LitInt::new(&g.block_length.to_string(), span);
+                let entry_bl_usize: syn::Type = syn::parse_str("usize").unwrap();
+                ts.extend(quote::quote! {
+                    impl #current_stage {
+                        /// Register this flat group with a known entry count.
+                        /// No closure needed — entries have no nested groups
+                        /// or var-data.
+                        #[must_use]
+                        pub fn #g_snake(
+                            self, count: #count_ty,
+                        ) -> Result<#next_stage, sbe_rt::EncodeError> {
+                            let entries_len: #entry_bl_usize = (#entry_bl as usize)
+                                .checked_mul(count as usize)
+                                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                            Ok(#next_stage {
+                                len: self
+                                    .len
+                                    .checked_add(#dim_size_lit)
+                                    .and_then(|l| l.checked_add(entries_len))
+                                    .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+                            })
+                        }
+                    }
+                });
+            } else {
+                ts.extend(quote::quote! {
                 impl #current_stage {
                     /// Encode this group with a known entry count.
                     #[must_use]
@@ -4395,7 +4434,12 @@ fn generate_encoded_length_builder(
                                 )?,
                         })
                     }
+                }
+                });
+            }
 
+            ts.extend(quote::quote! {
+                impl #current_stage {
                     /// Encode this group without knowing the count up front.
                     #[must_use]
                     pub fn #g_snake_unknown<F>(

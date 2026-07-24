@@ -68,10 +68,7 @@ nested groups, and variable data — zero allocation, no buffer needed.
 
 ```rust
 let len = CarEncodedLength::new()
-    .fuel_figures(3, |g| {
-        g.add()?; g.add()?; g.add()?;
-        Ok(())
-    })?
+    .fuel_figures(3)?
     .manufacturer(12)?
     .encoded_length_with_header();
 
