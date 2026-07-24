@@ -66,7 +66,7 @@ fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let dir = cformat!("{}", cluster.aeron_dir().display());
 
-    let builder = SessionBuilder::builder()
+    let builder = SessionBuilder::default()
         .ingress_channel(&cluster.ingress_channel)
         .egress_channel(&cluster.egress_channel);
 
@@ -105,7 +105,7 @@ fn test_fragmented_egress_controlled_poll_reassembles_and_commits() -> Result<()
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
     let dir = cformat!("{}", cluster.aeron_dir().display());
 
-    let builder = SessionBuilder::builder()
+    let builder = SessionBuilder::default()
         .ingress_channel(&cluster.ingress_channel)
         .egress_channel(&cluster.egress_channel);
 
