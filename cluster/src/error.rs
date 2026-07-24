@@ -105,6 +105,11 @@ pub enum ClusterError {
     /// The session was closed by the cluster or by calling `close()`.
     #[error("session has been closed")]
     SessionClosed,
+    /// The session was disconnected while connected — the egress image closed
+    /// or the ingress publication reported CLOSED / max-position. The caller
+    /// may reconnect on a new leader or treat the session as dead.
+    #[error("session disconnected: {reason}")]
+    Disconnected { reason: String },
     /// The protocol stream contained an unexpected or malformed message.
     #[error("protocol error: {reason}")]
     ProtocolError { reason: String },

@@ -125,10 +125,17 @@ pub struct AeronCluster {
     leadership_term_id: i64,
     leader_member_id: i32,
     state: SessionState,
+    /// Wall-clock when the session entered `AwaitingNewLeader` (None while
+    /// Connected). Drives the `new_leader_timeout` enforced by
+    /// [`Self::poll_state_changes`].
+    awaiting_leader_since: Option<Instant>,
     /// Configured ingress stream id, retained so a `NewLeaderEvent`
     /// reconnect uses the same stream the session was established on
     /// (the post-connect path no longer has the builder).
     ingress_stream_id: i32,
+    /// `newLeaderTimeout` from the builder (ms). Enforced by
+    /// [`Self::poll_state_changes`].
+    new_leader_timeout_ms: u64,
     /// When the last keep-alive was sent (drives auto-scheduling).
     last_keep_alive: Instant,
     /// Interval between keep-alive sends (derived from message_timeout_ms).
@@ -186,7 +193,9 @@ impl AeronCluster {
             leadership_term_id: -1,
             leader_member_id: -1,
             state: SessionState::Closed,
+            awaiting_leader_since: None,
             ingress_stream_id: builder.ingress_stream_id,
+            new_leader_timeout_ms: builder.new_leader_timeout_ms,
             last_keep_alive: Instant::now(),
             keep_alive_interval_ms: connect_reoffer_interval_ms(builder.message_timeout_ms),
             regular_assembler: AeronFragmentClosureAssembler::new()
@@ -521,27 +530,37 @@ impl AeronCluster {
         Ok(n)
     }
 
-    /// Handle a NewLeaderEvent: update session state, recreate assemblers,
-    /// and reconnect ingress to the new leader.
+    /// Handle a `NewLeaderEvent` **atomically**: resolve the new leader
+    /// endpoint, open the new ingress publication, and recreate the fragment
+    /// assemblers *before* any session field is touched. On failure the
+    /// previous coherent state is left intact and a typed
+    /// [`ClusterError::ReconnectFailed`] is returned — no torn leadership /
+    /// ingress state is ever observable.
     fn on_new_leader_event(&mut self, term: i64, member: i32, endpoints: &str) -> Result<(), ClusterError> {
-        self.leadership_term_id = term;
-        self.leader_member_id = member;
-        self.state = SessionState::AwaitingNewLeaderConnection;
-        // Recreate assemblers so an incomplete old-image message cannot
-        // contaminate the new image.
-        // Fragment assemblers are stateless — reset on next poll.
-        // Resolve the NEW leader's endpoint by member id.
         let ep =
             crate::poller::parse_leader_endpoint(endpoints, member).ok_or_else(|| ClusterError::ReconnectFailed {
                 reason: format!("NewLeaderEvent listed no endpoint for leader member {member}: {endpoints}"),
             })?;
         let cstr = uri::udp_endpoint_cstr(&ep)?;
-        let pub_ = self
+        // Prepare every side effect before swapping state.
+        let new_pub = self
             ._aeron
             .add_exclusive_publication(&cstr, self.ingress_stream_id, Duration::from_secs(5))
             .map_err(|e| ClusterError::reconnect(format!("new-leader publication to member {member}: {e}")))?;
-        self.ingress = pub_;
+        // Recreate assemblers so an incomplete old-image message cannot
+        // contaminate the new image.
+        let new_regular = AeronFragmentClosureAssembler::new()
+            .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?;
+        let new_controlled = AeronControlledFragmentClosureAssembler::new()
+            .map_err(|e| ClusterError::aeron("AeronControlledFragmentClosureAssembler", e))?;
+        // All preparation succeeded — commit the leadership swap in one step.
+        self.leadership_term_id = term;
+        self.leader_member_id = member;
+        self.ingress = new_pub;
+        self.regular_assembler = new_regular;
+        self.controlled_assembler = new_controlled;
         self.state = SessionState::Connected;
+        self.awaiting_leader_since = None;
         Ok(())
     }
 
@@ -553,6 +572,74 @@ impl AeronCluster {
     }
     pub fn leader_member_id(&self) -> i32 {
         self.leader_member_id
+    }
+
+    /// True when the ingress publication has a connected subscriber (the
+    /// leader). Java `publication.isConnected()` analogue for
+    /// backpressure-aware callers.
+    #[inline]
+    pub fn is_ingress_connected(&self) -> bool {
+        self.ingress.is_connected()
+    }
+
+    /// True when the ingress publication is closed (fatal for this handle).
+    #[inline]
+    pub fn is_ingress_closed(&self) -> bool {
+        self.ingress.is_closed()
+    }
+
+    /// Current ingress publication position.
+    #[inline]
+    pub fn ingress_position(&self) -> i64 {
+        self.ingress.position()
+    }
+
+    /// True when the egress subscription still has a live image from the
+    /// cluster (image count > 0). Going false while `Connected` is the
+    /// leader-loss signal consumed by [`Self::poll_state_changes`].
+    #[inline]
+    pub fn is_egress_connected(&self) -> bool {
+        self.egress.image_count().is_ok_and(|c| c > 0)
+    }
+
+    /// Request the cluster take a snapshot (Java
+    /// `sendAdminRequestToTakeASnapshot`). The response arrives on the egress
+    /// listener as [`crate::EgressListener::on_admin_response`].
+    pub fn send_admin_request_to_take_snapshot(&mut self, correlation_id: i64) -> Result<i64, ClusterError> {
+        self.send_admin_request(correlation_id, AdminRequestType::SNAPSHOT, &[])
+    }
+
+    /// Drive pure session-state transitions without polling fragments (Java
+    /// `pollStateChanges`): leader-loss detection, `newLeaderTimeout`
+    /// enforcement, and `PendingClose` → `Closed` finalisation. Call this from
+    /// your event loop alongside [`Self::poll_egress`].
+    pub fn poll_state_changes(&mut self) -> Result<(), ClusterError> {
+        match self.state {
+            SessionState::Connected if !self.is_egress_connected() => {
+                self.state = SessionState::AwaitingNewLeader;
+                self.awaiting_leader_since = Some(Instant::now());
+            }
+            SessionState::AwaitingNewLeader | SessionState::AwaitingNewLeaderConnection => {
+                if let Some(since) = self.awaiting_leader_since
+                    && since.elapsed() >= Duration::from_millis(self.new_leader_timeout_ms)
+                {
+                    self.state = SessionState::Closed;
+                    return Err(ClusterError::Disconnected {
+                        reason: format!(
+                            "no NewLeaderEvent within new_leader_timeout ({}ms)",
+                            self.new_leader_timeout_ms
+                        ),
+                    });
+                }
+            }
+            SessionState::PendingClose => {
+                // Local close proceeds: once the caller has issued close() and
+                // driven the loop, finalise to Closed.
+                self.state = SessionState::Closed;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Begin a poll-driven async connect. Returns an
@@ -666,6 +753,7 @@ pub struct AsyncClusterConnect {
     /// Wall-clock of last SessionConnectRequest offer attempt (success or not).
     last_connect_offer: Instant,
     reoffer_interval_ms: u64,
+    started: Instant,
     deadline: Instant,
     cluster_session_id: i64,
     leadership_term_id: i64,
@@ -703,6 +791,7 @@ impl AsyncClusterConnect {
             connect_sent: false,
             last_connect_offer: past,
             reoffer_interval_ms: connect_reoffer_interval_ms(timeout_ms),
+            started: Instant::now(),
             deadline: Instant::now() + Duration::from_millis(timeout_ms),
             cluster_session_id: -1,
             leadership_term_id: -1,
@@ -731,7 +820,7 @@ impl AsyncClusterConnect {
         if Instant::now() > self.deadline {
             return Err(ClusterError::Timeout {
                 phase: "async_connect",
-                after_ms: 0,
+                after_ms: self.started.elapsed().as_millis() as u64,
             });
         }
         match self.step {
@@ -873,7 +962,9 @@ impl AsyncClusterConnect {
             leadership_term_id,
             leader_member_id,
             state: SessionState::Connected,
+            awaiting_leader_since: None,
             ingress_stream_id: builder.ingress_stream_id,
+            new_leader_timeout_ms: builder.new_leader_timeout_ms,
             last_keep_alive: Instant::now(),
             keep_alive_interval_ms,
             regular_assembler: AeronFragmentClosureAssembler::new()

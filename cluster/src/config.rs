@@ -37,6 +37,9 @@ pub struct SessionBuilder {
     pub(crate) ingress_stream_id: i32,
     pub(crate) egress_stream_id: i32,
     pub(crate) message_timeout_ms: u64,
+    /// Deadline (ms) for awaiting a NewLeaderEvent before the session is
+    /// deemed dead. Mirrors Java `Context.newLeaderTimeoutNs` (default 5s).
+    pub(crate) new_leader_timeout_ms: u64,
     pub(crate) credentials: Option<Arc<dyn CredentialsSupplier>>,
     /// Multi-member ingress endpoints: `"0=host:port,1=host:port,..."`.
     pub(crate) ingress_endpoints: Option<String>,
@@ -50,6 +53,7 @@ impl Default for SessionBuilder {
             ingress_stream_id: 101,
             egress_stream_id: 102,
             message_timeout_ms: 10_000,
+            new_leader_timeout_ms: 5_000,
             credentials: None,
             ingress_endpoints: None,
         }
@@ -81,6 +85,15 @@ impl SessionBuilder {
 
     pub fn message_timeout(mut self, timeout: Duration) -> Self {
         self.message_timeout_ms = timeout.as_millis() as u64;
+        self
+    }
+
+    /// Deadline for awaiting a `NewLeaderEvent` after the current leader is
+    /// lost (mirrors Java `Context.newLeaderTimeoutNs`; default 5s). When it
+    /// elapses, [`crate::AeronCluster::poll_state_changes`] transitions the
+    /// session to [`crate::ClusterError::Disconnected`].
+    pub fn new_leader_timeout(mut self, timeout: Duration) -> Self {
+        self.new_leader_timeout_ms = timeout.as_millis() as u64;
         self
     }
 
@@ -175,6 +188,7 @@ mod tests {
         assert_eq!(b.ingress_stream_id, 101);
         assert_eq!(b.egress_stream_id, 102);
         assert_eq!(b.message_timeout_ms, 10_000);
+        assert_eq!(b.new_leader_timeout_ms, 5_000);
         Ok(())
     }
 
