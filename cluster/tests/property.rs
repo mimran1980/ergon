@@ -13,10 +13,10 @@ proptest! {
         ts in any::<i64>(),
     ) {
         let mut buf = vec![0u8; 128];
-        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid).timestamp(ts);
         let bytes = enc.as_ref().to_vec();
-        let dec = SessionMessageHeaderDecoder::wrap_and_apply_header(&bytes, 0).unwrap();
+        let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&bytes, 0).unwrap();
         prop_assert_eq!(dec.leadership_term_id(), ltid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.timestamp(), ts);
@@ -28,7 +28,7 @@ proptest! {
         csid in any::<i64>(),
     ) {
         let mut buf = vec![0u8; 128];
-        let mut enc = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid);
         let bytes = enc.as_ref();
         prop_assert_eq!(u16::from_le_bytes([bytes[2], bytes[3]]), 5); // KEEP_ALIVE
@@ -41,13 +41,13 @@ proptest! {
         data in prop::collection::vec(any::<u8>(), 0..64),
     ) {
         let mut buf = vec![0u8; 256];
-        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(cid).cluster_session_id(csid);
         let complete = enc.encoded_challenge(&data).unwrap();
         let bytes = complete.as_bytes_with_header();
 
         // Decode: skip header bytes (8), decode the body
-        let dec = ergo_aeron_cluster::codecs::session::ChallengeDecoder::wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::codecs::session::ChallengeDecoder::try_wrap_and_apply_header(bytes, 0).unwrap();
         prop_assert_eq!(dec.correlation_id(), cid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         let (chal, _) = dec.into_encoded_challenge().unwrap();
@@ -62,12 +62,12 @@ proptest! {
         eps in "[a-z0-9=,:]{0,80}",
     ) {
         let mut buf = vec![0u8; 256];
-        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid).leader_member_id(mid);
         let complete = enc.ingress_endpoints(eps.as_bytes()).unwrap();
         let bytes = complete.as_bytes_with_header();
 
-        let dec = ergo_aeron_cluster::codecs::session::NewLeaderEventDecoder::wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::codecs::session::NewLeaderEventDecoder::try_wrap_and_apply_header(bytes, 0).unwrap();
         prop_assert_eq!(dec.leadership_term_id(), ltid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.leader_member_id(), mid);
@@ -84,13 +84,13 @@ proptest! {
         detail in "[a-zA-Z0-9 ]{0,40}",
     ) {
         let mut buf = vec![0u8; 256];
-        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.cluster_session_id(csid).correlation_id(cid).leadership_term_id(ltid)
             .leader_member_id(mid).code(EventCode::OK).version(1);
         let complete = enc.detail(detail.as_bytes()).unwrap();
         let bytes = complete.as_bytes_with_header();
 
-        let dec = ergo_aeron_cluster::codecs::session::SessionEventDecoder::wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::codecs::session::SessionEventDecoder::try_wrap_and_apply_header(bytes, 0).unwrap();
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.correlation_id(), cid);
         prop_assert_eq!(dec.leadership_term_id(), ltid);

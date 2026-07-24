@@ -15,7 +15,7 @@
     unused_assignments,
     non_camel_case_types,
     non_snake_case,
-    unexpected_cfgs,
+    unexpected_cfgs, unsafe_op_in_unsafe_fn,
     clippy::all
 )]
 pub mod session {
@@ -28,7 +28,7 @@ pub mod session {
         unused_assignments,
         non_camel_case_types,
         non_snake_case,
-        unexpected_cfgs,
+        unexpected_cfgs, unsafe_op_in_unsafe_fn,
         clippy::all
     )]
     include!(concat!(env!("OUT_DIR"), "/session.rs"));
@@ -43,7 +43,7 @@ pub mod session {
     unused_assignments,
     non_camel_case_types,
     non_snake_case,
-    unexpected_cfgs,
+    unexpected_cfgs, unsafe_op_in_unsafe_fn,
     clippy::all
 )]
 pub mod mark {
@@ -56,7 +56,7 @@ pub mod mark {
         unused_assignments,
         non_camel_case_types,
         non_snake_case,
-        unexpected_cfgs,
+        unexpected_cfgs, unsafe_op_in_unsafe_fn,
         clippy::all
     )]
     include!(concat!(env!("OUT_DIR"), "/mark.rs"));

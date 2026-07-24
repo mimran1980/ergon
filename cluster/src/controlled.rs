@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn test_controlled_session_message_dispatch() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 256];
-        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.cluster_session_id(42).leadership_term_id(1).timestamp(100);
         let payload = b"hello";
         let data = &buf[..SessionMessageHeaderEncoder::ENCODED_LENGTH];
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn test_controlled_session_filter_drops_foreign_session() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 256];
-        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.cluster_session_id(99).leadership_term_id(1).timestamp(0);
         let mut full = Vec::from(&buf[..SessionMessageHeaderEncoder::ENCODED_LENGTH]);
         full.extend_from_slice(b"x");

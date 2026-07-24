@@ -45,7 +45,7 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     let ingress = a.add_publication(&ing_cstr, 101, Duration::from_secs(5))?;
 
     let mut buf = vec![0u8; 512];
-    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)?;
+    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
     enc.correlation_id(1).response_stream_id(102).version(0);
     let complete = enc
         .response_channel(cluster.egress_channel.as_bytes())?
