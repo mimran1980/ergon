@@ -1,6 +1,42 @@
 # ergo-aeron-cluster client parity and publish specification
 
-Status: ready-for-agent
+Status: in-progress — Phases 1–4 implemented and committed on `first_cut`; Phase 5 (Java interop matrix + crates.io publish) pending the Aeron jars and explicit release approval.
+
+## Implementation progress (2026-07-24)
+
+Scope reaffirmed: **client-only**. The Aeron media driver, consensus module,
+clustered services, and archive run as the **Java Aeron process**; this crate
+only implements the client (`io.aeron.cluster.client` parity). No server-side
+code will be added.
+
+Committed on `first_cut`:
+
+- **Phase 1 — hot path / ergo-sbe hygiene:** allocation-free `offer`
+  (claim-based, no combined header+payload heap alloc); stack-array keep-alive
+  / close; exact-sized connect / challenge frames via the ergo-sbe encoders
+  (truncated to `as_bytes_with_header()`, replacing the fixed 512-byte buffer
+  that could truncate long credentials); full migration to the current codec
+  API (infallible encoder `wrap_and_apply_header`, `try_wrap_and_apply_header`
+  decoders) across `src/`, `tests/`, and `benches/`.
+- **Phase 2 — lifecycle / leadership:** atomic leader failover (new
+  publication + both assemblers are prepared *before* any session field swaps;
+  failure leaves the prior state intact and returns `ReconnectFailed`);
+  publication/egress accessors (`is_ingress_connected`, `is_ingress_closed`,
+  `ingress_position`, `is_egress_connected`); `poll_state_changes` (leader-loss
+  → `AwaitingNewLeader`, `newLeaderTimeout` → `Disconnected`, `PendingClose` →
+  `Closed`); `send_admin_request_to_take_snapshot`; async-connect `Timeout`
+  now reports elapsed ms (was hardcoded `0`).
+- **Phase 3 — context / credentials:** `SessionBuilder::new_leader_timeout`
+  (default 5s, wired into `poll_state_changes`); `StaticCredentials` supplier
+  so challenge-response is answerable without a bespoke impl.
+- **Docs:** README + `lib.rs` rustdoc now state the client-only / Java-server
+  deployment model explicitly; stale RFQ codec references removed.
+
+Open deltas (documented, not blocking lib correctness; Phase 5 needs the Aeron
+jars + human publish approval): external-Aeron injection / `owns_aeron`;
+non-exclusive (shared) ingress; an `idleStrategy` knob for the connect retry
+loop; `cargo doc -D warnings`, `cargo publish --dry-run`, the Java interop
+matrix, and maintained codec bench ratios.
 
 **Prerequisite:** `ergo-sbe 0.1.x` is published to crates.io and installable
 (or is about to be; Cluster publish is sequenced after sbe is indexed).
