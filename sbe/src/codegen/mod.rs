@@ -123,6 +123,7 @@ pub(crate) struct GenerationContext {
     pub schema_name: String,
     pub multi_message: bool,
     pub conversions: Vec<crate::ConversionSelector>,
+    pub domain_types: Vec<(crate::ConversionSelector, String)>,
     pub unchecked_companions: bool,
     pub domain_objects: bool,
 }
@@ -146,6 +147,7 @@ impl GenerationContext {
             schema_name: schema.ir.package.clone(),
             multi_message,
             conversions: config.conversions.clone(),
+            domain_types: config.domain_types.clone(),
             unchecked_companions: config.unchecked_companions,
             domain_objects: config.domain_objects,
         }
@@ -6243,6 +6245,87 @@ mod tests {
             make_token(Signal::BeginEnum), // at top level
         ]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_type_matches_primitive_field() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::ir::{Presence, PrimitiveType};
+        use crate::structured_ir::{FieldType, MessageField};
+        let field = MessageField {
+            name: "exchangeTimestamp".into(),
+            id: Some(1),
+            offset: 0,
+            presence: Presence::Required,
+            since_version: 0,
+            null_value: None,
+            min_value: None,
+            max_value: None,
+            description: None,
+            semantic_type: Some("UTCTimestamp".into()),
+            constant_value: None,
+            field_type: FieldType::Primitive(PrimitiveType::UInt64, None),
+        };
+        let conversions = vec![
+            crate::ConversionSelector::semantic_type("UTCTimestamp"),
+        ];
+        assert!(
+            super::field_has_conversion_free(&field, &conversions),
+            "SemanticType should match primitive u64 with semanticType=UTCTimestamp"
+        );
+
+        let domain_types = vec![(
+            crate::ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>".into(),
+        )];
+        let dt = super::find_domain_type(&field, &domain_types);
+        assert_eq!(
+            dt,
+            Some("chrono::DateTime<chrono::Utc>"),
+            "should find domain type for UTCTimestamp"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn chrono_converter_generates_accessor() -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="test.chrono" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId"   primitiveType="uint16"/>
+              <type name="schemaId"     primitiveType="uint16"/>
+              <type name="version"      primitiveType="uint16"/>
+            </composite>
+          </types>
+          <sbe:message name="TsMsg" id="1">
+            <field name="ts" id="1" type="uint64" semanticType="UTCTimestamp"/>
+          </sbe:message>
+        </sbe:messageSchema>"#;
+        let ir = crate::parse(xml)?;
+        let schema = crate::Schema::from_ir(ir);
+        let config = crate::GenerationConfig::new("test_chrono")
+            .with_domain_type(
+                crate::ConversionSelector::semantic_type("UTCTimestamp"),
+                "chrono::DateTime<chrono::Utc>",
+            );
+        let generator = crate::Generator::new(config);
+        let modules = generator.generate(&schema)?;
+        let src = modules.modules().next().unwrap().source.clone();
+        assert!(
+            src.contains("fn ts(&self) -> chrono::DateTime"),
+            "should generate concrete DateTime accessor for UTCTimestamp field"
+        );
+        assert!(
+            src.contains("fn ts_wire"),
+            "should rename raw u64 getter to _wire"
+        );
+        assert!(
+            src.contains("impl TryFromSbe<u64> for chrono::DateTime<chrono::Utc>"),
+            "should generate TryFromSbe impl"
+        );
         Ok(())
     }
 }

@@ -1600,6 +1600,11 @@ fn parse_message_child(
                     if let Some(cv) = constant_value {
                         first.encoding.constant_value = Some(cv);
                     }
+                    // Propagate semanticType from the field element if set
+                    if first.encoding.semantic_type.is_none() {
+                        first.encoding.semantic_type =
+                            node.attribute("semanticType").map(str::to_string);
+                    }
                 }
                 tokens.extend(inlined);
             } else {
