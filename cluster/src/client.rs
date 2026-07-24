@@ -395,15 +395,42 @@ impl AeronCluster {
         offer_result("challenge_response", r).map(|_| ())
     }
 
-    /// Recreate the ingress publication pointed at a new leader endpoint.
-    fn reconnect_ingress(&mut self, builder: &crate::SessionBuilder, endpoint: &str) -> Result<(), ClusterError> {
-        // Close the old publication then open a new one to the leader.
+    /// Prepare a fresh ingress publication + both fragment assemblers from an
+    /// endpoint without touching any session field. The caller atomically swaps
+    /// the result into `self` when ready. Mirrors Java's ingress rebuild
+    /// discipline (prepare before commit).
+    fn prepare_reconnect_ingress(
+        aeron: &Aeron,
+        endpoint: &str,
+        stream_id: i32,
+    ) -> Result<
+        (
+            AeronExclusivePublication,
+            AeronFragmentClosureAssembler,
+            AeronControlledFragmentClosureAssembler,
+        ),
+        ClusterError,
+    > {
         let cstr = uri::udp_endpoint_cstr(endpoint)?;
-        let new_pub = self
-            ._aeron
-            .add_exclusive_publication(&cstr, builder.ingress_stream_id, Duration::from_secs(5))
-            .map_err(|e| ClusterError::aeron("redirect pub", e))?;
+        let new_pub = aeron
+            .add_exclusive_publication(&cstr, stream_id, Duration::from_secs(5))
+            .map_err(|e| ClusterError::reconnect(format!("ingress to {endpoint}: {e}")))?;
+        let new_regular = AeronFragmentClosureAssembler::new()
+            .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?;
+        let new_controlled = AeronControlledFragmentClosureAssembler::new()
+            .map_err(|e| ClusterError::aeron("AeronControlledFragmentClosureAssembler", e))?;
+        Ok((new_pub, new_regular, new_controlled))
+    }
+
+    /// Recreate the ingress publication pointed at a new leader endpoint
+    /// (connect-time redirect). Uses [`Self::prepare_reconnect_ingress`] so
+    /// the publication AND assemblers are refreshed atomically.
+    fn reconnect_ingress(&mut self, builder: &crate::SessionBuilder, endpoint: &str) -> Result<(), ClusterError> {
+        let (new_pub, new_regular, new_controlled) =
+            Self::prepare_reconnect_ingress(&self._aeron, endpoint, builder.ingress_stream_id)?;
         self.ingress = new_pub;
+        self.regular_assembler = new_regular;
+        self.controlled_assembler = new_controlled;
         Ok(())
     }
 
@@ -606,28 +633,17 @@ impl AeronCluster {
     }
 
     /// Handle a `NewLeaderEvent` **atomically**: resolve the new leader
-    /// endpoint, open the new ingress publication, and recreate the fragment
-    /// assemblers *before* any session field is touched. On failure the
-    /// previous coherent state is left intact and a typed
-    /// [`ClusterError::ReconnectFailed`] is returned — no torn leadership /
-    /// ingress state is ever observable.
+    /// endpoint, prepare a fresh ingress publication + assemblers *before*
+    /// any session field is touched, then commit the leadership swap in one
+    /// step. Uses [`Self::prepare_reconnect_ingress`] so the connect-time
+    /// redirect and the active-session failover share one uniform code path.
     fn on_new_leader_event(&mut self, term: i64, member: i32, endpoints: &str) -> Result<(), ClusterError> {
         let ep =
             crate::poller::parse_leader_endpoint(endpoints, member).ok_or_else(|| ClusterError::ReconnectFailed {
                 reason: format!("NewLeaderEvent listed no endpoint for leader member {member}: {endpoints}"),
             })?;
-        let cstr = uri::udp_endpoint_cstr(&ep)?;
-        // Prepare every side effect before swapping state.
-        let new_pub = self
-            ._aeron
-            .add_exclusive_publication(&cstr, self.ingress_stream_id, Duration::from_secs(5))
-            .map_err(|e| ClusterError::reconnect(format!("new-leader publication to member {member}: {e}")))?;
-        // Recreate assemblers so an incomplete old-image message cannot
-        // contaminate the new image.
-        let new_regular = AeronFragmentClosureAssembler::new()
-            .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?;
-        let new_controlled = AeronControlledFragmentClosureAssembler::new()
-            .map_err(|e| ClusterError::aeron("AeronControlledFragmentClosureAssembler", e))?;
+        let (new_pub, new_regular, new_controlled) =
+            Self::prepare_reconnect_ingress(&self._aeron, &ep, self.ingress_stream_id)?;
         // All preparation succeeded — commit the leadership swap in one step.
         self.leadership_term_id = term;
         self.leader_member_id = member;
