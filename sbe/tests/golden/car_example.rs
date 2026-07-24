@@ -4806,6 +4806,34 @@ impl CarFuelFiguresUniformEncodedLength {
         }
     }
 }
+impl CarFuelFiguresUniformEncodedLength {
+    pub fn performance_figures(
+        self,
+        count: u16,
+    ) -> CarEncodedLengthAfterPerformanceFigures {
+        if self.declared_count != 0 {
+            let mut state = self.state;
+            state
+                .fail(sbe_rt::EncodeError::GroupCountMismatch {
+                    declared: self.declared_count,
+                    actual: 0,
+                });
+            return CarEncodedLengthAfterPerformanceFigures {
+                state,
+            };
+        }
+        match self.finish_empty() {
+            Ok(next) => next,
+            Err(e) => {
+                let mut state = self.state;
+                state.fail(e);
+                CarEncodedLengthAfterPerformanceFigures {
+                    state,
+                }
+            }
+        }
+    }
+}
 impl CarEncodedLength {
     /// Uniform group — all entries share one shape.
     pub const fn fuel_figures(self, count: u16) -> CarFuelFiguresUniformEncodedLength {
@@ -4920,6 +4948,31 @@ impl CarPerformanceFiguresUniformEncodedLength {
                 })
             }
             Err(e) => Err(e),
+        }
+    }
+}
+impl CarPerformanceFiguresUniformEncodedLength {
+    pub fn manufacturer(self, byte_len: usize) -> CarEncodedLengthAfterManufacturer {
+        if self.declared_count != 0 {
+            let mut state = self.state;
+            state
+                .fail(sbe_rt::EncodeError::GroupCountMismatch {
+                    declared: self.declared_count,
+                    actual: 0,
+                });
+            return CarEncodedLengthAfterManufacturer {
+                state,
+            };
+        }
+        match self.finish_empty() {
+            Ok(next) => next,
+            Err(e) => {
+                let mut state = self.state;
+                state.fail(e);
+                CarEncodedLengthAfterManufacturer {
+                    state,
+                }
+            }
         }
     }
 }
