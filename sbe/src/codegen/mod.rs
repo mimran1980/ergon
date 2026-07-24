@@ -5538,41 +5538,8 @@ fn generate_message_encoder(
         });
     }
 
-    // ── Standalone encoded-length types ──
-    // ponytail: keep old staged builder for complex messages until Tasks 4-7.
-    // Fixed/Direct messages use the new strategy-based helpers; Staged still
-    // calls the legacy generate_encoded_length_builder.
-    if matches!(
-        encoded_length::strategy(msg),
-        encoded_length::LengthStrategy::Staged
-    ) && total_tail > 0
-    {
-        let group_scoped_names: Vec<String> = msg
-            .groups
-            .iter()
-            .map(|g| {
-                let raw = to_pascal_case(&g.name);
-                if multi_message {
-                    format!("{}{}", &name, raw)
-                } else {
-                    raw
-                }
-            })
-            .collect();
-        let lb_ts = generate_encoded_length_builder(
-            &name,
-            block_length,
-            header_size,
-            &msg.groups,
-            &msg.var_data,
-            elements,
-            multi_message,
-            &group_scoped_names,
-        );
-        ts.extend(lb_ts);
-    } else {
-        ts.extend(encoded_len_gen.standalone);
-    }
+    // ── Standalone encoded-length types (from strategy-based generator) ──
+    ts.extend(encoded_len_gen.standalone);
 
     ts
 }

@@ -52,14 +52,345 @@ pub(super) fn generate(
         },
         LengthStrategy::Direct => generate_direct(message, block_length, header_size, elements),
         LengthStrategy::Staged => {
-            // ponytail: return old staged builder for now until Tasks 4-7
-            // implement uniform/ragged/unknown_size. The standalone field
-            // is filled by the caller in mod.rs via the legacy path.
-            GeneratedEncodedLength {
-                encoder_impl: TokenStream::new(),
-                standalone: TokenStream::new(),
+            generate_staged(message, block_length, header_size, elements)
+        }
+    }
+}
+
+/// Generate uniform staged builder types for structurally dynamic messages.
+fn generate_staged(
+    msg: &MessageStructure,
+    block_length: usize,
+    header_size: usize,
+    elements: &SchemaElements,
+) -> GeneratedEncodedLength {
+    let span = proc_macro2::Span::call_site();
+    let msg_name = crate::codegen::to_pascal_case(&msg.name);
+    let bl_lit = syn::LitInt::new(&block_length.to_string(), span);
+    let hs_lit = syn::LitInt::new(&header_size.to_string(), span);
+    let entry_ident = syn::Ident::new(&format!("{msg_name}EncodedLength"), span);
+
+    let mut standalone = TokenStream::new();
+
+    // ── Entry-point struct ──
+    standalone.extend(quote::quote! {
+        /// Exact-length calculator for this message.
+        #[must_use = "length builder must be consumed"]
+        pub struct #entry_ident {
+            state: EncodedLengthAccumulator,
+        }
+
+        impl #entry_ident {
+            pub const BLOCK_LENGTH: usize = #bl_lit;
+            pub const HEADER_LENGTH: usize = #hs_lit;
+
+            /// Start computing the encoded length.
+            pub const fn new() -> Self {
+                Self { state: EncodedLengthAccumulator::new(Self::BLOCK_LENGTH) }
             }
         }
+    });
+
+    // ── Walk tail groups + varData, emitting uniform stages ──
+    let mut pending_name = entry_ident.clone();
+    let total_tail = msg.groups.len() + msg.var_data.len();
+    let mut tail_idx: usize = 0;
+
+    for g in &msg.groups {
+        let g_snake = syn::Ident::new(&crate::codegen::to_snake_case(&g.name), span);
+        let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+        let (_, _, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
+        let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
+        let ds = syn::LitInt::new(&dim_size.to_string(), span);
+        let g_bl = syn::LitInt::new(&g.block_length.to_string(), span);
+
+        let has_dynamic_entry = !g.groups.is_empty() || !g.var_data.is_empty();
+        let tail_after_group = tail_idx + 1;
+        let next_name = if tail_after_group < total_tail {
+            let next_pascal = if tail_after_group < msg.groups.len() {
+                crate::codegen::to_pascal_case(&msg.groups[tail_after_group].name)
+            } else {
+                crate::codegen::to_pascal_case(&msg.var_data[tail_after_group - msg.groups.len()].name)
+            };
+            syn::Ident::new(
+                &format!("{msg_name}EncodedLengthAfter{next_pascal}"), span,
+            )
+        } else {
+            syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
+        };
+
+        let mut entry_tail_methods = TokenStream::new();
+
+        if has_dynamic_entry {
+            // Generate nested-group methods and varData methods on a pending uniform stage.
+            let pending_ident = syn::Ident::new(
+                &format!("{msg_name}{}UniformEncodedLength",
+                    crate::codegen::to_pascal_case(&g.name)), span,
+            );
+
+            // Pending uniform stage struct
+            standalone.extend(quote::quote! {
+                #[doc(hidden)]
+                #[must_use = "complete the nested shape or call finish_empty()"]
+                pub struct #pending_ident {
+                    state: EncodedLengthAccumulator,
+                    parent_multiplier: usize,
+                }
+            });
+
+            // Nested groups inside the entry
+            for ng in &g.groups {
+                let ng_snake = syn::Ident::new(&crate::codegen::to_snake_case(&ng.name), span);
+                let (_, ng_dim, _, _) = get_dimension_info(elements, &ng.dimension_type);
+                let (_, _, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
+                let ng_count_ty: syn::Type = syn::parse_str(rust_type(ng_num_prim)).unwrap();
+                let ng_ds = syn::LitInt::new(&ng_dim.to_string(), span);
+                let ng_bl = syn::LitInt::new(&ng.block_length.to_string(), span);
+
+                let is_flat_nested = ng.groups.is_empty() && ng.var_data.is_empty();
+                if is_flat_nested {
+                    // Flat nested group: adds dim + count * block, restores multiplier.
+                    entry_tail_methods.extend(quote::quote! {
+                        pub const fn #ng_snake(
+                            mut self, count: #ng_count_ty,
+                        ) -> Result<#next_name, sbe_rt::EncodeError> {
+                            let pm = self.state.enter_group(count as usize, #ng_ds as usize, #ng_bl as usize);
+                            self.state.leave_group(pm);
+                            match self.state.check() {
+                                Ok(()) => Ok(#next_name { state: self.state }),
+                                Err(e) => Err(e),
+                            }
+                        }
+                    });
+                } else {
+                    // Nested group with entry varData: enter group, return nested pending stage.
+                    let nested_pending = syn::Ident::new(
+                        &format!("{msg_name}{}{}UniformEncodedLength",
+                            crate::codegen::to_pascal_case(&g.name),
+                            crate::codegen::to_pascal_case(&ng.name)), span,
+                    );
+
+                    standalone.extend(quote::quote! {
+                        #[doc(hidden)]
+                        pub struct #nested_pending {
+                            state: EncodedLengthAccumulator,
+                            parent_multiplier: usize,
+                            outer_multiplier: usize,
+                        }
+                    });
+
+                    entry_tail_methods.extend(quote::quote! {
+                        pub const fn #ng_snake(
+                            mut self, count: #ng_count_ty,
+                        ) -> #nested_pending {
+                            let pm = self.state.enter_group(
+                                count as usize, #ng_ds as usize, #ng_bl as usize,
+                            );
+                            #nested_pending {
+                                state: self.state,
+                                parent_multiplier: pm,
+                                outer_multiplier: self.parent_multiplier,
+                            }
+                        }
+                    });
+
+                    // VarData on the nested pending stage — fallible
+                    for nvd in &ng.var_data {
+                        let nvd_snake = syn::Ident::new(
+                            &crate::codegen::to_snake_case(&nvd.name), span,
+                        );
+                        let (_, nvd_prefix, _, _) = get_vardata_info(elements, &nvd.type_name);
+                        let nvd_ps = syn::LitInt::new(&nvd_prefix.to_string(), span);
+                        let nvd_field = &nvd.name;
+                        let mut max_chk = TokenStream::new();
+                        if let Some(max) = nvd.max_length {
+                            let max_lit = syn::LitInt::new(&max.to_string(), span);
+                            max_chk.extend(quote::quote! {
+                                if byte_len > #max_lit {
+                                    self.state.fail(sbe_rt::EncodeError::VarDataTooLong {
+                                        field: #nvd_field, max_length: #max_lit, actual: byte_len,
+                                    });
+                                    return Err(sbe_rt::EncodeError::VarDataTooLong {
+                                        field: #nvd_field, max_length: #max_lit, actual: byte_len,
+                                    });
+                                }
+                            });
+                        }
+                        // ponytail: nested varData completes the nested group and returns to outer
+                        let back_to = next_name.clone();
+                        standalone.extend(quote::quote! {
+                            impl #nested_pending {
+                                pub const fn #nvd_snake(
+                                    mut self, byte_len: usize,
+                                ) -> Result<#back_to, sbe_rt::EncodeError> {
+                                    #max_chk
+                                    let m = self.state.multiplier();
+                                    self.state.add_scaled(#nvd_ps as usize, m);
+                                    self.state.add_scaled(byte_len, m);
+                                    self.state.leave_group(self.parent_multiplier);
+                                    self.state.leave_group(self.outer_multiplier);
+                                    match self.state.check() {
+                                        Ok(()) => Ok(#back_to { state: self.state }),
+                                        Err(e) => Err(e),
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Entry varData on the pending stage
+            for vd in &g.var_data {
+                let vd_snake = syn::Ident::new(&crate::codegen::to_snake_case(&vd.name), span);
+                let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
+                let ps_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+                let field_name = &vd.name;
+                let mut max_chk = TokenStream::new();
+                if let Some(max) = vd.max_length {
+                    let max_lit = syn::LitInt::new(&max.to_string(), span);
+                    max_chk.extend(quote::quote! {
+                        if byte_len > #max_lit {
+                            self.state.fail(sbe_rt::EncodeError::VarDataTooLong {
+                                field: #field_name, max_length: #max_lit, actual: byte_len,
+                            });
+                            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                                field: #field_name, max_length: #max_lit, actual: byte_len,
+                            });
+                        }
+                    });
+                }
+
+                entry_tail_methods.extend(quote::quote! {
+                    pub const fn #vd_snake(
+                        mut self, byte_len: usize,
+                    ) -> Result<#next_name, sbe_rt::EncodeError> {
+                        #max_chk
+                        let m = self.state.multiplier();
+                        self.state.add_scaled(#ps_lit as usize, m);
+                        self.state.add_scaled(byte_len, m);
+                        self.state.leave_group(self.parent_multiplier);
+                        match self.state.check() {
+                            Ok(()) => Ok(#next_name { state: self.state }),
+                            Err(e) => Err(e),
+                        }
+                    }
+                });
+            }
+
+            standalone.extend(quote::quote! {
+                impl #pending_ident {
+                    #entry_tail_methods
+                }
+            });
+
+            // Group method on the previous stage creates the pending stage
+            standalone.extend(quote::quote! {
+                impl #pending_name {
+                    pub const fn #g_snake(
+                        self, count: #count_ty,
+                    ) -> #pending_ident {
+                        let mut state = self.state;
+                        let pm = state.enter_group(
+                            count as usize, #ds as usize, #g_bl as usize,
+                        );
+                        #pending_ident { state, parent_multiplier: pm }
+                    }
+                }
+            });
+        } else {
+            // Flat group — simple, no pending stage.
+            standalone.extend(quote::quote! {
+                impl #pending_name {
+                    pub const fn #g_snake(
+                        self, count: #count_ty,
+                    ) -> Result<#next_name, sbe_rt::EncodeError> {
+                        let entries_len = match (#g_bl as usize).checked_mul(count as usize) {
+                            Some(v) => v,
+                            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                        };
+                        let len = match self.state.len.checked_add(#ds as usize) {
+                            Some(v) => v,
+                            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                        };
+                        let len = match len.checked_add(entries_len) {
+                            Some(v) => v,
+                            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                        };
+                        Ok(#next_name { state: EncodedLengthAccumulator { len, multiplier: 1, error: None } })
+                    }
+                }
+            });
+        }
+
+        pending_name = next_name;
+        tail_idx += 1;
+    }
+
+    // VarData at message level
+    for vd in &msg.var_data {
+        let vd_snake = syn::Ident::new(&crate::codegen::to_snake_case(&vd.name), span);
+        let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
+        let ps_lit = syn::LitInt::new(&prefix_size.to_string(), span);
+        let field_name = &vd.name;
+
+        let tail_after = tail_idx + 1;
+        let next_name = if tail_after < total_tail {
+            let next_pascal = crate::codegen::to_pascal_case(&msg.var_data[tail_after - msg.groups.len()].name);
+            syn::Ident::new(&format!("{msg_name}EncodedLengthAfter{next_pascal}"), span)
+        } else {
+            syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
+        };
+
+        let mut max_chk = TokenStream::new();
+        if let Some(max) = vd.max_length {
+            let max_lit = syn::LitInt::new(&max.to_string(), span);
+            max_chk.extend(quote::quote! {
+                if byte_len > #max_lit {
+                    return Err(sbe_rt::EncodeError::VarDataTooLong {
+                        field: #field_name, max_length: #max_lit, actual: byte_len,
+                    });
+                }
+            });
+        }
+
+        standalone.extend(quote::quote! {
+            impl #pending_name {
+                pub const fn #vd_snake(
+                    self, byte_len: usize,
+                ) -> Result<#next_name, sbe_rt::EncodeError> {
+                    #max_chk
+                    let len = match self.state.len.checked_add(#ps_lit as usize) {
+                        Some(v) => v,
+                        None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                    };
+                    let len = match len.checked_add(byte_len) {
+                        Some(v) => v,
+                        None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                    };
+                    Ok(#next_name { state: EncodedLengthAccumulator { len, multiplier: 1, error: None } })
+                }
+            }
+        });
+
+        pending_name = next_name;
+        tail_idx += 1;
+    }
+
+    // Complete stage
+    let complete_ident = syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span);
+    standalone.extend(quote::quote! {
+        impl #complete_ident {
+            pub const fn encoded_length(&self) -> usize { self.state.len }
+            pub const fn encoded_length_with_header(&self) -> usize {
+                self.state.len + #hs_lit as usize
+            }
+        }
+    });
+
+    GeneratedEncodedLength {
+        encoder_impl: TokenStream::new(),
+        standalone,
     }
 }
 

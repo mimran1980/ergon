@@ -4710,158 +4710,110 @@ impl<'a> CarEncoder<'a> {
         }
     }
 }
-#[must_use = "length builder must be consumed to compute encoded length"]
+/// Exact-length calculator for this message.
+#[must_use = "length builder must be consumed"]
 pub struct CarEncodedLength {
-    len: usize,
-}
-#[must_use = "length builder must be consumed to compute encoded length"]
-pub struct CarEncodedLengthAfterFuelFigures {
-    len: usize,
-}
-#[must_use = "length builder must be consumed to compute encoded length"]
-pub struct CarEncodedLengthAfterPerformanceFigures {
-    len: usize,
-}
-#[must_use = "length builder must be consumed to compute encoded length"]
-pub struct CarEncodedLengthAfterManufacturer {
-    len: usize,
-}
-#[must_use = "length builder must be consumed to compute encoded length"]
-pub struct CarEncodedLengthAfterModel {
-    len: usize,
-}
-#[must_use = "length builder must be consumed to compute encoded length"]
-pub struct CarEncodedLengthComplete {
-    len: usize,
+    state: EncodedLengthAccumulator,
 }
 impl CarEncodedLength {
     pub const BLOCK_LENGTH: usize = 45;
     pub const HEADER_LENGTH: usize = 8;
-    /// Start computing the encoded length of this message.
-    /// Initial value is the fixed-field block length.
-    pub fn new() -> Self {
-        Self { len: Self::BLOCK_LENGTH }
+    /// Start computing the encoded length.
+    pub const fn new() -> Self {
+        Self {
+            state: EncodedLengthAccumulator::new(Self::BLOCK_LENGTH),
+        }
+    }
+}
+#[doc(hidden)]
+#[must_use = "complete the nested shape or call finish_empty()"]
+pub struct CarFuelFiguresUniformEncodedLength {
+    state: EncodedLengthAccumulator,
+    parent_multiplier: usize,
+}
+impl CarFuelFiguresUniformEncodedLength {
+    pub const fn usage_description(
+        mut self,
+        byte_len: usize,
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
+        if byte_len > 1073741824 {
+            self.state
+                .fail(sbe_rt::EncodeError::VarDataTooLong {
+                    field: "usageDescription",
+                    max_length: 1073741824,
+                    actual: byte_len,
+                });
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "usageDescription",
+                max_length: 1073741824,
+                actual: byte_len,
+            });
+        }
+        let m = self.state.multiplier();
+        self.state.add_scaled(4 as usize, m);
+        self.state.add_scaled(byte_len, m);
+        self.state.leave_group(self.parent_multiplier);
+        match self.state.check() {
+            Ok(()) => {
+                Ok(CarEncodedLengthAfterPerformanceFigures {
+                    state: self.state,
+                })
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 impl CarEncodedLength {
-    /// Encode this group with a known entry count.
-    #[must_use]
-    pub fn fuel_figures<F>(
-        self,
+    pub const fn fuel_figures(self, count: u16) -> CarFuelFiguresUniformEncodedLength {
+        let mut state = self.state;
+        let pm = state.enter_group(count as usize, 4 as usize, 6 as usize);
+        CarFuelFiguresUniformEncodedLength {
+            state,
+            parent_multiplier: pm,
+        }
+    }
+}
+#[doc(hidden)]
+#[must_use = "complete the nested shape or call finish_empty()"]
+pub struct CarPerformanceFiguresUniformEncodedLength {
+    state: EncodedLengthAccumulator,
+    parent_multiplier: usize,
+}
+impl CarPerformanceFiguresUniformEncodedLength {
+    pub const fn acceleration(
+        mut self,
         count: u16,
-        f: F,
-    ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError>
-    where
-        F: FnOnce(&mut FuelFiguresEncodedLength) -> sbe_rt::GroupResult,
-    {
-        let mut builder = FuelFiguresEncodedLength::new();
-        f(&mut builder)?;
-        if builder.written != count as usize {
-            return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                declared: count as u32,
-                actual: builder.written as u32,
-            });
+    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError> {
+        let pm = self.state.enter_group(count as usize, 4 as usize, 6 as usize);
+        self.state.leave_group(pm);
+        match self.state.check() {
+            Ok(()) => {
+                Ok(CarEncodedLengthAfterManufacturer {
+                    state: self.state,
+                })
+            }
+            Err(e) => Err(e),
         }
-        Ok(CarEncodedLengthAfterFuelFigures {
-            len: self
-                .len
-                .checked_add(4)
-                .and_then(|l| l.checked_add(builder.len))
-                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
-        })
-    }
-}
-impl CarEncodedLength {
-    /// Encode this group without knowing the count up front.
-    #[must_use]
-    pub fn fuel_figures_unknown_size<F>(
-        self,
-        f: F,
-    ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError>
-    where
-        F: FnOnce(&mut FuelFiguresEncodedLength) -> sbe_rt::GroupResult,
-    {
-        let mut builder = FuelFiguresEncodedLength::new();
-        f(&mut builder)?;
-        let max_count = u16::MAX as usize;
-        if builder.written > max_count {
-            return Err(sbe_rt::EncodeError::GroupCountOverflow {
-                maximum: u16::MAX as u32,
-                actual: builder.written as u32,
-            });
-        }
-        Ok(CarEncodedLengthAfterFuelFigures {
-            len: self
-                .len
-                .checked_add(4)
-                .and_then(|l| l.checked_add(builder.len))
-                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
-        })
-    }
-}
-impl CarEncodedLengthAfterFuelFigures {
-    /// Encode this group with a known entry count.
-    #[must_use]
-    pub fn performance_figures<F>(
-        self,
-        count: u16,
-        f: F,
-    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
-    where
-        F: FnOnce(&mut PerformanceFiguresEncodedLength) -> sbe_rt::GroupResult,
-    {
-        let mut builder = PerformanceFiguresEncodedLength::new();
-        f(&mut builder)?;
-        if builder.written != count as usize {
-            return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                declared: count as u32,
-                actual: builder.written as u32,
-            });
-        }
-        Ok(CarEncodedLengthAfterPerformanceFigures {
-            len: self
-                .len
-                .checked_add(4)
-                .and_then(|l| l.checked_add(builder.len))
-                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
-        })
-    }
-}
-impl CarEncodedLengthAfterFuelFigures {
-    /// Encode this group without knowing the count up front.
-    #[must_use]
-    pub fn performance_figures_unknown_size<F>(
-        self,
-        f: F,
-    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
-    where
-        F: FnOnce(&mut PerformanceFiguresEncodedLength) -> sbe_rt::GroupResult,
-    {
-        let mut builder = PerformanceFiguresEncodedLength::new();
-        f(&mut builder)?;
-        let max_count = u16::MAX as usize;
-        if builder.written > max_count {
-            return Err(sbe_rt::EncodeError::GroupCountOverflow {
-                maximum: u16::MAX as u32,
-                actual: builder.written as u32,
-            });
-        }
-        Ok(CarEncodedLengthAfterPerformanceFigures {
-            len: self
-                .len
-                .checked_add(4)
-                .and_then(|l| l.checked_add(builder.len))
-                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
-        })
     }
 }
 impl CarEncodedLengthAfterPerformanceFigures {
-    /// Track one variable-length data field.
-    #[must_use]
-    pub fn manufacturer(
+    pub const fn performance_figures(
+        self,
+        count: u16,
+    ) -> CarPerformanceFiguresUniformEncodedLength {
+        let mut state = self.state;
+        let pm = state.enter_group(count as usize, 4 as usize, 1 as usize);
+        CarPerformanceFiguresUniformEncodedLength {
+            state,
+            parent_multiplier: pm,
+        }
+    }
+}
+impl CarEncodedLengthAfterManufacturer {
+    pub const fn manufacturer(
         self,
         byte_len: usize,
-    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError> {
+    ) -> Result<CarEncodedLengthAfterModel, sbe_rt::EncodeError> {
         if byte_len > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "manufacturer",
@@ -4869,22 +4821,28 @@ impl CarEncodedLengthAfterPerformanceFigures {
                 actual: byte_len,
             });
         }
-        Ok(CarEncodedLengthAfterManufacturer {
-            len: self
-                .len
-                .checked_add(4)
-                .and_then(|l| l.checked_add(byte_len))
-                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        let len = match self.state.len.checked_add(4 as usize) {
+            Some(v) => v,
+            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+        };
+        let len = match len.checked_add(byte_len) {
+            Some(v) => v,
+            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+        };
+        Ok(CarEncodedLengthAfterModel {
+            state: EncodedLengthAccumulator {
+                len,
+                multiplier: 1,
+                error: None,
+            },
         })
     }
 }
-impl CarEncodedLengthAfterManufacturer {
-    /// Track one variable-length data field.
-    #[must_use]
-    pub fn model(
+impl CarEncodedLengthAfterModel {
+    pub const fn model(
         self,
         byte_len: usize,
-    ) -> Result<CarEncodedLengthAfterModel, sbe_rt::EncodeError> {
+    ) -> Result<CarEncodedLengthAfterActivationCode, sbe_rt::EncodeError> {
         if byte_len > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "model",
@@ -4892,19 +4850,25 @@ impl CarEncodedLengthAfterManufacturer {
                 actual: byte_len,
             });
         }
-        Ok(CarEncodedLengthAfterModel {
-            len: self
-                .len
-                .checked_add(4)
-                .and_then(|l| l.checked_add(byte_len))
-                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+        let len = match self.state.len.checked_add(4 as usize) {
+            Some(v) => v,
+            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+        };
+        let len = match len.checked_add(byte_len) {
+            Some(v) => v,
+            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+        };
+        Ok(CarEncodedLengthAfterActivationCode {
+            state: EncodedLengthAccumulator {
+                len,
+                multiplier: 1,
+                error: None,
+            },
         })
     }
 }
-impl CarEncodedLengthAfterModel {
-    /// Track one variable-length data field.
-    #[must_use]
-    pub fn activation_code(
+impl CarEncodedLengthAfterActivationCode {
+    pub const fn activation_code(
         self,
         byte_len: usize,
     ) -> Result<CarEncodedLengthComplete, sbe_rt::EncodeError> {
@@ -4915,192 +4879,29 @@ impl CarEncodedLengthAfterModel {
                 actual: byte_len,
             });
         }
+        let len = match self.state.len.checked_add(4 as usize) {
+            Some(v) => v,
+            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+        };
+        let len = match len.checked_add(byte_len) {
+            Some(v) => v,
+            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+        };
         Ok(CarEncodedLengthComplete {
-            len: self
-                .len
-                .checked_add(4)
-                .and_then(|l| l.checked_add(byte_len))
-                .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
+            state: EncodedLengthAccumulator {
+                len,
+                multiplier: 1,
+                error: None,
+            },
         })
     }
 }
 impl CarEncodedLengthComplete {
-    /// SBE message body length (excluding the standard header).
-    pub fn encoded_length(&self) -> usize {
-        self.len
+    pub const fn encoded_length(&self) -> usize {
+        self.state.len
     }
-    /// Total SBE message length including the standard message
-    /// header (`HEADER_LENGTH`).
-    pub fn encoded_length_with_header(&self) -> usize {
-        self.len + CarEncodedLength::HEADER_LENGTH
-    }
-}
-#[must_use = "length builder tracks entry sizes"]
-pub struct FuelFiguresEncodedLength {
-    len: usize,
-    written: usize,
-}
-impl FuelFiguresEncodedLength {
-    pub const ENTRY_BLOCK_LENGTH: usize = 6;
-    pub fn new() -> Self {
-        Self { len: 0, written: 0 }
-    }
-    /// Register one entry.
-    pub fn add(&mut self) -> sbe_rt::GroupResult {
-        self.len = self
-            .len
-            .checked_add(Self::ENTRY_BLOCK_LENGTH)
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        self.written += 1;
-        Ok(())
-    }
-    /// Register `n` entries at once — equivalent to calling
-    /// [`add`](Self::add) `n` times.
-    pub fn add_n(&mut self, n: usize) -> sbe_rt::GroupResult {
-        self.len = self
-            .len
-            .checked_add(
-                Self::ENTRY_BLOCK_LENGTH
-                    .checked_mul(n)
-                    .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
-            )
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        self.written += n;
-        Ok(())
-    }
-}
-impl FuelFiguresEncodedLength {
-    /// Track one variable-length data field inside an entry.
-    pub fn usage_description(&mut self, byte_len: usize) -> sbe_rt::GroupResult {
-        if byte_len > 1073741824 {
-            return Err(sbe_rt::EncodeError::VarDataTooLong {
-                field: "usageDescription",
-                max_length: 1073741824,
-                actual: byte_len,
-            });
-        }
-        self.len = self
-            .len
-            .checked_add(4)
-            .and_then(|l| l.checked_add(byte_len))
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        Ok(())
-    }
-}
-#[must_use = "length builder tracks entry sizes"]
-pub struct PerformanceFiguresEncodedLength {
-    len: usize,
-    written: usize,
-}
-impl PerformanceFiguresEncodedLength {
-    pub const ENTRY_BLOCK_LENGTH: usize = 1;
-    pub fn new() -> Self {
-        Self { len: 0, written: 0 }
-    }
-    /// Register one entry.
-    pub fn add(&mut self) -> sbe_rt::GroupResult {
-        self.len = self
-            .len
-            .checked_add(Self::ENTRY_BLOCK_LENGTH)
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        self.written += 1;
-        Ok(())
-    }
-    /// Register `n` entries at once — equivalent to calling
-    /// [`add`](Self::add) `n` times.
-    pub fn add_n(&mut self, n: usize) -> sbe_rt::GroupResult {
-        self.len = self
-            .len
-            .checked_add(
-                Self::ENTRY_BLOCK_LENGTH
-                    .checked_mul(n)
-                    .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
-            )
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        self.written += n;
-        Ok(())
-    }
-}
-impl PerformanceFiguresEncodedLength {
-    /// Track a nested repeating group inside one entry.
-    pub fn acceleration<F>(&mut self, count: u16, f: F) -> sbe_rt::GroupResult
-    where
-        F: FnOnce(
-            &mut PerformanceFiguresAccelerationEncodedLength,
-        ) -> sbe_rt::GroupResult,
-    {
-        let mut builder = PerformanceFiguresAccelerationEncodedLength::new();
-        f(&mut builder)?;
-        if builder.written != count as usize {
-            return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                declared: count as u32,
-                actual: builder.written as u32,
-            });
-        }
-        self.len = self
-            .len
-            .checked_add(4)
-            .and_then(|l| l.checked_add(builder.len))
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        Ok(())
-    }
-    /// Unknown-size variant — validates the count fits in
-    /// the wire type rather than requiring an exact match.
-    pub fn acceleration_unknown_size<F>(&mut self, f: F) -> sbe_rt::GroupResult
-    where
-        F: FnOnce(
-            &mut PerformanceFiguresAccelerationEncodedLength,
-        ) -> sbe_rt::GroupResult,
-    {
-        let mut builder = PerformanceFiguresAccelerationEncodedLength::new();
-        f(&mut builder)?;
-        let max_count = u16::MAX as usize;
-        if builder.written > max_count {
-            return Err(sbe_rt::EncodeError::GroupCountOverflow {
-                maximum: u16::MAX as u32,
-                actual: builder.written as u32,
-            });
-        }
-        self.len = self
-            .len
-            .checked_add(4)
-            .and_then(|l| l.checked_add(builder.len))
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        Ok(())
-    }
-}
-#[must_use = "length builder tracks entry sizes"]
-pub struct PerformanceFiguresAccelerationEncodedLength {
-    len: usize,
-    written: usize,
-}
-impl PerformanceFiguresAccelerationEncodedLength {
-    pub const ENTRY_BLOCK_LENGTH: usize = 6;
-    pub fn new() -> Self {
-        Self { len: 0, written: 0 }
-    }
-    /// Register one entry.
-    pub fn add(&mut self) -> sbe_rt::GroupResult {
-        self.len = self
-            .len
-            .checked_add(Self::ENTRY_BLOCK_LENGTH)
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        self.written += 1;
-        Ok(())
-    }
-    /// Register `n` entries at once — equivalent to calling
-    /// [`add`](Self::add) `n` times.
-    pub fn add_n(&mut self, n: usize) -> sbe_rt::GroupResult {
-        self.len = self
-            .len
-            .checked_add(
-                Self::ENTRY_BLOCK_LENGTH
-                    .checked_mul(n)
-                    .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?,
-            )
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        self.written += n;
-        Ok(())
+    pub const fn encoded_length_with_header(&self) -> usize {
+        self.state.len + 8 as usize
     }
 }
 pub mod car_field_meta {
