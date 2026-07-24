@@ -38,6 +38,45 @@ non-exclusive (shared) ingress; an `idleStrategy` knob for the connect retry
 loop; `cargo doc -D warnings`, `cargo publish --dry-run`, the Java interop
 matrix, and maintained codec bench ratios.
 
+## Gate status (2026-07-24, host macOS Darwin 25.5, fresh command evidence)
+
+- `cargo test -p ergo-aeron-cluster --lib` → **28 passed**.
+- `cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings` → **rc=0**.
+- `RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps` → **rc=0** (intra-doc links repaired).
+- `cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench --no-run` → **rc=0**.
+
+### Maintained codec bench ratios (median, ergo-sbe ÷ sbe-tool)
+
+| scenario | ergo-sbe | sbe-tool | ratio | gate (≤1.00) |
+|---|---|---|---|---|
+| encode/session_message_header | 4.75µs | 5.25µs | 0.91 | pass |
+| encode/session_keep_alive | 7.91µs | 6.70µs | 1.18 | **fail** |
+| encode/session_connect_request | 23.14µs | 23.05µs | 1.00 | tie |
+| decode/session_message_header | 7.55µs | 9.70µs | 0.78 | pass |
+| decode/session_event | 14.87µs | 18.04µs | 0.82 | pass |
+| decode/new_leader_event | 11.77µs | 5.43µs | 2.17 | **fail** |
+
+These benches measure the **generated ergo-sbe codecs**, not the client
+lifecycle code changed in this work. The two failures (`session_keep_alive`
+encode, `new_leader_event` decode — both var-data / ragged-staged messages)
+are **pre-existing, generator-level** and are owned by the `sbe/` crate (the
+ragged-staged / `add_struct` generator evolution), not by any client change
+here. They are recorded against the SBE performance gate for the generator
+owner to address; they are out of scope for the client-parity work.
+
+### Still genuinely blocked (need the Java process / human approval)
+
+- `cargo package -p ergo-aeron-cluster --list` currently ships `tests/`,
+  `benches/`, and `src/test_support/` (incl. `ClusterLauncher.java`). Adding a
+  package `exclude` for those violates the `test-harness` feature's compile in
+  the published tarball, so this needs the "move Java harness behind an
+  unpublished boundary" decision (release-readiness issue 10), not a quick
+  `exclude`.
+- Java interop matrix (connect / auth / echo / failover / snapshot) — needs
+  `just build-aeron-jars` + a running Java cluster.
+- `cargo publish --dry-run` — gated on `ergo-sbe 0.1.x` being on crates.io and
+  on explicit human release approval.
+
 **Prerequisite:** `ergo-sbe 0.1.x` is published to crates.io and installable
 (or is about to be; Cluster publish is sequenced after sbe is indexed).
 
