@@ -5,6 +5,7 @@
 //! Uses the shared `Fragment::decode` path — the
 //! same canonical dispatch used by the regular egress path.
 
+use crate::ClusterError;
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};
 use crate::fragment::Fragment;
 
@@ -90,17 +91,16 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
 
     /// Decode and dispatch one egress fragment.
     ///
-    /// Decode errors return `Abort` — the fragment may be retried after
-    /// backpressure. Previously these errors were silently swallowed as
-    /// `Continue`, making protocol corruption invisible.
-    pub fn on_fragment(&mut self, data: &[u8]) -> ControlledPollAction {
-        let frag = match Fragment::decode(data) {
-            Ok(Some(f)) => f,
-            Ok(None) => return ControlledPollAction::Continue,
-            Err(_) => return ControlledPollAction::Abort,
+    /// Decode / protocol errors are returned to the caller (not
+    /// silently swallowed as `Continue`). The app-level backpressure
+    /// path still returns `Abort` on success.
+    pub fn on_fragment(&mut self, data: &[u8]) -> Result<ControlledPollAction, ClusterError> {
+        let frag = match Fragment::decode(data)? {
+            Some(f) => f,
+            None => return Ok(ControlledPollAction::Continue),
         };
 
-        match frag {
+        Ok(match frag {
             Fragment::Message {
                 cluster_session_id,
                 timestamp,
@@ -109,7 +109,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 if let Some(expected) = self.expected_session_id
                     && cluster_session_id != expected
                 {
-                    return ControlledPollAction::Continue;
+                    return Ok(ControlledPollAction::Continue);
                 }
                 self.listener.on_message(cluster_session_id, timestamp, payload)
             }
@@ -172,7 +172,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 );
                 ControlledPollAction::Continue
             }
-        }
+        })
     }
 }
 
@@ -228,7 +228,7 @@ mod tests {
             ts: 0,
             pl: vec![],
         });
-        let action = adapter.on_fragment(&full);
+        let action = adapter.on_fragment(&full)?;
         assert_eq!(action, ControlledPollAction::Continue);
         assert_eq!(adapter.listener.session_id, 42);
         assert_eq!(adapter.listener.ts, 100);
@@ -253,7 +253,7 @@ mod tests {
         }
 
         let mut adapter = ControlledEgressAdapter::with_session_filter(Rec(false), 42);
-        let action = adapter.on_fragment(&full);
+        let action = adapter.on_fragment(&full)?;
         assert_eq!(action, ControlledPollAction::Continue);
         assert!(!adapter.listener.0, "foreign session message must be dropped");
         Ok(())

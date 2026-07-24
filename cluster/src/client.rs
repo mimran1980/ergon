@@ -61,6 +61,7 @@ struct PollCtx<'a, L: EgressListener> {
 struct ControlledPollCtx<'a, L: ControlledEgressListener> {
     adapter: &'a mut ControlledEgressAdapter<L>,
     new_leader: &'a mut Option<(i64, i32, String)>,
+    decode_err: &'a mut Option<ClusterError>,
 }
 
 fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], _hdr: rusteron_client::AeronHeader) {
@@ -96,7 +97,15 @@ fn dispatch_controlled<L: ControlledEgressListener>(
     {
         *ctx.new_leader = Some((leadership_term_id, leader_member_id, ingress_endpoints));
     }
-    to_aeron_action(ctx.adapter.on_fragment(data))
+    match ctx.adapter.on_fragment(data) {
+        Ok(action) => to_aeron_action(action),
+        Err(e) => {
+            if ctx.decode_err.is_none() {
+                *ctx.decode_err = Some(e);
+            }
+            AeronAction::AERON_ACTION_ABORT
+        }
+    }
 }
 
 /// Map a raw offer return: `Ok(pos)` if `r > 0`, else typed publication error.
@@ -552,6 +561,7 @@ impl AeronCluster {
         if let Some(e) = decode_err {
             return Err(e);
         }
+        self.poll_state_changes()?;
         Ok(n)
     }
 
@@ -567,9 +577,11 @@ impl AeronCluster {
         adapter.set_expected_session_id(self.cluster_session_id);
         self.keep_alive_if_due();
         let mut new_leader: Option<(i64, i32, String)> = None;
+        let mut decode_err: Option<ClusterError> = None;
         let mut ctx = ControlledPollCtx {
             adapter,
             new_leader: &mut new_leader,
+            decode_err: &mut decode_err,
         };
         let n = self
             .controlled_assembler
@@ -578,6 +590,10 @@ impl AeronCluster {
         if let Some((term, member, endpoints)) = new_leader {
             self.on_new_leader_event(term, member, &endpoints)?;
         }
+        if let Some(e) = decode_err {
+            return Err(e);
+        }
+        self.poll_state_changes()?;
         Ok(n)
     }
 
