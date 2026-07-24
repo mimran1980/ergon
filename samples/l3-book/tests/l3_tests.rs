@@ -23,7 +23,7 @@ fn converter_concrete_accessors() -> Result<(), Box<dyn std::error::Error>> {
                 e.price(d(50800)).size(d(15));
                 e.orders(1, |og| {
                     let raw_qty = l3_book::Decimal::new(5, 0);
-                    og.add_struct(&BidsOrdersEntry { order_id: 1, quantity: raw_qty })?;
+                    og.add_struct(&L3BookBidsOrdersEntry { order_id: 1, quantity: raw_qty })?;
                     Ok(())
                 })?;
                 Ok(())

@@ -32,7 +32,7 @@ pub fn encode_book(
                     e.orders(orders.len() as u16, |og| {
                         for (oid, qty) in *orders {
                             let raw_qty = Decimal::new(qty.mantissa() as i64, -(qty.scale() as i8));
-                            og.add_struct(&BidsOrdersEntry {
+                            og.add_struct(&L3BookBidsOrdersEntry {
                                 order_id: *oid,
                                 quantity: raw_qty,
                             })?;
@@ -51,7 +51,7 @@ pub fn encode_book(
                     e.orders(orders.len() as u16, |og| {
                         for (oid, qty) in *orders {
                             let raw_qty = Decimal::new(qty.mantissa() as i64, -(qty.scale() as i8));
-                            og.add_struct(&AsksOrdersEntry {
+                            og.add_struct(&L3BookAsksOrdersEntry {
                                 order_id: *oid,
                                 quantity: raw_qty,
                             })?;

@@ -37,22 +37,46 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         MODULE_FULL,
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let len = CarEncodedLength::new()
+            .fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
+                g.add()?;
+                g.usage_description(11)?;
+                g.add()?;
+                g.usage_description(14)?;
+                g.add()?;
+                g.usage_description(13)?;
+                Ok(())
+            })?
+            .performance_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
+                g.add()?;
+                g.acceleration(0, |_| Ok(()))?;
+                g.add()?;
+                g.acceleration(0, |_| Ok(()))?;
+                Ok(())
+            })?
+            .manufacturer(5)?
+            .model(9)?
+            .activation_code(6)?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
-        let car = car.fuel_figures(3, |g| {
-            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); Ok(()) }).unwrap();
-            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Combined Cycle").unwrap(); Ok(()) }).unwrap();
-            g.add(|e| { e.speed(75).mpg(40.0); e.usage_description(b"Highway Cycle").unwrap(); Ok(()) }).unwrap();
-        }).unwrap();
-        let car = car.performance_figures(2, |g| {
-            g.add(|e| { e.octane_rating(95).acceleration(0, |_| Ok(())).unwrap(); Ok(()) }).unwrap();
-            g.add(|e| { e.octane_rating(99).acceleration(0, |_| Ok(())).unwrap(); Ok(()) }).unwrap();
-        }).unwrap();
-        let car = car.manufacturer(b"Honda").unwrap();
-        let car = car.model(b"Civic VTi").unwrap();
-        let complete = car.activation_code(b"abcdef").unwrap();
+        let car = car.fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle")?; Ok(()) })?;
+            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"Combined Cycle")?; Ok(()) })?;
+            g.add(|e| { e.speed(75).mpg(40.0); e.usage_description(b"Highway Cycle")?; Ok(()) })?;
+            Ok(())
+        })?;
+        let car = car.performance_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|e| { e.octane_rating(95).acceleration(0, |_| Ok(()))?; Ok(()) })?;
+            g.add(|e| { e.octane_rating(99).acceleration(0, |_| Ok(()))?; Ok(()) })?;
+            Ok(())
+        })?;
+        let car = car.manufacturer(b"Honda")?;
+        let car = car.model(b"Civic VTi")?;
+        let complete = car.activation_code(b"abcdef")?;
+        assert_eq!(complete.encoded_length_with_header(), len);
         let encoded = complete.as_bytes();
         let total_len = encoded.len();
 
@@ -112,18 +136,35 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
         MODULE_FINISH,
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let len = CarEncodedLength::new()
+            .fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
+                g.add()?;
+                g.usage_description(3)?;
+                g.add()?;
+                g.usage_description(4)?;
+                g.add()?;
+                g.usage_description(5)?;
+                Ok(())
+            })?
+            .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .manufacturer(1)?
+            .model(1)?
+            .activation_code(1)?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(7);
-        let car = car.fuel_figures(3, |g| {
-            g.add(|e| { e.speed(10).mpg(1.0); e.usage_description(b"aaa").unwrap(); Ok(()) }).unwrap();
-            g.add(|e| { e.speed(20).mpg(2.0); e.usage_description(b"bbbb").unwrap(); Ok(()) }).unwrap();
-            g.add(|e| { e.speed(30).mpg(3.0); e.usage_description(b"ccccc").unwrap(); Ok(()) }).unwrap();
-        }).unwrap();
-        let car = car.performance_figures(0, |_| Ok(())).unwrap();
-        let car = car.manufacturer(b"M").unwrap();
-        let car = car.model(b"N").unwrap();
-        let complete = car.activation_code(b"P").unwrap();
+        let car = car.fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|e| { e.speed(10).mpg(1.0); e.usage_description(b"aaa")?; Ok(()) })?;
+            g.add(|e| { e.speed(20).mpg(2.0); e.usage_description(b"bbbb")?; Ok(()) })?;
+            g.add(|e| { e.speed(30).mpg(3.0); e.usage_description(b"ccccc")?; Ok(()) })?;
+            Ok(())
+        })?;
+        let car = car.performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;
+        let car = car.manufacturer(b"M")?;
+        let car = car.model(b"N")?;
+        let complete = car.activation_code(b"P")?;
+        assert_eq!(complete.encoded_length_with_header(), len);
         let encoded = complete.as_bytes();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
@@ -158,14 +199,22 @@ fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Err
         MODULE_EMPTY,
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let len = CarEncodedLength::new()
+            .fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .manufacturer(0)?
+            .model(0)?
+            .activation_code(0)?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1);
-        let car = car.fuel_figures(0, |_| Ok(())).unwrap();
-        let car = car.performance_figures(0, |_| Ok(())).unwrap();
-        let car = car.manufacturer(b"").unwrap();
-        let car = car.model(b"").unwrap();
-        let complete = car.activation_code(b"").unwrap();
+        let car = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;
+        let car = car.performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;
+        let car = car.manufacturer(b"")?;
+        let car = car.model(b"")?;
+        let complete = car.activation_code(b"")?;
+        assert_eq!(complete.encoded_length_with_header(), len);
         let encoded = complete.as_bytes();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
