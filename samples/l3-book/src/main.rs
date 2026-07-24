@@ -12,6 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let asks = [(d(50850), d(20), o3.as_slice()), (d(50900), d(30), o4.as_slice()), (d(50950), d(50), o5.as_slice())];
     let symbol = b"BTCUSDT";
 
+    // 1. Pre-compute exact buffer size with the staged length builder.
     let len = l3_book::L3BookEncodedLength::new()
         .bids(bids.len() as u16, |b| {
             for (_, _, orders) in &bids {
@@ -31,15 +32,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .encoded_length_with_header();
     println!("computed_len = {len}");
 
+    // 2. Encode — method chain reads top-to-bottom in wire order.
     let mut buf = vec![0u8; len];
     let actual = l3_book::encode_book(&mut buf, &bids, &asks, symbol)?;
     assert_eq!(len, actual);
 
+    // 3. Decode with concrete converter accessors — no turbofish.
     let dec = l3_book::L3BookDecoder::try_from(&buf[..])?;
     println!("{dec}");
-    // All concrete converter accessors — no turbofish
     let _ts: DateTime<Utc> = dec.exchange_timestamp();
     assert!(dec.is_active());
+
     println!("\nOK");
     Ok(())
 }

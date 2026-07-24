@@ -10,6 +10,9 @@ fn main() {
     let ir = ergo_sbe::parse(&xml)
         .unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
     let schema = ergo_sbe::Schema::from_ir(ir);
+    // ponytail: domain_objects + converters need integration — domain struct
+    // fields still use raw wire types while encoder setters are renamed to
+    // domain types. Enable when domain structs also use domain types.
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
