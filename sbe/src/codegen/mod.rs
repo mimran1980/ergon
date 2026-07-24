@@ -1387,7 +1387,7 @@ fn generate_message_decoder(
                                 return [0 as #r_type_ty; #len_lit];
                             }
                             let offset = self.pos + #offset_lit;
-                            let all: [u8; #total_size_lit] = read_bytes::<#total_size_lit>(self.buf, offset);
+                            let all: [u8; #total_size_lit] = read_bytes_unchecked::<#total_size_lit>(self.buf, offset);
                             [#(#elements),*]
                         }
                     });
@@ -1419,7 +1419,7 @@ fn generate_message_decoder(
                                      return None;\n\
                                  }}\n\
                                  let offset = self.pos + {offset};\n\
-                                 let val = {rt}::{order}(read_bytes::<{ps}>(self.buf, offset));\n\
+                                 let val = {rt}::{order}(read_bytes_unchecked::<{ps}>(self.buf, offset));\n\
                                  if {null_check} {{\n\
                                      None\n\
                                  }} else {{\n\
@@ -1455,7 +1455,7 @@ fn generate_message_decoder(
                                     return None;
                                 }
                                 let offset = self.pos + #offset_lit;
-                                Some(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                                Some(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                             }
                         });
                     } else {
@@ -1466,7 +1466,7 @@ fn generate_message_decoder(
                             #[inline]
                             pub fn #fname_ident(&self) -> #r_type_ty {
                                 let offset = self.pos + #offset_lit;
-                                #r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))
+                                #r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))
                             }
                         });
                     }
@@ -1532,7 +1532,7 @@ fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident(read_bytes::<#comp_size_lit>(self.buf, offset)))
+                            Some(#target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset)))
                         }
                     });
                 } else {
@@ -1540,7 +1540,7 @@ fn generate_message_decoder(
                         #[inline]
                         pub fn #as_struct_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident(read_bytes::<#comp_size_lit>(self.buf, offset))
+                            #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
                         }
                     });
                 }
@@ -1587,7 +1587,7 @@ fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))))
+                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))))
                         }
                     });
                     if is_bool_enum(elements, enum_name) {
@@ -1604,7 +1604,7 @@ fn generate_message_decoder(
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                            #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                         }
                     });
                     if is_bool_enum(elements, enum_name) {
@@ -1661,7 +1661,7 @@ fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))))
+                            Some(#target_ident(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))))
                         }
                     });
                 } else {
@@ -1669,7 +1669,7 @@ fn generate_message_decoder(
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                            #target_ident(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                         }
                     });
                 }
@@ -3116,7 +3116,7 @@ fn generate_group_decoder(
                         pub fn #f_name_ident(&self) -> [#r_type_ty; #len_lit] {
                             let offset = self.pos + #offset_lit;
                             let size = #total_size_lit;
-                            let all: [u8; #total_size_lit] = read_bytes::<#total_size_lit>(self.buf, offset);
+                            let all: [u8; #total_size_lit] = read_bytes_unchecked::<#total_size_lit>(self.buf, offset);
                             [#(#elem_exprs),*]
                         }
                     });
@@ -3135,7 +3135,7 @@ fn generate_group_decoder(
                         #[inline]
                         pub fn #f_name_ident(&self) -> Option<#r_type_ty> {
                             let offset = self.pos + #offset_lit;
-                            let val = #r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset));
+                            let val = #r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset));
                             if #null_check_expr {
                                 None
                             } else {
@@ -3148,7 +3148,7 @@ fn generate_group_decoder(
                         #[inline]
                         pub fn #f_name_ident(&self) -> #r_type_ty {
                             let offset = self.pos + #offset_lit;
-                            #r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset))
+                            #r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))
                         }
                     });
                 }
@@ -3182,7 +3182,7 @@ fn generate_group_decoder(
                     #[inline]
                     pub fn #as_struct_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(read_bytes::<#comp_size_lit>(self.buf, offset))
+                        #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
                     }
                 });
 
@@ -3214,7 +3214,7 @@ fn generate_group_decoder(
                     #[inline]
                     pub fn #f_name_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
 
@@ -3256,7 +3256,7 @@ fn generate_group_decoder(
                     #[inline]
                     pub fn #f_name_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#order_fn(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
 
@@ -4879,6 +4879,15 @@ fn generate_message_encoder(
                             }
                         });
                     }
+                } else if prim_size == 1 {
+                    // Direct byte write for u8/i8/char — 1 instruction vs 3.
+                    impl_contents.extend(quote::quote! {
+                        #[inline]
+                        pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
+                            self.buf[#body_offset_lit] = val as u8;
+                            self
+                        }
+                    });
                 } else {
                     impl_contents.extend(quote::quote! {
                         #[inline]
@@ -4929,9 +4938,7 @@ fn generate_message_encoder(
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
                     impl_contents.extend(quote::quote! {
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
-                            let offset = #body_offset_lit;
-                            let enum_val: #target_type = val.into();
-                            self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(enum_val as #r_type).#to_endian());
+                            self.buf[#body_offset_lit] = val as u8;
                             self
                         }
                     });
@@ -5814,6 +5821,13 @@ fn generate_group_encoder(
                             self
                         }
                     });
+                } else if prim_size == 1 {
+                    entry_methods.extend(quote::quote! {
+                        pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
+                            self.buf[self.entry_start + #f_offset] = val as u8;
+                            self
+                        }
+                    });
                 } else {
                     let sz = syn::LitInt::new(&prim_size.to_string(), span);
                     entry_methods.extend(quote::quote! {
@@ -5857,9 +5871,7 @@ fn generate_group_encoder(
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_snake), span);
                     entry_methods.extend(quote::quote! {
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
-                            let offset = self.entry_start + #f_offset;
-                            let enum_val: #target = val.into();
-                            self.buf[offset..offset + #sz].copy_from_slice(&(enum_val as #r_ty).#to_endian());
+                            self.buf[self.entry_start + #f_offset] = val as u8;
                             self
                         }
                     });

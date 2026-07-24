@@ -858,7 +858,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn serial_number(&self) -> u64 {
         let offset = self.pos + 0;
-        u64::from_le_bytes(read_bytes::<8>(self.buf, offset))
+        u64::from_le_bytes(read_bytes_unchecked::<8>(self.buf, offset))
     }
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
@@ -866,7 +866,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn model_year(&self) -> u16 {
         let offset = self.pos + 8;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
@@ -874,7 +874,9 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn available(&self) -> BooleanType {
         let offset = self.pos + 10;
-        BooleanType::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
+        BooleanType::from_raw(
+            u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset)),
+        )
     }
     #[inline]
     pub fn available_bool(&self) -> bool {
@@ -884,7 +886,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn code(&self) -> Model {
         let offset = self.pos + 11;
-        Model::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
+        Model::from_raw(u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset)))
     }
     pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
@@ -893,7 +895,7 @@ impl<'a> CarDecoder<'a> {
             return [0 as u32; 4];
         }
         let offset = self.pos + 12;
-        let all: [u8; 16] = read_bytes::<16>(self.buf, offset);
+        let all: [u8; 16] = read_bytes_unchecked::<16>(self.buf, offset);
         [
             u32::from_le_bytes([all[0usize], all[1usize], all[2usize], all[3usize]]),
             u32::from_le_bytes([all[4usize], all[5usize], all[6usize], all[7usize]]),
@@ -910,7 +912,7 @@ impl<'a> CarDecoder<'a> {
             return [0 as u8; 6];
         }
         let offset = self.pos + 28;
-        let all: [u8; 6] = read_bytes::<6>(self.buf, offset);
+        let all: [u8; 6] = read_bytes_unchecked::<6>(self.buf, offset);
         [
             u8::from_le_bytes([all[0usize]]),
             u8::from_le_bytes([all[1usize]]),
@@ -926,7 +928,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn extras(&self) -> OptionalExtras {
         let offset = self.pos + 34;
-        OptionalExtras(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
+        OptionalExtras(u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset)))
     }
     #[inline]
     pub const fn discounted_model(&self) -> Model {
@@ -944,7 +946,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn engine_value(&self) -> Engine {
         let offset = self.pos + 35;
-        Engine(read_bytes::<10>(self.buf, offset))
+        Engine(read_bytes_unchecked::<10>(self.buf, offset))
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1677,7 +1679,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn speed(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
     pub const SPEED_NULL: u16 = 65535_u16;
     pub const SPEED_MIN: u16 = 0_u16;
@@ -1685,7 +1687,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn mpg(&self) -> f32 {
         let offset = self.pos + 2;
-        f32::from_le_bytes(read_bytes::<4>(self.buf, offset))
+        f32::from_le_bytes(read_bytes_unchecked::<4>(self.buf, offset))
     }
     pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
     pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
@@ -2139,7 +2141,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     #[inline]
     pub fn octane_rating(&self) -> u8 {
         let offset = self.pos + 0;
-        u8::from_le_bytes(read_bytes::<1>(self.buf, offset))
+        u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset))
     }
     pub const OCTANE_RATING_NULL: u8 = 255_u8;
     pub const OCTANE_RATING_MIN: u8 = 90_u8;
@@ -2427,7 +2429,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     #[inline]
     pub fn mph(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
     pub const MPH_NULL: u16 = 65535_u16;
     pub const MPH_MIN: u16 = 0_u16;
@@ -2435,7 +2437,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     #[inline]
     pub fn seconds(&self) -> f32 {
         let offset = self.pos + 2;
-        f32::from_le_bytes(read_bytes::<4>(self.buf, offset))
+        f32::from_le_bytes(read_bytes_unchecked::<4>(self.buf, offset))
     }
     pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
     pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
@@ -3617,9 +3619,7 @@ impl<'a> CarEncoder<'a> {
         self
     }
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
-        let offset = 18;
-        let enum_val: BooleanType = val.into();
-        self.buf[offset..offset + 1].copy_from_slice(&(enum_val as u8).to_le_bytes());
+        self.buf[18] = val as u8;
         self
     }
     pub fn code(&mut self, val: Model) -> &mut Self {
@@ -4444,8 +4444,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         }
     }
     pub fn octane_rating(&mut self, val: u8) -> &mut Self {
-        let offset = self.entry_start + 0;
-        self.buf[offset..offset + 1].copy_from_slice(&val.to_le_bytes());
+        self.buf[self.entry_start + 0] = val as u8;
         self
     }
     #[must_use]
