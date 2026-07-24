@@ -396,30 +396,41 @@ assert!(flags.contains(Options::Sunroof));
 let raw: u32 = flags.raw();
 ```
 
-### Multi-schema generation with shared runtime
+### Multi-schema generation with shared types
 
-When you generate codecs for multiple schemas in one crate, use
-`generate_multi` and `with_shared_runtime` to emit the error types and
-conversion traits once, shared across all schema modules.
+When you have a common schema with shared enums, sets, and composites used
+by multiple message schemas, use `generate_multi` with `shared_module`.
+The first schema's types are emitted once; subsequent schemas import them.
 
 ```rust
-let config1 = GenerationConfig::new("market_data")
-    .with_shared_runtime("sbe_rt");
-let config2 = GenerationConfig::new("orders")
-    .with_shared_runtime("sbe_rt");
+// Common schema: enums, sets, composites (no messages needed).
+let common_schema = Schema::from_ir(parse_file("schemas/common.xml")?);
+let market_schema = Schema::from_ir(parse_file("schemas/market_data.xml")?);
+let orders_schema = Schema::from_ir(parse_file("schemas/orders.xml")?);
 
-let modules = Generator::generate_multi(&[
-    (&schema1, &config1),
-    (&schema2, &config2),
+let mut config = GenerationConfig::new("market_data");
+config.shared_module = Some("common_types".to_string());
+
+let modules = Generator::new(config).generate_multi(&[
+    (&common_schema, "common_types"),  // first = shared (enums, sets, composites, sbe_rt)
+    (&market_schema, "market_data"),   // pub use super::common_types::*;
+    (&orders_schema, "orders"),        // pub use super::common_types::*;
 ])?;
 
+for m in modules.modules() {
+    std::fs::write(out_dir.join(&m.path), &m.source)?;
+}
 // Output:
-//   sbe_rt.rs        — shared DecodeError, EncodeError, TryFromSbe, TryToSbe
-//   market_data.rs   — re-exports sbe_rt
-//   orders.rs        — re-exports the same sbe_rt
+//   common_types.rs  — enums, sets, composites, sbe_rt, no duplicate messages
+//   market_data.rs   — messages only, imports common_types
+//   orders.rs        — messages only, imports common_types
 ```
 
-When the runtime is provided by another crate, use `with_external_sbe_rt`:
+The first schema provides the shared types. All schemas share one `sbe_rt`
+runtime module. Different SBE package names are fine — sharing is by type name.
+
+When the runtime is provided by another crate, use `with_external_sbe_rt` to
+skip inline `sbe_rt` emission:
 
 ```rust
 let config = GenerationConfig::new("my_messages")
