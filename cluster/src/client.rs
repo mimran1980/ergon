@@ -1248,6 +1248,33 @@ mod tests {
     }
 
     #[test]
+    fn test_reconnect_prepares_before_swapping_state() -> Result<(), Box<dyn std::error::Error>> {
+        // T6: Structural proof — `on_new_leader_event` must call
+        // `parse_leader_endpoint` and `prepare_reconnect_ingress` BEFORE
+        // writing any leadership field.  Failure must leave prior state intact.
+        let src = include_str!("client.rs");
+        let off = src.find("fn on_new_leader_event")
+            .ok_or("on_new_leader_event not found")?;
+        let snippet = &src[off..src[off..].find("Ok(())").unwrap_or(src.len()) + off];
+        let parse_call = snippet.find("parse_leader_endpoint(");
+        let prepare_call = snippet.find("prepare_reconnect_ingress(");
+        let first_assign = snippet
+            .find("self.leadership_term_id")
+            .unwrap_or(usize::MAX);
+        assert!(parse_call.is_some(), "must call parse_leader_endpoint");
+        assert!(prepare_call.is_some(), "must call prepare_reconnect_ingress");
+        assert!(
+            parse_call.unwrap() < first_assign,
+            "parse_leader_endpoint must precede leadership_term_id write"
+        );
+        assert!(
+            prepare_call.unwrap() < first_assign,
+            "prepare_reconnect_ingress (pub+assemblers) must precede state swap"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_offer_path_has_no_combined_heap_buffer() -> Result<(), Box<dyn std::error::Error>> {
         // T9: Structural proof — the `offer` method body must delegate to
         // `try_claim` (claim-based, allocation-free), never allocate a
