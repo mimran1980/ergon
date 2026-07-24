@@ -347,14 +347,25 @@ enc.price_from(&rust_decimal::Decimal::new(50000, 2));
 
 ### Composites, enums, and sets
 
-Named composites get flyweight views and owned values with direct encoders.
-Enums and sets expose `raw()` and symbolic accessors.
+Named composites get **both** a zero-copy flyweight **and** an owned value.
+Use the flyweight when you only need a few fields — it reads directly from
+the wire with no allocation. Use the owned value when you need the whole
+struct or want to store it beyond the buffer lifetime.
 
 ```rust
-// Composite fuel figure:
+// ── Flyweight (zero-copy, fast for partial access) ──
+let engine_view = dec.engine();                        // EngineDecoder<'_>
+let cap = engine_view.capacity();                      // reads 2 bytes from wire
+let cyl = engine_view.num_cylinders();                 // reads 1 byte from wire
+// drop engine_view — no copy occurred, just pointer arithmetic
+
+// ── Owned value (eager copy, good for storage) ──
+let engine: Engine = dec.engine_value();               // copies 6 bytes
+// engine lives as long as you need it, independent of the buffer
+
+// ── Entry composite fields ──
 let e = fuel.next().unwrap();
-let speed = e.speed();                                 // u16 accessor
-let ffig = e.value();                                  // FuelFigure owned value
+let speed = e.speed();                                 // u16 accessor (flyweight)
 
 // Enum:
 let code = dec.code();                                 // Model enum
