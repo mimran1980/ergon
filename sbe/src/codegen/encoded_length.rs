@@ -233,6 +233,77 @@ fn generate_direct(
     }
 }
 
+// ── Accumulator emitted into generated schema modules ──────────────────
+
+/// Emit the `EncodedLengthAccumulator` helper for staged messages.
+pub(super) fn generate_support() -> TokenStream {
+    quote::quote! {
+        #[doc(hidden)]
+        pub(crate) struct EncodedLengthAccumulator {
+            len: usize,
+            multiplier: usize,
+            error: Option<sbe_rt::EncodeError>,
+        }
+
+        impl EncodedLengthAccumulator {
+            pub(crate) const fn new(block_length: usize) -> Self {
+                Self { len: block_length, multiplier: 1, error: None }
+            }
+
+            pub(crate) const fn multiplier(&self) -> usize {
+                self.multiplier
+            }
+
+            pub(crate) const fn add_scaled(&mut self, unit_len: usize, repetitions: usize) {
+                if self.error.is_some() { return; }
+                let contribution = match unit_len.checked_mul(repetitions) {
+                    Some(c) => c,
+                    None => { self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); return; }
+                };
+                self.len = match self.len.checked_add(contribution) {
+                    Some(l) => l,
+                    None => { self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); self.len }
+                };
+            }
+
+            pub(crate) const fn enter_group(
+                &mut self, count: usize, dimension_length: usize, entry_block_length: usize,
+            ) -> usize {
+                let parent_multiplier = self.multiplier;
+                self.add_scaled(dimension_length, parent_multiplier);
+                self.multiplier = match parent_multiplier.checked_mul(count) {
+                    Some(m) => m,
+                    None => { self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); 0 }
+                };
+                self.add_scaled(entry_block_length, self.multiplier);
+                parent_multiplier
+            }
+
+            pub(crate) const fn leave_group(&mut self, parent_multiplier: usize) {
+                self.multiplier = parent_multiplier;
+            }
+
+            pub(crate) const fn fail(&mut self, error: sbe_rt::EncodeError) {
+                if self.error.is_none() { self.error = Some(error); }
+            }
+
+            pub(crate) const fn check(&self) -> Result<(), sbe_rt::EncodeError> {
+                match self.error { Some(e) => Err(e), None => Ok(()) }
+            }
+
+            pub(crate) const fn finish(self, header_length: usize)
+                -> Result<(usize, usize), sbe_rt::EncodeError>
+            {
+                if let Err(e) = self.check() { return Err(e); }
+                match self.len.checked_add(header_length) {
+                    Some(full) => Ok((self.len, full)),
+                    None => Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{strategy, LengthStrategy};

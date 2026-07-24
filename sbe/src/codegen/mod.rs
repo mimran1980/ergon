@@ -517,6 +517,17 @@ impl Generator {
             src.push_str(&impl_blocks);
         }
 
+        // 6c. Emit EncodedLengthAccumulator if any message needs staged builder
+        {
+            let has_staged = messages.iter().any(|m| {
+                matches!(encoded_length::strategy(m), encoded_length::LengthStrategy::Staged)
+            });
+            if has_staged {
+                let support_ts = encoded_length::generate_support();
+                src.push_str(&support_ts.to_string());
+            }
+        }
+
         // 7. Generate schema-level constants — SEMANTIC_VERSION, SCHEMA_HASH, SCHEMA_SHA256, SCHEMA_SHA256_HEX
         if let Some(ref sem_ver) = schema.ir.semantic_version {
             write!(
