@@ -25,15 +25,17 @@ fixture.
 
 | Benchmark | ErgoSBE | Aeron | Ratio | Notes |
 |-----------|---------|-------|-------|-------|
-| scalar (wrap + 2 fields) | 8.38 ns | 12.60 ns | **0.665** | `wrap_unchecked` + `serial_number` + `model_year` |
-| throughput 10k | 5,894 ns | 6,447 ns | **0.914** | 10k messages, 2 scalars each |
-| batch 10k | 8,135 ns | 8,162 ns | 0.997 | Decode + encode 10k messages |
+| scalar (wrap + 2 fields) | ~11 ns | ~11 ns | ~1.00 | `wrap_unchecked` + `serial_number` + `model_year`. High variance at this scale (system noise dominates 11 ns). |
+| throughput 10k | 6,029 ns | 6,521 ns | **0.925** | 10k messages, 2 scalars each |
+| batch 10k | 8,282 ns | 8,300 ns | 0.998 | Decode + encode 10k messages |
 
 ### Head-to-head summary
 
-ErgoSBE is faster on 6 of 8 benchmarks, tied on 2. The largest wins are
-`entry_point` (16% faster) and `encode_scalar` (33% faster — Aeron's
-`header().parent()` dance vs ErgoSBE's bulk header copy).
+ErgoSBE is faster or tied on every maintained scenario. The largest wins are
+`entry_point` (17% faster — lean `wrap` vs Aeron's `default()` + `wrap()` dance)
+and `decode_full_message` (14% faster). Encode paths are at parity —
+the difference is header-write strategy (bulk copy vs individual field writes),
+which is a wash at the nanosecond scale.
 
 ## Group encoding API combinations
 
@@ -52,6 +54,15 @@ Key takeaways:
 - `_unknown_size` is free — no measurable overhead vs explicit count.
 - `add_struct` for nested fixed entries is clean and fast.
 - Large batches scale linearly: 100 entries at ~300 ns = ~3 ns per entry.
+
+## Generated code optimizations
+
+The decoder uses `read_bytes_unchecked` for all fixed-field accessors
+(bounds are validated once at `wrap_and_apply_header`, not per-field).
+Encoder 1-byte setters (`u8`, `i8`, `bool`) use direct byte writes
+instead of `copy_from_slice` + `to_le_bytes`. Group `next()` for
+fixed-size entries uses `acting_block_length` directly, skipping
+`encoded_length()`.
 
 ## Checked vs unchecked
 
