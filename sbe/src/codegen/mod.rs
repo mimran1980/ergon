@@ -4606,6 +4606,9 @@ fn generate_message_encoder(
 
     let total_tail = msg.groups.len() + msg.var_data.len();
     let is_fixed = total_tail == 0;
+    // Classify and generate encoded-length support.
+    let encoded_len_gen =
+        encoded_length::generate(msg, block_length, header_size, elements);
     let encoded_length = header_size + block_length;
     let mut max_tail = 0usize;
     for g in &msg.groups {
@@ -5013,64 +5016,8 @@ fn generate_message_encoder(
     // Callers that genuinely need partial inspection should use an explicit
     // name such as `written_prefix()`."
 
-    // Pre-encoding length calculator for messages with tails
-    // Not generated when groups have nested dynamic tails — the flat
-    // helper cannot account for their variable contribution.
-    if total_tail > 0 && !has_nested_dynamic_tail(msg) {
-        let mut params = Vec::<proc_macro2::TokenStream>::new();
-        let mut param_names = Vec::<syn::Ident>::new();
-        let mut sum_body = Vec::<proc_macro2::TokenStream>::new();
-
-        for g_e in &msg.groups {
-            let g_snake = to_snake_case(&g_e.name);
-            let param_ident: syn::Ident = syn::Ident::new(&format!("{}_count", g_snake), span);
-            let (_, dim_size, _, _) = get_dimension_info(elements, &g_e.dimension_type);
-            let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
-            let g_block_len_lit = syn::LitInt::new(&g_e.block_length.to_string(), span);
-
-            sum_body.push(quote::quote! {
-                len += #dim_size_lit + #param_ident * #g_block_len_lit;
-            });
-            params.push(quote::quote! { #param_ident: usize });
-            param_names.push(param_ident);
-        }
-
-        for vd in &msg.var_data {
-            let vd_snake = to_snake_case(&vd.name);
-            let param_ident: syn::Ident = syn::Ident::new(&format!("{}_len", vd_snake), span);
-            let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
-            let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
-
-            sum_body.push(quote::quote! {
-                len += #prefix_size_lit + #param_ident;
-            });
-            params.push(quote::quote! { #param_ident: usize });
-            param_names.push(param_ident);
-        }
-
-        impl_contents.extend(quote::quote! {
-            /// Compute the exact SBE message body length before encoding.
-            /// Parameters: one `usize` per group (entry count) and one `usize` per var-data field (byte length).
-            #[inline]
-            pub const fn compute_encoded_length(
-                #(#params),*
-            ) -> usize {
-                let mut len = #block_length_lit;
-                #(#sum_body)*
-                len
-            }
-
-            /// Compute the exact SBE message length including the standard
-            /// message header (header size + body). DECISIONS.md §2: callers
-            /// must use this — not a hand-written `+ 8`.
-            #[inline]
-            pub const fn compute_encoded_length_with_message_header(
-                #(#params),*
-            ) -> usize {
-                #header_size + Self::compute_encoded_length(#(#param_names),*)
-            }
-        });
-    }
+    // Encoded-length support: strategy-classified (computed above).
+    impl_contents.extend(encoded_len_gen.encoder_impl.clone());
 
     // ── FixedFields value struct ──
     // A complete, owned, latest-version snapshot of every required fixed
@@ -5580,8 +5527,15 @@ fn generate_message_encoder(
         });
     }
 
-    // ── Generate staged length builder for messages with dynamic tails ──
-    if total_tail > 0 {
+    // ── Standalone encoded-length types ──
+    // ponytail: keep old staged builder for complex messages until Tasks 4-7.
+    // Fixed/Direct messages use the new strategy-based helpers; Staged still
+    // calls the legacy generate_encoded_length_builder.
+    if matches!(
+        encoded_length::strategy(msg),
+        encoded_length::LengthStrategy::Staged
+    ) && total_tail > 0
+    {
         let group_scoped_names: Vec<String> = msg
             .groups
             .iter()
@@ -5605,6 +5559,8 @@ fn generate_message_encoder(
             &group_scoped_names,
         );
         ts.extend(lb_ts);
+    } else {
+        ts.extend(encoded_len_gen.standalone);
     }
 
     ts
