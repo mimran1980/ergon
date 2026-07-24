@@ -2,6 +2,13 @@
 
 **Date:** 2026-07-23
 
+> **Superseded (2026-07-24):** The "generate a builder for every dynamic tail"
+> interface choice in this document is superseded by the three-tier
+> strategy classification in
+> [`2026-07-24-simplified-encoded-length-api-implementation-plan.md`](2026-07-24-simplified-encoded-length-api-implementation-plan.md).
+> The correctness, checked arithmetic, domain-length, conformance, and
+> performance requirements from this document remain in force.
+
 ## Context
 
 `ergo-sbe` generates staged encoders and decoders for fixed fields, repeating
