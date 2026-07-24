@@ -92,7 +92,7 @@ pub mod uri;
 pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim};
 pub use config::SessionBuilder;
 pub use controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
-pub use credentials::{CredentialsSupplier, NullCredentialsSupplier};
+pub use credentials::{CredentialsSupplier, NullCredentialsSupplier, StaticCredentials};
 pub use egress::{EgressAdapter, EgressListener, NullListener};
 pub use endpoints::{IngressEndpoint, parse_ingress_endpoints};
 pub use error::{ClusterError, PublicationFailure};
