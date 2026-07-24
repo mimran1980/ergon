@@ -4828,7 +4828,7 @@ impl CarEncodedLength {
         F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
     {
         let pm = self.state.enter_group(count as usize, 4 as usize, 6 as usize);
-        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+        let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
         f(&mut builder)?;
         if builder.written != count as usize {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
@@ -4856,8 +4856,9 @@ impl CarEncodedLength {
         F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
     {
         let max_count = u16::MAX as usize;
-        let pm = self.state.enter_group(0, 4 as usize, 6 as usize);
-        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+        let pm = self.state.multiplier();
+        self.state.add_scaled(4 as usize, pm);
+        let mut builder = RaggedEntryBuilder::new(self.state, pm, 6 as usize);
         f(&mut builder)?;
         if builder.written > max_count {
             return Err(sbe_rt::EncodeError::GroupCountOverflow {
@@ -4866,7 +4867,6 @@ impl CarEncodedLength {
             });
         }
         self.state = builder.state;
-        self.state.leave_group(pm);
         match self.state.check() {
             Ok(()) => {
                 Ok(CarEncodedLengthAfterPerformanceFigures {
@@ -4948,7 +4948,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
         F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
     {
         let pm = self.state.enter_group(count as usize, 4 as usize, 1 as usize);
-        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+        let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
         f(&mut builder)?;
         if builder.written != count as usize {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
@@ -4976,8 +4976,9 @@ impl CarEncodedLengthAfterPerformanceFigures {
         F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
     {
         let max_count = u16::MAX as usize;
-        let pm = self.state.enter_group(0, 4 as usize, 1 as usize);
-        let mut builder = RaggedEntryBuilder::new(self.state, pm);
+        let pm = self.state.multiplier();
+        self.state.add_scaled(4 as usize, pm);
+        let mut builder = RaggedEntryBuilder::new(self.state, pm, 1 as usize);
         f(&mut builder)?;
         if builder.written > max_count {
             return Err(sbe_rt::EncodeError::GroupCountOverflow {
@@ -4986,7 +4987,6 @@ impl CarEncodedLengthAfterPerformanceFigures {
             });
         }
         self.state = builder.state;
-        self.state.leave_group(pm);
         match self.state.check() {
             Ok(()) => {
                 Ok(CarEncodedLengthAfterManufacturer {
@@ -5287,26 +5287,42 @@ impl EncodedLengthAccumulator {
         }
     }
 }
-/// Builder for ragged entries — counts completed entries automatically.
-/// ponytail: simplified — uses add() for entry block + nested contributions.
+/// Builder for ragged/unknown-size entries.
+/// `entry_block_length` is 0 for known-size ragged (blocks already
+/// counted by `enter_group`) and the actual block length for
+/// unknown-size (blocks added per-entry via `add()`/`entries()`).
 #[doc(hidden)]
 pub struct RaggedEntryBuilder {
     state: EncodedLengthAccumulator,
     parent_multiplier: usize,
+    entry_block_length: usize,
     pub written: usize,
 }
 impl RaggedEntryBuilder {
-    fn new(state: EncodedLengthAccumulator, parent_multiplier: usize) -> Self {
+    fn new(
+        state: EncodedLengthAccumulator,
+        parent_multiplier: usize,
+        entry_block_length: usize,
+    ) -> Self {
         Self {
             state,
             parent_multiplier,
+            entry_block_length,
             written: 0,
         }
     }
-    /// Register one entry block.
+    /// Register one entry (adds entry block for unknown-size groups).
     pub fn add(&mut self) -> sbe_rt::GroupResult {
-        self.state.add_scaled(0, 1);
+        self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
         self.written += 1;
+        Ok(())
+    }
+    /// Register N flat entries at once (for fixed-width unknown-size groups).
+    pub fn entries(&mut self, n: usize) -> sbe_rt::GroupResult {
+        for _ in 0..n {
+            self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
+        }
+        self.written += n;
         Ok(())
     }
     /// Add a nested group dimension + entries.
@@ -5321,11 +5337,10 @@ impl RaggedEntryBuilder {
         self.state.check()?;
         Ok(())
     }
-    /// Add a varData field.
+    /// Add a varData field for the current entry.
     pub fn var_data(&mut self, prefix: usize, byte_len: usize) -> sbe_rt::GroupResult {
-        let m = self.state.multiplier();
-        self.state.add_scaled(prefix, m);
-        self.state.add_scaled(byte_len, m);
+        self.state.add_scaled(prefix, self.parent_multiplier);
+        self.state.add_scaled(byte_len, self.parent_multiplier);
         self.state.check()?;
         Ok(())
     }

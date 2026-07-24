@@ -251,7 +251,8 @@ fn bench_decode_session_event(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::codecs::session::SessionEventDecoder;
-                let dec = SessionEventDecoder::try_wrap_and_apply_header(black_box(&SESSION_EVENT_FIXTURE[..]), 0).unwrap();
+                let dec =
+                    SessionEventDecoder::try_wrap_and_apply_header(black_box(&SESSION_EVENT_FIXTURE[..]), 0).unwrap();
                 let cid = dec.correlation_id();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
