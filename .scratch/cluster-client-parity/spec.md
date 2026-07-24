@@ -2,6 +2,10 @@
 
 Status: in-progress — Phases 1–4 implemented and committed on `first_cut`; Phase 5 (Java interop matrix + crates.io publish) pending the Aeron jars and explicit release approval.
 
+**LLM / agent execution backlog (complete task list):**  
+[`.scratch/cluster-client-parity/IMPLEMENTATION_BACKLOG.md`](IMPLEMENTATION_BACKLOG.md)  
+— Use that file as the full work order (P0→P4, acceptance criteria, commands, non-goals). This `spec.md` remains the design authority.
+
 ## Implementation progress (2026-07-24)
 
 Scope reaffirmed: **client-only**. The Aeron media driver, consensus module,
@@ -74,6 +78,39 @@ owner to address; they are out of scope for the client-parity work.
 published tarball (they all require the repo-only `test-harness` feature);
 default features are empty, so the published crate compiles without the
 excluded tree. No Java, tests, benches, or reference code ship.
+
+## Public API baseline — 0.1 (gate #9)
+
+The following types constitute the intentional public API surface for
+`ergo-aeron-cluster 0.1`. All other types, modules, and generated code are
+private to the crate (the `codecs` module is `#[doc(hidden)]`; test support is
+gated behind the repo-only `test-harness` feature).
+
+| Type | Source | Purpose |
+|---|---|---|
+| `AeronCluster` | `client` | Cluster client lifecycle |
+| `AsyncClusterConnect` | `client` | Poll-driven async connect |
+| `ClusterClaim` | `client` | Zero-copy claim handle |
+| `SessionBuilder` | `config` | Builder-pattern connect configuration |
+| `EgressListener` | `egress` | Egress message callbacks |
+| `EgressAdapter` | `egress` | Egress fragment dispatcher |
+| `NullListener` | `egress` | No-op listener |
+| `ControlledEgressListener` | `controlled` | Controlled egress (backpressure) |
+| `ControlledEgressAdapter` | `controlled` | Controlled dispatcher |
+| `ControlledPollAction` | `controlled` | Backpressure action enum |
+| `CredentialsSupplier` | `credentials` | Challenge-response trait |
+| `NullCredentialsSupplier` | `credentials` | No-auth supplier |
+| `StaticCredentials` | `credentials` | Fixed-credential supplier |
+| `ClusterError` | `error` | Typed client error |
+| `PublicationFailure` | `error` | Offer/claim sentinel |
+| `SessionState` | `state` | Client session state machine |
+| `IngressEndpoint` | `endpoints` | Multi-member endpoint entry |
+| `parse_ingress_endpoints` | `endpoints` | Endpoint-map parser |
+| `EgressEvent` | `poller` | Single-fragment polled event |
+| `parse_event` | `poller` | Fragment event parser |
+| `default_idle` | `idle` | Default backoff strategy |
+| `poll_connect_until_done` | `idle` | Poll async connect to completion |
+| `AERON_IPC_STREAM` | `uri` | IPC channel constant |
 
 ### Still genuinely blocked (need external resources / human approval)
 
