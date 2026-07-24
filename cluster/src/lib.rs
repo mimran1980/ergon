@@ -31,7 +31,7 @@
 //!
 //! # Codecs
 //!
-//! Production modules: [`codecs::session`] (schema 111) and [`codecs::mark`],
+//! Production modules: `codecs::session` (schema 111) and `codecs::mark`,
 //! generated in `build.rs` from the vendored Aeron schemas. The sbe-tool
 //! reference runtime lives at `cluster/benches/reference_sbe/`
 //! (Criterion-private — never imported from library, test, or example code).
@@ -86,7 +86,7 @@ pub mod idle;
 pub mod poller;
 /// [`SessionState`] machine for connected / new-leader / closed.
 pub mod state;
-/// Aeron channel URI helpers ([`AeronUriStringBuilder`](rusteron_client::AeronUriStringBuilder)).
+/// Aeron channel URI helpers (`AeronUriStringBuilder`).
 pub mod uri;
 
 pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim};

@@ -2,7 +2,7 @@
 //! `ControlledEgressListener`. Callbacks return a `ControlledPollAction`
 //! so the application can apply backpressure (Abort) or stop (Break).
 //!
-//! Uses the shared [`crate::fragment::Fragment::decode`] path — the
+//! Uses the shared `Fragment::decode` path — the
 //! same canonical dispatch used by the regular egress path.
 
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};

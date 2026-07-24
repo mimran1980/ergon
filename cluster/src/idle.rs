@@ -1,7 +1,7 @@
 //! Poll-loop idle helpers (Aeron `IdleStrategy` — not Tokio).
 //!
 //! Drive [`crate::AsyncClusterConnect::poll`] from your event loop and call
-//! [`IdleStrategy::idle`] with the work count.
+//! `IdleStrategy::idle` with the work count.
 
 use rusteron_client::{BackoffIdleStrategy, IdleStrategy};
 

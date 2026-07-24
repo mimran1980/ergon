@@ -3,7 +3,7 @@
 //! Mirrors Java `AeronCluster.Context`. Defaults: ingress stream 101, egress
 //! stream 102, 10s message timeout.
 //!
-//! Channels are stored as **[`CString`]** (rusteron-ready). Performance over
+//! Channels are stored as **`CString`** (rusteron-ready). Performance over
 //! convenience: do not convert to `String`/`&str` and back for FFI.
 
 use std::ffi::{CStr, CString};
@@ -16,8 +16,8 @@ use crate::{ClusterError, CredentialsSupplier};
 /// Builds and connects an [`crate::AeronCluster`].
 ///
 /// Channel setters normalize via
-/// [`AeronUriStringBuilder`](rusteron_client::AeronUriStringBuilder) and store
-/// **[`CString`]** so connect can pass `&CStr` to rusteron with no second alloc.
+/// `AeronUriStringBuilder` and store
+/// **`CString`** so connect can pass `&CStr` to rusteron with no second alloc.
 ///
 /// # Example
 ///
@@ -61,13 +61,13 @@ impl Default for SessionBuilder {
 }
 
 impl SessionBuilder {
-    /// Set the ingress channel URI (validated + stored as [`CString`]).
+    /// Set the ingress channel URI (validated + stored as `CString`).
     pub fn ingress_channel(mut self, channel: impl AsRef<str>) -> Self {
         self.ingress_c = uri::channel_cstr(channel.as_ref()).ok();
         self
     }
 
-    /// Set the egress channel URI (validated + stored as [`CString`]).
+    /// Set the egress channel URI (validated + stored as `CString`).
     pub fn egress_channel(mut self, channel: impl AsRef<str>) -> Self {
         self.egress_c = uri::channel_cstr(channel.as_ref()).ok();
         self
@@ -109,20 +109,20 @@ impl SessionBuilder {
         self
     }
 
-    /// Ingress channel as [`CStr`] for rusteron (after a successful set/validate).
+    /// Ingress channel as `CStr` for rusteron (after a successful set/validate).
     #[inline]
     pub fn ingress_channel_c_str(&self) -> Option<&CStr> {
         self.ingress_c.as_deref()
     }
 
-    /// Egress channel as [`CStr`] for rusteron (after a successful set/validate).
+    /// Egress channel as `CStr` for rusteron (after a successful set/validate).
     #[inline]
     pub fn egress_channel_c_str(&self) -> Option<&CStr> {
         self.egress_c.as_deref()
     }
 
     /// Egress channel bytes without trailing NUL (for SBE var-data fields).
-    /// Zero-cost slice of the cached [`CString`].
+    /// Zero-cost slice of the cached `CString`.
     #[inline]
     pub(crate) fn egress_channel_bytes(&self) -> &[u8] {
         self.egress_c.as_ref().map(|c| c.as_bytes()).unwrap_or(b"")

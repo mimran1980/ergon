@@ -1,6 +1,6 @@
 //! Egress fragment dispatch to an [`EgressListener`].
 //!
-//! Uses the shared [`crate::fragment::Fragment::decode`] path — the
+//! Uses the shared `Fragment::decode` path — the
 //! same canonical dispatch used by the controlled and poller paths.
 
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};

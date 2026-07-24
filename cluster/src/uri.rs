@@ -1,8 +1,8 @@
-//! Aeron channel URI construction via [`AeronUriStringBuilder`].
+//! Aeron channel URI construction via `AeronUriStringBuilder`.
 //!
 //! # Performance over convenience
 //!
-//! Prefer **[`CString`] / [`CStr`]** for channels that end up at rusteron/Aeron C.
+//! Prefer **`CString` / `CStr`** for channels that end up at rusteron/Aeron C.
 //! Returning `String` / `&str` when you still need a C string means **extra**
 //! work (UTF-8 view + a second NUL conversion). Do **not** do that for
 //! performance-sensitive paths.
@@ -10,11 +10,11 @@
 //! | Form | Cost | Use |
 //! |------|------|-----|
 //! | [`AERON_IPC_STREAM`] | zero | static IPC (rusteron; do not re-define) |
-//! | [`channel_cstr`] / [`udp_endpoint_cstr`] | one normalize + one CString | dynamic channels for rusteron |
+//! | `channel_cstr` / `udp_endpoint_cstr` | one normalize + one CString | dynamic channels for rusteron |
 //! | `String` / `&str` | only when you truly need UTF-8 text and **not** FFI next | rare |
 //!
-//! [`AeronUriStringBuilder::build`] produces a temporary `String`; we convert
-//! once to [`CString`] for the public API so callers pass `&CStr` to rusteron
+//! `AeronUriStringBuilder::build` produces a temporary `String`; we convert
+//! once to `CString` for the public API so callers pass `&CStr` to rusteron
 //! without a second `cformat!`.
 
 use std::ffi::CString;
@@ -25,14 +25,14 @@ use crate::ClusterError;
 
 /// IPC channel — re-export of rusteron's zero-cost `c"aeron:ipc"`.
 ///
-/// Prefer this over inventing another `c"aeron:ipc"` / owned [`CString`].
+/// Prefer this over inventing another `c"aeron:ipc"` / owned `CString`.
 pub use rusteron_client::AERON_IPC_STREAM;
 
 fn map_uri(e: AeronCError) -> ClusterError {
     ClusterError::ChannelUri { reason: e.to_string() }
 }
 
-/// Parse and normalize a full Aeron channel URI into a [`CString`] for rusteron.
+/// Parse and normalize a full Aeron channel URI into a `CString` for rusteron.
 pub fn channel_cstr(uri: &str) -> Result<CString, ClusterError> {
     let s = {
         let builder: AeronUriStringBuilder = uri.parse().map_err(map_uri)?;
@@ -41,7 +41,7 @@ pub fn channel_cstr(uri: &str) -> Result<CString, ClusterError> {
     Ok(cformat!("{s}"))
 }
 
-/// Build `aeron:udp?endpoint={endpoint}` as [`CString`] for rusteron.
+/// Build `aeron:udp?endpoint={endpoint}` as `CString` for rusteron.
 ///
 /// `endpoint` is `host:port` (no `aeron:` prefix).
 pub fn udp_endpoint_cstr(endpoint: &str) -> Result<CString, ClusterError> {
