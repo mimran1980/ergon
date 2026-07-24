@@ -702,35 +702,57 @@ impl AeronCluster {
 
     /// Drive pure session-state transitions without polling fragments (Java
     /// `pollStateChanges`): leader-loss detection, `newLeaderTimeout`
-    /// enforcement, and `PendingClose` → `Closed` finalisation. Call this from
-    /// your event loop alongside [`Self::poll_egress`].
-    pub fn poll_state_changes(&mut self) -> Result<(), ClusterError> {
-        match self.state {
-            SessionState::Connected if !self.is_egress_connected() => {
-                self.state = SessionState::AwaitingNewLeader;
-                self.awaiting_leader_since = Some(Instant::now());
-            }
-            SessionState::AwaitingNewLeader | SessionState::AwaitingNewLeaderConnection => {
-                if let Some(since) = self.awaiting_leader_since
-                    && since.elapsed() >= Duration::from_millis(self.new_leader_timeout_ms)
-                {
-                    self.state = SessionState::Closed;
-                    return Err(ClusterError::Disconnected {
-                        reason: format!(
-                            "no NewLeaderEvent within new_leader_timeout ({}ms)",
-                            self.new_leader_timeout_ms
-                        ),
-                    });
-                }
-            }
-            SessionState::PendingClose => {
-                // Local close proceeds: once the caller has issued close() and
-                // driven the loop, finalise to Closed.
-                self.state = SessionState::Closed;
-            }
-            _ => {}
+    /// enforcement, and `PendingClose` → `Closed` finalisation. Delegates to
+    /// [`apply_state_transition`] so the state machine is unit-testable without
+    /// a live Aeron client.
+
+    /// Pure state-machine logic extracted for unit testing. See
+    /// [`Self::poll_state_changes`] for the caller that wires in the live
+    /// egress connection.
+fn apply_state_transition(
+    state: &mut SessionState,
+    awaiting_leader_since: &mut Option<Instant>,
+    new_leader_timeout_ms: u64,
+    egress_connected: bool,
+) -> Result<(), ClusterError> {
+    match *state {
+        SessionState::Connected if !egress_connected => {
+            *state = SessionState::AwaitingNewLeader;
+            *awaiting_leader_since = Some(Instant::now());
         }
-        Ok(())
+        SessionState::AwaitingNewLeader | SessionState::AwaitingNewLeaderConnection => {
+            if let Some(since) = *awaiting_leader_since
+                && since.elapsed() >= Duration::from_millis(new_leader_timeout_ms)
+            {
+                *state = SessionState::Closed;
+                return Err(ClusterError::Disconnected {
+                    reason: format!(
+                        "no NewLeaderEvent within new_leader_timeout ({}ms)",
+                        new_leader_timeout_ms
+                    ),
+                });
+            }
+        }
+        SessionState::PendingClose => {
+            *state = SessionState::Closed;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+    /// Drive pure session-state transitions without polling fragments (Java
+    /// `pollStateChanges`): leader-loss detection, `newLeaderTimeout`
+    /// enforcement, and `PendingClose` → `Closed` finalisation. Delegates to
+    /// [`apply_state_transition`] so the state machine is unit-testable without
+    /// a live Aeron client.
+    pub fn poll_state_changes(&mut self) -> Result<(), ClusterError> {
+        apply_state_transition(
+            &mut self.state,
+            &mut self.awaiting_leader_since,
+            self.new_leader_timeout_ms,
+            self.is_egress_connected(),
+        )
     }
 
     /// Begin a poll-driven async connect. Returns an
@@ -1200,11 +1222,46 @@ mod tests {
     #[test]
     fn test_keep_alive_buffer_is_stack_sized_by_encoded_length() -> Result<(), Box<dyn std::error::Error>> {
         use crate::codecs::session::SessionKeepAliveEncoder;
-        // Fixed message — the stack array must use the generated ENCODED_LENGTH.
         assert_eq!(
             SessionKeepAliveEncoder::ENCODED_LENGTH,
             8 + SessionKeepAliveEncoder::BLOCK_LENGTH,
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_pending_close_finalises_to_closed() -> Result<(), Box<dyn std::error::Error>> {
+        // T1: PendingClose transitions to Closed without separate poll_state_changes call.
+        let mut state = SessionState::PendingClose;
+        let mut awaiting = None;
+        apply_state_transition(&mut state, &mut awaiting, 5_000, true)?;
+        assert_eq!(state, SessionState::Closed, "PendingClose must finalise to Closed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_new_leader_timeout_disconnects() -> Result<(), Box<dyn std::error::Error>> {
+        // T7: After new_leader_timeout, AwaitingNewLeader → Closed + Disconnected.
+        let mut state = SessionState::AwaitingNewLeader;
+        // Simulate a stale entry time (5s ago).
+        let mut awaiting = Some(Instant::now() - Duration::from_secs(6));
+        let result = apply_state_transition(&mut state, &mut awaiting, 5_000, false);
+        assert!(result.is_err(), "timeout must error");
+        match result {
+            Err(ClusterError::Disconnected { .. }) => {}
+            other => panic!("expected Disconnected, got {other:?}"),
+        }
+        assert_eq!(state, SessionState::Closed, "timeout closes session");
+        Ok(())
+    }
+
+    #[test]
+    fn test_new_leader_timeout_not_yet_elapsed_keeps_awaiting() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = SessionState::AwaitingNewLeader;
+        let mut awaiting = Some(Instant::now()); // just entered
+        let result = apply_state_transition(&mut state, &mut awaiting, 5_000, false);
+        assert!(result.is_ok(), "within timeout must not error");
+        assert_eq!(state, SessionState::AwaitingNewLeader);
         Ok(())
     }
 }
