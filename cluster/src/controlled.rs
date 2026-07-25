@@ -100,6 +100,16 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
             None => return Ok(ControlledPollAction::Continue),
         };
 
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.dispatch_controlled(frag)));
+        match result {
+            Ok(r) => r,
+            Err(_) => Err(crate::ClusterError::ListenerPanicked {
+                context: "controlled dispatch",
+            }),
+        }
+    }
+
+    fn dispatch_controlled(&mut self, frag: Fragment<'_>) -> Result<ControlledPollAction, ClusterError> {
         Ok(match frag {
             Fragment::Message {
                 cluster_session_id,

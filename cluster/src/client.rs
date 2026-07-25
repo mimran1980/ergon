@@ -511,14 +511,15 @@ impl AeronCluster {
 
     /// Send keep-alive if the interval has elapsed since the last send.
     /// Called from `poll_egress` — mirrors Java's automatic session keep-alive.
-    pub fn keep_alive_if_due(&mut self) {
+    pub fn keep_alive_if_due(&mut self) -> Result<(), ClusterError> {
         let now = Instant::now();
         if self.state == SessionState::Connected
             && now.saturating_duration_since(self.last_keep_alive) >= Duration::from_millis(self.keep_alive_interval_ms)
-            && self.send_keep_alive().is_ok()
         {
+            self.send_keep_alive()?;
             self.last_keep_alive = now;
         }
+        Ok(())
     }
 
     /// Classify an ingress publication result (raw offer/try_claim return
@@ -625,7 +626,7 @@ impl AeronCluster {
         limit: usize,
     ) -> Result<i32, ClusterError> {
         adapter.set_expected_session_id(self.cluster_session_id);
-        self.keep_alive_if_due();
+        self.keep_alive_if_due()?;
         let mut new_leader: Option<(i64, i32, String)> = None;
         let mut decode_err: Option<ClusterError> = None;
         let mut session_closed = false;
@@ -663,7 +664,7 @@ impl AeronCluster {
         fragment_limit: usize,
     ) -> Result<i32, ClusterError> {
         adapter.set_expected_session_id(self.cluster_session_id);
-        self.keep_alive_if_due();
+        self.keep_alive_if_due()?;
         let mut new_leader: Option<(i64, i32, String)> = None;
         let mut decode_err: Option<ClusterError> = None;
         let mut session_closed = false;

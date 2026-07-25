@@ -3,6 +3,7 @@
 //! [`ControlledEgressAdapter`](crate::ControlledEgressAdapter), and the
 //! poller. Callers decide how to route the result.
 
+use crate::codecs::session::sbe_rt::DecodeError;
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder};
 use crate::error::ClusterError;
 
@@ -57,7 +58,12 @@ impl<'a> Fragment<'a> {
     pub(crate) fn decode(data: &'a [u8]) -> Result<Option<Self>, ClusterError> {
         let msg = match AnyMessage::decode(data, 0) {
             Ok(m) => m,
-            Err(_) => return Ok(None),
+            Err(DecodeError::UnknownTemplateLength { .. }) => return Ok(None),
+            Err(e) => {
+                return Err(ClusterError::ProtocolError {
+                    reason: format!("fragment decode: {e}"),
+                });
+            }
         };
 
         Ok(Some(match msg {
@@ -112,12 +118,16 @@ impl<'a> Fragment<'a> {
             AnyMessage::Challenge(decoder) => {
                 let cid = decoder.correlation_id();
                 let csid = decoder.cluster_session_id();
-                // Challenges are binary — raw bytes.
-                let chal = decoder.into_encoded_challenge().map(|(b, _)| b).unwrap_or(&[]);
+                let (chal_bytes, _next) =
+                    decoder
+                        .into_encoded_challenge()
+                        .map_err(|e| ClusterError::ProtocolError {
+                            reason: format!("challenge payload: {e}"),
+                        })?;
                 Self::Challenge {
                     correlation_id: cid,
                     cluster_session_id: csid,
-                    encoded_challenge: chal,
+                    encoded_challenge: chal_bytes,
                 }
             }
             AnyMessage::AdminResponse(decoder) => {
