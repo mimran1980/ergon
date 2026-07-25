@@ -1,9 +1,11 @@
 name: CI
 
+# Auto-runs only on pushes to main. Use the "Run workflow" button
+# (workflow_dispatch) to invoke it manually on any branch/commit — e.g. to
+# validate first_cut before merge.
 on:
   push:
-    branches: [main, first_cut]
-  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 env:
