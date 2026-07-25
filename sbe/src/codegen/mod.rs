@@ -2716,6 +2716,7 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
     let type_name_lit =
         syn::LitStr::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
     let mut body = proc_macro2::TokenStream::new();
+    let mut debug_body = proc_macro2::TokenStream::new();
     let display_header = format!("{} {{{{ ", name);
     body.extend(quote::quote! {
         write!(f, #display_header)?;
@@ -2744,6 +2745,13 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                     if #in_bounds {
                         let v = self.#f_ident();
                         write!(f, #fmt_str, v)?;
+                    }
+                });
+                let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                debug_body.extend(quote::quote! {
+                    if #in_bounds {
+                        let v = self.#f_ident();
+                        d.field(#name_lit, &v);
                     }
                 });
                 out_idx += 1;
@@ -2843,10 +2851,9 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
 
         impl<'a> core::fmt::Debug for #decoder_ident<'a> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                // Delegate to Display so Debug shows actual field values
-                // (like Java toString), not raw positions. Display has the
-                // in_bounds guards for invalid/truncated SBE.
-                core::fmt::Display::fmt(self, f)
+                let mut d = f.debug_struct(#type_name_lit);
+                #debug_body
+                d.finish()
             }
         }
     };
