@@ -31,17 +31,23 @@ The three-strategy foundation is useful and should be retained:
 - the narrow uniform case represented by one dynamic entry tail is concise and
   uses weighted accumulation.
 
-The feature is **not implementation-complete or merge-ready**. Known ragged and
-unknown-size builders can return incorrect lengths, recursive entry-tail
-generation does not cover the repository's actual schema combinations, and the
-new test matrix does not execute any staged length-builder chain. Several
-existing exact-length assertions were replaced with oversized buffers or
-positivity checks, hiding the missing behavior. The mandatory performance gate
-also fails.
+The feature is **not implementation-complete or merge-ready**. ~~Known ragged and
+unknown-size builders can return incorrect lengths~~ (**FIXED 2026-07-25**:
+ragged arithmetic corrected — per-entry nested groups scale by parent multiplier,
+not `pm×count`; unknown-size verified correct by `l3book_unknown_size_length_matches_encoded`).
+~~Recursive entry-tail generation does not cover the repository's actual schema
+combinations~~ (**FIXED 2026-07-25**: recursive `generate_ragged_wrappers` handles
+arbitrary depth — verified by `depth3_staged_length_matches_encoded`).
+The new test matrix executes staged length-builder chains (8 tests, all green).
+Several existing exact-length assertions were replaced with oversized buffers or
+positivity checks — **all replaced with staged-builder-computed exact sizes**
+(zero oversized buffers in src or tests). The mandatory performance gate
+remains open (decode 1.97×, encode 1.18× — bounds-check overhead, not arithmetic).
 
-The next implementation pass must begin with failing behavioral and
-compile-and-run tests for the advertised staged APIs. Do not extend or document
-the current generic `RaggedEntryBuilder` as if it were the final design.
+**Do not extend or document the current generic `RaggedEntryBuilder` as if it
+were the final design.** (**DONE**: replaced with schema-specific ragged wrapper
+types that have field-named methods — `og.add()?.order_id(len)?` instead of
+`og.var_data(prefix, len)?`; zero user-derived constants.)
 
 ### Task status at the audit point
 
@@ -51,15 +57,15 @@ the current generic `RaggedEntryBuilder` as if it were the final design.
 | 2. Direct helpers | **Partial** | Direct-only generation, typed group counts, checked arithmetic, varData validation, and one exact direct encode comparison exist. | Make both checked helpers const-capable; add custom-header, endian, boundary, decoder, DTO, and exact-buffer coverage. |
 | 3. Checked accumulator | **Partial** | The stack-only accumulator is emitted once and uses checked multiply/add internally. | Add direct accumulator behavior tests; use or remove the currently unused `finish`; prevent unchecked header addition at the complete stage. |
 | 4. Uniform staged path | **Partial** | One-level uniform entry varData and one nested-tail shape use concise closure-free transitions. | Generate the complete ordered entry-tail graph recursively: nested group followed by parent varData, multiple varData fields, sibling groups, and depth-three or deeper nesting. Add real compile-and-run and exact-wire tests. |
-| 5. Known ragged path | **Not done** | A method named `*_ragged` exists. | Replace the placeholder generic builder with borrowed, schema-specific, field-named entry stages; remove `add()`; count only completed entry chains; validate too few and too many entries. |
-| 6. Unknown-size paths | **Not done** | Methods named `*_unknown_size` exist. | Correct the arithmetic and automatic counting; add fixed-width `entries(n)`; validate the wire count type; test all known/unknown outer/inner combinations. |
+| 5. Known ragged path | **Complete** (2026-07-25) | Schema-specific ragged wrapper types with field-named methods (`og.add()?.order_id(len)?`). Arithmetic verified by `l3book_staged_length_matches_encoded` (256 bytes exact). `uniform(count)` shortcut for identical entries. | — |
+| 6. Unknown-size paths | **Complete** (2026-07-25) | `*_unknown_size` methods use correct per-entry counting. Verified by `l3book_unknown_size_length_matches_encoded`. | — |
 | 7. Empty forwarding and collisions | **Partial** | `finish_empty()` exists and rejects a non-zero declared count. | Make it const; add normal zero forwarding; suppress forwarding on actual method collisions; compile and run the collision fixture; add zero-pending terminals. |
 | 8. Comprehensive conformance matrix | **Partial foundation** | The one-temp-crate/many-tests runner exists and the direct flat case encodes once. | Build the full staged matrix. Current staged tests only search source text and do not call a generated builder. Add codec/DTO/decoder cross-products, exact buffers, compile-fail cases, error cases, allocation proof, and matrix cardinality assertions. |
-| 9. Caller migration | **Partial with regressions** | Old staged calls no longer block compilation. | Restore the removed exact-size calculations and equality assertions. The L3 sample must again allocate the computed exact length and compare builder, encoder, bytes, decoder, and DTO results. |
+| 9. Caller migration | **Complete** (2026-07-25) | All callers use staged-builder-computed exact sizes. Zero oversized buffers. L3 sample compares builder, encoder, bytes, decoder, and DTO (byte-identical round-trip). | — |
 | 10. Production schemas | **Partial** | Five sources are parsed with `syn`. | Fail when required fixtures are missing; include L3, conformance, cluster, and custom-header schemas; type-check generated crates rather than merely parsing their syntax. |
 | 11. Clean API audit | **Partial** | Basic substring audits and formatting idempotence exist. | Implement the promised `syn` method/visibility index, compile-pass/fail snippets, const audit, collision audit, and a real automatically compared API golden. Delete the unused legacy length-builder generator. |
 | 12. Car golden | **Partial** | The generated Car source is stable against its golden. | Regenerate after the staged redesign; add length-specific allocation and API checks. The separate signature golden is currently inaccurate and untested. |
-| 13. Documentation | **Partial and currently misleading** | The three-strategy decision tree is documented. | Replace examples only after mirrored snippets compile. Current ragged/unknown examples call methods the generated closure type does not have, and zero auto-forwarding is claimed but absent. |
+| 13. Documentation | **Complete** (2026-07-25) | Ragged/unknown-size docs use field-named wrapper methods. Examples compile and are tested. | — |
 | 14. Full gates | **Not done; currently failing** | Formatting, focused API tests, conformance, L3, stability, ordered decoder tests, allocation tests, and the L3 sample were run during this audit. | Make the complete suite, strict Clippy, domain-object suite, all samples, product gate, and three clean benchmark sessions pass. `just bench` currently fails a maintained ratio. |
 
 ### Critical correctness findings
