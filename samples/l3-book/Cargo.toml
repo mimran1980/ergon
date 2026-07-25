@@ -12,6 +12,7 @@ rust_decimal = { version = "1", features = ["macros"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1.11"
 
 [build-dependencies]
 ergo-sbe = { path = "../../sbe" }
