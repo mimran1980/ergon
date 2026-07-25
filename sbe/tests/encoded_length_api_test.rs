@@ -23,11 +23,8 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-// ── Section 1: Source-surface audits (Task 11) ──────────────────────────
-
 #[test]
 fn direct_schemas_omit_builders() -> Result<(), Box<dyn std::error::Error>> {
-    // Fixed-only: no builder, no accumulator
     let (_s, fixed_src) = generate(&fixture("basic-schema.xml"), "fixed_audit");
     assert!(
         !fixed_src.contains("EncodedLengthAccumulator"),
@@ -128,8 +125,6 @@ fn formatting_is_idempotent() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Section 2: Runtime direct-helper exactness (Task 2) ────────────────
-
 #[test]
 fn direct_flatgroup_exact_length() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "direct_fg");
@@ -163,19 +158,15 @@ fn direct_flatgroup_exact_length() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn direct_u8_overflow() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&fixture("u8-dimension-schema.xml"), "u8_test");
-    // Source-level: verify direct helpers exist
     assert!(src.contains("try_compute_encoded_length"));
     assert!(src.contains("try_compute_encoded_length_with_header"));
     assert!(!src.contains("CompactMsgEncodedLength"));
     Ok(())
 }
 
-// ── Section 3: Staged builder uniform path (Task 4) ────────────────────
-
 #[test]
 fn uniform_staged_car_length() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&fixture("example-schema.xml"), "uniform_car");
-    // Source-level: verify staged builder exists
     assert!(
         src.contains("CarEncodedLength"),
         "Car must generate builder"
@@ -191,15 +182,12 @@ fn uniform_staged_car_length() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Section 4: Conformance matrix (Task 8) ────────────────────────────
-
 #[test]
 fn conformance_matrix_flatgroup() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "matrix_fg");
 
     let mut tests = Vec::new();
 
-    // Empty shape
     tests.push(GeneratedRustTest {
         name: "empty".into(),
         body: r#"
@@ -209,7 +197,6 @@ fn conformance_matrix_flatgroup() -> Result<(), Box<dyn std::error::Error>> {
         .into(),
     });
 
-    // Singleton
     tests.push(GeneratedRustTest {
         name: "singleton".into(),
         body: r#"
@@ -219,7 +206,6 @@ fn conformance_matrix_flatgroup() -> Result<(), Box<dyn std::error::Error>> {
         .into(),
     });
 
-    // Many entries
     tests.push(GeneratedRustTest {
         name: "many".into(),
         body: r#"
@@ -275,8 +261,6 @@ fn conformance_matrix_nested_group() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Section 5: Matrix helper tests ─────────────────────────────────────
-
 #[test]
 fn matrix_runner_rejects_duplicates() -> Result<(), Box<dyn std::error::Error>> {
     let tests = vec![
@@ -305,8 +289,6 @@ fn matrix_runner_rejects_empty_name() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-// ── Section 6: Acceptance checklist tests ──────────────────────────────
-
 #[test]
 fn one_byte_short_buffer_fails() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "short_buf");
@@ -326,7 +308,6 @@ fn one_byte_short_buffer_fails() -> Result<(), Box<dyn std::error::Error>> {
         .description(b"")?;
         assert_eq!(len, complete.as_bytes().len());
 
-        // Buffer too short for header+block must fail
         let mut tiny = vec![0u8; 4]; // header=8, block=8 — 4 is too short
         let result = FlatGroupEncoder::try_wrap_and_apply_header(&mut tiny, 0);
         assert!(result.is_err(), "too-short buffer must fail");
@@ -394,8 +375,6 @@ fn direct_helper_overflow_detected() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
-
-// ── Section 7: Production schema generation (Task 10) ──────────────────
 
 #[test]
 fn production_schemas_generate_valid_rust() -> Result<(), Box<dyn std::error::Error>> {

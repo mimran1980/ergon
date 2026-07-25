@@ -98,12 +98,11 @@ impl core::fmt::Display for GenerateError {
 impl core::error::Error for GenerateError {}
 
 impl GeneratedModuleSet {
-    /// Add a generated module to the set.
     pub(crate) fn push(&mut self, module: GeneratedModule) {
         self.modules.push(module);
     }
 
-    /// Iterate over generated modules in deterministic output order.
+    /// Iterate over the generated modules.
     #[must_use]
     pub fn modules(&self) -> impl ExactSizeIterator<Item = &GeneratedModule> {
         self.modules.iter()
@@ -161,7 +160,6 @@ pub struct Generator {
     config: GenerationConfig,
 }
 
-/// Whether a message field matches any configured conversion selector.
 fn field_has_conversion_free(
     field: &MessageField,
     conversions: &[crate::ConversionSelector],
@@ -181,7 +179,6 @@ fn field_has_conversion_free(
     })
 }
 
-/// Look up the domain type path for a field, if one is configured.
 fn find_domain_type<'a>(
     field: &MessageField,
     domain_types: &'a [(crate::ConversionSelector, String)],
@@ -224,8 +221,8 @@ fn domain_encode_setter_name(
 }
 
 impl Generator {
-    /// Create a generator with the supplied configuration.
     #[must_use]
+    /// Create a new generator from the given configuration.
     pub const fn new(config: GenerationConfig) -> Self {
         Self { config }
     }
@@ -259,7 +256,6 @@ impl Generator {
                 });
             }
         }
-        // Validate domain type paths are non-empty
         for (sel, rust_type) in &self.config.domain_types {
             if rust_type.is_empty() {
                 return Err(GenerateError::InvalidConversion {
@@ -271,7 +267,6 @@ impl Generator {
         Ok(())
     }
 
-    /// Whether a message field matches any configured conversion selector.
     fn field_has_conversion(
         field: &MessageField,
         conversions: &[crate::ConversionSelector],
@@ -298,7 +293,6 @@ impl Generator {
                     return true;
                 }
                 crate::ConversionSelector::FieldPath(path) => {
-                    // Match "Owner.field" or just "field"
                     let expected = format!("{}.{}", owner_name.unwrap_or(""), field_name);
                     if path == &expected || path == field_name {
                         return true;
@@ -415,7 +409,6 @@ impl Generator {
             }
         }
 
-        // 1. SBE runtime: external re-export, or inline once per module set.
         if let Some(ref ext) = self.config.external_sbe_rt_path {
             let _ = writeln!(src, "pub use {ext} as sbe_rt;\n");
             if self.config.has_conversions() {
@@ -428,10 +421,8 @@ impl Generator {
             }
         }
 
-        // 2. Group the tokens into composites, enums, sets, and messages
         let elements = partition_tokens(&ir.tokens);
 
-        // 3. Generate Enums (skip shared)
         for enum_tokens in &elements.enums {
             let type_name = to_pascal_case(&enum_tokens[0].name);
             if shared.contains(&type_name) {
@@ -440,7 +431,6 @@ impl Generator {
             generate_enum(&mut src, enum_tokens);
         }
 
-        // 4. Generate Sets/Choices (skip shared)
         for set_tokens in &elements.sets {
             let type_name = to_pascal_case(&set_tokens[0].name);
             if shared.contains(&type_name) {
@@ -449,7 +439,6 @@ impl Generator {
             generate_set(&mut src, set_tokens);
         }
 
-        // 5. Generate Composites (skip shared)
         for composite_tokens in &elements.composites {
             let type_name = to_pascal_case(&composite_tokens[0].name);
             if shared.contains(&type_name) {
@@ -466,13 +455,11 @@ impl Generator {
             generate_composite(&mut src, composite_tokens, comp_byte_order);
         }
 
-        // Generate MessageHeader alias if custom name is used (skip if shared)
         let header_pascal = to_pascal_case(&ir.header_type);
         if header_pascal != "MessageHeader" && !shared.contains(&header_pascal) {
             write!(src, "pub type MessageHeader = {};\n\n", header_pascal).unwrap();
         }
 
-        // 6. Generate Messages (Decoders and Encoders) — always generated
         let messages: Vec<MessageStructure> = elements
             .messages
             .iter()
@@ -609,7 +596,6 @@ impl Generator {
                 buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
             }
 
-            /// Write `N` bytes from `bytes` into `buf` at `offset`.
             #[inline]
             pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
                 buf[offset..offset + N].copy_from_slice(bytes);
@@ -642,23 +628,19 @@ impl Generator {
         };
         src.push_str(&uc.to_string());
         src.push('\n');
-        // 8. Generate zero-parse schemaId extraction from raw header bytes
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
-        // 8. Generate AnyMessage enum (per-schema: only this schema's messages)
         let any_msg_ts =
             generate_any_message(&messages, &elements, ir.id, &ir.header_type, &ir.package);
         src.push_str(&any_msg_ts.to_string());
         src.push('\n');
 
-        // Format through syn/prettyplease
         let file =
             syn::parse_str::<syn::File>(&src).expect("generated code must be valid Rust syntax");
         prettyplease::unparse(&file)
     }
 }
 
-/// Generate the inline `sbe_rt` runtime module source.
 fn generate_owner_consuming_stages(
     initial_ident: syn::Ident,
     stage_prefix: &str,
@@ -981,7 +963,6 @@ fn generate_owner_consuming_stages(
         });
     }
 
-    // 3. finish()/skip_remaining() for each group -> next owner stage.
     for (gi, tg) in groups.iter().enumerate() {
         let i = gi;
         let next_stage = stage_after_ident(i);
@@ -1017,7 +998,6 @@ fn generate_owner_consuming_stages(
         });
     }
 
-    // 4. Terminal (Complete) stage extent helpers.
     let complete_ident = stage_after_ident(total_tail - 1);
     ts.extend(quote::quote! {
         impl<'a> #complete_ident<'a> {
@@ -1194,7 +1174,6 @@ fn generate_message_decoder(
         .and_then(|c| c[0].encoding.offset)
         .unwrap_or(8);
 
-    // Compile-time buffer sizing constants
     let is_fixed = msg.groups.is_empty() && msg.var_data.is_empty();
     let encoded_length = header_size + block_length;
     let mut max_tail = 0usize;
@@ -1208,7 +1187,6 @@ fn generate_message_decoder(
     }
     let max_encoded_length = header_size + block_length + max_tail;
 
-    // Identifiers for codegen
     let _name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
     let decoder_ident =
         syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
@@ -1228,7 +1206,6 @@ fn generate_message_decoder(
     let encoded_len_lit =
         syn::LitInt::new(&encoded_length.to_string(), proc_macro2::Span::call_site());
 
-    // 1. Decoder Struct + optional doc comment
     if let Some(ref desc) = msg.description {
         ts.extend(doc_attr_tokens(desc));
     }
@@ -1250,7 +1227,6 @@ fn generate_message_decoder(
         }
     });
 
-    // 2. impl block with compile-time constants
     let mut impl_body = proc_macro2::TokenStream::new();
     if is_fixed {
         impl_body.extend(quote::quote! {
@@ -1304,7 +1280,6 @@ fn generate_message_decoder(
         });
     }
 
-    // 3. wrap() function
     impl_body.extend(quote::quote! {
         #[inline]
         pub fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
@@ -1317,7 +1292,6 @@ fn generate_message_decoder(
         }
     });
 
-    // 4. try_wrap_and_apply_header — validates schema_id + template_id
     {
         let hs = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
         let hp = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
@@ -1368,12 +1342,10 @@ fn generate_message_decoder(
         });
     }
 
-    // 5. acting_version and acting_block_length
     impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(
         "#[inline]\n    pub const fn acting_version(&self) -> u16 {\n        self.acting_version\n    }\n\n    pub const fn acting_block_length(&self) -> usize {\n        self.acting_block_length\n    }\n\n"
     ).unwrap());
 
-    // 6. Field getters
     for f in &msg.fields {
         let fname_snake = to_snake_case(&f.name);
         let offset = f.offset;
@@ -1483,7 +1455,6 @@ fn generate_message_decoder(
                         }
                     });
                 } else {
-                    // Non-array primitive
                     if f.presence == Presence::Optional {
                         let null_val = f.null_value.unwrap_or(0);
                         let null_check_expr = if *prim == PrimitiveType::Float {
@@ -1605,7 +1576,6 @@ fn generate_message_decoder(
                     });
                 }
 
-                // Eager copy accessor (_value)
                 let as_struct_ident = syn::Ident::new(
                     &format!("{}_value", fname_snake),
                     proc_macro2::Span::call_site(),
@@ -1766,12 +1736,10 @@ fn generate_message_decoder(
                 }
             }
         }
-        // Emit field constants
         let field_consts_ts = emit_field_consts(f);
         impl_body.extend(field_consts_ts);
     }
 
-    // 7. Tail offset helpers
     let total_tail = msg.groups.len() + msg.var_data.len();
 
     // tail_offset_0
@@ -1782,7 +1750,6 @@ fn generate_message_decoder(
         }
     });
 
-    // Group PascalCase names (parser guarantees unique names within a message).
     let group_unique_names: Vec<String> = msg
         .groups
         .iter()
@@ -1881,7 +1848,6 @@ fn generate_message_decoder(
         k += 1;
     }
 
-    // 8. Group accessors — uses pre-computed dedup names from section 7
     let mut g_idx = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
         let scoped = &group_unique_names[gi];
@@ -1914,7 +1880,6 @@ fn generate_message_decoder(
         g_idx += 1;
     }
 
-    // 9. VarData accessors
     let mut vd_idx = msg.groups.len();
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
@@ -2019,7 +1984,6 @@ fn generate_message_decoder(
         });
     }
 
-    // 10. encoded_length, encoded_length_with_header, as_bytes
     let total_tail_ident: syn::Ident = syn::Ident::new(
         &format!("tail_offset_{}", total_tail),
         proc_macro2::Span::call_site(),
@@ -2045,7 +2009,6 @@ fn generate_message_decoder(
         }
     });
 
-    // 11. verify function - built as TokenStream directly
     let hs_lit = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
     let hp_ident = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
     let hbl_ident = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
@@ -2085,7 +2048,6 @@ fn generate_message_decoder(
         let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
         let ebl_lit = syn::LitInt::new(&g.block_length.to_string(), proc_macro2::Span::call_site());
         let has_tails = !g.groups.is_empty() || !g.var_data.is_empty();
-        // Entry decoder ident for skip() calls
         let entry_dec_ident = {
             let raw = to_pascal_case(&g.name);
             let unique = if multi_message {
@@ -2185,14 +2147,12 @@ fn generate_message_decoder(
         }
     });
 
-    // Wrap all impl_body items inside the impl block
     ts.extend(quote::quote! {
         impl<'a> #decoder_ident<'a> {
             #impl_body
         }
     });
 
-    // 12. Trait impls
     let msg_id_lit = syn::LitInt::new(&msg.id.to_string(), proc_macro2::Span::call_site());
     let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), proc_macro2::Span::call_site());
     let schema_version_lit =
@@ -2226,11 +2186,9 @@ fn generate_message_decoder(
         }
     });
 
-    // 13. Display impl
     let display_ts = generate_decoder_display(msg, domain_types);
     ts.extend(display_ts);
 
-    // 14. Repeating Group decoders — use pre-computed dedup names from section 8
     for (gi, g) in msg.groups.iter().enumerate() {
         let unique = &group_unique_names[gi];
         ts.extend(generate_group_decoder(
@@ -2261,14 +2219,10 @@ fn generate_message_decoder(
     // The quote! for trait impls starts with `}` to close the impl block first.
     // Let me verify: the impl block opening uses `quote! { impl ... { ... }`
     // Wait, no. Let me re-check the flow.
-    //
     // Section 2 opens: quote! { impl ... { ...  (no closing })
     // Section 12 starts with: `}` (closing the impl)
     // So the impl is properly closed.
 
-    // Group decoders don't need the impl to still be open - they're separate impl blocks
-
-    // 15. Domain objects — owned structs with From<Decoder> for application-layer use
     if domain_objects {
         ts.extend(generate_domain_objects(
             msg,
@@ -2369,7 +2323,6 @@ fn generate_domain_recursive(
     let mut group_encode_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut vardata_encode_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
 
-    // Scalar / array / composite / enum / set fields
     for f in fields {
         if f.presence == Presence::Constant {
             continue;
@@ -2411,13 +2364,12 @@ fn generate_domain_recursive(
                 } else {
                     // Domain-typed scalars use the concrete converted getter.
                     // Conversion-only renames the raw flyweight getter to *_wire.
-                    let from_getter = if field_has_conversion_free(f, conversions)
-                        && scalar_domain.is_none()
-                    {
-                        syn::Ident::new(&format!("{f_snake}_wire"), span)
-                    } else {
-                        f_ident.clone()
-                    };
+                    let from_getter =
+                        if field_has_conversion_free(f, conversions) && scalar_domain.is_none() {
+                            syn::Ident::new(&format!("{f_snake}_wire"), span)
+                        } else {
+                            f_ident.clone()
+                        };
                     struct_fields.push(quote::quote! { pub #f_ident: #scalar_ty });
                     from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
                     encode_stmts.push(quote::quote! { enc.#enc_setter(self.#f_ident); });
@@ -2516,7 +2468,6 @@ fn generate_domain_recursive(
         }
     }
 
-    // Group fields → Vec<EntryDomain>
     for g in groups {
         let g_snake = to_snake_case(&g.name);
         let g_pascal = to_pascal_case(&g.name);
@@ -2556,7 +2507,6 @@ fn generate_domain_recursive(
             });
         }
 
-        // Encode: group chain
         let (_, _, count_prim) = get_dim_num_layout(elements, &g.dimension_type);
         let count_ty: syn::Type = syn::parse_str(rust_type(count_prim)).unwrap();
         group_encode_stmts.push(quote::quote! {
@@ -2573,7 +2523,6 @@ fn generate_domain_recursive(
             )?;
         });
 
-        // Recursively generate the entry domain struct
         let entry_prefix = format!("{struct_prefix}{g_pascal}Entry");
         let entry_decoder_name = format!("{g_scoped}Entry");
         generate_domain_recursive(
@@ -2606,7 +2555,6 @@ fn generate_domain_recursive(
         });
     }
 
-    // ── Generate the struct + From impl ──────────────────────────────
     let encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);
     ts.extend(quote::quote! {
         /// Owned domain object — application-layer counterpart to the flyweight decoder.
@@ -2637,7 +2585,6 @@ fn generate_domain_recursive(
         }
     });
 
-    // ── Encode-from-DTO ──────────────────────────────────────────────
     if is_entry {
         // Entry domains: encode_into for use inside group closures
         let entry_encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);
@@ -2655,7 +2602,6 @@ fn generate_domain_recursive(
             }
         };
 
-        // Build entry-level length_contribution
         let entry_block_len = groups.iter().fold(
             fields.iter().fold(0usize, |acc, f| {
                 let size = f.field_type.size();
@@ -2704,7 +2650,6 @@ fn generate_domain_recursive(
 
         ts.extend(quote::quote! {
             impl #domain_ident {
-                /// Encode this entry into a group entry encoder.
                 pub fn encode_into<'a>(
                     &self,
                     enc: &mut #entry_encoder_ident<'a>,
@@ -2729,7 +2674,6 @@ fn generate_domain_recursive(
         } else {
             quote::quote! {}
         };
-        // Build message-level encoded_length computation
         let block_len = fields.iter().fold(0usize, |acc, f| {
             let size = f.field_type.size();
             acc.max(f.offset + size)
@@ -2793,7 +2737,6 @@ fn generate_domain_recursive(
         };
         ts.extend(quote::quote! {
             impl #domain_ident {
-                /// Encode this domain object into a byte buffer.
                 pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
                     #encode_body
                 }
@@ -2837,7 +2780,7 @@ fn generate_decoder_display(
         let end_off = f.offset + f.field_type.size();
         let end_off_lit = syn::LitInt::new(&end_off.to_string(), proc_macro2::Span::call_site());
         // Only touch wire when the field's full range is in-buffer — Display must
-        // not panic on truncated / invalid SBE (todo 73 + ops 3am debugging).
+        // not panic on truncated / invalid SBE.
         let in_bounds = quote::quote! {
             self.pos.saturating_add(#end_off_lit) <= self.buf.len()
                 && #end_off_lit <= self.acting_block_length
@@ -3219,7 +3162,6 @@ fn generate_group_decoder(
         }
     });
 
-    // Iterator implementation
     if total_tail == 0 {
         ts.extend(quote::quote! {
             impl<'a> Iterator for #decoder_ident<'a> {
@@ -3273,13 +3215,12 @@ fn generate_group_decoder(
         });
     }
 
-    // EntryDecoder struct fields and methods
     let mut entry_body = proc_macro2::TokenStream::new();
 
     // wrap() method header. Entries with tail components carry a one-shot
     // tail-end cache: the group iterator computes the entry extent to
     // advance, and var-data accessors reuse it instead of re-reading the
-    // length header (todo 110, re-opened 2026-07-17).
+    // length header.
     if total_tail == 0 {
         entry_body.extend(quote::quote! {
             pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
@@ -3300,7 +3241,6 @@ fn generate_group_decoder(
         });
     }
 
-    // Fields of group entry
     for f in &g.fields {
         let f_name = to_snake_case(&f.name);
         // In converter mode, Decimal-composite-backed raw entry accessors are
@@ -3429,7 +3369,6 @@ fn generate_group_decoder(
                     }
                 });
 
-                // Eager copy accessor (_value)
                 let as_struct_ident =
                     syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
                 entry_body.extend(quote::quote! {
@@ -3529,7 +3468,6 @@ fn generate_group_decoder(
         entry_body.extend(fconsts_ts);
     }
 
-    // Entry decoder tail offsets
     entry_body.extend(quote::quote! {
         #[inline]
         fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -3632,7 +3570,6 @@ fn generate_group_decoder(
         ng_idx += 1;
     }
 
-    // Var data accessors
     let mut nvd_idx = g.groups.len();
     for vd in &g.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
@@ -3718,7 +3655,6 @@ fn generate_group_decoder(
         });
     }
 
-    // EntryDecoder Display impl body
     let mut entry_display_body = proc_macro2::TokenStream::new();
     let mut entry_display_out_idx = 0usize;
     for f in &g.fields {
@@ -3794,7 +3730,6 @@ fn generate_group_decoder(
         });
         entry_display_out_idx += 1;
     }
-    // Entry nested groups in Display
     for ng in &g.groups {
         let ng_snake = to_snake_case(&ng.name);
         let ng_ident = syn::Ident::new(&ng_snake, proc_macro2::Span::call_site());
@@ -3802,7 +3737,6 @@ fn generate_group_decoder(
         let fmt_open = format!("{sep}{}: [", ng.name);
         let ng_total_tail = ng.groups.len() + ng.var_data.len();
         if ng_total_tail == 0 {
-            // Fixed-entry nested group: entries are infallible
             entry_display_body.extend(quote::quote! {
                 write!(f, #fmt_open)?;
                 if let Ok(ng_decoder) = self.#ng_ident() {
@@ -3832,7 +3766,6 @@ fn generate_group_decoder(
         entry_display_out_idx += 1;
     }
 
-    // Emit the EntryDecoder struct + its impl block + Display impl
     if let Some(ref desc) = g.description {
         ts.extend(doc_attr_tokens(desc));
     }
@@ -3852,7 +3785,7 @@ fn generate_group_decoder(
                 pos: usize,
                 acting_version: u16,
                 acting_block_length: usize,
-                /// One-shot entry-extent cache (todo 110): filled by
+                /// One-shot entry-extent cache: filled by
                 /// `encoded_length`, reused by the last var-data accessor.
                 tail_end: core::cell::Cell<Option<usize>>,
             }
@@ -3980,7 +3913,6 @@ fn generate_conversion_impl_blocks(
     });
 
     if has_bool_conv {
-        // Find the BooleanType enum name (may be scoped per-schema)
         let bt_name = elements
             .enums
             .iter()
@@ -4123,7 +4055,6 @@ fn generate_converter_impls(
         let wire_setter = syn::Ident::new(&format!("{field_snake}_wire"), span);
 
         if let Some(dt) = domain_type_path {
-            // Concrete methods using the configured domain type
             let dt_ty: syn::Type =
                 syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
             let domain_ident = syn::Ident::new(&field_snake, span);
@@ -4148,7 +4079,6 @@ fn generate_converter_impls(
                 }
             });
         } else {
-            // Generic *_as / *_from methods
             let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
             let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
 
@@ -4342,7 +4272,6 @@ fn field_type_ident(ft: &FieldType, span: proc_macro2::Span) -> syn::Type {
     }
 }
 
-/// Generate the raw fixed writer impl block with field setters and finish_unchecked.
 fn generate_raw_fixed_impls(
     msg: &MessageStructure,
     raw_name: &syn::Ident,
@@ -4456,7 +4385,6 @@ fn generate_encoded_length_builder(
     let block_length_lit = syn::LitInt::new(&block_length.to_string(), span);
 
     if is_entry_level {
-        // ── Entry-level builder (flat, &mut self methods) ──
         ts.extend(quote::quote! {
             #[must_use = "length builder tracks entry sizes"]
             pub struct #prefix_ident {
@@ -4492,7 +4420,6 @@ fn generate_encoded_length_builder(
             }
         });
 
-        // Nested-group methods on the entry-level builder
         for (gi, ng) in groups.iter().enumerate() {
             let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
             let ng_snake_unknown =
@@ -4602,7 +4529,6 @@ fn generate_encoded_length_builder(
             });
         }
     } else {
-        // ── Message-level builder (staged, consumes self) ──
         let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
 
         // Tail field names in wire order (groups then var-data)
@@ -4612,7 +4538,6 @@ fn generate_encoded_length_builder(
             .chain(var_data.iter().map(|vd| to_pascal_case(&vd.name)))
             .collect();
 
-        // Stage struct names
         let mut stage_idents = vec![prefix_ident.clone()];
         for (i, field) in tail_pascal.iter().enumerate() {
             if i < total_tail - 1 {
@@ -4652,7 +4577,6 @@ fn generate_encoded_length_builder(
             }
         });
 
-        // ── Group transition methods ──
         let mut tail_idx = 0usize;
         for (gi, g) in groups.iter().enumerate() {
             let current_stage = &stage_idents[tail_idx];
@@ -4700,7 +4624,6 @@ fn generate_encoded_length_builder(
             } else {
                 ts.extend(quote::quote! {
                 impl #current_stage {
-                    /// Encode this group with a known entry count.
                     #[must_use]
                     pub fn #g_snake<F>(
                         self, count: #count_ty, f: F,
@@ -4734,7 +4657,6 @@ fn generate_encoded_length_builder(
 
             ts.extend(quote::quote! {
                 impl #current_stage {
-                    /// Encode this group without knowing the count up front.
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
                         self, f: F,
@@ -4768,7 +4690,6 @@ fn generate_encoded_length_builder(
             tail_idx += 1;
         }
 
-        // ── Var-data transition methods ──
         for vd in var_data {
             let current_stage = &stage_idents[tail_idx];
             let next_stage = &stage_idents[tail_idx + 1];
@@ -4816,7 +4737,6 @@ fn generate_encoded_length_builder(
             tail_idx += 1;
         }
 
-        // ── Complete stage ──
         let complete_ident = &stage_idents[total_tail];
         ts.extend(quote::quote! {
             impl #complete_ident {
@@ -4832,7 +4752,6 @@ fn generate_encoded_length_builder(
         });
     }
 
-    // ── Recursively generate nested entry-level builders ──
     for (gi, g) in groups.iter().enumerate() {
         let scoped_name = &scoped_group_names[gi];
         let nested_group_names: Vec<String> = g
@@ -4935,7 +4854,6 @@ fn generate_message_encoder(
         .map(|b| syn::LitInt::new(&b.to_string(), span))
         .collect();
 
-    // Helper literals
     let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
     let block_length_lit = syn::LitInt::new(&block_length.to_string(), span);
     let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), span);
@@ -4947,7 +4865,6 @@ fn generate_message_encoder(
 
     let mut ts = proc_macro2::TokenStream::new();
 
-    // ── Compute tail field names in wire order (groups then var-data) ──
     let tail_pascal: Vec<String> = msg
         .groups
         .iter()
@@ -4955,11 +4872,6 @@ fn generate_message_encoder(
         .chain(msg.var_data.iter().map(|vd| to_pascal_case(&vd.name)))
         .collect();
 
-    // ── Stage struct names ──
-    // Stage 0 = initial (#name_encoder_ident). After each tail field, a new
-    // concrete struct (e.g. CarEncoderAfterFuelFigures). Final = Complete.
-    // This gives compile-time ordering: each struct only has the transition
-    // for its stage; you can't call asks() before bids() — different type.
     let stage_idents: Vec<syn::Ident> = if total_tail > 0 {
         let mut stages = vec![name_encoder_ident.clone()];
         for (i, field) in tail_pascal.iter().enumerate() {
@@ -4974,8 +4886,6 @@ fn generate_message_encoder(
         vec![name_encoder_ident.clone()]
     };
 
-    // ── Generate all stage struct definitions (identical layout, non-generic) ──
-    // Emit encoder struct doc from the message's XML description.
     if let Some(ref desc) = msg.description {
         ts.extend(doc_attr_tokens(desc));
     }
@@ -5021,12 +4931,8 @@ fn generate_message_encoder(
         });
     }
 
-    // ── Shared impl block ──
-    // Constants, HEADER_TEMPLATE, wrap(), wrap_and_apply_header(), field
-    // setters, encoded_length() all live on the INITIAL struct only.
     let mut impl_contents = proc_macro2::TokenStream::new();
 
-    // Constants
     if is_fixed {
         impl_contents.extend(quote::quote! {
             pub const SCHEMA_ID: u16 = #schema_id_lit;
@@ -5077,8 +4983,6 @@ fn generate_message_encoder(
         if !encoded_len_gen.standalone.is_empty() {
             let el_ident = syn::Ident::new(&format!("{name}EncodedLength"), span);
             impl_contents.extend(quote::quote! {
-                /// Return a staged length builder for computing the exact
-                /// encoded size before allocation.
                 #[inline]
                 pub const fn compute_length() -> #el_ident {
                     #el_ident::new()
@@ -5203,7 +5107,6 @@ fn generate_message_encoder(
         }
     }
 
-    // ── Field setters ──
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
         let body_offset = header_size + f.offset;
@@ -5218,7 +5121,6 @@ fn generate_message_encoder(
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
                 if f.presence == Presence::Constant {
-                    // Constant fields have no setter
                     continue;
                 }
                 let prim_size = prim.size();
@@ -5299,7 +5201,6 @@ fn generate_message_encoder(
                 encoding_type,
             } => {
                 if f.presence == Presence::Constant {
-                    // Constant enum fields have no setter
                     continue;
                 }
                 let target_type: syn::Type = syn::parse_str(&to_pascal_case(enum_name)).unwrap();
@@ -5350,7 +5251,6 @@ fn generate_message_encoder(
     // Encoded-length support: strategy-classified (computed above).
     impl_contents.extend(encoded_len_gen.encoder_impl.clone());
 
-    // ── FixedFields value struct ──
     // A complete, owned, latest-version snapshot of every required fixed
     // field. Optional fields are `Option<T>`; constants are excluded.
     // No `Default` — every required field must be explicitly initialised.
@@ -5387,7 +5287,6 @@ fn generate_message_encoder(
         });
     }
 
-    // ── safe fixed(&FixedFields) — consume encoder, write all fixed fields ──
     {
         let fixed_name = syn::Ident::new(&format!("{name}FixedFields"), span);
         // Build the write block: for each non-constant field, write from the struct.
@@ -5432,9 +5331,6 @@ fn generate_message_encoder(
         });
     }
 
-    // ── raw_fixed() — dedicated consuming writer for manual fixed-field access ──
-    // Individual fixed-field setters are available only on the raw writer.
-    // The only safe transition to tail stages is via `fixed(&FixedFields)`.
     {
         let raw_name = syn::Ident::new(&format!("{name}RawFixedWriter"), span);
         ts.extend(quote::quote! {
@@ -5464,7 +5360,6 @@ fn generate_message_encoder(
         });
     }
 
-    // Close the impl block
     if total_tail > 0 {
         ts.extend(quote::quote! {
             impl<'a> #name_encoder_ident<'a> {
@@ -5479,11 +5374,9 @@ fn generate_message_encoder(
         });
     }
 
-    // ── Tail state transition methods ──
     if total_tail > 0 {
         let mut tail_idx = 0;
 
-        // Group methods
         for g in &msg.groups {
             let current_stage = &stage_idents[tail_idx];
             let next_stage = &stage_idents[tail_idx + 1];
@@ -5573,7 +5466,6 @@ fn generate_message_encoder(
                             }
                             .into());
                         }
-                        // Write dimension template + zero placeholder count.
                         self.buf[self.pos..self.pos + #dim_size_lit]
                             .copy_from_slice(&#g_pascal_enc::GROUP_DIM_TEMPLATE);
                         let count_offset = self.pos + #num_offset_lit;
@@ -5774,7 +5666,6 @@ fn generate_message_encoder(
         });
     }
 
-    // ── Sealed + SbeMessage ──
     if total_tail > 0 {
         ts.extend(quote::quote! {
             impl<'a> sbe_rt::private::Sealed for #name_encoder_ident<'a> {}
@@ -5799,7 +5690,6 @@ fn generate_message_encoder(
         });
     }
 
-    // ── Generate Repeating Groups encoders ──
     let mut group_buf = String::new();
     let enc_group_names: Vec<String> = msg
         .groups
@@ -5858,7 +5748,6 @@ fn generate_message_encoder(
         });
     }
 
-    // ── Standalone encoded-length types (from strategy-based generator) ──
     ts.extend(encoded_len_gen.standalone);
 
     ts
@@ -5903,7 +5792,6 @@ fn generate_group_encoder(
         .collect();
     let to_endian = syn::Ident::new(&format!("to_{order_suffix}_bytes"), span);
 
-    // Build nullification for add() body (inline, uses self.buf)
     let mut null_stmts = proc_macro2::TokenStream::new();
     for f in &g.fields {
         if f.presence == Presence::Optional {
@@ -6109,7 +5997,6 @@ fn generate_group_encoder(
         }
     });
 
-    // Field setters
     for f in &g.fields {
         let f_snake = to_snake_case(&f.name);
         // Raw entry setters become *_wire when a conversion is configured.
@@ -6392,20 +6279,17 @@ mod tests {
         assert_eq!(collected[0].path, "common_types.rs");
         assert_eq!(collected[1].path, "market_data.rs");
 
-        // First module has the sbe_rt runtime
         assert!(collected[0].source.contains("pub mod sbe_rt"));
 
         // Second module does NOT have its own sbe_rt (sbe_rt comes via pub use)
         assert!(!collected[1].source.contains("pub mod sbe_rt"));
 
-        // Second module imports from the shared module
         assert!(
             collected[1]
                 .source
                 .contains("pub use super::common_types::*;")
         );
 
-        // Each module contains its own schema metadata
         assert!(collected[0].source.contains("common.sbe"));
         assert!(collected[1].source.contains("market_data.sbe"));
 
@@ -6434,11 +6318,6 @@ mod tests {
         assert!(!collected[1].source.contains("\npub use super::"));
         Ok(())
     }
-
-    // ── partition_tokens defensive-branch coverage ──────────────────
-    // These branches are unreachable through normal XML parsing (the parser
-    // validates token structure before emission). We cover them by calling
-    // partition_tokens directly with crafted invalid token sequences.
 
     use super::{
         SchemaElements, parse_composite_members, parse_field_structure, parse_group_structure,

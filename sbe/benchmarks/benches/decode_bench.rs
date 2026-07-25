@@ -40,8 +40,6 @@ fn replicate_baseline(count: usize) -> Vec<u8> {
     buf
 }
 
-// ── Decode entry point ───────────────────────────────────────────────
-
 fn bench_try_from(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode/try_from");
     group.throughput(Throughput::Bytes(BASELINE.len() as u64));
@@ -53,8 +51,6 @@ fn bench_try_from(c: &mut Criterion) {
     });
     group.finish();
 }
-
-// ── Scalar field access (checked) ───────────────────────────────────
 
 fn bench_field_access_checked(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
@@ -72,8 +68,6 @@ fn bench_field_access_checked(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Scalar field access (safe) ────────────────────────────────────
-
 fn bench_field_access_safe(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
 
@@ -89,8 +83,6 @@ fn bench_field_access_safe(c: &mut Criterion) {
     });
     group.finish();
 }
-
-// ── Group iteration ────────────────────────────────────────────────
 
 fn bench_group_iteration(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode/group");
@@ -113,8 +105,6 @@ fn bench_group_iteration(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Full decode with safe scalar access ───────────────────────────
-
 fn bench_full_decode_safe(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode/safe");
     group.throughput(Throughput::Bytes(BASELINE.len() as u64));
@@ -134,8 +124,6 @@ fn bench_full_decode_safe(c: &mut Criterion) {
     });
     group.finish();
 }
-
-// ── Checked vs unchecked comparison ──────────────────────────────
 
 fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
@@ -174,11 +162,6 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
     group.finish();
 }
 
-// ── HFT: tight-loop decode ────────────────────────────────────────
-//
-// Simulates a feed handler: decode 10k messages from a pre-allocated buffer.
-// Each iteration decodes one message and reads a few key fields.
-
 fn bench_hft_tight_loop(c: &mut Criterion) {
     let batch = replicate_baseline(BATCH_SIZE);
     let msg_len = BASELINE.len();
@@ -205,13 +188,6 @@ fn bench_hft_tight_loop(c: &mut Criterion) {
     group.finish();
 }
 
-// ── HFT: fixed-field stride ──────────────────────────────────────
-//
-// Measures latency of striding to fixed-block fields (modelYear,
-// engine.capacity). Tail-group strides (fuelFigures[0].speed) are not
-// random-access in the consuming model (DECISIONS.md §3/§10), so they are
-// not benchmarked here.
-
 fn bench_hft_field_stride(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let engine = car.engine_value();
@@ -230,11 +206,6 @@ fn bench_hft_field_stride(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ── HFT: alloc-free stack buffer ──────────────────────────────────
-//
-// Demonstrates that the decoder operates entirely on a stack-allocated
-// buffer with no heap allocation.
 
 fn bench_hft_alloc_free(c: &mut Criterion) {
     // Stack buffer containing the baseline message.
@@ -259,8 +230,6 @@ fn bench_hft_alloc_free(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ── Display / debug_wire / skip ─────────────────────────────────────
 
 fn bench_display(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();

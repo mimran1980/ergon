@@ -1680,7 +1680,7 @@ pub struct FuelFiguresEntryDecoder<'a> {
     pos: usize,
     acting_version: u16,
     acting_block_length: usize,
-    /// One-shot entry-extent cache (todo 110): filled by
+    /// One-shot entry-extent cache: filled by
     /// `encoded_length`, reused by the last var-data accessor.
     tail_end: core::cell::Cell<Option<usize>>,
 }
@@ -2186,7 +2186,7 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     pos: usize,
     acting_version: u16,
     acting_block_length: usize,
-    /// One-shot entry-extent cache (todo 110): filled by
+    /// One-shot entry-extent cache: filled by
     /// `encoded_length`, reused by the last var-data accessor.
     tail_end: core::cell::Cell<Option<usize>>,
 }
@@ -3368,7 +3368,6 @@ impl<'a> From<FuelFiguresEntryDecoder<'a>> for CarFuelFiguresEntryDomain {
     }
 }
 impl CarFuelFiguresEntryDomain {
-    /// Encode this entry into a group entry encoder.
     pub fn encode_into<'a>(
         &self,
         enc: &mut FuelFiguresEntryEncoder<'a>,
@@ -3426,7 +3425,6 @@ for CarPerformanceFiguresEntryAccelerationEntryDomain {
     }
 }
 impl CarPerformanceFiguresEntryAccelerationEntryDomain {
-    /// Encode this entry into a group entry encoder.
     pub fn encode_into<'a>(
         &self,
         enc: &mut PerformanceFiguresAccelerationEntryEncoder<'a>,
@@ -3478,7 +3476,6 @@ impl<'a> From<PerformanceFiguresEntryDecoder<'a>> for CarPerformanceFiguresEntry
     }
 }
 impl CarPerformanceFiguresEntryDomain {
-    /// Encode this entry into a group entry encoder.
     pub fn encode_into<'a>(
         &self,
         enc: &mut PerformanceFiguresEntryEncoder<'a>,
@@ -3572,7 +3569,6 @@ impl<'a> From<CarDecoder<'a>> for CarDomain {
     }
 }
 impl CarDomain {
-    /// Encode this domain object into a byte buffer.
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0)?;
         enc.serial_number(self.serial_number);
@@ -3872,8 +3868,6 @@ impl<'a> CarEncoder<'a> {
     ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
-    /// Return a staged length builder for computing the exact
-    /// encoded size before allocation.
     #[inline]
     pub const fn compute_length() -> CarEncodedLength {
         CarEncodedLength::new()
@@ -5955,7 +5949,6 @@ pub mod prelude {
 pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
     buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
 }
-/// Write `N` bytes from `bytes` into `buf` at `offset`.
 #[inline]
 pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
     buf[offset..offset + N].copy_from_slice(bytes);

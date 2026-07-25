@@ -24,8 +24,6 @@ fn binance_schema() -> PathBuf {
     ))
 }
 
-// ── Car: domain with all field types ────────────────────────────────────
-
 #[test]
 fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_dom_all");
@@ -101,8 +99,6 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Car: domain Clone + PartialEq + Debug ───────────────────────────────
-
 #[test]
 fn car_domain_clone_eq_debug() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_dom_clone");
@@ -136,8 +132,6 @@ fn car_domain_clone_eq_debug() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Car: domain with empty groups ───────────────────────────────────────
-
 #[test]
 fn car_domain_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_dom_empty");
@@ -169,8 +163,6 @@ fn car_domain_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// ── L3: domain with nested groups + var-data ────────────────────────────
 
 #[test]
 fn l3_domain_nested_groups_vardata() -> Result<(), Box<dyn std::error::Error>> {
@@ -248,8 +240,6 @@ fn l3_domain_nested_groups_vardata() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── L3: domain with 12 orders per level ─────────────────────────────────
-
 #[test]
 fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3_dom_12");
@@ -292,8 +282,6 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── L3: compute_encoded_length matches actual ───────────────────────────
-
 #[test]
 fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&l3_schema(), "l3_len");
@@ -319,8 +307,6 @@ fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>>
 
     Ok(())
 }
-
-// ── Binance: DepthResponse domain (scalars + 2 groups, no var-data) ─────
 
 #[test]
 fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
@@ -365,8 +351,6 @@ fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// ── serde: Serialize/Deserialize round-trip on a domain object ─────────
 
 #[test]
 fn car_serde_round_trip() -> Result<(), Box<dyn std::error::Error>> {
@@ -488,11 +472,9 @@ fn car_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert!(complete.encoded_length_with_header() > 0);
         let flyweight_bytes = complete.as_bytes().to_vec();
 
-        // Decode to domain
         let dec = CarDecoder::try_from(&flyweight_bytes[..]).unwrap();
         let d: CarDomain = dec.into();
 
-        // Encode from domain back to bytes
         let mut buf2 = vec![0u8; 512];
         let n = d.encode(&mut buf2).unwrap();
         assert_eq!(&buf2[..n], &flyweight_bytes[..],
@@ -518,12 +500,10 @@ fn l3_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         src.contains("pub fn encode_into"),
         "L3 entry domain must have encode_into method"
     );
-    // Verify the generated source compiles (implicit by generation)
     compile_and_run(
         "l3_enc_rt",
         &src,
         r#"
-        // Source compiles and encode/encode_into exist
     "#,
     );
     Ok(())
@@ -538,7 +518,6 @@ fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = vec![0u8; 1024];
-        // Encode a full car into domain
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1).model_year(2000).available_bool(false).code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
@@ -555,11 +534,9 @@ fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
         let dec = CarDecoder::try_from(&fb[..]).unwrap();
         let d: CarDomain = dec.into();
 
-        // Buffer large enough
         let mut ok_buf = vec![0u8; 512];
         assert!(d.encode(&mut ok_buf).is_ok());
 
-        // Buffer definitely too short
         let mut tiny_buf = [0u8; 8];
         let err = d.encode(&mut tiny_buf);
         assert!(err.is_err(), "encode into 8-byte buffer must fail");

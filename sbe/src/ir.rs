@@ -139,7 +139,7 @@ pub struct Encoding {
     pub time_unit: Option<String>,
     /// Whether this token's wire size is variable; used for var-data composites.
     pub is_variable_length: bool,
-    /// Whether this element is deprecated.
+    /// Whether this type or field is marked as deprecated in the schema.
     pub deprecated: bool,
 }
 

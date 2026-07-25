@@ -18,8 +18,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// ── Counting allocator ──────────────────────────────────────────────
-
 static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
 static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
 
@@ -42,8 +40,6 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-// ── Guard ───────────────────────────────────────────────────────────
-
 struct AllocGuard {
     start_alloc: u64,
 }
@@ -59,8 +55,6 @@ impl AllocGuard {
         ALLOC_COUNT.load(Ordering::Relaxed) - self.start_alloc
     }
 }
-
-// ── Generated code ──────────────────────────────────────────────────
 
 #[allow(
     clippy::absurd_extreme_comparisons,
@@ -91,19 +85,14 @@ mod generated {
 }
 use generated::*;
 
-// ── Fixture ─────────────────────────────────────────────────────────
-
 static BASELINE: &[u8] = include_bytes!("fixtures/car_example_baseline_data.sbe");
 
-// ── Warm-up helper ──────────────────────────────────────────────────
-//
 // Call each code path once to settle lazy-inits (thread-locals,
 // std-internal statics, etc.) before snapshotting.
 // Tests using this MUST run with --test-threads=1 because the counting
 // allocator is global and parallel tests would race.
 
 fn warm_up_all() {
-    // Decode
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let _sn = car.serial_number();
     let _my = car.model_year();
@@ -133,7 +122,6 @@ fn warm_up_all() {
     let msg = AnyMessage::decode_frame(BASELINE, 0, BASELINE.len()).unwrap();
     let _ = black_box(msg);
 
-    // Encode
     let mut buf = [0u8; 512];
     let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0);
     enc.serial_number(1234);
@@ -151,7 +139,6 @@ fn warm_up_all() {
 }
 
 // ── Consuming stage decode path (DECISIONS.md §3) ──────────────────
-//
 // Warm + measure the new sequential decoder stages: into_<group> -> iterate
 // -> finish -> into_<vd> -> complete. Must allocate nothing.// ── Decode entrypoint ───────────────────────────────────────────────
 
@@ -170,8 +157,6 @@ fn decode_entrypoint_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// ── Raw scalar accessor ─────────────────────────────────────────────
 
 #[test]
 fn raw_scalar_accessor_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
@@ -194,8 +179,6 @@ fn raw_scalar_accessor_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Group iteration ─────────────────────────────────────────────────
-
 #[test]
 fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_all();
@@ -217,9 +200,6 @@ fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// ── Frame cursor decode ─────────────────────────────────────────────
-// ── Encode into caller buffer ───────────────────────────────────────
 
 #[test]
 fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
@@ -252,8 +232,6 @@ fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-// ── Length builder zero allocation (Task 8 Step 12) ─────────────────
-
 #[test]
 fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     warm_up_all();
@@ -282,7 +260,6 @@ fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>>
     );
     Ok(())
 }
-// ── Var-data decode ─────────────────────────────────────────────────
 
 #[test]
 fn vardata_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {

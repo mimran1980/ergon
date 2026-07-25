@@ -25,8 +25,6 @@ use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_mai
 #[path = "_common.rs"]
 mod common;
 
-// ── Encode helpers ──────────────────────────────────────────────────
-
 /// Encode a full Car message using the **checked** API.
 /// Returns the total encoded length (header + body).
 fn encode_checked(buf: &mut [u8]) -> usize {
@@ -177,8 +175,6 @@ fn encode_full(buf: &mut [u8]) -> usize {
     let encoded = car.activation_code(b"abcdef").unwrap();
     encoded.encoded_length_with_header()
 }
-
-// ── Benchmarks ─────────────────────────────────────────────────────
 
 fn bench_encode_checked(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode/checked");

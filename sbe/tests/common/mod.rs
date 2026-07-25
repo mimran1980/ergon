@@ -19,8 +19,6 @@ use std::process::Command;
 
 use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
 
-// ── Schema & fixture path resolution ──────────────────────────────────
-
 pub struct Paths;
 
 impl Paths {
@@ -31,7 +29,6 @@ impl Paths {
                 return ancestor.to_path_buf();
             }
         }
-        // Fallback: running from crate dir
         let fallback = PathBuf::from("../..");
         if fallback.join("Cargo.toml").exists() {
             return fallback;
@@ -129,9 +126,6 @@ impl Paths {
     }
 }
 
-// ── Code generation helpers ──────────────────────────────────────────
-
-/// Parse a schema XML file and generate `ergon` Rust source.
 pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
@@ -149,11 +143,6 @@ pub fn assert_source_ok(src: &str, expected: &[&str]) {
     }
 }
 
-// ── Known codegen bug patches ───────────────────────────────────────
-//
-// Each patch corresponds to a codegen bug that will be fixed in a
-// separate PR.  Remove patches as their upstream fixes land.
-
 /// Apply surgical patches for known codegen bugs.
 pub fn patch_source(src: &str) -> String {
     // no patches needed currently; if a new codegen bug requires patching, add the patch here and record the bug; delete this function if it stays empty two releases
@@ -161,8 +150,6 @@ pub fn patch_source(src: &str) -> String {
     // Message encoders take `mut self` by value so no borrow conflict.
     src.to_string()
 }
-
-// ── Compile and run generated code ───────────────────────────────────
 
 /// Write generated source + a `main()` test body into a temp crate, compile,
 /// and run.  `code` is placed directly inside `main()`.
@@ -172,7 +159,7 @@ pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
 
 /// Negative-proof helper: write generated source + a `main()` body into a temp
 /// crate and assert that it FAILS to compile. Used for compile-fail API proofs
-/// (DECISIONS.md §11 / todo 137): out-of-order tail access, reused consumed
+/// (DECISIONS.md §11 /): out-of-order tail access, reused consumed
 /// stages, etc. `code` is placed directly inside `main()`.
 pub fn compile_fails(module_name: &str, source: &str, code: &str) {
     let dir = std::env::temp_dir().join(format!("ergo_test_cf_{module_name}"));
@@ -343,7 +330,6 @@ pub fn compile_and_run_two_modules(
     }
 }
 
-/// Generate with domain objects enabled.
 pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);

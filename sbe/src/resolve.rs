@@ -146,7 +146,6 @@ impl ResolveError {
 pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveError> {
     let src = source.map(|s| miette::NamedSource::new("schema.xml", s.to_owned()));
 
-    // 1. Validate no duplicate template IDs.
     {
         let mut seen_ids: std::collections::HashMap<u16, &str> = std::collections::HashMap::new();
         for token in &ir.tokens {
@@ -166,7 +165,6 @@ pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveEr
         }
     }
 
-    // 2. Validate that no token has a since_version exceeding the schema version.
     for token in &ir.tokens {
         let sv = token.encoding.since_version;
         if sv > ir.version {
@@ -180,7 +178,6 @@ pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveEr
         }
     }
 
-    // 3. Fill in default null/min/max values for all primitive encodings in the tokens.
     for token in &mut ir.tokens {
         if let Some(prim) = token.encoding.primitive_type {
             if token.encoding.null_value.is_none() {
@@ -195,7 +192,6 @@ pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveEr
         }
     }
 
-    // 4. Resolve offsets and block lengths for all composites and messages.
     let mut i = 0;
     while i < ir.tokens.len() {
         match ir.tokens[i].signal {
@@ -235,7 +231,6 @@ fn find_matching_end(tokens: &[Token], start: usize, begin: Signal, end: Signal)
     tokens.len() - 1
 }
 
-/// Helper to get size of a type block.
 fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
     match tokens[start].signal {
         Signal::BeginField => {
@@ -260,7 +255,6 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
                 }
                 (size, end_idx + 1)
             } else {
-                // Primitive field
                 let count = tokens[start].encoding.length.unwrap_or(1);
                 let size = tokens[start]
                     .encoding
@@ -317,7 +311,6 @@ fn resolve_composite_offsets(
     while i < end_limit {
         let (size, next_i) = get_token_block_size(tokens, i);
 
-        // Resolve offset
         let resolved_offset = if let Some(off) = tokens[i].encoding.offset {
             off
         } else {
@@ -345,7 +338,6 @@ fn resolve_composite_offsets(
         i = next_i;
     }
 
-    // Set total block length/size on BeginComposite
     let composite_size = current_offset;
     tokens[0].encoding.offset = Some(composite_size);
     Ok(())
@@ -379,7 +371,6 @@ fn resolve_message_offsets(
 
         let (size, next_i) = get_token_block_size(tokens, i);
 
-        // Resolve offset
         let resolved_offset = if let Some(off) = tokens[i].encoding.offset {
             off
         } else {
@@ -391,7 +382,6 @@ fn resolve_message_offsets(
         i = next_i;
     }
 
-    // Set total block length/size on BeginMessage
     let block_length = current_offset;
     tokens[0].encoding.offset = Some(block_length);
     Ok(())
@@ -531,8 +521,6 @@ mod tests {
         .unwrap()
     }
 
-    // ── Error paths ──────────────────────────────────────────────────
-
     #[test]
     fn duplicate_template_id_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let result = crate::parse(
@@ -552,7 +540,6 @@ mod tests {
     #[test]
     fn since_version_beyond_schema_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let mut ir = minimal_schema();
-        // Bump a token's since_version above schema version 0
         ir.tokens[5].encoding.since_version = 5;
         let result = resolve_schema(&mut ir, None);
         assert!(matches!(
@@ -582,8 +569,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── default_null / min / max ─────────────────────────────────────
 
     #[test]
     fn default_null_all_primitives() -> Result<(), Box<dyn std::error::Error>> {
@@ -645,13 +630,10 @@ mod tests {
         Ok(())
     }
 
-    // ── Offset resolution ────────────────────────────────────────────
-
     #[test]
     fn composite_offsets_assigned_sequentially() -> Result<(), Box<dyn std::error::Error>> {
         let mut ir = minimal_schema();
         resolve_schema(&mut ir, None).unwrap();
-        // Find the messageHeader composite
         let hdr = ir
             .tokens
             .iter()
@@ -667,7 +649,6 @@ mod tests {
     fn message_offsets_assigned_correctly() -> Result<(), Box<dyn std::error::Error>> {
         let mut ir = minimal_schema();
         resolve_schema(&mut ir, None).unwrap();
-        // Find BeginMessage token for message A
         let msg = ir
             .tokens
             .iter()
@@ -700,8 +681,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Group/var-data offset resolution ─────────────────────────────
-
     #[test]
     fn group_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
@@ -722,7 +701,6 @@ mod tests {
         ).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
-        // Group entry fields should have sequential offsets
         let a = ir.tokens.iter().find(|t| t.name == "a").unwrap();
         assert_eq!(a.encoding.offset, Some(0));
         let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
@@ -757,8 +735,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Enum/set block sizes ─────────────────────────────────────────
 
     #[test]
     fn enum_block_size_calculated() -> Result<(), Box<dyn std::error::Error>> {
@@ -809,8 +785,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Constant field handling ──────────────────────────────────────
-
     #[test]
     fn constant_field_does_not_affect_block_length() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
@@ -834,8 +808,6 @@ mod tests {
         assert_eq!(msg.encoding.offset, Some(4));
         Ok(())
     }
-
-    // ── Nested composite in message ──────────────────────────────────
 
     #[test]
     fn nested_composite_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
@@ -861,8 +833,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Error Display and take_source_code ───────────────────────────
 
     #[test]
     fn take_source_code_from_duplicate_template_id() -> Result<(), Box<dyn std::error::Error>> {
@@ -972,8 +942,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Fixed-size array in message ──────────────────────────────────
-
     #[test]
     fn fixed_array_field_offset() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
@@ -999,8 +967,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Nested group within group ────────────────────────────────────
-
     #[test]
     fn nested_group_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
         let ir = crate::parse(
@@ -1022,14 +988,11 @@ mod tests {
         ).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
-        // Inner group field should be resolved
         let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
         assert_eq!(b.encoding.offset, Some(0));
 
         Ok(())
     }
-
-    // ── Edge cases for 100% line/branch coverage ─────────────────────
 
     #[test]
     fn begin_message_without_id_skips_duplicate_check() -> Result<(), Box<dyn std::error::Error>> {
@@ -1140,7 +1103,6 @@ mod tests {
         let src: Option<miette::NamedSource<String>> = None;
         let result = resolve_group_offsets(&mut tokens, &src);
         assert!(result.is_ok());
-        // Field should still get an offset
         assert_eq!(tokens[1].encoding.offset, Some(0));
 
         Ok(())

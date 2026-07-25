@@ -19,8 +19,6 @@ use common::{Paths, generate, patch_source};
 use std::fs;
 use std::process::Command;
 
-// ── Helper: compile generated code and run proptest in a temp crate ─────
-
 /// Like `compile_and_run` but creates a proper crate with `proptest` as a
 /// dev-dependency so that the test code can use the `proptest!` macro.
 ///
@@ -36,7 +34,6 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
     let src_dir = dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
 
-    // Write the generated + patched module
     let patched = patch_source(source);
     let module_path = format!("{module_name}.rs");
     fs::write(src_dir.join(&module_path), &patched)
@@ -46,7 +43,6 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
     let lib = format!("mod {module_name};\npub use {module_name}::*;\n");
     fs::write(src_dir.join("lib.rs"), &lib).unwrap();
 
-    // Test file (integration test, compiled with proptest dev-dep)
     let tests_dir = dir.join("tests");
     fs::create_dir_all(&tests_dir).unwrap();
     fs::write(tests_dir.join("roundtrip.rs"), test_code).unwrap();
@@ -83,8 +79,6 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
         );
     }
 }
-
-// ── Round-trip tests ───────────────────────────────────────────────────
 
 /// Test 1 — random scalars + Engine composite.
 ///
@@ -157,7 +151,6 @@ proptest! {
         prop_assert_eq!(engine.num_cylinders(), de.num_cylinders());
         prop_assert_eq!(engine.manufacturer_code(), de.manufacturer_code());
 
-        // Constant fields always round-trip
         prop_assert_eq!(9000_u16, de.max_rpm());
         prop_assert_eq!("Petrol", de.fuel());
         prop_assert_eq!(Model::C, decoded.discounted_model());

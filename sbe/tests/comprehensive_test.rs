@@ -13,8 +13,6 @@ use common::{Paths, compile_and_run, generate, run_fixture_test};
 
 const MODULE: &str = "car_example";
 
-// ── todo 02: composite/enum/set wire parity ───────────────────────────
-
 #[test]
 fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "enum_rt");
@@ -25,7 +23,6 @@ fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = vec![0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
-        // Test all Model variants
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
@@ -38,7 +35,6 @@ fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
-        // Enum accessors
         assert_eq!(car2.available(), BooleanType::T);
         assert_eq!(car2.code(), Model::A);
         // raw() returns underlying integer
@@ -46,9 +42,7 @@ fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         // from_raw
         assert_eq!(BooleanType::from_raw(1), BooleanType::T);
         assert_eq!(BooleanType::from_raw(0), BooleanType::F);
-        // Unknown discriminant maps to NullVal
         assert!(matches!(BooleanType::from_raw(99), BooleanType::NullVal));
-        // Constant enum
         assert_eq!(car2.discounted_model(), Model::C);
     "#,
     );
@@ -68,7 +62,6 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        // Set with all bits
         let mut extras = OptionalExtras::default();
         extras.set_cruise_control(true);
         extras.set_sports_pack(true);
@@ -94,7 +87,6 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── todo 03: group/var-data wire parity ───────────────────────────────
 #[test]
 fn vardata_empty_and_max_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "vd_edge");
@@ -140,8 +132,6 @@ fn vardata_empty_and_max_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── todo 01: scalar wire parity ───────────────────────────────────────
-
 #[test]
 fn all_scalar_accessor_paths() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "scalar_paths");
@@ -164,18 +154,14 @@ fn all_scalar_accessor_paths() -> Result<(), Box<dyn std::error::Error>> {
         let encoded = car.as_bytes();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
-        // Safe path: scalars return T directly (infallible)
         assert_eq!(car2.serial_number(), 1234u64);
         assert_eq!(car2.model_year(), 2013u16);
-        // Safe path for scalars
         assert_eq!(car2.serial_number(), 1234u64);
     "#,
     );
 
     Ok(())
 }
-
-// ── todo 58: boolean support ──────────────────────────────────────────
 
 #[test]
 fn boolean_field_from_bool_impl() -> Result<(), Box<dyn std::error::Error>> {
@@ -199,7 +185,6 @@ fn boolean_field_from_bool_impl() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Encode `available` via the `_bool()` setter, decode via the `_bool()` getter.
 #[test]
 fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "bool_roundtrip");
@@ -209,7 +194,6 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         r#"
         let mut buf = vec![0u8; 256];
 
-        // Encode with _bool(true), complete all stages
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(42); car.model_year(2013);
         car.available_bool(true); car.code(Model::A);
@@ -227,7 +211,6 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         assert!(dec.available_bool(), "expected true from _bool()");
         assert_eq!(dec.available(), BooleanType::T, "enum getter should also be T");
 
-        // Encode with _bool(false)
         let mut buf2 = vec![0u8; 256];
         let mut car2 = CarEncoder::wrap_and_apply_header(&mut buf2, 0);
         car2.serial_number(42); car2.model_year(2013);
@@ -268,7 +251,6 @@ fn boolean_semantic_type_gating() -> Result<(), Box<dyn std::error::Error>> {
         !src.contains("fn status_bool"),
         "Status (no semanticType) must NOT have _bool getter"
     );
-    // Group-level: ToggleGroup.items.flag (YesNo) gets _bool, mode (Status) does not
     assert!(
         src.contains("fn flag_bool"),
         "entry YesNo should have _bool getter"
@@ -277,21 +259,18 @@ fn boolean_semantic_type_gating() -> Result<(), Box<dyn std::error::Error>> {
         !src.contains("fn mode_bool"),
         "entry Status must NOT have _bool getter"
     );
-    // Compile-and-run: roundtrip via _bool API
     compile_and_run(
         "bool_semantic",
         &src,
         r#"
         let mut buf = vec![0u8; 256];
 
-        // Toggle message: set true via _bool, read back
         let mut enc = ToggleEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.enabled_bool(true).status(Status::Active);
         let dec = ToggleDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         assert!(dec.enabled_bool(), "enabled_bool should return true");
         assert_eq!(dec.status(), Status::Active);
 
-        // False roundtrip
         let mut buf2 = vec![0u8; 256];
         let mut enc2 = ToggleEncoder::wrap_and_apply_header(&mut buf2, 0);
         enc2.enabled_bool(false).status(Status::Inactive);
@@ -317,7 +296,6 @@ fn boolean_nullval_reads_true() -> Result<(), Box<dyn std::error::Error>> {
         r#"
         let mut buf = vec![0u8; 256];
 
-        // Encode available as NullVal, complete all stages
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(42); car.model_year(2013);
         car.available(BooleanType::NullVal); car.code(Model::A);
@@ -332,7 +310,6 @@ fn boolean_nullval_reads_true() -> Result<(), Box<dyn std::error::Error>> {
         let encoded = car.as_bytes();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
-        // NullVal → enum getter returns NullVal
         assert_eq!(dec.available(), BooleanType::NullVal);
         // NullVal → _bool() returns true (raw byte != 0)
         assert!(dec.available_bool(), "NullVal (raw!=0) → _bool() is true");
@@ -341,16 +318,12 @@ fn boolean_nullval_reads_true() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── todo 52: NULL/MIN/MAX constants ───────────────────────────────────
-
 #[test]
 fn null_min_max_constants_match_schema_values() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "consts_val");
-    // Source contains the constants
     assert!(src.contains("SERIAL_NUMBER_NULL"), "missing NULL constant");
     assert!(src.contains("SERIAL_NUMBER_MIN"), "missing MIN constant");
     assert!(src.contains("SERIAL_NUMBER_MAX"), "missing MAX constant");
-    // Compile-and-run: verify constant values match schema definitions
     compile_and_run(
         "consts_val",
         &src,
@@ -369,7 +342,6 @@ fn null_min_max_constants_match_schema_values() -> Result<(), Box<dyn std::error
         assert_eq!(CarDecoder::VEHICLE_CODE_NULL, 0u8);
         assert_eq!(CarDecoder::VEHICLE_CODE_MIN, 32u8);
         assert_eq!(CarDecoder::VEHICLE_CODE_MAX, 126u8);
-        // Enum types get NULL variants
         assert_eq!(CarDecoder::AVAILABLE_NULL, BooleanType::NullVal);
         assert_eq!(CarDecoder::CODE_NULL, Model::NullVal);
         // speed (in group entry) gets NULL/MIN/MAX
@@ -385,8 +357,6 @@ fn null_min_max_constants_match_schema_values() -> Result<(), Box<dyn std::error
 
     Ok(())
 }
-
-// ── todo 60: schema_id fast extract ───────────────────────────────────
 
 #[test]
 fn schema_id_from_header_extracts_correctly() -> Result<(), Box<dyn std::error::Error>> {
@@ -421,9 +391,6 @@ fn schema_id_from_header_extracts_correctly() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-// ── todo 61: Display/Debug impls ──────────────────────────────────────
-// ── todo 66: constant field values ────────────────────────────────────
-
 #[test]
 fn constant_fields_return_correct_values() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "const_fields");
@@ -455,8 +422,6 @@ fn constant_fields_return_correct_values() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-// ── todo 80: schema hash / SHA256 ─────────────────────────────────────
-
 #[test]
 fn schema_constants_present_and_nonzero() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "schema_consts");
@@ -475,10 +440,6 @@ fn schema_constants_present_and_nonzero() -> Result<(), Box<dyn std::error::Erro
 
     Ok(())
 }
-
-// ── todo 03 + 84: encoder roundtrip with groups ───────────────────────
-// ── todo 67 + 94: as_chunks + SoA for fixed-entry groups ─────────────
-// ── todo 69: buffer verify function ───────────────────────────────────
 
 #[test]
 fn verify_function_detects_invalid_messages() -> Result<(), Box<dyn std::error::Error>> {
@@ -500,17 +461,13 @@ fn verify_function_detects_invalid_messages() -> Result<(), Box<dyn std::error::
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
-        // verify() should pass on valid message
         assert!(CarDecoder::verify(encoded).is_ok());
-        // verify() should fail on truncated buffer
         assert!(CarDecoder::verify(&encoded[..5]).is_err());
     "#,
     );
 
     Ok(())
 }
-
-// ── todo 93: float composite skips Eq/Ord/Hash ──────────────────────────
 
 #[test]
 fn float_composite_skips_eq_ord_hash() -> Result<(), Box<dyn std::error::Error>> {
@@ -537,7 +494,6 @@ fn float_composite_skips_eq_ord_hash() -> Result<(), Box<dyn std::error::Error>>
 }
 
 // ── Display / Debug on invalid / truncated SBE (must not panic) ───────
-//
 // Logging `{}` / `{:?}` on codecs is an ops path. Truncated buffers, trusted
 // wrap with short body, and mid-encode encoders must never panic.
 // ── Error path tests (critical for trading system robustness) ──────────
@@ -565,9 +521,7 @@ fn buffer_too_short_truncated_field() -> Result<(), Box<dyn std::error::Error>> 
         // Truncate buffer mid-message — field read should fail
         let truncated = &encoded[..10]; // only header + partial block
         assert!(CarDecoder::verify(truncated).is_err());
-        // Truncated right at header boundary
         assert!(CarDecoder::verify(&encoded[..8]).is_err());
-        // Empty buffer
         assert!(CarDecoder::verify(&[]).is_err());
     "#,
     );
@@ -626,8 +580,6 @@ fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>>
 
     Ok(())
 }
-
-// ── Raw accessor tests (HFT hot-path opts) ─────────────────────────────
 
 #[test]
 fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::error::Error>> {
@@ -696,12 +648,9 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-// ── todo 121: endianness test matrix ──────────────────────────────────
-
 #[test]
 fn all_types_little_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::all_types_le_schema(), "all_types_le");
-    // Verify source compiles and contains expected types
     assert!(src.contains("AllScalars"), "AllScalars composite missing");
     assert!(src.contains("FloatPair"), "FloatPair composite missing");
     assert!(src.contains("TestEnum"), "TestEnum missing");
@@ -711,7 +660,6 @@ fn all_types_little_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>>
     // Check the actual #[derive(...)] line, not doc comments.
     let asc_idx = src.find("pub struct AllScalars").unwrap();
     let asc_pre = &src[asc_idx.saturating_sub(200)..asc_idx];
-    // Extract the #[derive] line if present.
     let asc_derive = asc_pre
         .lines()
         .rev()
@@ -729,7 +677,6 @@ fn all_types_little_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>>
         !asc_derive.contains("Hash"),
         "AllScalars with floats: no Hash"
     );
-    // Float composite should NOT derive Eq/Ord/Hash
     let fp_idx = src.find("pub struct FloatPair").unwrap();
     let fp_pre = &src[fp_idx.saturating_sub(200)..fp_idx];
     let fp_derive = fp_pre
@@ -749,16 +696,13 @@ fn all_types_little_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>>
         !fp_derive.contains("Hash"),
         "FloatPair should NOT derive Hash"
     );
-    // Compile check: types exist and are callable
     compile_and_run(
         "all_types_le",
         &src,
         r#"
-        // Verify enum constants
         assert_eq!(TestEnum::A as u8, 0u8);
         assert_eq!(TestEnum::B as u8, 1u8);
         assert_eq!(TestEnum::C as u8, 2u8);
-        // Verify composite constructors exist
         let s = AllScalars::new(-1i8, 255u8, -2i16, 65535u16,
             -3i32, 4294967295u32, -4i64, 18446744073709551615u64,
             3.14f32, 2.718f64);
@@ -768,12 +712,10 @@ fn all_types_little_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>>
         let f = FloatPair::new(1.5, 2.5);
         assert_eq!(f.x(), 1.5);
         assert_eq!(f.y(), 2.5);
-        // Verify set
         let mut set = TestSet::default();
         set.set_bit1(true);
         assert!(set.bit1());
         assert!(!set.bit0());
-        // Verify enum from_raw + raw roundtrip
         let a = TestEnum::from_raw(0);
         assert_eq!(a.raw(), 0u8);
         let b = TestEnum::from_raw(1);
@@ -810,8 +752,6 @@ fn all_types_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Endianness wire tests ──────────────────────────────────────────────
-
 /// SBE spec §4.1: the message header is ALWAYS little-endian,
 /// regardless of the schema's declared byteOrder. The body fields
 /// follow the schema byteOrder. This test proves both properties.
@@ -829,7 +769,6 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
         "BE schema uses BE accessors"
     );
 
-    // ── LE schema: header IS LE, body IS LE ──
     compile_and_run(
         "endian_le",
         &le_src,
@@ -867,7 +806,6 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
         let u16_val = u16::from_le_bytes(u16_val_bytes);
         assert_eq!(u16_val, 50000u16, "LE body: u16_val should be 50000 in LE bytes");
 
-        // Roundtrip: decode from LE buffer
         let dec = AllTypesDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let s = dec.scalar_composite_value();
         assert_eq!(s.i8_val(), 42i8);
@@ -878,7 +816,6 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
     "#,
     );
 
-    // ── BE schema: header IS STILL LE, body IS BE ──
     compile_and_run(
         "endian_be",
         &be_src,
@@ -908,7 +845,6 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
         let u16_val_le = u16::from_le_bytes(be_bytes);
         assert_ne!(u16_val_le, 50000u16, "BE body: u16_val should NOT be 50000 when read as LE");
 
-        // Roundtrip from BE buffer
         let dec = AllTypesDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let s = dec.scalar_composite_value();
         assert_eq!(s.i8_val(), 42i8);
@@ -949,7 +885,6 @@ fn all_scalars_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         enc.fixed_array([b'A'; 8]);
         let _ = enc.var_data(b"test").unwrap();
 
-        // Roundtrip all scalars through BE codec
         let dec = AllTypesDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let s = dec.scalar_composite_value();
         assert_eq!(s.i8_val(), 42i8);
@@ -968,15 +903,12 @@ fn all_scalars_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-// ── API contract: verify generated public surface is stable ────────────
-
 #[test]
 fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::Error>> {
     // Verify the car example generates a consistent public API surface.
     // Catches accidental codegen changes that break user code.
     let (_schema, src) = generate(&Paths::example_schema(), "api_contract");
 
-    // Core types
     let required_types = &[
         "pub struct CarDecoder",
         "pub struct CarEncoder",
@@ -1002,7 +934,6 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
         assert!(src.contains(t), "missing public type: {t}");
     }
 
-    // Public constants
     let required_consts = &[
         "pub const SCHEMA_HASH",
         "pub const SCHEMA_SHA256",
@@ -1036,7 +967,6 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
         assert!(src.contains(m), "missing decoder method: {m}");
     }
 
-    // Group decoder methods
     assert!(src.contains("fn len"), "missing group len()");
     assert!(src.contains("fn is_empty"), "missing group is_empty()");
     assert!(src.contains("fn nth"), "missing group nth()");
@@ -1061,13 +991,11 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
         "missing Engine::manufacturer_code()"
     );
 
-    // Free functions
     assert!(
         src.contains("pub fn schema_id_from_header"),
         "missing free fn"
     );
 
-    // Null/min/max consts
     assert!(src.contains("SERIAL_NUMBER_NULL"), "missing NULL const");
     assert!(src.contains("SERIAL_NUMBER_MIN"), "missing MIN const");
     assert!(src.contains("SERIAL_NUMBER_MAX"), "missing MAX const");
@@ -1084,8 +1012,6 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
 
     Ok(())
 }
-
-// ── Compatibility mode wiring (todo 65) ────────────────────────────────
 
 #[test]
 fn deterministic_generation_produces_identical_output() -> Result<(), Box<dyn std::error::Error>> {
@@ -1108,9 +1034,6 @@ fn deterministic_generation_produces_identical_output() -> Result<(), Box<dyn st
 
     Ok(())
 }
-
-// ── Display / Debug content assertions for complex types ──────────
-// ── Helpers ───────────────────────────────────────────────────────────
 
 /// Strip `/// ...` doc-comment lines from a source snippet so substring
 /// checks for `Hash`, `Eq`, `Ord` etc. don't false-positive on prose.

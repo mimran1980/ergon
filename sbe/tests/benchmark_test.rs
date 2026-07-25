@@ -1,4 +1,4 @@
-//! Benchmark smoke tests (Item 3 of todo 00).
+//! Benchmark smoke tests (Item 3 of).
 //!
 //! Port of upstream `simple-binary-encoding/rust/benches/car_benchmark.rs`.
 //! The upstream benchmarks use `criterion` on the upstream Rust codegen's
@@ -35,7 +35,6 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
         // to reach the Complete state before as_bytes() is available.
         // We build one Car, then benchmark decode on it.
 
-        // ── Build reference encoded Car, return a Vec so ownership is clean ──
         fn encode_car_vec() -> Vec<u8> {
             let mut buf = vec![0u8; 512];
             let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -78,7 +77,6 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
 
         let encoded = encode_car_vec();
 
-        // ── Timed encode ──
         let encode_start = std::time::Instant::now();
         for _ in 0..50 {
             encode_car_vec();
@@ -86,7 +84,6 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
         let encode_dur = encode_start.elapsed();
         eprintln!("encode 50x: {:?}", encode_dur);
 
-        // ── Timed decode ──
         let decode_start = std::time::Instant::now();
         for _ in 0..50 {
             let car2 = CarDecoder::try_wrap_and_apply_header(&encoded, 0).unwrap();

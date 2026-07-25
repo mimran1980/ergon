@@ -1,4 +1,4 @@
-//! Structural tests for upstream schema edge cases (Items 1 & 2 of todo 00).
+//! Structural tests for upstream schema edge cases (Items 1 & 2 of).
 //!
 //! For each upstream test schema we:
 //! 1. Parse the XML via `generate()`
@@ -18,15 +18,10 @@
 mod common;
 use common::{Paths, assert_source_ok, generate};
 
-// ── Helpers ──────────────────────────────────────────────────────────────
-
-/// Generate code from an sbe-tool test resource and verify structural validity.
 fn assert_tool_schema(name: &str, filename: &str, expected: &[&str]) {
     let (_schema, src) = generate(&Paths::sbe_tool_test_resource(filename), name);
     assert_source_ok(&src, expected);
 }
-
-// ── Item 1: Port key Java test cases ─────────────────────────────────────
 
 /// Schema extension (version 2): Car with `uuid`, `cupHolderCount`, `mpg (sinceVersion=2)`.
 #[test]
@@ -137,8 +132,6 @@ fn issue_972_optional_composite_types_exist() -> Result<(), Box<dyn std::error::
 
     Ok(())
 }
-
-// ── Item 2: Extract XML schemas with edge cases ──────────────────────────
 
 /// Composite elements: enum, set, and nested composite inside a composite.
 /// Note: inline enum/set/composite types (`EnumOne`, `SetOne`, Inner) are
@@ -335,8 +328,6 @@ fn block_length_schema_types_exist() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// ── todo 101: Gap coverage tests ──────────────────────────────────────
 
 /// UTF-16 var-data encoding: verify schema parses and generates valid Rust.
 /// The generated code currently hardcodes `core::str::from_utf8` for var-data

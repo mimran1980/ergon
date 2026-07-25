@@ -1,4 +1,4 @@
-//! Schema documentation provenance tests (reopened todo 87, DECISIONS.md §9).
+//! Schema documentation provenance tests (reopened.md §9).
 //!
 //! Proves every supported documentation source independently through
 //! parser -> IR -> codegen -> generated Rust -> cargo doc:
@@ -19,8 +19,6 @@ mod common;
 use common::{Paths, compile_and_run, generate};
 use std::path::PathBuf;
 use std::process::Command;
-
-// ── Helpers ───────────────────────────────────────────────────────────
 
 /// Extract the rustdoc lines immediately preceding an item in generated source.
 /// Walks backwards from the item offset, skipping blank lines and `#[...]`
@@ -70,8 +68,6 @@ fn assert_doc_on_item(schema_xml: &str, module_name: &str, expected: &str, item_
     );
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────
-
 /// The `schema-docs-all-sources.xml` fixture gives messageHeader all four
 /// documentation sources with unique labels. Prove each source reaches
 /// the generated struct and the merge order is deterministic:
@@ -103,7 +99,6 @@ fn all_four_sources_on_message_header_with_correct_order() -> Result<(), Box<dyn
         "missing xml-comment:header in docs"
     );
 
-    // Verify deterministic merge order.
     let offsets = [
         "attr:header",
         "description-child:header",

@@ -17,8 +17,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-// ── Path helpers ──────────────────────────────────────────────────────
-
 fn workspace_root() -> PathBuf {
     let cwd = std::env::current_dir().unwrap();
     for ancestor in cwd.ancestors() {
@@ -50,7 +48,6 @@ struct SchemaMeta {
     byte_order: String,
 }
 
-/// Parse SBE XML using roxmltree and extract top-level metadata.
 fn parse_xml_meta(xml: &str) -> SchemaMeta {
     let doc = roxmltree::Document::parse(xml).expect("XML must be well-formed");
     let root = doc
@@ -88,10 +85,6 @@ fn parse_xml_meta(xml: &str) -> SchemaMeta {
         byte_order,
     }
 }
-
-// ── Schema metadata assertions ────────────────────────────────────────
-// Each issue schema exercises a specific edge case. The test confirms
-// it is valid XML with the expected SBE attributes.
 
 #[test]
 fn issue435_enum_ref_composite_ref_set_ref() -> Result<(), Box<dyn std::error::Error>> {
@@ -153,7 +146,6 @@ fn issue488_variable_length_data() -> Result<(), Box<dyn std::error::Error>> {
 fn issue496_nested_composites() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("496")).unwrap();
     let meta = parse_xml_meta(&xml);
-    // Note: this file re-uses the issue488 package/id
     assert_eq!(meta.id, 488);
     assert!(xml.contains("compositeOne"), "compositeOne");
     assert!(xml.contains("compositeTwo"), "compositeTwo");
@@ -169,7 +161,6 @@ fn issue505_constant_fields() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(meta.package, "issue505");
     assert_eq!(meta.id, 505);
     assert!(xml.contains("presence=\"constant\""), "constant fields");
-    // Multiple constant field patterns
     assert!(xml.contains(">C<"), "char constant C"); // idSourceOne
     assert!(xml.contains(">D<"), "char constant D"); // idSourceTwo
     assert!(xml.contains(">EF<"), "char constant EF"); // idSourceThree
@@ -223,7 +214,6 @@ fn issue567_invalid_group_dimension() -> Result<(), Box<dyn std::error::Error>> 
     // Our parser should reject this later.
     // Use a targeted regex: the numInGroup type element should lack maxValue.
     assert!(xml.contains("primitiveType=\"uint32\""));
-    // Extract the groupSizeEncoding block
     if let Some(start) = xml.find("groupSizeEncoding") {
         let after = &xml[start..];
         let end = after.find("</composite>").unwrap_or(after.len());
@@ -508,8 +498,6 @@ fn issue1066_optional_versioned_field() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-// ── Codegen pipeline smoke test ───────────────────────────────────────
-
 #[test]
 fn issue435_codegen_pipeline() -> Result<(), Box<dyn std::error::Error>> {
     let xml = fs::read_to_string(issue_schema("435")).unwrap();
@@ -535,8 +523,6 @@ fn issue435_codegen_pipeline() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// ── Bulk checks ───────────────────────────────────────────────────────
 
 /// All issue schemas parse as valid XML.
 #[test]

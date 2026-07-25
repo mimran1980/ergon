@@ -93,7 +93,6 @@ pub enum ParseError {
 }
 
 impl ParseError {
-    /// Build a `MalformedXml` error from the raw input (no document was parsed).
     fn malformed_xml(message: impl Into<String>, xml: &str) -> Self {
         Self::MalformedXml {
             message: message.into(),
@@ -455,16 +454,13 @@ fn read_include_file(
         };
     }
 
-    // 1. Relative to the parent schema's directory.
     if let Some(dir) = base_dir {
         let candidate = dir.join(href).to_string_lossy().to_string();
         try_include!(try_read(&candidate, seen));
     }
 
-    // 2. Direct (CWD-relative) probe.
     try_include!(try_read(href, seen));
 
-    // 3. Local fixtures directory.
     let paths = [
         format!("sbe/tests/fixtures/schemas/{}", href),
         format!("../sbe/tests/fixtures/schemas/{}", href),
@@ -608,7 +604,6 @@ fn is_primitive_name(s: &str) -> bool {
     )
 }
 
-/// Parse the `<messageSchema>` root into the [`Ir`].
 #[allow(clippy::needless_pass_by_value)]
 fn parse_schema(
     root: Node<'_, '_>,
@@ -708,7 +703,6 @@ fn parse_schema(
     })
 }
 
-/// Parse a `<type>` element.
 fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<Encoding, Fault> {
     let primitive = node
         .attribute("primitiveType")
@@ -760,7 +754,6 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
         None
     };
 
-    // Validate char constant value length matches the declared length.
     if primitive_type == Some(PrimitiveType::Char) && presence == Presence::Constant {
         if let Some(len) = length {
             if len > 1 {
@@ -797,7 +790,6 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
     })
 }
 
-/// Parse a `<composite>` into bracketed `BeginComposite`/`EndComposite` tokens.
 fn parse_composite(
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
@@ -1075,7 +1067,6 @@ fn parse_composite(
     Ok(())
 }
 
-/// Parse an `<enum>` into bracketed `BeginEnum`/`EndEnum` tokens.
 fn parse_enum(
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
@@ -1242,7 +1233,6 @@ fn parse_enum(
     Ok(())
 }
 
-/// Parse a `<set>` into bracketed `BeginSet`/`EndSet` tokens.
 fn parse_set(
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
@@ -1305,7 +1295,6 @@ fn parse_set(
             let choice_since = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             let bit_index_str = child.text().unwrap_or("").trim();
 
-            // Validate bit index is a valid number within the encoding width.
             let bit_index: u8 = bit_index_str.parse().map_err(|_| {
                 Fault::invalid(
                     child,
@@ -1408,14 +1397,12 @@ fn parse_message(
     let mut seen_names: HashSet<String> = HashSet::new();
     let mut prev_offset: Option<usize> = None;
 
-    // Block-length tracking
     let mut expected_block_len: usize = 0;
     let mut all_fields_have_offsets = true;
     let mut any_field_counted = false;
 
     for child in element_children(node) {
         parse_message_child(child, registry, tokens)?;
-        // Collect field IDs, names, and offsets for validation
         if child.tag_name().name() == "field"
             || child.tag_name().name() == "group"
             || child.tag_name().name() == "data"
@@ -1458,7 +1445,6 @@ fn parse_message(
             }
         }
 
-        // Track expected block length from fixed-size fields
         if child.tag_name().name() == "field"
             && child.attribute("presence").unwrap_or("required") != "constant"
         {
@@ -1746,7 +1732,7 @@ fn element_children<'a, 'input>(node: Node<'a, 'input>) -> impl Iterator<Item = 
 }
 
 /// Collect all documentation sources for an element and merge them into a
-/// single description string (DECISIONS.md §9 / reopened todo 87). Handles:
+/// single description string (DECISIONS.md §9 / reopened). Handles:
 ///
 /// - `description="..."` attribute
 /// - `<description>text</description>` child element
@@ -1760,7 +1746,6 @@ fn element_children<'a, 'input>(node: Node<'a, 'input>) -> impl Iterator<Item = 
 fn collect_description(node: Node<'_, '_>) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
-    // 1. description attribute
     if let Some(d) = node.attribute("description") {
         parts.push(d.trim().to_string());
     }
@@ -1988,7 +1973,6 @@ fn validate_header_type(header_type: &str, registry: &TypeRegistry) -> Result<()
         _ => return Ok(()), // Not in the registry or not a composite — skip
     };
 
-    // Collect the field names present in the composite.
     let field_names: HashSet<&str> = tokens
         .iter()
         .filter(|t| t.signal == Signal::BeginField)
@@ -2020,7 +2004,6 @@ fn compute_type_size(type_name: &str, registry: &TypeRegistry) -> Option<usize> 
         return Some(enc.primitive_type?.size() * enc.length.unwrap_or(1));
     }
 
-    // Composite, enum, or set stored in the registry
     let tokens = registry.registry.get(type_name)?;
     let first = tokens.first()?;
 
@@ -2640,7 +2623,6 @@ mod tests {
 <composite name="Wrapper"><type name="val" type="baseInt"/></composite></types>
 <sbe:message name="M" id="1"><field name="w" id="1" type="Wrapper"/></sbe:message>
 </sbe:messageSchema>"#;
-        // Exercise the composite member type-ref code path — may succeed or error
         let _ = parse(xml);
 
         Ok(())
@@ -2708,7 +2690,6 @@ mod tests {
 <type name="ci" primitiveType="uint32" presence="constant">42</type></types>
 <sbe:message name="M" id="1"><field name="c" id="1" type="ci" presence="constant"/></sbe:message>
 </sbe:messageSchema>"#;
-        // Exercise the field inheriting constant from referenced type path
         let _ = parse(xml);
 
         Ok(())
@@ -2722,7 +2703,6 @@ mod tests {
 <type name="c3" primitiveType="char" length="3" presence="constant">AB</type></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-        // Exercise the char constant length check — may error or succeed
         let _ = parse(xml);
 
         Ok(())
@@ -3105,8 +3085,6 @@ mod tests {
         Ok(())
     }
 
-    // ── XInclude tests ─────────────────────────────────────────────────
-
     /// Walk up to find the workspace root (where the top-level Cargo.toml lives).
     fn workspace_root() -> PathBuf {
         let mut dir = std::env::current_dir().unwrap();
@@ -3219,8 +3197,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Validation tests ─────────────────────────────────────────────
 
     #[test]
     fn null_value_on_non_optional_type_parses_with_warning()
@@ -3529,8 +3505,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Gap 1: presence inheritance from referenced types ─────────────
-
     #[test]
     fn field_inherits_optional_presence_from_type() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -3611,8 +3585,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Gap 2: composite child ref attributes ─────────────────────────
-
     #[test]
     fn composite_member_with_valid_ref_parses() -> Result<(), Box<dyn std::error::Error>> {
         // <ref> on a composite member should resolve through the registry.
@@ -3665,8 +3637,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Gap 3: header type well-formedness ─────────────────────────────
-
     #[test]
     fn custom_header_type_with_required_fields_parses() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -3713,8 +3683,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Gap 10/11: epoch and timeUnit on types and fields ──────────────
 
     #[test]
     fn parses_epoch_and_time_unit_on_type() -> Result<(), Box<dyn std::error::Error>> {
@@ -3785,8 +3753,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Gap 12: deprecated attribute on all elements ────────────────────
 
     #[test]
     fn deprecated_on_type() -> Result<(), Box<dyn std::error::Error>> {
@@ -4026,8 +3992,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Gap 13: duplicate message name ─────────────────────────────────
-
     #[test]
     fn duplicate_message_name_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -4057,8 +4021,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Gap 10: varData variable-length member does not contribute to block length ──
 
     #[test]
     fn vardata_member_excluded_from_block_length() -> Result<(), Box<dyn std::error::Error>> {
@@ -4104,8 +4066,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Coverage: include-file root variants ──────────────────────────
 
     const HEADER_TYPES: &str = r#"
     <composite name="messageHeader">
@@ -4172,8 +4132,6 @@ mod tests {
         Ok(())
     }
 
-    // ── Coverage: char constant with matching declared length ─────────
-
     #[test]
     fn char_constant_with_matching_length_parses() -> Result<(), Box<dyn std::error::Error>> {
         let schema = format!(
@@ -4191,8 +4149,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Coverage: composite member type-attribute fallbacks ───────────
 
     #[test]
     fn composite_member_with_primitive_type_attr_inlines_encoding()
@@ -4250,8 +4206,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Coverage: enum/set child-element edge cases ────────────────────
 
     #[test]
     fn enum_valid_value_equal_to_registered_null_sentinel_is_error()
@@ -4338,8 +4292,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Coverage: message-child structural attribute tolerance ─────────
 
     #[test]
     fn message_children_with_missing_or_unparseable_attrs_reach_second_pass()
@@ -4547,8 +4499,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ── Coverage: unparseable numeric attribute error paths ────────────
 
     #[test]
     fn message_with_non_numeric_id_is_error() -> Result<(), Box<dyn std::error::Error>> {

@@ -84,8 +84,8 @@ pub struct GenerationConfig {
 }
 
 impl GenerationConfig {
-    /// Create a new configuration with the given module name.
     #[must_use]
+    /// Create a new config with the given output module name.
     pub fn new(module_name: impl Into<String>) -> Self {
         Self {
             module_name: module_name.into(),
@@ -105,13 +105,11 @@ impl GenerationConfig {
         &self.module_name
     }
 
-    /// Whether domain objects are enabled.
     #[must_use]
     pub(crate) fn domain_objects_enabled(&self) -> bool {
         self.domain_objects
     }
 
-    /// Whether any conversions are configured.
     pub(crate) fn has_conversions(&self) -> bool {
         !self.conversions.is_empty() || !self.domain_types.is_empty()
     }
@@ -167,7 +165,6 @@ impl GenerationConfig {
         if !self.conversions.contains(&sel) {
             self.conversions.push(sel.clone());
         }
-        // Deduplicate by selector
         if !self.domain_types.iter().any(|(s, _)| s == &sel) {
             self.domain_types.push((sel, ty));
         }
@@ -189,8 +186,8 @@ impl GenerationConfig {
         self
     }
 
-    /// Set a sibling module name for shared types.
     #[must_use]
+    /// Set the shared module name for multi-schema generation.
     pub fn with_shared_module(mut self, name: impl Into<String>) -> Self {
         self.shared_module = Some(name.into());
         self

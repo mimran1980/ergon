@@ -59,7 +59,6 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         let encoded = complete.as_bytes();
         let total_len = encoded.len();
 
-        // ── Decode through consuming stages, in wire order ──
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert_eq!(dec.serial_number(), 1234);
         assert_eq!(dec.model_year(), 2013);
@@ -133,7 +132,6 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let mut fuel = dec.into_fuel_figures().unwrap();
-        // Read only the first entry, then explicitly skip the rest.
         let first = fuel.next().unwrap().unwrap();
         assert_eq!(first.speed(), 10);
         let after_fuel = fuel.skip_remaining().unwrap();

@@ -29,8 +29,6 @@ use common::BASELINE;
 /// Batch sizes for throughput sweeps.
 const BATCH_SIZES: &[usize] = &[1, 10, 100, 1_000, 10_000];
 
-// ── Pre-allocated multi-message buffer ──────────────────────────────
-
 fn build_batch_buffer(count: usize) -> Vec<u8> {
     let msg_len = BASELINE.len();
     let mut buf = Vec::with_capacity(count * msg_len);
@@ -41,10 +39,6 @@ fn build_batch_buffer(count: usize) -> Vec<u8> {
     }
     buf
 }
-
-// ── Throughput: checked decode + field access ──────────────────────
-//
-// For each batch size: decode every message and read a few key fields.
 
 fn bench_throughput_checked(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput/checked");
@@ -77,8 +71,6 @@ fn bench_throughput_checked(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Throughput: raw/unchecked decode + field access ────────────────
-
 fn bench_throughput_unchecked(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput/unchecked");
 
@@ -109,12 +101,6 @@ fn bench_throughput_unchecked(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ── Hand-written unsafe raw-decode loop ────────────────────────────
-//
-// Direct byte reads from the buffer using pointer arithmetic.
-// No struct allocation, no trait dispatch — just raw bytes.
-// Mirrors what a latency-optimised C++ feed handler might do.
 
 mod raw_decode {
     use criterion::black_box;
@@ -185,8 +171,6 @@ fn bench_throughput_raw(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ── Throughput comparison (n=1000) ─────────────────────────────────
 
 fn bench_throughput_comparison(c: &mut Criterion) {
     const COMP_N: usize = 1_000;

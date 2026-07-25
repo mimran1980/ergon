@@ -33,11 +33,9 @@ pub fn compile_and_run_generated_tests(
         .join("encoded_length_matrix")
         .join(crate_name);
 
-    // Clean any previous run
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(tmp.join("src"))?;
 
-    // Validate test names
     let mut seen = std::collections::HashSet::new();
     for t in tests {
         if t.name.is_empty() {
@@ -92,7 +90,6 @@ path = "src/lib.rs"
 
     fs::write(tmp.join("src").join("lib.rs"), lib_rs)?;
 
-    // Compile and run
     let output = Command::new("cargo")
         .args(["test", "--", "--test-threads=1"])
         .current_dir(&tmp)
@@ -102,14 +99,12 @@ path = "src/lib.rs"
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Clean up on failure too
         let _ = fs::remove_dir_all(&tmp);
         return Err(format!(
             "matrix tests failed for {crate_name}:\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
         ).into());
     }
 
-    // Clean up after success
     let _ = fs::remove_dir_all(&tmp);
     Ok(())
 }

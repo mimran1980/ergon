@@ -46,7 +46,6 @@ fn generate_car_codec(out_dir: &Path) {
         )
     });
 
-    // Rerun if schema or codegen sources change
     println!("cargo:rerun-if-changed={}", schema_path.display());
     println!("cargo:rerun-if-changed=../src/codegen.rs");
     println!("cargo:rerun-if-changed=../src/schema.rs");

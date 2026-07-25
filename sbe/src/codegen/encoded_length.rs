@@ -44,7 +44,6 @@ pub(super) fn strategy(message: &MessageStructure) -> LengthStrategy {
     }
 }
 
-/// Generate encoded-length support for one message.
 pub(super) fn generate(
     message: &MessageStructure,
     block_length: usize,
@@ -62,7 +61,6 @@ pub(super) fn generate(
     }
 }
 
-/// Generate uniform staged builder types for structurally dynamic messages.
 fn generate_staged(
     msg: &MessageStructure,
     block_length: usize,
@@ -77,7 +75,6 @@ fn generate_staged(
 
     let mut standalone = TokenStream::new();
 
-    // ── Entry-point struct ──
     standalone.extend(quote::quote! {
         /// Exact-length calculator for this message.
         #[must_use = "length builder must be consumed"]
@@ -96,14 +93,10 @@ fn generate_staged(
         }
     });
 
-    // ── Layout constants for ragged builder usage ──
-    // Eliminates user-derived constants: callers reference these generated
-    // values instead of hardcoding dim/block/prefix in application code.
     {
         let mut layout_consts: Vec<proc_macro2::TokenStream> = Vec::new();
         for g in &msg.groups {
             let g_upper = crate::codegen::to_pascal_case(&g.name).to_uppercase();
-            // Nested groups
             for ng in &g.groups {
                 let ng_upper = crate::codegen::to_pascal_case(&ng.name).to_uppercase();
                 let (_, ng_dim, _, _) = get_dimension_info(elements, &ng.dimension_type);
@@ -158,17 +151,10 @@ fn generate_staged(
         }
     }
 
-    // ── Schema-specific ragged entry builder wrappers ──
-    // For groups with nested groups or var-data, generate a wrapper type with
-    // FIELD-NAMED methods that bake in dim/block/prefix. Users write:
-    //   builder.add()?.orders(|og| og.add()?.order_id(5)?; Ok(()) )?;
-    // instead of the generic:
-    //   builder.add()?; builder.group_ragged(4, 9, |og| og.add()?; og.var_data(4, 5)?; })?;
     for g in &msg.groups {
         generate_ragged_wrappers(&msg_name, "", g, elements, &mut standalone);
     }
 
-    // ── Pre-emit all stage structs (except entry and uniform pending) ──
     let mut stage_names: Vec<String> = Vec::new();
     let total_tail = msg.groups.len() + msg.var_data.len();
     {
@@ -207,7 +193,6 @@ fn generate_staged(
         });
     }
 
-    // ── Walk tail groups + varData, emitting uniform stages ──
     let mut pending_name = entry_ident.clone();
     let total_tail = msg.groups.len() + msg.var_data.len();
     let mut tail_idx: usize = 0;
@@ -247,7 +232,6 @@ fn generate_staged(
                 span,
             );
 
-            // Pending uniform stage struct
             standalone.extend(quote::quote! {
                 #[doc(hidden)]
                 #[must_use = "complete the nested shape or call finish_empty()"]
@@ -258,7 +242,6 @@ fn generate_staged(
                 }
             });
 
-            // Nested groups inside the entry
             for ng in &g.groups {
                 let ng_snake = syn::Ident::new(&crate::codegen::to_snake_case(&ng.name), span);
                 let (_, ng_dim, _, _) = get_dimension_info(elements, &ng.dimension_type);
@@ -425,10 +408,6 @@ fn generate_staged(
                 }
             });
 
-            // ── Zero-count forwarding: forward the next tail component's
-            //     method so bids(0).asks(0) works without finish_empty() ──
-            // Only forward if the next component's method name doesn't
-            // collide with the pending stage's own methods.
             {
                 let next_tail_idx = tail_idx + 1;
                 if next_tail_idx < total_tail {
@@ -454,7 +433,6 @@ fn generate_staged(
                         )
                     };
 
-                    // Check for name collision with pending stage methods
                     let method_name_str = next_method_name.to_string();
                     let has_collision = g
                         .groups
@@ -688,7 +666,6 @@ fn generate_staged(
         tail_idx += 1;
     }
 
-    // Complete stage
     let complete_ident = syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span);
     standalone.extend(quote::quote! {
         impl #complete_ident {
@@ -705,7 +682,6 @@ fn generate_staged(
     }
 }
 
-/// Generate direct `compute_encoded_length` + checked `try_compute_encoded_length` helpers.
 fn generate_direct(
     msg: &MessageStructure,
     block_length: usize,
@@ -716,7 +692,6 @@ fn generate_direct(
     let block_len_lit = syn::LitInt::new(&block_length.to_string(), span);
     let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
 
-    // Compatibility methods (existing pattern)
     let mut compat_param_decls = Vec::new();
     let mut compat_param_names = Vec::new();
     let mut compat_body = Vec::new();
@@ -764,7 +739,6 @@ fn generate_direct(
         }
     };
 
-    // Checked methods with typed group counts
     let mut checked_param_decls = Vec::new();
     let mut checked_param_names = Vec::new();
     let mut checked_body = Vec::new();
@@ -872,8 +846,6 @@ fn generate_direct(
         standalone: TokenStream::new(),
     }
 }
-
-// ── Accumulator emitted into generated schema modules ──────────────────
 
 /// Emit the `EncodedLengthAccumulator` + `RaggedEntryBuilder` helpers for staged messages.
 pub(super) fn generate_support() -> TokenStream {
@@ -1031,7 +1003,6 @@ fn generate_ragged_wrappers(
     let wrapper_name = format!("{}{}{}RaggedBuilder", msg_name, parent_chain, group_pascal);
     let wrapper_ident = syn::Ident::new(&wrapper_name, span);
 
-    // Struct definition
     ts.extend(quote::quote! {
         /// Schema-specific ragged entry builder — field-named methods bake in
         /// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
@@ -1042,7 +1013,6 @@ fn generate_ragged_wrappers(
 
     let mut methods: Vec<proc_macro2::TokenStream> = Vec::new();
 
-    // add() — returns &mut Self for chaining
     methods.push(quote::quote! {
         /// Register one entry. Returns `&mut Self` for chaining.
         pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
@@ -1107,7 +1077,6 @@ fn generate_ragged_wrappers(
         });
     }
 
-    // Emit impl block
     ts.extend(quote::quote! {
         impl<'a> #wrapper_ident<'a> {
             #(#methods)*

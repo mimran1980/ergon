@@ -222,7 +222,6 @@ pub mod aeron {
     }
     
     
-
     pub mod boolean_type {
         use super::*;
         /// Boolean Type.
@@ -411,7 +410,6 @@ pub mod aeron {
                     self
                 }
 
-                /// Set all optional fields to their null values.
                 #[inline]
                 pub fn nullify_optional_fields(&mut self) -> &mut Self {
                     self
@@ -512,7 +510,6 @@ pub mod aeron {
                     self.limit = limit;
                 }
 
-                /// Set all optional fields to their 'null' values.
                 #[inline]
                 fn nullify_optional_fields(&mut self) -> &mut Self {
                     {
@@ -1803,7 +1800,6 @@ pub mod aeron {
                     booster_codec::BoosterEncoder::default().wrap(self, offset)
                 }
 
-                /// Set all optional fields to their null values.
                 #[inline]
                 pub fn nullify_optional_fields(&mut self) -> &mut Self {
                     {
@@ -1982,7 +1978,6 @@ pub mod aeron {
                     self
                 }
 
-                /// Set all optional fields to their null values.
                 #[inline]
                 pub fn nullify_optional_fields(&mut self) -> &mut Self {
                     self
@@ -2149,7 +2144,6 @@ pub mod aeron {
                     self
                 }
 
-                /// Set all optional fields to their null values.
                 #[inline]
                 pub fn nullify_optional_fields(&mut self) -> &mut Self {
                     self
@@ -2425,7 +2419,6 @@ pub mod aeron {
                     self
                 }
 
-                /// Set all optional fields to their null values.
                 #[inline]
                 pub fn nullify_optional_fields(&mut self) -> &mut Self {
                     self
@@ -2559,7 +2552,6 @@ pub mod aeron {
                     self
                 }
 
-                /// Set all optional fields to their null values.
                 #[inline]
                 pub fn nullify_optional_fields(&mut self) -> &mut Self {
                     self

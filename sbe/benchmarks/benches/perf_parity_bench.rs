@@ -2,7 +2,7 @@
 //!
 //! Both codecs generated from the same Car schema, decoding the same
 //! Java-produced binary fixture. If ergon is slower in any scenario,
-//! that is a blocking v1 release bug (todo 105).
+//! that is a blocking v1 release bug.
 //!
 //! Note: sbe-tool uses a different API pattern (mutable self, parent
 //! references, advance()-based group iteration). These benchmarks compare
@@ -49,14 +49,6 @@ fn ergo_sbe_header_fields() -> (usize, u16) {
     (header.block_length() as usize, header.version())
 }
 
-// ── Decode: entry point (wrap/try_from) ──────────────────────────────
-//
-// PARITY GATE: `ergo-sbe_wrap` vs `aeron_wrap`. Both pre-compute header
-// fields once (the real HFT feed-handler pattern: validate once, decode
-// fast). `ergo-sbe_try_from` is informational — it re-reads + re-validates
-// the header every call, which Aeron's `wrap` does not, so it is not the
-// parity comparison.
-
 fn bench_decode_entry_point(c: &mut Criterion) {
     let bl = aeron_block_length();
     let ver = aeron_version();
@@ -100,8 +92,6 @@ fn bench_decode_entry_point(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Decode: scalar field access (serial_number + model_year) ─────────
-
 fn bench_decode_scalar(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let bl = aeron_block_length();
@@ -136,8 +126,6 @@ fn bench_decode_scalar(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Decode: array field (some_numbers: [u32; 4]) ─────────────────────
-
 fn bench_decode_array(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let bl = aeron_block_length();
@@ -169,8 +157,6 @@ fn bench_decode_array(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ── Decode: composite (Engine) — ergon copies eagerly, Aeron flyweight ──
 
 fn bench_decode_composite(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
@@ -210,8 +196,6 @@ fn bench_decode_composite(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ── HFT batch decode throughput ──────────────────────────────────────
 
 const BATCH_SIZE: usize = 10_000;
 
@@ -280,24 +264,19 @@ fn bench_throughput_batch(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Encode: scalar writes (serial_number + model_year) ───────────────
-//
-// Both write via copy_from_slice (ergon write_bytes / Aeron put_uX_at).
-// ergon wrap_and_apply_header writes the header in one template copy;
-// Aeron wrap does not write the header (caller calls .header() separately,
-// 4 put_u16_at calls). We measure wrap + 2 scalar writes for both.
-
 fn bench_encode_scalar(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/scalar");
     group.throughput(Throughput::Elements(1));
 
-    // Fair: Aeron wrap() does no bounds check — use wrap.
-    // Also avoids black_box hiding buffer size for bounds check elision.
+    // Equal work: both arms write the 8-byte header + 2 scalar fields.
+    // ergo-sbe uses wrap_and_apply_header (writes header template),
+    // aeron uses wrap() + header(0) (writes 4 header fields individually).
     group.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || [0u8; 512],
             |mut buf| {
-                let mut car: CarEncoder<'_> = CarEncoder::wrap(black_box(&mut buf), 0);
+                let mut car: CarEncoder<'_> =
+                    CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
                 car.serial_number(1234);
                 car.model_year(2013);
                 black_box(car);
@@ -310,8 +289,6 @@ fn bench_encode_scalar(c: &mut Criterion) {
         b.iter_batched(
             || [0u8; 512],
             |mut buf| {
-                // Fair: write the header (4 fields) like ergon's wrap_and_apply_header,
-                // then reclaim the CarEncoder via parent() and write 2 scalars.
                 let car =
                     ergo_sbe_benchmarks::aeron_car::aeron::car_codec::encoder::CarEncoder::default(
                     )
@@ -332,20 +309,19 @@ fn bench_encode_scalar(c: &mut Criterion) {
     group.finish();
 }
 
-// ── Encode: throughput (10k batch, wrap + 2 scalars per message) ─────
-
 fn bench_encode_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/throughput_10k");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
-    // Fair: Aeron does no bounds check — use wrap for parity.
+    // Equal work: both arms write header + 2 scalars per message.
     group.bench_function("ergo-sbe", |b| {
         b.iter_batched(
             || vec![0u8; BATCH_SIZE * 64],
             |mut buf| {
                 for i in 0..BATCH_SIZE {
                     let off = i * 64;
-                    let mut car: CarEncoder<'_> = CarEncoder::wrap(&mut buf[off..off + 64], 0);
+                    let mut car: CarEncoder<'_> =
+                        CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0);
                     car.serial_number(i as u64);
                     car.model_year(2013);
                 }
@@ -484,8 +460,6 @@ fn bench_decode_skip_rewind(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ── Full encoder stage transition (scalars + groups + var-data → Complete) ──
 
 fn bench_fallible_vs_manual(c: &mut Criterion) {
     // ergon-internal parity: the fallible-closure convenience API

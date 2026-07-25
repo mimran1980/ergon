@@ -26,7 +26,6 @@ fn test_generate_car_example() -> Result<(), Box<dyn std::error::Error>> {
     let module = module_set.modules().next().unwrap();
     assert_eq!(module.path, "car_example.rs");
 
-    // Check that expected generated components exist in the source code
     assert!(module.source.contains("pub struct CarDecoder"));
     assert!(module.source.contains("pub struct CarEncoder"));
     assert!(module.source.contains("pub struct MessageHeader"));

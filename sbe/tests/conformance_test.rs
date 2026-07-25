@@ -23,8 +23,6 @@ fn conformance_path() -> PathBuf {
     ))
 }
 
-// -- 1. Fixed-only message ------------------------------------------------
-
 #[test]
 fn conformance_fixed_only_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
@@ -53,8 +51,6 @@ fn conformance_fixed_only_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     );
     Ok(())
 }
-
-// -- 2. Flat group -- known/known -----------------------------------------
 
 #[test]
 fn conformance_flat_group_known_known() -> Result<(), Box<dyn std::error::Error>> {
@@ -108,8 +104,6 @@ fn conformance_flat_group_known_known() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-// -- 3. Flat group -- known/unknown ---------------------------------------
-
 #[test]
 fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
@@ -150,8 +144,6 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
     );
     Ok(())
 }
-
-// -- 4. Flat group -- unknown/unknown -------------------------------------
 
 #[test]
 fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Error>> {
@@ -199,8 +191,6 @@ fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-// -- 5. Length builder invariants -----------------------------------------
-
 #[test]
 fn conformance_length_builder_invariants() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
@@ -232,7 +222,6 @@ fn conformance_length_builder_invariants() -> Result<(), Box<dyn std::error::Err
         assert!(complete.encoded_length_with_header() > enc_len,
             "with_header > body");
 
-        // NestedGroup: staged encode
         let mut buf2 = vec![0u8; 4096];
         let mut enc2 = NestedGroupEncoder::try_wrap_and_apply_header(&mut buf2, 0)?;
         enc2.exchange_id(0);
@@ -264,7 +253,6 @@ fn conformance_length_builder_invariants() -> Result<(), Box<dyn std::error::Err
         .comment(b"hello")?;
         assert!(complete2.encoded_length_with_header() > 0, "NestedGroup length > 0");
 
-        // PureFixedNested: staged encode
         let mut buf3 = vec![0u8; 4096];
         let mut enc3 = PureFixedNestedEncoder::try_wrap_and_apply_header(&mut buf3, 0)?;
         enc3.id(0);
@@ -287,8 +275,6 @@ fn conformance_length_builder_invariants() -> Result<(), Box<dyn std::error::Err
     );
     Ok(())
 }
-
-// -- 6. Nested group roundtrip --------------------------------------------
 
 #[test]
 fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -372,8 +358,6 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-// -- 7. AllTypes: enums, composites, groups, varData ----------------------
-
 #[test]
 fn conformance_all_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
@@ -436,8 +420,6 @@ fn conformance_all_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
-
-// -- 8. PureFixedNested with add_struct -----------------------------------
 
 #[test]
 fn conformance_pure_fixed_nested_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -513,8 +495,6 @@ fn conformance_pure_fixed_nested_roundtrip() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-// -- 9. Empty groups ------------------------------------------------------
-
 #[test]
 fn conformance_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
@@ -546,8 +526,6 @@ fn conformance_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// -- 10. VarData edge cases -----------------------------------------------
-
 #[test]
 fn conformance_var_data_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
@@ -555,7 +533,6 @@ fn conformance_var_data_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
         "conformance_var_data",
         &src,
         r#"
-        // Empty description
         let body_len_0 = FlatGroupEncoder::try_compute_encoded_length_with_header(0, 0, 0)?;
         let mut buf1 = vec![0u8; body_len_0];
         let mut enc1 = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf1, 0)?;
@@ -573,7 +550,6 @@ fn conformance_var_data_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
         let (desc, _c) = after_asks1.into_description()?;
         assert_eq!(desc, b"", "empty description");
 
-        // UTF-8 string via varStringEncoding
         let body_len_2 = FlatGroupEncoder::try_compute_encoded_length_with_header(0, 0, 14)?;
         let mut buf2 = vec![0u8; body_len_2];
         let mut enc2 = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf2, 0)?;
@@ -606,8 +582,6 @@ fn conformance_var_data_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// -- 11. Fixed-only raw fixed vs field chaining parity --------------------
-
 #[test]
 fn conformance_fixed_raw_fixed_parity() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
@@ -637,8 +611,6 @@ fn conformance_fixed_raw_fixed_parity() -> Result<(), Box<dyn std::error::Error>
     );
     Ok(())
 }
-
-// -- 12. Error cases ------------------------------------------------------
 
 #[test]
 fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::error::Error>> {

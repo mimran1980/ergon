@@ -141,7 +141,6 @@ pub(crate) fn generate_sbe_rt_src() -> String {
         }
     };
 
-    // Format the generated module through prettyplease for canonical output
     syn::parse_str::<syn::File>(&module.to_string())
         .map(|file| prettyplease::unparse(&file))
         .expect("generated SBE runtime must be valid Rust syntax")
@@ -342,7 +341,6 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
     let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
 
-    // Collect encoding variants
     struct Variant {
         variant_ident: syn::Ident,
         disc: proc_macro2::TokenStream,
@@ -382,7 +380,6 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     let variant_names: Vec<_> = variants.iter().map(|v| &v.variant_ident).collect();
     let variant_discs: Vec<_> = variants.iter().map(|v| &v.disc).collect();
 
-    // Build From<r_type> arms: disc => Self::Variant, _ => Self::NullVal
     let from_raw_arms: Vec<_> = variants
         .iter()
         .map(|v| {
@@ -396,7 +393,6 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     let is_bool = tokens[0].name == "BooleanType"
         || tokens[0].encoding.semantic_type.as_deref() == Some("Boolean");
 
-    // Find TRUE/FALSE variant idents for From<bool>
     let (false_ident, true_ident) = if is_bool {
         let f = variants
             .iter()
@@ -448,7 +444,6 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             syn::LitInt::new(&val_str, proc_macro2::Span::call_site())
         })
         .unwrap_or_else(|| {
-            // Fallback: max value for unsigned, min for signed
             let nv: i64 = match encoding_type {
                 PrimitiveType::UInt8 => 255,
                 PrimitiveType::UInt16 => 65535,
@@ -465,7 +460,6 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         });
     let null_disc_ts: proc_macro2::TokenStream = quote::quote! { #null_disc };
 
-    // Emit enum rustdoc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
     }
@@ -559,7 +553,6 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         push_description_doc(src, desc);
     }
 
-    // Emit set doc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
     }
@@ -831,7 +824,6 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
 
     // manual String param parsing instead of syn::FnArg, refactor when generated code interface stabilises
 
-    // Emit composite doc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
     }
@@ -909,7 +901,6 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     }
     src.push('\n');
 
-    // ── 5b. Composite decoder (flyweight / _lazy accessor) ──
     let mut decoder_getters = proc_macro2::TokenStream::new();
     for m in &members {
         let field_name = to_snake_case(&m.name);
@@ -1083,37 +1074,30 @@ pub(crate) fn generate_prelude(
     schema_id: u16,
     schema_version: u16,
 ) {
-    // Schema-level constants
     writeln!(src, "pub const SCHEMA_ID: u16 = {schema_id};").unwrap();
     writeln!(src, "pub const SCHEMA_VERSION: u16 = {schema_version};").unwrap();
 
-    // Collect generated type names (module-level, not in sbe_rt)
     let mut gen_types: Vec<String> = Vec::new();
 
-    // Composites: both value struct and decoder
     for ct in &elements.composites {
         let name = to_pascal_case(&ct[0].name);
         gen_types.push(name.clone());
         gen_types.push(format!("{name}Decoder"));
     }
 
-    // Enums
     for et in &elements.enums {
         gen_types.push(to_pascal_case(&et[0].name));
     }
 
-    // Sets
     for st in &elements.sets {
         gen_types.push(to_pascal_case(&st[0].name));
     }
 
-    // Message decoders and encoders
     for msg in messages {
         gen_types.push(format!("{}Decoder", to_pascal_case(&msg.name)));
         gen_types.push(format!("{}Encoder", to_pascal_case(&msg.name)));
     }
 
-    // Emit prelude
     // sbe_rt types (exported from super::sbe_rt)
     src.push_str("pub mod prelude {\n");
     src.push_str(
@@ -1122,7 +1106,6 @@ pub(crate) fn generate_prelude(
 
     // Module-level types (exported from super)
     src.push_str("    pub use super::{\n");
-    // Built-in module-level types
     for ty in &[
         "AnyMessage",
         "DecodedFrame",
@@ -1234,7 +1217,6 @@ pub(crate) fn generate_any_message(
 
     let mut out = proc_macro2::TokenStream::new();
 
-    // ── AnyMessage enum ─────────────────────────────────────────────────
     {
         let mut enum_variants = proc_macro2::TokenStream::new();
         for m in messages {
@@ -1256,7 +1238,6 @@ pub(crate) fn generate_any_message(
         });
     }
 
-    // ── DecodedFrame struct ──────────────────────────────────────────────
     out.extend(quote::quote! {
         pub struct DecodedFrame<'a> {
             pub message: AnyMessage<'a>,
@@ -1265,7 +1246,6 @@ pub(crate) fn generate_any_message(
         }
     });
 
-    // ── FramingPolicy enum ──────────────────────────────────────────────
     out.extend(quote::quote! {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum FramingPolicy {
@@ -1275,7 +1255,6 @@ pub(crate) fn generate_any_message(
         }
     });
 
-    // ── FrameCursor struct + Iterator impl ──────────────────────────────
     out.extend(quote::quote! {
         pub struct FrameCursor<'a> {
             buf: &'a [u8],
@@ -1345,7 +1324,6 @@ pub(crate) fn generate_any_message(
         }
     });
 
-    // ── decode() ────────────────────────────────────────────────────────
     {
         let mut decode_arms = proc_macro2::TokenStream::new();
         for m in messages {
@@ -1393,7 +1371,6 @@ pub(crate) fn generate_any_message(
         });
     }
 
-    // ── decode_frame() ──────────────────────────────────────────────────
     {
         let mut decode_frame_arms = proc_macro2::TokenStream::new();
         for m in messages {
@@ -1475,7 +1452,6 @@ pub(crate) fn generate_any_message(
         });
     }
 
-    // ── encoded_length_with_header() ────────────────────────────────────
     {
         let mut encoded_arms = proc_macro2::TokenStream::new();
         for m in messages {
@@ -1498,7 +1474,6 @@ pub(crate) fn generate_any_message(
         });
     }
 
-    // ── as_bytes() ──────────────────────────────────────────────────────
     {
         let mut as_bytes_arms = proc_macro2::TokenStream::new();
         for m in messages {
@@ -1521,7 +1496,6 @@ pub(crate) fn generate_any_message(
         });
     }
 
-    // ── encode() ────────────────────────────────────────────────────────
     {
         let mut encode_arms = proc_macro2::TokenStream::new();
         for m in messages {
@@ -1551,7 +1525,6 @@ pub(crate) fn generate_any_message(
         });
     }
 
-    // ── MessageVisitor trait + visit() ──────────────────────────────────
     {
         let mut visitor_methods = Vec::new();
         let mut visit_arms = Vec::new();
@@ -1693,7 +1666,6 @@ pub(crate) fn canonical_schema_bytes(ir: &Ir) -> Vec<u8> {
     extend_opt_str(&mut buf, ir.semantic_version.as_deref());
     extend_str(&mut buf, &ir.header_type);
 
-    // Tokens
     for token in &ir.tokens {
         buf.push(token.signal as u8);
         extend_str(&mut buf, &token.name);
@@ -1705,7 +1677,6 @@ pub(crate) fn canonical_schema_bytes(ir: &Ir) -> Vec<u8> {
             None => buf.push(0),
         }
 
-        // Encoding
         match token.encoding.primitive_type {
             Some(pt) => {
                 buf.push(1);

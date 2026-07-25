@@ -16,7 +16,6 @@ fn workspace_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap();
     loop {
         if dir.join("Cargo.toml").exists() {
-            // Check known layouts: sbe/, ergon/, crates/ergon/
             if dir.join("sbe").exists()
                 || dir.join("ergon").exists()
                 || dir.join("crates/ergon").exists()
@@ -49,11 +48,6 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-// ── missing-required-attr.xml ──────────────────────────────────────────────
-//
-// A <field> element without the required @name attribute.
-// Expected: ParseError::Missing { what: "field @name", .. }
-
 #[test]
 fn missing_required_attr_returns_missing_error() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("missing-required-attr.xml");
@@ -72,11 +66,6 @@ fn missing_required_attr_returns_missing_error() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-// ── invalid-type-ref.xml ───────────────────────────────────────────────────
-//
-// A <field> referencing a type name that has no definition in the schema.
-// Expected: ParseError::Invalid { what: "primitive type", value: "NonExistentType", .. }
-
 #[test]
 fn invalid_type_ref_returns_invalid_error() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("invalid-type-ref.xml");
@@ -94,11 +83,6 @@ fn invalid_type_ref_returns_invalid_error() -> Result<(), Box<dyn std::error::Er
 
     Ok(())
 }
-
-// ── duplicate-message-id.xml ───────────────────────────────────────────────
-//
-// Two <message> elements sharing the same template id.
-// Expected: ResolveError::DuplicateTemplateId { id: 1, name: "AnotherMessageWithId1" }
 
 #[test]
 fn duplicate_message_id_returns_duplicate_template_id() -> Result<(), Box<dyn std::error::Error>> {
@@ -122,16 +106,11 @@ fn duplicate_message_id_returns_duplicate_template_id() -> Result<(), Box<dyn st
     Ok(())
 }
 
-// ── duplicate-message-id miette rendering ─────────────────────────────────────
-//
-// Verify that a ResolveError rendered through miette includes source context.
-
 #[test]
 fn duplicate_message_id_renders_miette_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("duplicate-message-id.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
 
-    // Verify the error carries source_code via the Diagnostic trait.
     use miette::Diagnostic;
     assert!(
         err.source_code().is_some(),
@@ -162,11 +141,6 @@ fn duplicate_message_id_renders_miette_diagnostic() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-// ── version-gap.xml ────────────────────────────────────────────────────────
-//
-// A <field> with sinceVersion=5 when the schema version is 1.
-// Expected: ResolveError::SinceVersionBeyondSchema { version: 5, schema_version: 1, .. }
-
 #[test]
 fn version_gap_returns_since_version_beyond_schema() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("version-gap.xml");
@@ -188,11 +162,6 @@ fn version_gap_returns_since_version_beyond_schema() -> Result<(), Box<dyn std::
 
     Ok(())
 }
-
-// ── version-gap miette rendering ──────────────────────────────────────────────
-//
-// Verify that a SinceVersionBeyondSchema error rendered through miette includes
-// source context.
 
 #[test]
 fn version_gap_renders_miette_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
@@ -222,12 +191,7 @@ fn version_gap_renders_miette_diagnostic() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-// ── invalid-enum-value.xml ─────────────────────────────────────────────────
-//
-// An <enum> whose encodingType references a type not defined in the schema.
-// Expected: ParseError::Invalid { what: "enum encodingType", value: "NonExistentEncodingType", .. }
-
-// Upstream error-handler schemas (SBE-20 / todo 20) — each must fail parse.
+// Upstream error-handler schemas (SBE-20 /) — each must fail parse.
 // Closed 2026-07-19: every listed fixture produces a clear ParseError.
 
 #[test]
@@ -278,11 +242,6 @@ fn invalid_enum_encoding_type_returns_invalid_error() -> Result<(), Box<dyn std:
 
     Ok(())
 }
-
-// ── Useful miette diagnostics for every intentionally-invalid fixture ─────
-//
-// Ops need: non-empty Display, Debug, and (when available) miette Report that
-// names *what* failed — not a bare "error". Confirms ergon schema diagnostics.
 
 #[test]
 fn invalid_schema_fixtures_have_useful_miette_errors() -> Result<(), Box<dyn std::error::Error>> {

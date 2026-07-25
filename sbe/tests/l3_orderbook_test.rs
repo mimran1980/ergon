@@ -280,7 +280,6 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
         let dec = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(dec.timestamp(), 555);
         assert_eq!(dec.sequence(), 42);
-        // Verify bids: 1 level, 12 orders
         let mut bids = dec.into_bids().unwrap();
         let bid_levels: Vec<_> = bids.by_ref().collect();
         assert_eq!(bid_levels.len(), 1);
@@ -296,7 +295,6 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
             let expected = format!("ORDER-{:02}", i);
             assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "bid order {} id", i);
         }
-        // Verify asks: 1 level, 12 orders
         let asks = bids.finish().unwrap().into_asks().unwrap();
         let ask_levels: Vec<_> = asks.collect();
         assert_eq!(ask_levels.len(), 1);
