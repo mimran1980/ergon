@@ -7,19 +7,9 @@ mod l3_codec {
 }
 pub use l3_codec::*;
 
-/// Nested-orders group wire layout (structural constants from
-/// `schemas/l3-book.xml`, not buffer guesses):
-/// - dimension prefix: `u32` count = 4 bytes
-/// - entry block: `u64 order_id` (8) + `Decimal` mantissa/exponent (9) = 17 bytes
-// TODO: these manual group dim/block constants MUST come from the generated
-// EncodedLength API (the staged builder should expose nested-group dim/block),
-// not be hardcoded here. See CLAUDE.md "Buffer sizing" hard rule.
-const ORDERS_DIM: usize = 4;
-const ORDER_BLOCK: usize = 17;
-
 /// Exact header-inclusive encoded length of an L3 book for the given ragged
 /// bids/asks + symbol, computed up-front via the staged `L3BookEncodedLength`.
-/// Allocate the encode buffer to exactly this length — no oversized buffer.
+/// No user-defined constants — all layout values come from the generated API.
 pub fn book_encoded_length(
     bids: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(u64, rust_decimal::Decimal)])],
     asks: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(u64, rust_decimal::Decimal)])],
@@ -28,14 +18,22 @@ pub fn book_encoded_length(
     let after_bids = L3BookEncodedLength::new().bids_ragged(bids.len() as u16, |g| {
         for (_, _, orders) in bids {
             g.add()?;
-            g.group(ORDERS_DIM, ORDER_BLOCK, orders.len())?;
+            g.group(
+                L3BookEncodedLength::BIDS_ORDERS_GROUP_DIM,
+                L3BookEncodedLength::BIDS_ORDERS_ENTRY_BLOCK,
+                orders.len(),
+            )?;
         }
         Ok(())
     })?;
     let after_asks = after_bids.asks_ragged(asks.len() as u16, |g| {
         for (_, _, orders) in asks {
             g.add()?;
-            g.group(ORDERS_DIM, ORDER_BLOCK, orders.len())?;
+            g.group(
+                L3BookEncodedLength::ASKS_ORDERS_GROUP_DIM,
+                L3BookEncodedLength::ASKS_ORDERS_ENTRY_BLOCK,
+                orders.len(),
+            )?;
         }
         Ok(())
     })?;
@@ -45,14 +43,8 @@ pub fn book_encoded_length(
 
 // ── L3BookVarData ────────────────────────────────────────────────────────
 // VarData orders are ragged at two levels: each order carries a var-data
-// `order_id` of differing length. The staged `L3BookVarDataEncodedLength`
-// builder + `RaggedEntryBuilder::group_ragged` express this exactly.
-// TODO: the group dim / entry block / var-data prefix passed to group_ragged
-// and var_data should come from the generated EncodedLength API, not be
-// hardcoded — see CLAUDE.md "Buffer sizing" hard rule.
-const VD_ORDERS_DIM: usize = 4;   // groupSizeEncoding: u16 blockLength + u16 numInGroup
-const VD_ORDER_BLOCK: usize = 9;  // quantity Decimal (order_id is var-data)
-const VD_VAR_PREFIX: usize = 4;   // varAsciiEncoding length: u32
+// `order_id` of differing length. Uses the staged builder + group_ragged.
+// No user-defined constants — all layout values from the generated API.
 
 /// Exact header-inclusive encoded length of an L3BookVarData book, computed
 /// via the staged `L3BookVarDataEncodedLength` builder (nested-ragged).
@@ -64,26 +56,40 @@ pub fn vardata_book_encoded_length(
     let after_bids = L3BookVarDataEncodedLength::new().bids_ragged(bids.len() as u16, |g| {
         for (_, _, orders) in bids {
             g.add()?;
-            g.group_ragged(VD_ORDERS_DIM, VD_ORDER_BLOCK, |og| {
-                for (_, order_id) in *orders {
-                    og.add()?;
-                    og.var_data(VD_VAR_PREFIX, order_id.len())?;
-                }
-                Ok(())
-            })?;
+            g.group_ragged(
+                L3BookVarDataEncodedLength::BIDS_ORDERS_GROUP_DIM,
+                L3BookVarDataEncodedLength::BIDS_ORDERS_ENTRY_BLOCK,
+                |og| {
+                    for (_, order_id) in *orders {
+                        og.add()?;
+                        og.var_data(
+                            L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX,
+                            order_id.len(),
+                        )?;
+                    }
+                    Ok(())
+                },
+            )?;
         }
         Ok(())
     })?;
     let after_asks = after_bids.asks_ragged(asks.len() as u16, |g| {
         for (_, _, orders) in asks {
             g.add()?;
-            g.group_ragged(VD_ORDERS_DIM, VD_ORDER_BLOCK, |og| {
-                for (_, order_id) in *orders {
-                    og.add()?;
-                    og.var_data(VD_VAR_PREFIX, order_id.len())?;
-                }
-                Ok(())
-            })?;
+            g.group_ragged(
+                L3BookVarDataEncodedLength::ASKS_ORDERS_GROUP_DIM,
+                L3BookVarDataEncodedLength::ASKS_ORDERS_ENTRY_BLOCK,
+                |og| {
+                    for (_, order_id) in *orders {
+                        og.add()?;
+                        og.var_data(
+                            L3BookVarDataEncodedLength::ASKS_ORDERS_ORDERID_PREFIX,
+                            order_id.len(),
+                        )?;
+                    }
+                    Ok(())
+                },
+            )?;
         }
         Ok(())
     })?;

@@ -96,6 +96,70 @@ fn generate_staged(
         }
     });
 
+    // ── Layout constants for ragged builder usage ──
+    // Eliminates user-derived constants: callers reference these generated
+    // values instead of hardcoding dim/block/prefix in application code.
+    {
+        let mut layout_consts: Vec<proc_macro2::TokenStream> = Vec::new();
+        for g in &msg.groups {
+            let g_upper = crate::codegen::to_pascal_case(&g.name).to_uppercase();
+            // Nested groups
+            for ng in &g.groups {
+                let ng_upper = crate::codegen::to_pascal_case(&ng.name).to_uppercase();
+                let (_, ng_dim, _, _) = get_dimension_info(elements, &ng.dimension_type);
+                let dim_ident = syn::Ident::new(
+                    &format!("{g_upper}_{ng_upper}_GROUP_DIM"), span);
+                let block_ident = syn::Ident::new(
+                    &format!("{g_upper}_{ng_upper}_ENTRY_BLOCK"), span);
+                let ng_dim_lit = syn::LitInt::new(&ng_dim.to_string(), span);
+                let ng_bl_lit = syn::LitInt::new(&ng.block_length.to_string(), span);
+                layout_consts.push(quote::quote! {
+                    pub const #dim_ident: usize = #ng_dim_lit;
+                    pub const #block_ident: usize = #ng_bl_lit;
+                });
+                // Var-data in nested group entries
+                for vd in &ng.var_data {
+                    let vd_upper = crate::codegen::to_pascal_case(&vd.name).to_uppercase();
+                    let prefix_ident = syn::Ident::new(
+                        &format!("{g_upper}_{ng_upper}_{vd_upper}_PREFIX"), span);
+                    let (_, vd_prefix, _, _) = get_vardata_info(elements, &vd.type_name);
+                    let vd_prefix_lit = syn::LitInt::new(&vd_prefix.to_string(), span);
+                    layout_consts.push(quote::quote! {
+                        pub const #prefix_ident: usize = #vd_prefix_lit;
+                    });
+                }
+            }
+            // Var-data in group entries
+            for vd in &g.var_data {
+                let vd_upper = crate::codegen::to_pascal_case(&vd.name).to_uppercase();
+                let prefix_ident = syn::Ident::new(
+                    &format!("{g_upper}_{vd_upper}_PREFIX"), span);
+                let (_, vd_prefix, _, _) = get_vardata_info(elements, &vd.type_name);
+                let vd_prefix_lit = syn::LitInt::new(&vd_prefix.to_string(), span);
+                layout_consts.push(quote::quote! {
+                    pub const #prefix_ident: usize = #vd_prefix_lit;
+                });
+            }
+        }
+        // Message-level var-data
+        for vd in &msg.var_data {
+            let vd_upper = crate::codegen::to_pascal_case(&vd.name).to_uppercase();
+            let prefix_ident = syn::Ident::new(&format!("{vd_upper}_PREFIX"), span);
+            let (_, vd_prefix, _, _) = get_vardata_info(elements, &vd.type_name);
+            let vd_prefix_lit = syn::LitInt::new(&vd_prefix.to_string(), span);
+            layout_consts.push(quote::quote! {
+                pub const #prefix_ident: usize = #vd_prefix_lit;
+            });
+        }
+        if !layout_consts.is_empty() {
+            standalone.extend(quote::quote! {
+                impl #entry_ident {
+                    #(#layout_consts)*
+                }
+            });
+        }
+    }
+
     // ── Pre-emit all stage structs (except entry and uniform pending) ──
     let mut stage_names: Vec<String> = Vec::new();
     let total_tail = msg.groups.len() + msg.var_data.len();
