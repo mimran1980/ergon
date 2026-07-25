@@ -10,13 +10,13 @@ fn main() {
     let ir = ergo_sbe::parse(&xml)
         .unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
     let schema = ergo_sbe::Schema::from_ir(ir);
-    // ponytail: domain_objects + converters need integration — domain struct
-    // fields still use raw wire types while encoder setters are renamed to
-    // domain types. Enable when domain structs also use domain types.
+    // Domain objects (DTOs) + converters: generated DTO struct fields now use
+    // the configured domain types (Decimal→rust_decimal::Decimal,
+    // BooleanType→bool, UTCTimestamp→chrono::DateTime), so the DTOs round-trip
+    // to/from the wire codec with full domain typing.
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
         .enable_domain_objects()
         .with_unchecked_companions()
-        // TODO need to add converters as well for these types
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",

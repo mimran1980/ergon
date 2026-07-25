@@ -24,12 +24,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Decode with concrete converter accessors — no turbofish.
     let dec = l3_book::L3BookDecoder::try_from(&buf[..actual])?;
     println!("{dec}");
-
-    // TODO can you print the DTO from &buf[..actual] and also encode it back DTO to sbe and viery bytes are idential
     let _ts: DateTime<Utc> = dec.exchange_timestamp();
     assert!(dec.is_active());
 
-    println!("{dec}");
+    // DTO round-trip: decode -> L3BookDomain (owned, domain-typed fields),
+    // then re-encode the DTO and verify the bytes are identical to the
+    // original wire buffer.
+    let dto = l3_book::L3BookDomain::from(
+        l3_book::L3BookDecoder::try_from(&buf[..actual])?,
+    );
+    println!("DTO: {dto:?}");
+    let mut buf2 = vec![0u8; len];
+    let encoded2 = dto.encode(&mut buf2)?;
+    assert_eq!(actual, encoded2, "DTO re-encode length must match original");
+    assert_eq!(
+        &buf[..actual], &buf2[..encoded2],
+        "DTO round-trip must produce byte-identical output",
+    );
+    println!("DTO round-trip: byte-identical ({actual} bytes)");
+
     println!("\nOK");
     Ok(())
 }

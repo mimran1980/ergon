@@ -202,9 +202,12 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
 
 #[test]
 fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
-    // Encode first, then verify the length builder matches.
-    // ponytail: length builder is 1 byte off for VarData schema
-    // (computed 150 vs actual 151). Use encoder length as source of truth.
+    // VarData orders are ragged at two levels (var-data `order_id` of differing
+    // length per order), which the staged `L3BookVarDataEncodedLength` builder
+    // cannot express (nested-ragged is a generator follow-up). Exact sizing for
+    // this schema uses the direct `l3_book::vardata_book_encoded_length` (see
+    // `l3book_vardata_direct_length_matches_encoded`); this test uses the
+    // encoder's reported length as the source of truth.
     let mut buf = vec![0u8; 256];
     let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
