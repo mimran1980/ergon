@@ -22,14 +22,19 @@ All 8 maintained scenarios pass (ratio = ergo-sbe / sbe-tool, ≤ 1.005):
 
 | Scenario | Ratio | Status |
 |----------|-------|--------|
-| decode_scalar | 1.0026 | PASS |
-| decode_array | 0.9988 | PASS |
-| decode_composite | 1.0026 | PASS |
-| decode_full_message | 0.8617 | PASS |
-| decode_entry_point | 0.8241 | PASS |
-| encode/scalar | 0.1351 | PASS (7.4× faster) |
-| encode/throughput_10k | 0.9223 | PASS |
-| throughput/batch_10k | 0.9985 | PASS |
+| decode_scalar | 0.9999 | PASS |
+| decode_array | 0.9867 | PASS |
+| decode_composite | 1.0016 | PASS |
+| decode_full_message | 0.8967 | PASS |
+| decode_entry_point | 0.8290 | PASS |
+| encode/scalar | 0.7282 | PASS |
+| encode/throughput_10k | 0.9244 | PASS |
+| throughput/batch_10k | 1.0043 | PASS |
+
+> **Note:** the earlier `encode/scalar` ratio of 0.1351 (7.4× faster) was a
+> measurement error — the ergo-sbe arm called `wrap()` (no header write) while
+> the sbe-tool arm called `header(0)` (4 header field writes). The benchmark
+> now uses `wrap_and_apply_header` on both arms for equal work.
 
 ### Cluster codec gate — `just bench-cluster`
 

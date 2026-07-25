@@ -103,8 +103,12 @@ test:
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
     @echo "=== 4/5 sample offline tests ==="
+    cd samples/l3-book && cargo test -- --test-threads=1
+    cd samples/sbe-feature-tour && cargo test -- --test-threads=1
+    cd samples/sbe-codegen-examples && cargo run --example flyweight >/dev/null && cargo run --example domain_objects >/dev/null
     cd samples/exchange-example && cargo test --lib -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
+    cd samples/cluster-rfq && cargo build --examples
     @echo "=== 5/5 bench compilation ==="
     cargo bench -p ergo-sbe-benchmarks --no-run
     @echo ""
