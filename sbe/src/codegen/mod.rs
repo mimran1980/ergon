@@ -2172,6 +2172,7 @@ fn generate_message_decoder(
             multi_message,
             byte_order,
             conversions,
+            domain_types,
         ));
     }
 
@@ -2189,15 +2190,11 @@ fn generate_domain_objects(
     multi_message: bool,
     _byte_order: ByteOrder,
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
     let _has_conversion = domain_has_conversion(&msg.fields, &msg.groups, &conversions);
-    // Domain<D> detection scaffolded but conversion not emitted, complete when domain mapping is implemented
-    // but not yet emitted — the identity escape hatch (SbeDecimal for Decimal)
-    // is already emitted by generate_converter_impls; users get raw
-    // Decimal in DTOs today and can convert in app code. Full generic DTO
-    // emission is follow-up.
     generate_domain_recursive(
         msg_name,
         msg_name,
@@ -2208,6 +2205,7 @@ fn generate_domain_objects(
         multi_message,
         msg_name,
         conversions,
+        domain_types,
         false, // is_entry — this is a message, not a group entry
         &mut ts,
         span,
@@ -2251,6 +2249,7 @@ fn generate_domain_recursive(
     multi_message: bool,
     msg_name: &str,
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
     is_entry: bool,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
@@ -2275,6 +2274,19 @@ fn generate_domain_recursive(
             FieldType::Primitive(prim, length) => {
                 let r_type_str = rust_type(*prim);
                 let r_type: syn::Type = syn::parse_str(r_type_str).unwrap();
+                // Domain type for primitives with a semantic/named conversion
+                // (e.g. u64 UTCTimestamp → chrono::DateTime<Utc>). Only the
+                // scalar required case is converted; arrays/optional keep the
+                // wire type.
+                let scalar_domain = if length.is_none() && f.presence != Presence::Optional {
+                    find_domain_type(f, domain_types)
+                } else {
+                    None
+                };
+                let scalar_ty: syn::Type = match scalar_domain {
+                    Some(dt) => syn::parse_str(dt).unwrap(),
+                    None => r_type.clone(),
+                };
                 if let Some(len) = length {
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
                     struct_fields.push(quote::quote! { pub #f_ident: [#r_type; #len_lit] });
@@ -2287,7 +2299,7 @@ fn generate_domain_recursive(
                         quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
                     );
                 } else {
-                    struct_fields.push(quote::quote! { pub #f_ident: #r_type });
+                    struct_fields.push(quote::quote! { pub #f_ident: #scalar_ty });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
                     encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
                 }
@@ -2298,18 +2310,39 @@ fn generate_domain_recursive(
                 let comp_pascal = to_pascal_case(comp_name);
                 let comp_ident = syn::Ident::new(&comp_pascal, span);
                 let as_struct_ident = syn::Ident::new(&format!("{f_snake}_value"), span);
+                // If a domain type is configured for this composite (e.g.
+                // Decimal → rust_decimal::Decimal), the DTO field uses the
+                // domain type and reads/writes via the domain accessors.
+                let domain_ty = find_domain_type(f, domain_types);
+                let field_ty: proc_macro2::TokenStream = match domain_ty {
+                    Some(dt) => {
+                        let parsed: syn::Type = syn::parse_str(dt).unwrap();
+                        quote::quote! { #parsed }
+                    }
+                    None => quote::quote! { #comp_ident },
+                };
                 // Drive-by fix: versioned composites return Option<T> on decoders,
                 // so the DTO field must also be optional.
                 if !is_entry && f.since_version > 0 {
-                    struct_fields.push(quote::quote! { pub #f_ident: Option<#comp_ident> });
-                    encode_stmts.push(
-                        quote::quote! { if let Some(ref v) = self.#f_ident { enc.#f_ident(*v); } },
-                    );
+                    struct_fields.push(quote::quote! { pub #f_ident: Option<#field_ty> });
+                    if domain_ty.is_some() {
+                        from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                        encode_stmts
+                            .push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
+                    } else {
+                        from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
+                        encode_stmts
+                            .push(quote::quote! { if let Some(ref v) = self.#f_ident { enc.#f_ident(*v); } });
+                    }
                 } else {
-                    struct_fields.push(quote::quote! { pub #f_ident: #comp_ident });
+                    struct_fields.push(quote::quote! { pub #f_ident: #field_ty });
+                    if domain_ty.is_some() {
+                        from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                    } else {
+                        from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
+                    }
                     encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
                 }
-                from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
             }
             FieldType::Enum {
                 name: enum_name, ..
@@ -2426,6 +2459,7 @@ fn generate_domain_recursive(
             multi_message,
             msg_name,
             &conversions,
+            domain_types,
             true, // is_entry — group entries always return T for enums
             ts,
             span,
