@@ -137,18 +137,22 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
             group
                 .add(|entry| {
                     entry.price(100i64).size(10i64);
+                    Ok(())
                 })
                 .expect("ask entry 0 should succeed");
             group
                 .add(|entry| {
                     entry.price(200i64).size(20i64);
+                    Ok(())
                 })
                 .expect("ask entry 1 should succeed");
             group
                 .add(|entry| {
                     entry.price(300i64).size(30i64);
+                    Ok(())
                 })
                 .expect("ask entry 2 should succeed");
+            Ok(())
         })
         .expect("asks encoding should succeed");
     let after_bids = after_asks
@@ -156,13 +160,16 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
             group
                 .add(|entry| {
                     entry.price(1000i64).size(100i64);
+                    Ok(())
                 })
                 .expect("bid entry 0 should succeed");
             group
                 .add(|entry| {
                     entry.price(2000i64).size(200i64);
+                    Ok(())
                 })
                 .expect("bid entry 1 should succeed");
+            Ok(())
         })
         .expect("bids encoding should succeed");
     let complete = after_bids
@@ -316,6 +323,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
                         .size(10i64)
                         .side(TradeSide::Buy)
                         .padding(Padding7([0u8; 7]));
+                    Ok(())
                 })
                 .expect("trade entry 0 should succeed");
             group
@@ -327,8 +335,10 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
                         .size(20i64)
                         .side(TradeSide::Sell)
                         .padding(Padding7([0u8; 7]));
+                    Ok(())
                 })
                 .expect("trade entry 1 should succeed");
+            Ok(())
         })
         .expect("trades encoding should succeed");
     let complete = after_trades
@@ -405,8 +415,10 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
                         .size(1i64)
                         .side(TradeSide::Buy)
                         .padding(Padding7([0u8; 7]));
+                    Ok(())
                 })
                 .expect("trade entry should succeed");
+            Ok(())
         })
         .expect("trades encoding should succeed");
     let complete = after_trades
@@ -448,8 +460,10 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
                         .size(0i64)
                         .side(TradeSide::Buy)
                         .padding(Padding7([0u8; 7]));
+                    Ok(())
                 })
                 .expect("trade entry should succeed");
+            Ok(())
         })
         .expect("trades encoding should succeed");
     let complete = after_trades
@@ -577,6 +591,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
                         .interval_num(1u8)
                         .rate_limit(1200i64)
                         .current(50i64);
+                    Ok(())
                 })
                 .expect("rate limit entry 0 should succeed");
             group
@@ -587,8 +602,10 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
                         .interval_num(10u8)
                         .rate_limit(100i64)
                         .current(0i64);
+                    Ok(())
                 })
                 .expect("rate limit entry 1 should succeed");
+            Ok(())
         })
         .expect("rate_limits encoding should succeed");
     let after_id = after_rate_limits
@@ -926,11 +943,14 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
                     g.add(|e| {
                         e.price_wire(Decimal::new(50000_00, -2));
                         e.size_wire(Decimal::new(1_50, -2));
+                        Ok(())
                     });
                     g.add(|e| {
                         e.price_wire(Decimal::new(49900_00, -2));
                         e.size_wire(Decimal::new(2_00, -2));
+                        Ok(())
                     });
+                    Ok(())
                 })
                 .unwrap();
             let book = book
@@ -938,7 +958,9 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
                     g.add(|e| {
                         e.price_wire(Decimal::new(50100_00, -2));
                         e.size_wire(Decimal::new(0_50, -2));
+                        Ok(())
                     });
+                    Ok(())
                 })
                 .unwrap();
             let book = book.symbol(symbol).unwrap();

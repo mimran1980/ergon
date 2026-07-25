@@ -12,7 +12,7 @@
 //! Then: RFQ_AERON_DIR=<dir> cargo run --example rfq_roundtrip --features test-harness
 
 use cluster_rfq::rfq_codec::{AddInstrumentEncoder, BooleanType, CreateRfqCommandEncoder, Side};
-use ergo_aeron_cluster::codecs::session::{
+use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
 };
 use rusteron_client::cformat;

@@ -3716,21 +3716,22 @@ fn generate_group_decoder(
                 if f.presence == Presence::Constant {
                     continue;
                 }
+                let f_value =
+                    syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
                 if let Some(domain_path) = find_domain_type(f, domain_types) {
                     let fmt_str = format!("{sep}{}: {{}}", f.name);
-                    let domain_ty: syn::Type = syn::parse_str(domain_path)
-                        .unwrap_or_else(|_| panic!("invalid domain type path: {domain_path}"));
-                    let f_as =
-                        syn::Ident::new(&format!("{}_as", f_name), proc_macro2::Span::call_site());
+                    let domain_ty: syn::Type = syn::parse_str(domain_path).unwrap();
                     entry_display_body.extend(quote::quote! {
-                        { if let Ok(v) = self.#f_as::<#domain_ty>() { write!(f, #fmt_str, v)?; } }
+                        {
+                            let raw = self.#f_value();
+                            match <#domain_ty as TryFromSbe<_>>::try_from_sbe(raw) {
+                                Ok(v) => write!(f, #fmt_str, v)?,
+                                Err(_) => write!(f, #fmt_str, "<?>")?,
+                            }
+                        }
                     });
                 } else {
                     let fmt_str = format!("{sep}{}: {{:?}}", f.name);
-                    let f_value = syn::Ident::new(
-                        &format!("{}_value", f_name),
-                        proc_macro2::Span::call_site(),
-                    );
                     entry_display_body.extend(quote::quote! {
                         { write!(f, #fmt_str, self.#f_value())?; }
                     });

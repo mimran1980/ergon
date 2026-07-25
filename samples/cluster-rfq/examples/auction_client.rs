@@ -4,7 +4,7 @@
 //! cargo run --example auction_client --features test-harness
 //! ```
 
-use ergo_aeron_cluster::codecs::session::{
+use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
 };
 use rusteron_client::cformat;

@@ -117,7 +117,9 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
                         g.add(|e| {
                             e.price_wire(Decimal::new(50000_00, -2));
                             e.size_wire(Decimal::new(1_50, -2));
+                            Ok(())
                         });
+                        Ok(())
                     })
                     .expect("bids");
                 let book = book.asks(asks, |_| Ok(())).expect("asks");
