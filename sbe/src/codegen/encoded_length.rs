@@ -908,6 +908,27 @@ pub(super) fn generate_support() -> TokenStream {
                 Ok(())
             }
 
+            /// Add a nested **ragged** group — entries may differ (e.g. var-data
+            /// of differing length per entry). Adds the group dimension once,
+            /// then the closure describes each entry (`sub.add()` for the entry
+            /// block, `sub.var_data(...)` for per-entry var-data). The closure
+            /// receives a sub-builder scoped to this group's parent multiplier.
+            pub fn group_ragged<F>(
+                &mut self, dim: usize, entry_block: usize, f: F,
+            ) -> sbe_rt::GroupResult
+            where
+                F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+            {
+                let pm = self.state.multiplier();
+                self.state.add_scaled(dim, pm);
+                let state = core::mem::replace(&mut self.state, EncodedLengthAccumulator::new(0));
+                let mut sub = RaggedEntryBuilder::new(state, pm, entry_block);
+                f(&mut sub)?;
+                self.state = sub.state;
+                self.state.check()?;
+                Ok(())
+            }
+
             /// Add a varData field for the current entry.
             pub fn var_data(&mut self, prefix: usize, byte_len: usize) -> sbe_rt::GroupResult {
                 self.state.add_scaled(prefix, self.parent_multiplier);

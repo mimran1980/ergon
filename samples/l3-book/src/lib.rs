@@ -44,38 +44,51 @@ pub fn book_encoded_length(
 }
 
 // ── L3BookVarData ────────────────────────────────────────────────────────
-// TODO: `vardata_book_encoded_length` MUST use the staged
-// `L3BookVarDataEncodedLength` builder, NOT direct computation. Direct sizing
-// is a FAILURE per the CLAUDE.md "Buffer sizing" hard rule. This requires
-// adding nested-ragged support to the ergo-sbe length builder (var-data
-// `order_id` of differing length per order, ragged at two levels). Until that
-// lands, the direct computation below is a known TODO, not an accepted design.
-// Structural constants from `schemas/l3-book.xml`:
-const VARDATA_GROUP_DIM: usize = 4;   // groupSizeEncoding: u16 blockLength + u16 numInGroup
-const VARDATA_BID_BLOCK: usize = 18;  // price Decimal (9) + size Decimal (9)
-const VARDATA_ORDER_BLOCK: usize = 9; // quantity Decimal (order_id is var-data)
-const VARDATA_VAR_PREFIX: usize = 4;  // varAsciiEncoding length: u32
+// VarData orders are ragged at two levels: each order carries a var-data
+// `order_id` of differing length. The staged `L3BookVarDataEncodedLength`
+// builder + `RaggedEntryBuilder::group_ragged` express this exactly.
+// TODO: the group dim / entry block / var-data prefix passed to group_ragged
+// and var_data should come from the generated EncodedLength API, not be
+// hardcoded — see CLAUDE.md "Buffer sizing" hard rule.
+const VD_ORDERS_DIM: usize = 4;   // groupSizeEncoding: u16 blockLength + u16 numInGroup
+const VD_ORDER_BLOCK: usize = 9;  // quantity Decimal (order_id is var-data)
+const VD_VAR_PREFIX: usize = 4;   // varAsciiEncoding length: u32
 
-/// Exact header-inclusive encoded length of an L3BookVarData book for the
-/// given ragged bids/asks (orders carry var-data `order_id`) + symbol.
-// TODO: replace this direct computation with the staged EncodedLength builder.
+/// Exact header-inclusive encoded length of an L3BookVarData book, computed
+/// via the staged `L3BookVarDataEncodedLength` builder (nested-ragged).
 pub fn vardata_book_encoded_length(
     bids: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(rust_decimal::Decimal, &[u8])])],
     asks: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(rust_decimal::Decimal, &[u8])])],
     symbol: &[u8],
-) -> usize {
-    let mut len = L3BookVarDataEncoder::HEADER_LENGTH + L3BookVarDataEncoder::BLOCK_LENGTH;
-    for group in [bids, asks] {
-        len += VARDATA_GROUP_DIM;
-        for (_, _, orders) in group {
-            len += VARDATA_BID_BLOCK + VARDATA_GROUP_DIM;
-            for (_, order_id) in *orders {
-                len += VARDATA_ORDER_BLOCK + VARDATA_VAR_PREFIX + order_id.len();
-            }
+) -> Result<usize, sbe_rt::EncodeError> {
+    let after_bids = L3BookVarDataEncodedLength::new().bids_ragged(bids.len() as u16, |g| {
+        for (_, _, orders) in bids {
+            g.add()?;
+            g.group_ragged(VD_ORDERS_DIM, VD_ORDER_BLOCK, |og| {
+                for (_, order_id) in *orders {
+                    og.add()?;
+                    og.var_data(VD_VAR_PREFIX, order_id.len())?;
+                }
+                Ok(())
+            })?;
         }
-    }
-    len += VARDATA_VAR_PREFIX + symbol.len();
-    len
+        Ok(())
+    })?;
+    let after_asks = after_bids.asks_ragged(asks.len() as u16, |g| {
+        for (_, _, orders) in asks {
+            g.add()?;
+            g.group_ragged(VD_ORDERS_DIM, VD_ORDER_BLOCK, |og| {
+                for (_, order_id) in *orders {
+                    og.add()?;
+                    og.var_data(VD_VAR_PREFIX, order_id.len())?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    })?;
+    let complete = after_asks.symbol(symbol.len())?;
+    Ok(complete.encoded_length_with_header())
 }
 
 /// Encode an L3 order book into `buf`. Returns the header-inclusive encoded length.

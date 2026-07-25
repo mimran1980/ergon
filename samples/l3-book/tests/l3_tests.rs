@@ -68,7 +68,7 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
     let asks: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(50850), d(20), &o3)];
     let symbol = b"BTCUSDT";
 
-    let expected = l3_book::vardata_book_encoded_length(bids, asks, symbol);
+    let expected = l3_book::vardata_book_encoded_length(bids, asks, symbol)?;
 
     let mut buf = vec![0u8; expected];
     let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
