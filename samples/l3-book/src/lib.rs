@@ -130,3 +130,99 @@ pub fn encode_book(
         .symbol(symbol)?;
     Ok(complete.encoded_length_with_header())
 }
+
+/// Encode an L3BookVarData book (orders carry var-data `order_id`).
+pub fn encode_vardata_book(
+    buf: &mut [u8],
+    bids: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(rust_decimal::Decimal, &[u8])])],
+    asks: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(rust_decimal::Decimal, &[u8])])],
+    symbol: &[u8],
+) -> Result<usize, sbe_rt::EncodeError> {
+    let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(buf, 0)?
+        .fixed(&L3BookVarDataFixedFields {
+            exchange_timestamp: 1_720_000_000_000_000_000u64,
+            sequence: 42,
+            is_active: BooleanType::True,
+        })
+        .bids(bids.len() as u16, |g| {
+            for (price, size, orders) in bids {
+                g.add(|e| {
+                    e.price(*price).size(*size);
+                    e.orders(orders.len() as u16, |og| {
+                        for (qty, oid) in *orders {
+                            og.add(|o| { o.quantity(*qty).order_id(oid)?; Ok(()) })?;
+                        }
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .asks(asks.len() as u16, |g| {
+            for (price, size, orders) in asks {
+                g.add(|e| {
+                    e.price(*price).size(*size);
+                    e.orders(orders.len() as u16, |og| {
+                        for (qty, oid) in *orders {
+                            og.add(|o| { o.quantity(*qty).order_id(oid)?; Ok(()) })?;
+                        }
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .symbol(symbol)?;
+    Ok(complete.encoded_length_with_header())
+}
+
+/// Encode a Depth3Test message (levels → items → tag var-data).
+pub fn encode_depth3(
+    buf: &mut [u8],
+    id: u64,
+    levels: &[(u32, &[(u64, &[u8])])],
+    description: &[u8],
+) -> Result<usize, sbe_rt::EncodeError> {
+    let complete = Depth3TestEncoder::try_wrap_and_apply_header(buf, 0)?
+        .fixed(&Depth3TestFixedFields { id })
+        .levels(levels.len() as u16, |g| {
+            for (name, items) in levels {
+                g.add(|e| {
+                    e.name(*name);
+                    e.items(items.len() as u16, |ig| {
+                        for (value, tag) in *items {
+                            ig.add(|i| { i.value(*value).tag(tag)?; Ok(()) })?;
+                        }
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .description(description)?;
+    Ok(complete.encoded_length_with_header())
+}
+
+/// Exact length for Depth3Test via the staged builder.
+pub fn depth3_encoded_length(
+    levels: &[(u32, &[(u64, &[u8])])],
+    description: &[u8],
+) -> Result<usize, sbe_rt::EncodeError> {
+    let after_levels = Depth3TestEncodedLength::new()
+        .levels_ragged(levels.len() as u16, |g| {
+            for (_, items) in levels {
+                g.add()?.items(|ig| {
+                    for (_, tag) in *items {
+                        ig.add()?.tag(tag.len())?;
+                    }
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?;
+    let complete = after_levels.description(description.len())?;
+    Ok(complete.encoded_length_with_header())
+}
