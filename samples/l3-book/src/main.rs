@@ -1,15 +1,13 @@
 //! L3 order book demo — nested repeating groups with domain-type converters.
 use chrono::{DateTime, Utc};
-use rust_decimal::Decimal;
-
-fn d(val: i64) -> Decimal { Decimal::new(val, 0) }
+use rust_decimal::dec;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let o1 = [(1001u64, d(5)), (1002, d(10))];
-    let o2 = [(1003u64, d(25))];
-    let bids = [(d(50800), d(15), o1.as_slice()), (d(50750), d(40), o2.as_slice())];
-    let o3 = [(2001u64, d(10))]; let o4 = [(2002u64, d(20))]; let o5 = [(2003u64, d(40))];
-    let asks = [(d(50850), d(20), o3.as_slice()), (d(50900), d(30), o4.as_slice()), (d(50950), d(50), o5.as_slice())];
+    let o1 = [(1001u64, dec!(5.25)), (1002, dec!(10.50))];
+    let o2 = [(1003u64, dec!(25.75))];
+    let bids = [(dec!(50800.50), dec!(15.25), o1.as_slice()), (dec!(50750.25), dec!(40.10), o2.as_slice())];
+    let o3 = [(2001u64, dec!(10.30))]; let o4 = [(2002u64, dec!(20.00))]; let o5 = [(2003u64, dec!(40.15))];
+    let asks = [(dec!(50850.00), dec!(20.50), o3.as_slice()), (dec!(50900.75), dec!(30.25), o4.as_slice()), (dec!(50950.10), dec!(50.00), o5.as_slice())];
     let symbol = b"BTCUSDT";
 
     // Encode — ragged entries with different order counts per level.

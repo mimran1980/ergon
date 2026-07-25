@@ -3816,7 +3816,15 @@ fn generate_conversion_impl_blocks(
                 fn try_from_sbe(wire: #dec_ident) -> Result<Self, Self::Error> {
                     let mantissa = wire.mantissa() as i128;
                     let exponent = wire.exponent();
-                    rust_decimal::Decimal::from_i128_with_scale(mantissa, exponent as u32)
+                    // SBE Decimal: negative exponent = fractional places (e.g.
+                    // -2 → scale 2). Positive exponent = magnitude (mantissa ×
+                    // 10^exp). rust_decimal scale must be a positive u32 ≤ 28.
+                    let (mantissa, scale) = if exponent < 0 {
+                        (mantissa, (-exponent) as u32)
+                    } else {
+                        (mantissa.saturating_mul(10i128.saturating_pow(exponent as u32)), 0)
+                    };
+                    rust_decimal::Decimal::from_i128_with_scale(mantissa, scale)
                         .try_into()
                         .map_err(|_| "Decimal overflow")
                 }
