@@ -1,119 +1,103 @@
 # Contributing
 
-This is an experimental hobby repository. Contributions must preserve official
-SBE wire compatibility and must not turn prototype behaviour into a production
-claim. The current release-readiness design and backlog are in
-[`.scratch/release-readiness/spec.md`](.scratch/release-readiness/spec.md).
+ergon is experimental, but changes must still be reproducible, wire-compatible,
+and honest about what has been verified.
 
-## Work test-first
+## Work from behavior
 
-For generator or protocol behaviour:
+For generator or protocol changes:
 
-1. Add a behavioural or compile-fail test that demonstrates the missing contract.
-2. Run it and confirm it fails for the expected reason.
-3. Implement the smallest coherent change.
-4. Run the focused test, then the affected crate's complete tests and Clippy.
-5. Run equal-work allocation and benchmark checks for a hot-path change.
+1. Add a focused behavioral, compile-fail, wire-parity, or allocation test.
+2. Run it and confirm the expected failure.
+3. Make the smallest coherent implementation change.
+4. Run the focused test and the affected crate's complete checks.
+5. Run the maintained benchmark gate when a generated or Cluster hot path
+   changes.
 
-Generated-source substring assertions may supplement a behavioural test, but do
-not prove type-state safety, error propagation, allocation behaviour, or wire
-correctness on their own.
+Generated-source substring tests can supplement behavior tests, but do not prove
+wire correctness, type-state ordering, error propagation, or allocation
+behavior by themselves.
 
-Wire-shape changes must cover byte-exact reference parity, optional/null values,
-acting-version behaviour, configured headers and group dimensions, nested tails,
-and malformed input. Generated interface restrictions belong in compile-pass and
-compile-fail tests.
-
-## Local checks
-
-Run the repository gate when possible:
+## Product checks
 
 ```sh
-just check
+just check-products
+RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-sbe --all-features --no-deps
+RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps
 ```
 
-Product-crate checks:
+`just check` adds the repository hygiene and established sample checks. Some
+Cluster integration paths require Java 17+, built Aeron artifacts, and a local
+Aeron environment:
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
-cargo test -p ergo-sbe --all-features -- --test-threads=1
-cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-cargo test -p ergo-aeron-cluster --all-targets
+just build-aeron-jars
+just test-aeron-cluster-harness
 ```
 
-Sample compatibility checks:
+Do not report a skipped external integration as a passing test.
 
-```sh
-(cd samples/exchange-example && cargo check --all-targets)
-(cd samples/cluster-ha-orderbook && cargo check --all-targets)
-(cd samples/cluster-rfq && cargo check --all-targets)
-```
+## Performance
 
-Some all-feature Cluster tests require Java 17+ and locally built Aeron jars.
-Sample integration tests may require a running Cluster. Do not convert a missing
-external dependency into a product success claim.
-
-## Performance rules
-
-For a generated hot-path change, run:
+Run the SBE parity gate after any change that can affect generated hot paths:
 
 ```sh
 just bench
-cargo bench -p ergo-aeron-cluster
 ```
 
-Comparisons must perform byte-identical work and apply equivalent validation.
-Run three sessions before accepting a material result. A maintained runtime
-median regression above 3%, or generator-time regression above 5%, remains open
-work. Borrowed decoding, fixed-width conversion, fixed encoding, and Cluster
-offering must remain allocation-free where the implementation plan requires it.
+Run the Cluster gate after session codec, offer, claim, or egress hot-path
+changes:
 
-Docs-only changes do not require benchmarks.
+```sh
+just bench-cluster
+```
 
-## Errors and examples
+Every maintained ergo-sbe/reference ratio must be at most `1.00` under
+equal-work inputs. Record fresh measurements instead of copying old benchmark
+numbers into documentation. Documentation-only changes do not require a
+benchmark run.
 
-- Published interfaces use crate-specific error types and `Result`.
-- Do not expose `Box<dyn std::error::Error>` or `anyhow` from a library interface.
-- Tests and binaries may return `Result<(), Box<dyn std::error::Error>>` to use
-  `?` cleanly.
-- Avoid `unwrap` and `expect` where `?` can preserve useful context.
-- Cluster examples use typed `offer`; `offer_raw` is an internal low-level tool,
-  not an example interface.
-- Dynamic C strings are created privately at the FFI seam. Do not add shallow
-  public CString formatting helpers.
+## Error and example style
 
-## Documentation rules
+- Public library APIs use crate-specific typed errors.
+- Tests and binaries may return `Result<(), Box<dyn std::error::Error>>`.
+- Prefer `?` to avoidable `unwrap` or `expect`.
+- Treat schema-declared text strictly; keep binary fields as bytes.
+- Size generated-message buffers from generated constants or length helpers.
+- Use the high-level Cluster facade in consumer examples.
 
-- Track specs and implementation issues under `.scratch/<feature-slug>/` using
-  the conventions in `docs/agents/issue-tracker.md`.
-- Do not create standalone per-task todo Markdown files, goal files, completion
-  reports, or archived plan trees.
-- Update the relevant crate README only for current, verified behaviour. Keep
-  unfinished design in the relevant `.scratch/<feature-slug>/spec.md`.
-- Samples must always be labelled unpublished laboratories and never
-  described as reference implementations.
-- Ergo Aeron Cluster must always be labelled a hobby project unsuitable for
-  production.
+## Documentation
 
-## Package checks
+- Keep the root README focused on repository orientation.
+- Put crate usage in that crate's README.
+- Keep one sample inventory in `samples/README.md`; do not add per-sample
+  READMEs.
+- Describe current, verified behavior. Do not commit dated implementation
+  plans, completion ledgers, or archived task trees.
+- Use Git history as the archive for superseded design material.
+- Keep benchmark results out of permanent docs unless a release record needs an
+  immutable, reproducible snapshot.
 
-Only ergo-sbe and ergo-aeron-cluster are publication candidates:
+## Package boundaries
+
+Only `ergo-sbe` and `ergo-aeron-cluster` are publication candidates. Inspect
+their payloads before any release:
 
 ```sh
 cargo package -p ergo-sbe --list --allow-dirty
 cargo package -p ergo-aeron-cluster --list --allow-dirty
-cargo publish -p ergo-sbe --dry-run --allow-dirty
-cargo publish -p ergo-aeron-cluster --dry-run --allow-dirty
 ```
 
-Inspect the package lists. They must not include historical plans, test fixture
-inventories, the Java harness, application protocols, RFQ/auction material, or
-reference codecs.
+Packages must exclude repository tests, fixtures not required at build time,
+benchmarks, Java harness code, application protocols, samples, and internal
+plans.
+
+Publishing, tagging, and announcing a release require explicit maintainer
+authorization.
 
 ## Git hygiene
 
-- Preserve unrelated changes and dirty submodules.
-- Stage paths explicitly; do not use `git add -A` in this repository.
+- Preserve unrelated working-tree changes and dirty submodules.
+- Stage paths explicitly; do not use `git add -A`.
 - Do not rename the `sbe`, `cluster`, or `samples` directories.
-- Use a one-line conventional commit subject such as `docs:`, `fix:`, or `feat:`.
+- Use a short one-line conventional commit subject.

@@ -103,7 +103,8 @@
 //! 4. Decode: create a decoder from a buffer, read fields.
 //! 5. Encode: create an encoder, set fields, write to a buffer.
 //!
-//! See the [implementation plan](https://github.com/mimran1980/ergon/blob/first_cut/.scratch/release-readiness/spec.md) for current design and open acceptance criteria.
+//! See the [crate README](https://github.com/mimran1980/ergon/blob/first_cut/sbe/README.md)
+//! for the generated-code workflow and verification commands.
 //!
 //! # Design philosophy
 //!
@@ -116,8 +117,9 @@
 //! - **Version-aware**: all accessors respect the wire message version.
 //! - **No `unsafe` by default**: `unsafe` is opt-in via `_unchecked` methods.
 //!
-//! See the [release-readiness implementation plan](https://github.com/mimran1980/ergon/blob/first_cut/.scratch/release-readiness/spec.md)
-//! for the canonical design and backlog. Pillar overview: [`sbe/README.md`](https://github.com/mimran1980/ergon/blob/first_cut/sbe/README.md).
+//! See [`sbe/README.md`](https://github.com/mimran1980/ergon/blob/first_cut/sbe/README.md)
+//! for usage and [`sbe/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/first_cut/sbe/BENCHMARKS.md)
+//! for the maintained performance method.
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
 

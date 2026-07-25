@@ -1,39 +1,65 @@
-# Samples laboratory
+# Samples
 
-> **Low-quality unpublished playgrounds. Do not use these crates in production
-> and do not copy them as reference implementations.**
+These five standalone crates exercise repository APIs in larger flows. They are
+excluded from the workspace, set `publish = false`, and are not reference
+implementations.
 
-The sample crates are deliberately outside the workspace. They exist only to try
-ergo-sbe and ergo-aeron-cluster interfaces in larger flows. They may contain
-experimental structure, unfinished migrations, external-service assumptions, and
-code that is less polished than the two product prototypes.
+| Sample | Purpose | External requirements |
+|---|---|---|
+| [`exchange-example/`](exchange-example/) | Multi-schema generation, domain objects, market-data state, and Aeron IPC | Network only for live exchange paths |
+| [`l3-book/`](l3-book/) | Exact sizing, nested and ragged groups, variable data, conversions, and domain-object round trips | None for local tests |
+| [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | Claim-based Cluster publishing and an HA-shaped order-book flow | Java harness only for leader-kill coverage |
+| [`cluster-rfq/`](cluster-rfq/) | RFQ and auction application-protocol experiments | Java harness for live examples |
+| [`cluster-tutorial/`](cluster-tutorial/) | Connect, offer, poll, keep-alive, and close walkthrough | Java 17+ and built Aeron artifacts |
 
-| Sample | Purpose |
-|---|---|
-| `exchange-example` | Exercise Aeron IPC, nested SBE messages, converters, domain objects |
-| `cluster-ha-orderbook` | Exercise Cluster claims, egress, leader changes, and an HA-shaped data flow |
-| `cluster-rfq` | Historical RFQ/auction protocol experiments (not a reference implementation) |
+## Local checks
 
-## Checks
+Run standalone packages through their manifest paths:
 
 ```sh
-(cd samples/exchange-example && cargo check --all-targets)
-(cd samples/cluster-ha-orderbook && cargo check --all-targets)
-(cd samples/cluster-rfq && cargo check --all-targets)
+cargo check --manifest-path samples/exchange-example/Cargo.toml --all-targets
+cargo check --manifest-path samples/l3-book/Cargo.toml --all-targets
+cargo check --manifest-path samples/cluster-ha-orderbook/Cargo.toml --all-targets
+cargo check --manifest-path samples/cluster-rfq/Cargo.toml --all-targets
+cargo check --manifest-path samples/cluster-tutorial/Cargo.toml --all-targets
 ```
 
-Additional recipes can require Java 17+, built Aeron jars, or a local multi-node
-Cluster. They are optional laboratory checks, not release gates.
+Useful service-free tests:
+
+```sh
+cargo test --manifest-path samples/exchange-example/Cargo.toml
+cargo test --manifest-path samples/l3-book/Cargo.toml
+cargo test --manifest-path samples/cluster-ha-orderbook/Cargo.toml \
+  --lib --test ha_offline_pipeline
+```
+
+Java-backed samples require:
+
+```sh
+just build-aeron-jars
+cargo run --manifest-path samples/cluster-tutorial/Cargo.toml
+```
+
+## L3 sample
+
+The L3 sample is the main generated-code walkthrough. Its schema contains:
+
+- fixed fields with `chrono`, `bool`, and `rust_decimal` mappings;
+- nested bid/ask and order groups;
+- ragged entry shapes;
+- variable-length order identifiers;
+- a three-level group-to-variable-data tail.
+
+Its helpers compute the complete header-inclusive wire length before allocating,
+encode into exactly that buffer, decode through generated flyweights, and check
+owned domain-object round trips. Read
+[`l3-book/src/main.rs`](l3-book/src/main.rs) and
+[`l3-book/src/lib.rs`](l3-book/src/lib.rs) alongside the schema.
 
 ## Rules
 
-- Keep `publish = false` and keep crates outside the workspace.
-- Use the product interfaces being tested; do not create sample-only public
-  abstractions and then document them as recommended design.
-- Prefer `Result` and `?` over avoidable `unwrap` or `expect`.
-- Use domain objects when they make an experiment clearer and flyweights when the
-  experiment specifically measures zero-copy behaviour.
-- Delete code that no longer exercises a unique ergo-sbe or ergo-aeron-cluster interface.
-- Track future work in `.scratch/<feature-slug>/spec.md` and its issue files,
-  following [`docs/agents/issue-tracker.md`](../docs/agents/issue-tracker.md),
-  not standalone todo Markdown files.
+- Keep every sample outside the workspace and unpublished.
+- Do not expose sample-only abstractions as product APIs.
+- Size SBE buffers from generated encoded-length APIs.
+- Propagate fallible operations with `Result` and `?`.
+- Delete a sample when it no longer exercises a distinct repository behavior.

@@ -2,8 +2,8 @@
 //!
 //! # See also
 //!
-//! [`crate::GenerationConfig`], [`crate::Schema`], design authority
-//! `sbe/design/DECISIONS.md` (consuming stages, wire compatibility).
+//! [`crate::GenerationConfig`], [`crate::Schema`], and the crate README's
+//! generated-code workflow.
 //!
 //! This module contains the [`Generator`] struct — the primary API for
 //! producing Rust source modules from a parsed [`Schema`].
@@ -155,7 +155,7 @@ impl GenerationContext {
     }
 }
 
-/// SBE codec generator from a resolved [`Schema`](crate::Schema).
+/// SBE codec generator from a resolved [`Schema`].
 #[derive(Clone, Debug)]
 pub struct Generator {
     config: GenerationConfig,
@@ -2196,13 +2196,10 @@ fn generate_message_decoder(
             const SCHEMA_VERSION: u16 = #schema_version_lit;
         }
 
-        impl<'a> AsRef<[u8]> for #decoder_ident<'a> {
-            fn as_ref(&self) -> &[u8] {
-                self.as_bytes().unwrap_or(&[])
-            }
-        }
-
         impl<'a> #decoder_ident<'a> {
+            /// Fallible byte view of the message. Returns `None` if the
+            /// buffer is malformed or truncated. Prefer [`Self::as_bytes`]
+            /// for explicit error handling.
             pub fn as_ref_opt(&self) -> Option<&[u8]> {
                 self.as_bytes().ok()
             }

@@ -1424,12 +1424,10 @@ impl<'a> sbe_rt::SbeMessage for CarDecoder<'a> {
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
-impl<'a> AsRef<[u8]> for CarDecoder<'a> {
-    fn as_ref(&self) -> &[u8] {
-        self.as_bytes().unwrap_or(&[])
-    }
-}
 impl<'a> CarDecoder<'a> {
+    /// Fallible byte view of the message. Returns `None` if the
+    /// buffer is malformed or truncated. Prefer [`Self::as_bytes`]
+    /// for explicit error handling.
     pub fn as_ref_opt(&self) -> Option<&[u8]> {
         self.as_bytes().ok()
     }

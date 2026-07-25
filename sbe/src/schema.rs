@@ -4,10 +4,9 @@
 //!
 //! [`crate::parse`], [`crate::Generator`], [`crate::GenerationConfig`].
 //!
-//! Defines the [`Schema`] and [`SchemaSource`] types that represent
-//! a parsed SBE schema at the ergo-sbe boundary. A `Schema` holds the
-//! package identity (`package`, `id`, `version`) plus the resolved
-//! token [`Ir`].
+//! Defines the [`Schema`] type that represents a parsed SBE schema
+//! at the ergo-sbe boundary. A `Schema` holds the package identity
+//! (`package`, `id`, `version`) plus the resolved token [`Ir`].
 //!
 //! # Usage
 //!
@@ -35,8 +34,6 @@
 //! # Schema creation
 //!
 //! - [`Schema::from_ir`] — from a parsed token IR.
-//! - [`Schema::new`] — directly from metadata (when you already have the
-//!   schema identity and will populate the IR separately).
 
 use crate::ir::{ByteOrder, Ir};
 
