@@ -14,6 +14,9 @@ fn main() {
     // fields still use raw wire types while encoder setters are renamed to
     // domain types. Enable when domain structs also use domain types.
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
+        .enable_domain_objects()
+        .with_unchecked_companions()
+        // TODO need to add converters as well for these types
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
