@@ -4740,6 +4740,7 @@ fn generate_message_encoder(
     let span = proc_macro2::Span::call_site();
     let snake_name = to_snake_case(&msg.name);
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
+    let name_decoder_ident = syn::Ident::new(&format!("{}Decoder", name), span);
 
     // Pre-compute HEADER_TEMPLATE bytes. SBE spec §4.1: the message header
     // is ALWAYS little-endian regardless of the schema's byteOrder. The body
@@ -4810,16 +4811,32 @@ fn generate_message_encoder(
                 pos: usize,
             }
 
-            // Structural Debug only — encoder stages are mid-encode (no wire
-            // field data to read). Decoder Debug delegates to Display for
-            // field-value output; encoder stages show structural positions.
+            // Encoder Display + Debug: delegate to the decoder for field-value
+            // output (reads the encoded buffer). Safe for partial buffers —
+            // decoder try_wrap guards prevent panics; falls back to structural.
+            impl<'a> core::fmt::Display for #stage<'a> {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    match #name_decoder_ident::try_wrap_and_apply_header(
+                        &self.buf[self.message_start..], 0,
+                    ) {
+                        Ok(dec) => core::fmt::Display::fmt(&dec, f),
+                        Err(_) => write!(f, "<partial {}>", #stage_name_lit),
+                    }
+                }
+            }
+
             impl<'a> core::fmt::Debug for #stage<'a> {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                    f.debug_struct(#stage_name_lit)
-                        .field("message_start", &self.message_start)
-                        .field("pos", &self.pos)
-                        .field("buf_len", &self.buf.len())
-                        .finish()
+                    match #name_decoder_ident::try_wrap_and_apply_header(
+                        &self.buf[self.message_start..], 0,
+                    ) {
+                        Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+                        Err(_) => f.debug_struct(#stage_name_lit)
+                            .field("message_start", &self.message_start)
+                            .field("pos", &self.pos)
+                            .field("buf_len", &self.buf.len())
+                            .finish(),
+                    }
                 }
             }
         });
