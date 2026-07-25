@@ -361,10 +361,8 @@ fn ragged_too_few_entries_rejected() -> Result<(), Box<dyn std::error::Error>> {
         r#"
         let result = CarEncodedLength::new()
             .fuel_figures_ragged(3, |ff| {
-                ff.add()?;
-                ff.var_data(4, 5)?;
-                ff.add()?;
-                ff.var_data(4, 7)?;
+                ff.add()?.usage_description(5)?;
+                ff.add()?.usage_description(7)?;
                 Ok(())
             });
         assert!(result.is_err(), "too few ragged entries must fail");

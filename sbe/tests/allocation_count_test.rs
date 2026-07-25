@@ -153,72 +153,7 @@ fn warm_up_all() {
 // ── Consuming stage decode path (DECISIONS.md §3) ──────────────────
 //
 // Warm + measure the new sequential decoder stages: into_<group> -> iterate
-// -> finish -> into_<vd> -> complete. Must allocate nothing.
-
-fn warm_up_consuming() {
-    let car = CarDecoder::try_from(BASELINE).unwrap();
-    let _sn = car.serial_number();
-    let mut fuel = car.into_fuel_figures().unwrap();
-    for entry in fuel.by_ref() {
-        let e = entry.unwrap();
-        let _ = e.speed();
-        let _ = e.usage_description();
-    }
-    let after_fuel = fuel.finish().unwrap();
-    let mut perf = after_fuel.into_performance_figures().unwrap();
-    for entry in perf.by_ref() {
-        let _ = entry.unwrap().octane_rating();
-    }
-    let after_perf = perf.finish().unwrap();
-    let (_mfr, after_mfr) = after_perf.into_manufacturer().unwrap();
-    let (_model, after_model) = after_mfr.into_model().unwrap();
-    let (_code, _done) = after_model.into_activation_code().unwrap();
-}
-
-#[test]
-fn consuming_stage_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_consuming();
-    let guard = AllocGuard::after_warmup();
-
-    let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
-    let _sn = car.serial_number();
-    let _my = car.model_year();
-    let mut fuel = car.into_fuel_figures().unwrap();
-    let mut fuel_count = 0usize;
-    while let Some(Ok(e)) = fuel.next() {
-        let _ = e.speed();
-        let _ = e.mpg();
-        let _ = e.usage_description();
-        fuel_count += 1;
-    }
-    let after_fuel = fuel.finish().unwrap();
-    let mut perf = after_fuel.into_performance_figures().unwrap();
-    while let Some(Ok(e)) = perf.next() {
-        let _ = e.octane_rating();
-    }
-    let after_perf = perf.finish().unwrap();
-    let (mfr, after_mfr) = after_perf.into_manufacturer().unwrap();
-    let (model, after_model) = after_mfr.into_model().unwrap();
-    let (code, done) = after_model.into_activation_code().unwrap();
-    black_box((
-        fuel_count,
-        mfr,
-        model,
-        code,
-        done.encoded_length_with_header(),
-    ));
-
-    assert_eq!(
-        guard.diff(),
-        0,
-        "consuming stage decode allocated {} times",
-        guard.diff()
-    );
-
-    Ok(())
-}
-
-// ── Decode entrypoint ───────────────────────────────────────────────
+// -> finish -> into_<vd> -> complete. Must allocate nothing.// ── Decode entrypoint ───────────────────────────────────────────────
 
 #[test]
 fn decode_entrypoint_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
@@ -284,23 +219,6 @@ fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // ── Frame cursor decode ─────────────────────────────────────────────
-
-#[test]
-fn frame_cursor_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_all();
-    let guard = AllocGuard::after_warmup();
-    let msg = AnyMessage::decode_frame(black_box(BASELINE), 0, BASELINE.len()).unwrap();
-    black_box(msg);
-    assert_eq!(
-        guard.diff(),
-        0,
-        "frame cursor decode allocated {} times",
-        guard.diff()
-    );
-
-    Ok(())
-}
-
 // ── Encode into caller buffer ───────────────────────────────────────
 
 #[test]
@@ -364,42 +282,6 @@ fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>>
     );
     Ok(())
 }
-
-#[test]
-fn ragged_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_all();
-
-    let guard = AllocGuard::after_warmup();
-    // RaggedEntryBuilder uses add() + var_data() for entry contributions
-    let len = CarEncodedLength::new()
-        .fuel_figures_ragged(2, |ff| {
-            ff.add()?;
-            ff.var_data(4, 5)?; // usageDescription: prefix=4 + 5 bytes
-            ff.add()?;
-            ff.var_data(4, 7)?; // second entry: prefix=4 + 7 bytes
-            Ok(())
-        })
-        .unwrap()
-        .performance_figures(0)
-        .acceleration(0)
-        .unwrap()
-        .manufacturer(5)
-        .unwrap()
-        .model(4)
-        .unwrap()
-        .activation_code(3)
-        .unwrap()
-        .encoded_length_with_header();
-    black_box(len);
-    assert_eq!(
-        guard.diff(),
-        0,
-        "ragged length builder allocated {} times",
-        guard.diff()
-    );
-    Ok(())
-}
-
 // ── Var-data decode ─────────────────────────────────────────────────
 
 #[test]

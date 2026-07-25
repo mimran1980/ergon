@@ -93,9 +93,7 @@ mod tests {
         assert_eq!(&*connect, b"user:pass");
         assert_eq!(&*challenge, b"user:pass", "challenge must reuse the same bytes");
         assert_eq!(
-            &*StaticCredentials::new(vec![1, 2, 3])
-                .encoded_credentials()
-                .unwrap(),
+            &*StaticCredentials::new(vec![1, 2, 3]).encoded_credentials().unwrap(),
             &[1u8, 2, 3][..]
         );
         Ok(())

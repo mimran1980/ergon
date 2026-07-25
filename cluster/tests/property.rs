@@ -1,7 +1,6 @@
 use ergo_aeron_cluster::cluster_codec_types::{
-    ChallengeDecoder, ChallengeEncoder, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder,
-    SessionEventDecoder, SessionEventEncoder, SessionKeepAliveEncoder,
-    SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+    ChallengeDecoder, ChallengeEncoder, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder, SessionEventDecoder,
+    SessionEventEncoder, SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
 };
 
 use proptest::prelude::*;
@@ -110,44 +109,36 @@ proptest! {
     /// Feed random bytes to SessionMessageHeaderDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_session_message_header_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        if data.len() >= 8 {
-            if let Ok(dec) = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&data, 0) {
+        if data.len() >= 8 && let Ok(dec) = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&data, 0) {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
-            }
         }
     }
 
     /// Feed random bytes to SessionEventDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_session_event_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        if data.len() >= 8 {
-            if let Ok(dec) = SessionEventDecoder::try_wrap_and_apply_header(&data, 0) {
+        if data.len() >= 8 && let Ok(dec) = SessionEventDecoder::try_wrap_and_apply_header(&data, 0) {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
-            }
         }
     }
 
     /// Feed random bytes to NewLeaderEventDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_new_leader_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        if data.len() >= 8 {
-            if let Ok(dec) = NewLeaderEventDecoder::try_wrap_and_apply_header(&data, 0) {
+        if data.len() >= 8 && let Ok(dec) = NewLeaderEventDecoder::try_wrap_and_apply_header(&data, 0) {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
-            }
         }
     }
 
     /// Feed random bytes to ChallengeDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_challenge_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        if data.len() >= 8 {
-            if let Ok(dec) = ChallengeDecoder::try_wrap_and_apply_header(&data, 0) {
+        if data.len() >= 8 && let Ok(dec) = ChallengeDecoder::try_wrap_and_apply_header(&data, 0) {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
-            }
         }
     }
 

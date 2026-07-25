@@ -891,7 +891,7 @@ fn generate_owner_consuming_stages(
                         /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
                         #[inline]
                         pub unsafe fn #as_str_unchecked(self) -> (&'a str, #next_stage<'a>) {
-                            let (bytes, next) = self.#into_ident().unwrap_unchecked();
+                            let (bytes, next) = unsafe { self.#into_ident().unwrap_unchecked() };
                             // SAFETY: caller guarantees valid UTF-8
                             let s = unsafe { core::str::from_utf8_unchecked(bytes) };
                             (s, next)
@@ -1968,7 +1968,7 @@ fn generate_message_decoder(
             /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
             #[inline]
             pub unsafe fn #str_unchecked(&self) -> &'a str {
-                let bytes = self.#vd_snake_ident().unwrap_unchecked();
+                let bytes = unsafe { self.#vd_snake_ident().unwrap_unchecked() };
                 // SAFETY: caller guarantees valid UTF-8
                 unsafe { core::str::from_utf8_unchecked(bytes) }
             }
@@ -2370,8 +2370,9 @@ fn generate_domain_recursive(
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#field_ty> });
                     if domain_ty.is_some() {
                         from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                        encode_stmts
-                            .push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
+                        encode_stmts.push(
+                            quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
+                        );
                     } else {
                         from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
                         encode_stmts
@@ -3659,8 +3660,10 @@ fn generate_group_decoder(
                     continue;
                 }
                 let fmt_str = format!("{sep}{}: {{:?}}", f.name);
+                let f_value =
+                    syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
                 entry_display_body.extend(quote::quote! {
-                    { write!(f, #fmt_str, self.#f_ident())?; }
+                    { write!(f, #fmt_str, self.#f_value())?; }
                 });
                 entry_display_out_idx += 1;
             }
@@ -4955,6 +4958,19 @@ fn generate_message_encoder(
             pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
             const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
         });
+
+        // compute_length() — convenience factory for the staged length builder
+        if !encoded_len_gen.standalone.is_empty() {
+            let el_ident = syn::Ident::new(&format!("{name}EncodedLength"), span);
+            impl_contents.extend(quote::quote! {
+                /// Return a staged length builder for computing the exact
+                /// encoded size before allocation.
+                #[inline]
+                pub const fn compute_length() -> #el_ident {
+                    #el_ident::new()
+                }
+            });
+        }
     }
 
     // HEADER_TEMPLATE
@@ -5892,18 +5908,34 @@ fn generate_group_encoder(
             let f_offset = syn::Index::from(f.offset);
             let f_size = syn::LitInt::new(&f.field_type.size().to_string(), span);
             struct_fields.extend(quote::quote! { pub #f_name: #f_ty, });
-            if let FieldType::Composite { .. } = &f.field_type {
-                struct_write.extend(quote::quote! {
-                    self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name.0);
-                });
-            } else {
-                struct_write.extend(quote::quote! {
-                    self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name.#to_endian());
-                });
+            match &f.field_type {
+                FieldType::Composite { .. } => {
+                    struct_write.extend(quote::quote! {
+                        self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name.0);
+                    });
+                }
+                FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
+                    let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
+                    struct_write.extend(quote::quote! {
+                        self.buf[pos + #f_offset..][..#f_size]
+                            .copy_from_slice(&(entry.#f_name as #r_ty).#to_endian());
+                    });
+                }
+                FieldType::Primitive(pt, Some(_len)) if pt.size() == 1 => {
+                    struct_write.extend(quote::quote! {
+                        self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name);
+                    });
+                }
+                FieldType::Primitive(..) => {
+                    struct_write.extend(quote::quote! {
+                        self.buf[pos + #f_offset..][..#f_size]
+                            .copy_from_slice(&entry.#f_name.#to_endian());
+                    });
+                }
             }
         }
         ts.extend(quote::quote! {
-            /// Value struct for this group's entries. Pass to [`Self::add_struct`].
+            /// Value struct for this group's entries.
             #[derive(Debug, Clone, PartialEq)]
             pub struct #entry_struct_ident {
                 #struct_fields

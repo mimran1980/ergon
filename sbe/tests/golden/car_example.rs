@@ -189,6 +189,22 @@ pub mod sbe_rt {
     /// Return type for group closures (`add`, `bids`, …).
     /// Closures return `Result<(), EncodeError>`; `?` just works.
     pub type GroupResult = Result<(), EncodeError>;
+    /// Conversion trait for group-closure return values.
+    /// Implemented for `()` and `Result<(), EncodeError>` so
+    /// closures may use either return type.
+    pub trait IntoGroupResult {
+        fn into_group_result(self) -> GroupResult;
+    }
+    impl IntoGroupResult for () {
+        fn into_group_result(self) -> GroupResult {
+            Ok(())
+        }
+    }
+    impl IntoGroupResult for GroupResult {
+        fn into_group_result(self) -> GroupResult {
+            self
+        }
+    }
 }
 ///Boolean Type.
 #[repr(u8)]
@@ -1139,7 +1155,7 @@ impl<'a> CarDecoder<'a> {
     /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
     #[inline]
     pub unsafe fn manufacturer_as_str_unchecked(&self) -> &'a str {
-        let bytes = self.manufacturer().unwrap_unchecked();
+        let bytes = unsafe { self.manufacturer().unwrap_unchecked() };
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     #[inline]
@@ -1183,7 +1199,7 @@ impl<'a> CarDecoder<'a> {
     /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
     #[inline]
     pub unsafe fn model_as_str_unchecked(&self) -> &'a str {
-        let bytes = self.model().unwrap_unchecked();
+        let bytes = unsafe { self.model().unwrap_unchecked() };
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     #[inline]
@@ -1227,7 +1243,7 @@ impl<'a> CarDecoder<'a> {
     /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
     #[inline]
     pub unsafe fn activation_code_as_str_unchecked(&self) -> &'a str {
-        let bytes = self.activation_code().unwrap_unchecked();
+        let bytes = unsafe { self.activation_code().unwrap_unchecked() };
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     /// Consume this stage and return a fresh decoder at the initial
@@ -1403,71 +1419,68 @@ impl<'a> CarDecoder<'a> {
 }
 impl<'a> core::fmt::Display for CarDecoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Car {{ ")?;
+        core::fmt::Debug::fmt(self, f)
+    }
+}
+impl<'a> core::fmt::Debug for CarDecoder<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("CarDecoder");
         if self.pos.saturating_add(8) <= self.buf.len() && 8 <= self.acting_block_length
         {
             let v = self.serial_number();
-            write!(f, "serial_number: {:?}", v)?;
+            d.field("serialNumber", &v);
         }
         if self.pos.saturating_add(10) <= self.buf.len()
             && 10 <= self.acting_block_length
         {
             let v = self.model_year();
-            write!(f, ", model_year: {:?}", v)?;
+            d.field("modelYear", &v);
         }
         if self.pos.saturating_add(11) <= self.buf.len()
             && 11 <= self.acting_block_length
         {
-            let e = self.available();
-            write!(f, ", available: BooleanType::{e:?}")?;
+            let v = self.available();
+            d.field("available", &v);
         }
         if self.pos.saturating_add(12) <= self.buf.len()
             && 12 <= self.acting_block_length
         {
-            let e = self.code();
-            write!(f, ", code: Model::{e:?}")?;
+            let v = self.code();
+            d.field("code", &v);
         }
-        if let Ok(g) = self.fuel_figures() {
-            write!(f, ", fuel_figures: [")?;
-            for (i, result) in g.enumerate() {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                match result {
-                    Ok(entry) => write!(f, "{}", entry)?,
-                    Err(_) => write!(f, "{{err}}")?,
-                }
-            }
-            write!(f, "]")?;
+        if let Ok(_g) = self.fuel_figures() {
+            let entries: Vec<String> = _g
+                .filter_map(|r| r.ok())
+                .map(|e| format!("{e}"))
+                .collect();
+            d.field("fuelFigures", &entries);
         }
-        if let Ok(g) = self.performance_figures() {
-            write!(f, ", performance_figures: [")?;
-            for (i, result) in g.enumerate() {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                match result {
-                    Ok(entry) => write!(f, "{}", entry)?,
-                    Err(_) => write!(f, "{{err}}")?,
-                }
-            }
-            write!(f, "]")?;
+        if let Ok(_g) = self.performance_figures() {
+            let entries: Vec<String> = _g
+                .filter_map(|r| r.ok())
+                .map(|e| format!("{e}"))
+                .collect();
+            d.field("performanceFigures", &entries);
         }
-        if let Ok(d) = self.manufacturer() {
-            write!(f, ", manufacturer: {} bytes", d.len())?;
+        if let Ok(_data) = self.manufacturer() {
+            match std::str::from_utf8(_data) {
+                Ok(_s) => d.field("manufacturer", &_s),
+                Err(_) => d.field("manufacturer", &format!("<{} bytes>", _data.len())),
+            };
         }
-        if let Ok(d) = self.model() {
-            write!(f, ", model: {} bytes", d.len())?;
+        if let Ok(_data) = self.model() {
+            match std::str::from_utf8(_data) {
+                Ok(_s) => d.field("model", &_s),
+                Err(_) => d.field("model", &format!("<{} bytes>", _data.len())),
+            };
         }
-        if let Ok(d) = self.activation_code() {
-            write!(f, ", activation_code: {} bytes", d.len())?;
+        if let Ok(_data) = self.activation_code() {
+            match std::str::from_utf8(_data) {
+                Ok(_s) => d.field("activationCode", &_s),
+                Err(_) => d.field("activationCode", &format!("<{} bytes>", _data.len())),
+            };
         }
-        write!(f, " }}")
-    }
-}
-impl<'a> core::fmt::Debug for CarDecoder<'a> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Display::fmt(self, f)
+        d.finish()
     }
 }
 pub struct FuelFiguresDecoder<'a> {
@@ -1762,7 +1775,10 @@ impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
             write!(f, ", mpg: {:?}", v)?;
         }
         if let Ok(d) = self.usage_description() {
-            write!(f, ", usageDescription: {} bytes", d.len())?;
+            match std::str::from_utf8(d) {
+                Ok(s) => write!(f, ", usageDescription: {}", s)?,
+                Err(_) => write!(f, ", usageDescription: <{} bytes>", d.len())?,
+            }
         }
         write!(f, " }}")
     }
@@ -1802,8 +1818,11 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let bytes: [u8; 4] = unsafe {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
-        let header = VarAsciiEncoding(bytes);
-        let len = header.length() as usize;
+        let len = match 4 {
+            1 => bytes[0] as usize,
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        };
         if len > 1073741824 {
             return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                 field: "usageDescription",
@@ -1828,6 +1847,44 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             acting_block_length: self.acting_block_length,
         };
         Ok((data, next))
+    }
+    /// Non-consuming variant: read this var-data field as `&[u8]`
+    /// without advancing or constructing the next stage. Cheaper
+    /// than [`Self::#into_ident`] when only the bytes are needed.
+    #[inline]
+    pub fn usage_description_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let offset = self.pos + self.acting_block_length;
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "usageDescription",
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
+        let len = match 4 {
+            1 => bytes[0] as usize,
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        };
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "usageDescription",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
+        let data_start = offset + 4;
+        if data_start + len > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "usageDescription",
+                needed: 4 + len,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        Ok(&self.buf[data_start..data_start + len])
     }
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
@@ -1861,7 +1918,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub unsafe fn into_usage_description_as_str_unchecked(
         self,
     ) -> (&'a str, FuelFiguresEntryDecoderComplete<'a>) {
-        let (bytes, next) = self.into_usage_description().unwrap_unchecked();
+        let (bytes, next) = unsafe { self.into_usage_description().unwrap_unchecked() };
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         (s, next)
     }
@@ -2700,8 +2757,11 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
         let bytes: [u8; 4] = unsafe {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
-        let header = VarStringEncoding(bytes);
-        let len = header.length() as usize;
+        let len = match 4 {
+            1 => bytes[0] as usize,
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        };
         if len > 1073741824 {
             return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                 field: "manufacturer",
@@ -2726,6 +2786,44 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
             acting_block_length: self.acting_block_length,
         };
         Ok((data, next))
+    }
+    /// Non-consuming variant: read this var-data field as `&[u8]`
+    /// without advancing or constructing the next stage. Cheaper
+    /// than [`Self::#into_ident`] when only the bytes are needed.
+    #[inline]
+    pub fn manufacturer_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let offset = self.tail_start;
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "manufacturer",
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
+        let len = match 4 {
+            1 => bytes[0] as usize,
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        };
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "manufacturer",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
+        let data_start = offset + 4;
+        if data_start + len > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "manufacturer",
+                needed: 4 + len,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        Ok(&self.buf[data_start..data_start + len])
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
@@ -2759,7 +2857,7 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     pub unsafe fn into_manufacturer_as_str_unchecked(
         self,
     ) -> (&'a str, CarDecoderAfterManufacturer<'a>) {
-        let (bytes, next) = self.into_manufacturer().unwrap_unchecked();
+        let (bytes, next) = unsafe { self.into_manufacturer().unwrap_unchecked() };
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         (s, next)
     }
@@ -2831,8 +2929,11 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
         let bytes: [u8; 4] = unsafe {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
-        let header = VarStringEncoding(bytes);
-        let len = header.length() as usize;
+        let len = match 4 {
+            1 => bytes[0] as usize,
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        };
         if len > 1073741824 {
             return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                 field: "model",
@@ -2857,6 +2958,44 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
             acting_block_length: self.acting_block_length,
         };
         Ok((data, next))
+    }
+    /// Non-consuming variant: read this var-data field as `&[u8]`
+    /// without advancing or constructing the next stage. Cheaper
+    /// than [`Self::#into_ident`] when only the bytes are needed.
+    #[inline]
+    pub fn model_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let offset = self.tail_start;
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "model",
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
+        let len = match 4 {
+            1 => bytes[0] as usize,
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        };
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "model",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
+        let data_start = offset + 4;
+        if data_start + len > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "model",
+                needed: 4 + len,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        Ok(&self.buf[data_start..data_start + len])
     }
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
@@ -2890,7 +3029,7 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     pub unsafe fn into_model_as_str_unchecked(
         self,
     ) -> (&'a str, CarDecoderAfterModel<'a>) {
-        let (bytes, next) = self.into_model().unwrap_unchecked();
+        let (bytes, next) = unsafe { self.into_model().unwrap_unchecked() };
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         (s, next)
     }
@@ -2953,8 +3092,11 @@ impl<'a> CarDecoderAfterModel<'a> {
         let bytes: [u8; 4] = unsafe {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
-        let header = VarAsciiEncoding(bytes);
-        let len = header.length() as usize;
+        let len = match 4 {
+            1 => bytes[0] as usize,
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        };
         if len > 1073741824 {
             return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                 field: "activationCode",
@@ -2979,6 +3121,44 @@ impl<'a> CarDecoderAfterModel<'a> {
             acting_block_length: self.acting_block_length,
         };
         Ok((data, next))
+    }
+    /// Non-consuming variant: read this var-data field as `&[u8]`
+    /// without advancing or constructing the next stage. Cheaper
+    /// than [`Self::#into_ident`] when only the bytes are needed.
+    #[inline]
+    pub fn activation_code_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let offset = self.tail_start;
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "activationCode",
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
+        let len = match 4 {
+            1 => bytes[0] as usize,
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        };
+        if len > 1073741824 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: "activationCode",
+                length: len as u32,
+                max_length: 1073741824,
+            });
+        }
+        let data_start = offset + 4;
+        if data_start + len > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "activationCode",
+                needed: 4 + len,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        Ok(&self.buf[data_start..data_start + len])
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {
@@ -3012,7 +3192,7 @@ impl<'a> CarDecoderAfterModel<'a> {
     pub unsafe fn into_activation_code_as_str_unchecked(
         self,
     ) -> (&'a str, CarDecoderComplete<'a>) {
-        let (bytes, next) = self.into_activation_code().unwrap_unchecked();
+        let (bytes, next) = unsafe { self.into_activation_code().unwrap_unchecked() };
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         (s, next)
     }
@@ -3442,13 +3622,26 @@ pub struct CarEncoder<'a> {
     message_start: usize,
     pos: usize,
 }
+impl<'a> core::fmt::Display for CarEncoder<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Display::fmt(&dec, f),
+            Err(_) => write!(f, "<partial {}>", "CarEncoder"),
+        }
+    }
+}
 impl<'a> core::fmt::Debug for CarEncoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CarEncoder")
-            .field("message_start", &self.message_start)
-            .field("pos", &self.pos)
-            .field("buf_len", &self.buf.len())
-            .finish()
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+            Err(_) => {
+                f.debug_struct("CarEncoder")
+                    .field("message_start", &self.message_start)
+                    .field("pos", &self.pos)
+                    .field("buf_len", &self.buf.len())
+                    .finish()
+            }
+        }
     }
 }
 #[must_use = "encoder must be consumed to write the message"]
@@ -3457,13 +3650,26 @@ pub struct CarAfterFuelFigures<'a> {
     message_start: usize,
     pos: usize,
 }
+impl<'a> core::fmt::Display for CarAfterFuelFigures<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Display::fmt(&dec, f),
+            Err(_) => write!(f, "<partial {}>", "CarAfterFuelFigures"),
+        }
+    }
+}
 impl<'a> core::fmt::Debug for CarAfterFuelFigures<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CarAfterFuelFigures")
-            .field("message_start", &self.message_start)
-            .field("pos", &self.pos)
-            .field("buf_len", &self.buf.len())
-            .finish()
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+            Err(_) => {
+                f.debug_struct("CarAfterFuelFigures")
+                    .field("message_start", &self.message_start)
+                    .field("pos", &self.pos)
+                    .field("buf_len", &self.buf.len())
+                    .finish()
+            }
+        }
     }
 }
 #[must_use = "encoder must be consumed to write the message"]
@@ -3472,13 +3678,26 @@ pub struct CarAfterPerformanceFigures<'a> {
     message_start: usize,
     pos: usize,
 }
+impl<'a> core::fmt::Display for CarAfterPerformanceFigures<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Display::fmt(&dec, f),
+            Err(_) => write!(f, "<partial {}>", "CarAfterPerformanceFigures"),
+        }
+    }
+}
 impl<'a> core::fmt::Debug for CarAfterPerformanceFigures<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CarAfterPerformanceFigures")
-            .field("message_start", &self.message_start)
-            .field("pos", &self.pos)
-            .field("buf_len", &self.buf.len())
-            .finish()
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+            Err(_) => {
+                f.debug_struct("CarAfterPerformanceFigures")
+                    .field("message_start", &self.message_start)
+                    .field("pos", &self.pos)
+                    .field("buf_len", &self.buf.len())
+                    .finish()
+            }
+        }
     }
 }
 #[must_use = "encoder must be consumed to write the message"]
@@ -3487,13 +3706,26 @@ pub struct CarAfterManufacturer<'a> {
     message_start: usize,
     pos: usize,
 }
+impl<'a> core::fmt::Display for CarAfterManufacturer<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Display::fmt(&dec, f),
+            Err(_) => write!(f, "<partial {}>", "CarAfterManufacturer"),
+        }
+    }
+}
 impl<'a> core::fmt::Debug for CarAfterManufacturer<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CarAfterManufacturer")
-            .field("message_start", &self.message_start)
-            .field("pos", &self.pos)
-            .field("buf_len", &self.buf.len())
-            .finish()
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+            Err(_) => {
+                f.debug_struct("CarAfterManufacturer")
+                    .field("message_start", &self.message_start)
+                    .field("pos", &self.pos)
+                    .field("buf_len", &self.buf.len())
+                    .finish()
+            }
+        }
     }
 }
 #[must_use = "encoder must be consumed to write the message"]
@@ -3502,13 +3734,26 @@ pub struct CarAfterModel<'a> {
     message_start: usize,
     pos: usize,
 }
+impl<'a> core::fmt::Display for CarAfterModel<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Display::fmt(&dec, f),
+            Err(_) => write!(f, "<partial {}>", "CarAfterModel"),
+        }
+    }
+}
 impl<'a> core::fmt::Debug for CarAfterModel<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CarAfterModel")
-            .field("message_start", &self.message_start)
-            .field("pos", &self.pos)
-            .field("buf_len", &self.buf.len())
-            .finish()
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+            Err(_) => {
+                f.debug_struct("CarAfterModel")
+                    .field("message_start", &self.message_start)
+                    .field("pos", &self.pos)
+                    .field("buf_len", &self.buf.len())
+                    .finish()
+            }
+        }
     }
 }
 #[must_use = "encoder must be consumed to write the message"]
@@ -3517,13 +3762,26 @@ pub struct CarComplete<'a> {
     message_start: usize,
     pos: usize,
 }
+impl<'a> core::fmt::Display for CarComplete<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Display::fmt(&dec, f),
+            Err(_) => write!(f, "<partial {}>", "CarComplete"),
+        }
+    }
+}
 impl<'a> core::fmt::Debug for CarComplete<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CarComplete")
-            .field("message_start", &self.message_start)
-            .field("pos", &self.pos)
-            .field("buf_len", &self.buf.len())
-            .finish()
+        match CarDecoder::try_wrap_and_apply_header(&self.buf[self.message_start..], 0) {
+            Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+            Err(_) => {
+                f.debug_struct("CarComplete")
+                    .field("message_start", &self.message_start)
+                    .field("pos", &self.pos)
+                    .field("buf_len", &self.buf.len())
+                    .finish()
+            }
+        }
     }
 }
 /// Complete set of latest-version fixed fields for this message.
@@ -3560,6 +3818,12 @@ impl<'a> CarEncoder<'a> {
     ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+    /// Return a staged length builder for computing the exact
+    /// encoded size before allocation.
+    #[inline]
+    pub const fn compute_length() -> CarEncodedLength {
+        CarEncodedLength::new()
+    }
     pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
     /// Cold error constructor — never inlined into the hot path.
@@ -4624,7 +4888,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         self.written
     }
 }
-/// Value struct for this group's entries. Pass to [`Self::add_struct`].
+/// Value struct for this group's entries.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PerformanceFiguresAccelerationEntry {
     pub mph: u16,
@@ -4725,6 +4989,101 @@ impl CarEncodedLength {
         }
     }
 }
+impl CarEncodedLength {
+    pub const FUELFIGURES_USAGEDESCRIPTION_PREFIX: usize = 4;
+    pub const PERFORMANCEFIGURES_ACCELERATION_GROUP_DIM: usize = 4;
+    pub const PERFORMANCEFIGURES_ACCELERATION_ENTRY_BLOCK: usize = 6;
+    pub const MANUFACTURER_PREFIX: usize = 4;
+    pub const MODEL_PREFIX: usize = 4;
+    pub const ACTIVATIONCODE_PREFIX: usize = 4;
+}
+/// Schema-specific ragged entry builder — field-named methods bake in
+/// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
+pub struct CarFuelFiguresRaggedBuilder<'a> {
+    b: &'a mut RaggedEntryBuilder,
+}
+impl<'a> CarFuelFiguresRaggedBuilder<'a> {
+    /// Register one entry. Returns `&mut Self` for chaining.
+    pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
+        self.b.add()?;
+        Ok(self)
+    }
+    /// Register `count` identical entries at once (uniform shape — no
+    /// per-entry var-data or nested-group differences). Shortcut for
+    /// calling `add()` in a loop.
+    pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
+        self.b.entries(count)?;
+        Ok(self)
+    }
+    /// Record a var-data field's length for the current entry.
+    /// The prefix size is baked in — just pass the data length.
+    pub fn usage_description(
+        &mut self,
+        len: usize,
+    ) -> Result<&mut Self, sbe_rt::EncodeError> {
+        self.b.var_data(4, len)?;
+        Ok(self)
+    }
+}
+/// Schema-specific ragged entry builder — field-named methods bake in
+/// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
+pub struct CarPerformanceFiguresRaggedBuilder<'a> {
+    b: &'a mut RaggedEntryBuilder,
+}
+/// Schema-specific ragged entry builder — field-named methods bake in
+/// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
+pub struct CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
+    b: &'a mut RaggedEntryBuilder,
+}
+impl<'a> CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
+    /// Register one entry. Returns `&mut Self` for chaining.
+    pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
+        self.b.add()?;
+        Ok(self)
+    }
+    /// Register `count` identical entries at once (uniform shape — no
+    /// per-entry var-data or nested-group differences). Shortcut for
+    /// calling `add()` in a loop.
+    pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
+        self.b.entries(count)?;
+        Ok(self)
+    }
+}
+impl<'a> CarPerformanceFiguresRaggedBuilder<'a> {
+    /// Register one entry. Returns `&mut Self` for chaining.
+    pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
+        self.b.add()?;
+        Ok(self)
+    }
+    /// Register `count` identical entries at once (uniform shape — no
+    /// per-entry var-data or nested-group differences). Shortcut for
+    /// calling `add()` in a loop.
+    pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
+        self.b.entries(count)?;
+        Ok(self)
+    }
+    /// Enter a nested ragged group. The closure receives a sub-builder
+    /// with field-named methods for the nested entries.
+    pub fn acceleration<F>(&mut self, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
+    where
+        F: FnOnce(
+            &mut CarPerformanceFiguresAccelerationRaggedBuilder<'_>,
+        ) -> Result<(), sbe_rt::EncodeError>,
+    {
+        self.b
+            .group_ragged(
+                4,
+                6,
+                |inner| {
+                    let mut sub = CarPerformanceFiguresAccelerationRaggedBuilder {
+                        b: inner,
+                    };
+                    f(&mut sub)
+                },
+            )?;
+        Ok(self)
+    }
+}
 #[doc(hidden)]
 pub struct CarEncodedLengthAfterPerformanceFigures {
     state: EncodedLengthAccumulator,
@@ -4822,10 +5181,15 @@ impl CarFuelFiguresUniformEncodedLength {
                 state,
             };
         }
-        match self.finish_empty() {
-            Ok(next) => next,
+        let mut state = self.state;
+        state.leave_group(self.parent_multiplier);
+        match state.check() {
+            Ok(()) => {
+                CarEncodedLengthAfterPerformanceFigures {
+                    state,
+                }
+            }
             Err(e) => {
-                let mut state = self.state;
                 state.fail(e);
                 CarEncodedLengthAfterPerformanceFigures {
                     state,
@@ -4835,7 +5199,12 @@ impl CarFuelFiguresUniformEncodedLength {
     }
 }
 impl CarEncodedLength {
-    /// Uniform group — all entries share one shape.
+    /// **Uniform** group — every one of the `count` entries shares
+    /// exactly the same wire shape (same fixed block AND the same
+    /// nested-group counts / var-data lengths). The length is the
+    /// single entry shape multiplied by `count`, so no per-entry
+    /// description is needed. This is the fastest path; prefer it
+    /// whenever all entries are identical.
     pub const fn fuel_figures(self, count: u16) -> CarFuelFiguresUniformEncodedLength {
         let mut state = self.state;
         let pm = state.enter_group(count as usize, 4 as usize, 6 as usize);
@@ -4845,19 +5214,34 @@ impl CarEncodedLength {
             declared_count: count as u32,
         }
     }
-    /// Ragged group — entries may have different shapes.
-    /// The closure receives a builder for each entry.
+    /// **Ragged** group (known count) — entries may have *different*
+    /// shapes: e.g. each bid has a different number of orders, or
+    /// each entry carries var-data of a different length. The total
+    /// entry count is known up-front (`count`); the closure describes
+    /// each entry's *variable* contribution (nested groups via
+    /// `builder.group(dim, block, count)` and var-data via
+    /// `builder.var_data(prefix, len)`), calling `builder.add()` once
+    /// per entry. The builder verifies `add()` was called exactly
+    /// `count` times. Each entry's fixed block is pre-counted, so
+    /// `add()` only registers the entry — describe its variable tail
+    /// with `group()`/`var_data()`.
     pub fn fuel_figures_ragged<F>(
         mut self,
         count: u16,
         f: F,
     ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+        F: FnOnce(
+            &mut CarFuelFiguresRaggedBuilder<'_>,
+        ) -> Result<(), sbe_rt::EncodeError>,
     {
         let pm = self.state.enter_group(count as usize, 4 as usize, 6 as usize);
+        self.state.leave_group(pm);
         let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
-        f(&mut builder)?;
+        let mut wrapper = CarFuelFiguresRaggedBuilder {
+            b: &mut builder,
+        };
+        f(&mut wrapper)?;
         if builder.written != count as usize {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
                 declared: count as u32,
@@ -4875,19 +5259,31 @@ impl CarEncodedLength {
             Err(e) => Err(e),
         }
     }
-    /// Unknown-size group — count discovered from completed entries.
+    /// **Unknown-size** group — the entry count is discovered from
+    /// the data (e.g. draining an iterator), not known up-front.
+    /// Like the ragged path but without a declared `count`: call
+    /// `builder.add()` (or `builder.entries(n)`) once per entry;
+    /// the builder counts completed entries and rejects overflow
+    /// of the wire count type (`#count_ty`). Each `add()` contributes
+    /// the entry's fixed block, plus any `group()`/`var_data()` you
+    /// record for that entry.
     pub fn fuel_figures_unknown_size<F>(
         mut self,
         f: F,
     ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+        F: FnOnce(
+            &mut CarFuelFiguresRaggedBuilder<'_>,
+        ) -> Result<(), sbe_rt::EncodeError>,
     {
         let max_count = u16::MAX as usize;
         let pm = self.state.multiplier();
         self.state.add_scaled(4 as usize, pm);
         let mut builder = RaggedEntryBuilder::new(self.state, pm, 6 as usize);
-        f(&mut builder)?;
+        let mut wrapper = CarFuelFiguresRaggedBuilder {
+            b: &mut builder,
+        };
+        f(&mut wrapper)?;
         if builder.written > max_count {
             return Err(sbe_rt::EncodeError::GroupCountOverflow {
                 maximum: u16::MAX as u32,
@@ -4964,10 +5360,15 @@ impl CarPerformanceFiguresUniformEncodedLength {
                 state,
             };
         }
-        match self.finish_empty() {
-            Ok(next) => next,
+        let mut state = self.state;
+        state.leave_group(self.parent_multiplier);
+        match state.check() {
+            Ok(()) => {
+                CarEncodedLengthAfterManufacturer {
+                    state,
+                }
+            }
             Err(e) => {
-                let mut state = self.state;
                 state.fail(e);
                 CarEncodedLengthAfterManufacturer {
                     state,
@@ -4977,7 +5378,12 @@ impl CarPerformanceFiguresUniformEncodedLength {
     }
 }
 impl CarEncodedLengthAfterPerformanceFigures {
-    /// Uniform group — all entries share one shape.
+    /// **Uniform** group — every one of the `count` entries shares
+    /// exactly the same wire shape (same fixed block AND the same
+    /// nested-group counts / var-data lengths). The length is the
+    /// single entry shape multiplied by `count`, so no per-entry
+    /// description is needed. This is the fastest path; prefer it
+    /// whenever all entries are identical.
     pub const fn performance_figures(
         self,
         count: u16,
@@ -4990,19 +5396,34 @@ impl CarEncodedLengthAfterPerformanceFigures {
             declared_count: count as u32,
         }
     }
-    /// Ragged group — entries may have different shapes.
-    /// The closure receives a builder for each entry.
+    /// **Ragged** group (known count) — entries may have *different*
+    /// shapes: e.g. each bid has a different number of orders, or
+    /// each entry carries var-data of a different length. The total
+    /// entry count is known up-front (`count`); the closure describes
+    /// each entry's *variable* contribution (nested groups via
+    /// `builder.group(dim, block, count)` and var-data via
+    /// `builder.var_data(prefix, len)`), calling `builder.add()` once
+    /// per entry. The builder verifies `add()` was called exactly
+    /// `count` times. Each entry's fixed block is pre-counted, so
+    /// `add()` only registers the entry — describe its variable tail
+    /// with `group()`/`var_data()`.
     pub fn performance_figures_ragged<F>(
         mut self,
         count: u16,
         f: F,
     ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+        F: FnOnce(
+            &mut CarPerformanceFiguresRaggedBuilder<'_>,
+        ) -> Result<(), sbe_rt::EncodeError>,
     {
         let pm = self.state.enter_group(count as usize, 4 as usize, 1 as usize);
+        self.state.leave_group(pm);
         let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
-        f(&mut builder)?;
+        let mut wrapper = CarPerformanceFiguresRaggedBuilder {
+            b: &mut builder,
+        };
+        f(&mut wrapper)?;
         if builder.written != count as usize {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
                 declared: count as u32,
@@ -5020,19 +5441,31 @@ impl CarEncodedLengthAfterPerformanceFigures {
             Err(e) => Err(e),
         }
     }
-    /// Unknown-size group — count discovered from completed entries.
+    /// **Unknown-size** group — the entry count is discovered from
+    /// the data (e.g. draining an iterator), not known up-front.
+    /// Like the ragged path but without a declared `count`: call
+    /// `builder.add()` (or `builder.entries(n)`) once per entry;
+    /// the builder counts completed entries and rejects overflow
+    /// of the wire count type (`#count_ty`). Each `add()` contributes
+    /// the entry's fixed block, plus any `group()`/`var_data()` you
+    /// record for that entry.
     pub fn performance_figures_unknown_size<F>(
         mut self,
         f: F,
     ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+        F: FnOnce(
+            &mut CarPerformanceFiguresRaggedBuilder<'_>,
+        ) -> Result<(), sbe_rt::EncodeError>,
     {
         let max_count = u16::MAX as usize;
         let pm = self.state.multiplier();
         self.state.add_scaled(4 as usize, pm);
         let mut builder = RaggedEntryBuilder::new(self.state, pm, 1 as usize);
-        f(&mut builder)?;
+        let mut wrapper = CarPerformanceFiguresRaggedBuilder {
+            b: &mut builder,
+        };
+        f(&mut wrapper)?;
         if builder.written > max_count {
             return Err(sbe_rt::EncodeError::GroupCountOverflow {
                 maximum: u16::MAX as u32,
@@ -5387,6 +5820,32 @@ impl RaggedEntryBuilder {
     ) -> sbe_rt::GroupResult {
         let pm = self.state.enter_group(count, dim, block);
         self.state.leave_group(pm);
+        self.state.check()?;
+        Ok(())
+    }
+    /// Add a nested **ragged** group — entries may differ (e.g. var-data
+    /// of differing length per entry). Adds the group dimension once,
+    /// then the closure describes each entry (`sub.add()` for the entry
+    /// block, `sub.var_data(...)` for per-entry var-data). The closure
+    /// receives a sub-builder scoped to this group's parent multiplier.
+    pub fn group_ragged<F>(
+        &mut self,
+        dim: usize,
+        entry_block: usize,
+        f: F,
+    ) -> sbe_rt::GroupResult
+    where
+        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+    {
+        let pm = self.state.multiplier();
+        self.state.add_scaled(dim, pm);
+        let state = core::mem::replace(
+            &mut self.state,
+            EncodedLengthAccumulator::new(0),
+        );
+        let mut sub = RaggedEntryBuilder::new(state, pm, entry_block);
+        f(&mut sub)?;
+        self.state = sub.state;
         self.state.check()?;
         Ok(())
     }

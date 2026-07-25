@@ -107,10 +107,9 @@ fn generate_staged(
             for ng in &g.groups {
                 let ng_upper = crate::codegen::to_pascal_case(&ng.name).to_uppercase();
                 let (_, ng_dim, _, _) = get_dimension_info(elements, &ng.dimension_type);
-                let dim_ident = syn::Ident::new(
-                    &format!("{g_upper}_{ng_upper}_GROUP_DIM"), span);
-                let block_ident = syn::Ident::new(
-                    &format!("{g_upper}_{ng_upper}_ENTRY_BLOCK"), span);
+                let dim_ident = syn::Ident::new(&format!("{g_upper}_{ng_upper}_GROUP_DIM"), span);
+                let block_ident =
+                    syn::Ident::new(&format!("{g_upper}_{ng_upper}_ENTRY_BLOCK"), span);
                 let ng_dim_lit = syn::LitInt::new(&ng_dim.to_string(), span);
                 let ng_bl_lit = syn::LitInt::new(&ng.block_length.to_string(), span);
                 layout_consts.push(quote::quote! {
@@ -120,8 +119,8 @@ fn generate_staged(
                 // Var-data in nested group entries
                 for vd in &ng.var_data {
                     let vd_upper = crate::codegen::to_pascal_case(&vd.name).to_uppercase();
-                    let prefix_ident = syn::Ident::new(
-                        &format!("{g_upper}_{ng_upper}_{vd_upper}_PREFIX"), span);
+                    let prefix_ident =
+                        syn::Ident::new(&format!("{g_upper}_{ng_upper}_{vd_upper}_PREFIX"), span);
                     let (_, vd_prefix, _, _) = get_vardata_info(elements, &vd.type_name);
                     let vd_prefix_lit = syn::LitInt::new(&vd_prefix.to_string(), span);
                     layout_consts.push(quote::quote! {
@@ -132,8 +131,7 @@ fn generate_staged(
             // Var-data in group entries
             for vd in &g.var_data {
                 let vd_upper = crate::codegen::to_pascal_case(&vd.name).to_uppercase();
-                let prefix_ident = syn::Ident::new(
-                    &format!("{g_upper}_{vd_upper}_PREFIX"), span);
+                let prefix_ident = syn::Ident::new(&format!("{g_upper}_{vd_upper}_PREFIX"), span);
                 let (_, vd_prefix, _, _) = get_vardata_info(elements, &vd.type_name);
                 let vd_prefix_lit = syn::LitInt::new(&vd_prefix.to_string(), span);
                 layout_consts.push(quote::quote! {
@@ -434,33 +432,37 @@ fn generate_staged(
             {
                 let next_tail_idx = tail_idx + 1;
                 if next_tail_idx < total_tail {
-                    let (next_method_name, next_param_ty, next_param_name) =
-                        if next_tail_idx < msg.groups.len() {
-                            let ng = &msg.groups[next_tail_idx];
-                            let (_, _, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
-                            let ng_count_ty: syn::Type = syn::parse_str(rust_type(ng_num_prim)).unwrap();
-                            (
-                                syn::Ident::new(&crate::codegen::to_snake_case(&ng.name), span),
-                                ng_count_ty,
-                                syn::Ident::new("count", span),
-                            )
-                        } else {
-                            let vdi = next_tail_idx - msg.groups.len();
-                            let vd = &msg.var_data[vdi];
-                            (
-                                syn::Ident::new(&crate::codegen::to_snake_case(&vd.name), span),
-                                syn::parse_str::<syn::Type>("usize").unwrap(),
-                                syn::Ident::new("byte_len", span),
-                            )
-                        };
+                    let (next_method_name, next_param_ty, next_param_name) = if next_tail_idx
+                        < msg.groups.len()
+                    {
+                        let ng = &msg.groups[next_tail_idx];
+                        let (_, _, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
+                        let ng_count_ty: syn::Type =
+                            syn::parse_str(rust_type(ng_num_prim)).unwrap();
+                        (
+                            syn::Ident::new(&crate::codegen::to_snake_case(&ng.name), span),
+                            ng_count_ty,
+                            syn::Ident::new("count", span),
+                        )
+                    } else {
+                        let vdi = next_tail_idx - msg.groups.len();
+                        let vd = &msg.var_data[vdi];
+                        (
+                            syn::Ident::new(&crate::codegen::to_snake_case(&vd.name), span),
+                            syn::parse_str::<syn::Type>("usize").unwrap(),
+                            syn::Ident::new("byte_len", span),
+                        )
+                    };
 
                     // Check for name collision with pending stage methods
                     let method_name_str = next_method_name.to_string();
-                    let has_collision = g.groups.iter().any(|ng| {
-                        crate::codegen::to_snake_case(&ng.name) == method_name_str
-                    }) || g.var_data.iter().any(|vd| {
-                        crate::codegen::to_snake_case(&vd.name) == method_name_str
-                    });
+                    let has_collision = g
+                        .groups
+                        .iter()
+                        .any(|ng| crate::codegen::to_snake_case(&ng.name) == method_name_str)
+                        || g.var_data
+                            .iter()
+                            .any(|vd| crate::codegen::to_snake_case(&vd.name) == method_name_str);
 
                     if !has_collision {
                         // Generate forwarding: on error, store in accumulator

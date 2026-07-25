@@ -4,7 +4,7 @@
 //! SessionMessageHeader into the first 32 bytes; the fill closure only encodes
 //! the application payload.
 
-use ergo_aeron_cluster::codecs::session::SessionMessageHeaderEncoder;
+use ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder;
 use ergo_aeron_cluster::{AeronCluster, ClusterError};
 
 use crate::market::Level;

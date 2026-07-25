@@ -285,8 +285,7 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_missing_ingress() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::default()
-            .egress_channel("aeron:udp?endpoint=localhost:19002");
+        let b = SessionBuilder::default().egress_channel("aeron:udp?endpoint=localhost:19002");
         let err = b.validate().unwrap_err();
         assert!(err.to_string().contains("ingress"), "{err}");
         Ok(())
@@ -294,8 +293,7 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_missing_egress() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010");
+        let b = SessionBuilder::default().ingress_channel("aeron:udp?endpoint=localhost:9010");
         let err = b.validate().unwrap_err();
         assert!(err.to_string().contains("egress"), "{err}");
         Ok(())

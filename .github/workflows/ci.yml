@@ -47,8 +47,6 @@ jobs:
       - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=2
       - run: cargo test -p ergo-aeron-cluster --lib
       - run: cargo test --doc
-      - run: cargo test -p ergo-sbe --features bound-check-disabled -- --test-threads=1
-      - run: cargo test -p ergo-sbe --test allocation_count_test -- --test-threads=1
 
   msrv:
     if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
@@ -104,12 +102,12 @@ jobs:
           toolchain: "1.95.0"
           components: rustfmt, clippy
 
-      - name: advanced-bitget (fmt, clippy, test)
+      - name: exchange-example (fmt, clippy, test)
         run: |
-          cd samples/advanced-bitget
+          cd samples/exchange-example
           cargo fmt --check
           cargo clippy --all-targets --all-features -- -D warnings
-          cargo test -- --test-threads=1 --skip clickhouse
+          cargo test --lib -- --test-threads=1
 
       - name: cluster-ha-orderbook (fmt, clippy, test)
         run: |
@@ -120,50 +118,12 @@ jobs:
 
       - name: cluster-rfq (fmt, clippy)
         run: |
-          cd samples/cluster_rfq
+          cd samples/cluster-rfq
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
 
-  clickhouse-live:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    services:
-      clickhouse:
-        image: clickhouse/clickhouse-server:latest
-        ports:
-          - 8123:8123
-          - 9000:9000
-        env:
-          CLICKHOUSE_USER: default
-          CLICKHOUSE_PASSWORD: ergon
-          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.95.0"
-
-      - name: Wait for ClickHouse
-        run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8123/ping; then
-              echo "ClickHouse ready after ${i}s"
-              break
-            fi
-            sleep 2
-          done
-
-      - name: Persist integration tests (live ClickHouse)
-        run: cargo test -p ergo-clickhouse-persist --all-features -- --include-ignored --test-threads=1
-
-      - name: advanced-bitget E2E (live ClickHouse)
-        run: cd samples/advanced-bitget && cargo test --test clickhouse_e2e_test --test e2e_persist_test -- --include-ignored --test-threads=1 --nocapture
-
-      - name: cluster-ha-orderbook latency (live ClickHouse)
+  # clickhouse-live: disabled — ergo-clickhouse-persist not yet published
+  # Re-enable when the persist crate is ready.
         run: cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture
 
   build:

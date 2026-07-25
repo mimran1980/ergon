@@ -322,13 +322,7 @@ mod tests {
             called: bool,
         }
         impl ControlledEgressListener for Rec {
-            fn on_new_leader(
-                &mut self,
-                _csid: i64,
-                _ltid: i64,
-                _lmid: i32,
-                _eps: &str,
-            ) {
+            fn on_new_leader(&mut self, _csid: i64, _ltid: i64, _lmid: i32, _eps: &str) {
                 self.called = true;
             }
             fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledPollAction {

@@ -52,18 +52,22 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
             car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
 
             let car = car.fuel_figures(1, |g| {
-                g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); }).unwrap();
+                g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); Ok(()) }).unwrap();
+                Ok(())
             }).unwrap();
 
             let car = car.performance_figures(1, |g| {
                 g.add(|e| {
                     e.octane_rating(95);
                     e.acceleration(3, |a| {
-                        a.add(|x| { x.mph(30).seconds(4.0); }).unwrap();
-                        a.add(|x| { x.mph(60).seconds(7.5); }).unwrap();
-                        a.add(|x| { x.mph(100).seconds(12.2); }).unwrap();
+                        a.add(|x| { x.mph(30).seconds(4.0); Ok(()) }).unwrap();
+                        a.add(|x| { x.mph(60).seconds(7.5); Ok(()) }).unwrap();
+                        a.add(|x| { x.mph(100).seconds(12.2); Ok(()) }).unwrap();
+                        Ok(())
                     }).unwrap();
+                    Ok(())
                 }).unwrap();
+                Ok(())
             }).unwrap();
 
             let car = car.manufacturer(b"Honda").unwrap();

@@ -414,9 +414,7 @@ impl AeronCluster {
         cluster_session_id: i64,
         credentials: &[u8],
     ) -> Result<(), ClusterError> {
-        let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(
-            credentials.len(),
-        );
+        let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(credentials.len());
         let mut buf = vec![0u8; len];
         let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(correlation_id)
@@ -1316,14 +1314,13 @@ mod tests {
         // `parse_leader_endpoint` and `prepare_reconnect_ingress` BEFORE
         // writing any leadership field.  Failure must leave prior state intact.
         let src = include_str!("client.rs");
-        let off = src.find("fn on_new_leader_event")
+        let off = src
+            .find("fn on_new_leader_event")
             .ok_or("on_new_leader_event not found")?;
         let snippet = &src[off..src[off..].find("Ok(())").unwrap_or(src.len()) + off];
         let parse_call = snippet.find("parse_leader_endpoint(");
         let prepare_call = snippet.find("prepare_reconnect_ingress(");
-        let first_assign = snippet
-            .find("self.leadership_term_id")
-            .unwrap_or(usize::MAX);
+        let first_assign = snippet.find("self.leadership_term_id").unwrap_or(usize::MAX);
         assert!(parse_call.is_some(), "must call parse_leader_endpoint");
         assert!(prepare_call.is_some(), "must call prepare_reconnect_ingress");
         assert!(
@@ -1345,7 +1342,8 @@ mod tests {
         let src = include_str!("client.rs");
         // Find the `pub fn offer` body — search from its signature to the
         // next `pub fn` (or the closing `}` at the same indent level).
-        let off_start = src.find("pub fn offer(&mut self, payload: &[u8])")
+        let off_start = src
+            .find("pub fn offer(&mut self, payload: &[u8])")
             .ok_or("offer signature not found")?;
         let body_snippet = &src[off_start..];
         // The body must not contain `vec!` (the only `vec!` in this file
@@ -1356,7 +1354,10 @@ mod tests {
             !offer_body.contains("vec!["),
             "offer body must not allocate a combined heap buffer — use try_claim"
         );
-        assert!(offer_body.contains("self.try_claim"), "offer must delegate to try_claim");
+        assert!(
+            offer_body.contains("self.try_claim"),
+            "offer must delegate to try_claim"
+        );
         Ok(())
     }
 

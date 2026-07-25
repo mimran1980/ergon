@@ -264,8 +264,8 @@ impl EgressListener for NullListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codecs::session::SessionEventEncoder;
     use crate::codecs::session::EventCode;
+    use crate::codecs::session::SessionEventEncoder;
 
     #[test]
     fn test_foreign_session_session_event_ignored() -> Result<(), Box<dyn std::error::Error>> {
@@ -322,19 +322,42 @@ mod tests {
         use crate::codecs::session::SessionMessageHeaderEncoder;
         let mut buf = vec![0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH + 5];
         SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
-            .leadership_term_id(7).cluster_session_id(42).timestamp(100);
+            .leadership_term_id(7)
+            .cluster_session_id(42)
+            .timestamp(100);
         let payload = b"hello";
         let mut full = Vec::from(&buf[..SessionMessageHeaderEncoder::ENCODED_LENGTH]);
         full.extend_from_slice(payload);
-        struct Rec { sid: i64, ts: i64, pl: Vec<u8> }
+        struct Rec {
+            sid: i64,
+            ts: i64,
+            pl: Vec<u8>,
+        }
         impl EgressListener for Rec {
-            fn on_message(&mut self, s: i64, t: i64, b: &[u8]) { self.sid = s; self.ts = t; self.pl = b.to_vec(); }
+            fn on_message(&mut self, s: i64, t: i64, b: &[u8]) {
+                self.sid = s;
+                self.ts = t;
+                self.pl = b.to_vec();
+            }
             fn on_session_event(&mut self, _: i64, _: i64, _: i64, _: i32, _: EventCode, _: &str) {}
             fn on_new_leader(&mut self, _: i64, _: i64, _: i32, _: &str) {}
             fn on_challenge(&mut self, _: i64, _: i64, _: &[u8]) {}
-            fn on_admin_response(&mut self, _: i64, _: i64, _: AdminRequestType, _: AdminResponseCode, _: &str, _: &[u8]) {}
+            fn on_admin_response(
+                &mut self,
+                _: i64,
+                _: i64,
+                _: AdminRequestType,
+                _: AdminResponseCode,
+                _: &str,
+                _: &[u8],
+            ) {
+            }
         }
-        let mut adapter = EgressAdapter::new(Rec { sid: 0, ts: 0, pl: vec![] });
+        let mut adapter = EgressAdapter::new(Rec {
+            sid: 0,
+            ts: 0,
+            pl: vec![],
+        });
         adapter.on_fragment(&full)?;
         assert_eq!(adapter.listener.sid, 42);
         assert_eq!(adapter.listener.ts, 100);
@@ -351,15 +374,39 @@ mod tests {
         let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(3).cluster_session_id(42).leader_member_id(1);
         let _ = enc.ingress_endpoints(eps)?;
-        struct Rec { sid: i64, ltid: i64, lmid: i32, eps: String }
+        struct Rec {
+            sid: i64,
+            ltid: i64,
+            lmid: i32,
+            eps: String,
+        }
         impl EgressListener for Rec {
-            fn on_new_leader(&mut self, s: i64, l: i64, m: i32, e: &str) { self.sid = s; self.ltid = l; self.lmid = m; self.eps = e.to_string(); }
+            fn on_new_leader(&mut self, s: i64, l: i64, m: i32, e: &str) {
+                self.sid = s;
+                self.ltid = l;
+                self.lmid = m;
+                self.eps = e.to_string();
+            }
             fn on_message(&mut self, _: i64, _: i64, _: &[u8]) {}
             fn on_session_event(&mut self, _: i64, _: i64, _: i64, _: i32, _: EventCode, _: &str) {}
             fn on_challenge(&mut self, _: i64, _: i64, _: &[u8]) {}
-            fn on_admin_response(&mut self, _: i64, _: i64, _: AdminRequestType, _: AdminResponseCode, _: &str, _: &[u8]) {}
+            fn on_admin_response(
+                &mut self,
+                _: i64,
+                _: i64,
+                _: AdminRequestType,
+                _: AdminResponseCode,
+                _: &str,
+                _: &[u8],
+            ) {
+            }
         }
-        let mut adapter = EgressAdapter::new(Rec { sid: 0, ltid: 0, lmid: 0, eps: String::new() });
+        let mut adapter = EgressAdapter::new(Rec {
+            sid: 0,
+            ltid: 0,
+            lmid: 0,
+            eps: String::new(),
+        });
         adapter.on_fragment(&buf)?;
         assert_eq!(adapter.listener.sid, 42);
         assert_eq!(adapter.listener.ltid, 3);
@@ -377,15 +424,36 @@ mod tests {
         let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(99).cluster_session_id(42);
         let _ = enc.encoded_challenge(chal)?;
-        struct Rec { cid: i64, sid: i64, chal: Vec<u8> }
+        struct Rec {
+            cid: i64,
+            sid: i64,
+            chal: Vec<u8>,
+        }
         impl EgressListener for Rec {
-            fn on_challenge(&mut self, c: i64, s: i64, d: &[u8]) { self.cid = c; self.sid = s; self.chal = d.to_vec(); }
+            fn on_challenge(&mut self, c: i64, s: i64, d: &[u8]) {
+                self.cid = c;
+                self.sid = s;
+                self.chal = d.to_vec();
+            }
             fn on_message(&mut self, _: i64, _: i64, _: &[u8]) {}
             fn on_session_event(&mut self, _: i64, _: i64, _: i64, _: i32, _: EventCode, _: &str) {}
             fn on_new_leader(&mut self, _: i64, _: i64, _: i32, _: &str) {}
-            fn on_admin_response(&mut self, _: i64, _: i64, _: AdminRequestType, _: AdminResponseCode, _: &str, _: &[u8]) {}
+            fn on_admin_response(
+                &mut self,
+                _: i64,
+                _: i64,
+                _: AdminRequestType,
+                _: AdminResponseCode,
+                _: &str,
+                _: &[u8],
+            ) {
+            }
         }
-        let mut adapter = EgressAdapter::new(Rec { cid: 0, sid: 0, chal: vec![] });
+        let mut adapter = EgressAdapter::new(Rec {
+            cid: 0,
+            sid: 0,
+            chal: vec![],
+        });
         adapter.on_fragment(&buf)?;
         assert_eq!(adapter.listener.cid, 99);
         assert_eq!(adapter.listener.sid, 42);

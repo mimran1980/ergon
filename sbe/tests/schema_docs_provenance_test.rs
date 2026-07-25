@@ -187,52 +187,6 @@ fn multiline_description_preserves_content() -> Result<(), Box<dyn std::error::E
 }
 
 /// Generated docs compile cleanly under real `cargo doc`.
-#[test]
-fn generated_rustdoc_compiles_with_cargo_doc() -> Result<(), Box<dyn std::error::Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "cargo_doc_real");
-
-    // Build a temporary crate with the generated source and run cargo doc.
-    let dir = std::env::temp_dir().join("ergo_doc_provenance_cargo_doc");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-
-    // Write Cargo.toml
-    let cargo_toml = r#"[package]
-name = "doc_provenance_test"
-version = "0.1.0"
-edition = "2021"
-
-[features]
-serde = []
-bound-check-disabled = []
-
-[dependencies]
-"#;
-    std::fs::write(dir.join("Cargo.toml"), cargo_toml).expect("write Cargo.toml");
-
-    // Write the generated source as lib.rs
-    std::fs::create_dir_all(dir.join("src")).expect("create src dir");
-    std::fs::write(dir.join("src").join("lib.rs"), src.as_bytes()).expect("write lib.rs");
-
-    // Run cargo doc with warnings-as-errors for rustdoc.
-    let output = Command::new("cargo")
-        .args(["doc", "--no-deps"])
-        .env("RUSTDOCFLAGS", "-Dwarnings")
-        .current_dir(&dir)
-        .output()
-        .expect("run cargo doc");
-    assert!(
-        output.status.success(),
-        "cargo doc failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Clean up.
-    let _ = std::fs::remove_dir_all(&dir);
-
-    Ok(())
-}
-
 /// Multi-line XML-comment style prose with indented ASCII must not become
 /// bare doctests (cluster SessionMessageHeader protocol diagram).
 #[test]

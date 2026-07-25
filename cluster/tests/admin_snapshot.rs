@@ -84,8 +84,15 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
     // depends on cluster auth — the default single-node test cluster denies
     // snapshot admin requests as UNAUTHORISEDACCESS (no elevated credentials),
     // which still proves the request was received, processed, and answered.
-    assert_eq!(got_cid, Some(correlation_id), "admin response correlation id must match");
-    assert!(got_code.is_some(), "admin response must carry a response code, got None");
+    assert_eq!(
+        got_cid,
+        Some(correlation_id),
+        "admin response correlation id must match"
+    );
+    assert!(
+        got_code.is_some(),
+        "admin response must carry a response code, got None"
+    );
 
     client.close()?;
     Ok(())

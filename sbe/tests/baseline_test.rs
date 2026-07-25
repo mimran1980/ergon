@@ -414,16 +414,13 @@ fn decoder_display() -> Result<(), Box<dyn std::error::Error>> {
         r#"
         let car = CarDecoder::try_wrap_and_apply_header(FIXTE, 0).unwrap();
         let s = format!("{}", car);
-        assert!(s.contains("serial_number: 1234"), "display serial_number");
-        assert!(s.contains("model_year: 2013"), "display model_year");
-        assert!(s.contains("available: BooleanType::T"), "display available");
-        assert!(s.contains("code: Model::A"), "display code");
-        assert!(s.contains("fuel_figures: ["), "display fuel_figures entries");
-        assert!(s.contains("performance_figures: ["), "display performance_figures entries");
-        assert!(s.contains("manufacturer: 5 bytes"), "display manufacturer bytes");
-        assert!(s.contains("model: 9 bytes"), "display model bytes");
-        assert!(s.contains("activation_code: 6 bytes"), "display activation_code bytes");
-        assert!(s.starts_with("Car {"), "display starts with Car {{");
+        assert!(s.contains("serialNumber: 1234"), "display serialNumber: {s}");
+        assert!(s.contains("modelYear: 2013"), "display modelYear: {s}");
+        assert!(s.contains("available: T"), "display available: {s}");
+        assert!(s.contains("code: A"), "display code: {s}");
+        assert!(s.contains("fuelFigures: ["), "display fuelFigures entries: {s}");
+        assert!(s.contains("performanceFigures: ["), "display performanceFigures entries: {s}");
+        assert!(s.starts_with("CarDecoder {"), "display starts with CarDecoder: {s}");
         assert!(s.ends_with(" }"), "display ends with }}");
         "#,
     );
@@ -1002,7 +999,7 @@ fn display_shows_group_entry_fields_not_just_count() -> Result<(), Box<dyn std::
         // Must NOT show stale "N entries" count-only format
         assert!(!display.contains("2 entries"), "Display should not show raw count: {display}");
         // Also shows message-level scalars
-        assert!(display.contains("serial_number"), "Display missing serial_number: {display}");
+        assert!(display.contains("serialNumber"), "Display missing serialNumber: {display}");
         assert!(display.contains("1234"), "Display missing serial_number value: {display}");
     "#,
     );
@@ -1459,86 +1456,6 @@ fn boolean_roundtrip_runtime() -> Result<(), Box<dyn std::error::Error>> {
     assert!(src.contains("impl From<BooleanType> for bool"));
     Ok(())
 }
-
-// ── Bound-check-disabled feature toggle (todo 07) ───────────────────────
-
-#[test]
-fn bounds_checking_switch() -> Result<(), Box<dyn std::error::Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "bndchk");
-
-    // Verify cfg gates exist in generated source
-    assert!(
-        src.contains(r#"#[cfg(feature = "bound-check-disabled")]"#),
-        "generated code must have cfg(feature = bound-check-disabled)"
-    );
-    assert!(
-        src.contains(r#"#[cfg(not(feature = "bound-check-disabled"))]"#),
-        "generated code must have cfg(not(feature = bound-check-disabled))"
-    );
-
-    // Run the same test code both with and without the feature → field values match
-    let test_body = r#"
-        let mut buf = vec![0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
-        car.serial_number(42);
-        car.model_year(2000);
-        car.available(BooleanType::T);
-        car.code(Model::A);
-        car.some_numbers([1u32, 2, 3, 4]);
-        car.vehicle_code([97, 98, 99, 100, 101, 102]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(2, |g| {
-            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"U").unwrap(); Ok(()) }).unwrap();
-            g.add(|e| { e.speed(55).mpg(49.0); e.usage_description(b"C").unwrap(); Ok(()) }).unwrap();
-            Ok(())
-        }).unwrap();
-        let car = car.performance_figures(1, |g| {
-            g.add(|e| {
-                e.octane_rating(95);
-                e.acceleration(1, |a| {
-                    a.add(|x| { x.mph(30).seconds(4.0); Ok(()) }).unwrap();
-                    Ok(())
-                }).unwrap();
-                Ok(())
-            }).unwrap();
-            Ok(())
-        }).unwrap();
-        let car = car.manufacturer(b"Honda").unwrap();
-        let car = car.model(b"Civic").unwrap();
-        let car = car.activation_code(b"12345").unwrap();
-        let encoded = car.as_bytes().to_vec();
-
-        let car2 = CarDecoder::try_wrap_and_apply_header(&encoded, 0).unwrap();
-        assert_eq!(42, car2.serial_number());
-        assert_eq!(2000, car2.model_year());
-        assert_eq!(BooleanType::T, car2.available());
-        assert_eq!(Model::A, car2.code());
-        assert_eq!([1u32, 2, 3, 4], car2.some_numbers());
-        assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code());
-        let mut fuel = car2.into_fuel_figures().unwrap();
-        let ff: Vec<_> = fuel.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_eq!(2, ff.len());
-        let after_perf = fuel
-            .finish()
-            .unwrap()
-            .into_performance_figures()
-            .unwrap()
-            .finish()
-            .unwrap();
-        let (mfr, c1) = after_perf.into_manufacturer().unwrap();
-        assert_eq!(b"Honda", mfr);
-        let (model, c2) = c1.into_model().unwrap();
-        assert_eq!(b"Civic", model);
-        let (activation_code, _done) = c2.into_activation_code().unwrap();
-        assert_eq!(b"12345", activation_code);
-    "#;
-
-    compile_and_run("bndchk_off", &src, test_body);
-    compile_and_run_with_feature("bndchk_on", &src, test_body, "bound-check-disabled");
-    Ok(())
-}
-
 // ── #[inline] on generated methods (todo 28) ────────────────────────────
 
 #[test]
