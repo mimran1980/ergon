@@ -2164,7 +2164,7 @@ fn generate_message_decoder(
     });
 
     // 13. Display impl
-    let display_ts = generate_decoder_display(msg);
+    let display_ts = generate_decoder_display(msg, domain_types);
     ts.extend(display_ts);
 
     // 14. Repeating Group decoders — use pre-computed dedup names from section 8
@@ -2719,7 +2719,10 @@ fn generate_domain_recursive(
     }
 }
 
-fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream {
+fn generate_decoder_display(
+    msg: &MessageStructure,
+    domain_types: &[(crate::ConversionSelector, String)],
+) -> proc_macro2::TokenStream {
     let name = to_pascal_case(&msg.name);
     let decoder_ident =
         syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
@@ -2773,8 +2776,6 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                     continue;
                 }
                 let fmt_str = format!("{sep}{snake}: {enum_name}::{{e:?}}");
-                // enum accessors: presence="optional" still returns the enum directly
-                // (NullVal sentinel), only since_version > 0 produces Option<T>
                 if f.since_version > 0 {
                     body.extend(quote::quote! {
                         if #in_bounds {
@@ -2791,10 +2792,33 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                         }
                     });
                 }
+                let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                debug_body.extend(quote::quote! {
+                    if #in_bounds {
+                        let v = self.#f_ident();
+                        d.field(#name_lit, &v);
+                    }
+                });
                 out_idx += 1;
             }
             FieldType::Set { .. } => {}
-            FieldType::Composite { .. } => {}
+            FieldType::Composite { .. } => {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                // Domain-converted composites (e.g. Decimal→rust_decimal) have
+                // Display on the domain type. Raw composites return a sub-decoder
+                // that may not implement Display — skip in debug_struct to avoid
+                // trait errors. The value is visible via group entry Display.
+                if find_domain_type(f, domain_types).is_some() {
+                    let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            d.field(#name_lit, &format_args!("{}", self.#f_ident()));
+                        }
+                    });
+                }
+            }
         }
     }
     for g in &msg.groups {
@@ -2831,6 +2855,23 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
             });
         }
         out_idx += 1;
+        // Debug: format group entries as a Vec<String> via Display.
+        let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
+        if g_total_tail == 0 {
+            debug_body.extend(quote::quote! {
+                if let Ok(_g) = self.#g_ident() {
+                    let entries: Vec<String> = _g.map(|e| format!("{e}")).collect();
+                    d.field(#g_name_lit, &entries);
+                }
+            });
+        } else {
+            debug_body.extend(quote::quote! {
+                if let Ok(_g) = self.#g_ident() {
+                    let entries: Vec<String> = _g.filter_map(|r| r.ok()).map(|e| format!("{e}")).collect();
+                    d.field(#g_name_lit, &entries);
+                }
+            });
+        }
     }
     for vd in &msg.var_data {
         let vd_snake = to_snake_case(&vd.name);
@@ -2846,6 +2887,15 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
                 }
             }
         });
+        let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
+        debug_body.extend(quote::quote! {
+            if let Ok(_data) = self.#vd_ident() {
+                match std::str::from_utf8(_data) {
+                    Ok(_s) => d.field(#vd_name_lit, &_s),
+                    Err(_) => d.field(#vd_name_lit, &format!("<{} bytes>", _data.len())),
+                };
+            }
+        });
         out_idx += 1;
     }
     body.extend(quote::quote! {
@@ -2855,17 +2905,17 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
     let ts = quote::quote! {
         impl<'a> core::fmt::Display for #decoder_ident<'a> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                #body
+                // Display delegates to Debug — one impl, both {} and {:?} work.
+                // {:?} gives debug_struct (compact), {:#?} gives pretty multi-line.
+                core::fmt::Debug::fmt(self, f)
             }
         }
 
         impl<'a> core::fmt::Debug for #decoder_ident<'a> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                // Delegate to Display for complete field-value output across
-                // ALL field types (primitives, enums, composites, groups,
-                // var-data) with in_bounds guards. This matches Java SBE
-                // toString behaviour — safe on truncated/invalid SBE.
-                core::fmt::Display::fmt(self, f)
+                let mut d = f.debug_struct(#type_name_lit);
+                #debug_body
+                d.finish()
             }
         }
     };
