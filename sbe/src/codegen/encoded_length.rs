@@ -340,7 +340,7 @@ fn generate_staged(
                                 }
                             });
                         }
-                        // ponytail: nested varData completes the nested group and returns to outer
+                        // Nested var-data completes the nested group and returns to the outer stage.
                         let back_to = next_name.clone();
                         standalone.extend(quote::quote! {
                             impl #nested_pending {
