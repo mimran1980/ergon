@@ -781,8 +781,13 @@ fn generate_owner_consuming_stages(
                             self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit],
                         )
                     };
-                    let header = #vd_type_ident(bytes);
-                    let len = header.#len_field_ident() as usize;
+                    // Direct integer read — avoids constructing the var-data
+                    // encoding struct (VarAsciiEncoding etc.) for the length.
+                    let len = match #prefix_size_lit {
+                        1 => bytes[0] as usize,
+                        2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+                        _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+                    };
                     #max_check
                     let data_start = offset + #prefix_size_lit;
                     if data_start + len > self.buf.len() {
@@ -821,8 +826,13 @@ fn generate_owner_consuming_stages(
                             self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit],
                         )
                     };
-                    let header = #vd_type_ident(bytes);
-                    let len = header.#len_field_ident() as usize;
+                    // Direct integer read — avoids constructing the var-data
+                    // encoding struct (VarAsciiEncoding etc.) for the length.
+                    let len = match #prefix_size_lit {
+                        1 => bytes[0] as usize,
+                        2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+                        _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+                    };
                     #max_check
                     let data_start = offset + #prefix_size_lit;
                     if data_start + len > self.buf.len() {
