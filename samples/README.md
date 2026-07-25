@@ -6,6 +6,7 @@ implementations.
 
 | Sample | Purpose | External requirements |
 |---|---|---|
+| [`sbe-feature-tour/`](sbe-feature-tour/) | **ErgoSBE feature map** — EncodedLength, encode/decode stages, DTO, AnyMessage, try_* vs wrap (see sample README) | None |
 | [`exchange-example/`](exchange-example/) | Multi-schema generation, domain objects, market-data state, and Aeron IPC | Network only for live exchange paths |
 | [`l3-book/`](l3-book/) | Exact sizing, nested and ragged groups, variable data, conversions, and domain-object round trips | None for local tests |
 | [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | Claim-based Cluster publishing and an HA-shaped order-book flow | Java harness only for leader-kill coverage |
@@ -19,6 +20,7 @@ entry points: samples intentionally move with experimental APIs, so a failing
 command identifies migration drift rather than a supported product regression.
 
 ```sh
+cargo check --manifest-path samples/sbe-feature-tour/Cargo.toml --all-targets
 cargo check --manifest-path samples/exchange-example/Cargo.toml --all-targets
 cargo check --manifest-path samples/l3-book/Cargo.toml --all-targets
 cargo check --manifest-path samples/cluster-ha-orderbook/Cargo.toml --all-targets
@@ -29,6 +31,7 @@ cargo check --manifest-path samples/cluster-tutorial/Cargo.toml --all-targets
 Useful service-free tests:
 
 ```sh
+cargo test --manifest-path samples/sbe-feature-tour/Cargo.toml
 cargo test --manifest-path samples/exchange-example/Cargo.toml
 cargo test --manifest-path samples/l3-book/Cargo.toml
 cargo test --manifest-path samples/cluster-ha-orderbook/Cargo.toml \
@@ -42,9 +45,26 @@ just build-aeron-jars
 cargo run --manifest-path samples/cluster-tutorial/Cargo.toml
 ```
 
+## ErgoSBE feature tour
+
+[`sbe-feature-tour/`](sbe-feature-tour/) is the map from **product README claims →
+runnable code + schema**. Prefer it when documenting or teaching:
+
+- fixed `ENCODED_LENGTH`
+- staged `*EncodedLength` (including ragged groups)
+- encoder `fixed` + consuming tails
+- decoder consuming stages + strict text
+- `CarDomain` DTO + byte-identical re-encode
+- multi-message `AnyMessage`
+- `try_*` / `verify` vs trusted `wrap`
+
+```sh
+cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml
+```
+
 ## L3 sample
 
-The L3 sample is the main generated-code migration target. Its schema contains:
+The L3 sample is the deep nested/ragged migration target. Its schema contains:
 
 - fixed fields with `chrono`, `bool`, and `rust_decimal` mappings;
 - nested bid/ask and order groups;

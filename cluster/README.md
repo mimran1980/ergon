@@ -90,7 +90,8 @@ cargo package -p ergo-aeron-cluster --list --allow-dirty
 ```
 
 Run `just bench-cluster` for the maintained codec comparisons. See
-[`../sbe/BENCHMARKS.md`](../sbe/BENCHMARKS.md) for the common benchmark rules.
+[sbe/BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md)
+for the common benchmark rules.
 
 ## Limitations
 

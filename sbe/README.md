@@ -69,9 +69,41 @@ mod messages {
 }
 ```
 
-The repository's [`l3-book`](../samples/l3-book/) sample is the compact
-end-to-end example: its `build.rs` configures conversions and domain objects,
-then its library sizes, encodes, decodes, and round-trips nested messages.
+### Samples (schema + runnable demos)
+
+Samples live in the **ergon monorepo** (not in this crates.io package). Links are
+absolute so they work on [docs.rs](https://docs.rs/ergo-sbe) and crates.io.
+
+**Primary tour** — fixed `ENCODED_LENGTH`, staged `*EncodedLength`, encode chain,
+consuming decoder stages, owned DTOs, `AnyMessage`, `try_*` vs trusted wrap,
+Display/Debug:
+
+| Resource | GitHub |
+|----------|--------|
+| Sample root | [samples/sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour) |
+| Schema | [schemas/feature-tour.xml](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/schemas/feature-tour.xml) |
+| Named demos | [src/lib.rs](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| `build.rs` (domain objects + conversions) | [build.rs](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/build.rs) |
+| Sample README (feature → function map) | [README.md](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/README.md) |
+
+**Deeper nested/ragged sample** (L3 books, `chrono` / `rust_decimal`):
+
+| Resource | GitHub |
+|----------|--------|
+| Sample root | [samples/l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) |
+| Schema | [schemas/l3-book.xml](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/schemas/l3-book.xml) |
+| Encode / EncodedLength helpers | [src/lib.rs](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) |
+| Runnable demos | [src/main.rs](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/main.rs) |
+
+Clone and run from the monorepo:
+
+```sh
+git clone https://github.com/mimran1980/ergon.git
+cd ergon
+cargo run  --manifest-path samples/sbe-feature-tour/Cargo.toml
+cargo test --manifest-path samples/sbe-feature-tour/Cargo.toml
+cargo run  --manifest-path samples/l3-book/Cargo.toml
+```
 
 ## Buffer sizing
 
@@ -161,13 +193,16 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-sbe --all-features --no-deps
 cargo package -p ergo-sbe --list --allow-dirty
 ```
 
-Performance methodology and commands live in
-[`BENCHMARKS.md`](BENCHMARKS.md).
+Performance methodology and commands live in the monorepo
+[BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md)
+(not shipped in the crates.io package).
 
 ## Package scope
 
-The crate package contains the generator source, manifest, and this README.
+The crates.io package contains the generator source, manifest, and this README.
 Repository tests, fixtures, samples, benchmarks, and internal planning material
-are not part of the package.
+are **not** part of the package — open them on GitHub via the links above.
 
-Apache-2.0.
+## License
+
+Apache-2.0. Repository: [mimran1980/ergon](https://github.com/mimran1980/ergon).

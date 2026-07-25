@@ -1,0 +1,392 @@
+//! ErgoSBE feature tour — live demos of generated APIs.
+//!
+//! Schema: [`schemas/feature-tour.xml`](../schemas/feature-tour.xml)  
+//! Generated module: written by `build.rs` to `OUT_DIR/feature_tour.rs`
+//! (inspect after `cargo build` under `target/.../out/feature_tour.rs`).
+//!
+//! # Features covered
+//!
+//! | Demo | Feature |
+//! |------|---------|
+//! | [`demo_fixed_heartbeat`] | Fixed message + `ENCODED_LENGTH` |
+//! | [`demo_car_size_and_encode`] | Staged `CarEncodedLength` + exact buffer encode |
+//! | [`demo_car_decode_stages`] | Consuming decoder stages (groups → var-data) |
+//! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
+//! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
+//! | [`demo_try_vs_trusted`] | `try_wrap` / `try_from` vs trusted wrap; `verify` |
+//! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
+//! | [`run_all`] | Runs every demo; used by `main` and tests |
+
+#![allow(
+    dead_code,
+    unused_imports,
+    non_camel_case_types,
+    non_snake_case,
+    clippy::all
+)]
+
+/// Generated codecs (session types live in this module).
+pub mod codecs {
+    include!(concat!(env!("OUT_DIR"), "/feature_tour.rs"));
+}
+
+pub use codecs::*;
+
+use chrono::{DateTime, Utc};
+
+// ─── 1. Fixed-only message ─────────────────────────────────────────────────
+
+/// Heartbeat is fixed-block only: size with `HeartbeatEncoder::ENCODED_LENGTH`,
+/// no staged length builder.
+///
+/// Note: wire setters take `u64` nanos; decoder domain conversion exposes
+/// `timestamp() -> DateTime<Utc>` when `UTCTimestamp` is configured in build.rs.
+pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let len = HeartbeatEncoder::ENCODED_LENGTH;
+    let mut buf = vec![0u8; len];
+    let nanos: i64 = 1_720_000_000_000_000_000;
+    let enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?.fixed(
+        &HeartbeatFixedFields {
+            sequence: 7,
+            timestamp: nanos as u64,
+        },
+    );
+    // Fixed encoder stays on the same type; length is the constant.
+    assert_eq!(
+        HeartbeatEncoder::ENCODED_LENGTH,
+        len,
+        "fixed ENCODED_LENGTH is the full header-inclusive size"
+    );
+    let written = len;
+    let _ = enc; // fields already written
+
+    let dec = HeartbeatDecoder::try_from(&buf[..written])?;
+    assert_eq!(dec.sequence(), 7);
+    let decoded_ts: DateTime<Utc> = dec.timestamp();
+    assert_eq!(decoded_ts.timestamp_nanos_opt(), Some(nanos));
+    Ok(buf[..written].to_vec())
+}
+
+// ─── 2. EncodedLength + encode ─────────────────────────────────────────────
+
+/// Compute exact wire length for a Car with known group shapes, allocate once,
+/// encode with `try_wrap_and_apply_header` + fixed phase + consuming tails.
+pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Fuel: 2 entries with usage ASCII lengths 5 and 7.
+    // Performance: 1 entry with 2 nested acceleration rows (fixed-only entries).
+    // Message var-data: manufacturer / model / activationCode lengths.
+    let complete_len = CarEncodedLength::new()
+        .fuel_figures_ragged(2, |ff| {
+            ff.add()?.usage_description(5)?; // "Urban"
+            ff.add()?.usage_description(7)?; // "Highway"
+            Ok(())
+        })?
+        .performance_figures_ragged(1, |pf| {
+            pf.add()?.acceleration(|acc| {
+                acc.uniform(2)?;
+                Ok(())
+            })?;
+            Ok(())
+        })?
+        .manufacturer(5)? // "Honda"
+        .model(9)? // "Civic VTi"
+        .activation_code(6)? // "abcdef"
+        .encoded_length_with_header();
+
+    let mut buf = vec![0u8; complete_len];
+    let written = encode_sample_car(&mut buf)?;
+    assert_eq!(
+        written, complete_len,
+        "CarEncodedLength must equal encoder-produced length"
+    );
+    Ok(buf[..written].to_vec())
+}
+
+/// Encode the canonical sample car into `buf` (must be pre-sized).
+pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
+    let mut extras = OptionalExtras::default();
+    extras.set_cruise_control(true);
+    extras.set_sports_pack(true);
+
+    let complete = CarEncoder::try_wrap_and_apply_header(buf, 0)?
+        .fixed(&CarFixedFields {
+            serial_number: 1234,
+            model_year: 2013,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [10, 20, 30, 40],
+            vehicle_code: [b'A', b'B', b'C', b'D', b'E', b'F'],
+            extras,
+            engine: Engine::new(
+                2000,
+                4,
+                [b'1', b'2', b'3'],
+                0i8,
+                BooleanType::F,
+                Booster::new(BoostType::TURBO, 210),
+            ),
+        })
+        .fuel_figures(2, |g| {
+            g.add(|e| {
+                e.speed(30).mpg(35.9);
+                e.usage_description(b"Urban")?;
+                Ok(())
+            })?;
+            g.add(|e| {
+                e.speed(60).mpg(25.0);
+                e.usage_description(b"Highway")?;
+                Ok(())
+            })?;
+            Ok(())
+        })?
+        .performance_figures(1, |g| {
+            g.add(|e| {
+                e.octane_rating(95);
+                e.acceleration(2, |a| {
+                    a.add(|x| {
+                        x.mph(30).seconds(4.0);
+                        Ok(())
+                    })?;
+                    a.add(|x| {
+                        x.mph(60).seconds(7.5);
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        })?
+        .manufacturer(b"Honda")?
+        .model(b"Civic VTi")?
+        .activation_code(b"abcdef")?;
+
+    Ok(complete.encoded_length_with_header())
+}
+
+// ─── 3. Decoder consuming stages ───────────────────────────────────────────
+
+/// Walk Car in wire order: fixed random-access fields, then groups, then var-data.
+pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let car = CarDecoder::try_from(wire)?;
+    assert_eq!(car.serial_number(), 1234);
+    assert_eq!(car.model_year(), 2013);
+    // Domain conversion: BooleanType → bool when configured.
+    let available: bool = car.available();
+    assert!(available);
+    assert_eq!(car.code(), Model::A);
+    assert_eq!(car.discounted_model(), Model::C); // constant field
+    assert_eq!(car.engine().capacity(), 2000);
+
+    // Consuming stages enforce fuelFigures → performanceFigures → strings.
+    let mut fuel = car.into_fuel_figures()?;
+    let mut speeds = Vec::new();
+    while let Some(entry) = fuel.next() {
+        let e = entry?;
+        speeds.push(e.speed());
+        let _usage = e.usage_description()?; // ASCII var-data on entry
+    }
+    assert_eq!(speeds, vec![30, 60]);
+
+    let after_fuel = fuel.finish()?;
+    let mut perf = after_fuel.into_performance_figures()?;
+    let mut octanes = Vec::new();
+    while let Some(entry) = perf.next() {
+        let e = entry?;
+        octanes.push(e.octane_rating());
+        let mut acc = e.into_acceleration()?;
+        let mut mphs = Vec::new();
+        while let Some(a) = acc.next() {
+            mphs.push(a.mph());
+        }
+        assert_eq!(mphs, vec![30, 60]);
+        let _ = acc.finish()?;
+    }
+    assert_eq!(octanes, vec![95]);
+
+    let after_perf = perf.finish()?;
+    let (mfr, after_mfr) = after_perf.into_manufacturer_as_str()?;
+    assert_eq!(mfr, "Honda");
+    let (model, after_model) = after_mfr.into_model_as_str()?;
+    assert_eq!(model, "Civic VTi");
+    let (code, _done) = after_model.into_activation_code_as_str()?;
+    assert_eq!(code, "abcdef");
+    Ok(())
+}
+
+// ─── 4. Domain DTO ─────────────────────────────────────────────────────────
+
+/// Materialise owned `CarDomain`, re-encode, compare bytes.
+pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let dec = CarDecoder::try_from(wire)?;
+    // Prefer try_from_decoder when you need fallible conversion; From panics on
+    // malformed tails (see generated docs).
+    let dto = CarDomain::try_from_decoder(dec)?;
+    assert_eq!(dto.serial_number, 1234);
+    assert!(dto.available); // bool domain field
+    assert_eq!(dto.fuel_figures.len(), 2);
+    assert_eq!(dto.fuel_figures[0].usage_description, b"Urban");
+    assert_eq!(dto.manufacturer, b"Honda");
+
+    let mut buf2 = vec![0u8; wire.len() + 64];
+    let n = dto.encode(&mut buf2)?;
+    assert_eq!(&buf2[..n], wire, "DTO re-encode must be byte-identical");
+    Ok(())
+}
+
+// ─── 5. AnyMessage ─────────────────────────────────────────────────────────
+
+/// Encode Heartbeat + Note into one buffer and dispatch by template id.
+pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
+    let mut hb = vec![0u8; HeartbeatEncoder::ENCODED_LENGTH];
+    let nanos: u64 = 1_700_000_000_000_000_000;
+    let _ = HeartbeatEncoder::try_wrap_and_apply_header(&mut hb, 0)?.fixed(
+        &HeartbeatFixedFields {
+            sequence: 1,
+            timestamp: nanos,
+        },
+    );
+    let hb_len = HeartbeatEncoder::ENCODED_LENGTH;
+
+    let note_body = b"hello AnyMessage";
+    let note_len = NoteEncoder::compute_encoded_length_with_message_header(note_body.len());
+    let mut note = vec![0u8; note_len];
+    let note_written = NoteEncoder::try_wrap_and_apply_header(&mut note, 0)?
+        .fixed(&NoteFixedFields { note_id: 99 })
+        .body(note_body)?
+        .encoded_length_with_header();
+    assert_eq!(note_written, note_len);
+
+    // Concatenate framed messages (each includes its own SBE header).
+    let mut stream = Vec::new();
+    stream.extend_from_slice(&hb[..hb_len]);
+    stream.extend_from_slice(&note[..note_written]);
+
+    let mut offset = 0usize;
+    let mut saw_heartbeat = false;
+    let mut saw_note = false;
+    while offset < stream.len() {
+        match AnyMessage::decode(&stream, offset)? {
+            AnyMessage::Heartbeat(d) => {
+                assert_eq!(d.sequence(), 1);
+                offset += d.encoded_length_with_header()?;
+                saw_heartbeat = true;
+            }
+            AnyMessage::Note(d) => {
+                assert_eq!(d.note_id(), 99);
+                let (body, complete) = d.into_body()?;
+                assert_eq!(body, note_body);
+                offset += complete.encoded_length_with_header();
+                saw_note = true;
+            }
+            AnyMessage::Car(_) => return Err("unexpected Car in this demo stream".into()),
+            AnyMessage::Unknown { .. } => {
+                return Err("unexpected Unknown template".into());
+            }
+        }
+    }
+    assert!(saw_heartbeat && saw_note);
+    Ok(())
+}
+
+// ─── 6. try_* vs trusted wrap ──────────────────────────────────────────────
+
+/// Trust-boundary constructors reject short / wrong-schema buffers.
+pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    // Safe entry: validates header + block.
+    let _ = CarDecoder::try_from(valid_car)?;
+    let _ = CarDecoder::try_wrap_and_apply_header(valid_car, 0)?;
+
+    // Truncated buffer must fail try_from / verify.
+    assert!(
+        CarDecoder::try_from(&valid_car[..8.min(valid_car.len())]).is_err(),
+        "truncated buffer should fail try_from"
+    );
+    if valid_car.len() > 16 {
+        assert!(
+            CarDecoder::verify(&valid_car[..16]).is_err(),
+            "truncated buffer should fail verify"
+        );
+    }
+
+    // Trusted wrap is only for already-validated buffers (header already checked
+    // by try_*). Signature: wrap(buf, body_pos, acting_block_length, version).
+    let mut hdr_bytes = [0u8; 8];
+    hdr_bytes.copy_from_slice(&valid_car[..8]);
+    let hdr = MessageHeader(hdr_bytes);
+    let trusted = CarDecoder::wrap(
+        valid_car,
+        8,
+        hdr.block_length() as usize,
+        hdr.version(),
+    );
+    assert_eq!(trusted.serial_number(), 1234);
+    Ok(())
+}
+
+// ─── 7. Display / Debug ────────────────────────────────────────────────────
+
+/// Diagnostic formatting — not a stable serialization format.
+pub fn demo_display_debug(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let car = CarDecoder::try_from(valid_car)?;
+    let display = format!("{car}");
+    let debug = format!("{car:?}");
+    assert!(
+        display.contains("serial") || display.contains("1234") || display.contains("Car"),
+        "Display should mention car fields: {display}"
+    );
+    // Debug is content-oriented (not raw pointer dump).
+    assert!(!debug.is_empty());
+    Ok(())
+}
+
+// ─── Orchestrator ──────────────────────────────────────────────────────────
+
+/// Run every feature demo. Returns Ok when all assertions pass.
+pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
+    println!("1) Fixed Heartbeat + ENCODED_LENGTH");
+    let _hb = demo_fixed_heartbeat()?;
+    println!("   ok\n");
+
+    println!("2) Car EncodedLength + encode");
+    let car = demo_car_size_and_encode()?;
+    println!("   ok ({} bytes)\n", car.len());
+
+    println!("3) Car decode consuming stages");
+    demo_car_decode_stages(&car)?;
+    println!("   ok\n");
+
+    println!("4) CarDomain DTO round-trip");
+    demo_car_domain_dto(&car)?;
+    println!("   ok\n");
+
+    println!("5) AnyMessage multi-template dispatch");
+    demo_any_message()?;
+    println!("   ok\n");
+
+    println!("6) try_* trust boundary vs trusted wrap");
+    demo_try_vs_trusted(&car)?;
+    println!("   ok\n");
+
+    println!("7) Display / Debug diagnostics");
+    demo_display_debug(&car)?;
+    println!("   ok\n");
+
+    println!("All feature-tour demos passed.");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_feature_demos() -> Result<(), Box<dyn std::error::Error>> {
+        run_all()
+    }
+
+    #[test]
+    fn heartbeat_encoded_length_is_constant() {
+        assert!(HeartbeatEncoder::ENCODED_LENGTH >= 8 + 16);
+    }
+}

@@ -1,0 +1,18 @@
+[package]
+name = "sbe-feature-tour"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "ErgoSBE feature tour — EncodedLength, encode/decode stages, DTO, AnyMessage (schema + generated codecs)"
+
+[dependencies]
+# Path dep for monorepo; published consumers use ergo-sbe = "0.1" from crates.io.
+# Domain bool conversion is pure; chrono optional for timestamp semantic demos.
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[build-dependencies]
+ergo-sbe = { path = "../../sbe" }
+
+[[bin]]
+name = "sbe-feature-tour"
+path = "src/main.rs"
