@@ -3924,13 +3924,21 @@ impl<'a> CarEncoder<'a> {
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = 8;
-        self.buf[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 8)
+                .copy_from_slice(&val.to_le_bytes());
+        }
         self
     }
     #[inline]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = 16;
-        self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 2)
+                .copy_from_slice(&val.to_le_bytes());
+        }
         self
     }
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
@@ -3952,15 +3960,20 @@ impl<'a> CarEncoder<'a> {
         let offset = 20;
         let mut idx = 0usize;
         while idx < 4 {
-            self.buf[offset + idx * 4..offset + (idx + 1) * 4]
-                .copy_from_slice(&val[idx].to_le_bytes());
+            unsafe {
+                self.buf
+                    .get_unchecked_mut(offset + idx * 4..offset + (idx + 1) * 4)
+                    .copy_from_slice(&val[idx].to_le_bytes());
+            }
             idx += 1;
         }
         self
     }
     #[inline]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
-        self.buf[36..][..6].copy_from_slice(&val);
+        unsafe {
+            self.buf.get_unchecked_mut(36..36 + 6).copy_from_slice(&val);
+        }
         self
     }
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {

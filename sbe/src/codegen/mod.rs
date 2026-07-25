@@ -5188,7 +5188,9 @@ fn generate_message_encoder(
                         impl_contents.extend(quote::quote! {
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
-                                self.buf[#body_offset_lit..][..#len_lit].copy_from_slice(&val);
+                                unsafe {
+                                    self.buf.get_unchecked_mut(#body_offset_lit..#body_offset_lit + #len_lit).copy_from_slice(&val);
+                                }
                                 self
                             }
                         });
@@ -5199,7 +5201,10 @@ fn generate_message_encoder(
                                 let offset = #body_offset_lit;
                                 let mut idx = 0usize;
                                 while idx < #len_lit {
-                                    self.buf[offset + idx * #prim_size_lit..offset + (idx + 1) * #prim_size_lit].copy_from_slice(&val[idx].#to_endian());
+                                    unsafe {
+                                        self.buf.get_unchecked_mut(offset + idx * #prim_size_lit..offset + (idx + 1) * #prim_size_lit)
+                                            .copy_from_slice(&val[idx].#to_endian());
+                                    }
                                     idx += 1;
                                 }
                                 self
@@ -5211,7 +5216,7 @@ fn generate_message_encoder(
                     impl_contents.extend(quote::quote! {
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
-                            self.buf[#body_offset_lit] = val as u8;
+                            *unsafe { self.buf.get_unchecked_mut(#body_offset_lit) } = val as u8;
                             self
                         }
                     });
@@ -5220,7 +5225,12 @@ fn generate_message_encoder(
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
                             let offset = #body_offset_lit;
-                            self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.#to_endian());
+                            // SAFETY: wrap/try_wrap validates buf.len() >= BLOCK_LENGTH,
+                            // and offset + prim_size <= BLOCK_LENGTH by construction.
+                            unsafe {
+                                self.buf.get_unchecked_mut(offset..offset + #prim_size_lit)
+                                    .copy_from_slice(&val.#to_endian());
+                            }
                             self
                         }
                     });
