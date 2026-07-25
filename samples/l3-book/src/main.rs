@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let symbol = b"BTCUSDT";
 
     // Encode — ragged entries with different order counts per level.
+    // TODO this should be using L3BookEncodedLength, infact on L3BookEncoded::compute_length() return L3BookEncodedLength
     let mut buf = vec![0u8; 4096];
     let actual = l3_book::encode_book(&mut buf, &bids, &asks, symbol)?;
     println!("encoded_len = {actual}");
@@ -20,9 +21,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Decode with concrete converter accessors — no turbofish.
     let dec = l3_book::L3BookDecoder::try_from(&buf[..actual])?;
     println!("{dec}");
+
+    // TODO can you print the DTO from &buf[..actual] and also encode it back DTO to sbe and viery bytes are idential
     let _ts: DateTime<Utc> = dec.exchange_timestamp();
     assert!(dec.is_active());
 
+    println!("{dec}");
     println!("\nOK");
     Ok(())
 }
