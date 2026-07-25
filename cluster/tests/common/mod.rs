@@ -9,7 +9,7 @@ use rusteron_client::cformat;
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use ergo_aeron_cluster::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};
+use ergo_aeron_cluster::cluster_codec_types::{AdminRequestType, AdminResponseCode, EventCode};
 use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 

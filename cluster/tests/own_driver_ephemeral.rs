@@ -4,7 +4,7 @@
 //! ingress to cluster's 9002, responseChannel=9100 so the cluster
 //! sends SessionEvent back to the client's sub.
 
-use ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder;
+use ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder;
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;

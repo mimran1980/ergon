@@ -1,6 +1,6 @@
 #![cfg(feature = "test-harness")]
 
-use ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder;
+use ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder;
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;

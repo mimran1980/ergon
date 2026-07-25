@@ -31,7 +31,7 @@ impl EgressListener for Rec {
         _csid: i64,
         _tid: i64,
         _mid: i32,
-        _code: ergo_aeron_cluster::codecs::session::EventCode,
+        _code: ergo_aeron_cluster::cluster_codec_types::EventCode,
         _detail: &str,
     ) {
     }
@@ -41,8 +41,8 @@ impl EgressListener for Rec {
         &mut self,
         _csid: i64,
         _cid: i64,
-        _rt: ergo_aeron_cluster::codecs::session::AdminRequestType,
-        _rc: ergo_aeron_cluster::codecs::session::AdminResponseCode,
+        _rt: ergo_aeron_cluster::cluster_codec_types::AdminRequestType,
+        _rc: ergo_aeron_cluster::cluster_codec_types::AdminResponseCode,
         _msg: &str,
         _pl: &[u8],
     ) {

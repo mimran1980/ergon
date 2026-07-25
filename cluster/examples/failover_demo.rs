@@ -9,7 +9,7 @@
 //! cargo run --example failover_demo --features test-harness
 //! ```
 
-use ergo_aeron_cluster::codecs::session::SessionConnectRequestEncoder;
+use ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder;
 use ergo_aeron_cluster::poller;
 use rusteron_client::cformat;
 use std::time::{Duration, Instant};
