@@ -9,8 +9,7 @@ fn d(val: i64) -> Rd { Rd::new(val, 0) }
 fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
     let len = L3BookEncodedLength::new()
         .bids_ragged(1, |g| {
-            g.add()?;
-            g.group(L3BookEncodedLength::BIDS_ORDERS_GROUP_DIM, L3BookEncodedLength::BIDS_ORDERS_ENTRY_BLOCK, 1)?;
+            g.add()?.orders(|og| { og.add()?; Ok(()) })?;
             Ok(())
         })?
         .asks_ragged(0, |g| Ok(()))?
@@ -150,15 +149,13 @@ fn l3book_unknown_size_length_matches_encoded() -> Result<(), Box<dyn std::error
     let staged = L3BookEncodedLength::new()
         .bids_unknown_size(|g| {
             for (_, _, orders) in bids {
-                g.add()?;
-                g.group(4, 17, orders.len())?;
+                g.add()?.orders(|og| { for _ in 0..orders.len() { og.add()?; } Ok(()) })?;
             }
             Ok(())
         })?
         .asks_unknown_size(|g| {
             for (_, _, orders) in asks {
-                g.add()?;
-                g.group(4, 17, orders.len())?;
+                g.add()?.orders(|og| { for _ in 0..orders.len() { og.add()?; } Ok(()) })?;
             }
             Ok(())
         })?
@@ -195,15 +192,13 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     let staged = L3BookEncodedLength::new()
         .bids_ragged(bids.len() as u16, |g| {
             for (_, _, orders) in bids {
-                g.add()?;
-                g.group(4, 17, orders.len())?;
+                g.add()?.orders(|og| { for _ in 0..orders.len() { og.add()?; } Ok(()) })?;
             }
             Ok(())
         })?
         .asks_ragged(asks.len() as u16, |g| {
             for (_, _, orders) in asks {
-                g.add()?;
-                g.group(4, 17, orders.len())?;
+                g.add()?.orders(|og| { for _ in 0..orders.len() { og.add()?; } Ok(()) })?;
             }
             Ok(())
         })?
@@ -218,10 +213,9 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
 fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>> {
     let len = L3BookVarDataEncodedLength::new()
         .bids_ragged(1, |g| {
-            g.add()?;
-            g.group_ragged(L3BookVarDataEncodedLength::BIDS_ORDERS_GROUP_DIM, L3BookVarDataEncodedLength::BIDS_ORDERS_ENTRY_BLOCK, |og| {
-                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ORD-1".len())?;
-                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ORD-2".len())?;
+            g.add()?.orders(|og| {
+                og.add()?.order_id(b"ORD-1".len())?;
+                og.add()?.order_id(b"ORD-2".len())?;
                 Ok(())
             })?;
             Ok(())
@@ -278,16 +272,14 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
     // Compute exact length via the staged builder — no magic buffers.
     let len = L3BookVarDataEncodedLength::new()
         .bids_ragged(2, |g| {
-            g.add()?;
-            g.group_ragged(L3BookVarDataEncodedLength::BIDS_ORDERS_GROUP_DIM, L3BookVarDataEncodedLength::BIDS_ORDERS_ENTRY_BLOCK, |og| {
-                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ABC".len())?;
+            g.add()?.orders(|og| {
+                og.add()?.order_id(b"ABC".len())?;
                 Ok(())
             })?;
-            g.add()?;
-            g.group_ragged(L3BookVarDataEncodedLength::BIDS_ORDERS_GROUP_DIM, L3BookVarDataEncodedLength::BIDS_ORDERS_ENTRY_BLOCK, |og| {
-                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ID-AA".len())?;
-                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ID-BB".len())?;
-                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ID-C".len())?;
+            g.add()?.orders(|og| {
+                og.add()?.order_id(b"ID-AA".len())?;
+                og.add()?.order_id(b"ID-BB".len())?;
+                og.add()?.order_id(b"ID-C".len())?;
                 Ok(())
             })?;
             Ok(())

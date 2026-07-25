@@ -160,6 +160,16 @@ fn generate_staged(
         }
     }
 
+    // ── Schema-specific ragged entry builder wrappers ──
+    // For groups with nested groups or var-data, generate a wrapper type with
+    // FIELD-NAMED methods that bake in dim/block/prefix. Users write:
+    //   builder.add()?.orders(|og| og.add()?.order_id(5)?; Ok(()) )?;
+    // instead of the generic:
+    //   builder.add()?; builder.group_ragged(4, 9, |og| og.add()?; og.var_data(4, 5)?; })?;
+    for g in &msg.groups {
+        generate_ragged_wrappers(&msg_name, "", g, elements, &mut standalone);
+    }
+
     // ── Pre-emit all stage structs (except entry and uniform pending) ──
     let mut stage_names: Vec<String> = Vec::new();
     let total_tail = msg.groups.len() + msg.var_data.len();
@@ -497,6 +507,11 @@ fn generate_staged(
                 &format!("{}_unknown_size", crate::codegen::to_snake_case(&g.name)),
                 span,
             );
+            let g_pascal_ragged = crate::codegen::to_pascal_case(&g.name);
+            let wrapper_ident = syn::Ident::new(
+                &format!("{}{}RaggedBuilder", msg_name, g_pascal_ragged),
+                span,
+            );
             standalone.extend(quote::quote! {
                 impl #pending_name {
                     /// **Uniform** group — every one of the `count` entries shares
@@ -534,21 +549,15 @@ fn generate_staged(
                         mut self, count: #count_ty, f: F,
                     ) -> Result<#next_name, sbe_rt::EncodeError>
                     where
-                        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+                        F: FnOnce(&mut #wrapper_ident<'_>) -> Result<(), sbe_rt::EncodeError>,
                     {
                         let pm = self.state.enter_group(
                             count as usize, #ds as usize, #g_bl as usize,
                         );
-                        // enter_group pre-counts the dimension (×pm) and all
-                        // `count` entry fixed-blocks (×pm×count). For ragged
-                        // entries the per-entry VARIABLE parts (nested groups,
-                        // var-data) must scale by `pm` (the parent multiplier)
-                        // — each entry contributes once — NOT by `pm×count`.
-                        // Reset the multiplier to `pm` so the builder's
-                        // group()/var_data()/add() operate at the parent scale.
                         self.state.leave_group(pm);
                         let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
-                        f(&mut builder)?;
+                        let mut wrapper = #wrapper_ident { b: &mut builder };
+                        f(&mut wrapper)?;
                         if builder.written != count as usize {
                             return Err(sbe_rt::EncodeError::GroupCountMismatch {
                                 declared: count as u32,
@@ -575,14 +584,14 @@ fn generate_staged(
                         mut self, f: F,
                     ) -> Result<#next_name, sbe_rt::EncodeError>
                     where
-                        F: FnOnce(&mut RaggedEntryBuilder) -> sbe_rt::GroupResult,
+                        F: FnOnce(&mut #wrapper_ident<'_>) -> Result<(), sbe_rt::EncodeError>,
                     {
                         let max_count = #count_ty::MAX as usize;
                         let pm = self.state.multiplier();
-                        // Add dimension header only (entries added by builder.add()/entries())
                         self.state.add_scaled(#ds as usize, pm);
                         let mut builder = RaggedEntryBuilder::new(self.state, pm, #g_bl as usize);
-                        f(&mut builder)?;
+                        let mut wrapper = #wrapper_ident { b: &mut builder };
+                        f(&mut wrapper)?;
                         if builder.written > max_count {
                             return Err(sbe_rt::EncodeError::GroupCountOverflow {
                                 maximum: #count_ty::MAX as u32,
@@ -1002,6 +1011,99 @@ pub(super) fn generate_support() -> TokenStream {
             }
         }
     }
+}
+
+/// Generate schema-specific ragged entry builder wrapper types for a group
+/// and its nested groups. Each wrapper has field-named methods that bake in
+/// dim/block/prefix, so users never need to pass layout constants.
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
+fn generate_ragged_wrappers(
+    msg_name: &str,
+    parent_chain: &str,
+    group: &crate::structured_ir::MessageGroup,
+    elements: &crate::structured_ir::SchemaElements,
+    ts: &mut TokenStream,
+) {
+    let span = proc_macro2::Span::call_site();
+    let group_pascal = crate::codegen::to_pascal_case(&group.name);
+    let wrapper_name = format!("{}{}{}RaggedBuilder", msg_name, parent_chain, group_pascal);
+    let wrapper_ident = syn::Ident::new(&wrapper_name, span);
+
+    // Struct definition
+    ts.extend(quote::quote! {
+        /// Schema-specific ragged entry builder — field-named methods bake in
+        /// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
+        pub struct #wrapper_ident<'a> {
+            b: &'a mut RaggedEntryBuilder,
+        }
+    });
+
+    let mut methods: Vec<proc_macro2::TokenStream> = Vec::new();
+
+    // add() — returns &mut Self for chaining
+    methods.push(quote::quote! {
+        /// Register one entry. Returns `&mut Self` for chaining.
+        pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
+            self.b.add()?;
+            Ok(self)
+        }
+    });
+
+    // Nested groups — field-named method that enters the nested ragged group
+    for ng in &group.groups {
+        let ng_pascal = crate::codegen::to_pascal_case(&ng.name);
+        let ng_snake = crate::codegen::to_snake_case(&ng.name);
+        let ng_ident = syn::Ident::new(&ng_snake, span);
+        let (_, ng_dim, _, _) = get_dimension_info(elements, &ng.dimension_type);
+        let ng_dim_lit = syn::LitInt::new(&ng_dim.to_string(), span);
+        let ng_bl_lit = syn::LitInt::new(&ng.block_length.to_string(), span);
+
+        // Recurse: generate sub-wrapper for the nested group
+        let sub_chain = format!("{}{}", parent_chain, group_pascal);
+        generate_ragged_wrappers(msg_name, &sub_chain, ng, elements, ts);
+
+        let sub_name = format!("{}{}{}RaggedBuilder", msg_name, sub_chain, ng_pascal);
+        let sub_ident = syn::Ident::new(&sub_name, span);
+
+        methods.push(quote::quote! {
+            /// Enter a nested ragged group. The closure receives a sub-builder
+            /// with field-named methods for the nested entries.
+            pub fn #ng_ident<F>(&mut self, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
+            where
+                F: FnOnce(&mut #sub_ident<'_>) -> Result<(), sbe_rt::EncodeError>,
+            {
+                self.b.group_ragged(#ng_dim_lit, #ng_bl_lit, |inner| {
+                    let mut sub = #sub_ident { b: inner };
+                    f(&mut sub)
+                })?;
+                Ok(self)
+            }
+        });
+    }
+
+    // Var-data — field-named method that bakes the prefix
+    for vd in &group.var_data {
+        let vd_snake = crate::codegen::to_snake_case(&vd.name);
+        let vd_ident = syn::Ident::new(&vd_snake, span);
+        let (_, vd_prefix, _, _) = get_vardata_info(elements, &vd.type_name);
+        let vd_prefix_lit = syn::LitInt::new(&vd_prefix.to_string(), span);
+
+        methods.push(quote::quote! {
+            /// Record a var-data field's length for the current entry.
+            /// The prefix size is baked in — just pass the data length.
+            pub fn #vd_ident(&mut self, len: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
+                self.b.var_data(#vd_prefix_lit, len)?;
+                Ok(self)
+            }
+        });
+    }
+
+    // Emit impl block
+    ts.extend(quote::quote! {
+        impl<'a> #wrapper_ident<'a> {
+            #(#methods)*
+        }
+    });
 }
 
 #[cfg(test)]
