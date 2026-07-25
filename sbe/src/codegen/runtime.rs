@@ -440,6 +440,39 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         quote::quote! {}
     };
 
+    // NullVal discriminant: use the schema's nullValue if set.
+    // null_value is stored as u64 — reinterpret for signed encoding types.
+    let null_disc: syn::LitInt = tokens[0]
+        .encoding
+        .null_value
+        .map(|nv| {
+            let val_str: String = match encoding_type {
+                PrimitiveType::Int8 => (nv as i8 as i64).to_string(),
+                PrimitiveType::Int16 => (nv as i16 as i64).to_string(),
+                PrimitiveType::Int32 => (nv as i32 as i64).to_string(),
+                PrimitiveType::Int64 => (nv as i64).to_string(),
+                _ => nv.to_string(),
+            };
+            syn::LitInt::new(&val_str, proc_macro2::Span::call_site())
+        })
+        .unwrap_or_else(|| {
+            // Fallback: max value for unsigned, min for signed
+            let nv: i64 = match encoding_type {
+                PrimitiveType::UInt8 => 255,
+                PrimitiveType::UInt16 => 65535,
+                PrimitiveType::UInt32 => 4_294_967_295_i64,
+                PrimitiveType::UInt64 => i64::MAX,
+                PrimitiveType::Int8 => -128,
+                PrimitiveType::Int16 => -32768,
+                PrimitiveType::Int32 => -2_147_483_648,
+                PrimitiveType::Int64 => i64::MIN,
+                PrimitiveType::Char => 0,
+                _ => 255,
+            };
+            syn::LitInt::new(&nv.to_string(), proc_macro2::Span::call_site())
+        });
+    let null_disc_ts: proc_macro2::TokenStream = quote::quote! { #null_disc };
+
     // Emit enum rustdoc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
@@ -452,7 +485,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         pub enum #name_ident {
             #(#variant_names = #variant_discs,)*
             /// Unknown enum value — the wire discriminant did not match any known variant.
-            NullVal,
+            NullVal = #null_disc_ts,
         }
 
         impl #name_ident {

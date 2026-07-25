@@ -223,7 +223,7 @@ pub enum BooleanType {
     F = 0,
     T = 1,
     /// Unknown enum value — the wire discriminant did not match any known variant.
-    NullVal,
+    NullVal = 255,
 }
 impl BooleanType {
     pub fn raw(self) -> u8 {
@@ -269,7 +269,7 @@ pub enum Model {
     B = b'B',
     C = b'C',
     /// Unknown enum value — the wire discriminant did not match any known variant.
-    NullVal,
+    NullVal = 0,
 }
 impl Model {
     pub fn raw(self) -> u8 {
@@ -305,7 +305,7 @@ pub enum BoostType {
     NITROUS = b'N',
     KERS = b'K',
     /// Unknown enum value — the wire discriminant did not match any known variant.
-    NullVal,
+    NullVal = 0,
 }
 impl BoostType {
     pub fn raw(self) -> u8 {
