@@ -76,24 +76,29 @@ absolute so they work on [docs.rs](https://docs.rs/ergo-sbe) and crates.io.
 
 **Primary tour** — fixed `ENCODED_LENGTH`, staged `*EncodedLength`, encode chain,
 consuming decoder stages, owned DTOs, `AnyMessage`, `try_*` vs trusted wrap,
-Display/Debug:
+Display/Debug, and **both** `with_domain_type` + `with_conversion` (see
+`demo_conversion_only`):
 
 | Resource | GitHub |
 |----------|--------|
 | Sample root | [samples/sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour) |
 | Schema | [schemas/feature-tour.xml](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/schemas/feature-tour.xml) |
 | Named demos | [src/lib.rs](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| `build.rs` (domain objects + conversions) | [build.rs](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/build.rs) |
+| `build.rs` (domain objects + both conversion styles) | [build.rs](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/build.rs) |
 | Sample README (feature → function map) | [README.md](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/README.md) |
 
-**Deeper nested/ragged sample** (L3 books, `chrono` / `rust_decimal`):
+**Deeper nested/ragged sample** — L3 books with **`with_domain_type` only**
+(concrete `price() -> rust_decimal::Decimal`; domain type already implies
+conversion, so bare `with_conversion` is not used):
 
 | Resource | GitHub |
 |----------|--------|
 | Sample root | [samples/l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) |
+| Sample README (`with_domain_type` rationale) | [README.md](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/README.md) |
 | Schema | [schemas/l3-book.xml](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/schemas/l3-book.xml) |
 | Encode / EncodedLength helpers | [src/lib.rs](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) |
 | Runnable demos | [src/main.rs](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/main.rs) |
+| `build.rs` | [build.rs](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/build.rs) |
 
 Clone and run from the monorepo:
 
@@ -168,9 +173,14 @@ observable.
 
 `GenerationConfig` supports:
 
-- `with_conversion` for generated conversion methods selected by named type,
-  semantic type, or field path;
-- `with_domain_type` for concrete application types;
+- `with_conversion` for **generic** `*_as` / `*_from` methods (caller supplies
+  `TryFromSbe` / `TryToSbe`; no forced rust_decimal dependency) — see
+  [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example)
+  and feature-tour `demo_conversion_only`;
+- `with_domain_type` for **concrete** app-type methods (implies conversion and
+  well-known bool / rust_decimal / chrono impls when those paths are used) — see
+  [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book);
+  you do not also need `with_conversion` for the same selectors;
 - `enable_domain_objects` for owned message structures;
 - `with_external_sbe_rt` to share a generated runtime;
 - `with_shared_module` for multi-schema shared types;

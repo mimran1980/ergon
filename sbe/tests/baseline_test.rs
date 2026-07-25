@@ -2835,6 +2835,61 @@ fn decimal_converter_emits_wire_and_generic_methods() -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// Domain DTOs + conversion-only must call `*_wire` setters (not bare `price`),
+/// and must not force a rust_decimal impl unless `with_domain_type` is used.
+#[test]
+fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("conv_domain")
+        .enable_domain_objects()
+        .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
+    let g = ergo_sbe::Generator::new(config);
+    let modules = g.generate(&schema).unwrap();
+    let src = &modules.modules().next().unwrap().source;
+
+    assert!(
+        src.contains("struct OrderDomain"),
+        "OrderDomain missing with enable_domain_objects"
+    );
+    // Encode must use renamed wire setters.
+    assert!(
+        src.contains("price_wire(self.price)") || src.contains("price_wire(self . price)"),
+        "domain encode must call price_wire under conversion-only; got no match"
+    );
+    // Conversion-only must NOT inject rust_decimal into generated source.
+    assert!(
+        !src.contains("rust_decimal::"),
+        "with_conversion alone must not reference rust_decimal"
+    );
+
+    compile_and_run(
+        "conv_domain",
+        src,
+        r#"
+        let mut buf = vec![0u8; 256];
+        let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
+        enc.price_wire(Decimal::new(99, -2));
+        enc.size_wire(Decimal::new(3, 0));
+        let wire = enc.as_ref().to_vec();
+
+        let dec = OrderDecoder::try_wrap_and_apply_header(&wire, 0).unwrap();
+        let dto = OrderDomain::from(dec);
+        assert_eq!(dto.price.mantissa(), 99);
+        assert_eq!(dto.price.exponent(), -2);
+
+        let mut out = vec![0u8; 256];
+        let n = dto.encode(&mut out).unwrap();
+        assert_eq!(&out[..n], &wire[..n]);
+    "#,
+    );
+    Ok(())
+}
+
 /// Raw and converted paths produce identical wire bytes.
 #[test]
 fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std::error::Error>> {

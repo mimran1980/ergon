@@ -74,6 +74,12 @@
             <choice name="sportsPack">1</choice>
             <choice name="cruiseControl">2</choice>
         </set>
+        <!-- Wire composite used with with_conversion (generic *_as / *_from),
+             not with_domain_type — see build.rs comments. -->
+        <composite name="Decimal" description="mantissa * 10^exponent">
+            <type name="mantissa" primitiveType="int64"/>
+            <type name="exponent" primitiveType="int8"/>
+        </composite>
     </types>
 
     <!-- Fixed-only: size with ENCODED_LENGTH, no EncodedLength builder needed. -->
@@ -114,5 +120,11 @@
     <sbe:message name="Note" id="3" description="Short free-text note.">
         <field name="noteId" id="1" type="uint32"/>
         <data name="body" id="2" type="varStringEncoding"/>
+    </sbe:message>
+
+    <!-- Decimal fields: conversion-only API (price_as / price_from), wire type stays Decimal. -->
+    <sbe:message name="Quote" id="4" description="Price/size with conversion-only Decimal accessors.">
+        <field name="price" id="1" type="Decimal" semanticType="Price"/>
+        <field name="size" id="2" type="Decimal" semanticType="Qty"/>
     </sbe:message>
 </sbe:messageSchema>

@@ -6,9 +6,9 @@ publish = false
 description = "ErgoSBE feature tour — EncodedLength, encode/decode stages, DTO, AnyMessage (schema + generated codecs)"
 
 [dependencies]
-# Path dep for monorepo; published consumers use ergo-sbe = "0.1" from crates.io.
-# Domain bool conversion is pure; chrono optional for timestamp semantic demos.
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# Used only with with_conversion(Decimal) demos (generic price_as / price_from).
+rust_decimal = { version = "1", default-features = false, features = ["std"] }
 
 [build-dependencies]
 ergo-sbe = { path = "../../sbe" }

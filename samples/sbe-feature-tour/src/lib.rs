@@ -15,6 +15,7 @@
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
 //! | [`demo_try_vs_trusted`] | `try_wrap` / `try_from` vs trusted wrap; `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
+//! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
 
 #![allow(
@@ -33,6 +34,7 @@ pub mod codecs {
 pub use codecs::*;
 
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal as Rd;
 
 // ─── 1. Fixed-only message ─────────────────────────────────────────────────
 
@@ -280,6 +282,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
                 saw_note = true;
             }
             AnyMessage::Car(_) => return Err("unexpected Car in this demo stream".into()),
+            AnyMessage::Quote(_) => return Err("unexpected Quote in this demo stream".into()),
             AnyMessage::Unknown { .. } => {
                 return Err("unexpected Unknown template".into());
             }
@@ -340,6 +343,123 @@ pub fn demo_display_debug(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+// ─── 8. with_conversion only (not with_domain_type) ───────────────────────
+
+// Application-supplied adapter. `with_conversion` emits the generic seam
+// (`price_as` / `price_from`) but does **not** pull in rust_decimal — you
+// implement `TryFromSbe` / `TryToSbe` for whatever app type you want.
+// (`with_domain_type(Decimal, "rust_decimal::Decimal")` would instead emit a
+// built-in impl + concrete `price() -> Decimal` methods.)
+impl TryFromSbe<Decimal> for Rd {
+    type Error = &'static str;
+
+    fn try_from_sbe(wire: Decimal) -> Result<Self, Self::Error> {
+        let mantissa = i128::from(wire.mantissa());
+        let exponent = wire.exponent();
+        let (mantissa, scale) = if exponent < 0 {
+            (mantissa, (-exponent) as u32)
+        } else {
+            (
+                mantissa.saturating_mul(10i128.saturating_pow(exponent as u32)),
+                0,
+            )
+        };
+        Ok(Rd::from_i128_with_scale(mantissa, scale))
+    }
+}
+
+impl TryToSbe<Decimal> for Rd {
+    type Error = &'static str;
+
+    fn try_to_sbe(&self) -> Result<Decimal, Self::Error> {
+        let mantissa: i64 = self
+            .mantissa()
+            .try_into()
+            .map_err(|_| "Decimal mantissa overflow i64")?;
+        Ok(Decimal::new(mantissa, -(self.scale() as i8)))
+    }
+}
+
+/// Minimal custom adapter — proves conversion-only is pluggable (not tied to
+/// rust_decimal). Same wire layout as SBE Decimal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedPrice {
+    pub mantissa: i64,
+    pub exponent: i8,
+}
+
+impl TryFromSbe<Decimal> for FixedPrice {
+    type Error = &'static str;
+
+    fn try_from_sbe(wire: Decimal) -> Result<Self, Self::Error> {
+        Ok(Self {
+            mantissa: wire.mantissa(),
+            exponent: wire.exponent(),
+        })
+    }
+}
+
+impl TryToSbe<Decimal> for FixedPrice {
+    type Error = &'static str;
+
+    fn try_to_sbe(&self) -> Result<Decimal, Self::Error> {
+        Ok(Decimal::new(self.mantissa, self.exponent))
+    }
+}
+
+/// Quote uses **`with_conversion(Decimal)` only** in `build.rs`.
+///
+/// - Wire accessors remain primary (`price_value()`, `price_wire` on encode).
+/// - You get **generic** `price_as::<T>()` / `price_from(&T)` for any `T: TryFromSbe` /
+///   `TryToSbe` (here both `rust_decimal::Decimal` and [`FixedPrice`]).
+/// - You do **not** get a concrete `price() -> rust_decimal::Decimal` that replaces
+///   the wire type — that is what `with_domain_type(..., "rust_decimal::Decimal")`
+///   would add (and what Boolean/timestamp use elsewhere in this sample).
+pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let len = QuoteEncoder::ENCODED_LENGTH;
+    let mut buf = vec![0u8; len];
+
+    // Encode via generic conversion: app type → wire Decimal composite.
+    let price = Rd::new(12345, 2); // 123.45
+    let size = Rd::new(10, 0); // 10
+    let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+    enc.price_from(&price)?;
+    enc.size_from(&size)?;
+
+    let dec = QuoteDecoder::try_from(&buf[..len])?;
+    // Wire value still available:
+    let wire = dec.price_value();
+    assert_eq!(wire.mantissa(), 12345);
+    assert_eq!(wire.exponent(), -2);
+
+    // Generic conversion back to app type:
+    let price2: Rd = dec.price_as()?;
+    let size2: Rd = dec.size_as()?;
+    assert_eq!(price2, price);
+    assert_eq!(size2, size);
+
+    // Same buffer via a different adapter (pluggable converters):
+    let fixed: FixedPrice = dec.price_as()?;
+    assert_eq!(
+        fixed,
+        FixedPrice {
+            mantissa: 12345,
+            exponent: -2
+        }
+    );
+
+    // Domain DTO still uses wire Decimal (no domain type mapped):
+    let dto = QuoteDomain::from(dec);
+    assert_eq!(dto.price.mantissa(), 12345);
+    let mut re = vec![0u8; len];
+    let n = dto.encode(&mut re)?;
+    assert_eq!(&re[..n], &buf[..len]);
+
+    // Contrast: Car.available() is a *concrete* bool method from with_domain_type.
+    // Quote has no `price() -> Rd` — only price_as / price_value / price_wire.
+    Ok(buf[..len].to_vec())
+}
+
 // ─── Orchestrator ──────────────────────────────────────────────────────────
 
 /// Run every feature demo. Returns Ok when all assertions pass.
@@ -372,6 +492,10 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
     demo_display_debug(&car)?;
     println!("   ok\n");
 
+    println!("8) with_conversion only (generic price_as / price_from)");
+    let _q = demo_conversion_only()?;
+    println!("   ok\n");
+
     println!("All feature-tour demos passed.");
     Ok(())
 }
@@ -388,5 +512,24 @@ mod tests {
     #[test]
     fn heartbeat_encoded_length_is_constant() {
         assert!(HeartbeatEncoder::ENCODED_LENGTH >= 8 + 16);
+    }
+
+    #[test]
+    fn conversion_only_roundtrip_rust_decimal_and_fixed() -> Result<(), Box<dyn std::error::Error>> {
+        let wire = demo_conversion_only()?;
+        let dec = QuoteDecoder::try_from(wire.as_slice())?;
+        let rd: Rd = dec.price_as()?;
+        assert_eq!(rd, Rd::new(12345, 2));
+        let fixed: FixedPrice = dec.price_as()?;
+        assert_eq!(fixed.mantissa, 12345);
+        assert_eq!(fixed.exponent, -2);
+        // Wire setter path still works without any adapter:
+        let mut buf = vec![0u8; QuoteEncoder::ENCODED_LENGTH];
+        QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .price_wire(Decimal::new(1, -2))
+            .size_wire(Decimal::new(2, 0));
+        let d2 = QuoteDecoder::try_from(buf.as_slice())?;
+        assert_eq!(d2.price_value().mantissa(), 1);
+        Ok(())
     }
 }

@@ -203,6 +203,26 @@ fn find_domain_type<'a>(
     })
 }
 
+/// Encoder setter name used by domain DTOs.
+///
+/// When a conversion is configured without a domain type, flyweight setters
+/// are renamed to `*_wire` (concrete domain methods take the bare name).
+/// Domain-object encode must call the same name.
+fn domain_encode_setter_name(
+    field: &MessageField,
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+    field_snake: &str,
+) -> String {
+    if field_has_conversion_free(field, conversions)
+        && find_domain_type(field, domain_types).is_none()
+    {
+        format!("{field_snake}_wire")
+    } else {
+        field_snake.to_string()
+    }
+}
+
 impl Generator {
     /// Create a generator with the supplied configuration.
     #[must_use]
@@ -2373,21 +2393,34 @@ fn generate_domain_recursive(
                     Some(dt) => syn::parse_str(dt).unwrap(),
                     None => r_type.clone(),
                 };
+                let enc_setter = syn::Ident::new(
+                    &domain_encode_setter_name(f, conversions, domain_types, &f_snake),
+                    span,
+                );
                 if let Some(len) = length {
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
                     struct_fields.push(quote::quote! { pub #f_ident: [#r_type; #len_lit] });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                    encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
+                    encode_stmts.push(quote::quote! { enc.#enc_setter(self.#f_ident); });
                 } else if f.presence == Presence::Optional {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#r_type> });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
                     encode_stmts.push(
-                        quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
+                        quote::quote! { if let Some(v) = self.#f_ident { enc.#enc_setter(v); } },
                     );
                 } else {
+                    // Domain-typed scalars use the concrete converted getter.
+                    // Conversion-only renames the raw flyweight getter to *_wire.
+                    let from_getter = if field_has_conversion_free(f, conversions)
+                        && scalar_domain.is_none()
+                    {
+                        syn::Ident::new(&format!("{f_snake}_wire"), span)
+                    } else {
+                        f_ident.clone()
+                    };
                     struct_fields.push(quote::quote! { pub #f_ident: #scalar_ty });
-                    from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                    encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
+                    from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
+                    encode_stmts.push(quote::quote! { enc.#enc_setter(self.#f_ident); });
                 }
             }
             FieldType::Composite {
@@ -2400,6 +2433,10 @@ fn generate_domain_recursive(
                 // Decimal → rust_decimal::Decimal), the DTO field uses the
                 // domain type and reads/writes via the domain accessors.
                 let domain_ty = find_domain_type(f, domain_types);
+                let enc_setter = syn::Ident::new(
+                    &domain_encode_setter_name(f, conversions, domain_types, &f_snake),
+                    span,
+                );
                 let field_ty: proc_macro2::TokenStream = match domain_ty {
                     Some(dt) => {
                         let parsed: syn::Type = syn::parse_str(dt).unwrap();
@@ -2414,12 +2451,12 @@ fn generate_domain_recursive(
                     if domain_ty.is_some() {
                         from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
                         encode_stmts.push(
-                            quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
+                            quote::quote! { if let Some(v) = self.#f_ident { enc.#enc_setter(v); } },
                         );
                     } else {
                         from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
                         encode_stmts
-                            .push(quote::quote! { if let Some(ref v) = self.#f_ident { enc.#f_ident(*v); } });
+                            .push(quote::quote! { if let Some(ref v) = self.#f_ident { enc.#enc_setter(*v); } });
                     }
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #field_ty });
@@ -2428,7 +2465,7 @@ fn generate_domain_recursive(
                     } else {
                         from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
                     }
-                    encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
+                    encode_stmts.push(quote::quote! { enc.#enc_setter(self.#f_ident); });
                 }
             }
             FieldType::Enum {
@@ -3915,17 +3952,23 @@ fn emit_conversion_traits(src: &mut String) {
     );
 }
 
-/// Emit `TryFromSbe` / `TryToSbe` impls for well-known domain-type mappings
+/// Emit `TryFromSbe` / `TryToSbe` impls for well-known **domain-type** mappings
 /// (bool ↔ BooleanType, rust_decimal ↔ Decimal, chrono ↔ u64/UTCTimestamp).
+///
+/// These built-in impls are gated on `domain_types`, not bare `conversions`:
+/// `with_conversion` alone keeps the seam dependency-free so callers can plug
+/// any adapter (see samples/sbe-feature-tour `FixedPrice` / app-side
+/// rust_decimal). `with_domain_type` opts into a concrete app type *and* these
+/// well-known impls.
 fn generate_conversion_impl_blocks(
     elements: &SchemaElements,
-    conversions: &[crate::ConversionSelector],
+    _conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
 ) -> String {
     let mut out = String::new();
     let span = proc_macro2::Span::call_site();
 
-    // Check which conversions are active
+    // Built-ins require an explicit domain-type mapping (not conversion-only).
     let has_bool_conv = domain_types.iter().any(|(sel, ty)| {
         ty == "bool" && matches!(sel, crate::ConversionSelector::NamedType(n) if n == "BooleanType")
     });

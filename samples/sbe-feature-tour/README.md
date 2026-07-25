@@ -17,15 +17,17 @@ crates.io).
 | Named demos (`demo_*`) | https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs |
 | `build.rs` | https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/build.rs |
 | Integration tests | https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/tests/feature_tour.rs |
-| Deeper L3 sample | https://github.com/mimran1980/ergon/tree/main/samples/l3-book |
+| Deeper L3 sample (`with_domain_type` only) | https://github.com/mimran1980/ergon/tree/main/samples/l3-book |
+| L3 sample README (why no bare `with_conversion`) | https://github.com/mimran1980/ergon/blob/main/samples/l3-book/README.md |
+| Conversion-only exchange path | https://github.com/mimran1980/ergon/tree/main/samples/exchange-example |
 
 ## Layout (in a checkout)
 
 | Path | Role |
 |------|------|
-| `schemas/feature-tour.xml` | Self-contained multi-message schema (Heartbeat, Car, Note) |
-| `build.rs` | Generates codecs + domain DTOs + bool/timestamp conversions |
-| `src/lib.rs` | Named demos for each feature |
+| `schemas/feature-tour.xml` | Self-contained multi-message schema (Heartbeat, Car, Note, Quote) |
+| `build.rs` | Domain types for bool/timestamp; **conversion-only** for Decimal |
+| `src/lib.rs` | Named demos for each feature (incl. pluggable `TryFromSbe` adapters) |
 | `src/main.rs` | Prints and runs all demos |
 | `OUT_DIR/feature_tour.rs` | Generated module (after `cargo build`; not checked in) |
 
@@ -49,13 +51,23 @@ cargo test --manifest-path samples/sbe-feature-tour/Cargo.toml
 | Multi-template `AnyMessage` | `demo_any_message` |
 | `try_from` / `try_wrap` / `verify` vs trusted wrap | `demo_try_vs_trusted` |
 | Diagnostic `Display` / `Debug` | `demo_display_debug` |
+| **`with_conversion` only** (generic `price_as` / `price_from`) | `demo_conversion_only` |
 | Run everything | `run_all` |
 
 ## Generation config (see `build.rs`)
 
-- `enable_domain_objects()` → `CarDomain`, etc.
-- `BooleanType` → `bool`
-- `semanticType="UTCTimestamp"` → `chrono::DateTime<Utc>` on Heartbeat
+### `with_conversion` vs `with_domain_type` (not redundant)
+
+| API | Generated surface |
+|-----|-------------------|
+| **`with_conversion(sel)`** | Wire accessors stay primary (`price_value` / `price_wire`). Adds **generic** `price_as::<T>()` / `price_from(&T)` via `TryFromSbe` / `TryToSbe`. **You** implement the traits for your app type (this sample does so for `rust_decimal` and a tiny `FixedPrice`). |
+| **`with_domain_type(sel, "path::Type")`** | Implies conversion, **and** emits **concrete** methods (`available() -> bool`, `timestamp() -> DateTime<Utc>`) plus well-known trait impls for bool / rust_decimal / chrono when those paths are used. |
+
+This sample uses **both**:
+- `with_domain_type` for `BooleanType` → `bool` and `UTCTimestamp` → `DateTime<Utc>`
+- `with_conversion` alone for `Decimal` on `Quote` (see `demo_conversion_only`)
+
+- `enable_domain_objects()` → `CarDomain`, `QuoteDomain`, etc.
 
 ## Inspect generated code
 

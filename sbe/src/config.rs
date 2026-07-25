@@ -131,7 +131,13 @@ impl GenerationConfig {
         self
     }
 
-    /// Enable `*_as`/`*_from` conversion methods for matching fields.
+    /// Enable generic `*_as` / `*_from` conversion methods for matching fields.
+    ///
+    /// Wire accessors stay primary (`price_value` / `price_wire`). Callers
+    /// supply `TryFromSbe` / `TryToSbe` for their app type — the generator does
+    /// not pull in rust_decimal. Prefer [`Self::with_domain_type`] when there
+    /// is a single canonical Rust type (emits concrete methods + well-known
+    /// impls).
     ///
     /// Duplicate selectors are ignored. Selectors matching no field are
     /// generation errors.
@@ -145,7 +151,10 @@ impl GenerationConfig {
 
     /// Map matching fields to a concrete Rust domain type.
     ///
-    /// Implicitly enables conversion for the same selector. The `rust_type`
+    /// Implicitly enables conversion for the same selector, **and** emits
+    /// concrete methods named after the field (e.g. `price() -> Decimal`)
+    /// plus well-known `TryFromSbe` impls for `bool`, `rust_decimal::Decimal`,
+    /// and `chrono::DateTime<Utc>` when those paths are used. The `rust_type`
     /// must be a valid Rust type path (e.g. `"rust_decimal::Decimal"`).
     #[must_use]
     pub fn with_domain_type(

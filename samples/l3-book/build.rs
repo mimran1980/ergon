@@ -10,10 +10,12 @@ fn main() {
     let ir = ergo_sbe::parse(&xml)
         .unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
     let schema = ergo_sbe::Schema::from_ir(ir);
-    // Domain objects (DTOs) + converters: generated DTO struct fields now use
-    // the configured domain types (Decimal→rust_decimal::Decimal,
-    // BooleanType→bool, UTCTimestamp→chrono::DateTime), so the DTOs round-trip
-    // to/from the wire codec with full domain typing.
+    // Domain objects + with_domain_type only (not bare with_conversion).
+    // with_domain_type already enables conversion for each selector and emits
+    // concrete methods (price() -> rust_decimal::Decimal, etc.). Adding
+    // with_conversion for the same selectors would be redundant — use bare
+    // with_conversion only when you want generic price_as::<T> / app adapters
+    // (see samples/sbe-feature-tour and samples/exchange-example).
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
         .enable_domain_objects()
         .with_unchecked_companions()
