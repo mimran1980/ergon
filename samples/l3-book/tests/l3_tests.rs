@@ -7,8 +7,16 @@ fn d(val: i64) -> Rd { Rd::new(val, 0) }
 
 #[test]
 fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
-    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-    let mut buf = vec![0u8; 4096];
+    let len = L3BookEncodedLength::new()
+        .bids_ragged(1, |g| {
+            g.add()?;
+            g.group(L3BookEncodedLength::BIDS_ORDERS_GROUP_DIM, L3BookEncodedLength::BIDS_ORDERS_ENTRY_BLOCK, 1)?;
+            Ok(())
+        })?
+        .asks_ragged(0, |g| Ok(()))?
+        .symbol(b"X".len())?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
@@ -43,8 +51,12 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
-    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-    let mut buf = vec![0u8; 4096];
+    let len = L3BookEncodedLength::new()
+        .bids_ragged(0, |g| Ok(()))?
+        .asks_ragged(0, |g| Ok(()))?
+        .symbol(b"".len())?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: 0, sequence: 0, is_active: BooleanType::False })
         .bids(0, |_| Ok(()))?
@@ -130,9 +142,10 @@ fn l3book_unknown_size_length_matches_encoded() -> Result<(), Box<dyn std::error
     ];
     let symbol = b"BTCUSDT";
 
-    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-    let mut buf = vec![0u8; 4096];
+    let len = l3_book::book_encoded_length(bids, asks, symbol)?;
+    let mut buf = vec![0u8; len];
     let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
+    assert_eq!(len, actual, "book_encoded_length must match encode_book");
 
     let staged = L3BookEncodedLength::new()
         .bids_unknown_size(|g| {
@@ -173,9 +186,10 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     let symbol = b"BTCUSDT";
 
     // Actual length from the encoder.
-    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-    let mut buf = vec![0u8; 4096];
+    let len = l3_book::book_encoded_length(bids, asks, symbol)?;
+    let mut buf = vec![0u8; len];
     let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
+    assert_eq!(len, actual, "book_encoded_length must match encode_book");
 
     // Staged length builder (orders: dim=4, block=17 = u64 + Decimal).
     let staged = L3BookEncodedLength::new()
@@ -202,8 +216,20 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>> {
-    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-    let mut buf = vec![0u8; 4096];
+    let len = L3BookVarDataEncodedLength::new()
+        .bids_ragged(1, |g| {
+            g.add()?;
+            g.group_ragged(L3BookVarDataEncodedLength::BIDS_ORDERS_GROUP_DIM, L3BookVarDataEncodedLength::BIDS_ORDERS_ENTRY_BLOCK, |og| {
+                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ORD-1".len())?;
+                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ORD-2".len())?;
+                Ok(())
+            })?;
+            Ok(())
+        })?
+        .asks_ragged(0, |g| Ok(()))?
+        .symbol(b"BTCUSDT".len())?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
@@ -249,14 +275,27 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
 
 #[test]
 fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
-    // VarData orders are ragged at two levels (var-data `order_id` of differing
-    // length per order), which the staged `L3BookVarDataEncodedLength` builder
-    // cannot express (nested-ragged is a generator follow-up). Exact sizing for
-    // this schema uses the direct `l3_book::vardata_book_encoded_length` (see
-    // `l3book_vardata_direct_length_matches_encoded`); this test uses the
-    // encoder's reported length as the source of truth.
-    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-    let mut buf = vec![0u8; 256];
+    // Compute exact length via the staged builder — no magic buffers.
+    let len = L3BookVarDataEncodedLength::new()
+        .bids_ragged(2, |g| {
+            g.add()?;
+            g.group_ragged(L3BookVarDataEncodedLength::BIDS_ORDERS_GROUP_DIM, L3BookVarDataEncodedLength::BIDS_ORDERS_ENTRY_BLOCK, |og| {
+                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ABC".len())?;
+                Ok(())
+            })?;
+            g.add()?;
+            g.group_ragged(L3BookVarDataEncodedLength::BIDS_ORDERS_GROUP_DIM, L3BookVarDataEncodedLength::BIDS_ORDERS_ENTRY_BLOCK, |og| {
+                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ID-AA".len())?;
+                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ID-BB".len())?;
+                og.add()?; og.var_data(L3BookVarDataEncodedLength::BIDS_ORDERS_ORDERID_PREFIX, b"ID-C".len())?;
+                Ok(())
+            })?;
+            Ok(())
+        })?
+        .asks_ragged(0, |g| Ok(()))?
+        .symbol(b"".len())?
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
     let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 0, sequence: 0, is_active: BooleanType::False,
