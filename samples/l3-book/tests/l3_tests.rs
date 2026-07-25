@@ -112,6 +112,48 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+fn l3book_unknown_size_length_matches_encoded() -> Result<(), Box<dyn std::error::Error>> {
+    // Same ragged data, but via the unknown-size path (count discovered from
+    // add() calls). Must also match the actual encoded length.
+    let o1 = [(1u64, d(5)), (2, d(10))];
+    let o2 = [(3u64, d(25))];
+    let bids: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50800), d(15), &o1), (d(50750), d(40), &o2)];
+    let o3 = [(4u64, d(10))];
+    let o4 = [(5u64, d(20))];
+    let o5 = [(6u64, d(40))];
+    let asks: &[(Rd, Rd, &[(u64, Rd)])] = &[
+        (d(50850), d(20), &o3),
+        (d(50900), d(30), &o4),
+        (d(50950), d(50), &o5),
+    ];
+    let symbol = b"BTCUSDT";
+
+    let mut buf = vec![0u8; 4096];
+    let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
+
+    let staged = L3BookEncodedLength::new()
+        .bids_unknown_size(|g| {
+            for (_, _, orders) in bids {
+                g.add()?;
+                g.group(4, 17, orders.len())?;
+            }
+            Ok(())
+        })?
+        .asks_unknown_size(|g| {
+            for (_, _, orders) in asks {
+                g.add()?;
+                g.group(4, 17, orders.len())?;
+            }
+            Ok(())
+        })?
+        .symbol(symbol.len())?
+        .encoded_length_with_header();
+
+    assert_eq!(actual, staged, "unknown-size length must match actual");
+    Ok(())
+}
+
+#[test]
 fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Error>> {
     // Ragged data: bid1 has 2 orders, bid2 has 1; asks have 1 each.
     let o1 = [(1u64, d(5)), (2, d(10))];
