@@ -302,3 +302,60 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
     assert!(bids.next().transpose()?.is_none());
     Ok(())
 }
+
+#[test]
+fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::Error>> {
+    // Encode a small book, then compare Display ({}) and Debug ({:?}) across
+    // decoder, encoder, and DTO. Also verify that Display/Debug on a TRUNCATED
+    // buffer does NOT panic (panic safety for partial/invalid structures).
+    let o1 = [(1u64, d(100))];
+    let bids: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50000), d(10), &o1)];
+    let asks: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50100), d(5), &o1)];
+    let symbol = b"BTC";
+
+    let len = l3_book::book_encoded_length(bids, asks, symbol)?;
+    let mut buf = vec![0u8; len];
+    let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
+    assert_eq!(len, actual);
+
+    // 1. Decoder Display + Debug — shows field values.
+    let dec = L3BookDecoder::try_from(&buf[..actual])?;
+    let dec_display = format!("{}", dec);
+    let dec_debug = format!("{:?}", dec);
+    eprintln!("decoder Display: {dec_display}");
+    eprintln!("decoder Debug:   {dec_debug}");
+    assert!(dec_display.contains("BTC"), "decoder Display must show symbol as string");
+    assert!(dec_display.contains("50000"), "decoder Display must show price");
+
+    // 2. Encoder Display + Debug — delegates to decoder for field values.
+    let enc = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+    let enc_display = format!("{}", enc);
+    eprintln!("encoder Display: {enc_display}");
+    assert!(enc_display.contains("BTC"), "encoder Display must show symbol");
+
+    // 3. DTO Debug — domain-typed fields.
+    let dto = L3BookDomain::from(L3BookDecoder::try_from(&buf[..actual])?);
+    let dto_debug = format!("{:?}", dto);
+    eprintln!("DTO Debug:       {dto_debug}");
+    assert!(dto_debug.contains("66"), "DTO Debug must contain symbol byte values");
+
+    // 4. Panic safety: truncated buffer (header only, no body).
+    let truncated = &buf[..8]; // just the 8-byte message header
+    let truncated_dec = L3BookDecoder::try_from(truncated);
+    if let Ok(td) = truncated_dec {
+        // Display must not panic on truncated buffer.
+        let _ = format!("{}", td);
+        let _ = format!("{:?}", td);
+    }
+    eprintln!("truncated buffer: no panic (Display/Debug safe)");
+
+    // 5. Panic safety: invalid buffer (all zeros, wrong template id).
+    let invalid = vec![0u8; 64];
+    let _ = format!("{:?}", invalid); // just bytes, no panic
+    if let Ok(id) = L3BookDecoder::try_from(&invalid[..]) {
+        let _ = format!("{}", id);
+        let _ = format!("{:?}", id);
+    }
+    eprintln!("invalid buffer: no panic");
+    Ok(())
+}
