@@ -435,7 +435,12 @@ fn generate_staged(
             );
             standalone.extend(quote::quote! {
                 impl #pending_name {
-                    /// Uniform group — all entries share one shape.
+                    /// **Uniform** group — every one of the `count` entries shares
+                    /// exactly the same wire shape (same fixed block AND the same
+                    /// nested-group counts / var-data lengths). The length is the
+                    /// single entry shape multiplied by `count`, so no per-entry
+                    /// description is needed. This is the fastest path; prefer it
+                    /// whenever all entries are identical.
                     pub const fn #g_snake(
                         self, count: #count_ty,
                     ) -> #pending_ident {
@@ -450,8 +455,17 @@ fn generate_staged(
                         }
                     }
 
-                    /// Ragged group — entries may have different shapes.
-                    /// The closure receives a builder for each entry.
+                    /// **Ragged** group (known count) — entries may have *different*
+                    /// shapes: e.g. each bid has a different number of orders, or
+                    /// each entry carries var-data of a different length. The total
+                    /// entry count is known up-front (`count`); the closure describes
+                    /// each entry's *variable* contribution (nested groups via
+                    /// `builder.group(dim, block, count)` and var-data via
+                    /// `builder.var_data(prefix, len)`), calling `builder.add()` once
+                    /// per entry. The builder verifies `add()` was called exactly
+                    /// `count` times. Each entry's fixed block is pre-counted, so
+                    /// `add()` only registers the entry — describe its variable tail
+                    /// with `group()`/`var_data()`.
                     pub fn #g_ragged<F>(
                         mut self, count: #count_ty, f: F,
                     ) -> Result<#next_name, sbe_rt::EncodeError>
@@ -485,7 +499,14 @@ fn generate_staged(
                         }
                     }
 
-                    /// Unknown-size group — count discovered from completed entries.
+                    /// **Unknown-size** group — the entry count is discovered from
+                    /// the data (e.g. draining an iterator), not known up-front.
+                    /// Like the ragged path but without a declared `count`: call
+                    /// `builder.add()` (or `builder.entries(n)`) once per entry;
+                    /// the builder counts completed entries and rejects overflow
+                    /// of the wire count type (`#count_ty`). Each `add()` contributes
+                    /// the entry's fixed block, plus any `group()`/`var_data()` you
+                    /// record for that entry.
                     pub fn #g_unknown<F>(
                         mut self, f: F,
                     ) -> Result<#next_name, sbe_rt::EncodeError>
