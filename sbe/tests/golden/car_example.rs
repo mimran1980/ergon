@@ -137,6 +137,7 @@ pub mod sbe_rt {
         GroupDimOutOfBounds { field: &'static str, offset: usize },
         VarDataOutOfBounds { field: &'static str, offset: usize, length: u32 },
         MessageTooShort { needed: usize, available: usize },
+        DecodeError(DecodeError),
     }
     impl core::fmt::Display for VerifyError {
         #[cold]
@@ -169,7 +170,15 @@ pub mod sbe_rt {
                         available
                     )
                 }
+                Self::DecodeError(e) => {
+                    write!(f, "decode error during verification: {e}")
+                }
             }
+        }
+    }
+    impl From<DecodeError> for VerifyError {
+        fn from(e: DecodeError) -> Self {
+            VerifyError::DecodeError(e)
         }
     }
     impl core::error::Error for VerifyError {}
@@ -862,7 +871,15 @@ impl<'a> CarDecoder<'a> {
                 expected_name: "baseline",
             });
         }
-        Ok(Self::wrap(buf, pos + 8, header.block_length() as usize, header.version()))
+        let acting_block_length = header.block_length() as usize;
+        if pos + 8 + acting_block_length > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "message body",
+                needed: 8 + acting_block_length,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
+        Ok(Self::wrap(buf, pos + 8, acting_block_length, header.version()))
     }
     #[inline]
     pub const fn acting_version(&self) -> u16 {
@@ -1300,14 +1317,14 @@ impl<'a> CarDecoder<'a> {
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let dim = GroupSizeEncoding(bytes);
             let count = dim.num_in_group() as usize;
-            let entries_end = offset + 4 + count * 6;
-            if entries_end > buf.len() {
-                return Err(sbe_rt::VerifyError::MessageTooShort {
-                    needed: entries_end,
-                    available: buf.len(),
-                });
+            let mut entry_pos = offset + 4;
+            for _ in 0..count {
+                match FuelFiguresEntryDecoder::skip(buf, entry_pos, 6, 0) {
+                    Ok(next) => entry_pos = next,
+                    Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+                }
             }
-            offset = entries_end;
+            offset = entry_pos;
         }
         {
             if offset + 4 > buf.len() {
@@ -1319,14 +1336,14 @@ impl<'a> CarDecoder<'a> {
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let dim = GroupSizeEncoding(bytes);
             let count = dim.num_in_group() as usize;
-            let entries_end = offset + 4 + count * 1;
-            if entries_end > buf.len() {
-                return Err(sbe_rt::VerifyError::MessageTooShort {
-                    needed: entries_end,
-                    available: buf.len(),
-                });
+            let mut entry_pos = offset + 4;
+            for _ in 0..count {
+                match PerformanceFiguresEntryDecoder::skip(buf, entry_pos, 1, 0) {
+                    Ok(next) => entry_pos = next,
+                    Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+                }
             }
-            offset = entries_end;
+            offset = entry_pos;
         }
         {
             if offset + 4 > buf.len() {

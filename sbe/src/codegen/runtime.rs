@@ -84,6 +84,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 GroupDimOutOfBounds { field: &'static str, offset: usize },
                 VarDataOutOfBounds { field: &'static str, offset: usize, length: u32 },
                 MessageTooShort { needed: usize, available: usize },
+                DecodeError(DecodeError),
             }
 
             impl core::fmt::Display for VerifyError {
@@ -95,7 +96,14 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::GroupDimOutOfBounds { field, offset } => write!(f, "group dimension header for '{}' out of bounds at offset {}", field, offset),
                         Self::VarDataOutOfBounds { field, offset, length } => write!(f, "var-data for '{}' out of bounds at offset {} with length {}", field, offset, length),
                         Self::MessageTooShort { needed, available } => write!(f, "message too short: needed {} bytes, {} available", needed, available),
+                        Self::DecodeError(e) => write!(f, "decode error during verification: {e}"),
                     }
+                }
+            }
+
+            impl From<DecodeError> for VerifyError {
+                fn from(e: DecodeError) -> Self {
+                    VerifyError::DecodeError(e)
                 }
             }
 

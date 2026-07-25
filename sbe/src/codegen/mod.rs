@@ -1335,7 +1335,15 @@ fn generate_message_decoder(
                         expected_name: #en,
                     });
                 }
-                Ok(Self::wrap(buf, pos + #hs, header.#hbl() as usize, header.#hvr()))
+                let acting_block_length = header.#hbl() as usize;
+                if pos + #hs + acting_block_length > buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "message body",
+                        needed: #hs + acting_block_length,
+                        available: buf.len().saturating_sub(pos),
+                    });
+                }
+                Ok(Self::wrap(buf, pos + #hs, acting_block_length, header.#hvr()))
             }
         });
     }
@@ -2056,27 +2064,65 @@ fn generate_message_decoder(
         let dn_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
         let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
         let ebl_lit = syn::LitInt::new(&g.block_length.to_string(), proc_macro2::Span::call_site());
-        verify_stmts.push(quote::quote! {
-            {
-                if offset + #ds_lit > buf.len() {
-                    return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
-                        field: #g_snake,
-                        offset,
-                    });
+        let has_tails = !g.groups.is_empty() || !g.var_data.is_empty();
+        // Entry decoder ident for skip() calls
+        let entry_dec_ident = {
+            let raw = to_pascal_case(&g.name);
+            let unique = if multi_message {
+                format!("{name}{raw}")
+            } else {
+                raw
+            };
+            syn::Ident::new(
+                &format!("{unique}EntryDecoder"),
+                proc_macro2::Span::call_site(),
+            )
+        };
+        if has_tails {
+            verify_stmts.push(quote::quote! {
+                {
+                    if offset + #ds_lit > buf.len() {
+                        return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                            field: #g_snake,
+                            offset,
+                        });
+                    }
+                    let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
+                    let dim = #dn_ident(bytes);
+                    let count = dim.#cf_ident() as usize;
+                    let mut entry_pos = offset + #ds_lit;
+                    for _ in 0..count {
+                        match #entry_dec_ident::skip(buf, entry_pos, #ebl_lit, 0) {
+                            Ok(next) => entry_pos = next,
+                            Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+                        }
+                    }
+                    offset = entry_pos;
                 }
-                let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
-                let dim = #dn_ident(bytes);
-                let count = dim.#cf_ident() as usize;
-                let entries_end = offset + #ds_lit + count * #ebl_lit;
-                if entries_end > buf.len() {
-                    return Err(sbe_rt::VerifyError::MessageTooShort {
-                        needed: entries_end,
-                        available: buf.len(),
-                    });
+            });
+        } else {
+            verify_stmts.push(quote::quote! {
+                {
+                    if offset + #ds_lit > buf.len() {
+                        return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                            field: #g_snake,
+                            offset,
+                        });
+                    }
+                    let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
+                    let dim = #dn_ident(bytes);
+                    let count = dim.#cf_ident() as usize;
+                    let entries_end = offset + #ds_lit + count * #ebl_lit;
+                    if entries_end > buf.len() {
+                        return Err(sbe_rt::VerifyError::MessageTooShort {
+                            needed: entries_end,
+                            available: buf.len(),
+                        });
+                    }
+                    offset = entries_end;
                 }
-                offset = entries_end;
-            }
-        });
+            });
+        }
     }
 
     // VarData checks
