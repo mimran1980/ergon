@@ -44,6 +44,10 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             pub enum EncodeError {
                 BufferTooShort { needed: usize, available: usize },
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
+                /// Fixed char/byte array source longer than the schema length.
+                FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
+                /// Domain/DTO value outside the schema min/max range.
+                ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
                 GroupFull { declared: u32, attempted: u32 },
                 /// Known-size group closure returned without adding enough entries.
                 GroupCountMismatch { declared: u32, actual: u32 },
@@ -60,6 +64,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                     match self {
                         Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
                         Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
+                        Self::FixedArrayTooLong { field, max_length, actual } => write!(f, "fixed array too long for field {}: max {}, actual {}", field, max_length, actual),
+                        Self::ValueOutOfRange { field, min, max, actual } => write!(f, "value out of range for field {}: min {}, max {}, actual {}", field, min, max, actual),
                         Self::GroupFull { declared, attempted } => write!(f, "group full: declared count {}, attempted to write {}", declared, attempted),
                         Self::GroupCountMismatch { declared, actual } => write!(f, "group count mismatch: declared {declared}, wrote {actual}"),
                         Self::GroupCountOverflow { maximum, actual } => write!(f, "group count overflow: max {maximum}, actual {actual}"),
@@ -75,6 +81,19 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 fn from(e: DecodeError) -> Self {
                     Self::Decode(e)
                 }
+            }
+
+            /// Meta attribute selector (Java `MetaAttribute` parity).
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            pub enum MetaAttribute {
+                /// Epoch / start of time (e.g. `"unix"`).
+                Epoch,
+                /// Time unit applied to the epoch (e.g. `"nanosecond"`).
+                TimeUnit,
+                /// SBE semantic type / FIX-tag relationship.
+                SemanticType,
+                /// Field presence: `"required"`, `"optional"`, or `"constant"`.
+                Presence,
             }
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +165,91 @@ pub(crate) fn generate_sbe_rt_src() -> String {
         .expect("generated SBE runtime must be valid Rust syntax")
 }
 
+/// Token appended when a generated identifier collides with a Rust keyword.
+/// Set for the duration of a codegen pass via [`with_keyword_append`].
+thread_local! {
+    static KEYWORD_APPEND: std::cell::RefCell<String> = std::cell::RefCell::new("_".into());
+}
+
+/// Run `f` with a custom keyword-append token (Java `sbe.keyword.append.token`).
+pub(crate) fn with_keyword_append<R>(token: &str, f: impl FnOnce() -> R) -> R {
+    KEYWORD_APPEND.with(|cell| {
+        let prev = cell.replace(token.to_string());
+        let out = f();
+        *cell.borrow_mut() = prev;
+        out
+    })
+}
+
+fn keyword_append_token() -> String {
+    KEYWORD_APPEND.with(|c| c.borrow().clone())
+}
+
+/// Rust keywords that cannot be used as bare identifiers.
+pub(crate) fn is_rust_keyword(s: &str) -> bool {
+    matches!(
+        s,
+        "as" | "async"
+            | "await"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+            | "abstract"
+            | "become"
+            | "box"
+            | "do"
+            | "final"
+            | "macro"
+            | "override"
+            | "priv"
+            | "try"
+            | "typeof"
+            | "unsized"
+            | "virtual"
+            | "yield"
+            | "gen"
+    )
+}
+
+fn avoid_keyword(mut name: String) -> String {
+    if is_rust_keyword(&name) {
+        name.push_str(&keyword_append_token());
+    }
+    name
+}
+
 pub(crate) fn to_pascal_case(s: &str) -> String {
     let mut res = String::new();
     let mut capitalize_next = true;
@@ -175,7 +279,7 @@ pub(crate) fn to_pascal_case(s: &str) -> String {
             prev_is_lower = true;
         }
     }
-    res
+    avoid_keyword(res)
 }
 
 pub(crate) fn to_snake_case(s: &str) -> String {
@@ -207,10 +311,12 @@ pub(crate) fn to_snake_case(s: &str) -> String {
         }
         clean.push(c);
     }
-    clean
+    avoid_keyword(clean)
 }
 
 pub(crate) fn to_upper_snake_case(s: &str) -> String {
+    // Uppercase after snake conversion; re-apply keyword rule on the upper form
+    // only if the snake form itself was not already rewritten (keywords are lowercase).
     to_snake_case(s).to_uppercase()
 }
 
@@ -246,46 +352,106 @@ pub(crate) fn field_const_value_expr(val: u64, prim: PrimitiveType) -> String {
     }
 }
 
-/// Emit `*_NULL`, `*_MIN`, `*_MAX` compile-time constants for a message field.
+/// Emit field metadata + `*_NULL`/`*_MIN`/`*_MAX` constants (Java field statics parity).
 pub(crate) fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
     let upper_name = to_upper_snake_case(&f.name);
-    let mut _any = false;
+    let snake_name = to_snake_case(&f.name);
+    let span = proc_macro2::Span::call_site();
     let mut tokens = proc_macro2::TokenStream::new();
+
+    // Structural metadata (id / sinceVersion / offset / length) — always emitted.
+    if let Some(id) = f.id {
+        let id_ident = syn::Ident::new(&format!("{upper_name}_ID"), span);
+        let id_lit = syn::LitInt::new(&id.to_string(), span);
+        tokens.extend(quote::quote! {
+            pub const #id_ident: u16 = #id_lit;
+        });
+    }
+    {
+        let since_ident = syn::Ident::new(&format!("{upper_name}_SINCE_VERSION"), span);
+        let since_lit = syn::LitInt::new(&f.since_version.to_string(), span);
+        let off_ident = syn::Ident::new(&format!("{upper_name}_ENCODING_OFFSET"), span);
+        let off_lit = syn::LitInt::new(&f.offset.to_string(), span);
+        let len_ident = syn::Ident::new(&format!("{upper_name}_ENCODING_LENGTH"), span);
+        let enc_len = f.field_type.size();
+        let len_lit = syn::LitInt::new(&enc_len.to_string(), span);
+        tokens.extend(quote::quote! {
+            pub const #since_ident: u16 = #since_lit;
+            pub const #off_ident: usize = #off_lit;
+            pub const #len_ident: usize = #len_lit;
+        });
+    }
+
+    // MetaAttribute lookup (epoch / timeUnit / semanticType / presence).
+    {
+        let meta_fn = syn::Ident::new(&format!("{snake_name}_meta_attribute"), span);
+        let presence = match f.presence {
+            crate::Presence::Required => "required",
+            crate::Presence::Optional => "optional",
+            crate::Presence::Constant => "constant",
+        };
+        let presence_lit = syn::LitStr::new(presence, span);
+        let epoch_arm = match f.epoch.as_deref() {
+            Some(e) => {
+                let lit = syn::LitStr::new(e, span);
+                quote::quote! { Some(#lit) }
+            }
+            None => quote::quote! { None },
+        };
+        let time_arm = match f.time_unit.as_deref() {
+            Some(t) => {
+                let lit = syn::LitStr::new(t, span);
+                quote::quote! { Some(#lit) }
+            }
+            None => quote::quote! { None },
+        };
+        let sem_arm = match f.semantic_type.as_deref() {
+            Some(s) => {
+                let lit = syn::LitStr::new(s, span);
+                quote::quote! { Some(#lit) }
+            }
+            None => quote::quote! { None },
+        };
+        tokens.extend(quote::quote! {
+            #[inline]
+            pub const fn #meta_fn(attr: sbe_rt::MetaAttribute) -> Option<&'static str> {
+                match attr {
+                    sbe_rt::MetaAttribute::Epoch => #epoch_arm,
+                    sbe_rt::MetaAttribute::TimeUnit => #time_arm,
+                    sbe_rt::MetaAttribute::SemanticType => #sem_arm,
+                    sbe_rt::MetaAttribute::Presence => Some(#presence_lit),
+                }
+            }
+        });
+    }
+
     match &f.field_type {
         FieldType::Primitive(prim, _) => {
             let r_type = rust_type(*prim);
             let r_type_ty: syn::Type = syn::parse_str(r_type).unwrap();
             if let Some(val) = f.null_value {
-                let name_ident = syn::Ident::new(
-                    &format!("{upper_name}_NULL"),
-                    proc_macro2::Span::call_site(),
-                );
+                let name_ident = syn::Ident::new(&format!("{upper_name}_NULL"), span);
                 let expr = field_const_value_expr(val, *prim);
                 let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                _any = true;
             }
             if let Some(val) = f.min_value {
-                let name_ident =
-                    syn::Ident::new(&format!("{upper_name}_MIN"), proc_macro2::Span::call_site());
+                let name_ident = syn::Ident::new(&format!("{upper_name}_MIN"), span);
                 let expr = field_const_value_expr(val, *prim);
                 let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                _any = true;
             }
             if let Some(val) = f.max_value {
-                let name_ident =
-                    syn::Ident::new(&format!("{upper_name}_MAX"), proc_macro2::Span::call_site());
+                let name_ident = syn::Ident::new(&format!("{upper_name}_MAX"), span);
                 let expr = field_const_value_expr(val, *prim);
                 let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                 tokens.extend(quote::quote! {
                     pub const #name_ident: #r_type_ty = #expr_parsed;
                 });
-                _any = true;
             }
         }
         FieldType::Enum {
@@ -293,15 +459,11 @@ pub(crate) fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
             encoding_type: _,
         } => {
             let target_name = to_pascal_case(name);
-            let name_ident = syn::Ident::new(
-                &format!("{upper_name}_NULL"),
-                proc_macro2::Span::call_site(),
-            );
-            let target_ident = syn::Ident::new(&target_name, proc_macro2::Span::call_site());
+            let name_ident = syn::Ident::new(&format!("{upper_name}_NULL"), span);
+            let target_ident = syn::Ident::new(&target_name, span);
             tokens.extend(quote::quote! {
                 pub const #name_ident: #target_ident = #target_ident::NullVal;
             });
-            _any = true;
         }
         FieldType::Composite { .. } | FieldType::Set { .. } => {}
     }
@@ -1101,7 +1263,7 @@ pub(crate) fn generate_prelude(
     // sbe_rt types (exported from super::sbe_rt)
     src.push_str("pub mod prelude {\n");
     src.push_str(
-        "    pub use super::sbe_rt::{DecodeError, EncodeError, VerifyError, SbeMessage};\n",
+        "    pub use super::sbe_rt::{DecodeError, EncodeError, VerifyError, MetaAttribute, SbeMessage};\n",
     );
 
     // Module-level types (exported from super)

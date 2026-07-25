@@ -81,6 +81,9 @@ pub struct GenerationConfig {
     pub(crate) error_from_path: Option<String>,
     /// Emit `_unchecked` companion methods for benchmarking.
     pub(crate) unchecked_companions: bool,
+    /// Token appended when a schema name collides with a Rust keyword (default `"_"`).
+    /// Mirrors Java `sbe.keyword.append.token`.
+    pub(crate) keyword_append_token: String,
 }
 
 impl GenerationConfig {
@@ -96,6 +99,7 @@ impl GenerationConfig {
             external_sbe_rt_path: None,
             error_from_path: None,
             unchecked_companions: false,
+            keyword_append_token: "_".into(),
         }
     }
 
@@ -197,6 +201,17 @@ impl GenerationConfig {
     #[must_use]
     pub fn with_unchecked_companions(mut self) -> Self {
         self.unchecked_companions = true;
+        self
+    }
+
+    /// Token appended when a generated identifier collides with a Rust keyword.
+    ///
+    /// Default is `"_"`, matching the usual Java `sbe.keyword.append.token`
+    /// recommendation. Empty string is allowed but will leave bare keywords
+    /// (which fail to compile) — prefer a non-empty token.
+    #[must_use]
+    pub fn with_keyword_append_token(mut self, token: impl Into<String>) -> Self {
+        self.keyword_append_token = token.into();
         self
     }
 }

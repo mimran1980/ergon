@@ -92,6 +92,12 @@ pub(crate) struct MessageField {
     pub(crate) description: Option<String>,
     pub(crate) semantic_type: Option<String>,
     pub(crate) constant_value: Option<String>,
+    /// Epoch for timestamp fields (e.g. `"unix"`); feeds `MetaAttribute::Epoch`.
+    pub(crate) epoch: Option<String>,
+    /// Time unit (e.g. `"nanosecond"`); feeds `MetaAttribute::TimeUnit`.
+    pub(crate) time_unit: Option<String>,
+    /// Character encoding for fixed char arrays (e.g. `"ASCII"`).
+    pub(crate) character_encoding: Option<String>,
     pub(crate) field_type: FieldType,
 }
 
@@ -216,6 +222,9 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
     let description = begin.encoding.description.clone();
     let semantic_type = begin.encoding.semantic_type.clone();
     let constant_value = begin.encoding.constant_value.clone();
+    let epoch = begin.encoding.epoch.clone();
+    let time_unit = begin.encoding.time_unit.clone();
+    let character_encoding = begin.encoding.character_encoding.clone();
 
     let field_type = if tokens.len() > 2 {
         let inner_signal = tokens[1].signal;
@@ -283,6 +292,9 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
         description,
         semantic_type,
         constant_value,
+        epoch,
+        time_unit,
+        character_encoding,
         field_type,
     }
 }

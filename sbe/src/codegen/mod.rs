@@ -51,6 +51,8 @@ pub struct GeneratedModule {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GeneratedModuleSet {
     modules: Vec<GeneratedModule>,
+    /// Generation warnings (e.g. shared types with version-gated members).
+    warnings: Vec<String>,
 }
 
 /// Errors returned by [`Generator::generate`] when the configuration
@@ -107,6 +109,13 @@ impl GeneratedModuleSet {
     pub fn modules(&self) -> impl ExactSizeIterator<Item = &GeneratedModule> {
         self.modules.iter()
     }
+
+    /// Warnings emitted during generation (e.g. shared types with version-gated
+    /// members that may not decode correctly across schemas at different versions).
+    #[must_use]
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
 }
 
 /// SBE-to-Rust generator.
@@ -158,6 +167,40 @@ impl GenerationContext {
 #[derive(Clone, Debug)]
 pub struct Generator {
     config: GenerationConfig,
+}
+
+/// Warn if a shared type has version-gated members (`sinceVersion > 0`).
+///
+/// Version numbers are per-schema. A shared type with members added in a later
+/// version is ambiguous when imported by a schema at a different version — the
+/// importer's `acting_version` may not match the type's evolution timeline.
+/// Returns `Some(warning_string)` if the type carries version-gated members.
+fn warn_version_gated(
+    type_name: &str,
+    tokens: &[crate::ir::Token],
+    schema: &Schema,
+) -> Option<String> {
+    let max_since = tokens
+        .iter()
+        .filter_map(|t| {
+            if t.signal == crate::ir::Signal::Encoding || t.signal == crate::ir::Signal::BeginField
+            {
+                if t.encoding.since_version > 0 {
+                    Some(t.encoding.since_version)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .max()?;
+    Some(format!(
+        "warning: shared type `{}` (schema {} id {}) has members at sinceVersion={max_since}. \
+         Version numbers are per-schema — importing schemas at different versions may decode \
+         these members incorrectly. Consider keeping shared types at version 0.",
+        type_name, schema.package, schema.id
+    ))
 }
 
 fn field_has_conversion_free(
@@ -334,25 +377,42 @@ impl Generator {
     ) -> Result<GeneratedModuleSet, GenerateError> {
         let mut modules = GeneratedModuleSet::default();
         let mut shared_types: HashSet<String> = HashSet::new();
+        let empty_set: HashSet<String> = HashSet::new();
 
         for (i, (schema, module_name)) in schemas.iter().enumerate() {
             if i == 0 {
                 let elements = partition_tokens(&schema.ir.tokens);
                 for et in &elements.enums {
-                    shared_types.insert(to_pascal_case(&et[0].name));
+                    let name = to_pascal_case(&et[0].name);
+                    shared_types.insert(name.clone());
+                    if let Some(warn) = warn_version_gated(&name, et, schema) {
+                        modules.warnings.push(warn);
+                    }
                 }
                 for st in &elements.sets {
                     shared_types.insert(to_pascal_case(&st[0].name));
                 }
                 for ct in &elements.composites {
-                    shared_types.insert(to_pascal_case(&ct[0].name));
+                    let name = to_pascal_case(&ct[0].name);
+                    shared_types.insert(name.clone());
+                    if let Some(warn) = warn_version_gated(&name, ct, schema) {
+                        modules.warnings.push(warn);
+                    }
                 }
             }
             let is_importing = i > 0 && self.config.shared_module.is_some();
             // Emit sbe_rt in the first module always, and in every module
             // when there is no shared module (standalone mode).
             let emit_sbe_rt = i == 0 || self.config.shared_module.is_none();
-            let src = self.gen_schema(schema, &shared_types, is_importing, emit_sbe_rt);
+            // Type dedup only applies when a shared module is configured.
+            // Without it, each schema is standalone and defines all its types.
+            // The first schema (shared-module owner) always defines ALL its types.
+            let skip_set: &HashSet<String> = if self.config.shared_module.is_some() && i > 0 {
+                &shared_types
+            } else {
+                &empty_set
+            };
+            let src = self.gen_schema(schema, skip_set, is_importing, emit_sbe_rt);
             modules.push(GeneratedModule {
                 path: format!("{}.rs", module_name),
                 source: src,
@@ -6493,6 +6553,9 @@ mod tests {
             description: None,
             semantic_type: Some("UTCTimestamp".into()),
             constant_value: None,
+            epoch: None,
+            time_unit: None,
+            character_encoding: None,
             field_type: FieldType::Primitive(PrimitiveType::UInt64, None),
         };
         let conversions = vec![crate::ConversionSelector::semantic_type("UTCTimestamp")];
