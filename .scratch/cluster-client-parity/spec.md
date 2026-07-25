@@ -71,6 +71,24 @@ ragged-staged / `add_struct` generator evolution), not by any client change
 here. They are recorded against the SBE performance gate for the generator
 owner to address; they are out of scope for the client-parity work.
 
+**Root-cause diagnosis (2026-07-25, high confidence):**
+
+- `session_keep_alive` encode 1.18× — `wrap_and_apply_header` does a slice
+  reborrow (`&mut buf[pos..]`, bounds-checked + slice-metadata) vs sbe-tool's
+  integer field assignment. **Fix: encoder struct redesign** (`buf: &mut [u8]`
+  → `buf + base_offset`), touching all field setters. Entangled with the
+  staged-decoder redesign — defer.
+- `new_leader_event` decode 2.17× — the consuming staged decoder constructs a
+  5-field `Complete` struct + `VarAsciiEncoding` parse + max-length validation
+  + 2 bounds checks, vs sbe-tool's raw `(offset, len)` + direct slice. **Fix:
+  add an optional `raw_<field>()` accessor** returning `(offset, len)` like
+  sbe-tool, bypassing `Complete` construction for the single-var-data fast
+  path. Entangled with the ragged/unknown-size redesign — defer.
+
+**Action for the staged-decoder redesign owner:** when that work lands,
+(1) adopt the sbe-tool base-offset pattern for encoder structs, (2) add the
+raw var-data accessor fast path, (3) re-run `just bench` to confirm ≤ 1.00.
+
 ### Package allow-list — RESOLVED (2026-07-24)
 
 `cargo package -p ergo-aeron-cluster --list` now ships product code only
