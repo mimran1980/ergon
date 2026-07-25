@@ -40,6 +40,39 @@ pub fn book_encoded_length(
     Ok(complete.encoded_length_with_header())
 }
 
+// ── L3BookVarData ────────────────────────────────────────────────────────
+// VarData orders are ragged at TWO levels (var-data `order_id` of differing
+// length per order), which the staged `L3BookVarDataEncodedLength` builder
+// cannot yet express (nested-ragged is a generator follow-up). Compute the
+// exact length directly from the known data instead — same outcome: an exact
+// buffer size with no oversized allocation.
+// Structural constants from `schemas/l3-book.xml`:
+const VARDATA_GROUP_DIM: usize = 4;   // groupSizeEncoding: u16 blockLength + u16 numInGroup
+const VARDATA_BID_BLOCK: usize = 18;  // price Decimal (9) + size Decimal (9)
+const VARDATA_ORDER_BLOCK: usize = 9; // quantity Decimal (order_id is var-data)
+const VARDATA_VAR_PREFIX: usize = 4;  // varAsciiEncoding length: u32
+
+/// Exact header-inclusive encoded length of an L3BookVarData book for the
+/// given ragged bids/asks (orders carry var-data `order_id`) + symbol.
+pub fn vardata_book_encoded_length(
+    bids: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(rust_decimal::Decimal, &[u8])])],
+    asks: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(rust_decimal::Decimal, &[u8])])],
+    symbol: &[u8],
+) -> usize {
+    let mut len = L3BookVarDataEncoder::HEADER_LENGTH + L3BookVarDataEncoder::BLOCK_LENGTH;
+    for group in [bids, asks] {
+        len += VARDATA_GROUP_DIM;
+        for (_, _, orders) in group {
+            len += VARDATA_BID_BLOCK + VARDATA_GROUP_DIM;
+            for (_, order_id) in *orders {
+                len += VARDATA_ORDER_BLOCK + VARDATA_VAR_PREFIX + order_id.len();
+            }
+        }
+    }
+    len += VARDATA_VAR_PREFIX + symbol.len();
+    len
+}
+
 /// Encode an L3 order book into `buf`. Returns the header-inclusive encoded length.
 ///
 /// Uses known-size group construction — counts are known from slice lengths,

@@ -56,6 +56,62 @@ fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
 // ── L3BookVarData (var-data orderId) ────────────────────────────────────
 
 #[test]
+fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::error::Error>> {
+    // Ragged at two levels: bid1 has 2 orders, bid2 has 1; order_id var-data
+    // differs per order. Direct length computation must match the encoder.
+    let o1: [(Rd, &[u8]); 2] = [(d(5), b"ORD-1"), (d(10), b"ORD-22")];
+    let o2: [(Rd, &[u8]); 1] = [(d(25), b"X")];
+    let bids: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(50800), d(15), &o1), (d(50750), d(40), &o2)];
+    let o3: [(Rd, &[u8]); 1] = [(d(10), b"AA")];
+    let asks: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(50850), d(20), &o3)];
+    let symbol = b"BTCUSDT";
+
+    let expected = l3_book::vardata_book_encoded_length(bids, asks, symbol);
+
+    let mut buf = vec![0u8; expected];
+    let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookVarDataFixedFields {
+            exchange_timestamp: 1_720_000_000_000_000_000u64,
+            sequence: 42,
+            is_active: BooleanType::True,
+        })
+        .bids(bids.len() as u16, |g| {
+            for (_, _, orders) in bids {
+                g.add(|e| {
+                    e.price(d(1)).size(d(1));
+                    e.orders(orders.len() as u16, |og| {
+                        for (q, oid) in *orders {
+                            og.add(|o| { o.quantity(*q).order_id(oid)?; Ok(()) })?;
+                        }
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .asks(asks.len() as u16, |g| {
+            for (_, _, orders) in asks {
+                g.add(|e| {
+                    e.price(d(1)).size(d(1));
+                    e.orders(orders.len() as u16, |og| {
+                        for (q, oid) in *orders {
+                            og.add(|o| { o.quantity(*q).order_id(oid)?; Ok(()) })?;
+                        }
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .symbol(symbol)?;
+    let actual = complete.encoded_length_with_header();
+    assert_eq!(expected, actual, "vardata direct length must match encoded");
+    Ok(())
+}
+
+#[test]
 fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Error>> {
     // Ragged data: bid1 has 2 orders, bid2 has 1; asks have 1 each.
     let o1 = [(1u64, d(5)), (2, d(10))];
