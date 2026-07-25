@@ -12,7 +12,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Encode — ragged entries with different order counts per level.
     // Size the buffer EXACTLY up-front via the staged L3BookEncodedLength
-    // (no oversized buffer). The pre-computed length must equal the encoded length.
+    // (no oversized buffer). vec! is needed because len is a RUNTIME value
+    // (ragged groups → varying size). For fixed messages where ENCODED_LENGTH
+    // is a const, prefer stack arrays: `[0u8; Msg::ENCODED_LENGTH]`.
     let len = l3_book::book_encoded_length(&bids, &asks, symbol)?;
     let mut buf = vec![0u8; len];
     let actual = l3_book::encode_book(&mut buf, &bids, &asks, symbol)?;

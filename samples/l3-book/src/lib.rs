@@ -44,7 +44,8 @@ pub fn book_encoded_length(
 
 // ── L3BookVarData ────────────────────────────────────────────────────────
 // VarData orders are ragged at two levels: each order carries a var-data
-// `order_id` of differing length. Uses the staged builder + group_ragged.
+// `order_id` of differing length. Uses the staged builder with schema-specific
+// ragged wrapper types (field-named `order_id(len)` methods, zero constants).
 // No user-defined constants — all layout values from the generated API.
 
 /// Exact header-inclusive encoded length of an L3BookVarData book, computed
