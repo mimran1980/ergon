@@ -198,9 +198,6 @@ pub mod sbe_rt {
     /// Return type for group closures (`add`, `bids`, …).
     /// Closures return `Result<(), EncodeError>`; `?` just works.
     pub type GroupResult = Result<(), EncodeError>;
-    /// Conversion trait for group-closure return values.
-    /// Implemented for `()` and `Result<(), EncodeError>` so
-    /// closures may use either return type.
     pub trait IntoGroupResult {
         fn into_group_result(self) -> GroupResult;
     }

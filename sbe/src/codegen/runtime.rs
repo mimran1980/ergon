@@ -128,24 +128,16 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             /// Closures return `Result<(), EncodeError>`; `?` just works.
             pub type GroupResult = Result<(), EncodeError>;
 
-            /// Conversion trait for group-closure return values.
-            /// Implemented for `()` and `Result<(), EncodeError>` so
-            /// closures may use either return type.
             pub trait IntoGroupResult {
                 fn into_group_result(self) -> GroupResult;
             }
-
             impl IntoGroupResult for () {
-                fn into_group_result(self) -> GroupResult {
-                    Ok(())
-                }
+                fn into_group_result(self) -> GroupResult { Ok(()) }
+            }
+            impl IntoGroupResult for GroupResult {
+                fn into_group_result(self) -> GroupResult { self }
             }
 
-            impl IntoGroupResult for GroupResult {
-                fn into_group_result(self) -> GroupResult {
-                    self
-                }
-            }
         }
     };
 

@@ -40,8 +40,8 @@ fn warm_up() {
     };
     let mut buf = vec![0u8; 256];
     // Encode + decode to settle lazy-inits
-    let _ = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
-    let _ = AppMessageDecoder::wrap_and_apply_header(&buf, 0);
+    let _ = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0);
+    let _ = AppMessageDecoder::try_wrap_and_apply_header(&buf, 0);
     let _ = L2BookEncoder::compute_encoded_length_with_message_header(0, 0, 1);
 }
 
@@ -63,7 +63,7 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
         .app_name(b"x")
         .unwrap()
         .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-            let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
+            let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0);
             enc.source(Source::Bitget)
                 .exchange_timestamp(1)
                 .receive_timestamp(2)
@@ -76,7 +76,7 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
                     });
                 })
                 .unwrap();
-            let enc = enc.asks(0, |_| {}).unwrap();
+            let enc = enc.asks(0, |_| Ok(())).unwrap();
             enc.symbol(b"X").unwrap();
             Ok(())
         })
@@ -107,13 +107,13 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     // Pre-encode
     {
-        let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.sent_ts(1);
         let _ = outer
             .app_name(b"x")
             .unwrap()
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
+                let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0);
                 enc.source(Source::Bitget)
                     .exchange_timestamp(1)
                     .receive_timestamp(2)
@@ -126,7 +126,7 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
                         });
                     })
                     .unwrap();
-                let enc = enc.asks(0, |_| {}).unwrap();
+                let enc = enc.asks(0, |_| Ok(())).unwrap();
                 enc.symbol(b"X").unwrap();
                 Ok(())
             })
@@ -135,7 +135,7 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     let before = ALLOC_COUNT.load(Ordering::Relaxed);
 
-    let dec = AppMessageDecoder::wrap_and_apply_header(black_box(&buf), 0).unwrap();
+    let dec = AppMessageDecoder::try_wrap_and_apply_header(black_box(&buf), 0).unwrap();
     let (_name, after_name) = dec.into_app_name().unwrap();
     let (frame, _) = after_name.into_payload_as_message().unwrap();
     match frame.message {

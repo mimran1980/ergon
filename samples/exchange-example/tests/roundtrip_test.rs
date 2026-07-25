@@ -35,7 +35,7 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .ts(1712345678000u64)
         .bid1_price(50000123456i64)
@@ -85,7 +85,7 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .ts(1)
         .bid1_price(2)
@@ -123,7 +123,7 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = Depth50Encoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = Depth50Encoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .ts(1000u64)
         .seq(1u64)
@@ -249,7 +249,7 @@ fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
     // Encode — ServerTimeResponseEncoder has no type-state, just plain methods
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(expected_ts);
     let encoded = encoder.as_ref();
 
@@ -267,7 +267,7 @@ fn binance_server_time_verify_passes() -> Result<(), Box<dyn std::error::Error>>
     use binance_spot::ServerTimeResponseEncoder;
 
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(42);
     let encoded = encoder.as_ref();
 
@@ -298,7 +298,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .price_exponent(-5i8)
         .size_exponent(-3i8)
@@ -387,7 +387,7 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .price_exponent(-8i8)
         .size_exponent(-2i8)
@@ -430,7 +430,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .price_exponent(0i8)
         .size_exponent(0i8)
@@ -496,7 +496,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
 
     // Encode
     let mut encoder =
-        WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .authorized_since(1712345678000000i64)
         .connected_since(1712345679000000i64)
@@ -563,7 +563,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder = WebSocketResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = WebSocketResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .sbe_schema_id_version_deprecated(BoolEnum::False)
         .status(200u16);
@@ -702,7 +702,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf = vec![0u8; buf_len];
 
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .ts(1u64)
         .bid1_price(2i64)
@@ -871,7 +871,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
 
     // Encode a valid binance ServerTimeResponse message
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(42);
     let encoded = encoder.as_ref();
 
@@ -908,7 +908,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         AppMessageEncoder::compute_encoded_length_with_message_header(app_name.len(), inner_len);
 
     let mut buf = vec![0u8; outer_len];
-    let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0);
     outer.sent_ts(1_700_000_000_000_000_000);
 
     // Nested encode via payload_with
@@ -916,7 +916,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         .app_name(app_name)
         .unwrap()
         .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-            let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0)?;
+            let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0);
             book.source(Source::Bitget);
             book.exchange_timestamp(1_700_000_000_000_000_001);
             book.receive_timestamp(1_700_000_000_000_000_002);
@@ -949,7 +949,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(complete.as_bytes().len(), outer_len);
 
     // Decode outer -> inner
-    let outer_dec = AppMessageDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+    let outer_dec = AppMessageDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
     assert_eq!(outer_dec.sent_ts(), 1_700_000_000_000_000_000);
     let (name, after_name) = outer_dec.into_app_name().unwrap();
     assert_eq!(name, app_name);

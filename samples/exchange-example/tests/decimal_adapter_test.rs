@@ -50,7 +50,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
 
         let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(1, 0, 1);
         let mut buf = vec![0u8; inner_len];
-        let mut enc = L2BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = L2BookEncoder::wrap_and_apply_header(&mut buf, 0);
         let _ = enc
             .source(Source::Bitget)
             .exchange_timestamp(1)
@@ -58,17 +58,19 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
             .sequence(3);
         let after = enc
             .bids(1, |g| {
-                let _ = g.add(|e| {
+                g.add(|e| {
                     e.price_from(&d).unwrap();
                     let _ = e.size_wire(Decimal::new(1, 0));
-                });
+                    Ok(())
+                })?;
+                Ok(())
             })
             .unwrap();
-        let complete = after.asks(0, |_| {}).unwrap().symbol(b"X").unwrap();
+        let complete = after.asks(0, |_| Ok(())).unwrap().symbol(b"X").unwrap();
         let bytes = complete.as_bytes_with_header().to_vec();
 
         // Generic decode returns the exact same rust_decimal value.
-        let dec = L2BookDecoder::wrap_and_apply_header(&bytes, 0).unwrap();
+        let dec = L2BookDecoder::try_wrap_and_apply_header(&bytes, 0).unwrap();
         let mut g = dec.into_bids().unwrap();
         let entry = g.next().unwrap();
         let back: rust_decimal::Decimal =
@@ -80,7 +82,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let m = wire.mantissa();
         let e = wire.exponent();
         let mut buf2 = vec![0u8; inner_len];
-        let mut enc = L2BookEncoder::wrap_and_apply_header(&mut buf2, 0).unwrap();
+        let mut enc = L2BookEncoder::wrap_and_apply_header(&mut buf2, 0);
         let _ = enc
             .source(Source::Bitget)
             .exchange_timestamp(1)
@@ -88,14 +90,16 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
             .sequence(3);
         let after = enc
             .bids(1, |g| {
-                let _ = g.add(|entry| {
-                    let _ = entry
+                g.add(|entry| {
+                    entry
                         .price_wire(Decimal::new(m, e))
                         .size_wire(Decimal::new(1, 0));
-                });
+                    Ok(())
+                })?;
+                Ok(())
             })
             .unwrap();
-        let complete = after.asks(0, |_| {}).unwrap().symbol(b"X").unwrap();
+        let complete = after.asks(0, |_| Ok(())).unwrap().symbol(b"X").unwrap();
         assert_eq!(
             complete.as_bytes_with_header(),
             &bytes[..],

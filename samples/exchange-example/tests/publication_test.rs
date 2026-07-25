@@ -43,7 +43,7 @@ fn publish_l2book_encodes_app_message_on_typed_stream() -> Result<(), Box<dyn st
     let bytes = &typed.committed[0];
 
     // Claim length must exactly equal the encoded message length.
-    let app = AppMessageDecoder::wrap_and_apply_header(bytes, 0).unwrap();
+    let app = AppMessageDecoder::try_wrap_and_apply_header(bytes, 0).unwrap();
     let (name, after) = app.into_app_name().unwrap();
     assert_eq!(name, b"ergon");
     let (frame, _complete) = after.into_payload_as_message().unwrap();
@@ -99,7 +99,7 @@ fn publish_trade_encodes_app_message_trade() -> Result<(), Box<dyn std::error::E
     let typed = p.into_adapter();
     assert_eq!(typed.committed.len(), 1);
 
-    let app = AppMessageDecoder::wrap_and_apply_header(&typed.committed[0], 0).unwrap();
+    let app = AppMessageDecoder::try_wrap_and_apply_header(&typed.committed[0], 0).unwrap();
     let (_, after) = app.into_app_name().unwrap();
     let (frame, _) = after.into_payload_as_message().unwrap();
     let AnyMessage::Trade(trade) = frame.message else {
