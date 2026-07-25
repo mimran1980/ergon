@@ -10,11 +10,11 @@ than retaining dated point estimates.
 | | |
 |---|---|
 | **Date** | 2026-07-25 |
-| **Commit** | `6370a41` |
+| **Commit** | `3f7065c` |
 | **Host** | Apple M4 (macOS Darwin 25.5.0, arm64) |
 | **Toolchain** | rustc 1.95.0 |
 | **SBE gate** | **8/8 PASS** |
-| **Cluster gate** | **3/5 PASS** (2 pre-existing encode FAILs) |
+| **Cluster gate** | **5/5 PASS** |
 
 ### SBE codec gate — `just bench`
 
@@ -22,31 +22,38 @@ All 8 maintained scenarios pass (ratio = ergo-sbe / sbe-tool, ≤ 1.005):
 
 | Scenario | Ratio | Status |
 |----------|-------|--------|
-| decode_scalar | 1.0000 | PASS |
-| decode_array | 1.0012 | PASS |
-| decode_composite | 0.9508 | PASS |
-| decode_full_message | 0.8667 | PASS |
-| decode_entry_point | 0.8488 | PASS |
-| encode/scalar | 0.3162 | PASS (3.2× faster) |
-| encode/throughput_10k | 0.9549 | PASS |
-| throughput/batch_10k | 1.0031 | PASS |
+| decode_scalar | 1.0026 | PASS |
+| decode_array | 0.9988 | PASS |
+| decode_composite | 1.0026 | PASS |
+| decode_full_message | 0.8617 | PASS |
+| decode_entry_point | 0.8241 | PASS |
+| encode/scalar | 0.1351 | PASS (7.4× faster) |
+| encode/throughput_10k | 0.9223 | PASS |
+| throughput/batch_10k | 0.9985 | PASS |
 
 ### Cluster codec gate — `just bench-cluster`
 
+All 5 maintained scenarios pass:
+
 | Scenario | Ratio | Status |
 |----------|-------|--------|
-| encode/session_message_header | 0.8607 | PASS |
-| encode/session_keep_alive | 1.1869 | **FAIL** (pre-existing) |
-| decode/session_message_header | 0.7850 | PASS |
-| decode/session_event | 0.8484 | PASS |
-| encode/claim_shaped_header_plus_app | 1.2845 | **FAIL** (pre-existing) |
+| encode/session_message_header | 0.8651 | PASS |
+| encode/session_keep_alive | 0.9173 | PASS |
+| decode/session_message_header | 0.6822 | PASS |
+| decode/session_event | 0.7953 | PASS |
+| encode/claim_shaped_header_plus_app | 0.9932 | PASS |
 
-The two cluster encode FAILs are pre-existing — Criterion detected no change
-(`new == base`). The decode paths all pass comfortably (0.78–0.86). The
-`session_keep_alive` and `claim_shaped` encode regressions warrant investigation
-in a focused profiling pass; they compare ergo-sbe-generated cluster codecs
-against the reference `sbe-tool` codecs and have been at this ratio before the
-current generator changes.
+### Root cause of prior cluster encode regression (FIXED)
+
+The two cluster encode scenarios (`session_keep_alive`, `claim_shaped`) previously
+failed at 1.19× and 1.28×. Root cause: generated field setters used
+`self.buf[offset..offset+N].copy_from_slice(...)`, which re-checks bounds on every
+field write. After `wrap`/`try_wrap` validates `buf.len() >= BLOCK_LENGTH`, field
+offsets are in-bounds by construction — the per-write bounds check was redundant.
+
+**Fix:** field setters now use `get_unchecked_mut` after the trust boundary. This
+restored the encode paths to parity: `session_keep_alive` went from 1.19× slower to
+0.92× (8% faster), and `claim_shaped` from 1.28× slower to 0.99×.
 
 ## SBE codec gate
 
