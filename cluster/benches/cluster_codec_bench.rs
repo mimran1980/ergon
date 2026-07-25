@@ -332,7 +332,7 @@ fn bench_decode_new_leader(c: &mut Criterion) {
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
                 let lmid = dec.leader_member_id();
-                let (eps, _) = dec.into_ingress_endpoints().unwrap();
+                let eps = dec.ingress_endpoints_slice().unwrap();
                 black_box((csid, ltid, lmid, eps));
             }
         });
