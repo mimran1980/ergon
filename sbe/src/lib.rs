@@ -137,10 +137,13 @@ pub mod schema;
 pub(crate) mod structured_ir;
 /// SBE XML parse + XInclude resolution.
 pub mod xml;
+/// Optional SBE XSD-aligned structural validation (+ embedded official XSD).
+pub mod xsd;
 
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{ConversionSelector, GenerationConfig};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;
-pub use xml::{ParseError, parse, parse_file};
+pub use xml::{ParseError, parse, parse_file, parse_with_xsd_validation};
+pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};

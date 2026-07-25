@@ -346,6 +346,22 @@ pub fn parse(xml: &str) -> Result<Ir, ParseError> {
     parse_with_context(xml, None, &mut HashSet::new())
 }
 
+/// Parse after running [`crate::validate_against_sbe_xsd`].
+///
+/// Use this when schema authors should be gated on the FPL element model
+/// before IR construction. Semantic IR errors still come from the normal
+/// parse/resolve path.
+#[allow(clippy::result_large_err)]
+pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
+    if let Err(e) = crate::xsd::validate_against_sbe_xsd(xml) {
+        return Err(ParseError::malformed_xml(
+            format!("XSD structural validation failed: {e}"),
+            xml,
+        ));
+    }
+    parse(xml)
+}
+
 /// Parse an SBE schema file, resolving `<xi:include href="..."/>`
 /// elements relative to the parent directory of `path`.
 ///

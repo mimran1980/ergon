@@ -79,6 +79,10 @@ pub mod sbe_rt {
     pub enum EncodeError {
         BufferTooShort { needed: usize, available: usize },
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
+        /// Fixed char/byte array source longer than the schema length.
+        FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
+        /// Domain/DTO value outside the schema min/max range.
+        ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
         GroupFull { declared: u32, attempted: u32 },
         /// Known-size group closure returned without adding enough entries.
         GroupCountMismatch { declared: u32, actual: u32 },
@@ -101,6 +105,18 @@ pub mod sbe_rt {
                     write!(
                         f, "var data too long for field {}: max {}, actual {}", field,
                         max_length, actual
+                    )
+                }
+                Self::FixedArrayTooLong { field, max_length, actual } => {
+                    write!(
+                        f, "fixed array too long for field {}: max {}, actual {}", field,
+                        max_length, actual
+                    )
+                }
+                Self::ValueOutOfRange { field, min, max, actual } => {
+                    write!(
+                        f, "value out of range for field {}: min {}, max {}, actual {}",
+                        field, min, max, actual
                     )
                 }
                 Self::GroupFull { declared, attempted } => {
@@ -129,6 +145,18 @@ pub mod sbe_rt {
         fn from(e: DecodeError) -> Self {
             Self::Decode(e)
         }
+    }
+    /// Meta attribute selector (Java `MetaAttribute` parity).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum MetaAttribute {
+        /// Epoch / start of time (e.g. `"unix"`).
+        Epoch,
+        /// Time unit applied to the epoch (e.g. `"nanosecond"`).
+        TimeUnit,
+        /// SBE semantic type / FIX-tag relationship.
+        SemanticType,
+        /// Field presence: `"required"`, `"optional"`, or `"constant"`.
+        Presence,
     }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum VerifyError {
@@ -246,6 +274,26 @@ impl From<u8> for BooleanType {
         Self::from_raw(val)
     }
 }
+impl core::fmt::Display for BooleanType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::F => f.write_str(stringify!(F)),
+            Self::T => f.write_str(stringify!(T)),
+            Self::NullVal => f.write_str("NullVal"),
+        }
+    }
+}
+impl core::str::FromStr for BooleanType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            stringify!(F) => Ok(Self::F),
+            stringify!(T) => Ok(Self::T),
+            "NullVal" => Ok(Self::NullVal),
+            _ => Err(()),
+        }
+    }
+}
 impl From<bool> for BooleanType {
     #[inline]
     fn from(val: bool) -> Self {
@@ -293,6 +341,28 @@ impl From<u8> for Model {
         Self::from_raw(val)
     }
 }
+impl core::fmt::Display for Model {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::A => f.write_str(stringify!(A)),
+            Self::B => f.write_str(stringify!(B)),
+            Self::C => f.write_str(stringify!(C)),
+            Self::NullVal => f.write_str("NullVal"),
+        }
+    }
+}
+impl core::str::FromStr for Model {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            stringify!(A) => Ok(Self::A),
+            stringify!(B) => Ok(Self::B),
+            stringify!(C) => Ok(Self::C),
+            "NullVal" => Ok(Self::NullVal),
+            _ => Err(()),
+        }
+    }
+}
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -328,6 +398,30 @@ impl From<u8> for BoostType {
     #[inline]
     fn from(val: u8) -> Self {
         Self::from_raw(val)
+    }
+}
+impl core::fmt::Display for BoostType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TURBO => f.write_str(stringify!(TURBO)),
+            Self::SUPERCHARGER => f.write_str(stringify!(SUPERCHARGER)),
+            Self::NITROUS => f.write_str(stringify!(NITROUS)),
+            Self::KERS => f.write_str(stringify!(KERS)),
+            Self::NullVal => f.write_str("NullVal"),
+        }
+    }
+}
+impl core::str::FromStr for BoostType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            stringify!(TURBO) => Ok(Self::TURBO),
+            stringify!(SUPERCHARGER) => Ok(Self::SUPERCHARGER),
+            stringify!(NITROUS) => Ok(Self::NITROUS),
+            stringify!(KERS) => Ok(Self::KERS),
+            "NullVal" => Ok(Self::NullVal),
+            _ => Err(()),
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
@@ -382,6 +476,62 @@ impl From<OptionalExtras> for u8 {
     #[inline]
     fn from(val: OptionalExtras) -> Self {
         val.0
+    }
+}
+impl core::fmt::Display for OptionalExtras {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut first = true;
+        if self.sun_roof() {
+            if !first {
+                f.write_str("|")?;
+            }
+            f.write_str("sunRoof")?;
+            first = false;
+        }
+        if self.sports_pack() {
+            if !first {
+                f.write_str("|")?;
+            }
+            f.write_str("sportsPack")?;
+            first = false;
+        }
+        if self.cruise_control() {
+            if !first {
+                f.write_str("|")?;
+            }
+            f.write_str("cruiseControl")?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+impl core::str::FromStr for OptionalExtras {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut v = Self::default();
+        if s.is_empty() {
+            return Ok(v);
+        }
+        for part in s.split('|') {
+            let part = part.trim();
+            let mut matched = false;
+            if part == "sunRoof" {
+                v.set_sun_roof(true);
+                matched = true;
+            }
+            if part == "sportsPack" {
+                v.set_sports_pack(true);
+                matched = true;
+            }
+            if part == "cruiseControl" {
+                v.set_cruise_control(true);
+                matched = true;
+            }
+            if !matched {
+                return Err(());
+            }
+        }
+        Ok(v)
     }
 }
 ///Message identifiers and length of message root.
@@ -890,6 +1040,21 @@ impl<'a> CarDecoder<'a> {
         let offset = self.pos + 0;
         u64::from_le_bytes(read_bytes_unchecked::<8>(self.buf, offset))
     }
+    pub const SERIAL_NUMBER_ID: u16 = 1;
+    pub const SERIAL_NUMBER_SINCE_VERSION: u16 = 0;
+    pub const SERIAL_NUMBER_ENCODING_OFFSET: usize = 0;
+    pub const SERIAL_NUMBER_ENCODING_LENGTH: usize = 8;
+    #[inline]
+    pub const fn serial_number_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
@@ -897,6 +1062,21 @@ impl<'a> CarDecoder<'a> {
     pub fn model_year(&self) -> u16 {
         let offset = self.pos + 8;
         u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
+    }
+    pub const MODEL_YEAR_ID: u16 = 2;
+    pub const MODEL_YEAR_SINCE_VERSION: u16 = 0;
+    pub const MODEL_YEAR_ENCODING_OFFSET: usize = 8;
+    pub const MODEL_YEAR_ENCODING_LENGTH: usize = 2;
+    #[inline]
+    pub const fn model_year_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
     }
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
@@ -912,11 +1092,41 @@ impl<'a> CarDecoder<'a> {
     pub fn available_bool(&self) -> bool {
         bool::from(self.available())
     }
+    pub const AVAILABLE_ID: u16 = 3;
+    pub const AVAILABLE_SINCE_VERSION: u16 = 0;
+    pub const AVAILABLE_ENCODING_OFFSET: usize = 10;
+    pub const AVAILABLE_ENCODING_LENGTH: usize = 1;
+    #[inline]
+    pub const fn available_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     #[inline]
     pub fn code(&self) -> Model {
         let offset = self.pos + 11;
         Model::from_raw(u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset)))
+    }
+    pub const CODE_ID: u16 = 4;
+    pub const CODE_SINCE_VERSION: u16 = 0;
+    pub const CODE_ENCODING_OFFSET: usize = 11;
+    pub const CODE_ENCODING_LENGTH: usize = 1;
+    #[inline]
+    pub const fn code_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
     }
     pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
@@ -932,6 +1142,21 @@ impl<'a> CarDecoder<'a> {
             u32::from_le_bytes([all[8usize], all[9usize], all[10usize], all[11usize]]),
             u32::from_le_bytes([all[12usize], all[13usize], all[14usize], all[15usize]]),
         ]
+    }
+    pub const SOME_NUMBERS_ID: u16 = 5;
+    pub const SOME_NUMBERS_SINCE_VERSION: u16 = 0;
+    pub const SOME_NUMBERS_ENCODING_OFFSET: usize = 12;
+    pub const SOME_NUMBERS_ENCODING_LENGTH: usize = 16;
+    #[inline]
+    pub const fn some_numbers_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
     }
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
@@ -952,6 +1177,32 @@ impl<'a> CarDecoder<'a> {
             u8::from_le_bytes([all[5usize]]),
         ]
     }
+    #[inline]
+    pub fn copy_vehicle_code(&self, dst: &mut [u8]) -> usize {
+        let src = self.vehicle_code();
+        let n = src.len().min(dst.len());
+        let mut i = 0usize;
+        while i < n {
+            dst[i] = src[i] as u8;
+            i += 1;
+        }
+        n
+    }
+    pub const VEHICLE_CODE_ID: u16 = 6;
+    pub const VEHICLE_CODE_SINCE_VERSION: u16 = 0;
+    pub const VEHICLE_CODE_ENCODING_OFFSET: usize = 28;
+    pub const VEHICLE_CODE_ENCODING_LENGTH: usize = 6;
+    #[inline]
+    pub const fn vehicle_code_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
@@ -960,9 +1211,39 @@ impl<'a> CarDecoder<'a> {
         let offset = self.pos + 34;
         OptionalExtras(u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset)))
     }
+    pub const EXTRAS_ID: u16 = 7;
+    pub const EXTRAS_SINCE_VERSION: u16 = 0;
+    pub const EXTRAS_ENCODING_OFFSET: usize = 34;
+    pub const EXTRAS_ENCODING_LENGTH: usize = 1;
+    #[inline]
+    pub const fn extras_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
     #[inline]
     pub const fn discounted_model(&self) -> Model {
         Model::C
+    }
+    pub const DISCOUNTED_MODEL_ID: u16 = 8;
+    pub const DISCOUNTED_MODEL_SINCE_VERSION: u16 = 0;
+    pub const DISCOUNTED_MODEL_ENCODING_OFFSET: usize = 35;
+    pub const DISCOUNTED_MODEL_ENCODING_LENGTH: usize = 1;
+    #[inline]
+    pub const fn discounted_model_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("constant"),
+        }
     }
     pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
     #[inline]
@@ -977,6 +1258,21 @@ impl<'a> CarDecoder<'a> {
     pub fn engine_value(&self) -> Engine {
         let offset = self.pos + 35;
         Engine(read_bytes_unchecked::<10>(self.buf, offset))
+    }
+    pub const ENGINE_ID: u16 = 9;
+    pub const ENGINE_SINCE_VERSION: u16 = 0;
+    pub const ENGINE_ENCODING_OFFSET: usize = 35;
+    pub const ENGINE_ENCODING_LENGTH: usize = 10;
+    #[inline]
+    pub const fn engine_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
     }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -1706,6 +2002,21 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let offset = self.pos + 0;
         u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
+    pub const SPEED_ID: u16 = 11;
+    pub const SPEED_SINCE_VERSION: u16 = 0;
+    pub const SPEED_ENCODING_OFFSET: usize = 0;
+    pub const SPEED_ENCODING_LENGTH: usize = 2;
+    #[inline]
+    pub const fn speed_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
     pub const SPEED_NULL: u16 = 65535_u16;
     pub const SPEED_MIN: u16 = 0_u16;
     pub const SPEED_MAX: u16 = 65534_u16;
@@ -1713,6 +2024,21 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub fn mpg(&self) -> f32 {
         let offset = self.pos + 2;
         f32::from_le_bytes(read_bytes_unchecked::<4>(self.buf, offset))
+    }
+    pub const MPG_ID: u16 = 12;
+    pub const MPG_SINCE_VERSION: u16 = 0;
+    pub const MPG_ENCODING_OFFSET: usize = 2;
+    pub const MPG_ENCODING_LENGTH: usize = 4;
+    #[inline]
+    pub const fn mpg_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
     }
     pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
     pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
@@ -2212,6 +2538,21 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         let offset = self.pos + 0;
         u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset))
     }
+    pub const OCTANE_RATING_ID: u16 = 14;
+    pub const OCTANE_RATING_SINCE_VERSION: u16 = 0;
+    pub const OCTANE_RATING_ENCODING_OFFSET: usize = 0;
+    pub const OCTANE_RATING_ENCODING_LENGTH: usize = 1;
+    #[inline]
+    pub const fn octane_rating_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
     pub const OCTANE_RATING_NULL: u8 = 255_u8;
     pub const OCTANE_RATING_MIN: u8 = 90_u8;
     pub const OCTANE_RATING_MAX: u8 = 110_u8;
@@ -2500,6 +2841,21 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         let offset = self.pos + 0;
         u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
+    pub const MPH_ID: u16 = 16;
+    pub const MPH_SINCE_VERSION: u16 = 0;
+    pub const MPH_ENCODING_OFFSET: usize = 0;
+    pub const MPH_ENCODING_LENGTH: usize = 2;
+    #[inline]
+    pub const fn mph_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
     pub const MPH_NULL: u16 = 65535_u16;
     pub const MPH_MIN: u16 = 0_u16;
     pub const MPH_MAX: u16 = 65534_u16;
@@ -2507,6 +2863,21 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub fn seconds(&self) -> f32 {
         let offset = self.pos + 2;
         f32::from_le_bytes(read_bytes_unchecked::<4>(self.buf, offset))
+    }
+    pub const SECONDS_ID: u16 = 17;
+    pub const SECONDS_SINCE_VERSION: u16 = 0;
+    pub const SECONDS_ENCODING_OFFSET: usize = 2;
+    pub const SECONDS_ENCODING_LENGTH: usize = 4;
+    #[inline]
+    pub const fn seconds_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
     }
     pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
     pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
@@ -3372,6 +3743,17 @@ impl CarFuelFiguresEntryDomain {
         &self,
         enc: &mut FuelFiguresEntryEncoder<'a>,
     ) -> Result<(), sbe_rt::EncodeError> {
+        {
+            let __v = self.speed as i128;
+            if __v < 0 || __v > 65534 {
+                return Err(sbe_rt::EncodeError::ValueOutOfRange {
+                    field: "speed",
+                    min: 0,
+                    max: 65534,
+                    actual: __v,
+                });
+            }
+        }
         enc.speed(self.speed);
         enc.mpg(self.mpg);
         let enc = enc.usage_description(&self.usage_description)?;
@@ -3429,6 +3811,17 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
         &self,
         enc: &mut PerformanceFiguresAccelerationEntryEncoder<'a>,
     ) -> Result<(), sbe_rt::EncodeError> {
+        {
+            let __v = self.mph as i128;
+            if __v < 0 || __v > 65534 {
+                return Err(sbe_rt::EncodeError::ValueOutOfRange {
+                    field: "mph",
+                    min: 0,
+                    max: 65534,
+                    actual: __v,
+                });
+            }
+        }
         enc.mph(self.mph);
         enc.seconds(self.seconds);
         Ok(())
@@ -3480,6 +3873,17 @@ impl CarPerformanceFiguresEntryDomain {
         &self,
         enc: &mut PerformanceFiguresEntryEncoder<'a>,
     ) -> Result<(), sbe_rt::EncodeError> {
+        {
+            let __v = self.octane_rating as i128;
+            if __v < 90 || __v > 110 {
+                return Err(sbe_rt::EncodeError::ValueOutOfRange {
+                    field: "octaneRating",
+                    min: 90,
+                    max: 110,
+                    actual: __v,
+                });
+            }
+        }
         enc.octane_rating(self.octane_rating);
         let enc = enc
             .acceleration(
@@ -3571,7 +3975,29 @@ impl<'a> From<CarDecoder<'a>> for CarDomain {
 impl CarDomain {
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0)?;
+        {
+            let __v = self.serial_number as i128;
+            if __v < 0 || __v > 18446744073709551614 {
+                return Err(sbe_rt::EncodeError::ValueOutOfRange {
+                    field: "serialNumber",
+                    min: 0,
+                    max: 18446744073709551614,
+                    actual: __v,
+                });
+            }
+        }
         enc.serial_number(self.serial_number);
+        {
+            let __v = self.model_year as i128;
+            if __v < 0 || __v > 65534 {
+                return Err(sbe_rt::EncodeError::ValueOutOfRange {
+                    field: "modelYear",
+                    min: 0,
+                    max: 65534,
+                    actual: __v,
+                });
+            }
+        }
         enc.model_year(self.model_year);
         enc.available_bool(self.available);
         enc.code(self.code);
@@ -3925,6 +4351,24 @@ impl<'a> CarEncoder<'a> {
         }
         self
     }
+    pub const SERIAL_NUMBER_ID: u16 = 1;
+    pub const SERIAL_NUMBER_SINCE_VERSION: u16 = 0;
+    pub const SERIAL_NUMBER_ENCODING_OFFSET: usize = 0;
+    pub const SERIAL_NUMBER_ENCODING_LENGTH: usize = 8;
+    #[inline]
+    pub const fn serial_number_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
+    pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
+    pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
+    pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
     #[inline]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = 16;
@@ -3935,6 +4379,24 @@ impl<'a> CarEncoder<'a> {
         }
         self
     }
+    pub const MODEL_YEAR_ID: u16 = 2;
+    pub const MODEL_YEAR_SINCE_VERSION: u16 = 0;
+    pub const MODEL_YEAR_ENCODING_OFFSET: usize = 8;
+    pub const MODEL_YEAR_ENCODING_LENGTH: usize = 2;
+    #[inline]
+    pub const fn model_year_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
+    pub const MODEL_YEAR_NULL: u16 = 65535_u16;
+    pub const MODEL_YEAR_MIN: u16 = 0_u16;
+    pub const MODEL_YEAR_MAX: u16 = 65534_u16;
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = 18;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
@@ -3944,11 +4406,43 @@ impl<'a> CarEncoder<'a> {
         self.buf[18] = val as u8;
         self
     }
+    pub const AVAILABLE_ID: u16 = 3;
+    pub const AVAILABLE_SINCE_VERSION: u16 = 0;
+    pub const AVAILABLE_ENCODING_OFFSET: usize = 10;
+    pub const AVAILABLE_ENCODING_LENGTH: usize = 1;
+    #[inline]
+    pub const fn available_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
+    pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = 19;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
+    pub const CODE_ID: u16 = 4;
+    pub const CODE_SINCE_VERSION: u16 = 0;
+    pub const CODE_ENCODING_OFFSET: usize = 11;
+    pub const CODE_ENCODING_LENGTH: usize = 1;
+    #[inline]
+    pub const fn code_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
+    pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
         let offset = 20;
@@ -3964,21 +4458,124 @@ impl<'a> CarEncoder<'a> {
         self
     }
     #[inline]
+    pub fn put_some_numbers(&mut self, v0: u32, v1: u32, v2: u32, v3: u32) -> &mut Self {
+        self.some_numbers([v0, v1, v2, v3])
+    }
+    pub const SOME_NUMBERS_ID: u16 = 5;
+    pub const SOME_NUMBERS_SINCE_VERSION: u16 = 0;
+    pub const SOME_NUMBERS_ENCODING_OFFSET: usize = 12;
+    pub const SOME_NUMBERS_ENCODING_LENGTH: usize = 16;
+    #[inline]
+    pub const fn some_numbers_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
+    pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
+    pub const SOME_NUMBERS_MIN: u32 = 0_u32;
+    pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
+    #[inline]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
         unsafe {
             self.buf.get_unchecked_mut(36..36 + 6).copy_from_slice(&val);
         }
         self
     }
+    #[inline]
+    pub fn vehicle_code_str(
+        &mut self,
+        src: &str,
+    ) -> Result<&mut Self, sbe_rt::EncodeError> {
+        if src.len() > 6 {
+            return Err(sbe_rt::EncodeError::FixedArrayTooLong {
+                field: "vehicleCode",
+                max_length: 6,
+                actual: src.len(),
+            });
+        }
+        let mut tmp = [0 as u8; 6];
+        let bytes = src.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            tmp[i] = bytes[i] as u8;
+            i += 1;
+        }
+        Ok(self.vehicle_code(tmp))
+    }
+    #[inline]
+    pub fn put_vehicle_code(
+        &mut self,
+        v0: u8,
+        v1: u8,
+        v2: u8,
+        v3: u8,
+        v4: u8,
+        v5: u8,
+    ) -> &mut Self {
+        self.vehicle_code([v0, v1, v2, v3, v4, v5])
+    }
+    pub const VEHICLE_CODE_ID: u16 = 6;
+    pub const VEHICLE_CODE_SINCE_VERSION: u16 = 0;
+    pub const VEHICLE_CODE_ENCODING_OFFSET: usize = 28;
+    pub const VEHICLE_CODE_ENCODING_LENGTH: usize = 6;
+    #[inline]
+    pub const fn vehicle_code_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
+    pub const VEHICLE_CODE_NULL: u8 = 0_u8;
+    pub const VEHICLE_CODE_MIN: u8 = 32_u8;
+    pub const VEHICLE_CODE_MAX: u8 = 126_u8;
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = 42;
         self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
         self
     }
+    pub const EXTRAS_ID: u16 = 7;
+    pub const EXTRAS_SINCE_VERSION: u16 = 0;
+    pub const EXTRAS_ENCODING_OFFSET: usize = 34;
+    pub const EXTRAS_ENCODING_LENGTH: usize = 1;
+    #[inline]
+    pub const fn extras_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
+    }
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = 43;
         self.buf[offset..offset + 10].copy_from_slice(&val.0);
         self
+    }
+    pub const ENGINE_ID: u16 = 9;
+    pub const ENGINE_SINCE_VERSION: u16 = 0;
+    pub const ENGINE_ENCODING_OFFSET: usize = 35;
+    pub const ENGINE_ENCODING_LENGTH: usize = 10;
+    #[inline]
+    pub const fn engine_meta_attribute(
+        attr: sbe_rt::MetaAttribute,
+    ) -> Option<&'static str> {
+        match attr {
+            sbe_rt::MetaAttribute::Epoch => None,
+            sbe_rt::MetaAttribute::TimeUnit => None,
+            sbe_rt::MetaAttribute::SemanticType => None,
+            sbe_rt::MetaAttribute::Presence => Some("required"),
+        }
     }
     /// Set all fixed fields at once from a [`#fixed_name`] value.
     /// Required fields are always written; optional fields are
@@ -5929,7 +6526,9 @@ pub const SCHEMA_SHA256_HEX: &str = "1fc33fa7625cef1549c53866ec93fbfa74c0fa58b17
 pub const SCHEMA_ID: u16 = 1;
 pub const SCHEMA_VERSION: u16 = 0;
 pub mod prelude {
-    pub use super::sbe_rt::{DecodeError, EncodeError, VerifyError, SbeMessage};
+    pub use super::sbe_rt::{
+        DecodeError, EncodeError, VerifyError, MetaAttribute, SbeMessage,
+    };
     pub use super::{
         AnyMessage, DecodedFrame, FrameCursor, FramingPolicy, MessageVisitor,
         MessageHeader, MessageHeaderDecoder, GroupSizeEncoding, GroupSizeEncodingDecoder,

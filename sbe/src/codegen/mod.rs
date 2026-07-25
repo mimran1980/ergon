@@ -351,14 +351,16 @@ impl Generator {
     ///
     /// Validates conversion configuration and returns an error on invalid setup.
     pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
-        self.validate_conversions(schema)?;
-        let mut modules = GeneratedModuleSet::default();
-        let src = self.gen_schema(schema, &HashSet::new(), false, true);
-        modules.push(GeneratedModule {
-            path: format!("{}.rs", self.config.module_name),
-            source: src,
-        });
-        Ok(modules)
+        with_keyword_append(&self.config.keyword_append_token, || {
+            self.validate_conversions(schema)?;
+            let mut modules = GeneratedModuleSet::default();
+            let src = self.gen_schema(schema, &HashSet::new(), false, true);
+            modules.push(GeneratedModule {
+                path: format!("{}.rs", self.config.module_name),
+                source: src,
+            });
+            Ok(modules)
+        })
     }
 
     /// Generate Rust modules for multiple schemas, deduplicating shared types.
@@ -372,6 +374,15 @@ impl Generator {
     /// Each entry is `(schema, module_name)` where `module_name` is the Rust
     /// module name (e.g. `"common_types"`, `"market_data"`).
     pub fn generate_multi(
+        &self,
+        schemas: &[(&Schema, &str)],
+    ) -> Result<GeneratedModuleSet, GenerateError> {
+        with_keyword_append(&self.config.keyword_append_token, || {
+            self.generate_multi_inner(schemas)
+        })
+    }
+
+    fn generate_multi_inner(
         &self,
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
@@ -1514,6 +1525,26 @@ fn generate_message_decoder(
                             [#(#elements),*]
                         }
                     });
+                    // Destination-buffer copy for byte-width arrays (Java getVehicleCode(byte[])).
+                    if prim_size == 1 {
+                        let copy_ident = syn::Ident::new(
+                            &format!("copy_{}", fname_snake),
+                            proc_macro2::Span::call_site(),
+                        );
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #copy_ident(&self, dst: &mut [u8]) -> usize {
+                                let src = self.#fn_snake_ident();
+                                let n = src.len().min(dst.len());
+                                let mut i = 0usize;
+                                while i < n {
+                                    dst[i] = src[i] as u8;
+                                    i += 1;
+                                }
+                                n
+                            }
+                        });
+                    }
                 } else {
                     if f.presence == Presence::Optional {
                         let null_val = f.null_value.unwrap_or(0);
@@ -1534,6 +1565,7 @@ fn generate_message_decoder(
                         if let Some(ref desc) = f.description {
                             impl_body.extend(doc_attr_tokens(desc));
                         }
+                        impl_body.extend(deprecated_attr_tokens(f.deprecated));
                         let accessor = format!(
                             "#[inline]\n\
                              pub fn {snake}(&self) -> Option<{rt}> {{\n\
@@ -1570,6 +1602,7 @@ fn generate_message_decoder(
                         if let Some(ref desc) = f.description {
                             impl_body.extend(doc_attr_tokens(desc));
                         }
+                        impl_body.extend(deprecated_attr_tokens(f.deprecated));
                         impl_body.extend(quote::quote! {
                             #[inline]
                             pub fn #fname_ident(&self) -> Option<#r_type_ty> {
@@ -1584,6 +1617,7 @@ fn generate_message_decoder(
                         if let Some(ref desc) = f.description {
                             impl_body.extend(doc_attr_tokens(desc));
                         }
+                        impl_body.extend(deprecated_attr_tokens(f.deprecated));
                         impl_body.extend(quote::quote! {
                             #[inline]
                             pub fn #fname_ident(&self) -> #r_type_ty {
@@ -2358,6 +2392,57 @@ fn domain_has_conversion(
     false
 }
 
+/// Emit a domain-object range check against schema min/max for integer wire types.
+/// Floats/doubles are skipped (IEEE null sentinels are not simple min/max ranges).
+fn dto_range_check_tokens(
+    f: &MessageField,
+    prim: PrimitiveType,
+    value_expr: proc_macro2::TokenStream,
+    span: proc_macro2::Span,
+) -> proc_macro2::TokenStream {
+    if matches!(prim, PrimitiveType::Float | PrimitiveType::Double) {
+        return quote::quote! {};
+    }
+    let (Some(min), Some(max)) = (f.min_value, f.max_value) else {
+        return quote::quote! {};
+    };
+    let to_i128 = |v: u64| -> i128 {
+        match prim {
+            PrimitiveType::Int8 => (v as i8) as i128,
+            PrimitiveType::Int16 => (v as i16) as i128,
+            PrimitiveType::Int32 => (v as i32) as i128,
+            PrimitiveType::Int64 => (v as i64) as i128,
+            PrimitiveType::Char | PrimitiveType::UInt8 => v as u8 as i128,
+            PrimitiveType::UInt16 => v as u16 as i128,
+            PrimitiveType::UInt32 => v as u32 as i128,
+            PrimitiveType::UInt64 => v as i128,
+            PrimitiveType::Float | PrimitiveType::Double => 0,
+        }
+    };
+    let min_i = to_i128(min);
+    let max_i = to_i128(max);
+    // Skip no-op ranges that cover the full native type width.
+    if min_i == to_i128(0) && max_i >= (i128::from(u64::MAX) - 1) && matches!(prim, PrimitiveType::UInt64) {
+        // still check — MAX is often max-1 for null reserved
+    }
+    let min_lit = syn::LitInt::new(&format!("{min_i}"), span);
+    let max_lit = syn::LitInt::new(&format!("{max_i}"), span);
+    let field_lit = syn::LitStr::new(&f.name, span);
+    quote::quote! {
+        {
+            let __v = #value_expr as i128;
+            if __v < #min_lit || __v > #max_lit {
+                return Err(sbe_rt::EncodeError::ValueOutOfRange {
+                    field: #field_lit,
+                    min: #min_lit,
+                    max: #max_lit,
+                    actual: __v,
+                });
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 fn generate_domain_recursive(
     struct_prefix: &str,
@@ -2418,9 +2503,13 @@ fn generate_domain_recursive(
                 } else if f.presence == Presence::Optional {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#r_type> });
                     from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                    encode_stmts.push(
-                        quote::quote! { if let Some(v) = self.#f_ident { enc.#enc_setter(v); } },
-                    );
+                    let range_check = dto_range_check_tokens(f, *prim, quote::quote! { v }, span);
+                    encode_stmts.push(quote::quote! {
+                        if let Some(v) = self.#f_ident {
+                            #range_check
+                            enc.#enc_setter(v);
+                        }
+                    });
                 } else {
                     // Domain-typed scalars use the concrete converted getter.
                     // Conversion-only renames the raw flyweight getter to *_wire.
@@ -2432,7 +2521,16 @@ fn generate_domain_recursive(
                         };
                     struct_fields.push(quote::quote! { pub #f_ident: #scalar_ty });
                     from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
-                    encode_stmts.push(quote::quote! { enc.#enc_setter(self.#f_ident); });
+                    // Range-check wire-typed DTOs only (converted domain types are app-side).
+                    let range_check = if scalar_domain.is_none() {
+                        dto_range_check_tokens(f, *prim, quote::quote! { self.#f_ident }, span)
+                    } else {
+                        quote::quote! {}
+                    };
+                    encode_stmts.push(quote::quote! {
+                        #range_check
+                        enc.#enc_setter(self.#f_ident);
+                    });
                 }
             }
             FieldType::Composite {
@@ -5199,6 +5297,29 @@ fn generate_message_encoder(
                                 self
                             }
                         });
+                        // Zero-padded string write (Java vehicleCode(String) parity).
+                        let str_ident = syn::Ident::new(&format!("{method_name}_str"), span);
+                        let field_lit = syn::LitStr::new(&f.name, span);
+                        impl_contents.extend(quote::quote! {
+                            #[inline]
+                            pub fn #str_ident(&mut self, src: &str) -> Result<&mut Self, sbe_rt::EncodeError> {
+                                if src.len() > #len_lit {
+                                    return Err(sbe_rt::EncodeError::FixedArrayTooLong {
+                                        field: #field_lit,
+                                        max_length: #len_lit,
+                                        actual: src.len(),
+                                    });
+                                }
+                                let mut tmp = [0 as #r_type; #len_lit];
+                                let bytes = src.as_bytes();
+                                let mut i = 0usize;
+                                while i < bytes.len() {
+                                    tmp[i] = bytes[i] as #r_type;
+                                    i += 1;
+                                }
+                                Ok(self.#f_ident(tmp))
+                            }
+                        });
                     } else {
                         impl_contents.extend(quote::quote! {
                             #[inline]
@@ -5213,6 +5334,19 @@ fn generate_message_encoder(
                                     idx += 1;
                                 }
                                 self
+                            }
+                        });
+                    }
+                    // Unrolled put_field(v0, v1, …) for small fixed arrays (Java putSomeNumbers).
+                    if (2..=8).contains(len) {
+                        let put_ident = syn::Ident::new(&format!("put_{method_name}"), span);
+                        let params: Vec<syn::Ident> = (0..*len)
+                            .map(|i| syn::Ident::new(&format!("v{i}"), span))
+                            .collect();
+                        impl_contents.extend(quote::quote! {
+                            #[inline]
+                            pub fn #put_ident(&mut self, #(#params: #r_type),*) -> &mut Self {
+                                self.#f_ident([#(#params),*])
                             }
                         });
                     }
@@ -5301,6 +5435,8 @@ fn generate_message_encoder(
                 });
             }
         }
+        // Field id / offset / length / MetaAttribute (also on encoder, Java parity).
+        impl_contents.extend(emit_field_consts(f));
     }
 
     // No partial as_bytes on incomplete stages — complete-message byte/length
@@ -6551,6 +6687,7 @@ mod tests {
             min_value: None,
             max_value: None,
             description: None,
+            deprecated: false,
             semantic_type: Some("UTCTimestamp".into()),
             constant_value: None,
             epoch: None,

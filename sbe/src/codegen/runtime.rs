@@ -663,6 +663,27 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             }
         }
 
+        impl core::fmt::Display for #name_ident {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                match self {
+                    #(Self::#variant_names => f.write_str(stringify!(#variant_names)),)*
+                    Self::NullVal => f.write_str("NullVal"),
+                }
+            }
+        }
+
+        impl core::str::FromStr for #name_ident {
+            type Err = ();
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    #(stringify!(#variant_names) => Ok(Self::#variant_names),)*
+                    "NullVal" => Ok(Self::NullVal),
+                    _ => Err(()),
+                }
+            }
+        }
+
         #from_bool_impl
     };
 
@@ -685,36 +706,38 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
     let name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
     let r_type_ty: syn::Type = syn::parse_str(&r_type).unwrap();
 
-    let bits: Vec<proc_macro2::TokenStream> = tokens
-        .iter()
-        .filter(|t| t.signal == Signal::Encoding)
-        .filter_map(|t| {
-            let val = t.encoding.constant_value.as_ref()?;
-            let bit_index: u8 = val.parse().unwrap_or(0);
-            let bit_name = syn::Ident::new(&to_snake_case(&t.name), proc_macro2::Span::call_site());
-            let set_bit_name = quote::format_ident!("set_{}", to_snake_case(&t.name));
-            let bit_lit = syn::LitInt::new(&bit_index.to_string(), proc_macro2::Span::call_site());
-            Some(quote::quote! {
-                pub const fn #bit_name(self) -> bool {
-                    (self.0 & (1 << #bit_lit)) != 0
-                }
+    let mut bits: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut choice_getters: Vec<syn::Ident> = Vec::new();
+    let mut choice_setters: Vec<syn::Ident> = Vec::new();
+    let mut choice_name_strs: Vec<syn::LitStr> = Vec::new();
+    for t in tokens.iter().filter(|t| t.signal == Signal::Encoding) {
+        let Some(val) = t.encoding.constant_value.as_ref() else {
+            continue;
+        };
+        let bit_index: u8 = val.parse().unwrap_or(0);
+        let snake = to_snake_case(&t.name);
+        let bit_name = syn::Ident::new(&snake, proc_macro2::Span::call_site());
+        let set_bit_name = quote::format_ident!("set_{}", snake);
+        let bit_lit = syn::LitInt::new(&bit_index.to_string(), proc_macro2::Span::call_site());
+        choice_getters.push(bit_name.clone());
+        choice_setters.push(set_bit_name.clone());
+        choice_name_strs.push(syn::LitStr::new(&t.name, proc_macro2::Span::call_site()));
+        bits.push(quote::quote! {
+            pub const fn #bit_name(self) -> bool {
+                (self.0 & (1 << #bit_lit)) != 0
+            }
 
-                pub fn #set_bit_name(&mut self, val: bool) {
-                    if val {
-                        self.0 |= 1 << #bit_lit;
-                    } else {
-                        self.0 &= !(1 << #bit_lit);
-                    }
+            pub fn #set_bit_name(&mut self, val: bool) {
+                if val {
+                    self.0 |= 1 << #bit_lit;
+                } else {
+                    self.0 &= !(1 << #bit_lit);
                 }
-            })
-        })
-        .collect();
-
-    // Emit enum doc from the type's XML description (DECISIONS.md §9).
-    if let Some(ref desc) = tokens[0].encoding.description {
-        push_description_doc(src, desc);
+            }
+        });
     }
 
+    // Emit set doc from the type's XML description (DECISIONS.md §9).
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
     }
@@ -748,6 +771,47 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
             #[inline]
             fn from(val: #name_ident) -> Self {
                 val.0
+            }
+        }
+
+        impl core::fmt::Display for #name_ident {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                let mut first = true;
+                #(
+                    if self.#choice_getters() {
+                        if !first {
+                            f.write_str("|")?;
+                        }
+                        f.write_str(#choice_name_strs)?;
+                        first = false;
+                    }
+                )*
+                Ok(())
+            }
+        }
+
+        impl core::str::FromStr for #name_ident {
+            type Err = ();
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                let mut v = Self::default();
+                if s.is_empty() {
+                    return Ok(v);
+                }
+                for part in s.split('|') {
+                    let part = part.trim();
+                    let mut matched = false;
+                    #(
+                        if part == #choice_name_strs {
+                            v.#choice_setters(true);
+                            matched = true;
+                        }
+                    )*
+                    if !matched {
+                        return Err(());
+                    }
+                }
+                Ok(v)
             }
         }
     };
@@ -1763,6 +1827,15 @@ pub(crate) fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
         proc_macro2::Span::call_site(),
     );
     quote::quote! { #[doc = #lit] }
+}
+
+/// `#[deprecated]` when the schema marks the item deprecated, else nothing.
+pub(crate) fn deprecated_attr_tokens(deprecated: bool) -> proc_macro2::TokenStream {
+    if deprecated {
+        quote::quote! { #[deprecated] }
+    } else {
+        quote::quote! {}
+    }
 }
 
 /// Append `///` rustdoc lines for a schema description (doctest-safe).

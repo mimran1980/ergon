@@ -73,6 +73,7 @@ pub(crate) struct MessageStructure {
     pub(crate) id: u16,
     pub(crate) since_version: u16,
     pub(crate) description: Option<String>,
+    pub(crate) deprecated: bool,
     pub(crate) semantic_type: Option<String>,
     pub(crate) fields: Vec<MessageField>,
     pub(crate) groups: Vec<MessageGroup>,
@@ -90,6 +91,7 @@ pub(crate) struct MessageField {
     pub(crate) min_value: Option<u64>,
     pub(crate) max_value: Option<u64>,
     pub(crate) description: Option<String>,
+    pub(crate) deprecated: bool,
     pub(crate) semantic_type: Option<String>,
     pub(crate) constant_value: Option<String>,
     /// Epoch for timestamp fields (e.g. `"unix"`); feeds `MetaAttribute::Epoch`.
@@ -163,6 +165,7 @@ pub(crate) fn parse_message_structure(
     let id = begin_token.id.unwrap_or(0);
     let since_version = begin_token.encoding.since_version;
     let description = begin_token.encoding.description.clone();
+    let deprecated = begin_token.encoding.deprecated;
     let semantic_type = begin_token.encoding.semantic_type.clone();
 
     let mut fields = Vec::new();
@@ -202,6 +205,7 @@ pub(crate) fn parse_message_structure(
         id,
         since_version,
         description,
+        deprecated,
         semantic_type,
         fields,
         groups,
@@ -220,6 +224,7 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
     let min_value = begin.encoding.min_value;
     let max_value = begin.encoding.max_value;
     let description = begin.encoding.description.clone();
+    let deprecated = begin.encoding.deprecated;
     let semantic_type = begin.encoding.semantic_type.clone();
     let constant_value = begin.encoding.constant_value.clone();
     let epoch = begin.encoding.epoch.clone();
@@ -290,6 +295,7 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
         min_value,
         max_value,
         description,
+        deprecated,
         semantic_type,
         constant_value,
         epoch,
