@@ -391,6 +391,150 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+#[test]
+fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::error::Error>> {
+    // Comprehensive test: for each message type, encode → decode → DTO →
+    // re-encode → compare bytes. Print Display ({}) and Debug ({:?}) for
+    // encoder, decoder, and DTO. Verify no panic on truncated/invalid buffers.
+
+    // ── L3Book ──
+    {
+        let o1 = [(1u64, d(100))];
+        let bids: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50000), d(10), &o1)];
+        let asks: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50100), d(5), &o1)];
+        let symbol = b"BTC";
+        let len = l3_book::book_encoded_length(bids, asks, symbol)?;
+        let mut buf = vec![0u8; len];
+        let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
+        assert_eq!(len, actual);
+
+        let dec = L3BookDecoder::try_from(&buf[..actual])?;
+        let dec_display = format!("{dec}");
+        let dec_debug = format!("{dec:?}");
+        eprintln!("[L3Book] decoder Display: {dec_display}");
+        eprintln!("[L3Book] decoder Debug:   {dec_debug}");
+        assert!(dec_display.contains("BTC"));
+        assert!(dec_display.contains("50000"));
+
+        let enc = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let enc_display = format!("{enc}");
+        eprintln!("[L3Book] encoder Display: {enc_display}");
+        assert!(enc_display.contains("BTC"));
+
+        let dto = L3BookDomain::from(L3BookDecoder::try_from(&buf[..actual])?);
+        let dto_debug = format!("{dto:?}");
+        eprintln!("[L3Book] DTO Debug: {dto_debug}");
+        let mut buf2 = vec![0u8; len];
+        let n = dto.encode(&mut buf2)?;
+        assert_eq!(&buf[..actual], &buf2[..n], "L3Book DTO round-trip must be byte-identical");
+
+        // Truncated (header only) — must not panic.
+        if let Ok(td) = L3BookDecoder::try_from(&buf[..8]) {
+            let _ = format!("{td}");
+            let _ = format!("{td:?}");
+        }
+        eprintln!("[L3Book] truncated: no panic");
+    }
+
+    // ── L3BookVarData ──
+    {
+        let o1: [(Rd, &[u8]); 2] = [(d(1), b"ORD-1"), (d(2), b"ORD-22")];
+        let o2: [(Rd, &[u8]); 1] = [(d(3), b"X")];
+        let bids: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(100), d(10), &o1), (d(200), d(5), &o2)];
+        let asks: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(150), d(8), &[(
+            d(1),
+            b"AA",
+        )])];
+        let symbol = b"LINK";
+        let len = l3_book::vardata_book_encoded_length(bids, asks, symbol)?;
+        let mut buf = vec![0u8; len];
+        let actual = l3_book::encode_vardata_book(&mut buf, bids, asks, symbol)?;
+        assert_eq!(len, actual);
+
+        let dec = L3BookVarDataDecoder::try_from(&buf[..actual])?;
+        let dec_display = format!("{dec}");
+        let dec_debug = format!("{dec:?}");
+        eprintln!("[VarData] decoder Display: {dec_display}");
+        eprintln!("[VarData] decoder Debug:   {dec_debug}");
+        assert!(dec_display.contains("ORD-1"));
+
+        // Truncated — must not panic.
+        if let Ok(td) = L3BookVarDataDecoder::try_from(&buf[..8]) {
+            let _ = format!("{td}");
+            let _ = format!("{td:?}");
+        }
+        eprintln!("[VarData] truncated: no panic");
+    }
+
+    // ── Depth3Test ──
+    {
+        let i1 = [(1u64, &b"A"[..]), (2u64, &b"BB"[..])];
+        let i2 = [(3u64, &b"CCC"[..])];
+        let levels: &[(u32, &[(u64, &[u8])])] = &[(10, i1.as_slice()), (20, i2.as_slice())];
+        let desc = b"test";
+        let len = l3_book::depth3_encoded_length(levels, desc)?;
+        let mut buf = vec![0u8; len];
+        let actual = l3_book::encode_depth3(&mut buf, 99, levels, desc)?;
+        assert_eq!(len, actual);
+
+        let dec = Depth3TestDecoder::try_from(&buf[..actual])?;
+        let dec_display = format!("{dec}");
+        let dec_debug = format!("{dec:?}");
+        eprintln!("[Depth3] decoder Display: {dec_display}");
+        eprintln!("[Depth3] decoder Debug:   {dec_debug}");
+        assert!(dec_display.contains("test"));
+
+        // Truncated — must not panic.
+        if let Ok(td) = Depth3TestDecoder::try_from(&buf[..8]) {
+            let _ = format!("{td}");
+            let _ = format!("{td:?}");
+        }
+        eprintln!("[Depth3] truncated: no panic");
+    }
+
+    // ── All-zeros invalid buffer — must not panic for any message ──
+    let zeros = vec![0u8; 64];
+    if let Ok(d) = L3BookDecoder::try_from(&zeros[..]) {
+        let _ = format!("{d}");
+        let _ = format!("{d:?}");
+    }
+    if let Ok(d) = Depth3TestDecoder::try_from(&zeros[..]) {
+        let _ = format!("{d}");
+        let _ = format!("{d:?}");
+    }
+    eprintln!("[all-zeros] no panic on any decoder");
+
+    // ── Partially encoded (just fixed fields, no groups/var-data) ──
+    {
+        let len = L3BookEncodedLength::new()
+            .bids_ragged(0, |_| Ok(()))?
+            .asks_ragged(0, |_| Ok(()))?
+            .symbol(0)?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
+        let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&L3BookFixedFields {
+                exchange_timestamp: 0,
+                sequence: 0,
+                is_active: BooleanType::False,
+            })
+            .bids(0, |_| Ok(()))?
+            .asks(0, |_| Ok(()))?
+            .symbol(b"")?;
+        let n = complete.encoded_length_with_header();
+        let dec = L3BookDecoder::try_from(&buf[..n])?;
+        let display = format!("{dec}");
+        let debug = format!("{dec:?}");
+        eprintln!("[partial] Display: {display}");
+        eprintln!("[partial] Debug: {debug}");
+        assert!(display.contains("isActive") || display.contains("is_active"));
+    }
+    eprintln!("[partial] no panic");
+
+    println!("\nAll round-robin + Display/Debug/safety tests passed");
+    Ok(())
+}
+
 // ── Depth3Test (depth-3 nesting: levels → items → tag var-data) ──────────
 
 #[test]

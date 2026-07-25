@@ -2861,9 +2861,11 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
 
         impl<'a> core::fmt::Debug for #decoder_ident<'a> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                let mut d = f.debug_struct(#type_name_lit);
-                #debug_body
-                d.finish()
+                // Delegate to Display for complete field-value output across
+                // ALL field types (primitives, enums, composites, groups,
+                // var-data) with in_bounds guards. This matches Java SBE
+                // toString behaviour — safe on truncated/invalid SBE.
+                core::fmt::Display::fmt(self, f)
             }
         }
     };
