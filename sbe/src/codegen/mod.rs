@@ -3705,12 +3705,25 @@ fn generate_group_decoder(
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                let fmt_str = format!("{sep}{}: {{:?}}", f.name);
-                let f_value =
-                    syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
-                entry_display_body.extend(quote::quote! {
-                    { write!(f, #fmt_str, self.#f_value())?; }
-                });
+                if let Some(domain_path) = find_domain_type(f, domain_types) {
+                    let fmt_str = format!("{sep}{}: {{}}", f.name);
+                    let domain_ty: syn::Type = syn::parse_str(domain_path)
+                        .unwrap_or_else(|_| panic!("invalid domain type path: {domain_path}"));
+                    let f_as =
+                        syn::Ident::new(&format!("{}_as", f_name), proc_macro2::Span::call_site());
+                    entry_display_body.extend(quote::quote! {
+                        { if let Ok(v) = self.#f_as::<#domain_ty>() { write!(f, #fmt_str, v)?; } }
+                    });
+                } else {
+                    let fmt_str = format!("{sep}{}: {{:?}}", f.name);
+                    let f_value = syn::Ident::new(
+                        &format!("{}_value", f_name),
+                        proc_macro2::Span::call_site(),
+                    );
+                    entry_display_body.extend(quote::quote! {
+                        { write!(f, #fmt_str, self.#f_value())?; }
+                    });
+                }
                 entry_display_out_idx += 1;
             }
         }
