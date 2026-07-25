@@ -12,9 +12,11 @@ implementations.
 | [`cluster-rfq/`](cluster-rfq/) | RFQ and auction application-protocol experiments | Java harness for live examples |
 | [`cluster-tutorial/`](cluster-tutorial/) | Connect, offer, poll, keep-alive, and close walkthrough | Java 17+ and built Aeron artifacts |
 
-## Local checks
+## Check each sample
 
-Run standalone packages through their manifest paths:
+Run standalone packages through their manifest paths. These are diagnostic
+entry points: samples intentionally move with experimental APIs, so a failing
+command identifies migration drift rather than a supported product regression.
 
 ```sh
 cargo check --manifest-path samples/exchange-example/Cargo.toml --all-targets
@@ -42,7 +44,7 @@ cargo run --manifest-path samples/cluster-tutorial/Cargo.toml
 
 ## L3 sample
 
-The L3 sample is the main generated-code walkthrough. Its schema contains:
+The L3 sample is the main generated-code migration target. Its schema contains:
 
 - fixed fields with `chrono`, `bool`, and `rust_decimal` mappings;
 - nested bid/ask and order groups;

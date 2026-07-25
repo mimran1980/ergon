@@ -51,13 +51,37 @@ jobs:
           git config user.name "Mo Imran"
           git config user.email "mohammed.imran@gsr.io"
 
-      - name: Run cargo-release
+      - name: Publish ergo-sbe
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           CARGO_HTTP_MULTIPLEXING: false
         run: |
           cargo release "${{ github.event.inputs.release_type }}" \
-            --workspace \
+            -p ergo-sbe \
+            --execute \
+            --no-confirm \
+            --verbose
+
+      - name: Wait for crates.io index
+        run: |
+          VERSION=$(grep '^version' sbe/Cargo.toml | head -1 | sed 's/.*= "\(.*\)"/\1/')
+          echo "Waiting for ergo-sbe $VERSION to appear on crates.io..."
+          for i in $(seq 1 30); do
+            if curl -sf "https://crates.io/api/v1/crates/ergo-sbe/$VERSION" >/dev/null 2>&1; then
+              echo "ergo-sbe $VERSION is now available"
+              break
+            fi
+            echo "  attempt $i/30 — waiting 10s..."
+            sleep 10
+          done
+
+      - name: Publish ergo-aeron-cluster
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_HTTP_MULTIPLEXING: false
+        run: |
+          cargo release "${{ github.event.inputs.release_type }}" \
+            -p ergo-aeron-cluster \
             --execute \
             --no-confirm \
             --verbose

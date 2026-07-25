@@ -88,9 +88,9 @@ cargo package -p ergo-sbe --list --allow-dirty
 cargo package -p ergo-aeron-cluster --list --allow-dirty
 ```
 
-Packages must exclude repository tests, fixtures not required at build time,
-benchmarks, Java harness code, application protocols, samples, and internal
-plans.
+Packages must exclude repository integration tests, fixtures not required at
+build time, benchmarks, Java harness code, application protocols, samples, and
+internal plans.
 
 Publishing, tagging, and announcing a release require explicit maintainer
 authorization.

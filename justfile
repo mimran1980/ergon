@@ -79,11 +79,13 @@ check-samples:
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
     cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
 
-# Pre-release check: products + bench compile + package verification.
+# Pre-release check: product crates + bench compile + package + strict rustdoc.
 release-check: check-products
     cargo bench -p ergo-sbe-benchmarks --no-run
     cargo bench -p ergo-aeron-cluster --no-run
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
+    cargo publish -p ergo-aeron-cluster --dry-run --allow-dirty
     @echo "release-check: product crates pass, benches compile, dry-run publish OK"
 
 # ── test ──────────────────────────────────────────────────────────────────
