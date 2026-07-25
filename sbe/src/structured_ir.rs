@@ -353,7 +353,8 @@ pub(crate) fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
 
     let mut type_name = "varDataEncoding".to_string();
     let mut max_length = None;
-    let mut character_encoding: Option<String> = None;
+    // characterEncoding is declared on the <data> element, not the composite.
+    let mut character_encoding = begin.encoding.character_encoding.clone();
     if tokens.len() > 2 && tokens[1].signal == Signal::BeginComposite {
         type_name = tokens[1].name.clone();
         // Scan composite members for the length field's max_value and any

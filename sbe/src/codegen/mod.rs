@@ -2818,29 +2818,16 @@ fn generate_decoder_display(msg: &MessageStructure) -> proc_macro2::TokenStream 
         let vd_snake = to_snake_case(&vd.name);
         let vd_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let sep = if out_idx == 0 { "" } else { ", " };
-        let is_text = vd.character_encoding.as_deref().is_some_and(|e| {
-            e.eq_ignore_ascii_case("UTF-8") || e.eq_ignore_ascii_case("UTF8")
-                || e.eq_ignore_ascii_case("ASCII") || e.eq_ignore_ascii_case("US-ASCII")
+        let fmt_str = format!("{sep}{vd_snake}: {{}}");
+        let err_fmt = format!("{sep}{vd_snake}: <{{}} bytes>");
+        body.extend(quote::quote! {
+            if let Ok(d) = self.#vd_ident() {
+                match std::str::from_utf8(d) {
+                    Ok(s) => write!(f, #fmt_str, s)?,
+                    Err(_) => write!(f, #err_fmt, d.len())?,
+                }
+            }
         });
-        if is_text {
-            let fmt_str = format!("{sep}{vd_snake}: {{}}");
-            let err_fmt = format!("{sep}{vd_snake}: <{{}} bytes>");
-            body.extend(quote::quote! {
-                if let Ok(d) = self.#vd_ident() {
-                    match std::str::from_utf8(d) {
-                        Ok(s) => write!(f, #fmt_str, s)?,
-                        Err(_) => write!(f, #err_fmt, d.len())?,
-                    }
-                }
-            });
-        } else {
-            let fmt_str = format!("{sep}{vd_snake}: {{}} bytes");
-            body.extend(quote::quote! {
-                if let Ok(d) = self.#vd_ident() {
-                    write!(f, #fmt_str, d.len())?;
-                }
-            });
-        }
         out_idx += 1;
     }
     body.extend(quote::quote! {
@@ -3610,35 +3597,21 @@ fn generate_group_decoder(
             }
         }
     }
-    // Entry varData fields in Display
+    // Entry varData fields in Display — try UTF-8 first, fall back to bytes.
     for vd in &g.var_data {
         let vd_snake = to_snake_case(&vd.name);
         let vd_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
-        let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
         let sep = if entry_display_out_idx == 0 { "" } else { ", " };
-        let is_text = vd.character_encoding.as_deref().is_some_and(|e| {
-            e.eq_ignore_ascii_case("UTF-8") || e.eq_ignore_ascii_case("UTF8")
-                || e.eq_ignore_ascii_case("ASCII") || e.eq_ignore_ascii_case("US-ASCII")
+        let fmt_str = format!("{sep}{}: {{}}", vd.name);
+        let err_fmt = format!("{sep}{}: <{{}} bytes>", vd.name);
+        entry_display_body.extend(quote::quote! {
+            if let Ok(d) = self.#vd_ident() {
+                match std::str::from_utf8(d) {
+                    Ok(s) => write!(f, #fmt_str, s)?,
+                    Err(_) => write!(f, #err_fmt, d.len())?,
+                }
+            }
         });
-        if is_text {
-            let fmt_str = format!("{sep}{}: {{}}", vd.name);
-            let err_fmt = format!("{sep}{}: <{{}} bytes>", vd.name);
-            entry_display_body.extend(quote::quote! {
-                if let Ok(d) = self.#vd_ident() {
-                    match std::str::from_utf8(d) {
-                        Ok(s) => write!(f, #fmt_str, s)?,
-                        Err(_) => write!(f, #err_fmt, d.len())?,
-                    }
-                }
-            });
-        } else {
-            let fmt_str = format!("{sep}{}: {{}} bytes", vd.name);
-            entry_display_body.extend(quote::quote! {
-                if let Ok(d) = self.#vd_ident() {
-                    write!(f, #fmt_str, d.len())?;
-                }
-            });
-        }
         entry_display_out_idx += 1;
     }
     // Entry nested groups in Display
