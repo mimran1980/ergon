@@ -13,9 +13,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let symbol = b"BTCUSDT";
 
     // Encode — ragged entries with different order counts per level.
-    // TODO this should be using L3BookEncodedLength, infact on L3BookEncoded::compute_length() return L3BookEncodedLength
-    let mut buf = vec![0u8; 4096];
+    // Size the buffer EXACTLY up-front via the staged L3BookEncodedLength
+    // (no oversized buffer). The pre-computed length must equal the encoded length.
+    let len = l3_book::book_encoded_length(&bids, &asks, symbol)?;
+    let mut buf = vec![0u8; len];
     let actual = l3_book::encode_book(&mut buf, &bids, &asks, symbol)?;
+    assert_eq!(len, actual, "pre-computed length must match encoded length");
     println!("encoded_len = {actual}");
 
     // Decode with concrete converter accessors — no turbofish.

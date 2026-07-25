@@ -7,6 +7,39 @@ mod l3_codec {
 }
 pub use l3_codec::*;
 
+/// Nested-orders group wire layout (structural constants from
+/// `schemas/l3-book.xml`, not buffer guesses):
+/// - dimension prefix: `u32` count = 4 bytes
+/// - entry block: `u64 order_id` (8) + `Decimal` mantissa/exponent (9) = 17 bytes
+const ORDERS_DIM: usize = 4;
+const ORDER_BLOCK: usize = 17;
+
+/// Exact header-inclusive encoded length of an L3 book for the given ragged
+/// bids/asks + symbol, computed up-front via the staged `L3BookEncodedLength`.
+/// Allocate the encode buffer to exactly this length — no oversized buffer.
+pub fn book_encoded_length(
+    bids: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(u64, rust_decimal::Decimal)])],
+    asks: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(u64, rust_decimal::Decimal)])],
+    symbol: &[u8],
+) -> Result<usize, sbe_rt::EncodeError> {
+    let after_bids = L3BookEncodedLength::new().bids_ragged(bids.len() as u16, |g| {
+        for (_, _, orders) in bids {
+            g.add()?;
+            g.group(ORDERS_DIM, ORDER_BLOCK, orders.len())?;
+        }
+        Ok(())
+    })?;
+    let after_asks = after_bids.asks_ragged(asks.len() as u16, |g| {
+        for (_, _, orders) in asks {
+            g.add()?;
+            g.group(ORDERS_DIM, ORDER_BLOCK, orders.len())?;
+        }
+        Ok(())
+    })?;
+    let complete = after_asks.symbol(symbol.len())?;
+    Ok(complete.encoded_length_with_header())
+}
+
 /// Encode an L3 order book into `buf`. Returns the header-inclusive encoded length.
 ///
 /// Uses known-size group construction — counts are known from slice lengths,

@@ -461,9 +461,14 @@ fn generate_staged(
                         let pm = self.state.enter_group(
                             count as usize, #ds as usize, #g_bl as usize,
                         );
-                        // ponytail: simplified ragged — delegates to the old
-                        // closure-based approach with manual add() counting.
-                        // Full ragged stage generation is a follow-up.
+                        // enter_group pre-counts the dimension (×pm) and all
+                        // `count` entry fixed-blocks (×pm×count). For ragged
+                        // entries the per-entry VARIABLE parts (nested groups,
+                        // var-data) must scale by `pm` (the parent multiplier)
+                        // — each entry contributes once — NOT by `pm×count`.
+                        // Reset the multiplier to `pm` so the builder's
+                        // group()/var_data()/add() operate at the parent scale.
+                        self.state.leave_group(pm);
                         let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
                         f(&mut builder)?;
                         if builder.written != count as usize {
