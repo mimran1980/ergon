@@ -7,6 +7,17 @@ semantics.
 > Experimental software. The crate has no production-safety or long-term API
 > compatibility guarantee.
 
+## Rust version and edition
+
+| | |
+|---|---|
+| **Edition** | **2024** |
+| **MSRV** | **1.88** (keeps let-chains and other 1.88+ language features; edition 2024 floor is 1.85) |
+
+If **edition 2021** (and an older MSRV) would unblock you, open an issue or say
+so — I am happy to maintain a 2021-compatible packaging path if there is real
+demand. Prefer saying what toolchain your shop is stuck on (e.g. 1.75 / 1.80).
+
 ## What it generates
 
 Generated modules can include:

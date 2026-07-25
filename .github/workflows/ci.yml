@@ -57,12 +57,14 @@ jobs:
         with:
           submodules: recursive
 
+      # MSRV 1.88 (edition 2024 + let-chains). Gate the publishable pure-Rust crate;
+      # cluster (rusteron native build) is exercised on the primary toolchain.
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.95.0"
+          toolchain: "1.88.0"
 
-      - run: cargo +1.95.0 check --workspace --all-targets --all-features --exclude ergo-aeron-cluster
-      - run: cargo +1.95.0 check -p ergo-aeron-cluster --all-targets
+      - run: cargo +1.88.0 check -p ergo-sbe --all-targets --all-features
+      - run: cargo +1.88.0 test -p ergo-sbe --lib --all-features
 
   aeron-cluster-integration:
     if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')

@@ -6,7 +6,8 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
+# Edition 2024 needs ≥1.85; 1.88 keeps let-chains and other 1.88 language features.
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/mimran1980/ergon"
 homepage = "https://github.com/mimran1980/ergon"
