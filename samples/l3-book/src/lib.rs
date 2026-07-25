@@ -1,11 +1,12 @@
 //! L3 order book codecs — generated from schemas/l3-book.xml.
 //! Demonstrates nested repeating groups with domain-type converters.
 
-#[allow(dead_code, unused_imports, unused_variables, clippy::all)]
+#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all)]
 mod l3_codec {
     include!(concat!(env!("OUT_DIR"), "/l3_codec.rs"));
 }
 pub use l3_codec::*;
+use l3_codec::Decimal as SbeDecimal;
 
 /// Exact header-inclusive encoded length of an L3 book for the given ragged
 /// bids/asks + symbol, computed up-front via the staged `L3BookEncodedLength`.
@@ -18,23 +19,13 @@ pub fn book_encoded_length(
 ) -> Result<usize, sbe_rt::EncodeError> {
     let after_bids = L3BookEncodedLength::new().bids_ragged(bids.len() as u16, |g| {
         for (_, _, orders) in bids {
-            g.add()?.orders(|og| {
-                for _ in *orders {
-                    og.add()?;
-                }
-                Ok(())
-            })?;
+            g.add()?.orders(|og| { og.uniform(orders.len())?; Ok(()) })?;
         }
         Ok(())
     })?;
     let after_asks = after_bids.asks_ragged(asks.len() as u16, |g| {
         for (_, _, orders) in asks {
-            g.add()?.orders(|og| {
-                for _ in *orders {
-                    og.add()?;
-                }
-                Ok(())
-            })?;
+            g.add()?.orders(|og| { og.uniform(orders.len())?; Ok(()) })?;
         }
         Ok(())
     })?;
@@ -46,7 +37,6 @@ pub fn book_encoded_length(
 // VarData orders are ragged at two levels: each order carries a var-data
 // `order_id` of differing length. Uses the staged builder with schema-specific
 // ragged wrapper types (field-named `order_id(len)` methods, zero constants).
-// No user-defined constants — all layout values from the generated API.
 
 /// Exact header-inclusive encoded length of an L3BookVarData book, computed
 /// via the staged `L3BookVarDataEncodedLength` builder (nested-ragged).
@@ -105,7 +95,7 @@ pub fn encode_book(
                     e.price(*price).size(*size);
                     e.orders(orders.len() as u16, |og| {
                         for (oid, qty) in *orders {
-                            let raw_qty = Decimal::new(qty.mantissa() as i64, -(qty.scale() as i8));
+                            let raw_qty = SbeDecimal::new(qty.mantissa() as i64, -(qty.scale() as i8));
                             og.add_struct(&L3BookBidsOrdersEntry {
                                 order_id: *oid,
                                 quantity: raw_qty,
@@ -124,7 +114,7 @@ pub fn encode_book(
                     e.price(*price).size(*size);
                     e.orders(orders.len() as u16, |og| {
                         for (oid, qty) in *orders {
-                            let raw_qty = Decimal::new(qty.mantissa() as i64, -(qty.scale() as i8));
+                            let raw_qty = SbeDecimal::new(qty.mantissa() as i64, -(qty.scale() as i8));
                             og.add_struct(&L3BookAsksOrdersEntry {
                                 order_id: *oid,
                                 quantity: raw_qty,

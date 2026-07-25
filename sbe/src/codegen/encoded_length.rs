@@ -1047,6 +1047,13 @@ fn generate_ragged_wrappers(
             self.b.add()?;
             Ok(self)
         }
+        /// Register `count` identical entries at once (uniform shape — no
+        /// per-entry var-data or nested-group differences). Shortcut for
+        /// calling `add()` in a loop.
+        pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
+            self.b.entries(count)?;
+            Ok(self)
+        }
     });
 
     // Nested groups — field-named method that enters the nested ragged group
