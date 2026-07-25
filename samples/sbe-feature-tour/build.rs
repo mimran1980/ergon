@@ -1,19 +1,11 @@
-//! Generate the feature-tour codecs from `schemas/feature-tour.xml`.
+//! Generate codecs from `schemas/feature-tour.xml`.
 //!
-//! # `with_conversion` vs `with_domain_type` (not redundant)
+//! Conversion (two different styles on purpose):
+//! - `with_domain_type` → concrete `available() -> bool`, `timestamp() -> DateTime`
+//! - `with_conversion`  → generic `price_as::<T>` / `price_from` on Quote (see
+//!   `demo_conversion_only` in `src/lib.rs`)
 //!
-//! | API | What you get |
-//! |-----|----------------|
-//! | **`with_conversion(sel)`** | Wire accessors stay primary (`price_value()` / `price_wire()`). Adds **generic** `price_as::<T>()` / `price_from(&T)` using `TryFromSbe` / `TryToSbe`. Caller picks `T` (e.g. `rust_decimal::Decimal`). |
-//! | **`with_domain_type(sel, "path::Type")`** | Implies conversion for `sel`, **and** emits **concrete** methods `price() -> path::Type` / `price(Type)` that hard-wire that type. Domain DTOs also store that type when `enable_domain_objects()` is on. |
-//!
-//! Prefer `with_domain_type` when the app has one canonical Rust type.
-//! Prefer `with_conversion` alone when you want pluggable converters or to keep
-//! the flyweight API wire-typed.
-//!
-//! This sample uses **both**:
-//! - domain types for `BooleanType` → `bool` and `UTCTimestamp` → `DateTime<Utc>`
-//! - conversion-only for `Decimal` → generic `*_as` / `*_from` (see `demo_conversion_only`)
+//! Do not call both for the same selector.
 
 use std::fs;
 use std::path::PathBuf;
@@ -29,7 +21,6 @@ fn main() {
 
     let config = ergo_sbe::GenerationConfig::new("feature_tour")
         .enable_domain_objects()
-        // Concrete domain methods: available() -> bool, timestamp() -> DateTime<Utc>
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("BooleanType"),
             "bool",
@@ -38,7 +29,6 @@ fn main() {
             ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
         )
-        // Conversion-only: Quote.price_as::<rust_decimal::Decimal>(), not price() -> Decimal
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
 
     let modules = ergo_sbe::Generator::new(config)
@@ -51,9 +41,7 @@ fn main() {
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     fs::write(out_dir.join("feature_tour.rs"), &module.source)
-        .unwrap_or_else(|e| panic!("write OUT_DIR/feature_tour.rs: {e}"));
+        .unwrap_or_else(|e| panic!("write generated module: {e}"));
 
     println!("cargo::rerun-if-changed={}", schema_path.display());
-    // Generated codecs may reference cfg(feature = "serde"); declare it for check-cfg.
-    println!("cargo::rustc-check-cfg=cfg(feature, values(\"serde\"))");
 }

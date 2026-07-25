@@ -343,13 +343,9 @@ pub fn demo_display_debug(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-// ─── 8. with_conversion only (not with_domain_type) ───────────────────────
+// ─── 8. with_conversion only: generic price_as / price_from ────────────────
 
-// Application-supplied adapter. `with_conversion` emits the generic seam
-// (`price_as` / `price_from`) but does **not** pull in rust_decimal — you
-// implement `TryFromSbe` / `TryToSbe` for whatever app type you want.
-// (`with_domain_type(Decimal, "rust_decimal::Decimal")` would instead emit a
-// built-in impl + concrete `price() -> Decimal` methods.)
+// App adapter — generator does not depend on rust_decimal.
 impl TryFromSbe<Decimal> for Rd {
     type Error = &'static str;
 
@@ -380,8 +376,7 @@ impl TryToSbe<Decimal> for Rd {
     }
 }
 
-/// Minimal custom adapter — proves conversion-only is pluggable (not tied to
-/// rust_decimal). Same wire layout as SBE Decimal.
+/// Second adapter for the same wire type (shows conversion is pluggable).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixedPrice {
     pub mantissa: i64,
@@ -407,38 +402,34 @@ impl TryToSbe<Decimal> for FixedPrice {
     }
 }
 
-/// Quote uses **`with_conversion(Decimal)` only** in `build.rs`.
+/// `with_conversion(Decimal)` only (see `build.rs`).
 ///
-/// - Wire accessors remain primary (`price_value()`, `price_wire` on encode).
-/// - You get **generic** `price_as::<T>()` / `price_from(&T)` for any `T: TryFromSbe` /
-///   `TryToSbe` (here both `rust_decimal::Decimal` and [`FixedPrice`]).
-/// - You do **not** get a concrete `price() -> rust_decimal::Decimal` that replaces
-///   the wire type — that is what `with_domain_type(..., "rust_decimal::Decimal")`
-///   would add (and what Boolean/timestamp use elsewhere in this sample).
+/// | API on Quote | Present? |
+/// |--------------|----------|
+/// | `price_from` / `price_as::<T>` | yes |
+/// | `price() -> rust_decimal::Decimal` | **no** (that needs `with_domain_type`) |
+/// | `price_value()` wire composite | yes |
 pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let len = QuoteEncoder::ENCODED_LENGTH;
     let mut buf = vec![0u8; len];
 
-    // Encode via generic conversion: app type → wire Decimal composite.
     let price = Rd::new(12345, 2); // 123.45
-    let size = Rd::new(10, 0); // 10
+    let size = Rd::new(10, 0);
     let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
     enc.price_from(&price)?;
     enc.size_from(&size)?;
 
     let dec = QuoteDecoder::try_from(&buf[..len])?;
-    // Wire value still available:
     let wire = dec.price_value();
     assert_eq!(wire.mantissa(), 12345);
     assert_eq!(wire.exponent(), -2);
 
-    // Generic conversion back to app type:
     let price2: Rd = dec.price_as()?;
     let size2: Rd = dec.size_as()?;
     assert_eq!(price2, price);
     assert_eq!(size2, size);
 
-    // Same buffer via a different adapter (pluggable converters):
+    // Same buffer, different app type — only possible with with_conversion.
     let fixed: FixedPrice = dec.price_as()?;
     assert_eq!(
         fixed,
@@ -448,15 +439,11 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         }
     );
 
-    // Domain DTO still uses wire Decimal (no domain type mapped):
     let dto = QuoteDomain::from(dec);
     assert_eq!(dto.price.mantissa(), 12345);
     let mut re = vec![0u8; len];
     let n = dto.encode(&mut re)?;
     assert_eq!(&re[..n], &buf[..len]);
-
-    // Contrast: Car.available() is a *concrete* bool method from with_domain_type.
-    // Quote has no `price() -> Rd` — only price_as / price_value / price_wire.
     Ok(buf[..len].to_vec())
 }
 

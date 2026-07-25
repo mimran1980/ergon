@@ -1,94 +1,136 @@
-//! Code generation configuration.
+//! Code generation configuration ([`GenerationConfig`]).
 //!
-//! Options that shape the generated Rust output: module name,
-//! domain objects, typed conversions, shared runtime, and more.
+//! # Conversion: pick **one** style per selector
 //!
-//! Use builder methods to configure:
+//! | API | When to use | Generated decode | Generated encode |
+//! |-----|-------------|------------------|------------------|
+//! | [`GenerationConfig::with_conversion`] | Pluggable adapters; no forced crate dep | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
+//! | [`GenerationConfig::with_domain_type`] | One canonical app type | `dec.price() -> path::Type` | `enc.price(value)` |
+//!
+//! `with_domain_type` **implies** conversion for that selector. Do **not** also
+//! call `with_conversion` for the same selector.
 //!
 //! ```rust
 //! use ergo_sbe::{GenerationConfig, ConversionSelector};
 //!
-//! let config = GenerationConfig::new("market_data")
-//!     .enable_domain_objects()
-//!     .with_shared_module("common_types")
+//! // A — generic / pluggable (you implement TryFromSbe / TryToSbe)
+//! let _a = GenerationConfig::new("msgs")
 //!     .with_conversion(ConversionSelector::named_type("Decimal"));
+//!
+//! // B — concrete Rust type
+//! let _b = GenerationConfig::new("msgs")
+//!     .with_domain_type(
+//!         ConversionSelector::named_type("Decimal"),
+//!         "rust_decimal::Decimal",
+//!     );
 //! ```
+//!
+//! # Other features (generated surface)
+//!
+//! | Builder | What generated code looks like |
+//! |---------|--------------------------------|
+//! | [`enable_domain_objects`](GenerationConfig::enable_domain_objects) | `CarDomain::from(dec)`, `dto.encode(&mut buf)?` |
+//! | [`with_shared_module`](GenerationConfig::with_shared_module) | Multi-schema: shared types in one module, `pub use super::common::*` |
+//! | [`with_external_sbe_rt`](GenerationConfig::with_external_sbe_rt) | `pub use path::sbe_rt as sbe_rt` instead of inlining runtime |
+//! | [`enable_error_from_impls`](GenerationConfig::enable_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
+//! | [`with_unchecked_companions`](GenerationConfig::with_unchecked_companions) | `serial_number_unchecked` style fast paths for benches |
+//! | [`with_keyword_append_token`](GenerationConfig::with_keyword_append_token) | Schema field `type` → `type_` (default `"_"`) |
+//! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated]` on schema-deprecated items |
 
-/// Selects which fields get generated `*_as`/`*_from` conversion methods.
+/// Selects which fields receive conversion / domain-type methods.
 ///
-/// Precedence when multiple selectors could match a field:
-/// 1. Exact `"Message.field"` path
-/// 2. SBE `semanticType`
-/// 3. Named type (primitive alias, enum, set, composite, fixed array)
+/// When several selectors could match the same field, precedence is:
+/// 1. Exact `"Message.field"` path ([`ConversionSelector::FieldPath`])
+/// 2. SBE `semanticType` ([`ConversionSelector::SemanticType`])
+/// 3. Named type ([`ConversionSelector::NamedType`])
+///
+/// ```rust
+/// use ergo_sbe::ConversionSelector;
+///
+/// let _ = ConversionSelector::named_type("Decimal");
+/// let _ = ConversionSelector::semantic_type("UTCTimestamp");
+/// let _ = ConversionSelector::field_path("Quote.price");
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ConversionSelector {
-    /// Match a specific message field by path: `"Car.serialNumber"`.
+    /// Match one field by path, e.g. `"Car.serialNumber"` or `"Quote.price"`.
     FieldPath(String),
-    /// Match all fields with a given SBE `semanticType`: `"UTCTimestamp"`.
+    /// Match all fields with this SBE `semanticType` attribute (e.g. `"UTCTimestamp"`).
     SemanticType(String),
-    /// Match all fields of a named type: `"Decimal"`, `"Timestamp"`.
+    /// Match all fields whose type name is this (composite, enum, set, alias).
+    ///
+    /// Example: `"Decimal"` matches every field of composite type `Decimal`.
     NamedType(String),
 }
 
 impl ConversionSelector {
-    /// Select by SBE `semanticType` attribute.
+    /// Select by SBE `semanticType` (e.g. `"UTCTimestamp"`, `"Price"`).
     #[must_use]
     pub fn semantic_type(name: impl Into<String>) -> Self {
         Self::SemanticType(name.into())
     }
 
-    /// Select by named SBE type (composite, enum, set, alias).
+    /// Select by named SBE type (composite / enum / set / alias), e.g. `"Decimal"`.
     #[must_use]
     pub fn named_type(name: impl Into<String>) -> Self {
         Self::NamedType(name.into())
     }
 
-    /// Select by exact `"Message.field"` path.
+    /// Select by exact `"MessageName.fieldName"` path.
     #[must_use]
     pub fn field_path(path: impl Into<String>) -> Self {
         Self::FieldPath(path.into())
     }
 }
 
-/// Options that shape generated Rust.
+/// Options that shape generated Rust codecs.
 ///
-/// Use builder methods to configure:
+/// Start with [`GenerationConfig::new`], chain builder methods, then pass to
+/// [`crate::Generator::new`].
 ///
 /// ```rust
 /// use ergo_sbe::{GenerationConfig, ConversionSelector};
 ///
 /// let config = GenerationConfig::new("market_data")
 ///     .enable_domain_objects()
-///     .with_shared_module("common_types");
+///     .with_domain_type(
+///         ConversionSelector::named_type("Decimal"),
+///         "rust_decimal::Decimal",
+///     );
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GenerationConfig {
-    /// Rust module name for the generated output.
+    /// Rust module name for the generated output file (`{module_name}.rs`).
     pub(crate) module_name: String,
-    /// Name of a sibling module that provides shared types (enums, sets, composites).
+    /// Sibling module that already owns shared types (multi-schema mode).
     pub(crate) shared_module: Option<String>,
-    /// Generate owned domain structs alongside flyweight decoders.
+    /// Emit owned `*Domain` structs + `From<Decoder>` / `encode`.
     pub(crate) domain_objects: bool,
-    /// Selectors for fields that get `*_as`/`*_from` conversion methods.
+    /// Selectors for generic `*_as` / `*_from` conversion methods.
     pub(crate) conversions: Vec<ConversionSelector>,
     /// Domain-type mappings: `(selector, rust_type_path)`.
-    /// Implicitly enables conversion methods for the same selector.
+    /// Implicitly enables conversion for the same selector.
     pub(crate) domain_types: Vec<(ConversionSelector, String)>,
-    /// When set, emit `pub use <path> as sbe_rt;` instead of inlining.
+    /// When set, emit `pub use <path> as sbe_rt;` instead of inlining runtime.
     pub(crate) external_sbe_rt_path: Option<String>,
-    /// When set, emit `From<sbe_rt::EncodeError>` and `From<sbe_rt::DecodeError>`
-    /// impls for the given error type path.
+    /// Emit `From<EncodeError/DecodeError>` for this error type path.
     pub(crate) error_from_path: Option<String>,
-    /// Emit `_unchecked` companion methods for benchmarking.
+    /// Emit `_unchecked` companions for benchmarking.
     pub(crate) unchecked_companions: bool,
-    /// Token appended when a schema name collides with a Rust keyword (default `"_"`).
-    /// Mirrors Java `sbe.keyword.append.token`.
+    /// Appended when a name is a Rust keyword (default `"_"`).
     pub(crate) keyword_append_token: String,
+    /// Emit `#[deprecated]` on schema-deprecated items (opt-in).
+    pub(crate) deprecated_attrs: bool,
 }
 
 impl GenerationConfig {
+    /// Create a config for output module `{module_name}.rs`.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let c = GenerationConfig::new("msgs");
+    /// ```
     #[must_use]
-    /// Create a new config with the given output module name.
     pub fn new(module_name: impl Into<String>) -> Self {
         Self {
             module_name: module_name.into(),
@@ -100,6 +142,7 @@ impl GenerationConfig {
             error_from_path: None,
             unchecked_companions: false,
             keyword_append_token: "_".into(),
+            deprecated_attrs: false,
         }
     }
 
@@ -124,25 +167,41 @@ impl GenerationConfig {
         self.external_sbe_rt_path.as_deref()
     }
 
-    /// Share one `sbe_rt` module across separately generated schema files.
+    /// Re-use one `sbe_rt` runtime across separately generated schema modules.
     ///
-    /// `path` must be a valid Rust path usable in `pub use <path> as sbe_rt`.
+    /// `path` must work in `pub use <path> as sbe_rt;`.
+    ///
+    /// ```ignore
+    /// // first module embeds sbe_rt; later modules do:
+    /// // pub use crate::common::sbe_rt as sbe_rt;
+    /// GenerationConfig::new("md")
+    ///     .with_external_sbe_rt("crate::common::sbe_rt");
+    /// ```
     #[must_use]
     pub fn with_external_sbe_rt(mut self, path: impl Into<String>) -> Self {
         self.external_sbe_rt_path = Some(path.into());
         self
     }
 
-    /// Enable generic `*_as` / `*_from` conversion methods for matching fields.
+    /// Enable **generic** conversion methods for matching fields.
     ///
-    /// Wire accessors stay primary (`price_value` / `price_wire`). Callers
-    /// supply `TryFromSbe` / `TryToSbe` for their app type — the generator does
-    /// not pull in rust_decimal. Prefer [`Self::with_domain_type`] when there
-    /// is a single canonical Rust type (emits concrete methods + well-known
-    /// impls).
+    /// # Generated API
     ///
-    /// Duplicate selectors are ignored. Selectors matching no field are
-    /// generation errors.
+    /// ```ignore
+    /// // build.rs
+    /// .with_conversion(ConversionSelector::named_type("Decimal"))
+    ///
+    /// // application (you implement TryFromSbe / TryToSbe for MyPrice)
+    /// enc.price_from(&my_price)?;
+    /// let my_price: MyPrice = dec.price_as()?;
+    /// let wire = dec.price_value(); // still available
+    /// // encode setter for wire type is often renamed:
+    /// enc.price_wire(wire_decimal);
+    /// ```
+    ///
+    /// Prefer [`Self::with_domain_type`] when one concrete Rust type is enough.
+    /// Duplicate selectors are ignored; selectors matching nothing error at
+    /// [`crate::Generator::generate`] time.
     #[must_use]
     pub fn with_conversion(mut self, selector: ConversionSelector) -> Self {
         if !self.conversions.contains(&selector) {
@@ -151,13 +210,27 @@ impl GenerationConfig {
         self
     }
 
-    /// Map matching fields to a concrete Rust domain type.
+    /// Map matching fields to a **concrete** Rust type path.
     ///
-    /// Implicitly enables conversion for the same selector, **and** emits
-    /// concrete methods named after the field (e.g. `price() -> Decimal`)
-    /// plus well-known `TryFromSbe` impls for `bool`, `rust_decimal::Decimal`,
-    /// and `chrono::DateTime<Utc>` when those paths are used. The `rust_type`
-    /// must be a valid Rust type path (e.g. `"rust_decimal::Decimal"`).
+    /// Implies [`Self::with_conversion`] for the same selector. Also emits
+    /// well-known `TryFromSbe` impls for `bool`, `rust_decimal::Decimal`, and
+    /// `chrono::DateTime<Utc>` when those paths are used.
+    ///
+    /// # Generated API
+    ///
+    /// ```ignore
+    /// // build.rs
+    /// .with_domain_type(
+    ///     ConversionSelector::named_type("Decimal"),
+    ///     "rust_decimal::Decimal",
+    /// )
+    ///
+    /// // application
+    /// enc.price(rust_decimal::Decimal::new(12345, 2));
+    /// let p: rust_decimal::Decimal = dec.price();
+    /// ```
+    ///
+    /// Do **not** also call [`Self::with_conversion`] for the same selector.
     #[must_use]
     pub fn with_domain_type(
         mut self,
@@ -175,43 +248,82 @@ impl GenerationConfig {
         self
     }
 
-    /// Emit `From<sbe_rt::EncodeError>` / `From<sbe_rt::DecodeError>` for
-    /// the given error type, so callers can use `?` without `.map_err()`.
+    /// Emit `From<sbe_rt::EncodeError>` / `From<sbe_rt::DecodeError>` for your error type.
+    ///
+    /// ```ignore
+    /// // build.rs
+    /// .enable_error_from_impls("crate::AppError")
+    ///
+    /// // app: fn encode(...) -> Result<(), AppError> {
+    /// //     enc.group(...)?;  // EncodeError converts via From
+    /// // }
+    /// ```
     #[must_use]
     pub fn enable_error_from_impls(mut self, path: impl Into<String>) -> Self {
         self.error_from_path = Some(path.into());
         self
     }
 
-    /// Generate owned domain structs alongside flyweight decoders.
+    /// Generate owned domain structs next to flyweight codecs.
+    ///
+    /// # Generated API
+    ///
+    /// ```ignore
+    /// let dto = CarDomain::from(CarDecoder::try_from(buf)?);
+    /// assert_eq!(dto.serial_number, 1234);
+    /// let n = dto.encode(&mut out)?; // range-checks integer min/max
+    /// ```
     #[must_use]
     pub fn enable_domain_objects(mut self) -> Self {
         self.domain_objects = true;
         self
     }
 
+    /// Shared module name for multi-schema generation ([`crate::Generator::generate_multi`]).
+    ///
+    /// First schema owns shared enums/sets/composites; later modules
+    /// `pub use super::<name>::*`.
     #[must_use]
-    /// Set the shared module name for multi-schema generation.
     pub fn with_shared_module(mut self, name: impl Into<String>) -> Self {
         self.shared_module = Some(name.into());
         self
     }
 
-    /// Emit `_unchecked` companion methods for benchmarking.
+    /// Emit `_unchecked` companion methods for micro-benchmarks.
+    ///
+    /// ```ignore
+    /// // hot path after you have already validated bounds:
+    /// let n = car.serial_number_unchecked();
+    /// ```
     #[must_use]
     pub fn with_unchecked_companions(mut self) -> Self {
         self.unchecked_companions = true;
         self
     }
 
-    /// Token appended when a generated identifier collides with a Rust keyword.
+    /// Token appended when a schema name is a Rust keyword (default `"_"`).
     ///
-    /// Default is `"_"`, matching the usual Java `sbe.keyword.append.token`
-    /// recommendation. Empty string is allowed but will leave bare keywords
-    /// (which fail to compile) — prefer a non-empty token.
+    /// Schema field `name="type"` becomes method `type_()`; with token `"x"`,
+    /// it becomes `typex()`.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let c = GenerationConfig::new("m").with_keyword_append_token("_");
+    /// let _ = c;
+    /// ```
     #[must_use]
     pub fn with_keyword_append_token(mut self, token: impl Into<String>) -> Self {
         self.keyword_append_token = token.into();
+        self
+    }
+
+    /// Emit `#[deprecated]` on schema-deprecated fields/types/messages.
+    ///
+    /// Opt-in: deprecating a generated type cascades to its impls, so the
+    /// generated module also gets `#![allow(deprecated)]` for internal use.
+    #[must_use]
+    pub fn with_deprecated_attrs(mut self) -> Self {
+        self.deprecated_attrs = true;
         self
     }
 }

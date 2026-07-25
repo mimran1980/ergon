@@ -1,14 +1,11 @@
-//! Token-based intermediate representation for an SBE schema.
+//! Token intermediate representation for an SBE schema.
 //!
-//! # See also
+//! After [`crate::parse`], you usually only need [`Ir`] via [`crate::Schema`].
+//! The flat [`Token`] stream (sbe-tool style) uses [`Signal`] brackets for
+//! messages, fields, composites, enums, sets, groups, and var-data; [`Encoding`]
+//! holds wire layout. [`crate::resolve_schema`] fills offsets and defaults.
 //!
-//! [`crate::xml`], [`crate::resolve`], [`crate::Schema`].
-//!
-//! The IR is a flat stream of [`Token`]s modelled on the proven sbe-tool design:
-//! each token carries a [`Signal`] (its structural role) and an [`Encoding`]
-//! (wire layout). Codegen walks this stream. Later slices extend [`Signal`] and
-//! [`Encoding`] — enums, choices, groups, and var-data are bracketed by their own
-//! Begin/End signals, and offset/block-length resolution is a separate pass.
+//! Most application code never inspects IR directly — use generated codecs.
 
 /// Byte order declared by the schema; applies to every primitive encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

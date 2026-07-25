@@ -10,12 +10,8 @@ fn main() {
     let ir = ergo_sbe::parse(&xml)
         .unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
     let schema = ergo_sbe::Schema::from_ir(ir);
-    // Domain objects + with_domain_type only (not bare with_conversion).
-    // with_domain_type already enables conversion for each selector and emits
-    // concrete methods (price() -> rust_decimal::Decimal, etc.). Adding
-    // with_conversion for the same selectors would be redundant — use bare
-    // with_conversion only when you want generic price_as::<T> / app adapters
-    // (see samples/sbe-feature-tour and samples/exchange-example).
+    // Concrete app types (implies conversion). For generic price_as::<T> only,
+    // see samples/exchange-example and samples/sbe-feature-tour.
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
         .enable_domain_objects()
         .with_unchecked_companions()

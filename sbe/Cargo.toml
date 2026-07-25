@@ -64,6 +64,9 @@ name = "stability_test"
 [[test]]
 name = "java_parity_features_test"
 
+[[test]]
+name = "docs_validation_test"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 

@@ -1,13 +1,13 @@
-//! Optional SBE XSD-aligned structural validation.
+//! Optional SBE **XSD-shaped** structural validation (not a full W3C engine).
 //!
-//! Full W3C XSD evaluation needs a native libxml (or similar) binding. This
-//! module instead:
-//! 1. embeds the official FIX Protocol Limited `sbe.xsd`, and
-//! 2. runs a pure-Rust structural check that mirrors the XSD's element model
-//!    (root, allowed children, required attributes).
+//! | Item | Purpose |
+//! |------|---------|
+//! | [`SBE_XSD`] | Official FPL `sbe.xsd` text (for external tools / docs) |
+//! | [`validate_against_sbe_xsd`] | Pure-Rust checks: root, children, known attributes |
+//! | [`crate::parse_with_xsd_validation`] | Validate then [`crate::parse`] |
 //!
-//! Use this as a CI gate before codegen; the main parser remains the source of
-//! truth for semantic IR construction.
+//! Semantic IR rules (offsets, types, duplicates) still come from the main
+//! parser / resolver.
 
 use miette::Diagnostic;
 use thiserror::Error;

@@ -14,7 +14,8 @@ fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str, decimal: b
     let ir = ergo_sbe::parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path}: {e}"));
     let schema = ergo_sbe::Schema::from_ir(ir);
 
-    // Flyweight-only codecs: no generated domain objects (remediation Task 7).
+    // Flyweight codecs. Decimal uses with_conversion only (generic price_as /
+    // price_from + app TryFromSbe in src/decimal.rs) — not with_domain_type.
     let mut config = ergo_sbe::GenerationConfig::new(module_name);
     if decimal {
         config = config.with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));

@@ -1,17 +1,32 @@
-//! SBE XML schema parsing into the token IR.
+//! SBE XML → token [`Ir`](crate::Ir).
 //!
-//! # See also
+//! | Function | Use when |
+//! |----------|----------|
+//! | [`parse`] | Schema already in a string |
+//! | [`parse_file`] | Path on disk; resolves `xi:include` relative to the file |
+//! | [`parse_with_xsd_validation`] | Same as [`parse`], after structural XSD check |
 //!
-//! [`crate::schema`], [`crate::resolve`], [`crate::Generator`].
+//! After parse, wrap with [`crate::Schema::from_ir`] and pass to
+//! [`crate::Generator`].
 //!
-//! Uses [`roxmltree`] (DOM) so SBE's mixed-order `<type>`/`<enum>`/`<set>`/
-//! `<composite>`/`<message>` and forward references resolve naturally, and XML
-//! comments are retained as nodes (a later slice maps them to rustdoc alongside
-//! `description` attributes). Schema files are KB-scale, so DOM is effectively
-//! free here.
+//! ```rust
+//! use ergo_sbe::{parse, Schema};
+//! let ir = parse(r#"<?xml version="1.0"?>
+//! <messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
+//!   <types>
+//!     <composite name="messageHeader">
+//!       <type name="blockLength" primitiveType="uint16"/>
+//!       <type name="templateId" primitiveType="uint16"/>
+//!       <type name="schemaId" primitiveType="uint16"/>
+//!       <type name="version" primitiveType="uint16"/>
+//!     </composite>
+//!   </types>
+//! </messageSchema>"#).unwrap();
+//! let schema = Schema::from_ir(ir);
+//! assert_eq!(schema.id, 1);
+//! ```
 //!
-//! Errors are [`ParseError`]s with [`miette`] source spans pointing at the
-//! offending element, so consumers get a rendered, navigable diagnostic.
+//! Errors are span-bearing [`ParseError`]s ([`miette`]).
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -331,26 +346,28 @@ fn resolve_type_to_tokens(
     }
 }
 
-/// Parse an SBE schema document (raw XML string) into the token IR.
+/// Parse an SBE schema XML string into a token [`Ir`].
 ///
-/// Includes are resolved via the [`parse_file`] function with base-dir
-/// awareness. When called without a file path, relative includes fall
-/// back to a set of well-known submodule directory probes.
+/// Runs resolution ([`crate::resolve_schema`]) automatically. Relative
+/// `xi:include` without a file base dir uses well-known path probes.
 ///
 /// # Errors
 ///
-/// Returns a span-bearing [`ParseError`] if the XML is malformed, the root is
-/// not a `<messageSchema>`, or a required SBE attribute is missing or invalid.
+/// [`ParseError`] if XML is malformed, root is not `messageSchema`, or
+/// attributes/types fail validation.
 #[allow(clippy::result_large_err)]
 pub fn parse(xml: &str) -> Result<Ir, ParseError> {
     parse_with_context(xml, None, &mut HashSet::new())
 }
 
-/// Parse after running [`crate::validate_against_sbe_xsd`].
+/// [`parse`] after [`crate::validate_against_sbe_xsd`].
 ///
-/// Use this when schema authors should be gated on the FPL element model
-/// before IR construction. Semantic IR errors still come from the normal
-/// parse/resolve path.
+/// Use in CI for schema authors. Still not a full W3C XSD engine — see
+/// [`crate::xsd`].
+///
+/// # Errors
+///
+/// XSD structural failures or any [`parse`] error.
 #[allow(clippy::result_large_err)]
 pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
     if let Err(e) = crate::xsd::validate_against_sbe_xsd(xml) {
@@ -362,13 +379,11 @@ pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
     parse(xml)
 }
 
-/// Parse an SBE schema file, resolving `<xi:include href="..."/>`
-/// elements relative to the parent directory of `path`.
+/// Parse a schema file; resolve `xi:include` relative to the file's directory.
 ///
 /// # Errors
 ///
-/// Returns a span-bearing [`ParseError`] on XML parse failure, I/O error,
-/// or schema validation error.
+/// I/O, XML, or schema validation failures as [`ParseError`].
 #[allow(clippy::result_large_err)]
 pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
     let path = path.as_ref();

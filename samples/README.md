@@ -45,27 +45,27 @@ just build-aeron-jars
 cargo run --manifest-path samples/cluster-tutorial/Cargo.toml
 ```
 
-## Conversion config: which sample uses what
+## Conversion: which sample uses what
 
-| Sample | Config | Why |
-|--------|--------|-----|
-| [`l3-book/`](l3-book/) | **`with_domain_type` only** | One canonical app type per field (`rust_decimal`, `bool`, `chrono`). That API **implies** conversion — you do **not** also call `with_conversion` for the same selectors. You get concrete methods like `price() -> rust_decimal::Decimal`. |
-| [`exchange-example/`](exchange-example/) | **`with_conversion` only** | Pluggable seam: generated `price_as` / `price_from`; app implements `TryFromSbe` (see its decimal adapter). |
-| [`sbe-feature-tour/`](sbe-feature-tour/) | **Both** | Teaching sample: domain types for bool/timestamp; conversion-only Decimal on `Quote` (`demo_conversion_only`). |
+| Sample | Config | Decode / encode surface |
+|--------|--------|-------------------------|
+| [`l3-book/`](l3-book/) | **`with_domain_type` only** | `dec.price()` → `Decimal`; `enc.price(d)` |
+| [`exchange-example/`](exchange-example/) | **`with_conversion` only** | `dec.price_as::<T>()?`; `enc.price_from(&t)?` (+ app `TryFromSbe`) |
+| [`sbe-feature-tour/`](sbe-feature-tour/) | **Both** (different selectors) | bool/timestamp concrete; Decimal generic (`demo_conversion_only`) |
+
+Rule: **one style per selector**. `with_domain_type` already enables conversion;
+do not stack `with_conversion` on the same selector.
+
+```rust
+// A — pluggable
+.with_conversion(ConversionSelector::named_type("Decimal"))
+// B — concrete (implies conversion)
+.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
+```
 
 ## ErgoSBE feature tour
 
-[`sbe-feature-tour/`](sbe-feature-tour/) is the map from **product README claims →
-runnable code + schema**. Prefer it when documenting or teaching:
-
-- fixed `ENCODED_LENGTH`
-- staged `*EncodedLength` (including ragged groups)
-- encoder `fixed` + consuming tails
-- decoder consuming stages + strict text
-- `CarDomain` DTO + byte-identical re-encode
-- multi-message `AnyMessage`
-- `try_*` / `verify` vs trusted `wrap`
-- `with_conversion` vs `with_domain_type` (see sample README + `demo_conversion_only`)
+[`sbe-feature-tour/`](sbe-feature-tour/) maps product README claims → runnable demos.
 
 ```sh
 cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml
@@ -73,26 +73,8 @@ cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml
 
 ## L3 sample
 
-The L3 sample is the deep nested/ragged migration target. It intentionally uses
-only `with_domain_type` in [`l3-book/build.rs`](l3-book/build.rs) — not bare
-`with_conversion` — because the book always speaks `rust_decimal` / `chrono` /
-`bool`. Domain type already enables the conversion machinery; adding
-`with_conversion(Decimal)` on top would be a no-op for the same selector.
-
-Schema highlights:
-
-- fixed fields with `chrono`, `bool`, and `rust_decimal` mappings;
-- nested bid/ask and order groups;
-- ragged entry shapes;
-- variable-length order identifiers;
-- a three-level group-to-variable-data tail.
-
-Its helpers compute the complete header-inclusive wire length before allocating,
-encode into exactly that buffer, decode through generated flyweights, and check
-owned domain-object round trips. Read
-[`l3-book/README.md`](l3-book/README.md),
-[`l3-book/src/main.rs`](l3-book/src/main.rs) and
-[`l3-book/src/lib.rs`](l3-book/src/lib.rs) alongside the schema.
+Deep nested/ragged books; **`with_domain_type` only** (concrete decimals /
+chrono / bool). See [`l3-book/README.md`](l3-book/README.md).
 
 ## Rules
 

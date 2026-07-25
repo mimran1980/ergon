@@ -185,6 +185,27 @@ fn keyword_append_token() -> String {
     KEYWORD_APPEND.with(|c| c.borrow().clone())
 }
 
+thread_local! {
+    static DEPRECATED_ATTRS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with `#[deprecated]` emission enabled (`with_deprecated_attrs()`).
+/// When off (default), no `#[deprecated]` is emitted anywhere — avoiding the
+/// Rust cascade where deprecating a generated type warns at every `impl` on it.
+pub(crate) fn with_deprecated_attrs<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
+    DEPRECATED_ATTRS.with(|cell| {
+        let prev = cell.get();
+        cell.set(enabled);
+        let out = f();
+        cell.set(prev);
+        out
+    })
+}
+
+fn deprecated_attrs_enabled() -> bool {
+    DEPRECATED_ATTRS.with(|c| c.get())
+}
+
 /// Rust keywords that cannot be used as bare identifiers.
 pub(crate) fn is_rust_keyword(s: &str) -> bool {
     matches!(
@@ -1829,9 +1850,10 @@ pub(crate) fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
     quote::quote! { #[doc = #lit] }
 }
 
-/// `#[deprecated]` when the schema marks the item deprecated, else nothing.
+/// `#[deprecated]` when the item is schema-deprecated AND `with_deprecated_attrs()`
+/// is active. Centralises the flag check so every call site stays ungated.
 pub(crate) fn deprecated_attr_tokens(deprecated: bool) -> proc_macro2::TokenStream {
-    if deprecated {
+    if deprecated && deprecated_attrs_enabled() {
         quote::quote! { #[deprecated] }
     } else {
         quote::quote! {}

@@ -69,6 +69,9 @@ check-products:
     cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     cargo test -p ergo-sbe --all-features -- --test-threads=1
+    cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
+    cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     cargo test -p ergo-aeron-cluster --lib
 
 # Sample crates gate (unpublished).
@@ -91,25 +94,29 @@ release-check: check-products
 # ── test ──────────────────────────────────────────────────────────────────
 
 # Comprehensive test suite: runs everything possible (unit, integration,
-# cluster lib, sample offline tests, and bench compilation).
+# doctests/rustdoc for ergo-sbe, cluster lib, sample offline tests, benches).
 # Gated tests (Java harness) run only when their services are available.
 test:
-    @echo "=== 1/5 fmt ==="
+    @echo "=== 1/6 fmt ==="
     cargo fmt --all --check
-    @echo "=== 2/5 clippy (workspace + samples) ==="
+    @echo "=== 2/6 clippy (workspace + samples) ==="
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    @echo "=== 3/5 unit + integration tests ==="
+    @echo "=== 3/6 unit + integration tests ==="
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
-    @echo "=== 4/5 sample offline tests ==="
+    @echo "=== 4/6 ergo-sbe doctests + rustdoc (-D warnings) + docs_validation ==="
+    cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
+    cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
+    @echo "=== 5/6 sample offline tests ==="
     cd samples/l3-book && cargo test -- --test-threads=1
     cd samples/sbe-feature-tour && cargo test -- --test-threads=1
     cd samples/sbe-codegen-examples && cargo run --example flyweight >/dev/null && cargo run --example domain_objects >/dev/null
     cd samples/exchange-example && cargo test --lib -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
     cd samples/cluster-rfq && cargo build --examples
-    @echo "=== 5/5 bench compilation ==="
+    @echo "=== 6/6 bench compilation ==="
     cargo bench -p ergo-sbe-benchmarks --no-run
     @echo ""
     @echo "=== Gated: Aeron Cluster Java harness ==="

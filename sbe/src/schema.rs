@@ -1,14 +1,4 @@
-//! SBE schema inputs and normalised schema metadata.
-//!
-//! # See also
-//!
-//! [`crate::parse`], [`crate::Generator`], [`crate::GenerationConfig`].
-//!
-//! Defines the [`Schema`] type that represents a parsed SBE schema
-//! at the ergo-sbe boundary. A `Schema` holds the package identity
-//! (`package`, `id`, `version`) plus the resolved token [`Ir`].
-//!
-//! # Usage
+//! Normalised schema handle for codegen: package identity + resolved [`Ir`].
 //!
 //! ```rust
 //! use ergo_sbe::{parse, Schema};
@@ -29,18 +19,14 @@
 //! let schema = Schema::from_ir(ir);
 //! assert_eq!(schema.package, "example");
 //! assert_eq!(schema.id, 1);
+//! // Generator::new(config).generate(&schema)
 //! ```
-//!
-//! # Schema creation
-//!
-//! - [`Schema::from_ir`] — from a parsed token IR.
 
 use crate::ir::{ByteOrder, Ir};
 
-/// Normalised schema metadata after parsing and resolution.
+/// Parsed + resolved SBE schema ready for [`crate::Generator`].
 ///
-/// Holds the schema's package identity and the full token IR that
-/// the [`Generator`](crate::Generator) consumes to produce Rust code.
+/// Built with [`Schema::from_ir`] after [`crate::parse`] / [`crate::parse_file`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Schema {
     /// SBE package name from the XML schema (e.g. `"fix.sbe"`, `"baseline"`).
@@ -78,14 +64,19 @@ impl Schema {
         }
     }
 
-    /// Create schema metadata from a parsed token IR.
+    /// Wrap a resolved [`Ir`] as a [`Schema`] for codegen.
     ///
-    /// Typically the output of [`parse`](crate::parse):
-    ///
-    /// ```ignore
+    /// ```rust
     /// use ergo_sbe::{parse, Schema};
-    /// let ir = parse(schema_xml).unwrap();
-    /// let schema = Schema::from_ir(ir);
+    /// # let xml = r#"<?xml version="1.0"?><messageSchema package="t" id="1" version="0"
+    /// # byteOrder="littleEndian"><types><composite name="messageHeader">
+    /// # <type name="blockLength" primitiveType="uint16"/>
+    /// # <type name="templateId" primitiveType="uint16"/>
+    /// # <type name="schemaId" primitiveType="uint16"/>
+    /// # <type name="version" primitiveType="uint16"/>
+    /// # </composite></types></messageSchema>"#;
+    /// let schema = Schema::from_ir(parse(xml).unwrap());
+    /// assert_eq!(schema.version, 0);
     /// ```
     #[must_use]
     pub fn from_ir(ir: Ir) -> Self {

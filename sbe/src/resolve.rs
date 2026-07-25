@@ -1,34 +1,11 @@
-//! SBE schema validation and reference-resolution pass.
+//! Offset / block-length resolution and schema integrity checks on [`Ir`].
 //!
-//! # See also
+//! Called automatically by [`crate::parse`] / [`crate::parse_file`]. Direct use
+//! is only needed if you build an [`Ir`] by hand.
 //!
-//! [`crate::ir`], [`crate::Schema`], [`crate::Generator`].
-//!
-//! This module runs after XML parsing to:
-//!
-//! - Assign default null, min, and max values to every primitive encoding.
-//! - Compute and fill byte offsets for all fields, composites, and groups.
-//! - Compute block lengths for composites and messages.
-//! - Validate the resolved offsets (no overlap, valid alignment).
-//!
-//! The primary entry-point is [`resolve_schema`], which mutates the IR
-//! in-place. It is called automatically by [`parse`](crate::parse) and
-//! [`parse_file`](crate::xml::parse_file) — most users never need to
-//! call it directly.
-//!
-//! # Resolution passes
-//!
-//! 1. **Duplicate template ID check**: two messages may not share the same id.
-//! 2. **Since-version bound check**: no token may have a sinceVersion exceeding
-//!    the schema version.
-//! 3. **Default values**: every primitive type gets a default null, min, and
-//!    max sentinel (e.g. `uint16` null = `65535`, min = `0`, max = `65534`).
-//! 4. **Offset resolution**: walks composites and messages sequentially,
-//!    assigning offsets to fields that lack an explicit `offset` attribute.
-//!    Nested groups and var-data fields are resolved independently (they live
-//!    in the tail, after the fixed block).
-//! 5. **Block length**: the final offset of each composite/message becomes its
-//!    block length, stored on the `BeginComposite`/`BeginMessage` token.
+//! Passes: unique template ids, `sinceVersion` ≤ schema version, default
+//! null/min/max for primitives, sequential offsets, block lengths for
+//! composites/messages (groups/var-data live in the tail).
 
 use crate::ir::{Ir, PrimitiveType, Signal, Token};
 
@@ -136,13 +113,15 @@ impl ResolveError {
     }
 }
 
-/// Run the reference resolution pass on a schema IR.
+/// Resolve offsets, block lengths, and default null/min/max on `ir` in place.
 ///
-/// `source` is an optional reference to the raw XML text; when provided it
-/// is attached to any [`ResolveError`] for miette source-code rendering.
+/// Already invoked by [`crate::parse`]. Pass `source` for miette snippets on
+/// [`ResolveError`].
 ///
-/// Modifies the IR in-place to fill resolved offsets, block lengths,
-/// and default null/min/max values.
+/// # Errors
+///
+/// Duplicate template ids, unknown types, bad offsets, empty composites,
+/// or `sinceVersion` beyond schema version.
 pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveError> {
     let src = source.map(|s| miette::NamedSource::new("schema.xml", s.to_owned()));
 

@@ -1,29 +1,47 @@
-//! Rust code generation from the resolved SBE IR.
+//! Rust code generation from a resolved [`crate::Schema`].
 //!
-//! # See also
-//!
-//! [`crate::GenerationConfig`], [`crate::Schema`], and the crate README's
-//! generated-code workflow.
-//!
-//! This module contains the [`Generator`] struct — the primary API for
-//! producing Rust source modules from a parsed [`Schema`].
+//! Primary type: [`Generator`]. Configure with [`crate::GenerationConfig`],
+//! call [`Generator::generate`] or [`Generator::generate_multi`], write
+//! [`GeneratedModule::source`] to `OUT_DIR`, then `include!` it.
 //!
 //! # Pipeline
 //!
-//! 1. Partition the flat token IR into logical groups (enums, sets,
-//!    composites, messages).
-//! 2. Generate type definitions for each group.
-//! 3. For each message, generate:
-//!    - A decoder struct (`CarDecoder`) with field accessors, group
-//!      iterators, and var-data readers.
-//!    - An encoder struct (`CarEncoder`) with field setters and type-state
-//!      tail management.
-//! 4. Generate an `AnyMessage` dispatch enum and `FrameCursor`.
-//! 5. Run the output through [`prettyplease`] for formatting.
+//! 1. Partition IR tokens into enums, sets, composites, messages.
+//! 2. Emit type definitions.
+//! 3. Per message: decoder flyweight, encoder + type-state tails, optional domain DTO.
+//! 4. Emit `AnyMessage` / `FrameCursor` when multiple templates exist.
+//! 5. Format with `prettyplease`.
 //!
-//! The generated code includes an inline `sbe_rt` runtime module with
-//! error types, the `SbeMessage` trait, and helper traits for group
-//! encoding.
+//! # Example
+//!
+//! ```rust
+//! use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
+//!
+//! let ir = parse(r#"<?xml version="1.0"?>
+//! <messageSchema package="ex" id="1" version="0" byteOrder="littleEndian">
+//!   <types>
+//!     <composite name="messageHeader">
+//!       <type name="blockLength" primitiveType="uint16"/>
+//!       <type name="templateId" primitiveType="uint16"/>
+//!       <type name="schemaId" primitiveType="uint16"/>
+//!       <type name="version" primitiveType="uint16"/>
+//!     </composite>
+//!   </types>
+//!   <message name="Ping" id="1">
+//!     <field name="seq" id="1" type="uint32" offset="0"/>
+//!   </message>
+//! </messageSchema>"#).unwrap();
+//! let schema = Schema::from_ir(ir);
+//! let set = Generator::new(GenerationConfig::new("ping"))
+//!     .generate(&schema)
+//!     .unwrap();
+//! let src = &set.modules().next().unwrap().source;
+//! assert!(src.contains("PingDecoder"));
+//! assert!(src.contains("PingEncoder"));
+//! ```
+//!
+//! See the [crate root](crate) for how to use generated codecs (encode/decode,
+//! conversion styles, domain objects, metadata).
 
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -38,16 +56,34 @@ use quote::format_ident;
 pub(crate) use runtime::*;
 use sha2::{Digest, Sha256};
 
-/// A single generated Rust module.
+/// One generated Rust source file.
+///
+/// Write `source` to `OUT_DIR.join(path)` from `build.rs`, then:
+///
+/// ```ignore
+/// mod msgs {
+///     include!(concat!(env!("OUT_DIR"), "/msgs.rs"));
+/// }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedModule {
-    /// Relative module path, for example `messages.rs`.
+    /// Relative path, e.g. `"messages.rs"` or `"common_types.rs"`.
     pub path: String,
-    /// Rust source code.
+    /// Full formatted Rust source for that module.
     pub source: String,
 }
 
-/// Complete generated output for a schema.
+/// Set of modules from [`Generator::generate`] or [`Generator::generate_multi`].
+///
+/// ```ignore
+/// let set = generator.generate(&schema)?;
+/// for m in set.modules() {
+///     std::fs::write(out_dir.join(&m.path), &m.source)?;
+/// }
+/// for w in set.warnings() {
+///     println!("cargo:warning={w}");
+/// }
+/// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GeneratedModuleSet {
     modules: Vec<GeneratedModule>,
@@ -104,14 +140,14 @@ impl GeneratedModuleSet {
         self.modules.push(module);
     }
 
-    /// Iterate over the generated modules.
+    /// Iterate modules in a stable order (write each to `OUT_DIR`).
     #[must_use]
     pub fn modules(&self) -> impl ExactSizeIterator<Item = &GeneratedModule> {
         self.modules.iter()
     }
 
-    /// Warnings emitted during generation (e.g. shared types with version-gated
-    /// members that may not decode correctly across schemas at different versions).
+    /// Non-fatal warnings (e.g. shared types with `sinceVersion > 0`).
+    /// Surface via `cargo:warning=` from `build.rs`.
     #[must_use]
     pub fn warnings(&self) -> &[String] {
         &self.warnings
@@ -163,7 +199,27 @@ impl GenerationContext {
     }
 }
 
-/// SBE codec generator from a resolved [`Schema`].
+/// SBE → Rust codec generator.
+///
+/// Holds a [`GenerationConfig`]. Call [`Self::generate`] for one schema or
+/// [`Self::generate_multi`] when sharing types across schemas.
+///
+/// ```rust
+/// use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
+/// # let xml = r#"<?xml version="1.0"?><messageSchema package="t" id="1" version="0"
+/// # byteOrder="littleEndian"><types><composite name="messageHeader">
+/// # <type name="blockLength" primitiveType="uint16"/>
+/// # <type name="templateId" primitiveType="uint16"/>
+/// # <type name="schemaId" primitiveType="uint16"/>
+/// # <type name="version" primitiveType="uint16"/>
+/// # </composite></types><message name="M" id="1">
+/// # <field name="x" id="1" type="uint8" offset="0"/></message></messageSchema>"#;
+/// let schema = Schema::from_ir(parse(xml).unwrap());
+/// let modules = Generator::new(GenerationConfig::new("m"))
+///     .generate(&schema)
+///     .unwrap();
+/// assert_eq!(modules.modules().len(), 1);
+/// ```
 #[derive(Clone, Debug)]
 pub struct Generator {
     config: GenerationConfig,
@@ -264,8 +320,8 @@ fn domain_encode_setter_name(
 }
 
 impl Generator {
+    /// Create a generator with the given [`GenerationConfig`].
     #[must_use]
-    /// Create a new generator from the given configuration.
     pub const fn new(config: GenerationConfig) -> Self {
         Self { config }
     }
@@ -347,38 +403,43 @@ impl Generator {
         false
     }
 
-    /// Generate Rust modules for a normalized schema.
+    /// Generate one Rust module for `schema` (file name from config module name).
     ///
-    /// Validates conversion configuration and returns an error on invalid setup.
+    /// # Errors
+    ///
+    /// [`GenerateError`] if conversion selectors match nothing or collide.
     pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
         with_keyword_append(&self.config.keyword_append_token, || {
-            self.validate_conversions(schema)?;
-            let mut modules = GeneratedModuleSet::default();
-            let src = self.gen_schema(schema, &HashSet::new(), false, true);
-            modules.push(GeneratedModule {
-                path: format!("{}.rs", self.config.module_name),
-                source: src,
-            });
-            Ok(modules)
+            with_deprecated_attrs(self.config.deprecated_attrs, || {
+                self.validate_conversions(schema)?;
+                let mut modules = GeneratedModuleSet::default();
+                let src = self.gen_schema(schema, &HashSet::new(), false, true);
+                modules.push(GeneratedModule {
+                    path: format!("{}.rs", self.config.module_name),
+                    source: src,
+                });
+                Ok(modules)
+            })
         })
     }
 
-    /// Generate Rust modules for multiple schemas, deduplicating shared types.
+    /// Generate modules for several schemas, optionally deduplicating shared types.
     ///
-    /// When `config.shared_module` is set, the first schema's enums, sets, and
-    /// composites are treated as "shared". Subsequent schemas skip those type
-    /// definitions and instead emit `pub use super::<shared_module>::*;` to
-    /// reference them. The `sbe_rt` runtime module is only emitted in the first
-    /// schema's output.
+    /// When [`GenerationConfig::with_shared_module`] is set:
+    /// - first entry owns shared enums/sets/composites (+ usually `sbe_rt`);
+    /// - later entries emit `pub use super::<shared>::*;` and skip shared types.
     ///
-    /// Each entry is `(schema, module_name)` where `module_name` is the Rust
-    /// module name (e.g. `"common_types"`, `"market_data"`).
+    /// Each entry is `(schema, module_name)` → `{module_name}.rs`.
+    ///
+    /// # Errors
+    ///
+    /// Same conversion validation as [`Self::generate`].
     pub fn generate_multi(
         &self,
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
         with_keyword_append(&self.config.keyword_append_token, || {
-            self.generate_multi_inner(schemas)
+            with_deprecated_attrs(self.config.deprecated_attrs, || self.generate_multi_inner(schemas))
         })
     }
 
