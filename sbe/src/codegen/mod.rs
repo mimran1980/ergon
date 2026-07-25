@@ -2508,14 +2508,17 @@ fn generate_domain_recursive(
         if has_tail {
             from_exprs.push(quote::quote! {
                 #g_field_ident: dec.#g_field_ident()
-                    .map(|g| g.filter_map(|e| e.ok()).map(#entry_domain_ident::from).collect())
-                    .unwrap_or_default()
+                    .map(|g| {
+                        g.map(|r| r.map(#entry_domain_ident::from))
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .unwrap_or_else(|e| Err(e))?
             });
         } else {
             from_exprs.push(quote::quote! {
                 #g_field_ident: dec.#g_field_ident()
-                    .map(|g| g.map(#entry_domain_ident::from).collect())
-                    .unwrap_or_default()
+                    .map(|g| Ok(g.map(#entry_domain_ident::from).collect()))
+                    .unwrap_or_else(|e| Err(e))?
             });
         }
 
@@ -2580,11 +2583,22 @@ fn generate_domain_recursive(
             #(#struct_fields),*
         }
 
+        impl #domain_ident {
+            /// Fallible conversion from a decoder. Propagates decode errors
+            /// from malformed group entries instead of silently dropping them.
+            pub fn try_from_decoder(
+                dec: #decoder_ident<'_>,
+            ) -> Result<Self, sbe_rt::DecodeError> {
+                Ok(Self {
+                    #(#from_exprs),*
+                })
+            }
+        }
+
         impl<'a> From<#decoder_ident<'a>> for #domain_ident {
             fn from(dec: #decoder_ident<'a>) -> Self {
-                Self {
-                    #(#from_exprs),*
-                }
+                Self::try_from_decoder(dec)
+                    .expect("domain conversion failed — use try_from_decoder for fallible conversion")
             }
         }
     });

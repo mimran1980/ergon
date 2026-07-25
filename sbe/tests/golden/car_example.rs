@@ -3351,13 +3351,25 @@ pub struct CarFuelFiguresEntryDomain {
     pub mpg: f32,
     pub usage_description: Vec<u8>,
 }
-impl<'a> From<FuelFiguresEntryDecoder<'a>> for CarFuelFiguresEntryDomain {
-    fn from(dec: FuelFiguresEntryDecoder<'a>) -> Self {
-        Self {
+impl CarFuelFiguresEntryDomain {
+    /// Fallible conversion from a decoder. Propagates decode errors
+    /// from malformed group entries instead of silently dropping them.
+    pub fn try_from_decoder(
+        dec: FuelFiguresEntryDecoder<'_>,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        Ok(Self {
             speed: dec.speed(),
             mpg: dec.mpg(),
             usage_description: dec.usage_description().unwrap_or(&[]).to_vec(),
-        }
+        })
+    }
+}
+impl<'a> From<FuelFiguresEntryDecoder<'a>> for CarFuelFiguresEntryDomain {
+    fn from(dec: FuelFiguresEntryDecoder<'a>) -> Self {
+        Self::try_from_decoder(dec)
+            .expect(
+                "domain conversion failed — use try_from_decoder for fallible conversion",
+            )
     }
 }
 impl CarFuelFiguresEntryDomain {
@@ -3397,13 +3409,25 @@ pub struct CarPerformanceFiguresEntryAccelerationEntryDomain {
     pub mph: u16,
     pub seconds: f32,
 }
+impl CarPerformanceFiguresEntryAccelerationEntryDomain {
+    /// Fallible conversion from a decoder. Propagates decode errors
+    /// from malformed group entries instead of silently dropping them.
+    pub fn try_from_decoder(
+        dec: PerformanceFiguresAccelerationEntryDecoder<'_>,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        Ok(Self {
+            mph: dec.mph(),
+            seconds: dec.seconds(),
+        })
+    }
+}
 impl<'a> From<PerformanceFiguresAccelerationEntryDecoder<'a>>
 for CarPerformanceFiguresEntryAccelerationEntryDomain {
     fn from(dec: PerformanceFiguresAccelerationEntryDecoder<'a>) -> Self {
-        Self {
-            mph: dec.mph(),
-            seconds: dec.seconds(),
-        }
+        Self::try_from_decoder(dec)
+            .expect(
+                "domain conversion failed — use try_from_decoder for fallible conversion",
+            )
     }
 }
 impl CarPerformanceFiguresEntryAccelerationEntryDomain {
@@ -3431,19 +3455,31 @@ pub struct CarPerformanceFiguresEntryDomain {
     pub octane_rating: u8,
     pub acceleration: Vec<CarPerformanceFiguresEntryAccelerationEntryDomain>,
 }
-impl<'a> From<PerformanceFiguresEntryDecoder<'a>> for CarPerformanceFiguresEntryDomain {
-    fn from(dec: PerformanceFiguresEntryDecoder<'a>) -> Self {
-        Self {
+impl CarPerformanceFiguresEntryDomain {
+    /// Fallible conversion from a decoder. Propagates decode errors
+    /// from malformed group entries instead of silently dropping them.
+    pub fn try_from_decoder(
+        dec: PerformanceFiguresEntryDecoder<'_>,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        Ok(Self {
             octane_rating: dec.octane_rating(),
             acceleration: dec
                 .acceleration()
-                .map(|g| {
+                .map(|g| Ok(
                     g
                         .map(CarPerformanceFiguresEntryAccelerationEntryDomain::from)
-                        .collect()
-                })
-                .unwrap_or_default(),
-        }
+                        .collect(),
+                ))
+                .unwrap_or_else(|e| Err(e))?,
+        })
+    }
+}
+impl<'a> From<PerformanceFiguresEntryDecoder<'a>> for CarPerformanceFiguresEntryDomain {
+    fn from(dec: PerformanceFiguresEntryDecoder<'a>) -> Self {
+        Self::try_from_decoder(dec)
+            .expect(
+                "domain conversion failed — use try_from_decoder for fallible conversion",
+            )
     }
 }
 impl CarPerformanceFiguresEntryDomain {
@@ -3499,9 +3535,11 @@ pub struct CarDomain {
     pub model: Vec<u8>,
     pub activation_code: Vec<u8>,
 }
-impl<'a> From<CarDecoder<'a>> for CarDomain {
-    fn from(dec: CarDecoder<'a>) -> Self {
-        Self {
+impl CarDomain {
+    /// Fallible conversion from a decoder. Propagates decode errors
+    /// from malformed group entries instead of silently dropping them.
+    pub fn try_from_decoder(dec: CarDecoder<'_>) -> Result<Self, sbe_rt::DecodeError> {
+        Ok(Self {
             serial_number: dec.serial_number(),
             model_year: dec.model_year(),
             available: dec.available_bool(),
@@ -3513,25 +3551,29 @@ impl<'a> From<CarDecoder<'a>> for CarDomain {
             fuel_figures: dec
                 .fuel_figures()
                 .map(|g| {
-                    g
-                        .filter_map(|e| e.ok())
-                        .map(CarFuelFiguresEntryDomain::from)
-                        .collect()
+                    g.map(|r| r.map(CarFuelFiguresEntryDomain::from))
+                        .collect::<Result<Vec<_>, _>>()
                 })
-                .unwrap_or_default(),
+                .unwrap_or_else(|e| Err(e))?,
             performance_figures: dec
                 .performance_figures()
                 .map(|g| {
-                    g
-                        .filter_map(|e| e.ok())
-                        .map(CarPerformanceFiguresEntryDomain::from)
-                        .collect()
+                    g.map(|r| r.map(CarPerformanceFiguresEntryDomain::from))
+                        .collect::<Result<Vec<_>, _>>()
                 })
-                .unwrap_or_default(),
+                .unwrap_or_else(|e| Err(e))?,
             manufacturer: dec.manufacturer().unwrap_or(&[]).to_vec(),
             model: dec.model().unwrap_or(&[]).to_vec(),
             activation_code: dec.activation_code().unwrap_or(&[]).to_vec(),
-        }
+        })
+    }
+}
+impl<'a> From<CarDecoder<'a>> for CarDomain {
+    fn from(dec: CarDecoder<'a>) -> Self {
+        Self::try_from_decoder(dec)
+            .expect(
+                "domain conversion failed — use try_from_decoder for fallible conversion",
+            )
     }
 }
 impl CarDomain {
