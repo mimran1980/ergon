@@ -390,3 +390,77 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
     eprintln!("invalid buffer: no panic");
     Ok(())
 }
+
+// ── Depth3Test (depth-3 nesting: levels → items → tag var-data) ──────────
+
+#[test]
+fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Error>> {
+    // Ragged at two levels: each level has a different number of items,
+    // and each item carries a var-data tag of differing length.
+    let i1: [(u64, &[u8]); 2] = [(1, b"A"), (2, b"BB")];
+    let i2: [(u64, &[u8]); 1] = [(3, b"CCC")];
+    let levels: &[(u32, &[(u64, &[u8])])] = &[(10, &i1), (20, &i2)];
+    let description = b"depth-3 test";
+
+    // Encode into an exact-sized buffer.
+    let len = Depth3TestEncodedLength::new()
+        .levels_ragged(levels.len() as u16, |g| {
+            for (_, items) in levels {
+                g.add()?.items(|ig| {
+                    for (_, tag) in *items {
+                        ig.add()?.tag(tag.len())?;
+                    }
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .description(description.len())?
+        .encoded_length_with_header();
+
+    // Encode the same data via the encoder to get the actual length.
+    let mut buf = vec![0u8; len];
+    let complete = Depth3TestEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&Depth3TestFixedFields { id: 42 })
+        .levels(levels.len() as u16, |g| {
+            for (name, items) in levels {
+                g.add(|e| {
+                    e.name(*name);
+                    e.items(items.len() as u16, |ig| {
+                        for (value, tag) in *items {
+                            ig.add(|i| { i.value(*value).tag(tag)?; Ok(()) })?;
+                        }
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .description(description)?;
+    let actual = complete.encoded_length_with_header();
+
+    assert_eq!(len, actual, "depth-3 staged length must match actual");
+
+    // Decode and verify the ragged structure.
+    let dec = Depth3TestDecoder::try_from(complete.as_bytes())?;
+    let mut lvl = dec.into_levels()?;
+    let l1 = lvl.next().transpose()?.unwrap();
+    let mut it1 = l1.into_items()?;
+    let it1_first = it1.next().transpose()?.unwrap();
+    assert_eq!(it1_first.value(), 1);
+    assert_eq!(it1_first.tag()?, b"A");
+    let it1_second = it1.next().transpose()?.unwrap();
+    assert_eq!(it1_second.value(), 2);
+    assert_eq!(it1_second.tag()?, b"BB");
+    assert!(it1.next().is_none());
+
+    let l2 = lvl.next().transpose()?.unwrap();
+    let mut it2 = l2.into_items()?;
+    let it2_first = it2.next().transpose()?.unwrap();
+    assert_eq!(it2_first.value(), 3);
+    assert_eq!(it2_first.tag()?, b"CCC");
+    assert!(it2.next().is_none());
+    assert!(lvl.next().is_none());
+    Ok(())
+}

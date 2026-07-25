@@ -71,4 +71,15 @@
     </group>
     <data name="symbol" id="16" type="varAsciiEncoding" characterEncoding="ASCII"/>
   </message>
+  <message name="Depth3Test" id="3">
+    <field name="id" id="1" type="uint64"/>
+    <group name="levels" id="2" dimensionType="groupSizeEncoding">
+      <field name="name" id="3" type="uint32"/>
+      <group name="items" id="4" dimensionType="groupSizeEncoding">
+        <field name="value" id="5" type="uint64"/>
+        <data name="tag" id="6" type="varAsciiEncoding" characterEncoding="ASCII"/>
+      </group>
+    </group>
+    <data name="description" id="7" type="varAsciiEncoding" characterEncoding="ASCII"/>
+  </message>
 </messageSchema>
