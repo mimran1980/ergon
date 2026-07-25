@@ -7,6 +7,7 @@ fn d(val: i64) -> Rd { Rd::new(val, 0) }
 
 #[test]
 fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
+    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
     let mut buf = vec![0u8; 4096];
     let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields {
@@ -42,6 +43,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
+    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
     let mut buf = vec![0u8; 4096];
     let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields { exchange_timestamp: 0, sequence: 0, is_active: BooleanType::False })
@@ -128,6 +130,7 @@ fn l3book_unknown_size_length_matches_encoded() -> Result<(), Box<dyn std::error
     ];
     let symbol = b"BTCUSDT";
 
+    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
     let mut buf = vec![0u8; 4096];
     let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
 
@@ -170,6 +173,7 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     let symbol = b"BTCUSDT";
 
     // Actual length from the encoder.
+    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
     let mut buf = vec![0u8; 4096];
     let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
 
@@ -198,6 +202,7 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>> {
+    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
     let mut buf = vec![0u8; 4096];
     let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
@@ -250,6 +255,7 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
     // this schema uses the direct `l3_book::vardata_book_encoded_length` (see
     // `l3book_vardata_direct_length_matches_encoded`); this test uses the
     // encoder's reported length as the source of truth.
+    // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
     let mut buf = vec![0u8; 256];
     let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {

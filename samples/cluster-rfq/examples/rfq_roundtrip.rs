@@ -53,6 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect (SessionConnectRequest, schema 111)
     {
+        // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
         let mut buf = vec![0u8; 512];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
         let _ = enc.correlation_id(1).response_stream_id(102).version(0);

@@ -741,6 +741,7 @@ fn generate_owner_consuming_stages(
         };
         let next_stage = stage_after_ident(i);
         let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
+        let slice_ident = syn::Ident::new(&format!("{}_slice", vd.accessor_snake), span);
         let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
         let vd_type_ident = syn::Ident::new(&vd.type_pascal, span);
         let len_field_ident = syn::Ident::new(&vd.len_field, span);
@@ -800,6 +801,38 @@ fn generate_owner_consuming_stages(
                         acting_block_length: self.acting_block_length,
                     };
                     Ok((data, next))
+                }
+
+                /// Non-consuming variant: read this var-data field as `&[u8]`
+                /// without advancing or constructing the next stage. Cheaper
+                /// than [`Self::#into_ident`] when only the bytes are needed.
+                #[inline]
+                pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let offset = #se;
+                    if offset + #prefix_size_lit > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #vd_name_lit,
+                            needed: #prefix_size_lit,
+                            available: self.buf.len().saturating_sub(offset),
+                        });
+                    }
+                    let bytes: [u8; #prefix_size_lit] = unsafe {
+                        core::ptr::read_unaligned(
+                            self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit],
+                        )
+                    };
+                    let header = #vd_type_ident(bytes);
+                    let len = header.#len_field_ident() as usize;
+                    #max_check
+                    let data_start = offset + #prefix_size_lit;
+                    if data_start + len > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #vd_name_lit,
+                            needed: #prefix_size_lit + len,
+                            available: self.buf.len().saturating_sub(offset),
+                        });
+                    }
+                    Ok(&self.buf[data_start..data_start + len])
                 }
             }
         });

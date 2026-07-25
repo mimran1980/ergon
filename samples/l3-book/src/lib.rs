@@ -11,6 +11,9 @@ pub use l3_codec::*;
 /// `schemas/l3-book.xml`, not buffer guesses):
 /// - dimension prefix: `u32` count = 4 bytes
 /// - entry block: `u64 order_id` (8) + `Decimal` mantissa/exponent (9) = 17 bytes
+// TODO: these manual group dim/block constants MUST come from the generated
+// EncodedLength API (the staged builder should expose nested-group dim/block),
+// not be hardcoded here. See CLAUDE.md "Buffer sizing" hard rule.
 const ORDERS_DIM: usize = 4;
 const ORDER_BLOCK: usize = 17;
 
@@ -41,11 +44,12 @@ pub fn book_encoded_length(
 }
 
 // ── L3BookVarData ────────────────────────────────────────────────────────
-// VarData orders are ragged at TWO levels (var-data `order_id` of differing
-// length per order), which the staged `L3BookVarDataEncodedLength` builder
-// cannot yet express (nested-ragged is a generator follow-up). Compute the
-// exact length directly from the known data instead — same outcome: an exact
-// buffer size with no oversized allocation.
+// TODO: `vardata_book_encoded_length` MUST use the staged
+// `L3BookVarDataEncodedLength` builder, NOT direct computation. Direct sizing
+// is a FAILURE per the CLAUDE.md "Buffer sizing" hard rule. This requires
+// adding nested-ragged support to the ergo-sbe length builder (var-data
+// `order_id` of differing length per order, ragged at two levels). Until that
+// lands, the direct computation below is a known TODO, not an accepted design.
 // Structural constants from `schemas/l3-book.xml`:
 const VARDATA_GROUP_DIM: usize = 4;   // groupSizeEncoding: u16 blockLength + u16 numInGroup
 const VARDATA_BID_BLOCK: usize = 18;  // price Decimal (9) + size Decimal (9)
@@ -54,6 +58,7 @@ const VARDATA_VAR_PREFIX: usize = 4;  // varAsciiEncoding length: u32
 
 /// Exact header-inclusive encoded length of an L3BookVarData book for the
 /// given ragged bids/asks (orders carry var-data `order_id`) + symbol.
+// TODO: replace this direct computation with the staged EncodedLength builder.
 pub fn vardata_book_encoded_length(
     bids: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(rust_decimal::Decimal, &[u8])])],
     asks: &[(rust_decimal::Decimal, rust_decimal::Decimal, &[(rust_decimal::Decimal, &[u8])])],
