@@ -2,7 +2,7 @@
 
 > **AI assistance.** Large parts of this project were written **with heavy AI
 > assistance**. Humans directed the work, approved designs, and ran verification.
-> Details of process and ownership: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/first_cut/AI-ASSISTANCE.md).
+> Details of process and ownership: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
 
 `ergo-sbe` parses [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/)
 (SBE) schemas and generates **Rust codecs that are binary-compatible with the
