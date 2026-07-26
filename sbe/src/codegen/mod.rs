@@ -1555,7 +1555,7 @@ fn generate_message_decoder(
                     // Build unrolled element parses via direct constant indexing of a
                     // bulk-read local `all` array. One bulk read (single bounds check
                     // via read_bytes) + direct constant indexing (no per-element
-                    // bounds check). This is the fastest safe-mode shape: Aeron's
+                    // bounds check). This is the fastest safe-mode shape: sbe-tool's
                     // 4x per-element try_into is slower here because LLVM cannot elide
                     // the redundant checks when the offset is runtime-derived.
                     let mut elements: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -1576,11 +1576,11 @@ fn generate_message_decoder(
                     // lies within the message body is guaranteed in-bounds by the
                     // version/block-length check below (and by wrap, which validates the
                     // body extent). Returning `Result` here is over-cautious, diverges
-                    // from Aeron (which returns `[T; N]`), and adds Result+unwrap
+                    // from sbe-tool (which returns `[T; N]`), and adds Result+unwrap
                     // overhead that measurably slows decode. OOB only happens for a
                     // structurally malformed buffer shorter than its declared
-                    // block_length, in which case read_bytes panics — same as Aeron's
-                    // try_into. This matches Aeron's `[T; N]` signature and perf.
+                    // block_length, in which case read_bytes panics — same as sbe-tool's
+                    // try_into. This matches sbe-tool's `[T; N]` signature and perf.
                     // Skip `acting_version < 0` (always false for u16); keep block-length guard.
                     let version_guard = if since > 0 {
                         quote::quote! {
@@ -5345,7 +5345,7 @@ fn generate_message_encoder(
     impl_contents.extend(wrap_apply_fn);
 
     // Claim-compatible wrap: validates buffer is exactly ENCODED_LENGTH bytes.
-    // For use with Aeron try_claim where the buffer is pre-sized to the message.
+    // For use with try_claim / pre-sized claim buffers where the buffer is pre-sized to the message.
     if is_fixed {
         impl_contents.extend(quote::quote! {
             /// Wrap a mutable buffer sized exactly to `ENCODED_LENGTH` bytes.
@@ -5367,7 +5367,7 @@ fn generate_message_encoder(
     // Opt-in: write null sentinels for all optional fields. Call this after
     // wrap_and_apply_header if you want unset optional fields to carry their
     // schema-defined null value instead of whatever was in the buffer.
-    // Not called by default (Aeron does not nullify on wrap).
+    // Not called by default (sbe-tool does not nullify on wrap).
     {
         let mut null_buf = String::new();
         let offset_base = format!("self.message_start + {header_size}");
@@ -5386,7 +5386,7 @@ fn generate_message_encoder(
                 /// Write the schema-defined null sentinel into every optional field.
                 ///
                 /// Optional only — `wrap_and_apply_header` does not nullify by default
-                /// (matching Aeron). Call this if you want unset optional fields to
+                /// (matching sbe-tool). Call this if you want unset optional fields to
                 /// carry their null value rather than stale buffer contents.
                 #[inline]
                 pub fn apply_nulls(&mut self) {

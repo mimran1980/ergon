@@ -35,6 +35,10 @@ harness = false
 name = "perf_parity_bench"
 harness = false
 
+[[bench]]
+name = "layout_access_bench"
+harness = false
+
 [features]
 default = []
 

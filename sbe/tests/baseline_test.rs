@@ -5,7 +5,7 @@
 //! round-trip decode produces the same logical values.
 //!
 //! Engine composite includes `<ref>` members and nested `BoostType` (SBE-REF):
-//! wire size 10 bytes, Car `BLOCK_LENGTH` 45 matching the Aeron fixture header.
+//! wire size 10 bytes, Car `BLOCK_LENGTH` 45 matching the sbe-tool/Java fixture header.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -329,7 +329,7 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
         // discountedModel is presence="constant" valueRef="Model.C"
         assert_eq!(Model::C, car.discounted_model(), "discountedModel");
 
-        // Engine is 10 bytes on the Aeron wire (capacity, numCylinders,
+        // Engine is 10 bytes on the official SBE wire (capacity, numCylinders,
         // manufacturerCode[3], efficiency, boosterEnabled, booster{BoostType,hp}).
         let engine = car.engine();
         assert_eq!(2000, engine.capacity(), "engine.capacity");
@@ -560,7 +560,7 @@ fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
         extras.set_sports_pack(true);
         car.extras(extras);
 
-        // Engine (composite) — same values as Aeron fixture
+        // Engine (composite) — same values as the sbe-tool/Java fixture
         car.engine(Engine::new(
             2000,
             4,
@@ -579,7 +579,7 @@ fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes();
 
-        // Full 8-byte header including blockLength=45 matches Aeron fixture.
+        // Full 8-byte header including blockLength=45 matches the sbe-tool/Java fixture.
         assert_eq!(&FIXTE[0..8], &encoded[0..8], "header mismatch");
 
         // Scalar body through engine (offsets 0..45).
@@ -601,7 +601,7 @@ fn composite_byte_exact_engine() -> Result<(), Box<dyn std::error::Error>> {
         &Paths::example_schema(),
         &Paths::baseline_binary(),
         r#"
-        // Encode Engine with values matching the Aeron fixture (10-byte block).
+        // Encode Engine with values matching the sbe-tool/Java fixture (10-byte block).
         let engine = Engine::new(
             2000,
             4,
@@ -1267,7 +1267,7 @@ fn composite_ref_engine_roundtrip_compile() -> Result<(), Box<dyn std::error::Er
         assert_eq!(eng.booster().boost_type(), BoostType::NITROUS);
         assert_eq!(eng.booster().horse_power(), 200);
 
-        // Aeron car fixture engine block (body offset 35): capacity=2000,
+        // sbe-tool/Java car fixture engine block (body offset 35): capacity=2000,
         // cylinders=4, mfr="123", efficiency=35, boostEnabled=T, NITROUS@200.
         let fixture_engine: [u8; 10] =
             [0xd0, 0x07, 0x04, b'1', b'2', b'3', 35, 1, b'N', 200];

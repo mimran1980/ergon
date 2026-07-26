@@ -23,44 +23,39 @@ const BATCH_SIZE: usize = 10_000;
 fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/session_message_header");
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
+    // Pre-size once; timed path only writes into the reused buffer.
     g.bench_function("ergo-sbe", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * 32],
-            |mut buf| {
-                for i in 0..BATCH_SIZE {
-                    let off = i * 32;
-                    let _ =
-                        ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_and_apply_header(
-                            &mut buf[off..off + 32],
-                            0,
-                        )
-                        .leadership_term_id((i % 1000) as i64)
-                        .cluster_session_id(42)
-                        .timestamp(0);
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut buf = vec![0u8; BATCH_SIZE * 32];
+        b.iter(|| {
+            for i in 0..BATCH_SIZE {
+                let off = i * 32;
+                let _ =
+                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_and_apply_header(
+                        &mut buf[off..off + 32],
+                        0,
+                    )
+                    .leadership_term_id((i % 1000) as i64)
+                    .cluster_session_id(42)
+                    .timestamp(0);
+            }
+            black_box(&buf);
+        });
     });
     g.bench_function("sbe-tool", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * 32],
-            |mut buf| {
-                use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
-                for i in 0..BATCH_SIZE {
-                    let off = i * 32;
-                    let wb = WriteBuf::new(&mut buf[off..off + 32]);
-                    let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
-                    enc.leadership_term_id((i % 1000) as i64);
-                    enc.cluster_session_id(42);
-                    enc.timestamp(0);
-                    let _ = enc.header(0);
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut buf = vec![0u8; BATCH_SIZE * 32];
+        b.iter(|| {
+            use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
+            for i in 0..BATCH_SIZE {
+                let off = i * 32;
+                let wb = WriteBuf::new(&mut buf[off..off + 32]);
+                let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
+                enc.leadership_term_id((i % 1000) as i64);
+                enc.cluster_session_id(42);
+                enc.timestamp(0);
+                let _ = enc.header(0);
+            }
+            black_box(&buf);
+        });
     });
     g.finish();
 }
@@ -71,40 +66,34 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     let sz = 8 + ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::BLOCK_LENGTH;
     g.bench_function("ergo-sbe", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * sz],
-            |mut buf| {
-                for i in 0..BATCH_SIZE {
-                    let off = i * sz;
-                    let _ = ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::wrap_and_apply_header(
-                        &mut buf[off..off + sz],
-                        0,
-                    )
-                    .leadership_term_id(5)
-                    .cluster_session_id((i % 100) as i64);
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut buf = vec![0u8; BATCH_SIZE * sz];
+        b.iter(|| {
+            for i in 0..BATCH_SIZE {
+                let off = i * sz;
+                let _ = ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::wrap_and_apply_header(
+                    &mut buf[off..off + sz],
+                    0,
+                )
+                .leadership_term_id(5)
+                .cluster_session_id((i % 100) as i64);
+            }
+            black_box(&buf);
+        });
     });
     g.bench_function("sbe-tool", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * sz],
-            |mut buf| {
-                use reference_sbe::{WriteBuf, session_keep_alive_codec::SessionKeepAliveEncoder};
-                for i in 0..BATCH_SIZE {
-                    let off = i * sz;
-                    let wb = WriteBuf::new(&mut buf[off..off + sz]);
-                    let mut enc = SessionKeepAliveEncoder::default().wrap(wb, 8);
-                    enc.leadership_term_id(5);
-                    enc.cluster_session_id((i % 100) as i64);
-                    let _ = enc.header(0);
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut buf = vec![0u8; BATCH_SIZE * sz];
+        b.iter(|| {
+            use reference_sbe::{WriteBuf, session_keep_alive_codec::SessionKeepAliveEncoder};
+            for i in 0..BATCH_SIZE {
+                let off = i * sz;
+                let wb = WriteBuf::new(&mut buf[off..off + sz]);
+                let mut enc = SessionKeepAliveEncoder::default().wrap(wb, 8);
+                enc.leadership_term_id(5);
+                enc.cluster_session_id((i % 100) as i64);
+                let _ = enc.header(0);
+            }
+            black_box(&buf);
+        });
     });
     g.finish();
 }
@@ -117,51 +106,45 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
     let creds = b"user:pass";
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * 128],
-            |mut buf| {
-                for i in 0..BATCH_SIZE {
-                    let off = i * 128;
-                    let mut enc =
-                        ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder::wrap_and_apply_header(
-                            &mut buf[off..off + 128],
-                            0,
-                        );
-                    let _ = enc.correlation_id(0).response_stream_id(102).version(0);
-                    let _ = enc
-                        .response_channel(channel.as_bytes())
-                        .unwrap()
-                        .encoded_credentials(creds)
-                        .unwrap()
-                        .client_info(b"")
-                        .unwrap();
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut buf = vec![0u8; BATCH_SIZE * 128];
+        b.iter(|| {
+            for i in 0..BATCH_SIZE {
+                let off = i * 128;
+                let mut enc =
+                    ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder::wrap_and_apply_header(
+                        &mut buf[off..off + 128],
+                        0,
+                    );
+                let _ = enc.correlation_id(0).response_stream_id(102).version(0);
+                let _ = enc
+                    .response_channel(channel.as_bytes())
+                    .unwrap()
+                    .encoded_credentials(creds)
+                    .unwrap()
+                    .client_info(b"")
+                    .unwrap();
+            }
+            black_box(&buf);
+        });
     });
     g.bench_function("sbe-tool", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * 128],
-            |mut buf| {
-                use reference_sbe::{WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder};
-                for i in 0..BATCH_SIZE {
-                    let off = i * 128;
-                    let wb = WriteBuf::new(&mut buf[off..off + 128]);
-                    let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
-                    enc.correlation_id(0);
-                    enc.response_stream_id(102);
-                    enc.version(0);
-                    enc.response_channel(channel.as_bytes());
-                    enc.encoded_credentials(creds);
-                    enc.client_info(b"");
-                    let _ = enc.header(0);
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut buf = vec![0u8; BATCH_SIZE * 128];
+        b.iter(|| {
+            use reference_sbe::{WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder};
+            for i in 0..BATCH_SIZE {
+                let off = i * 128;
+                let wb = WriteBuf::new(&mut buf[off..off + 128]);
+                let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
+                enc.correlation_id(0);
+                enc.response_stream_id(102);
+                enc.version(0);
+                enc.response_channel(channel.as_bytes());
+                enc.encoded_credentials(creds);
+                enc.client_info(b"");
+                let _ = enc.header(0);
+            }
+            black_box(&buf);
+        });
     });
     g.finish();
 }
@@ -384,47 +367,41 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
     let total = 32 + CLAIM_APP_PAYLOAD.len(); // MSG_HDR_TOTAL + app
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * total],
-            |mut buf| {
-                for i in 0..BATCH_SIZE {
-                    let off = i * total;
-                    let slot = &mut buf[off..off + total];
-                    let _ =
-                        ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_and_apply_header(
-                            &mut slot[..32],
-                            0,
-                        )
-                        .leadership_term_id(5)
-                        .cluster_session_id(42)
-                        .timestamp(0);
-                    slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut buf = vec![0u8; BATCH_SIZE * total];
+        b.iter(|| {
+            for i in 0..BATCH_SIZE {
+                let off = i * total;
+                let slot = &mut buf[off..off + total];
+                let _ =
+                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_and_apply_header(
+                        &mut slot[..32],
+                        0,
+                    )
+                    .leadership_term_id(5)
+                    .cluster_session_id(42)
+                    .timestamp(0);
+                slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+            }
+            black_box(&buf);
+        });
     });
     g.bench_function("sbe-tool", |b| {
-        b.iter_batched(
-            || vec![0u8; BATCH_SIZE * total],
-            |mut buf| {
-                use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
-                for i in 0..BATCH_SIZE {
-                    let off = i * total;
-                    let slot = &mut buf[off..off + total];
-                    let wb = WriteBuf::new(&mut slot[..32]);
-                    let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
-                    enc.leadership_term_id(5);
-                    enc.cluster_session_id(42);
-                    enc.timestamp(0);
-                    let _ = enc.header(0);
-                    slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
-                }
-                black_box(&buf);
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut buf = vec![0u8; BATCH_SIZE * total];
+        b.iter(|| {
+            use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
+            for i in 0..BATCH_SIZE {
+                let off = i * total;
+                let slot = &mut buf[off..off + total];
+                let wb = WriteBuf::new(&mut slot[..32]);
+                let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
+                enc.leadership_term_id(5);
+                enc.cluster_session_id(42);
+                enc.timestamp(0);
+                let _ = enc.header(0);
+                slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+            }
+            black_box(&buf);
+        });
     });
     g.finish();
 }

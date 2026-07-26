@@ -842,6 +842,17 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
     src.push('\n');
 }
 
+/// Emit a composite as a **wire image** plus flyweight decoder.
+///
+/// Layout contract (do not “simplify” to `#[repr(C)]` native fields):
+/// - `#[repr(transparent)] pub struct Name(pub [u8; N])` — value == on-wire bytes
+/// - getters/setters use `from_{le,be}_bytes` / `to_{le,be}_bytes` at schema offsets
+/// - flyweight `NameDecoder { buf, pos }` for zero-copy reads from a message buffer
+/// - `const _: () = assert!(size_of::<Name>() == N)`
+///
+/// On little-endian hosts, `from_le_bytes` is effectively a plain load; this is
+/// the safe equivalent of “overlay a struct on the buffer” without padding or
+/// unaligned UB. See README “Composite layout & little-endian”.
 pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder) {
     let raw_name = &tokens[0].name;
     let name = to_pascal_case(raw_name);
@@ -1826,7 +1837,7 @@ pub(crate) fn generate_any_message(
 /// Make schema XML descriptions safe for rustdoc doctests.
 ///
 /// Multi-line descriptions often carry indented ASCII protocol diagrams or
-/// XML-comment prose (e.g. Aeron cluster codecs). Rustdoc treats 4-space
+/// XML-comment prose (e.g. cluster protocol codecs). Rustdoc treats 4-space
 /// indented blocks as Rust doctests, which then fail `cargo test --doc`.
 /// Fence multi-line content as `text` so it stays documentation only.
 pub(crate) fn sanitize_description_for_doc(desc: &str) -> String {

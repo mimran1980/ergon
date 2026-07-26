@@ -4,7 +4,7 @@
 //! example schema. This ensures benchmarks always measure the latest codegen,
 //! never stale checked-in generated code.
 //!
-//! Aeron reference code is checked in (stable, generated once from upstream).
+//! sbe-tool reference code is checked in (stable, generated once from upstream).
 
 #![allow(unsafe_code)]
 #![allow(
@@ -24,7 +24,10 @@
 // ergon-generated Car codec (from build.rs → `car_bench.rs`).
 ergo_sbe::sbe_mod!(pub ergo_car = "car_bench");
 
-/// Aeron-generated Car codec (checked in, stable reference).
-pub mod aeron_car {
-    include!("aeron_car_patched.rs");
+// Large 256-byte composite (BigBlock) for flyweight-vs-value access benches.
+ergo_sbe::sbe_mod!(pub large_comp = "large_comp_bench");
+
+/// sbe-tool-generated Car codec (checked in, stable reference).
+pub mod sbe_tool_car {
+    include!("sbe_tool_car_patched.rs");
 }

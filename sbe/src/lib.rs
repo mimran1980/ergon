@@ -94,6 +94,16 @@
 //! Names depend on your schema (`Car` below is illustrative). Examples use
 //! `ignore` because the types only exist after codegen.
 //!
+//! ## Composites = wire images (not `repr(C)` overlays)
+//!
+//! Generated composites are `#[repr(transparent)] struct Engine(pub [u8; N])`:
+//! the value **is** the on-wire byte block. Accessors use explicit
+//! `from_le_bytes` / `to_le_bytes` at schema offsets (portable; free on LE).
+//! Default decode is a flyweight (`EngineDecoder { buf, pos }`) — zero-copy
+//! into the message. Do **not** transmute the buffer to a padded `#[repr(C)]`
+//! field struct: SBE is packed and may be unaligned. See the crate README
+//! section *Composite layout & little-endian*.
+//!
 //! ## Decode flyweight
 //!
 //! ```ignore
@@ -236,7 +246,7 @@
 //!
 //! # Design
 //!
-//! - Wire-compatible with official SBE / Aeron baselines where tested
+//! - Wire-compatible with official SBE / sbe-tool baselines where tested
 //! - Idiomatic Rust (type-state tails, borrow flyweights) — not a Java port
 //! - Zero allocation on decode hot paths by default
 //! - Version-aware accessors (`sinceVersion` / acting version)

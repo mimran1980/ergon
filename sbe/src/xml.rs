@@ -774,7 +774,7 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
         .and_then(|s| parse_u64_val(s, primitive_type));
 
     // Constant `<type>`: body text, or `valueRef` (e.g. TimeUnit.nanosecond) as in
-    // value-ref-schema.xml — same options Aeron accepts for constant fields.
+    // value-ref-schema.xml — same options sbe-tool accepts for constant fields.
     let constant_value = if presence == Presence::Constant {
         let from_text = node
             .text()
@@ -863,7 +863,7 @@ fn parse_composite(
 
         // Nested `<enum>` / `<set>` / `<composite>` inside a composite both
         // define a named type (first definition wins) and occupy wire space
-        // as a member (Aeron Booster.BoostType, outer.inner, etc.).
+        // as a member (sbe-tool Booster.BoostType, outer.inner, etc.).
         if tag == "enum" {
             let enum_name = string_attr(child, "name", "composite nested enum @name")?;
             if !registry.registry.contains_key(&enum_name) {
@@ -1124,7 +1124,7 @@ fn parse_enum(
         .get(&encoding_type_name)
         .and_then(|e| e.max_value);
 
-    // Enum encoding types must be integer or char (Aeron requirement).
+    // Enum encoding types must be integer or char (sbe-tool requirement).
     // Float/Double enums are not valid SBE.
     if matches!(encoding_type, PrimitiveType::Float | PrimitiveType::Double) {
         return Err(Fault::invalid(
@@ -1150,7 +1150,7 @@ fn parse_enum(
         },
     });
 
-    // Resolve null sentinel for the enum's encoding type (Aeron: valid values
+    // Resolve null sentinel for the enum's encoding type (sbe-tool: valid values
     // must not equal the type's null value).
     let null_sentinel: Option<u64> = registry
         .encodings
@@ -1279,7 +1279,7 @@ fn parse_set(
         .and_then(|e| e.primitive_type)
         .ok_or_else(|| Fault::invalid(node, "set encodingType", &encoding_type_name))?;
 
-    // Set encoding types must be unsigned integers (Aeron requirement).
+    // Set encoding types must be unsigned integers (sbe-tool requirement).
     if !matches!(
         encoding_type,
         PrimitiveType::UInt8
@@ -1498,7 +1498,7 @@ fn parse_message(
     }
 
     // Validate blockLength when declared and all fields carry explicit offsets.
-    // Uses a warning (not an error) to match Aeron sbe-tool behavior — the
+    // Uses a warning (not an error) to match sbe-tool behavior — the
     // upstream tool accepts whatever blockLength the schema declares without
     // validation, and several official test schemas have intentionally differing
     // values.
@@ -1578,7 +1578,7 @@ fn parse_message_child(
                 }
                 node.attribute("valueRef").map(|s| {
                     // valueRef format: "EnumName.ValidValue" — validate the enum and
-                    // variant exist at parse time (Aeron rejects invalid valueRef).
+                    // variant exist at parse time (sbe-tool rejects invalid valueRef).
                     if let Some((enum_name, variant_name)) = s.split_once('.') {
                         // enum existence checked, variant existence deferred to resolve; add variant validation here if resolve becomes lenient
                         // validated at parse time. An invalid variant name produces
@@ -1710,7 +1710,7 @@ fn parse_message_child(
                     ));
                 }
                 // Clone and mark the varData member as variable-length
-                // (Aeron's makeDataFieldCompositeType equivalent — gap 10).
+                // (sbe-tool makeDataFieldCompositeType equivalent — gap 10).
                 let mut data_tokens = type_tokens.clone();
                 for token in data_tokens.iter_mut() {
                     if token.signal == Signal::BeginField && token.name == "varData" {
@@ -1995,7 +1995,7 @@ fn parse_primitive_type(node: Node<'_, '_>, s: &str) -> Result<PrimitiveType, Fa
 ///
 /// # Gap 3 — well-formedness constraints
 ///
-/// Aeron validates that the header type carries these four mandatory fields.
+/// sbe-tool validates that the header type carries these four mandatory fields.
 /// If the header type is not found in the registry it isn't flagged here
 /// (the missing type error will surface elsewhere, e.g. in resolution).
 fn validate_header_type(header_type: &str, registry: &TypeRegistry) -> Result<(), Fault> {
@@ -3512,7 +3512,7 @@ mod tests {
 
     #[test]
     fn block_length_mismatch_warns_but_does_not_error() -> Result<(), Box<dyn std::error::Error>> {
-        // Mismatched blockLength is a warning (matching Aeron sbe-tool),
+        // Mismatched blockLength is a warning (matching sbe-tool),
         // not a parse error.
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
