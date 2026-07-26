@@ -26,7 +26,8 @@ ergo_sbe::sbe_mod!(pub ergo_car = "car_bench");
 
 // Large 256-byte composite (BigBlock) for flyweight-vs-value access benches.
 ergo_sbe::sbe_mod!(pub large_comp = "large_comp_bench");
-
+// Same shape, big-endian body — for encode LE vs BE cost.
+ergo_sbe::sbe_mod!(pub large_comp_be = "large_comp_be_bench");
 /// sbe-tool-generated Car codec (checked in, stable reference).
 pub mod sbe_tool_car {
     include!("sbe_tool_car_patched.rs");

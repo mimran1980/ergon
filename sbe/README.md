@@ -436,8 +436,27 @@ So:
 
 Layout contracts:
 [`composite_layout_test`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/composite_layout_test.rs).
-Microbench:
+Decode microbench:
 [`layout_access_bench`](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/layout_access_bench.rs).
+
+#### Encode — FixedFields vs setters, composite write, LE vs BE
+
+Confirmed by
+[`encode_style_bench`](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/encode_style_bench.rs)
+(Apple M4, LE host; values prebuilt / seeded so LLVM cannot delete the work):
+
+| Comparison | Result |
+|------------|--------|
+| **`.fixed(&CarFixedFields{…})` vs all setters** | **~equal** (~2.6 ns both) — `.fixed` is the same setter sequence after inlining |
+| **Composite `Engine::new` + write vs preheld `engine(e)`** | **~equal** when the rest of the fixed block is also written (10-byte image is noise next to the other stores) |
+| **256 B block build+write LE vs BE** | BE ~**5%** slower on LE host (`to_be_bytes` / bswap on 32×`u64`) — 26.1 ns LE vs 27.5 ns BE |
+| **Preheld wire image memcpy LE vs BE** | **~equal** (~77 ns) — endian already in `.0`; only bulk copy remains |
+
+So on encode:
+
+1. Prefer **`.fixed`** for clarity / schema completeness — not for speed.
+2. Prefer a **prebuilt composite wire image** on the hot path when you can; for small `N` the win is tiny next to other field stores.
+3. **LE body on LE host** is free endian; **BE body** costs a bswap per multi-byte field when *building* the image. Once the image exists, write cost matches LE.
 
 ---
 

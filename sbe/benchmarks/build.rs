@@ -26,6 +26,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ergo_sbe::GenerationConfig::new("large_comp_bench"),
     )?;
 
+    let large_be_schema = manifest.join("schemas/large-composite-be.xml");
+    ergo_sbe::generate_to_out_dir(
+        &large_be_schema,
+        ergo_sbe::GenerationConfig::new("large_comp_be_bench"),
+    )?;
+
     println!("cargo:rerun-if-changed=../src/codegen");
     println!("cargo:rerun-if-changed=../src/codegen/mod.rs");
     println!("cargo:rerun-if-changed=../src/codegen/runtime.rs");
@@ -33,5 +39,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../src/ir.rs");
     println!("cargo:rerun-if-changed=../src/config.rs");
     println!("cargo:rerun-if-changed=schemas/large-composite.xml");
+    println!("cargo:rerun-if-changed=schemas/large-composite-be.xml");
     Ok(())
 }

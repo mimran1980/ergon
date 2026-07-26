@@ -39,6 +39,10 @@ harness = false
 name = "layout_access_bench"
 harness = false
 
+[[bench]]
+name = "encode_style_bench"
+harness = false
+
 [features]
 default = []
 

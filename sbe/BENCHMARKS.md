@@ -79,6 +79,31 @@ the expensive path. See README
 cd sbe/benchmarks && cargo bench --bench layout_access_bench
 ```
 
+### Encode style (diagnostic) — `encode_style_bench`
+
+Not a ≤1.00 gate. Confirms FixedFields vs setters, composite write, LE vs BE
+(body) on a LE host. Seeded/preheld values so work is not constant-folded away.
+
+| Arm | Median (this host) |
+|-----|--------------------|
+| setters_all_fixed | ~2.63 ns |
+| fixed_struct (`.fixed`) | ~2.60 ns |
+| engine_new_then_write (+ fixed prelude) | ~5.30 ns |
+| engine_preheld_write (+ fixed prelude) | ~5.65 ns |
+| le_block_new_then_write (256 B) | ~26.1 ns |
+| be_block_new_then_write (256 B) | ~27.5 ns |
+| le_block_preheld_memcpy | ~77.1 ns |
+| be_block_preheld_memcpy | ~77.0 ns |
+
+**Conclusion:** `.fixed` ≈ setters; preheld composite write ≈ build+write for a
+small engine once the rest of the fixed block is written; BE build is slightly
+slower than LE on an LE host; preheld memcpy is endian-independent. See README
+[Encode — FixedFields vs setters…](README.md#encode--fixedfields-vs-setters-composite-write-le-vs-be).
+
+```sh
+cd sbe/benchmarks && cargo bench --bench encode_style_bench
+```
+
 ### Root cause of prior cluster encode regression (FIXED)
 
 The two cluster encode scenarios (`session_keep_alive`, `claim_shaped`) previously
