@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
         let uri = Some(cformat!("localhost:{port}"))?;
         let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).ok()?;
         enc.correlation_id(1).response_stream_id(102).version(0);
         let complete = enc

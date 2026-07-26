@@ -12,7 +12,7 @@ proptest! {
         csid in any::<i64>(),
         ts in any::<i64>(),
     ) {
-        let mut buf = vec![0u8; 128];
+        let mut buf = [0u8; 128];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid).timestamp(ts);
         let bytes = enc.as_ref().to_vec();
@@ -27,7 +27,7 @@ proptest! {
         ltid in any::<i64>(),
         csid in any::<i64>(),
     ) {
-        let mut buf = vec![0u8; 128];
+        let mut buf = [0u8; 128];
         let mut enc = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid);
         let bytes = enc.as_ref();
@@ -40,7 +40,7 @@ proptest! {
         csid in any::<i64>(),
         data in prop::collection::vec(any::<u8>(), 0..64),
     ) {
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(cid).cluster_session_id(csid);
         let complete = enc.encoded_challenge(&data).unwrap();
@@ -61,7 +61,7 @@ proptest! {
         mid in any::<i32>(),
         eps in "[a-z0-9=,:]{0,80}",
     ) {
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid).leader_member_id(mid);
         let complete = enc.ingress_endpoints(eps.as_bytes()).unwrap();
@@ -83,7 +83,7 @@ proptest! {
         mid in any::<i32>(),
         detail in "[a-zA-Z0-9 ]{0,40}",
     ) {
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.cluster_session_id(csid).correlation_id(cid).leadership_term_id(ltid)
             .leader_member_id(mid).code(EventCode::OK).version(1);

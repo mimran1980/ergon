@@ -5127,7 +5127,13 @@ fn generate_message_encoder(
     // Pre-compute HEADER_TEMPLATE bytes. SBE spec §4.1: the message header
     // is ALWAYS little-endian regardless of the schema's byteOrder. The body
     // follows the schema byteOrder; the header does not.
-    let mut header_tpl = vec![0u8; header_size];
+    // Known size at generate-time (standard SBE header is 8); stack, not vec!.
+    assert!(
+        header_size <= 32,
+        "message header larger than stack pad: {header_size}"
+    );
+    let mut header_tpl = [0u8; 32];
+    let header_tpl = &mut header_tpl[..header_size];
     let hdr_bl = block_length as u16;
     header_tpl[0..2].copy_from_slice(&hdr_bl.to_le_bytes());
     header_tpl[2..4].copy_from_slice(&msg.id.to_le_bytes());
@@ -6093,7 +6099,12 @@ fn generate_group_encoder(
     let (_, _, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
     let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
-    let mut dim_tpl = vec![0u8; dim_size];
+    assert!(
+        dim_size <= 32,
+        "group dimension header larger than stack pad: {dim_size}"
+    );
+    let mut dim_storage = [0u8; 32];
+    let dim_tpl = &mut dim_storage[..dim_size];
     match byte_order {
         ByteOrder::LittleEndian => {
             dim_tpl[0..2].copy_from_slice(&(g.block_length as u16).to_le_bytes());

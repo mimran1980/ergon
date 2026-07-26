@@ -36,7 +36,7 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
         // We build one Car, then benchmark decode on it.
 
         fn encode_car_vec() -> Vec<u8> {
-            let mut buf = vec![0u8; 512];
+            let mut buf = [0u8; 512];
             let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
             car.serial_number(1234);
             car.model_year(2013);

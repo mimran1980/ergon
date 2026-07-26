@@ -20,7 +20,7 @@ fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         "enum_rt",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::T); car.code(Model::A);
@@ -57,7 +57,7 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         "set_rt",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::T); car.code(Model::A);
@@ -95,7 +95,7 @@ fn vardata_empty_and_max_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         // Encode with empty var-data
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::F); car.code(Model::A);
@@ -139,7 +139,7 @@ fn all_scalar_accessor_paths() -> Result<(), Box<dyn std::error::Error>> {
         "scalar_paths",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234); car.model_year(2013);
         car.available(BooleanType::T); car.code(Model::A);
@@ -192,7 +192,7 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         "bool_roundtrip",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
 
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(42); car.model_year(2013);
@@ -211,7 +211,7 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         assert!(dec.available_bool(), "expected true from _bool()");
         assert_eq!(dec.available(), BooleanType::T, "enum getter should also be T");
 
-        let mut buf2 = vec![0u8; 256];
+        let mut buf2 = [0u8; 256];
         let mut car2 = CarEncoder::wrap_and_apply_header(&mut buf2, 0);
         car2.serial_number(42); car2.model_year(2013);
         car2.available_bool(false); car2.code(Model::A);
@@ -263,7 +263,7 @@ fn boolean_semantic_type_gating() -> Result<(), Box<dyn std::error::Error>> {
         "bool_semantic",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
 
         let mut enc = ToggleEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.enabled_bool(true).status(Status::Active);
@@ -271,7 +271,7 @@ fn boolean_semantic_type_gating() -> Result<(), Box<dyn std::error::Error>> {
         assert!(dec.enabled_bool(), "enabled_bool should return true");
         assert_eq!(dec.status(), Status::Active);
 
-        let mut buf2 = vec![0u8; 256];
+        let mut buf2 = [0u8; 256];
         let mut enc2 = ToggleEncoder::wrap_and_apply_header(&mut buf2, 0);
         enc2.enabled_bool(false).status(Status::Inactive);
         let dec2 = ToggleDecoder::try_wrap_and_apply_header(&buf2, 0).unwrap();
@@ -294,7 +294,7 @@ fn boolean_nullval_reads_true() -> Result<(), Box<dyn std::error::Error>> {
         "bool_nullval",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
 
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(42); car.model_year(2013);
@@ -369,7 +369,7 @@ fn schema_id_from_header_extracts_correctly() -> Result<(), Box<dyn std::error::
         "schema_id",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::F); car.code(Model::A);
@@ -398,7 +398,7 @@ fn constant_fields_return_correct_values() -> Result<(), Box<dyn std::error::Err
         "const_fields",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::F); car.code(Model::A);
@@ -448,7 +448,7 @@ fn verify_function_detects_invalid_messages() -> Result<(), Box<dyn std::error::
         "verify_fn",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::F); car.code(Model::A);
@@ -505,7 +505,7 @@ fn buffer_too_short_truncated_field() -> Result<(), Box<dyn std::error::Error>> 
         "buf_err",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::F); car.code(Model::A);
@@ -536,7 +536,7 @@ fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>>
         "vd_trunc",
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::F); car.code(Model::A);
@@ -588,7 +588,7 @@ fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::er
         "raw_enum",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::T); car.code(Model::A);
@@ -619,7 +619,7 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         "raw_set",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1); car.model_year(2000);
         car.available(BooleanType::F); car.code(Model::A);
@@ -773,7 +773,7 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
         "endian_le",
         &le_src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut enc = AllTypesEncoder::wrap_and_apply_header(&mut buf, 0);
         let scalar = AllScalars::new(42i8, 128u8, 1000i16, 50000u16,
             100000i32, 3000000000u32, 99999i64, 77777u64,
@@ -820,7 +820,7 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
         "endian_be",
         &be_src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut enc = AllTypesEncoder::wrap_and_apply_header(&mut buf, 0);
         let scalar = AllScalars::new(42i8, 128u8, 1000i16, 50000u16,
             100000i32, 3000000000u32, 99999i64, 77777u64,
@@ -867,7 +867,7 @@ fn all_scalars_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         "be_scalars",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut enc = AllTypesEncoder::wrap_and_apply_header(&mut buf, 0);
         let scalar = AllScalars::new(
             42i8,             // i8_val

@@ -134,7 +134,9 @@ fn direct_flatgroup_exact_length() -> Result<(), Box<dyn std::error::Error>> {
         r#"
         let desc = b"test exchange data";
         let len = FlatGroupEncoder::try_compute_encoded_length_with_header(2u16, 1u16, desc.len())?;
-        let mut buf = vec![0u8; len];
+        let mut buf_storage = [0u8; 8192];
+assert!(len <= buf_storage.len());
+let mut buf = &mut buf_storage[..len];
         let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
         enc.symbol(42);
         let complete = enc.bids(2, |bids| {
@@ -297,7 +299,9 @@ fn one_byte_short_buffer_fails() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let len = FlatGroupEncoder::try_compute_encoded_length_with_header(1u16, 0u16, 0)?;
-        let mut buf = vec![0u8; len];
+        let mut buf_storage = [0u8; 8192];
+assert!(len <= buf_storage.len());
+let mut buf = &mut buf_storage[..len];
         let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
         enc.symbol(42);
         let complete = enc.bids(1, |g| {
@@ -308,7 +312,7 @@ fn one_byte_short_buffer_fails() -> Result<(), Box<dyn std::error::Error>> {
         .description(b"")?;
         assert_eq!(len, complete.as_bytes().len());
 
-        let mut tiny = vec![0u8; 4]; // header=8, block=8 — 4 is too short
+        let mut tiny = [0u8; 4]; // header=8, block=8 — 4 is too short
         let result = FlatGroupEncoder::try_wrap_and_apply_header(&mut tiny, 0);
         assert!(result.is_err(), "too-short buffer must fail");
         println!("PASS: one_byte_short_buffer_fails");

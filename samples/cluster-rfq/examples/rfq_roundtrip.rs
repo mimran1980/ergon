@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect (SessionConnectRequest, schema 111)
     {
         // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
         let _ = enc.correlation_id(1).response_stream_id(102).version(0);
         let _ = enc
@@ -102,9 +102,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Send AddInstrument (RFQ schema 101) wrapped in cluster SessionMessageHeader
     {
-        let hdr = SessionMessageHeaderEncoder::ENCODED_LENGTH;
-        let body = AddInstrumentEncoder::ENCODED_LENGTH;
-        let mut msg = vec![0u8; hdr + body];
+        const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
+        const BODY: usize = AddInstrumentEncoder::ENCODED_LENGTH;
+        let mut msg = [0u8; HDR + BODY];
+        let hdr = HDR;
+        let body = BODY;
         {
             let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
@@ -134,9 +136,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Send CreateRfq (RFQ schema 101)
     {
-        let hdr = SessionMessageHeaderEncoder::ENCODED_LENGTH;
-        let body = CreateRfqCommandEncoder::ENCODED_LENGTH;
-        let mut msg = vec![0u8; hdr + body];
+        const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
+        const BODY: usize = CreateRfqCommandEncoder::ENCODED_LENGTH;
+        let mut msg = [0u8; HDR + BODY];
+        let hdr = HDR;
+        let body = BODY;
         {
             let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh

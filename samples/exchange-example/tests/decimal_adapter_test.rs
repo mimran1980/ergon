@@ -49,7 +49,9 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let d = rust_decimal::Decimal::from_str(text).unwrap();
 
         let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(1, 0, 1);
-        let mut buf = vec![0u8; inner_len];
+        let mut buf_storage = [0u8; 8192];
+    assert!(inner_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..inner_len];
         let mut enc = L2BookEncoder::wrap_and_apply_header(&mut buf, 0);
         let _ = enc
             .source(Source::Bitget)
@@ -81,7 +83,9 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let wire = d.try_to_sbe().unwrap();
         let m = wire.mantissa();
         let e = wire.exponent();
-        let mut buf2 = vec![0u8; inner_len];
+        let mut buf2_storage = [0u8; 8192];
+    assert!(inner_len <= buf2_storage.len(), "len exceeds stack pad");
+    let mut buf2 = &mut buf2_storage[..inner_len];
         let mut enc = L2BookEncoder::wrap_and_apply_header(&mut buf2, 0);
         let _ = enc
             .source(Source::Bitget)

@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn test_on_message_dispatch_and_values() -> Result<(), Box<dyn std::error::Error>> {
         use crate::codecs::session::SessionMessageHeaderEncoder;
-        let mut buf = vec![0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH + 5];
+        let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH + 5];
         SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
             .leadership_term_id(7)
             .cluster_session_id(42)

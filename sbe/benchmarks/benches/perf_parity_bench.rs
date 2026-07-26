@@ -472,7 +472,7 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
 
     group.bench_function("manual", |b| {
         b.iter_batched(
-            || vec![0u8; 512],
+            || [0u8; 512],
             |mut buf| {
                 let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
                 car.serial_number(42);
@@ -504,7 +504,7 @@ fn bench_fallible_vs_manual(c: &mut Criterion) {
 
     group.bench_function("fallible", |b| {
         b.iter_batched(
-            || vec![0u8; 512],
+            || [0u8; 512],
             |mut buf| {
                 let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
                 car.serial_number(42);
@@ -556,7 +556,7 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
 
     group.bench_function("ergo-sbe", |b| {
         b.iter_batched(
-            || vec![0u8; 512],
+            || [0u8; 512],
             |mut buf| {
                 let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
                 car.serial_number(1234);

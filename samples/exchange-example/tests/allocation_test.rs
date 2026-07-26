@@ -36,7 +36,7 @@ fn warm_up() {
     use normalized_app::{
         AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
-    let mut buf = vec![0u8; 256];
+    let mut buf = [0u8; 256];
     // Encode + decode to settle lazy-inits
     let _ = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0);
     let _ = AppMessageDecoder::try_wrap_and_apply_header(&buf, 0);
@@ -52,7 +52,9 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(1, 0, 1);
     let outer_len = AppMessageEncoder::compute_encoded_length_with_message_header(1, inner_len);
-    let mut buf = vec![0u8; outer_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(outer_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..outer_len];
 
     let before = ALLOC_COUNT.load(Ordering::Relaxed);
 
@@ -105,7 +107,9 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(1, 0, 1);
     let outer_len = AppMessageEncoder::compute_encoded_length_with_message_header(1, inner_len);
-    let mut buf = vec![0u8; outer_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(outer_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..outer_len];
 
     // Pre-encode
     {

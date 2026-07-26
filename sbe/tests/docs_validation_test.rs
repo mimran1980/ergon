@@ -263,7 +263,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Bulk array helpers + group/var-data tail (docs)
-    let mut qbuf = vec![0u8; 512];
+    let mut qbuf = [0u8; 512];
     let written = {
         let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut qbuf, 0)?;
         enc.seq(1);
@@ -289,7 +289,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Domain object (docs)
     let dto = QuoteDomain::from(q);
-    let mut out = vec![0u8; 512];
+    let mut out = [0u8; 512];
     let n = dto.encode(&mut out)?;
     assert!(n > 0);
 

@@ -87,16 +87,19 @@ pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>>
         .activation_code(6)? // "abcdef"
         .encoded_length_with_header();
 
-    // Exact size from EncodedLength — not an oversize guess buffer.
-    // (Runtime `len` needs a heap or claim slot; const messages use stack
-    // `[0u8; MsgEncoder::ENCODED_LENGTH]` instead.)
-    let mut buf = vec![0u8; complete_len];
-    let written = encode_sample_car(&mut buf)?;
+    // Exact size from EncodedLength → stack pad (this demo fits well under 512).
+    const CAR_PAD: usize = 512;
+    assert!(
+        complete_len <= CAR_PAD,
+        "sample car length {complete_len} exceeds stack pad {CAR_PAD}"
+    );
+    let mut storage = [0u8; CAR_PAD];
+    let written = encode_sample_car(&mut storage[..complete_len])?;
     assert_eq!(
         written, complete_len,
         "CarEncodedLength must equal encoder-produced length"
     );
-    Ok(buf[..written].to_vec())
+    Ok(storage[..written].to_vec())
 }
 
 /// Encode the canonical sample car into `buf` (must be pre-sized).
@@ -225,9 +228,11 @@ pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>
     assert_eq!(dto.fuel_figures[0].usage_description, "Urban");
     assert_eq!(dto.manufacturer, "Honda");
 
-    let mut buf2 = vec![0u8; wire.len() + 64];
-    let n = dto.encode(&mut buf2)?;
-    assert_eq!(&buf2[..n], wire, "DTO re-encode must be byte-identical");
+    const RE_PAD: usize = 512;
+    assert!(wire.len() <= RE_PAD);
+    let mut storage = [0u8; RE_PAD];
+    let n = dto.encode(&mut storage[..wire.len()])?;
+    assert_eq!(&storage[..n], wire, "DTO re-encode must be byte-identical");
     Ok(())
 }
 
@@ -247,8 +252,11 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
 
     let note_body = b"hello AnyMessage";
     let note_len = NoteEncoder::compute_encoded_length_with_message_header(note_body.len());
-    let mut note = vec![0u8; note_len];
-    let note_written = NoteEncoder::try_wrap_and_apply_header(&mut note, 0)?
+    const NOTE_PAD: usize = 64;
+    assert!(note_len <= NOTE_PAD);
+    let mut note_storage = [0u8; NOTE_PAD];
+    let note = &mut note_storage[..note_len];
+    let note_written = NoteEncoder::try_wrap_and_apply_header(note, 0)?
         .fixed(&NoteFixedFields { note_id: 99 })
         .body(note_body)?
         .encoded_length_with_header();
@@ -405,8 +413,8 @@ impl TryToSbe<Decimal> for FixedPrice {
 /// | `price() -> rust_decimal::Decimal` | **no** (that needs `with_domain_type`) |
 /// | `price_value()` wire composite | yes |
 pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut buf = [0u8; QuoteEncoder::ENCODED_LENGTH];
     let len = QuoteEncoder::ENCODED_LENGTH;
-    let mut buf = vec![0u8; len];
 
     let price = Rd::new(12345, 2); // 123.45
     let size = Rd::new(10, 0);
@@ -414,7 +422,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     enc.price_from(&price)?;
     enc.size_from(&size)?;
 
-    let dec = QuoteDecoder::try_from(&buf[..len])?;
+    let dec = QuoteDecoder::try_from(buf.as_slice())?;
     let wire = dec.price_value();
     assert_eq!(wire.mantissa(), 12345);
     assert_eq!(wire.exponent(), -2);
@@ -436,7 +444,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let dto = QuoteDomain::from(dec);
     assert_eq!(dto.price.mantissa(), 12345);
-    let mut re = vec![0u8; len];
+    let mut re = [0u8; QuoteEncoder::ENCODED_LENGTH];
     let n = dto.encode(&mut re)?;
     assert_eq!(&re[..n], &buf[..len]);
     Ok(buf[..len].to_vec())

@@ -26,7 +26,9 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
     let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -77,7 +79,9 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
 
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
@@ -114,7 +118,9 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         bids_count as usize,
         symbol.len(),
     );
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
     let mut encoder = Depth50Encoder::wrap_and_apply_header(&mut buf, 0);
@@ -296,7 +302,9 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let trades_count = 2u16;
     let symbol = b"ETHUSDT";
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
     let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -389,7 +397,9 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
     let trades_count = 1u16;
     let symbol = b"BTCUSDT";
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
@@ -434,7 +444,9 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     let trades_count = 1u16;
     let symbol = b"";
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
@@ -500,7 +512,9 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     let buf_len = WebSocketSessionLogonResponseEncoder::compute_encoded_length_with_message_header(
         api_key.len(),
     );
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
     let mut encoder = WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -567,7 +581,9 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
         id.len(),
         result.len(),
     ) + 8;
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
     let mut encoder = WebSocketResponseEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -710,7 +726,9 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
     // Encode a valid bitget BestBidAsk message
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
-    let mut buf = vec![0u8; buf_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..buf_len];
 
     let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
@@ -917,7 +935,9 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let outer_len =
         AppMessageEncoder::compute_encoded_length_with_message_header(app_name.len(), inner_len);
 
-    let mut buf = vec![0u8; outer_len];
+    let mut buf_storage = [0u8; 8192];
+    assert!(outer_len <= buf_storage.len(), "len exceeds stack pad");
+    let mut buf = &mut buf_storage[..outer_len];
     let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0);
     outer.sent_ts(1_700_000_000_000_000_000);
 

@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect + get session ID
     {
         // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut enc = SessionConnectRequestEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
         enc.correlation_id(1).response_stream_id(102).version(0);
         let complete = enc
@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Build bid message with SessionMessageHeader
         // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-        let mut msg = vec![0u8; 512];
+        let mut msg = [0u8; 512];
         let mut enc = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg, 0)?;
         enc.leadership_term_id(leadership_term_id)
             .cluster_session_id(cluster_session_id)

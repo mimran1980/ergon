@@ -26,7 +26,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
         "l3_stages_rt",
         &src,
         r#"
-        let mut buf = vec![0u8; 1024];
+        let mut buf = [0u8; 1024];
         let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
         e.timestamp(99);
         e.sequence(7);
@@ -168,7 +168,7 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         "l3_entry_stages_rt",
         &src,
         r#"
-        let mut buf = vec![0u8; 1024];
+        let mut buf = [0u8; 1024];
         let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
         e.timestamp(5);
         e.sequence(3);

@@ -118,7 +118,7 @@ proptest! {
         let extras = OptionalExtras::from(extras_raw);
         let engine = Engine::new(capacity, num_cylinders, mc, 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0));
 
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(serial_number);
         car.model_year(model_year);
@@ -179,7 +179,7 @@ proptest! {
         model in proptest::collection::vec(32u8..=126, 0..100),
         activation in proptest::collection::vec(32u8..=126, 0..100),
     ) {
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(0);
         car.model_year(2000);
@@ -241,7 +241,7 @@ proptest! {
             0..=8,
         ),
     ) {
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(0);
         car.model_year(2000);
@@ -305,7 +305,7 @@ use prop_car_example::*;
 
 #[test]
 fn zero_length_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 512];
+    let mut buf = [0u8; 512];
     let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
     car.serial_number(0);
     car.model_year(0);
@@ -356,7 +356,7 @@ use prop_car_example::*;
 
 #[test]
 fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0u8; 512];
+    let mut buf = [0u8; 512];
     let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
     car.serial_number(u64::MAX);
     car.model_year(u16::MAX);

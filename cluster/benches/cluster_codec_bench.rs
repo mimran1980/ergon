@@ -313,13 +313,12 @@ const NEW_LEADER_SCHEMA_ID: u16 = 111;
 
 fn new_leader_fixture() -> Vec<u8> {
     use ergo_aeron_cluster::cluster_codec_types::NewLeaderEventEncoder;
-    let mut buf = vec![0u8; 256];
+    let mut buf = [0u8; 256];
     let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
     let _ = enc.cluster_session_id(2).leadership_term_id(9).leader_member_id(1);
     let complete = enc.ingress_endpoints(b"0=localhost:9000,1=localhost:9100").unwrap();
     let len = complete.encoded_length_with_header();
-    buf.truncate(len);
-    buf
+    buf[..len].to_vec()
 }
 
 fn bench_decode_new_leader(c: &mut Criterion) {

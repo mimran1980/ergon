@@ -33,8 +33,10 @@ fn example_1_uniform() -> Result<(), Box<dyn std::error::Error>> {
     let symbol = b"ETH";
 
     let len = l3_book::book_encoded_length(&bids, &asks, symbol)?;
-    let mut buf = vec![0u8; len];
-    let actual = l3_book::encode_book(&mut buf, &bids, &asks, symbol)?;
+    let mut storage = [0u8; 4096];
+    assert!(len <= storage.len(), "book len {len} exceeds stack pad");
+    let buf = &mut storage[..len];
+    let actual = l3_book::encode_book(buf, &bids, &asks, symbol)?;
     assert_eq!(len, actual);
 
     let dec = l3_book::L3BookDecoder::try_from(&buf[..actual])?;
@@ -65,8 +67,10 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
     let symbol = b"BTCUSDT";
 
     let len = l3_book::book_encoded_length(&bids, &asks, symbol)?;
-    let mut buf = vec![0u8; len];
-    let actual = l3_book::encode_book(&mut buf, &bids, &asks, symbol)?;
+    let mut storage = [0u8; 4096];
+    assert!(len <= storage.len(), "book len {len} exceeds stack pad");
+    let buf = &mut storage[..len];
+    let actual = l3_book::encode_book(buf, &bids, &asks, symbol)?;
     assert_eq!(len, actual);
 
     let dec = l3_book::L3BookDecoder::try_from(&buf[..actual])?;
@@ -75,9 +79,9 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
 
     // DTO round-trip — byte-identical.
     let dto = l3_book::L3BookDomain::from(l3_book::L3BookDecoder::try_from(&buf[..actual])?);
-    let mut buf2 = vec![0u8; len];
-    let encoded2 = dto.encode(&mut buf2)?;
-    assert_eq!(&buf[..actual], &buf2[..encoded2], "DTO round-trip must be byte-identical");
+    let mut storage2 = [0u8; 4096];
+    let encoded2 = dto.encode(&mut storage2[..len])?;
+    assert_eq!(&buf[..actual], &storage2[..encoded2], "DTO round-trip must be byte-identical");
     println!("  DTO round-trip: byte-identical ({actual} bytes)\n");
     Ok(())
 }
@@ -99,8 +103,10 @@ fn example_3_vardata() -> Result<(), Box<dyn std::error::Error>> {
     let symbol = b"LINK";
 
     let len = l3_book::vardata_book_encoded_length(&bids, &asks, symbol)?;
-    let mut buf = vec![0u8; len];
-    let actual = l3_book::encode_vardata_book(&mut buf, &bids, &asks, symbol)?;
+    let mut storage = [0u8; 4096];
+    assert!(len <= storage.len(), "vardata book len {len} exceeds stack pad");
+    let buf = &mut storage[..len];
+    let actual = l3_book::encode_vardata_book(buf, &bids, &asks, symbol)?;
     assert_eq!(len, actual);
 
     let dec = l3_book::L3BookVarDataDecoder::try_from(&buf[..actual])?;
@@ -123,8 +129,10 @@ fn example_4_depth3() -> Result<(), Box<dyn std::error::Error>> {
     let description = b"depth-3 test message";
 
     let len = l3_book::depth3_encoded_length(&levels, description)?;
-    let mut buf = vec![0u8; len];
-    let actual = l3_book::encode_depth3(&mut buf, 42, &levels, description)?;
+    let mut storage = [0u8; 4096];
+    assert!(len <= storage.len(), "depth3 len {len} exceeds stack pad");
+    let buf = &mut storage[..len];
+    let actual = l3_book::encode_depth3(buf, 42, &levels, description)?;
     assert_eq!(len, actual);
 
     let dec = l3_book::Depth3TestDecoder::try_from(&buf[..actual])?;

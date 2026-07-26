@@ -37,7 +37,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         MODULE_FULL,
         &src,
         r#"
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -114,7 +114,7 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
         MODULE_FINISH,
         &src,
         r#"
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(7);
         let car = car.fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
@@ -161,7 +161,7 @@ fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Err
         MODULE_EMPTY,
         &src,
         r#"
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1);
         let car = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;

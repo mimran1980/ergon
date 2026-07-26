@@ -15,7 +15,7 @@ fn bench_explicit_count_add(c: &mut Criterion) {
     let mut g = c.benchmark_group("group/explicit_count");
     g.throughput(Throughput::Elements(1));
     g.bench_function("10_bids_5_asks_add", |b| {
-        let mut buf = vec![0u8; BUF_SZ];
+        let mut buf = [0u8; BUF_SZ];
         b.iter(|| {
             let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                 .fixed(&fixed())
@@ -42,7 +42,7 @@ fn bench_unknown_size_add(c: &mut Criterion) {
     let mut g = c.benchmark_group("group/unknown_size");
     g.throughput(Throughput::Elements(1));
     g.bench_function("10_bids_5_asks_add", |b| {
-        let mut buf = vec![0u8; BUF_SZ];
+        let mut buf = [0u8; BUF_SZ];
         b.iter(|| {
             let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                 .fixed(&fixed())
@@ -69,7 +69,7 @@ fn bench_explicit_count_add_struct(c: &mut Criterion) {
     let mut g = c.benchmark_group("group/explicit_count_add_struct");
     g.throughput(Throughput::Elements(1));
     g.bench_function("3_bids_2_nested_orders_struct", |b| {
-        let mut buf = vec![0u8; BUF_SZ];
+        let mut buf = [0u8; BUF_SZ];
         b.iter(|| {
             let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                 .fixed(&fixed())
@@ -112,7 +112,7 @@ fn bench_mixed_unknown_struct(c: &mut Criterion) {
     let mut g = c.benchmark_group("group/mixed_unknown_struct");
     g.throughput(Throughput::Elements(1));
     g.bench_function("5_bids_nested_unknown_struct", |b| {
-        let mut buf = vec![0u8; BUF_SZ];
+        let mut buf = [0u8; BUF_SZ];
         b.iter(|| {
             let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                 .fixed(&fixed())
@@ -155,7 +155,7 @@ fn bench_large_batch(c: &mut Criterion) {
     let mut g = c.benchmark_group("group/large_batch");
     g.throughput(Throughput::Elements(1));
     g.bench_function("100_bids_50_asks", |b| {
-        let mut buf = vec![0u8; BUF_SZ];
+        let mut buf = [0u8; BUF_SZ];
         b.iter(|| {
             let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                 .fixed(&fixed())

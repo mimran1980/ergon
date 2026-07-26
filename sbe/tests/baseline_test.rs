@@ -424,7 +424,7 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         &Paths::example_schema(),
         &Paths::baseline_binary(),
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
 
         car.serial_number(1234);
@@ -546,7 +546,7 @@ fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
         &Paths::example_schema(),
         &Paths::baseline_binary(),
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
 
         car.serial_number(1234);
@@ -662,7 +662,7 @@ fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
         "is_empty_group",
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -681,7 +681,7 @@ fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert!(car2.into_fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
 
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -728,7 +728,7 @@ fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Err
         // Baseline: zero groups / zero var-data
         // Groups and var-data are always present (dim headers + length prefixes even at 0)
         // Use large buffer pattern instead of staged EncodedLength builders
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -750,7 +750,7 @@ fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Err
 
         // DECISIONS.md §2: header-inclusive length must use the dedicated helper.
         // Use large buffer pattern instead of staged EncodedLength builders
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -771,7 +771,7 @@ fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Err
 
         // Computed length must be ≤ MAX_ENCODED_LENGTH (worst-case bound)
         // Use large buffer pattern instead of staged EncodedLength builders
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -800,7 +800,7 @@ fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Err
         // Encode a simple message (no nested groups, no entry var-data)
         // and verify the pre-computed length matches actual encoded length
         // Use large buffer pattern instead of staged EncodedLength builders
-        let mut buf = vec![0u8; 4096];
+        let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -831,7 +831,7 @@ fn fixed_entry_group_entries_iterator() -> Result<(), Box<dyn std::error::Error>
         "entries_iter",
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -892,7 +892,7 @@ fn array_accessor_all_paths_return_same_values() -> Result<(), Box<dyn std::erro
         "array_paths",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -929,7 +929,7 @@ fn display_shows_group_entry_fields_not_just_count() -> Result<(), Box<dyn std::
         "display_entries",
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -974,7 +974,7 @@ fn composite_default_is_flyweight_value_is_eager_copy() -> Result<(), Box<dyn st
         "composite_api",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -1022,7 +1022,7 @@ fn bounds_checks_active_by_default_nth_always_checked() -> Result<(), Box<dyn st
         "bounds_default",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1);
         car.model_year(2000);
@@ -1057,7 +1057,7 @@ fn bounds_checks_disabled_with_feature_flag() -> Result<(), Box<dyn std::error::
         &src,
         r#"
         // With bound-check-disabled, wrap_and_apply_header (unchecked) uses unsafe fast path
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -1274,7 +1274,7 @@ fn composite_ref_engine_roundtrip_compile() -> Result<(), Box<dyn std::error::Er
         assert_eq!(&fixture_engine[..], &eng.0[..]);
 
         // Full message: encode + decode recovers ref members.
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1);
         car.model_year(2013);
@@ -1307,7 +1307,7 @@ fn vardata_maxlength_runtime() -> Result<(), Box<dyn std::error::Error>> {
         "vardata_max_len",
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -1337,7 +1337,7 @@ fn boolean_roundtrip_runtime() -> Result<(), Box<dyn std::error::Error>> {
         "bool_rt",
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -1359,7 +1359,7 @@ fn boolean_roundtrip_runtime() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(available, BooleanType::T, "round-trip available via available_bool(true)");
         assert_ne!(available.raw(), 0, "BooleanType::T raw != 0");
 
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
         car.model_year(2013);
@@ -1552,7 +1552,7 @@ fn static_header_templates_exist() -> Result<(), Box<dyn std::error::Error>> {
         "static_tpl",
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         // Drop the encoder immediately to release the mutable borrow,
         // then verify header bytes were written correctly.
         let _ = CarEncoder::<'_>::wrap_and_apply_header(&mut buf, 0);
@@ -1592,13 +1592,17 @@ fn encoder_wrap_short_buffer_returns_error() -> Result<(), Box<dyn std::error::E
         ));
 
         // Body too short: try_wrap checks header + BLOCK_LENGTH
-        let mut short_body = vec![0u8; total_needed - 1];
+        let mut short_body_storage = [0u8; 8192];
+        assert!(total_needed - 1 <= short_body_storage.len());
+        let mut short_body = &mut short_body_storage[..total_needed - 1];
         assert!(matches!(
             CarEncoder::try_wrap(&mut short_body, 0),
             Err(sbe_rt::EncodeError::BufferTooShort { .. })
         ));
 
-        let mut exact = vec![0u8; total_needed];
+        let mut exact_storage = [0u8; 8192];
+        assert!(total_needed <= exact_storage.len());
+        let mut exact = &mut exact_storage[..total_needed];
         let _encoder = CarEncoder::wrap_and_apply_header(&mut exact, 0);
     "#,
     );
@@ -1672,7 +1676,7 @@ fn forward_compat_v2_decoder_reads_v1_bytes() -> Result<(), Box<dyn std::error::
         "versmsg_v2",
         &v2_src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut e = versmsg_v1::VersionedMessageV1Encoder::wrap_and_apply_header(&mut buf, 0);
         e.field_a1(100);
         e.field_b1(200);
@@ -1712,7 +1716,7 @@ fn backward_compat_v1_decoder_reads_v2_bytes() -> Result<(), Box<dyn std::error:
         "versmsg_v2",
         &v2_src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut e = versmsg_v2::VersionedMessageV2Encoder::wrap_and_apply_header(&mut buf, 0);
         e.field_a1(42);
         e.field_b1(99);
@@ -1743,7 +1747,7 @@ fn anymessage_decode_dispatches_by_template_id() -> Result<(), Box<dyn std::erro
         "am_decode",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(42);
         car.model_year(2020);
@@ -1781,7 +1785,7 @@ fn anymessage_decode_frame_validates_length() -> Result<(), Box<dyn std::error::
         "am_frame",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(99);
         car.model_year(2021);
@@ -1826,7 +1830,7 @@ fn anymessage_unknown_template_forwards_payload() -> Result<(), Box<dyn std::err
         r#"
         // Construct a message with a non-existent templateId (99)
         // Header: blockLength(2) templateId(2) schemaId(2) version(2) = 8 bytes LE
-        let mut buf = vec![0u8; 64];
+        let mut buf = [0u8; 64];
         buf[0..2].copy_from_slice(&16u16.to_le_bytes());   // blockLength
         buf[2..4].copy_from_slice(&99u16.to_le_bytes());   // templateId = unknown
         buf[4..6].copy_from_slice(&1u16.to_le_bytes());    // schemaId = correct
@@ -1859,7 +1863,7 @@ fn framecursor_iterates_length_prefixed_frames() -> Result<(), Box<dyn std::erro
         "fc_iter",
         &src,
         r#"
-        let mut buf = vec![0u8; 512];
+        let mut buf = [0u8; 512];
         let mut car1 = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car1.serial_number(10);
         car1.model_year(2022);
@@ -1981,7 +1985,7 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength()
         "grpvers_v2",
         &v2_src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut e = grpvers_v1::GroupMsgEncoder::wrap_and_apply_header(&mut buf, 0);
         let after_entries = e.entries(2, |g| {
             g.add(|entry| { entry.price(100).qty(10); Ok(()) }).unwrap();
@@ -2029,7 +2033,7 @@ fn var_data_after_version_mismatched_group_at_correct_offset()
         "grpvers_v1b",
         &v1_src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut e = grpvers_v2b::GroupMsgEncoder::wrap_and_apply_header(&mut buf, 0);
         let after_entries = e.entries(2, |g| {
             g.add(|entry| { entry.price(111).qty(22).flags(0xABCD); Ok(()) }).unwrap();
@@ -2213,7 +2217,9 @@ fn nested_message_decode_via_vardata() -> Result<(), Box<dyn std::error::Error>>
         let inner_len = InnerEncoder::compute_encoded_length_with_message_header(
             b"nested".len(),
         );
-        let mut inner_buf = vec![0u8; inner_len];
+        let mut inner_buf_storage = [0u8; 8192];
+        assert!(inner_len <= inner_buf_storage.len());
+        let mut inner_buf = &mut inner_buf_storage[..inner_len];
         let mut inner = InnerEncoder::wrap_and_apply_header(&mut inner_buf, 0);
         inner.value(42);
         let inner_complete = inner.label(b"nested").unwrap();
@@ -2223,7 +2229,9 @@ fn nested_message_decode_via_vardata() -> Result<(), Box<dyn std::error::Error>>
             b"test-app".len(),
             inner_bytes.len(),
         );
-        let mut buf = vec![0u8; outer_len];
+        let mut buf_storage = [0u8; 8192];
+        assert!(outer_len <= buf_storage.len());
+        let mut buf = &mut buf_storage[..outer_len];
         let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.trace_id(7);
         let after_name = outer.app_name(b"test-app").unwrap();
@@ -2260,7 +2268,7 @@ fn nested_message_as_message_requires_ordered_consumption() -> Result<(), Box<dy
         "nested_msg_cf",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.trace_id(7);
         let _complete = outer.app_name(b"t").unwrap();
@@ -2289,7 +2297,9 @@ fn bounded_nested_payload_encode_via_with() -> Result<(), Box<dyn std::error::Er
             b"test-app".len(),
             inner_len,
         );
-        let mut buf = vec![0u8; outer_len];
+        let mut buf_storage = [0u8; 8192];
+        assert!(outer_len <= buf_storage.len());
+        let mut buf = &mut buf_storage[..outer_len];
         let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.trace_id(7);
         let complete = outer
@@ -2591,8 +2601,8 @@ fn manual_start_entry_matches_closure() -> Result<(), Box<dyn std::error::Error>
         "start_entry_test",
         &src,
         r#"
-        let mut buf_closure = vec![0u8; 512];
-        let mut buf_manual = vec![0u8; 512];
+        let mut buf_closure = [0u8; 512];
+        let mut buf_manual = [0u8; 512];
 
         let mut car_c = CarEncoder::wrap_and_apply_header(&mut buf_closure, 0);
         car_c.serial_number(42); car_c.model_year(2020);
@@ -2647,7 +2657,7 @@ fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Err
         "decimal_rt",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.price(Decimal::new(12345, -2));  // 123.45
         enc.size(Decimal::new(100, 0));       // 100
@@ -2745,7 +2755,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
         "conv_domain",
         src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.price_wire(Decimal::new(99, -2));
         enc.size_wire(Decimal::new(3, 0));
@@ -2756,7 +2766,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
         assert_eq!(dto.price.mantissa(), 99);
         assert_eq!(dto.price.exponent(), -2);
 
-        let mut out = vec![0u8; 256];
+        let mut out = [0u8; 256];
         let n = dto.encode(&mut out).unwrap();
         assert_eq!(&out[..n], &wire[..n]);
     "#,
@@ -2784,7 +2794,7 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
         src,
         r#"
         // Wire path: encode via price_wire, decode via price_wire
-        let mut buf_wire = vec![0u8; 256];
+        let mut buf_wire = [0u8; 256];
         let mut enc_wire = OrderEncoder::wrap_and_apply_header(&mut buf_wire, 0);
         enc_wire.price_wire(Decimal::new(12345, -2));
         enc_wire.size_wire(Decimal::new(100, 0));
@@ -2886,8 +2896,8 @@ fn fixed_method_manual_equivalence() -> Result<(), Box<dyn std::error::Error>> {
         "fixed_eq",
         &src,
         r#"
-        let mut buf_direct = vec![0u8; 256];
-        let mut buf_fixed = vec![0u8; 256];
+        let mut buf_direct = [0u8; 256];
+        let mut buf_fixed = [0u8; 256];
         let mut d = CarEncoder::wrap_and_apply_header(&mut buf_direct, 0);
         d.serial_number(42); d.model_year(2020);
         d.available(BooleanType::T); d.code(Model::A);
@@ -2931,7 +2941,7 @@ fn callback_escape_try_data_is_compile_fail() -> Result<(), Box<dyn std::error::
         "cb_escape",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.trace_id(7);
         let complete = outer.app_name(b"test").unwrap().payload(b"data").unwrap();
@@ -2959,7 +2969,7 @@ fn consumed_encoder_stage_cannot_be_reused() -> Result<(), Box<dyn std::error::E
         "consume_reuse",
         &src,
         r#"
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.trace_id(7);
         let after_name = outer.app_name(b"t").unwrap();
@@ -2981,7 +2991,7 @@ fn nested_message_rejects_malformed_payload() -> Result<(), Box<dyn std::error::
         "reject_malformed",
         &src,
         r#"
-        let mut tmp_inner = vec![0u8; 128];
+        let mut tmp_inner = [0u8; 128];
         let mut encoder = InnerEncoder::wrap_and_apply_header(&mut tmp_inner, 0);
         encoder.value(42);
         let inner_complete = encoder.label(b"").unwrap();
@@ -2990,7 +3000,9 @@ fn nested_message_rejects_malformed_payload() -> Result<(), Box<dyn std::error::
 
         let app_name_len = b"t".len();
         let outer_len = OuterEncoder::compute_encoded_length_with_message_header(app_name_len, inner_len);
-        let mut buf = vec![0u8; outer_len];
+        let mut buf_storage = [0u8; 8192];
+        assert!(outer_len <= buf_storage.len());
+        let mut buf = &mut buf_storage[..outer_len];
         let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.trace_id(1);
         let complete = outer.app_name(b"t").unwrap()
@@ -3003,9 +3015,11 @@ fn nested_message_rejects_malformed_payload() -> Result<(), Box<dyn std::error::
         assert!(matches!(frame.message, AnyMessage::Inner(_)));
 
         // Wrong-schema payload (all zeros) is rejected by into_payload_as_message
-        let payload_16 = vec![0u8; 16];
+        let payload_16 = [0u8; 16];
         let bad_outer_len = OuterEncoder::compute_encoded_length_with_message_header(0, 16);
-        let mut bad_buf = vec![0u8; bad_outer_len];
+        let mut bad_buf_storage = [0u8; 8192];
+        assert!(bad_outer_len <= bad_buf_storage.len());
+        let mut bad_buf = &mut bad_buf_storage[..bad_outer_len];
         let mut bad_outer = OuterEncoder::wrap_and_apply_header(&mut bad_buf, 0);
         bad_outer.trace_id(1);
         bad_outer.app_name(b"").unwrap()
@@ -3035,7 +3049,9 @@ fn nested_message_identifies_recursive_payload() -> Result<(), Box<dyn std::erro
         r#"
         let inner_outer_len = OuterEncoder::compute_encoded_length_with_message_header(0, 0);
         let outer_len = OuterEncoder::compute_encoded_length_with_message_header(1, inner_outer_len);
-        let mut buf = vec![0u8; outer_len];
+        let mut buf_storage = [0u8; 8192];
+        assert!(outer_len <= buf_storage.len());
+        let mut buf = &mut buf_storage[..outer_len];
         let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.trace_id(1);
         let complete = outer.app_name(b"x").unwrap()
@@ -3111,7 +3127,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
         }
 
         // Raw wire model
-        let mut buf_wire = vec![0u8; 256];
+        let mut buf_wire = [0u8; 256];
         let mut enc = BookEncoder::wrap_and_apply_header(&mut buf_wire, 0);
         enc.mid_wire(Decimal::new(5, -1));
         let complete = enc.levels(1, |g| {
@@ -3124,7 +3140,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
         }).unwrap();
         let wire_bytes = complete.as_bytes_with_header().to_vec();
 
-        let mut buf_gen = vec![0u8; 256];
+        let mut buf_gen = [0u8; 256];
         let mut enc = BookEncoder::wrap_and_apply_header(&mut buf_gen, 0);
         enc.mid_from(&Fixed { m: 5, e: -1 }).unwrap();
         let complete = enc.levels(1, |g| {
@@ -3222,7 +3238,7 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
             (1, -18, 1),
             (-1, -18, -1),
         ];
-        let mut buf = vec![0u8; 256];
+        let mut buf = [0u8; 256];
         for &(m, e, scaled) in cases {
             // Trait direction checks.
             assert_eq!(Exact18::try_from_sbe(Decimal::new(m, e)), Ok(Exact18(scaled)), "m={m} e={e}");
