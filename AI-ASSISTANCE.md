@@ -935,6 +935,45 @@ Subscription spend is also not directly comparable with enterprise API
 pay-as-you-go pricing. The next section normalises the observed workload for
 that comparison.
 
+### Would a $200 Claude Max or ChatGPT Pro subscription have been enough?
+
+Probably not if “enough” means reproducing the same uninterrupted workflow,
+with the same long-lived context and roughly 14-billion-token volume, within
+the same intensive month.
+
+The higher subscriptions would certainly have helped. As of 26 July 2026,
+[Claude Max 20x](https://support.claude.com/en/articles/11049741-what-is-the-max-plan)
+provides 20 times the per-session usage of Claude Pro, while
+[ChatGPT Pro $200](https://help.openai.com/en/articles/9793128-chatgpt-pro)
+provides 20 times the general usage allowance of ChatGPT Plus. Those
+multipliers are substantial, but neither product describes the subscription
+as an unlimited coding API:
+
+- Claude Max still has an all-model weekly limit, a separate Sonnet weekly
+  limit, and possible additional caps.
+- The
+  [Codex plan documentation](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan)
+  states that usage counts against a shared agentic allowance whose
+  consumption depends on task size, duration, and retained context. Once the
+  included limit is exhausted, the documented options are to wait or use
+  additional credits.
+
+The providers do not publish a fixed included token quantity that can be
+mapped cleanly onto my 14-billion-token estimate, so it would be misleading to
+claim an exact shortfall. The pay-as-you-go comparison later in this document
+does, however, put the scale in perspective: holding my sampled token mix
+constant produces several-thousand-dollar estimates for Claude and much higher
+one-million-context estimates for the OpenAI models considered.
+
+I believe I could still have completed the project with either $200
+subscription if I accepted pauses for resets, cleared context more
+aggressively, used cheaper fallback models, extended the schedule, or bought
+extra credits. I do not believe the subscription alone would reliably have
+preserved the particular development method described here: very long
+sessions, constant iteration, repeated tests and benchmarks, and no need to
+stop when a five-hour or weekly limit was reached. That uninterrupted flow was
+the practical advantage of inexpensive pay-as-you-go DeepSeek.
+
 ## The cache sample used for the cost comparison
 
 The dashboard screenshots expose the input-cache-hit, input-cache-miss, and
