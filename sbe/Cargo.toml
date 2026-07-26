@@ -79,6 +79,7 @@ name = "sbe_tool_multi_schema_wire_parity_test"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+serial_test = "3"
 
 [package.metadata.docs.rs]
 all-features = true
