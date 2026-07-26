@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<messageSchema package="SBE tests" id="103" semanticVersion="5.2"
+               description="Duplicate message ID test"
+               byteOrder="littleEndian">
+    <types>
+        <type name="TypeToTest" primitiveType="char"/>
+    </types>
+    <message name="Message1" id="1">
+        <field name="field" id="10" type="TypeToTest" semanticType="int"/>
+    </message>
+    <!-- id repeated => ResolveError::DuplicateTemplateId -->
+    <message name="AnotherMessageWithId1" id="1">
+        <field name="field" id="10" type="TypeToTest" semanticType="int"/>
+    </message>
+</messageSchema>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<types>
+    <composite name="IncludedType">
+        <type name="x" primitiveType="uint32"/>
+    </composite>
+    <enum name="IncludedEnum" encodingType="uint8">
+        <validValue name="A">1</validValue>
+    </enum>
+</types>

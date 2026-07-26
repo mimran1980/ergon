@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/real-logic/simple-binary-encoding/master/sbe-tool/src/main/resources/sbe.xsd"
+    package="collision.test" id="777" version="0" byteOrder="littleEndian"
+    description="Tests zero-count forwarding when nested group name collides with next message group">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId"   primitiveType="uint16"/>
+      <type name="schemaId"     primitiveType="uint16"/>
+      <type name="version"      primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup"  primitiveType="uint16"/>
+    </composite>
+    <composite name="varAsciiEncoding">
+      <type name="length"  primitiveType="uint32"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <!-- The nested group "items" collides with the message-level group "items" -->
+  <sbe:message name="CollisionMsg" id="1">
+    <field name="id" id="1" type="uint64" offset="0"/>
+    <group name="outer" id="2" dimensionType="groupSizeEncoding">
+      <field name="value" id="3" type="uint32" offset="0"/>
+      <!-- Nested group "items" — same name as the next message-level group -->
+      <group name="items" id="4" dimensionType="groupSizeEncoding">
+        <field name="key" id="5" type="uint32" offset="0"/>
+      </group>
+    </group>
+    <group name="items" id="6" dimensionType="groupSizeEncoding">
+      <field name="key" id="7" type="uint32" offset="0"/>
+    </group>
+    <data name="payload" id="8" type="varAsciiEncoding"/>
+  </sbe:message>
+</sbe:messageSchema>

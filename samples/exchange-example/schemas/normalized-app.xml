@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="normalized_app" id="92" version="0"
+    byteOrder="littleEndian" headerType="messageHeader">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+    <composite name="Decimal">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8"/>
+    </composite>
+    <enum name="Source" encodingType="uint8">
+      <validValue name="Bitget">1</validValue>
+    </enum>
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">1</validValue>
+      <validValue name="Sell">2</validValue>
+    </enum>
+  </types>
+
+  <!-- xml-comment:AppMessage -->
+  <sbe:message name="AppMessage" id="1" description="attr:AppMessage">
+    <description>description-child:AppMessage</description>
+    <comment>comment-child:AppMessage</comment>
+    <field name="sentTs" id="1" type="uint64" semanticType="UTCTimestamp"/>
+    <data name="appName" id="2" type="varStringEncoding"/>
+    <data name="payload" id="3" type="varDataEncoding"/>
+  </sbe:message>
+
+  <sbe:message name="L2Book" id="2">
+    <field name="source" id="1" type="Source"/>
+    <field name="exchangeTimestamp" id="2" type="uint64" semanticType="UTCTimestamp"/>
+    <field name="receiveTimestamp" id="3" type="uint64" semanticType="UTCTimestamp"/>
+    <field name="sequence" id="4" type="uint64"/>
+    <group name="bids" id="5" dimensionType="groupSizeEncoding">
+      <field name="price" id="1" type="Decimal" semanticType="Price"/>
+      <field name="size" id="2" type="Decimal" semanticType="Qty"/>
+    </group>
+    <group name="asks" id="6" dimensionType="groupSizeEncoding">
+      <field name="price" id="1" type="Decimal" semanticType="Price"/>
+      <field name="size" id="2" type="Decimal" semanticType="Qty"/>
+    </group>
+    <data name="symbol" id="7" type="varStringEncoding"/>
+  </sbe:message>
+
+  <sbe:message name="Trade" id="3">
+    <field name="source" id="1" type="Source"/>
+    <field name="exchangeTimestamp" id="2" type="uint64" semanticType="UTCTimestamp"/>
+    <field name="receiveTimestamp" id="3" type="uint64" semanticType="UTCTimestamp"/>
+    <field name="tradeId" id="4" type="uint64"/>
+    <field name="price" id="5" type="Decimal" semanticType="Price"/>
+    <field name="size" id="6" type="Decimal" semanticType="Qty"/>
+    <field name="side" id="7" type="Side"/>
+    <data name="symbol" id="8" type="varStringEncoding"/>
+  </sbe:message>
+</sbe:messageSchema>

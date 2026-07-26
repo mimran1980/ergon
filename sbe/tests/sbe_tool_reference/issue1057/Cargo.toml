@@ -1,0 +1,12 @@
+[package]
+name = "parity_issue1057"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "B3 Binary Entrypoint FIXP messages"
+edition = "2021"
+
+[lib]
+name = "parity_issue1057"
+path = "src/lib.rs"
+
+[workspace]

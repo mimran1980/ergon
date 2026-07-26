@@ -1,0 +1,12 @@
+[package]
+name = "parity_fixed_array"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Support for fixed sized primitive array"
+edition = "2021"
+
+[lib]
+name = "parity_fixed_array"
+path = "src/lib.rs"
+
+[workspace]

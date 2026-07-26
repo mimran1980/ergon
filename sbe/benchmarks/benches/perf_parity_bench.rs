@@ -1,0 +1,717 @@
+//! Performance parity: ergon vs sbe-tool (Java reference) head-to-head.
+//!
+//! Both codecs generated from the same Car schema, decoding the same
+//! Java-produced binary fixture. If ergon is slower in any scenario,
+//! that is a blocking v1 release bug.
+//!
+//! Note: sbe-tool uses a different API pattern (mutable self, parent
+//! references, advance()-based group iteration). These benchmarks compare
+//! semantically equivalent operations — same fields, same buffer, same count.
+//! Fair comparison uses `wrap` (sbe-tool's `wrap` does no bounds check).
+
+#![allow(
+    unsafe_code,
+    missing_docs,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    unused_must_use,
+    unused_assignments,
+    unused_comparisons,
+    unused_attributes
+)]
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
+
+// ergon generated code
+
+use ergo_sbe_benchmarks::ergo_car::*;
+
+// sbe-tool Rust SBE generated code (patched for module inclusion)
+
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+
+#[path = "_common.rs"]
+mod common;
+use common::BASELINE;
+
+// Header bytes for sbe-tool decoder construction
+fn sbe_tool_block_length() -> u16 {
+    u16::from_le_bytes(BASELINE[0..2].try_into().unwrap())
+}
+fn sbe_tool_version() -> u16 {
+    u16::from_le_bytes(BASELINE[6..8].try_into().unwrap())
+}
+
+// Pre-computed ergon header fields (validate once per stream, like sbe-tool).
+// In a real feed handler these are read once at session setup, not per message.
+fn ergo_sbe_header_fields() -> (usize, u16) {
+    let header = MessageHeader(read_bytes::<8>(BASELINE, 0));
+    (header.block_length() as usize, header.version())
+}
+
+fn bench_decode_entry_point(c: &mut Criterion) {
+    let bl = sbe_tool_block_length();
+    let ver = sbe_tool_version();
+    let (bl_e, ver_e) = ergo_sbe_header_fields();
+
+    let mut group = c.benchmark_group("parity/decode/entry_point");
+    group.throughput(Throughput::Bytes(BASELINE.len() as u64));
+
+    // Fast path: pre-computed header, lean wrap (4 field assigns).
+    group.bench_function("ergo-sbe_wrap", |b| {
+        b.iter(|| {
+            let car = CarDecoder::wrap(black_box(BASELINE), 8, bl_e, ver_e);
+            black_box(car);
+        });
+    });
+
+    // Informational: full validation (header read + schema_id check every call).
+    group.bench_function("ergo-sbe_try_from", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+            black_box(car);
+        });
+    });
+
+    group.bench_function("sbe-tool_wrap", |b| {
+        b.iter(|| {
+            let car =
+                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default()
+                    .wrap(
+                        black_box(ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(
+                            BASELINE,
+                        )),
+                        0,
+                        bl,
+                        ver,
+                    );
+            black_box(car);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_decode_scalar(c: &mut Criterion) {
+    let car = CarDecoder::try_from(BASELINE).unwrap();
+    let bl = sbe_tool_block_length();
+    let ver = sbe_tool_version();
+    let sbe_tool_car =
+        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default()
+            .wrap(
+                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(BASELINE),
+                0,
+                bl,
+                ver,
+            );
+
+    let mut group = c.benchmark_group("parity/decode/scalar");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("ergo-sbe", |b| {
+        b.iter(|| {
+            let sn = car.serial_number();
+            let my = car.model_year();
+            black_box((sn, my));
+        });
+    });
+
+    group.bench_function("sbe-tool", |b| {
+        b.iter(|| {
+            let sn = sbe_tool_car.serial_number();
+            let my = sbe_tool_car.model_year();
+            black_box((sn, my));
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_decode_array(c: &mut Criterion) {
+    let car = CarDecoder::try_from(BASELINE).unwrap();
+    let bl = sbe_tool_block_length();
+    let ver = sbe_tool_version();
+    let sbe_tool_car =
+        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default()
+            .wrap(
+                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(BASELINE),
+                0,
+                bl,
+                ver,
+            );
+
+    let mut group = c.benchmark_group("parity/decode/array");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("ergo-sbe", |b| {
+        b.iter(|| {
+            let sn = car.some_numbers();
+            black_box(sn);
+        });
+    });
+
+    group.bench_function("sbe-tool", |b| {
+        b.iter(|| {
+            let sn = sbe_tool_car.some_numbers();
+            black_box(sn);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_decode_composite(c: &mut Criterion) {
+    let car = CarDecoder::try_from(BASELINE).unwrap();
+
+    let mut group = c.benchmark_group("parity/decode/composite");
+    group.throughput(Throughput::Elements(1));
+
+    // ergon: eager copy of 6 bytes into value struct
+    group.bench_function("ergo-sbe_engine", |b| {
+        b.iter(|| {
+            let engine = car.engine(); // Engine value struct (Copy, 6 bytes)
+            let cap = engine.capacity();
+            let cyl = engine.num_cylinders();
+            black_box((cap, cyl));
+        });
+    });
+
+    // sbe-tool: flyweight decoder (parent reference, no copy)
+    group.bench_function("sbe-tool_engine", |b| {
+        b.iter(|| {
+            let bl = sbe_tool_block_length();
+            let ver = sbe_tool_version();
+            let sbe_tool_car =
+                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default()
+                    .wrap(
+                        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(BASELINE),
+                        0,
+                        bl,
+                        ver,
+                    );
+            let engine = sbe_tool_car.engine_decoder();
+            let cap = engine.capacity();
+            let cyl = engine.num_cylinders();
+            black_box((cap, cyl));
+        });
+    });
+
+    group.finish();
+}
+
+const BATCH_SIZE: usize = 10_000;
+
+fn replicate_baseline(count: usize) -> Vec<u8> {
+    let msg_len = BASELINE.len();
+    let mut buf = Vec::with_capacity(count * msg_len);
+    unsafe { buf.set_len(count * msg_len) };
+    for chunk in buf.chunks_mut(msg_len) {
+        chunk.copy_from_slice(BASELINE);
+    }
+    buf
+}
+
+fn bench_throughput_batch(c: &mut Criterion) {
+    let buf = replicate_baseline(BATCH_SIZE);
+    let msg_len = BASELINE.len();
+    let bl = sbe_tool_block_length();
+    let ver = sbe_tool_version();
+    // Validate the stream header once (real feed-handler pattern), then decode fast.
+    let (bl_e, ver_e) = ergo_sbe_header_fields();
+
+    let mut group = c.benchmark_group("parity/throughput/batch_10k");
+    group.throughput(Throughput::Elements(BATCH_SIZE as u64));
+
+    // Equal work: both arms stride absolute offsets into one prebuilt buffer
+    // (no per-message re-slice). Body starts at off+8 after the LE header.
+    group.bench_function("ergo-sbe", |b| {
+        b.iter(|| {
+            let mut total: u64 = 0;
+            let mut total_year: u64 = 0;
+            let mut off = 0;
+            for _ in 0..BATCH_SIZE {
+                let car = CarDecoder::wrap(black_box(buf.as_slice()), off + 8, bl_e, ver_e);
+                total += car.serial_number();
+                total_year += car.model_year() as u64;
+                off += msg_len;
+            }
+            black_box((total, total_year));
+        });
+    });
+
+    group.bench_function("sbe-tool", |b| {
+        b.iter(|| {
+            let mut total: u64 = 0;
+            let mut total_year: u64 = 0;
+            let mut off = 0;
+            for _ in 0..BATCH_SIZE {
+                let car =
+                    ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default(
+                    )
+                    .wrap(
+                        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(black_box(
+                            buf.as_slice(),
+                        )),
+                        off,
+                        bl,
+                        ver,
+                    );
+                total += car.serial_number() as u64;
+                total_year += car.model_year() as u64;
+                off += msg_len;
+            }
+            black_box((total, total_year));
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_scalar(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parity/encode/scalar");
+    group.throughput(Throughput::Elements(1));
+
+    // Equal work: both arms write the 8-byte header + 2 scalar fields.
+    // ergo-sbe uses wrap_and_apply_header (writes header template),
+    // sbe-tool uses wrap() + header(0) (writes 4 header fields individually).
+    // Fixed stack buffer, reused — timed path must not allocate.
+    group.bench_function("ergo-sbe", |b| {
+        let mut buf = [0u8; 512];
+        b.iter(|| {
+            let mut car: CarEncoder<'_> = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+            car.serial_number(1234);
+            car.model_year(2013);
+            black_box(car);
+        });
+    });
+
+    group.bench_function("sbe-tool", |b| {
+        let mut buf = [0u8; 512];
+        b.iter(|| {
+            let car =
+                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::encoder::CarEncoder::default()
+                    .wrap(
+                        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::WriteBuf::new(black_box(&mut buf)),
+                        0,
+                    );
+            let mut hdr = car.header(0);
+            let mut car = hdr.parent().unwrap();
+            car.serial_number(1234);
+            car.model_year(2013);
+            black_box(car);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parity/encode/throughput_10k");
+    group.throughput(Throughput::Elements(BATCH_SIZE as u64));
+
+    // Equal work: both arms write header + 2 scalars per message.
+    // Buffer allocated once and reused — no alloc on the timed path.
+    group.bench_function("ergo-sbe", |b| {
+        let mut buf = vec![0u8; BATCH_SIZE * 64];
+        b.iter(|| {
+            for i in 0..BATCH_SIZE {
+                let off = i * 64;
+                let mut car: CarEncoder<'_> =
+                    CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0);
+                car.serial_number(i as u64);
+                car.model_year(2013);
+            }
+            black_box(&buf);
+        });
+    });
+
+    group.bench_function("sbe-tool", |b| {
+        let mut buf = vec![0u8; BATCH_SIZE * 64];
+        b.iter(|| {
+            for i in 0..BATCH_SIZE {
+                let off = i * 64;
+                // Body at offset 8 (after the 8-byte message header), header at 0.
+                // Wrapping the body at 0 would overlap the header (serial_number
+                // overwrites it), making sbe-tool write ~10 bytes while ergon writes
+                // the full 18-byte header+serial+model_year — an unfair comparison.
+                let car = ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::encoder::CarEncoder::default().wrap(
+                    ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::WriteBuf::new(&mut buf[off..off + 64]),
+                    8,
+                );
+                let mut hdr = car.header(0);
+                let mut car = hdr.parent().unwrap();
+                car.serial_number(i as u64);
+                car.model_year(2013);
+            }
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_decode_consuming_full(c: &mut Criterion) {
+    // Fair three-way full-message decode over the same BASELINE buffer. All
+    // three do IDENTICAL work: every fuel entry (speed, mpg, usage_description),
+    // every performance entry (octane_rating + nested acceleration mph/seconds),
+    // and the three message-level var-data fields. sbe-tool's advance() does not
+    // skip per-entry tails, so it must consume usage_description/acceleration to
+    // advance — hence every codec traverses them, making the comparison fair.
+    let bl = sbe_tool_block_length();
+    let ver = sbe_tool_version();
+    let (bl_e, ver_e) = ergo_sbe_header_fields();
+
+    let mut group = c.benchmark_group("parity/decode/full_message");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("ergo-sbe_consuming", |b| {
+        b.iter(|| {
+            let car = CarDecoder::wrap(black_box(BASELINE), 8, bl_e, ver_e);
+            let mut fuel = car.into_fuel_figures().unwrap();
+            while let Some(Ok(e)) = fuel.next() {
+                black_box((e.speed(), e.mpg()));
+                black_box(e.usage_description().unwrap());
+            }
+            let after_fuel = fuel.finish().unwrap();
+            let mut perf = after_fuel.into_performance_figures().unwrap();
+            while let Some(Ok(e)) = perf.next() {
+                black_box(e.octane_rating());
+                for a in e.acceleration().unwrap() {
+                    black_box((a.mph(), a.seconds()));
+                }
+            }
+            let after_perf = perf.finish().unwrap();
+            let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+            let (model, a2) = a1.into_model().unwrap();
+            let (code, done) = a2.into_activation_code().unwrap();
+            black_box((mfr, model, code, done.encoded_length_with_header()));
+        });
+    });
+
+    // The legacy `&self` random-access full-decode bench used to live here to
+    // show consuming < legacy. It was removed: those `&self` group/var-data
+    // accessors are the rejected out-of-order surface (DECISIONS.md §10) and are
+    // no longer public. Recorded result (commit a989a97, 2026-07-10): consuming
+    // ~13.06 ns vs legacy ~26.55 ns (legacy rescanned preceding groups per call).
+
+    group.bench_function("sbe-tool", |b| {
+        b.iter(|| {
+            use ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::{
+                ReadBuf, car_codec::decoder::CarDecoder,
+                message_header_codec::decoder::MessageHeaderDecoder,
+            };
+            // Correct sbe-tool wrap: header decoder at 0, then car decoder at 0+HEADER_LEN.
+            // (Direct wrap(buf,0,..) reads fields at header offsets — wrong for the body.)
+            let header = MessageHeaderDecoder::default().wrap(ReadBuf::new(black_box(BASELINE)), 0);
+            let mut car = CarDecoder::default().header(header, 0);
+            let mut ff = car.fuel_figures_decoder();
+            while let Some(_) = ff.advance().unwrap() {
+                black_box((ff.speed(), ff.mpg()));
+                let c = ff.usage_description_decoder();
+                black_box(ff.usage_description_slice(c));
+            }
+            car = ff.parent().unwrap();
+            let mut pf = car.performance_figures_decoder();
+            while let Some(_) = pf.advance().unwrap() {
+                black_box(pf.octane_rating());
+                let mut acc = pf.acceleration_decoder();
+                while let Some(_) = acc.advance().unwrap() {
+                    black_box((acc.mph(), acc.seconds()));
+                }
+                pf = acc.parent().unwrap();
+            }
+            car = pf.parent().unwrap();
+            let mfr = car.manufacturer_decoder();
+            black_box(car.manufacturer_slice(mfr));
+            let model = car.model_decoder();
+            black_box(car.model_slice(model));
+            let code = car.activation_code_decoder();
+            black_box(car.activation_code_slice(code));
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_decode_skip_rewind(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parity/decode/skip_rewind");
+    group.throughput(Throughput::Elements(1));
+
+    // skip_to_model and direct_model removed: both read tail/var-data fields
+    // via the rejected out-of-order `&self` surface (DECISIONS.md §10).
+    // rewind_then_scalar stays — rewind() returns a fresh decoder and is not a
+    // tail out-of-order accessor.
+
+    group.bench_function("rewind_then_scalar", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_wrap_and_apply_header(BASELINE, 0).unwrap();
+            black_box(car.serial_number())
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_fallible_vs_manual(c: &mut Criterion) {
+    // ergon-internal parity: the fallible-closure convenience API
+    // (`add(|e| …)`) must not be slower than the manual `start_entry()` /
+    // field-set / drop path. Both write identical bytes; the closure helper
+    // constructs the same manual stage internally. The median
+    // fallible/manual ratio must be <= 1.00.
+    let mut group = c.benchmark_group("parity/fallible_vs_manual");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("manual", |b| {
+        let mut buf = [0u8; 512];
+        b.iter(|| {
+            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+            car.serial_number(42);
+            car.model_year(2013);
+            let after_fuel = car
+                .fuel_figures(3, |g| {
+                    for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
+                        g.add(|e| {
+                            e.speed(s).mpg(m);
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let after_perf = after_fuel.performance_figures(0, |_| Ok(())).unwrap();
+            let complete = after_perf
+                .manufacturer(b"Honda")
+                .unwrap()
+                .model(b"Civic")
+                .unwrap()
+                .activation_code(b"abc")
+                .unwrap();
+            black_box(complete.as_bytes());
+        });
+    });
+
+    group.bench_function("fallible", |b| {
+        let mut buf = [0u8; 512];
+        b.iter(|| {
+            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+            car.serial_number(42);
+            car.model_year(2013);
+            let after_fuel = car
+                .fuel_figures(3, |g| -> sbe_rt::GroupResult {
+                    for (s, m) in [(30u16, 35.9f32), (55, 40.0), (70, 22.5)] {
+                        g.add(|e| {
+                            e.speed(s).mpg(m);
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let after_perf = after_fuel
+                .performance_figures(0, |_| Ok::<(), sbe_rt::EncodeError>(()))
+                .unwrap();
+            let complete = after_perf
+                .manufacturer_with::<sbe_rt::EncodeError, _>(5, |b: &mut [u8]| {
+                    b.copy_from_slice(b"Honda");
+                    Ok::<(), sbe_rt::EncodeError>(())
+                })
+                .unwrap()
+                .model_with::<sbe_rt::EncodeError, _>(5, |b: &mut [u8]| {
+                    b.copy_from_slice(b"Civic");
+                    Ok::<(), sbe_rt::EncodeError>(())
+                })
+                .unwrap()
+                .activation_code_with::<sbe_rt::EncodeError, _>(3, |b: &mut [u8]| {
+                    b.copy_from_slice(b"abc");
+                    Ok::<(), sbe_rt::EncodeError>(())
+                })
+                .unwrap();
+            black_box(complete.as_bytes());
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_full_stage_transition(c: &mut Criterion) {
+    // ergon-only stage-transition diagnostic (no sbe-tool equivalent) — not a
+    // parity scenario, so the group is not under parity/.
+    let mut group = c.benchmark_group("encode/full_stage");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("ergo-sbe", |b| {
+        let mut buf = [0u8; 512];
+        b.iter(|| {
+            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+            car.serial_number(1234);
+            car.model_year(2013);
+            car.available(BooleanType::T);
+            car.code(Model::A);
+            car.some_numbers([1u32, 2, 3, 4]);
+            car.vehicle_code([97, 98, 99, 100, 101, 102]);
+            car.extras(OptionalExtras::default());
+            car.engine(Engine::new(
+                2000,
+                4,
+                [49, 0, 0],
+                0i8,
+                BooleanType::F,
+                Booster::new(BoostType::TURBO, 0),
+            ));
+            let car = car
+                .fuel_figures(2, |g| {
+                    g.add(|e| {
+                        e.speed(30).mpg(35.9);
+                        Ok(())
+                    })?;
+                    g.add(|e| {
+                        e.speed(55).mpg(40.0);
+                        Ok(())
+                    })?;
+                    Ok(())
+                })
+                .unwrap();
+            let car = car
+                .performance_figures(1, |g| {
+                    g.add(|e| {
+                        e.octane_rating(95);
+                        Ok(())
+                    })?;
+                    Ok(())
+                })
+                .unwrap();
+            let car = car.manufacturer(b"Honda").unwrap();
+            let car = car.model(b"Civic").unwrap();
+            let complete = car.activation_code(b"abc").unwrap();
+            black_box(complete.as_bytes());
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
+    use ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::{
+        self, Encoder, WriteBuf,
+        boolean_type::BooleanType as ToolBool,
+        boost_type::BoostType as ToolBoost,
+        car_codec::encoder::{
+            CarEncoder as ToolCarEnc, FuelFiguresEncoder as ToolFuel,
+            PerformanceFiguresEncoder as ToolPerf,
+        },
+        model::Model as ToolModel,
+        optional_extras::OptionalExtras as ToolExtras,
+    };
+
+    let mut group = c.benchmark_group("parity/wire_parity/encode_full");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("ergo-sbe", |b| {
+        let mut buf = [0u8; 512];
+        b.iter(|| {
+            let mut e = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+            e.serial_number(99).model_year(2020).available(BooleanType::T).code(Model::C);
+            e.some_numbers([9, 8, 7, 6]).vehicle_code(*b"XYZXYZ").extras(OptionalExtras::default());
+            e.engine(Engine::new(1600, 4, *b"ABC", 10, BooleanType::F, Booster::new(BoostType::SUPERCHARGER, 50)));
+            let e = e.fuel_figures(1, |g| {
+                g.add(|ent| { ent.speed(40).mpg(33.3); ent.usage_description(b"city")?; Ok(()) })?;
+                Ok(())
+            }).unwrap();
+            let e = e.performance_figures(0, |_| Ok(())).unwrap();
+            let e = e.manufacturer(b"Toyota").unwrap();
+            let e = e.model(b"Yaris").unwrap();
+            let complete = e.activation_code(b"zz").unwrap();
+            black_box(complete.as_bytes().len())
+        });
+    });
+
+    group.bench_function("sbe-tool", |b| {
+        let mut buf = [0u8; 512];
+        b.iter(|| {
+            let t = ToolCarEnc::default()
+                .wrap(WriteBuf::new(black_box(&mut buf)), 8);
+            let mut h = t.header(0);
+            let mut t = h.parent().unwrap();
+            t.serial_number(99).model_year(2020).available(ToolBool::T).code(ToolModel::C)
+                .some_numbers(&[9, 8, 7, 6]).vehicle_code(b"XYZXYZ").extras(ToolExtras::default());
+            let mut eng = t.engine_encoder();
+            eng.capacity(1600).num_cylinders(4).manufacturer_code(b"ABC").efficiency(10)
+                .booster_enabled(ToolBool::F);
+            let mut boost = eng.booster_encoder();
+            boost.boost_type(ToolBoost::SUPERCHARGER).horse_power(50);
+            eng = boost.parent().unwrap();
+            t = eng.parent().unwrap();
+            let mut fuel = ToolFuel::default();
+            fuel = t.fuel_figures_encoder(1, fuel);
+            assert_eq!(Some(0), fuel.advance().unwrap());
+            fuel.speed(40).mpg(33.3).usage_description(b"city");
+            t = fuel.parent().unwrap();
+            let mut perf = ToolPerf::default();
+            perf = t.performance_figures_encoder(0, perf);
+            t = perf.parent().unwrap();
+            t.manufacturer("Toyota").model("Yaris").activation_code(b"zz");
+            black_box(t.get_limit())
+        });
+    });
+    group.finish();
+
+    // Verify byte-identical once — panics on mismatch, failing the gate.
+    {
+        let mut ebuf = [0u8; 512];
+        let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
+        e.serial_number(99).model_year(2020).available(BooleanType::T).code(Model::C);
+        e.some_numbers([9, 8, 7, 6]).vehicle_code(*b"XYZXYZ").extras(OptionalExtras::default());
+        e.engine(Engine::new(1600, 4, *b"ABC", 10, BooleanType::F, Booster::new(BoostType::SUPERCHARGER, 50)));
+        let e = e.fuel_figures(1, |g| {
+            g.add(|ent| { ent.speed(40).mpg(33.3); ent.usage_description(b"city")?; Ok(()) })?;
+            Ok(())
+        }).unwrap();
+        let e = e.performance_figures(0, |_| Ok(())).unwrap();
+        let e = e.manufacturer(b"Toyota").unwrap();
+        let e = e.model(b"Yaris").unwrap();
+        let complete = e.activation_code(b"zz").unwrap();
+        let ergo_bytes = complete.as_bytes();
+
+        let mut tbuf = [0u8; 512];
+        let t = ToolCarEnc::default().wrap(WriteBuf::new(&mut tbuf), 8);
+        let mut h = t.header(0);
+        let mut t = h.parent().unwrap();
+        t.serial_number(99).model_year(2020).available(ToolBool::T).code(ToolModel::C)
+            .some_numbers(&[9, 8, 7, 6]).vehicle_code(b"XYZXYZ").extras(ToolExtras::default());
+        let mut eng = t.engine_encoder();
+        eng.capacity(1600).num_cylinders(4).manufacturer_code(b"ABC").efficiency(10).booster_enabled(ToolBool::F);
+        let mut boost = eng.booster_encoder();
+        boost.boost_type(ToolBoost::SUPERCHARGER).horse_power(50);
+        eng = boost.parent().unwrap();
+        t = eng.parent().unwrap();
+        let mut fuel = ToolFuel::default();
+        fuel = t.fuel_figures_encoder(1, fuel);
+        fuel.advance().unwrap();
+        fuel.speed(40).mpg(33.3).usage_description(b"city");
+        t = fuel.parent().unwrap();
+        let mut perf = ToolPerf::default();
+        perf = t.performance_figures_encoder(0, perf);
+        t = perf.parent().unwrap();
+        t.manufacturer("Toyota").model("Yaris").activation_code(b"zz");
+        let tool_len = t.get_limit();
+        assert_eq!(ergo_bytes.len(), tool_len, "wire parity length");
+        assert_eq!(ergo_bytes, &tbuf[..tool_len], "wire parity bytes");
+    }
+}
+
+criterion_group!(
+    benches,
+    bench_decode_entry_point,
+    bench_decode_scalar,
+    bench_decode_array,
+    bench_decode_composite,
+    bench_throughput_batch,
+    bench_encode_scalar,
+    bench_encode_throughput,
+    bench_decode_skip_rewind,
+    bench_decode_consuming_full,
+    bench_encode_full_stage_transition,
+    bench_fallible_vs_manual,
+    bench_wire_parity_encode_full_message,
+);
+criterion_main!(benches);

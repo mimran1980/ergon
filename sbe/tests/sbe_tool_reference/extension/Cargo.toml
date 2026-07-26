@@ -1,0 +1,12 @@
+[package]
+name = "parity_extension"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Example schema which extends baseline schema."
+edition = "2021"
+
+[lib]
+name = "parity_extension"
+path = "src/lib.rs"
+
+[workspace]

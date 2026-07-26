@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- xml-comment:schema — top-level comment before root element -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="docstest" id="84" version="0"
+    description="attr:schema"
+    byteOrder="littleEndian">
+    <types>
+        <!-- xml-comment:header — preceding-sibling comment for messageHeader -->
+        <composite name="messageHeader" description="attr:header">
+            <description>description-child:header</description>
+            <comment>comment-child:header</comment>
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <!-- xml-comment:enum — preceding-sibling comment for Colour -->
+        <enum name="Colour" encodingType="uint8" description="attr:enum">
+            <description>description-child:enum</description>
+            <comment>comment-child:enum</comment>
+            <validValue name="Red" description="attr:enum-value">1</validValue>
+        </enum>
+    </types>
+    <!-- xml-comment:message — preceding-sibling comment for M -->
+    <sbe:message name="M" id="1" description="attr:message">
+        <description>description-child:message</description>
+        <comment>comment-child:message</comment>
+        <field name="f" id="1" type="uint32" description="attr:field"/>
+    </sbe:message>
+</sbe:messageSchema>

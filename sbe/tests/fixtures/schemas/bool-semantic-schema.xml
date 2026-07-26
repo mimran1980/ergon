@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="bool_semantic"
+                   id="200"
+                   version="1"
+                   semanticVersion="5.2"
+                   description="Boolean semanticType tests"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <enum name="YesNo" encodingType="uint8" semanticType="Boolean">
+            <validValue name="No">0</validValue>
+            <validValue name="Yes">1</validValue>
+        </enum>
+        <enum name="Status" encodingType="uint8">
+            <validValue name="Active">0</validValue>
+            <validValue name="Inactive">1</validValue>
+        </enum>
+    </types>
+    <sbe:message name="Toggle" id="1">
+        <field name="enabled" id="1" type="YesNo"/>
+        <field name="status" id="2" type="Status"/>
+    </sbe:message>
+    <sbe:message name="ToggleGroup" id="2">
+        <group name="items" id="100" dimensionType="groupSizeEncoding">
+            <field name="flag" id="101" type="YesNo"/>
+            <field name="mode" id="102" type="Status"/>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>

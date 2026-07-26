@@ -1,0 +1,12 @@
+[package]
+name = "parity_new_order_single"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Test dictionary"
+edition = "2021"
+
+[lib]
+name = "parity_new_order_single"
+path = "src/lib.rs"
+
+[workspace]

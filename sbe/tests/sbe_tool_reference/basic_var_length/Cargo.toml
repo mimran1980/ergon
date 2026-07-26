@@ -1,0 +1,12 @@
+[package]
+name = "parity_basic_var_length"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Unit Test"
+edition = "2021"
+
+[lib]
+name = "parity_basic_var_length"
+path = "src/lib.rs"
+
+[workspace]

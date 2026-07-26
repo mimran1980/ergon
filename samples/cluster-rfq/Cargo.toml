@@ -1,0 +1,26 @@
+[package]
+name = "cluster-rfq"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "RFQ protocol examples — moved from cluster/examples/"
+
+[[example]]
+name = "rfq_client"
+path = "examples/rfq_client.rs"
+
+[[example]]
+name = "rfq_roundtrip"
+path = "examples/rfq_roundtrip.rs"
+
+[[example]]
+name = "auction_client"
+path = "examples/auction_client.rs"
+
+# Build-dep only for codecs: generated rfq_codec embeds sbe_rt.
+[dependencies]
+ergo-aeron-cluster = { path = "../../cluster", features = ["test-harness"] }
+rusteron-client = "0.2"
+
+[build-dependencies]
+ergo-sbe = { path = "../../sbe" }

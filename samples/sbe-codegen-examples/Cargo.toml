@@ -1,0 +1,25 @@
+[package]
+name = "sbe-codegen-examples"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Generator-API examples — how to call ergo-sbe as a library to generate and inspect codecs"
+
+[dependencies]
+ergo-sbe = { path = "../../sbe" }
+
+[[example]]
+name = "flyweight"
+path = "examples/flyweight.rs"
+
+[[example]]
+name = "domain_objects"
+path = "examples/domain_objects.rs"
+
+[[example]]
+name = "l3_nested"
+path = "examples/l3_nested.rs"
+
+[[example]]
+name = "dump_gen"
+path = "examples/dump_gen.rs"

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="u8dim" id="200" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <!-- Compact u8 framing: groups limited to 255 entries -->
+    <composite name="groupSize8">
+      <type name="blockLength" primitiveType="uint8"/>
+      <type name="numInGroup" primitiveType="uint8"/>
+    </composite>
+    <!-- Compact u8 varData: payload limited to 255 bytes -->
+    <composite name="varData8">
+      <type name="length" primitiveType="uint8"/>
+      <type name="varData" primitiveType="uint8"/>
+    </composite>
+  </types>
+  <message name="CompactMsg" id="1">
+    <field name="price" id="1" type="uint64" offset="0"/>
+    <group name="legs" id="2" dimensionType="groupSize8">
+      <field name="ratio" id="3" type="uint32"/>
+      <field name="side" id="4" type="char"/>
+    </group>
+    <data name="memo" id="5" type="varData8"/>
+  </message>
+</messageSchema>

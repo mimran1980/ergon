@@ -1,0 +1,41 @@
+[package]
+name = "cluster-ha-orderbook"
+version = "0.1.0"
+edition = "2024"
+description = "HA sample: AppMessage books via ergo-aeron-cluster try_claim + never-stale book"
+publish = false
+
+[dependencies]
+ergo-sbe = { path = "../../sbe" }
+ergo-aeron-cluster = { path = "../../cluster" }
+serde = { version = "1", features = ["derive"] }
+
+[features]
+default = []
+# Multi-node Java kill-leader HA harness (needs built Aeron jars).
+test-harness = [
+    "ergo-aeron-cluster/test-harness",
+    "dep:rusteron-media-driver",
+    "dep:serial_test",
+]
+
+[build-dependencies]
+ergo-sbe = { path = "../../sbe" }
+
+[dependencies.rusteron-media-driver]
+version = "0.2"
+optional = true
+
+[dependencies.serial_test]
+version = "3"
+features = ["file_locks"]
+optional = true
+
+[[test]]
+name = "ha_offline_pipeline"
+path = "tests/ha_offline_pipeline.rs"
+
+[[test]]
+name = "ha_kill_leader"
+path = "tests/ha_kill_leader.rs"
+required-features = ["test-harness"]

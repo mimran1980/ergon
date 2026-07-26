@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="withinc"
+    id="100" version="0" byteOrder="littleEndian">
+    <include href="types-include.xml"/>
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+    </types>
+    <sbe:message name="M" id="1">
+        <field name="a" id="1" type="IncludedEnum"/>
+        <field name="b" id="2" type="IncludedType"/>
+    </sbe:message>
+</sbe:messageSchema>

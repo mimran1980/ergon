@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<messageSchema package="SBE tests" id="101" semanticVersion="5.2"
+               description="Missing required attribute test"
+               byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+    </types>
+    <!-- field without @name attribute => ParseError::Missing -->
+    <message name="TestMessage" id="1">
+        <field id="10" type="uint8"/>
+    </message>
+</messageSchema>

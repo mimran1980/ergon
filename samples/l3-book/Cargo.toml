@@ -1,0 +1,23 @@
+[package]
+name = "l3-book"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "L3 order book sample — nested groups encode/decode with dummy data"
+
+# Build-dep only: generated codecs embed sbe_rt; no runtime ergo-sbe link.
+[dependencies]
+chrono = "0.4"
+rust_decimal = { version = "1", features = ["macros"] }
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1.11"
+
+[build-dependencies]
+ergo-sbe = { path = "../../sbe" }
+
+# TODO: rewrite api_combinations bench for current schema/API (old types removed)
+# [[bench]]
+# name = "api_combinations"
+# harness = false

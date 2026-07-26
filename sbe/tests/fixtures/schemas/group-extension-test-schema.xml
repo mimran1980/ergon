@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="grpexttest"
+                   id="303"
+                   version="2"
+                   semanticVersion="5.2"
+                   description="Group extension test schema for wire blockLength verification"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+    </types>
+    <sbe:message name="GroupExtensionMessage" id="1">
+        <field name="seqNum" id="1" type="uint32"/>
+        <group name="entries" id="10" dimensionType="groupSizeEncoding">
+            <field name="price" id="11" type="uint64"/>
+            <field name="volume" id="12" type="uint32"/>
+            <!-- sinceVersion=1: field added in schema version 1 -->
+            <field name="counterpartyId" id="13" type="uint64" sinceVersion="1"/>
+            <!-- sinceVersion=2: field added in schema version 2 -->
+            <field name="flags" id="14" type="uint8" sinceVersion="2"/>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>

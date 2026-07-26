@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<messageSchema package="SBE tests" id="102" semanticVersion="5.2"
+               description="Invalid type reference test"
+               byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+    </types>
+    <message name="TestMessage" id="1">
+        <!-- NonExistentType not defined => ParseError::Invalid -->
+        <field name="badField" id="10" type="NonExistentType"/>
+    </message>
+</messageSchema>

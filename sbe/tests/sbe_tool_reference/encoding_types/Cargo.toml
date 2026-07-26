@@ -1,0 +1,12 @@
+[package]
+name = "parity_encoding_types"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Unit Test"
+edition = "2021"
+
+[lib]
+name = "parity_encoding_types"
+path = "src/lib.rs"
+
+[workspace]

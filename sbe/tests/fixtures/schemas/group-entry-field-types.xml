@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="gentry"
+    id="81" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="SBE message header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSize" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <enum name="Colour" encodingType="uint8"><validValue name="Red">1</validValue></enum>
+        <set name="Flags" encodingType="uint8"><choice name="A">0</choice></set>
+        <composite name="Inner"><type name="x" primitiveType="uint16"/></composite>
+    </types>
+    <sbe:message name="M" id="1" description="group entry with composite/enum/set/float fields">
+        <group name="items" id="2" dimensionType="groupSize" blockLength="18">
+            <field name="e" id="3" type="Colour" offset="0" presence="optional" nullValue="255"/>
+            <field name="s" id="4" type="Flags" offset="2" presence="optional" nullValue="255"/>
+            <field name="c" id="5" type="Inner" offset="4" presence="optional"/>
+            <field name="dbl" id="6" type="double" offset="6" presence="optional" nullValue="255"/>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>

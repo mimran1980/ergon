@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/real-logic/simple-binary-encoding/master/sbe-tool/src/main/resources/sbe.xsd"
+    package="ergo.sbe.conformance"
+    id="99"
+    version="0"
+    byteOrder="littleEndian"
+    description="Conformance test schema — exercises all dynamic-tail shapes">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId"   primitiveType="uint16"/>
+      <type name="schemaId"     primitiveType="uint16"/>
+      <type name="version"      primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup"  primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length"  primitiveType="uint16"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length"  primitiveType="uint16" characterEncoding="UTF-8"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">0</validValue>
+      <validValue name="Sell">1</validValue>
+    </enum>
+    <enum name="Bool" encodingType="uint8">
+      <validValue name="False">0</validValue>
+      <validValue name="True">1</validValue>
+    </enum>
+    <composite name="PriceQty">
+      <type name="price" primitiveType="int64"/>
+      <type name="qty"   primitiveType="int32"/>
+    </composite>
+  </types>
+
+  <!-- Fixed-only message (no dynamic tail) -->
+  <sbe:message name="FixedOnly" id="1">
+    <field name="id"       id="1" type="uint64" offset="0"/>
+    <field name="price"    id="2" type="int64"  offset="8"/>
+    <field name="qty"      id="3" type="int32"  offset="16"/>
+    <field name="side"     id="4" type="Side"   offset="20"/>
+  </sbe:message>
+
+  <!-- Message with flat groups + varData (no nesting) -->
+  <sbe:message name="FlatGroup" id="2">
+    <field name="symbol"   id="1" type="uint64" offset="0"/>
+    <group name="bids" id="2" dimensionType="groupSizeEncoding">
+      <field name="price"  id="10" type="int64" offset="0"/>
+      <field name="qty"    id="11" type="int32" offset="8"/>
+    </group>
+    <group name="asks" id="3" dimensionType="groupSizeEncoding">
+      <field name="price"  id="20" type="int64" offset="0"/>
+      <field name="qty"    id="21" type="int32" offset="8"/>
+    </group>
+    <data name="description" id="4" type="varStringEncoding"/>
+  </sbe:message>
+
+  <!-- Message with nested groups and entry varData -->
+  <sbe:message name="NestedGroup" id="3">
+    <field name="exchangeId" id="1" type="uint64" offset="0"/>
+    <group name="bids" id="2" dimensionType="groupSizeEncoding">
+      <field name="price"  id="10" type="int64" offset="0"/>
+      <field name="qty"    id="11" type="int32" offset="8"/>
+      <!-- Nested group inside an entry -->
+      <group name="orders" id="20" dimensionType="groupSizeEncoding">
+        <field name="orderId" id="30" type="uint64" offset="0"/>
+        <field name="flags"   id="31" type="uint8"  offset="8"/>
+      </group>
+      <!-- Entry-level varData after nested group -->
+      <data name="venue" id="21" type="varStringEncoding"/>
+    </group>
+    <group name="asks" id="3" dimensionType="groupSizeEncoding">
+      <field name="price"  id="40" type="int64" offset="0"/>
+      <field name="qty"    id="41" type="int32" offset="8"/>
+      <group name="orders" id="50" dimensionType="groupSizeEncoding">
+        <field name="orderId" id="60" type="uint64" offset="0"/>
+      </group>
+      <data name="venue" id="51" type="varStringEncoding"/>
+    </group>
+    <data name="comment" id="4" type="varStringEncoding"/>
+  </sbe:message>
+
+  <!-- All-types message: enums, sets, composites, arrays -->
+  <sbe:message name="AllTypes" id="4">
+    <field name="charField"    id="1"  type="char"    offset="0"/>
+    <field name="int8Field"    id="2"  type="int8"    offset="1"/>
+    <field name="uint16Field"  id="3"  type="uint16"  offset="2"/>
+    <field name="int32Field"   id="4"  type="int32"   offset="4"/>
+    <field name="uint64Field"  id="5"  type="uint64"  offset="8"/>
+    <field name="floatField"   id="6"  type="float"   offset="16"/>
+    <field name="doubleField"  id="7"  type="double"  offset="20"/>
+    <field name="side"         id="8"  type="Side"    offset="28"/>
+    <field name="active"       id="9"  type="Bool"    offset="29"/>
+    <field name="composite"    id="10" type="PriceQty" offset="30"/>
+    <field name="prices"       id="11" type="int64"   offset="42" length="4"/>
+    <!-- Flat groups that exercise known/unknown combinations -->
+    <group name="entries" id="12" dimensionType="groupSizeEncoding">
+      <field name="key"   id="100" type="uint64" offset="0"/>
+      <field name="value" id="101" type="int64"  offset="8"/>
+    </group>
+    <data name="payload" id="13" type="varDataEncoding"/>
+  </sbe:message>
+
+  <!-- Pure-fixed nested entries (add_struct available) -->
+  <sbe:message name="PureFixedNested" id="5">
+    <field name="id" id="1" type="uint64" offset="0"/>
+    <group name="records" id="2" dimensionType="groupSizeEncoding">
+      <field name="key"    id="10" type="uint64" offset="0"/>
+      <field name="value"  id="11" type="int64"  offset="8"/>
+      <!-- Pure-fixed nested group — add_struct is available -->
+      <group name="tags" id="20" dimensionType="groupSizeEncoding">
+        <field name="tagId"   id="30" type="uint32" offset="0"/>
+        <field name="tagVal"  id="31" type="uint32" offset="4"/>
+      </group>
+    </group>
+  </sbe:message>
+</sbe:messageSchema>
