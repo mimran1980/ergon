@@ -1448,19 +1448,3 @@ If you use `ergo-sbe` seriously, please report the schema shapes and features
 you exercise, including failures. Real-world evidence is what will make this
 project trustworthy—not another paragraph claiming that AI-generated code is
 either magically perfect or automatically worthless.
-
-## Maintaining this disclosure
-
-Update this file when any of the following materially changes:
-
-- the primary models or agent harnesses;
-- the human review boundary;
-- the official parity or benchmark methodology;
-- the unsafe trust boundary;
-- production adoption;
-- the experimental status; or
-- a pricing table that is intentionally refreshed for a later historical
-  snapshot.
-
-Do not silently rewrite old usage or cost figures to current prices. Add a new
-dated comparison so that the historical record remains intelligible.
