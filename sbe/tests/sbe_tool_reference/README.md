@@ -19,18 +19,9 @@ cargo test -p ergo-sbe --test sbe_tool_multi_schema_wire_parity_test --test sbe_
 
 Requires Java + Gradle (submodule build).
 
-## Layout
+## Coverage
 
-| key | source schema |
-|-----|----------------|
-| baseline | example-schema.xml (Car LE) |
-| bigendian | example-bigendian-test-schema.xml |
-| basic_schema | basic-schema.xml |
-| basic_group | basic-group-schema.xml |
-| nested_group | nested-group-schema.xml |
-| composite_elements | composite-elements-schema.xml |
-| … | see regenerate script for full list |
-
-Do not hand-edit generated sources; re-run the script after bumping the
-submodule.
-
+Every package key is either dual-encoded in the multi-schema / Car suites or
+listed under **Permanent exclusions** in
+`sbe_tool_multi_schema_wire_parity_test.rs` (with reason). Do not hand-edit
+generated sources; re-run the script after bumping the submodule.

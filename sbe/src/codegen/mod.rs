@@ -4522,28 +4522,23 @@ fn generate_converter_impls(
 /// Map a [`FieldType`] to the corresponding Rust type as a `syn::Type`.
 fn field_type_ident(ft: &FieldType, span: proc_macro2::Span) -> syn::Type {
     match ft {
-        FieldType::Primitive(pt, arr_len) => match (pt, arr_len) {
-            (PrimitiveType::Char, Some(n)) => {
-                let n = syn::LitInt::new(&n.to_string(), span);
-                syn::parse_quote!([u8; #n])
-            }
-            (PrimitiveType::Char, None) => syn::parse_quote!(u8),
-            (PrimitiveType::Int8, _) => syn::parse_quote!(i8),
-            (PrimitiveType::Int16, _) => syn::parse_quote!(i16),
-            (PrimitiveType::Int32, _) => syn::parse_quote!(i32),
-            (PrimitiveType::Int64, _) => syn::parse_quote!(i64),
-            (PrimitiveType::UInt8, None) => syn::parse_quote!(u8),
-            (PrimitiveType::UInt16, None) => syn::parse_quote!(u16),
-            (PrimitiveType::UInt32, None) => syn::parse_quote!(u32),
-            (PrimitiveType::UInt64, None) => syn::parse_quote!(u64),
-            (PrimitiveType::Float, _) => syn::parse_quote!(f32),
-            (PrimitiveType::Double, _) => syn::parse_quote!(f64),
-            (pt, Some(len)) => {
-                let elem: syn::Type = field_type_ident(&FieldType::Primitive(*pt, None), span);
-                let n = syn::LitInt::new(&len.to_string(), span);
-                syn::parse_quote!([#elem; #n])
-            }
-            _ => syn::parse_quote!(u8), // fallback
+        FieldType::Primitive(pt, Some(len)) => {
+            // Fixed-length primitive arrays — always `[T; N]` (including i8/i16/f32).
+            let elem: syn::Type = field_type_ident(&FieldType::Primitive(*pt, None), span);
+            let n = syn::LitInt::new(&len.to_string(), span);
+            syn::parse_quote!([#elem; #n])
+        }
+        FieldType::Primitive(pt, None) => match pt {
+            PrimitiveType::Char | PrimitiveType::UInt8 => syn::parse_quote!(u8),
+            PrimitiveType::Int8 => syn::parse_quote!(i8),
+            PrimitiveType::Int16 => syn::parse_quote!(i16),
+            PrimitiveType::Int32 => syn::parse_quote!(i32),
+            PrimitiveType::Int64 => syn::parse_quote!(i64),
+            PrimitiveType::UInt16 => syn::parse_quote!(u16),
+            PrimitiveType::UInt32 => syn::parse_quote!(u32),
+            PrimitiveType::UInt64 => syn::parse_quote!(u64),
+            PrimitiveType::Float => syn::parse_quote!(f32),
+            PrimitiveType::Double => syn::parse_quote!(f64),
         },
         FieldType::Composite { name, .. } => {
             let ident = syn::Ident::new(&to_pascal_case(name), span);
@@ -5433,12 +5428,18 @@ fn generate_message_encoder(
                 if let Some(len) = length {
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
                     if prim_size == 1 {
-                        // [u8; N]: no byte-swap needed, single bulk copy
+                        // [u8; N] / [i8; N] / char: no multi-byte endian swap; bulk
+                        // copy via u8 view (i8 arrays cannot `copy_from_slice` into [u8]).
                         impl_contents.extend(quote::quote! {
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
                                 unsafe {
-                                    self.buf.get_unchecked_mut(#body_offset_lit..#body_offset_lit + #len_lit).copy_from_slice(&val);
+                                    let dst = self.buf.get_unchecked_mut(#body_offset_lit..#body_offset_lit + #len_lit);
+                                    let src = core::slice::from_raw_parts(
+                                        val.as_ptr() as *const u8,
+                                        #len_lit,
+                                    );
+                                    dst.copy_from_slice(src);
                                 }
                                 self
                             }

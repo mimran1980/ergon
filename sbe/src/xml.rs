@@ -1039,7 +1039,14 @@ fn parse_composite(
                 let is_named_ref = has_ref_attr
                     || (child.attribute("type").is_some() && !is_primitive_name(t_name));
                 if !is_named_ref {
-                    let encoding = parse_type_element(child, registry)?;
+                    let mut encoding = parse_type_element(child, registry)?;
+                    // SBE var-data payload member: never contributes fixed composite
+                    // size (length prefix alone is the wire header). Mark even when
+                    // `length` is omitted (defaults to 1 in type attrs) so uint8
+                    // length prefixes don't produce a false 2-byte VarDataEncoding.
+                    if member_name == "varData" || encoding.length == Some(0) {
+                        encoding.is_variable_length = true;
+                    }
                     composite_tokens.push(Token {
                         id: None,
                         name: member_name.clone(),
@@ -1057,7 +1064,10 @@ fn parse_composite(
                 {
                     composite_tokens.extend(resolved);
                 } else {
-                    let encoding = parse_type_element(child, registry)?;
+                    let mut encoding = parse_type_element(child, registry)?;
+                    if member_name == "varData" || encoding.length == Some(0) {
+                        encoding.is_variable_length = true;
+                    }
                     composite_tokens.push(Token {
                         id: None,
                         name: member_name.clone(),
@@ -1072,7 +1082,10 @@ fn parse_composite(
                     });
                 }
             } else {
-                let encoding = parse_type_element(child, registry)?;
+                let mut encoding = parse_type_element(child, registry)?;
+                if member_name == "varData" || encoding.length == Some(0) {
+                    encoding.is_variable_length = true;
+                }
                 composite_tokens.push(Token {
                     id: None,
                     name: member_name.clone(),
