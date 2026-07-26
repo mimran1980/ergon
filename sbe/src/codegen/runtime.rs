@@ -348,9 +348,11 @@ pub(crate) fn to_upper_snake_case(s: &str) -> String {
 
 pub(crate) fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
     // Convert dotted valueRef like "TimeUnit.nanosecond" → "TimeUnit::Nanosecond".
-    // When the field type is a plain primitive (not the enum itself), cast to the
-    // appropriate type so `fn field(&self) -> u8 { TimeUnit::Nanosecond as u8 }` works.
-    if let Some((enum_name, variant)) = val.split_once('.') {
+    // Only if the prefix is non-numeric — float constants like "1.5" must not
+    // be mistaken for enum references.
+    if let Some((enum_name, variant)) = val.split_once('.')
+        && enum_name.chars().any(|c| !c.is_ascii_digit())
+    {
         let enum_ref = format!(
             "{}::{}",
             to_pascal_case(enum_name),

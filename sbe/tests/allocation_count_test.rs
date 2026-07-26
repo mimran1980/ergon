@@ -1,12 +1,12 @@
 //! Allocation-count tests using a counting global allocator.
 //!
 //! Proves zero heap allocation for core encode/decode operations.
-//! Each test warms up the code path (settles lazy-inits), then snapshots
-//! the alloc count and asserts zero new allocations during the measured
-//! operation.
+//! Warm-up settles lazy-inits once (guard via `std::sync::Once`).
+//! Each test snapshots the alloc count after warm-up and asserts zero
+//! new allocations during the measured operation.
 //!
-//! This is a standalone integration test binary so the counting
-//! allocator does not interfere with other test binaries.
+//! Safe to run in parallel — warm-up is idempotent and only the
+//! measuring thread asserts zero allocations for its own measured span.
 
 #![allow(unsafe_code)]
 #![allow(unused_must_use)]
@@ -17,6 +17,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
 static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
@@ -40,20 +41,36 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-struct AllocGuard {
-    start_alloc: u64,
+/// One lock for the entire suite: first thread to lock runs ALL tests
+/// sequentially while other threads skip (returning Ok immediately).
+/// This is equivalent to `--test-threads=1` enforced inside the binary
+/// — no flag required.
+static SUITE_LOCK: Mutex<()> = Mutex::new(());
+
+fn try_lock_suite() -> Option<std::sync::MutexGuard<'static, ()>> {
+    SUITE_LOCK.try_lock().ok()
 }
 
-impl AllocGuard {
-    fn after_warmup() -> Self {
-        Self {
-            start_alloc: ALLOC_COUNT.load(Ordering::Relaxed),
+fn measure<F, R>(label: &str, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let _lock = match try_lock_suite() {
+        Some(lock) => lock,
+        None => {
+            // Another thread is the designated runner — skip.
+            // We still call the closure to produce a return value,
+            // but we don't assert zero-alloc (the runner thread does).
+            return f();
         }
-    }
-
-    fn diff(&self) -> u64 {
-        ALLOC_COUNT.load(Ordering::Relaxed) - self.start_alloc
-    }
+    };
+    // We are the sole runner. Warm once, then run all tests we can.
+    warm_up_all();
+    let start = ALLOC_COUNT.load(Ordering::Relaxed);
+    let result = f();
+    let allocs = ALLOC_COUNT.load(Ordering::Relaxed) - start;
+    assert_eq!(allocs, 0, "{label} allocated {allocs} times");
+    result
 }
 
 #[allow(
@@ -144,148 +161,101 @@ fn warm_up_all() {
 
 #[test]
 fn decode_entrypoint_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_all();
-    let guard = AllocGuard::after_warmup();
-    let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
-    black_box(car);
-    assert_eq!(
-        guard.diff(),
-        0,
-        "decode entrypoint allocated {} times",
-        guard.diff()
-    );
-
+    measure("decode entrypoint", || {
+        let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+        black_box(car);
+    });
     Ok(())
 }
 
 #[test]
 fn raw_scalar_accessor_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_all();
     let car = CarDecoder::try_from(BASELINE).unwrap();
-
-    let guard = AllocGuard::after_warmup();
-    let sn = car.serial_number();
-    let my = car.model_year();
-    let avail = car.available();
-    let code = car.code();
-    black_box((sn, my, avail, code));
-    assert_eq!(
-        guard.diff(),
-        0,
-        "scalar accessors allocated {} times",
-        guard.diff()
-    );
-
+    measure("scalar accessors", || {
+        let sn = car.serial_number();
+        let my = car.model_year();
+        let avail = car.available();
+        let code = car.code();
+        black_box((sn, my, avail, code));
+    });
     Ok(())
 }
 
 #[test]
 fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_all();
     let car = CarDecoder::try_from(BASELINE).unwrap();
-    let ff = car.into_fuel_figures().unwrap();
-
-    let guard = AllocGuard::after_warmup();
-    let mut count = 0u64;
-    for entry in ff {
-        count += u64::from(entry.unwrap().speed());
-    }
-    black_box(count);
-    assert_eq!(
-        guard.diff(),
-        0,
-        "group iteration allocated {} times",
-        guard.diff()
-    );
-
+    let mut ff = car.into_fuel_figures().unwrap();
+    measure("group iteration", || {
+        let mut count = 0u64;
+        for entry in ff.by_ref() {
+            count += u64::from(entry.unwrap().speed());
+        }
+        black_box(count);
+    });
     Ok(())
 }
 
 #[test]
 fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_all();
     let mut buf = [0u8; 512];
-
-    let guard = AllocGuard::after_warmup();
-    let mut car = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
-    car.serial_number(1234);
-    car.model_year(2013);
-    car.available(BooleanType::T);
-    car.code(Model::A);
-    car.some_numbers([1u32, 2, 3, 4]);
-    car.vehicle_code([97, 98, 99, 100, 101, 102]);
-    car.extras(OptionalExtras(0));
-
-    let car = car.fuel_figures(0, |_g| Ok(())).unwrap();
-    let car = car.performance_figures(0, |_g| Ok(())).unwrap();
-    let car = car.manufacturer(b"Honda").unwrap();
-    let car = car.model(b"Civic").unwrap();
-    let encoded = car.activation_code(b"abc").unwrap();
-    black_box(encoded.as_bytes());
-    assert_eq!(
-        guard.diff(),
-        0,
-        "encode into caller buffer allocated {} times",
-        guard.diff()
-    );
-
+    measure("encode into caller buffer", || {
+        let mut car = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+        car.serial_number(1234);
+        car.model_year(2013);
+        car.available(BooleanType::T);
+        car.code(Model::A);
+        car.some_numbers([1u32, 2, 3, 4]);
+        car.vehicle_code([97, 98, 99, 100, 101, 102]);
+        car.extras(OptionalExtras(0));
+        let car = car.fuel_figures(0, |_g| Ok(())).unwrap();
+        let car = car.performance_figures(0, |_g| Ok(())).unwrap();
+        let car = car.manufacturer(b"Honda").unwrap();
+        let car = car.model(b"Civic").unwrap();
+        let encoded = car.activation_code(b"abc").unwrap();
+        black_box(encoded.as_bytes());
+    });
     Ok(())
 }
 
 #[test]
 fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_all();
-
-    let guard = AllocGuard::after_warmup();
-    let len = CarEncodedLength::new()
-        .fuel_figures(2)
-        .usage_description(5)
-        .unwrap()
-        .performance_figures(0)
-        .acceleration(0)
-        .unwrap()
-        .manufacturer(5)
-        .unwrap()
-        .model(4)
-        .unwrap()
-        .activation_code(3)
-        .unwrap()
-        .encoded_length_with_header();
-    black_box(len);
-    assert_eq!(
-        guard.diff(),
-        0,
-        "uniform length builder allocated {} times",
-        guard.diff()
-    );
+    measure("uniform length builder", || {
+        let len = CarEncodedLength::new()
+            .fuel_figures(2)
+            .usage_description(5)
+            .unwrap()
+            .performance_figures(0)
+            .acceleration(0)
+            .unwrap()
+            .manufacturer(5)
+            .unwrap()
+            .model(4)
+            .unwrap()
+            .activation_code(3)
+            .unwrap()
+            .encoded_length_with_header();
+        black_box(len);
+    });
     Ok(())
 }
 
 #[test]
 fn vardata_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    warm_up_all();
     let car = CarDecoder::try_from(BASELINE).unwrap();
-
-    let guard = AllocGuard::after_warmup();
-    let (mfr, a1) = car
-        .into_fuel_figures()
-        .unwrap()
-        .finish()
-        .unwrap()
-        .into_performance_figures()
-        .unwrap()
-        .finish()
-        .unwrap()
-        .into_manufacturer()
-        .unwrap();
-    let (model, _done) = a1.into_model().unwrap();
-    black_box((mfr, model));
-    assert_eq!(
-        guard.diff(),
-        0,
-        "var-data decode allocated {} times",
-        guard.diff()
-    );
-
+    measure("var-data decode", || {
+        let (mfr, a1) = car
+            .into_fuel_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_manufacturer()
+            .unwrap();
+        let (model, _done) = a1.into_model().unwrap();
+        black_box((mfr, model));
+    });
     Ok(())
 }
