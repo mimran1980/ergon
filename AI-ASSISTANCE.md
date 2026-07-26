@@ -69,7 +69,7 @@ Choose the path that matches why you are here:
   [failed approaches](#what-did-not-work), and the
   [practical playbook](#a-practical-playbook-for-other-developers).
 - **Understanding model economics:** read the
-  [O(n²) and caching explanation](#long-context-the-on²-mental-model-and-caching),
+  [O(n²) and caching explanation](#long-context-on2-caching),
   [observed usage and spend](#observed-usage-and-actual-spend),
   [cache sample](#the-cache-sample-used-for-the-cost-comparison), and
   [normalized pay-as-you-go comparison](#normalised-pay-as-you-go-comparison).
@@ -91,7 +91,7 @@ Choose the path that matches why you are here:
 11. [Performance](#performance-was-part-of-correctness)
 12. [Unsafe code and the trust boundary](#unsafe-code-and-the-trust-boundary)
 13. [Tools and models](#tools-models-and-what-each-contributed)
-14. [Long context, O(n²), and caching](#long-context-the-on²-mental-model-and-caching)
+14. [Long context, O(n²), and caching](#long-context-on2-caching)
 15. [Observed usage and spend](#observed-usage-and-actual-spend)
 16. [Pay-as-you-go comparison](#normalised-pay-as-you-go-comparison)
 17. [A practical playbook](#a-practical-playbook-for-other-developers)
@@ -757,6 +757,8 @@ completed.
 Cross-model review is useful, but agreement among models is not independent
 proof. They can share training patterns and repeat the same plausible
 misunderstanding. Official bytes and behavioural tests are stronger evidence.
+
+<a name="long-context-on2-caching"></a>
 
 ## Long context, the O(n²) mental model, and caching
 
