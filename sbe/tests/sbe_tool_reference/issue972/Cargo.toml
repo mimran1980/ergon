@@ -1,0 +1,12 @@
+[package]
+name = "parity_issue972"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "null"
+edition = "2021"
+
+[lib]
+name = "parity_issue972"
+path = "src/lib.rs"
+
+[workspace]

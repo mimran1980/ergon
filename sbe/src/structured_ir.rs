@@ -75,6 +75,9 @@ pub(crate) struct MessageStructure {
     pub(crate) description: Option<String>,
     pub(crate) deprecated: bool,
     pub(crate) semantic_type: Option<String>,
+    /// Root fixed-block length in bytes (schema `blockLength` when declared and
+    /// larger than the tight field packing, else the computed field span).
+    pub(crate) block_length: usize,
     pub(crate) fields: Vec<MessageField>,
     pub(crate) groups: Vec<MessageGroup>,
     pub(crate) var_data: Vec<MessageVarData>,
@@ -167,6 +170,9 @@ pub(crate) fn parse_message_structure(
     let description = begin_token.encoding.description.clone();
     let deprecated = begin_token.encoding.deprecated;
     let semantic_type = begin_token.encoding.semantic_type.clone();
+    // Populated by `resolve_message_offsets` (max of computed field span and
+    // any schema-declared blockLength padding).
+    let block_length = begin_token.encoding.offset.unwrap_or(0);
 
     let mut fields = Vec::new();
     let mut groups = Vec::new();
@@ -207,6 +213,7 @@ pub(crate) fn parse_message_structure(
         description,
         deprecated,
         semantic_type,
+        block_length,
         fields,
         groups,
         var_data,

@@ -361,7 +361,14 @@ fn resolve_message_offsets(
         i = next_i;
     }
 
-    let block_length = current_offset;
+    // Honor schema `blockLength` when larger than the sum of fixed fields
+    // (padding). Matches sbe-tool / official SBE: the header and encoder walk
+    // use the declared root block length, not the tight field packing size.
+    let declared = tokens[0].encoding.offset;
+    let block_length = match declared {
+        Some(d) if d > current_offset => d,
+        _ => current_offset,
+    };
     tokens[0].encoding.offset = Some(block_length);
     Ok(())
 }

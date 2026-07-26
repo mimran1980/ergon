@@ -1,0 +1,12 @@
+[package]
+name = "parity_fix_messages"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Order Types and Quote Examples"
+edition = "2021"
+
+[lib]
+name = "parity_fix_messages"
+path = "src/lib.rs"
+
+[workspace]

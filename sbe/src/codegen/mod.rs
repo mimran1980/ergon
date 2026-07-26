@@ -1272,10 +1272,14 @@ fn generate_message_decoder(
         ByteOrder::BigEndian => "be",
     };
 
-    let block_length = msg.fields.iter().fold(0, |acc, f| {
+    // Prefer the resolved message block length (includes schema-declared
+    // padding via `blockLength="…"`). Fall back to a tight field-span only if
+    // resolve left it zero (should not happen for real messages).
+    let computed_block_length = msg.fields.iter().fold(0, |acc, f| {
         let size = f.field_type.size();
         acc.max(f.offset + size)
     });
+    let block_length = msg.block_length.max(computed_block_length);
 
     let header_pascal = to_pascal_case(header_type);
     let (header_bl, header_ti, header_si, header_vr) = {
@@ -5085,10 +5089,14 @@ fn generate_message_encoder(
         ByteOrder::BigEndian => "be",
     };
 
-    let block_length = msg.fields.iter().fold(0, |acc, f| {
+    // Prefer the resolved message block length (includes schema-declared
+    // padding via `blockLength="…"`). Fall back to a tight field-span only if
+    // resolve left it zero (should not happen for real messages).
+    let computed_block_length = msg.fields.iter().fold(0, |acc, f| {
         let size = f.field_type.size();
         acc.max(f.offset + size)
     });
+    let block_length = msg.block_length.max(computed_block_length);
 
     #[expect(unused_variables)]
     let header_pascal = to_pascal_case(header_type);
@@ -5124,9 +5132,9 @@ fn generate_message_encoder(
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
     let name_decoder_ident = syn::Ident::new(&format!("{}Decoder", name), span);
 
-    // Pre-compute HEADER_TEMPLATE bytes. SBE spec §4.1: the message header
-    // is ALWAYS little-endian regardless of the schema's byteOrder. The body
-    // follows the schema byteOrder; the header does not.
+    // Pre-compute HEADER_TEMPLATE bytes. Official sbe-tool writes the message
+    // header with the schema's byteOrder (same as the body). Matching that is
+    // required for dual-encode wire identity against sbe-tool Rust/Java codecs.
     // Known size at generate-time (standard SBE header is 8); stack, not vec!.
     assert!(
         header_size <= 32,
@@ -5135,10 +5143,16 @@ fn generate_message_encoder(
     let mut header_tpl = [0u8; 32];
     let header_tpl = &mut header_tpl[..header_size];
     let hdr_bl = block_length as u16;
-    header_tpl[0..2].copy_from_slice(&hdr_bl.to_le_bytes());
-    header_tpl[2..4].copy_from_slice(&msg.id.to_le_bytes());
-    header_tpl[4..6].copy_from_slice(&schema_id.to_le_bytes());
-    header_tpl[6..8].copy_from_slice(&schema_version.to_le_bytes());
+    let to_bytes = |v: u16| -> [u8; 2] {
+        match byte_order {
+            ByteOrder::LittleEndian => v.to_le_bytes(),
+            ByteOrder::BigEndian => v.to_be_bytes(),
+        }
+    };
+    header_tpl[0..2].copy_from_slice(&to_bytes(hdr_bl));
+    header_tpl[2..4].copy_from_slice(&to_bytes(msg.id));
+    header_tpl[4..6].copy_from_slice(&to_bytes(schema_id));
+    header_tpl[6..8].copy_from_slice(&to_bytes(schema_version));
     let hdr_lits: Vec<syn::LitInt> = header_tpl
         .iter()
         .map(|b| syn::LitInt::new(&b.to_string(), span))

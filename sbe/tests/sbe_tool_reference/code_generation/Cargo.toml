@@ -1,0 +1,12 @@
+[package]
+name = "parity_code_generation"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Code generation schema"
+edition = "2021"
+
+[lib]
+name = "parity_code_generation"
+path = "src/lib.rs"
+
+[workspace]

@@ -124,6 +124,15 @@ impl Paths {
     pub fn sbe_tool_test_resource(name: &str) -> PathBuf {
         Self::sbe_tool_test().join(name)
     }
+
+    /// Checked-in sbe-tool Rust reference crate for dual-encode wire parity.
+    /// Layout: `sbe/tests/sbe_tool_reference/<key>/` (Cargo package `parity_<key>`).
+    pub fn sbe_tool_reference(key: &str) -> PathBuf {
+        Self::sbe_dir()
+            .join("tests")
+            .join("sbe_tool_reference")
+            .join(key)
+    }
 }
 
 pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
@@ -272,6 +281,110 @@ pub fn run_fixture_test(name: &str, schema: &Path, fixture: &Path, code: &str) {
     let (_, src) = generate(schema, name);
     let body = format!("let FIXTE: &[u8] = &[{hex}];\n{code}");
     compile_and_run(name, &src, &body);
+}
+
+/// Dual-encode wire parity: generate ergo-sbe for `schema`, path-depend on the
+/// checked-in sbe-tool reference crate `tool_key`, then compile+run `code`.
+///
+/// Inside `code`:
+/// - `use ergo::*;` is already applied
+/// - sbe-tool crate is available as `tool::...` (`package = "parity_<tool_key>"`)
+/// - helper `assert_frames_eq(label, ergo, tool)` is in scope
+///
+/// The test body should encode the same logical payload with both generators
+/// and call `assert_frames_eq`.
+pub fn dual_encode_run(test_name: &str, schema: &Path, tool_key: &str, code: &str) {
+    let (_, ergo_src) = generate(schema, "ergo");
+    let tool_path = Paths::sbe_tool_reference(tool_key);
+    assert!(
+        tool_path.join("Cargo.toml").is_file(),
+        "missing sbe-tool reference crate at {tool_path:?}; regenerate with scripts/regenerate-sbe-tool-reference.sh"
+    );
+    let tool_path_str = tool_path
+        .canonicalize()
+        .unwrap_or_else(|e| panic!("canonicalize {tool_path:?}: {e}"))
+        .display()
+        .to_string();
+    // Escape backslashes for Windows paths in TOML strings.
+    let tool_path_toml = tool_path_str.replace('\\', "/");
+    let package = format!("parity_{tool_key}");
+
+    let dir = std::env::temp_dir().join(format!("ergo_dual_{test_name}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    let patched = patch_source(&ergo_src);
+    fs::write(src.join("ergo.rs"), &patched).unwrap();
+
+    let main = format!(
+        r#"#![allow(dead_code, unused_imports, unused_variables, unused_mut, unused_assignments, clippy::all)]
+mod ergo;
+use ergo::*;
+
+fn assert_frames_eq(label: &str, ergo: &[u8], tool: &[u8]) {{
+    if ergo != tool {{
+        let n = ergo.len().min(tool.len());
+        let mut first = None;
+        for i in 0..n {{
+            if ergo[i] != tool[i] {{
+                first = Some(i);
+                break;
+            }}
+        }}
+        panic!(
+            "{{}}: frames differ ergo_len={{}} tool_len={{}} first_mismatch={{:?}}\\n  ergo[:64]={{:02x?}}\\n  tool[:64]={{:02x?}}",
+            label,
+            ergo.len(),
+            tool.len(),
+            first,
+            &ergo[..ergo.len().min(64)],
+            &tool[..tool.len().min(64)],
+        );
+    }}
+}}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {{
+{code}
+Ok(())
+}}
+"#
+    );
+    fs::write(src.join("main.rs"), &main).unwrap();
+
+    let cargo = format!(
+        r#"[package]
+name = "{test_name}_dual"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+tool = {{ path = "{tool_path_toml}", package = "{package}" }}
+"#
+    );
+    fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+
+    let target_dir = dir.join("target_ci");
+    let out = Command::new("cargo")
+        .args(["run", "--quiet"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .output()
+        .expect("cargo run failed to start");
+
+    if !out.status.success() {
+        let e = String::from_utf8_lossy(&out.stderr);
+        let o = String::from_utf8_lossy(&out.stdout);
+        // Keep the temp dir on failure for debugging.
+        panic!(
+            "dual_encode {test_name} FAILED (dir={})\nstdout:\n{o}\nstderr:\n{e}",
+            dir.display()
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// Generate two modules, write them into the same temp crate, compile, and run.

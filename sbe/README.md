@@ -49,8 +49,12 @@ enc.fixed(&fields)
     .ask_var_data(bytes)?;
 ```
 
-Wire parity is exercised against official fixtures and a maintained benchmark
-gate versus sbe-tool-generated codecs in the monorepo (see
+Wire parity is exercised three ways: official Java `.sbe` fixtures, **live
+dual-encode** suites that require ergo-sbe and sbe-tool Rust bytes to be
+identical (`sbe_tool_wire_parity_test` for deep Car matrices;
+`sbe_tool_multi_schema_wire_parity_test` across example/unit schemas with
+checked-in sbe-tool reference crates under `sbe/tests/sbe_tool_reference/`),
+and a maintained benchmark gate versus sbe-tool-generated codecs (see
 [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md)).
 
 > **Early release (0.x).** This is the first published line of the crate. The
@@ -480,7 +484,7 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | Feature | What it does | How to use / more |
 |---------|--------------|-------------------|
 | **`build.rs` codegen** | Compile-time schema → Rust module in `OUT_DIR` | `generate_to_out_dir("schemas/….xml", config)?` · plain `include!` or `sbe_mod!(name)` · [Quick start](#quick-start) · [codegen examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
-| **Wire compatibility** | Same on-wire layout as official SBE | Golden fixtures + parity benches · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) · [stability_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/stability_test.rs) · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
+| **Wire compatibility** | Same on-wire layout as official SBE | Dual encode ergo vs sbe-tool · [sbe_tool_wire_parity_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/sbe_tool_wire_parity_test.rs) · golden fixtures · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
 | **Flyweight decode** | Zero-copy over `&[u8]` | `CarDecoder::try_from(buf)?; car.serial_number()` · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **Composite wire image** | `#[repr(transparent)] Engine([u8; N])` + LE accessors; flyweight default | Not a `repr(C)` overlay · [Core ideas](#composite-layout--little-endian) · [composite_layout_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/composite_layout_test.rs) |
 | **Per-field vs whole struct** | Flyweight **or** `*FixedFields` / `*Domain` | Single field: flyweight · always fill fixed block: `.fixed(&CarFixedFields { … })` · whole message owned: `CarDomain` · [Core ideas](#flyweight-per-field-vs-whole-struct) · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |

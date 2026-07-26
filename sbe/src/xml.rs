@@ -1404,6 +1404,10 @@ fn parse_message(
             deprecated: message_deprecated,
             description: collect_description(node),
             semantic_type: node.attribute("semanticType").map(str::to_string),
+            // Stash declared `blockLength` on the BeginMessage token so resolve can
+            // honor schema padding (max(computed, declared)). Cleared/overwritten by
+            // `resolve_message_offsets` with the final wire block length.
+            offset: block_length.map(|b| b as usize),
             ..Encoding::default()
         },
     });
