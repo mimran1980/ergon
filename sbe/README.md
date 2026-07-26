@@ -259,29 +259,71 @@ variable-length tails, you no longer hand-calculate wire size (header + block
 are about to encode; it returns the exact byte count for a first-time
 stack buffer, claim, or write with no trial encode and no oversized guess.
 
+Using the example **Car** schema (groups + nested groups + var-data tails):
+
 | Message shape | How to size (generated) | Prefer |
 |---------------|-------------------------|--------|
-| Fixed block only | `MessageEncoder::ENCODED_LENGTH` (**const**) | stack `[0u8; N]` |
-| Flat / known tail lengths | `compute_encoded_length_with_message_header(...)` (**const** when args are) | stack `[0u8; N]` |
-| Groups / nested / ragged | `{Message}EncodedLength` staged builder | size first → claim / encode into that exact slice |
+| Fixed block only (no groups/var-data) | `{Msg}Encoder::ENCODED_LENGTH` (**const**) | stack `[0u8; N]` |
+| Flat / known tail lengths | `try_compute_encoded_length_with_header(...)` when emitted | stack `[0u8; N]` |
+| Groups / nested / ragged (Car) | `CarEncodedLength` staged builder | size first → claim / encode into that exact slice |
 
 ```rust,ignore
-// Fixed / const-sized — stack, not Vec:
-let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
+// Uniform Car: every fuelFigures entry has the same shape (same
+// usageDescription length). Fastest path — multiplies one entry shape by count.
+// (Matches the generated CarEncodedLength API for example-schema.)
+let len = CarEncodedLength::new()
+    .fuel_figures(2)
+    .usage_description(5)?            // bytes per fuel entry's usageDescription
+    .performance_figures(1)
+    .acceleration(2)?                 // nested group count per performance entry
+    .manufacturer(5)?                 // "Honda"
+    .model(9)?                        // "Civic VTi"
+    .activation_code(6)?              // "abcdef"
+    .encoded_length_with_header();
 
-// Nested / ragged: compute exact `len`, then encode into a slot of that size
-// (Aeron try_claim, existing frame, or any &mut [u8] of length `len`).
-let complete = MessageEncodedLength::new().entries_ragged(2, |entries| {
-    entries.add()?.payload(first_payload.len())?;
-    entries.add()?.payload(second_payload.len())?;
-    Ok(())
-})?;
-let len = complete.encoded_length_with_header();
-// claim_or_slot is &mut [u8] with claim_or_slot.len() == len — no oversize Vec.
-// … then encode into claim_or_slot with the matching encoder stages …
+// Exact slice — stack when `len` is const-known, else claim / Vec of that size.
+let mut buf = vec![0u8; len];
+let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&fields)
+    .fuel_figures(2, |g| {
+        g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
+        g.add(|e| { e.speed(60).mpg(25.0); e.usage_description(b"Hwy!!")?; Ok(()) })?;
+        Ok(())
+    })?
+    .performance_figures(1, |g| {
+        g.add(|e| {
+            e.octane_rating(95);
+            e.acceleration(2, |a| {
+                a.add(|x| { x.mph(30).seconds(4.0); Ok(()) })?;
+                a.add(|x| { x.mph(60).seconds(7.5); Ok(()) })?;
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+        Ok(())
+    })?
+    .manufacturer(b"Honda")?
+    .model(b"Civic VTi")?
+    .activation_code(b"abcdef")?;
+
+// Ragged Car: fuel entries may have *different* usageDescription lengths.
+// Declare count up-front; describe each entry's variable tail in the closure.
+let len = CarEncodedLength::new()
+    .fuel_figures_ragged(2, |ff| {
+        ff.add()?.usage_description(5)?;    // first entry: 5-byte description
+        ff.add()?.usage_description(12)?;   // second entry: 12-byte description
+        Ok(())
+    })?
+    .performance_figures(0)
+    .acceleration(0)?
+    .manufacturer(5)?
+    .model(5)?
+    .activation_code(3)?
+    .encoded_length_with_header();
 ```
 
-Real nested book: [`book_encoded_length`](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs)
+Same idea on a real nested book:
+[`book_encoded_length`](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs)
 in the l3-book sample. API matrix:
 [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs).
 
