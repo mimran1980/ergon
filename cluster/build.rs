@@ -87,8 +87,10 @@ fn compile_test_harness_java(manifest_dir: &Path, aeron_dir: &Path) {
     let cp = format!("{}/*:{}/*", jar_dir.display(), cluster_jar.display());
     eprintln!("Compiling ClusterLauncher into {}", samples_classes.display());
     let _ = fs::create_dir_all(&samples_classes);
+    // Force UTF-8 so source comments with non-ASCII bytes never trip US-ASCII
+    // defaults on some macOS/JDK installs.
     let status = std::process::Command::new("javac")
-        .args(["-cp", &cp, "-d"])
+        .args(["-encoding", "UTF-8", "-cp", &cp, "-d"])
         .arg(&samples_classes)
         .arg(&java_src)
         .status()

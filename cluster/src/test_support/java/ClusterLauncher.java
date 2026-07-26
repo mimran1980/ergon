@@ -33,7 +33,7 @@ public class ClusterLauncher {
         for (int i = 0; i < nodeCount; i++) hosts.add("localhost");
 
         // When arg[3] == "keep", preserve the aeron/archive/consensus dirs
-        // across this launch — used by log-recovery restart tests.
+        // across this launch -- used by log-recovery restart tests.
         boolean keep = args.length > 3 && args[3].equals("keep");
         ClusterConfig config = ClusterConfig.create(memberId, hosts, basePort, new Echo());
         config.mediaDriverContext().dirDeleteOnStart(!keep);
