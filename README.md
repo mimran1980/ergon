@@ -2,7 +2,7 @@
 
 > **AI assistance.** This monorepo was developed **with heavy AI assistance**.
 > Humans directed the problems, approved designs, and verified results. Process
-> notes: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/sbe/AI-ASSISTANCE.md).
+> notes: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/first_cut/sbe/AI-ASSISTANCE.md).
 
 ergon is an experimental Rust workspace for two related projects:
 
@@ -64,7 +64,7 @@ build, test, interoperability, and benchmark recipes.
 - [`cluster/README.md`](cluster/README.md) — Cluster client scope and usage
 - [`samples/README.md`](samples/README.md) — sample inventory and commands
 - [`sbe/BENCHMARKS.md`](sbe/BENCHMARKS.md) — benchmark method and gates
-- [`AI-ASSISTANCE.md`](https://github.com/mimran1980/ergon/blob/main/sbe/AI-ASSISTANCE.md) — AI-assisted development process
+- [`AI-ASSISTANCE.md`](https://github.com/mimran1980/ergon/blob/first_cut/sbe/AI-ASSISTANCE.md) — AI-assisted development process
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution and verification rules
 - [`CHANGELOG.md`](CHANGELOG.md) — user-facing changes
 
