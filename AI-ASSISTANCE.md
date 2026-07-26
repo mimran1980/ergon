@@ -47,20 +47,21 @@ dated figures as a historical record, not a permanent promise.
 5. [What I reviewed—and what I did not](#what-i-reviewedand-what-i-did-not)
 6. [The actual working loop](#the-actual-working-loop)
 7. [How the project evolved](#how-the-project-evolved)
-8. [What did not work](#what-did-not-work)
-9. [Verification](#verification-why-the-tests-matter-so-much)
-10. [Performance](#performance-was-part-of-correctness)
-11. [Unsafe code and the trust boundary](#unsafe-code-and-the-trust-boundary)
-12. [Tools and models](#tools-models-and-what-each-contributed)
-13. [Long context, O(n²), and caching](#long-context-the-on²-mental-model-and-caching)
-14. [Observed usage and spend](#observed-usage-and-actual-spend)
-15. [Pay-as-you-go comparison](#normalised-pay-as-you-go-comparison)
-16. [A practical playbook](#a-practical-playbook-for-other-developers)
-17. [The personal experience](#the-personal-experience-pride-enjoyment-and-review-fatigue)
-18. [Why the crate is experimental](#why-this-crate-is-still-experimental)
-19. [What production users should verify](#what-a-prospective-production-user-should-verify)
-20. [AI-assisted contributions](#ai-assisted-contributions)
-21. [Final assessment](#final-assessment)
+8. [What the Git history shows](#what-the-git-history-shows)
+9. [What did not work](#what-did-not-work)
+10. [Verification](#verification-why-the-tests-matter-so-much)
+11. [Performance](#performance-was-part-of-correctness)
+12. [Unsafe code and the trust boundary](#unsafe-code-and-the-trust-boundary)
+13. [Tools and models](#tools-models-and-what-each-contributed)
+14. [Long context, O(n²), and caching](#long-context-the-on²-mental-model-and-caching)
+15. [Observed usage and spend](#observed-usage-and-actual-spend)
+16. [Pay-as-you-go comparison](#normalised-pay-as-you-go-comparison)
+17. [A practical playbook](#a-practical-playbook-for-other-developers)
+18. [The personal experience](#the-personal-experience-pride-enjoyment-and-review-fatigue)
+19. [Why the crate is experimental](#why-this-crate-is-still-experimental)
+20. [What production users should verify](#what-a-prospective-production-user-should-verify)
+21. [AI-assisted contributions](#ai-assisted-contributions)
+22. [Final assessment](#final-assessment)
 
 ## Why this page exists
 
@@ -385,6 +386,69 @@ exercise in learning agents. It had become a crate I wanted other SBE
 developers to evaluate. That raised the standard and is why the work continued
 past the holiday.
 
+## What the Git history shows
+
+The commit history provides a useful independent record of how the project
+actually developed. It should not be treated as a measure of human effort:
+agents commit much more frequently than I would when working manually, and
+some commits are tiny formatting, test, or repair steps. It does, however,
+show the shape and sequence of the work.
+
+The history snapshot ending at commit `85442ed` on 26 July 2026 contains
+**976 commits after the initial `main` scaffold**. The active codegen work
+began on 5 July and the history records:
+
+- 14 commits on 5 July;
+- 157 on 6 July;
+- 128 on 7 July;
+- 89 on 8 July;
+- 46 on 9 July;
+- 74 on 10 July; and
+- 41 on 11 July.
+
+That is consistent with the intensity of the holiday period, but the more
+interesting evidence is structural. The history contains ten explicitly named
+`worktree-agent` or equivalent worktree merge commits. Every one of those
+occurred on 6 or 7 July. After that early experiment, the branch becomes
+overwhelmingly linear; the only much later merge was an ordinary remote
+tracking merge on 25 July. This is visible evidence of the transition I
+described: parallel subagents were exciting in the greenfield phase, then
+shared invariants pushed the development into a sequential loop.
+
+The subjects also expose the sequence of technical lessons:
+
+- **5–6 July:** scaffold the generator, create the roadmap, add baseline
+  wire tests, CI, golden generation, upstream regression schemas, benchmarks,
+  unsafe experiments, and early exact-length support.
+- **7–8 July:** migrate more generator code to `syn`/`quote`, expand group and
+  variable-data support, add property and conformance tests, and repeatedly
+  repair the interactions between those features.
+- **9 July:** benchmark-driven redesign from generic encoder states to
+  non-generic concrete structs, followed by generated-shape regression tests.
+- **10 July:** introduce concrete consuming decoder stages, compile-fail
+  ordering proofs, zero-allocation checks, and broad generator coverage.
+- **11 July:** restrict bytes and encoded length to complete stages, add nested
+  message and converter workflows, and prove callback and stage ownership
+  constraints.
+- **17–21 July:** rerun multi-run benchmark matrices, deepen DTO/converter
+  support, migrate the Aeron Cluster client to `ergo-sbe`, and harden Cluster
+  behaviour and samples.
+- **22–24 July:** rename the workspace to `ergon`, expand the L3 examples,
+  build the staged exact-length API for uniform, ragged, nested, and
+  variable-data shapes, and revisit checked versus unchecked performance.
+- **25 July:** fix DTO conversion and ragged-length defects, complete Cluster
+  reliability work, run Java interoperability tests, repair benchmark gates,
+  and add broader generated-code safety tests.
+- **26 July:** clarify documentation and packaging, add live byte-for-byte
+  comparisons against checked-in official `sbe-tool` Rust codecs, close the
+  multi-schema parity gaps, and publish this disclosure.
+
+This is a messier and more credible history than a one-shot generation story.
+It contains reverts, merge repairs, performance regressions, benchmark
+redesigns, API replacements, small cleanup passes, and tests added after
+failures. It shows that the project was not produced by one prompt. It was
+produced through hundreds of short, observable corrections.
+
 ## What did not work
 
 ### Large parallel-agent plans
@@ -580,6 +644,21 @@ models.
 DeepSeek V4 Flash and V4 Pro performed most of the implementation work. I
 started using DeepSeek because I repeatedly exhausted other subscription or
 coding-plan limits. I expected it to be a fallback. It became the workhorse.
+
+The model split also reflects the change in development style. Early in the
+project I was using **UltraMode through Claude Code CLI**. UltraMode created
+subagents and selected the model it considered appropriate for each task. In
+my custom endpoint configuration, the model slot that UltraMode treated as
+Sonnet was mapped to **DeepSeek V4 Flash**. Consequently, much of the early
+parallel work ran on Flash without me manually choosing Flash for each
+subagent.
+
+Once the codebase became too coupled for parallel development, I moved to a
+mostly sequential workflow and kept the main session on **DeepSeek V4 Pro**.
+This explains why the dashboard contains substantial use of both models and
+why the actual bill was lower than an all-Pro estimate. Flash handled a large
+amount of the early, highly parallel token volume; Pro carried the longer
+sequential implementation and refinement sessions.
 
 There was no task where DeepSeek failed and I then had to escalate the same
 problem to Opus, ChatGPT, or Grok to rescue the implementation. That surprised
@@ -785,20 +864,22 @@ tokens** across providers:
 The 14-billion figure is therefore an honest order-of-magnitude estimate, not
 an audited total.
 
-My approximate cash spend was:
+My identifiable cash spend was:
 
-| Provider | Approximate spend |
+| Provider | Spend |
 |---|---:|
-| DeepSeek pay as you go | $90 |
+| DeepSeek pay as you go | $77.39 |
 | GLM coding plan | $114 |
 | OpenAI subscription | $20 |
 | Claude subscription | $20 |
 | Grok subscription | $30 |
-| **Approximate total** | **$274** |
+| **Total** | **$261.39** |
 
-The DeepSeek dashboard's $77.39 is for its displayed 30-day window. My $90
-figure is the rounded project-period spend. They describe different scopes and
-should not be forced to match.
+The DeepSeek figure is the actual charge shown for the project period. The
+mixture matters: the early UltraMode/subagent phase used V4 Flash through the
+Sonnet-mapped model slot, while the later sequential phase stayed primarily on
+V4 Pro. Treating all 10.5 billion DeepSeek tokens as Pro would therefore
+overstate what I actually bought.
 
 Subscription spend is also not directly comparable with enterprise API
 pay-as-you-go pricing. The next section normalises the observed workload for
@@ -926,12 +1007,11 @@ achieve different cache-hit ratios. Holding usage fixed is useful for
 isolating price; it does not predict the total cost of rerunning the project
 with another model.
 
-As a sanity check, scaling the observed DeepSeek dashboard window
-($77.39 / 10.5229B tokens) to 14B gives roughly **$103**. Scaling my rounded
-project-period estimate ($90 / 10.5B) gives roughly **$120**. Those sit between
-the all-Flash and all-Pro modelled figures because the real workload mixed
-models and the three selected cache screenshots are not a billing-complete
-sample of every day.
+As a sanity check, scaling the observed DeepSeek charge
+($77.39 / 10.5229B tokens) to 14B gives roughly **$103**. This sits between the
+all-Flash and all-Pro modelled figures because the real workload mixed models.
+The selected cache screenshots are also samples of three days rather than a
+billing-complete token-category ledger for every day.
 
 ## What I learned about model “intelligence”
 
