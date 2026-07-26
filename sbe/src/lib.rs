@@ -118,20 +118,36 @@
 //! ## Encode + type-state tails
 //!
 //! Fixed fields first, then groups / var-data in **wire order** (compile-time
-//! stages prevent out-of-order writes):
+//! stages prevent out-of-order writes). **Size the buffer first** — never guess
+//! with a large `vec![0u8; 4096]`.
 //!
 //! ```ignore
-//! // Const length → stack array (no heap).
-//! let mut buf = [0u8; CarEncoder::ENCODED_LENGTH];
+//! // Size the buffer before writing — Car has var-data so ENCODED_LENGTH
+//! // won't cover the tail. Use the *EncodedLength staged builder.
+//! let len = CarEncodedLength::new()
+//!     .fuel_figures(1).usage_description(5)?
+//!     .manufacturer(5)?.model(5)?
+//!     .encoded_length_with_header();
+//! let mut buf = vec![0u8; len];            // exact size
+//!
 //! let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
 //!     .serial_number(1234)
 //!     .model_year(2013)
 //!     .fuel_figures(1, |g| {
-//!         g.add(|e| { e.speed(30).mpg(35.5); Ok(()) })?;
+//!         g.add(|e| { e.speed(30).mpg(35.5); e.usage_description(b"city")?; Ok(()) })?;
 //!         Ok(())
 //!     })?
-//!     .manufacturer(b"Honda")?;
-//! let len = done.encoded_length_with_header();
+//!     .manufacturer(b"Honda")?
+//!     .model(b"Civic")?;
+//! let n = done.encoded_length_with_header();
+//! assert_eq!(n, len);
+//! ```
+//!
+//! For **fixed-only** messages (no groups, no var-data) use the shorter form:
+//!
+//! ```ignore
+//! let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
+//! let enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
 //! ```
 //!
 //! ## Buffer sizing
@@ -144,7 +160,7 @@
 //!
 //! | Shape | API | Prefer |
 //! |-------|-----|--------|
-//! | Fixed-only | `CarEncoder::ENCODED_LENGTH` | `[0u8; N]` on the stack |
+//! | Fixed-only | `HeartbeatEncoder::ENCODED_LENGTH` (const) | `[0u8; N]` stack |
 //! | Flat / known tails | `compute_encoded_length_with_message_header(...)` | stack when const |
 //! | Groups / nested / ragged | `CarEncodedLength::new()…encoded_length_with_header()` | exact claim / slot |
 //!
