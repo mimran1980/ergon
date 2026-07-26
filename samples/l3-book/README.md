@@ -9,7 +9,7 @@ Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
 ergo_sbe::generate_to_out_dir(
     "schemas/l3-book.xml",
     GenerationConfig::new("l3_codec")
-        .enable_domain_objects()
+        .enable_domain_objects(false) // Vec<u8> var-data; true → String
         .with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
         .with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
         .with_domain_type(

@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ergo_sbe::generate_to_out_dir(
         "schemas/messages.xml",
         ergo_sbe::GenerationConfig::new("messages"),
-        // .enable_domain_objects()
+        // .enable_domain_objects(true)  // String var-data on DTOs
         // .with_domain_type(…)?
     )?;
     Ok(())
@@ -155,7 +155,8 @@ use messages::*;
 ### 4. Encode and decode (fixed message)
 
 ```rust,ignore
-let mut buf = vec![0u8; HeartbeatEncoder::ENCODED_LENGTH];
+// Const length → stack array (no heap).
+let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
 {
     let mut enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
     enc.seq(7);
@@ -238,24 +239,28 @@ variable-length tails, you no longer hand-calculate wire size (header + block
 + Σ(group headers × count) + Σ(var-data lengths) + …). Codegen emits a
 **schema-aware length API** so you declare the *structure* of the payload you
 are about to encode; it returns the exact byte count for a first-time
-allocation (or Aeron claim) with no trial encode and no oversized guess buffer.
+stack buffer, claim, or write with no trial encode and no oversized guess.
 
-| Message shape | How to size (generated) |
-|---------------|-------------------------|
-| Fixed block only | `MessageEncoder::ENCODED_LENGTH` (const) |
-| Flat / known tail lengths | `compute_encoded_length_with_message_header(...)` |
-| Groups / nested / ragged | `{Message}EncodedLength` staged builder (same wire order as encode) |
+| Message shape | How to size (generated) | Prefer |
+|---------------|-------------------------|--------|
+| Fixed block only | `MessageEncoder::ENCODED_LENGTH` (**const**) | stack `[0u8; N]` |
+| Flat / known tail lengths | `compute_encoded_length_with_message_header(...)` (**const** when args are) | stack `[0u8; N]` |
+| Groups / nested / ragged | `{Message}EncodedLength` staged builder | size first → claim / encode into that exact slice |
 
 ```rust,ignore
-// Nested / ragged example: count + per-entry tails — no mental arithmetic.
+// Fixed / const-sized — stack, not Vec:
+let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
+
+// Nested / ragged: compute exact `len`, then encode into a slot of that size
+// (Aeron try_claim, existing frame, or any &mut [u8] of length `len`).
 let complete = MessageEncodedLength::new().entries_ragged(2, |entries| {
     entries.add()?.payload(first_payload.len())?;
     entries.add()?.payload(second_payload.len())?;
     Ok(())
 })?;
 let len = complete.encoded_length_with_header();
-let mut buffer = vec![0u8; len]; // exact fit
-// … then encode into `buffer` with the matching encoder stages …
+// claim_or_slot is &mut [u8] with claim_or_slot.len() == len — no oversize Vec.
+// … then encode into claim_or_slot with the matching encoder stages …
 ```
 
 Real nested book: [`book_encoded_length`](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs)
@@ -271,7 +276,7 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 |-------|-----------|------|------------------|
 | **Flyweight (per-field)** | You only **read** one or a few fields; hot path | Zero-copy; no heap | New fields are optional at call sites (you simply don’t read them) |
 | **`*FixedFields` + `.fixed(...)`** | You always write the **entire fixed block** | One struct write, still flyweight buffer | Adding a **required fixed field** to the schema → **compile error** until you set it in the struct |
-| **`*Domain` DTO** (`.enable_domain_objects()`) | You want the **whole message** as owned data (groups/`Vec`s too) | Allocates; easier app code | Same idea: regenerating after a schema change forces you to fill new struct fields |
+| **`*Domain` DTO** (`.enable_domain_objects(true\|false)`) | Whole message as owned data; bool picks `String` vs `Vec<u8>` var-data | Allocates; easier app code | Same idea: regenerating after a schema change forces you to fill new struct fields |
 
 #### Encode — individual fields (flyweight)
 
@@ -333,7 +338,7 @@ When you always need (almost) everything, or want to pass a value across threads
 / into non-SBE code:
 
 ```rust,ignore
-// build.rs: .enable_domain_objects()
+// build.rs: .enable_domain_objects(true)
 let dto = CarDomain::try_from_decoder(CarDecoder::try_from(buf)?)?;
 // dto is a plain Rust struct: Vecs for groups/strings, owned fields.
 process_order(&dto);
@@ -372,7 +377,7 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **Enums / sets / bool** | Wire enums, bitsets, `_bool` | `available()` / `available_bool(true)` · [comprehensive_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs) |
 | **`with_conversion`** | Wire type → **any** app type you impl | `price_from(&Cents)?` / `price_as::<Cents>()?` · [Configuration](#configuration) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) |
 | **`with_domain_type`** | Wire type → **one** fixed Rust path | `enc.price(d); let d = dec.price()` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [Configuration](#configuration) |
-| **Domain DTOs** | Owned structs + re-encode (ease > zero-copy) | `CarDomain::try_from_decoder` · `dto.encode` · [Recipes](#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
+| **Domain DTOs** | Owned structs + re-encode; var-data `String` or `Vec<u8>` via bool | `.enable_domain_objects(true)` · [Recipes](#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
 | **`AnyMessage` + frames** | Multi-template + framed streams | `AnyMessage::decode` · `FrameCursor` · [demo_any_message](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **`verify`** | Full tail bounds check | `car.verify()?` · feature-tour try/trusted demos |
 | **Schema identity** | Id / version / hashes | `SCHEMA_ID`, `SCHEMA_HASH`, `SCHEMA_SHA256_HEX` · generated module header |
@@ -420,17 +425,22 @@ println!("bytes={}", done.encoded_length_with_header());
 
 ### Display / Debug
 
-Diagnostic only — **not** a stable wire or log schema.
+Diagnostic only — **not** a stable wire or log schema. Real output from the
+feature-tour Car (`demo_car_size_and_encode` → `CarDecoder`;
+`Display` currently forwards to `Debug`):
 
 ```rust,ignore
 let car = CarDecoder::try_from(buf.as_slice())?;
-println!("{car}");    // Display → Debug
+println!("{car}");
 println!("{car:?}");
-// Example shape (fields depend on buffer; short buffers omit missing ones):
-// CarDecoder { serialNumber: 1234, modelYear: 2013, available: T, code: A,
-//              someNumbers: [0, 1, 2, 3], vehicleCode: […], extras: …,
-//              engine: …, fuelFigures: […], … }
 ```
+
+```text
+CarDecoder { serialNumber: 1234, modelYear: 2013, available: true, code: A, fuelFigures: ["{ speed: 30, mpg: 35.9, usageDescription: Urban }", "{ speed: 60, mpg: 25.0, usageDescription: Highway }"], performanceFigures: ["{ octaneRating: 95, acceleration: [{ mph: 30, seconds: 4.0 }, { mph: 60, seconds: 7.5 }] }"], manufacturer: "Honda", model: "Civic VTi", activationCode: "abcdef" }
+```
+
+Truncated / incomplete buffers omit missing tails rather than panicking.
+See [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs).
 
 ### Schema description → rustdoc
 
@@ -449,19 +459,21 @@ Provenance of all four XML doc sources:
 
 ### Domain DTO (ease of use)
 
-Use when you want **owned** values (`Vec` groups/strings) and simple structs —
-**not** the zero-copy hot path. Flyweights stay faster for HFT.
+Use when you want **owned** values (`Vec` groups, owned tails) and simple
+structs — **not** the zero-copy hot path. Flyweights stay faster for
+low-latency applications.
 
 ```rust,ignore
-// build.rs
-.enable_domain_objects()
+// build.rs — the bool is a big deal (DTO var-data type):
+.enable_domain_objects(true)   // manufacturer: String  (easiest for text)
+// .enable_domain_objects(false) // manufacturer: Vec<u8> (byte-exact)
 
-// --- generated shape (simplified) ---
+// --- generated shape with enable_domain_objects(true) ---
 // pub struct CarDomain {
 //     pub serial_number: u64,
 //     pub model_year: u16,
 //     pub fuel_figures: Vec<CarFuelFiguresEntryDomain>,
-//     pub manufacturer: Vec<u8>,
+//     pub manufacturer: String,
 //     // …
 // }
 // impl CarDomain {
@@ -472,16 +484,37 @@ Use when you want **owned** values (`Vec` groups/strings) and simple structs —
 
 // Wire → DTO (prefer try_from_decoder; From can panic on bad tails)
 let dto = CarDomain::try_from_decoder(CarDecoder::try_from(buf)?)?;
+assert_eq!(dto.manufacturer, "Honda");
 
 // Edit / build like normal Rust
 dto.model_year = 2014;
-let dto = CarDomain { serial_number: 1234, model_year: 2013, /* … */ };
+dto.manufacturer = "Toyota".into();
 
-// DTO → wire (re-encodes; integer min/max checked)
-let mut out = vec![0u8; dto.encoded_length_with_header()?];
-let n = dto.encode(&mut out)?;
+// DTO → wire (re-encodes; integer min/max checked).
+// Prefer stack when the message is fixed-size; otherwise size then write into
+// a claim / slot of that exact length (avoid oversize scratch Vecs).
+let len = dto.encoded_length_with_header()?;
+// e.g. let mut out = [0u8; CarEncoder::ENCODED_LENGTH];  // fixed
+// or encode into a transport claim of `len` bytes
+let n = dto.encode(&mut out[..len])?;
 println!("re-encoded {n} bytes");
 ```
+
+#### `enable_domain_objects(string_var_data: bool)`
+
+SBE `<data>` is length-prefixed **bytes**. The boolean picks the DTO field type:
+
+| Call | Field type | Invalid UTF-8 | When to use |
+|------|------------|---------------|-------------|
+| `.enable_domain_objects(true)` | `String` | **silently becomes `""`** (empty; not U+FFFD, not an error) | Text schemas; **easiest** app API |
+| `.enable_domain_objects(false)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
+
+With `true`, a field that was invalid UTF-8 on the wire materialises as empty
+and re-encodes as empty var-data (not a copy of the bad bytes). Prefer `false`
+when you must preserve non-UTF-8 payloads.
+
+Flyweight path is unchanged: with schema `characterEncoding="UTF-8"` you still
+get `into_manufacturer_as_str()` without a DTO.
 
 [demo_car_domain_dto](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) ·
 [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs).
@@ -586,7 +619,7 @@ Both styles on different fields:
 
 | Option | Purpose |
 |--------|---------|
-| `enable_domain_objects()` | Owned `*Domain` structs + `encode` |
+| `enable_domain_objects(true\|false)` | Owned `*Domain` + `encode`; **`true`** → var-data `String` (bad UTF-8 → `""`), **`false`** → `Vec<u8>` |
 | `with_shared_module` / `generate_multi` | Multi-schema shared types |
 | `with_external_sbe_rt` | Share one `sbe_rt` runtime module |
 | `enable_error_from_impls` | `From<EncodeError/DecodeError>` for your error type |

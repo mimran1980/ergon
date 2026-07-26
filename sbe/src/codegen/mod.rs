@@ -171,6 +171,7 @@ pub(crate) struct GenerationContext {
     pub domain_types: Vec<(crate::ConversionSelector, String)>,
     pub unchecked_companions: bool,
     pub domain_objects: bool,
+    pub domain_string_var_data: bool,
 }
 
 impl GenerationContext {
@@ -195,6 +196,7 @@ impl GenerationContext {
             domain_types: config.domain_types.clone(),
             unchecked_companions: config.unchecked_companions,
             domain_objects: config.domain_objects,
+            domain_string_var_data: config.domain_string_var_data,
         }
     }
 }
@@ -612,6 +614,7 @@ impl Generator {
                 &ir.package,
                 multi,
                 self.config.domain_objects,
+                self.config.domain_string_var_data,
                 &self.config.conversions,
                 &self.config.domain_types,
                 self.config.unchecked_companions,
@@ -1257,6 +1260,7 @@ fn generate_message_decoder(
     schema_name: &str,
     multi_message: bool,
     domain_objects: bool,
+    domain_string_var_data: bool,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     _unchecked_companions: bool,
@@ -2390,6 +2394,7 @@ fn generate_message_decoder(
             byte_order,
             conversions,
             domain_types,
+            domain_string_var_data,
         ));
     }
 
@@ -2397,8 +2402,8 @@ fn generate_message_decoder(
 }
 
 /// Generate owned domain structs + From<Decoder> impls for a message and all
-/// its group entries. These are application-layer types (Vec, String) that
-/// coexist with the zero-copy flyweight decoders.
+/// its group entries. Groups are `Vec<…EntryDomain>`; var-data is `Vec<u8>` or
+/// `String` when `domain_string_var_data` is set (invalid UTF-8 → empty).
 fn generate_domain_objects(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -2408,6 +2413,7 @@ fn generate_domain_objects(
     _byte_order: ByteOrder,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
+    domain_string_var_data: bool,
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
@@ -2423,6 +2429,7 @@ fn generate_domain_objects(
         msg_name,
         conversions,
         domain_types,
+        domain_string_var_data,
         false, // is_entry — this is a message, not a group entry
         &mut ts,
         span,
@@ -2521,6 +2528,7 @@ fn generate_domain_recursive(
     msg_name: &str,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
+    domain_string_var_data: bool,
     is_entry: bool,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
@@ -2760,23 +2768,37 @@ fn generate_domain_recursive(
             msg_name,
             &conversions,
             domain_types,
+            domain_string_var_data,
             true, // is_entry — group entries always return T for enums
             ts,
             span,
         );
     }
 
-    // VarData fields → Vec<u8>
+    // Var-data: Vec<u8> or String (invalid UTF-8 → empty) via enable_domain_objects(bool).
     for vd in var_data {
         let vd_snake = to_snake_case(&vd.name);
         let vd_ident = syn::Ident::new(&vd_snake, span);
-        struct_fields.push(quote::quote! { pub #vd_ident: Vec<u8> });
-        from_exprs.push(quote::quote! {
-            #vd_ident: dec.#vd_ident().unwrap_or(&[]).to_vec()
-        });
-        vardata_encode_stmts.push(quote::quote! {
-            let enc = enc.#vd_ident(&self.#vd_ident)?;
-        });
+        if domain_string_var_data {
+            struct_fields.push(quote::quote! { pub #vd_ident: String });
+            // Valid UTF-8 → String; invalid → silent empty (not U+FFFD, not an error).
+            from_exprs.push(quote::quote! {
+                #vd_ident: core::str::from_utf8(dec.#vd_ident().unwrap_or(&[]))
+                    .map(|s| s.to_owned())
+                    .unwrap_or_default()
+            });
+            vardata_encode_stmts.push(quote::quote! {
+                let enc = enc.#vd_ident(self.#vd_ident.as_bytes())?;
+            });
+        } else {
+            struct_fields.push(quote::quote! { pub #vd_ident: Vec<u8> });
+            from_exprs.push(quote::quote! {
+                #vd_ident: dec.#vd_ident().unwrap_or(&[]).to_vec()
+            });
+            vardata_encode_stmts.push(quote::quote! {
+                let enc = enc.#vd_ident(&self.#vd_ident)?;
+            });
+        }
     }
 
     let encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);

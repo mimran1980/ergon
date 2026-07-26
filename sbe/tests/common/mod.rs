@@ -331,10 +331,17 @@ pub fn compile_and_run_two_modules(
 }
 
 pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
+    generate_domain_with(xml_path, module_name, |c| c.enable_domain_objects(false))
+}
+
+pub fn generate_domain_with(
+    xml_path: &Path,
+    module_name: &str,
+    configure: impl FnOnce(GenerationConfig) -> GenerationConfig,
+) -> (Schema, String) {
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
-    let mut config = GenerationConfig::new(module_name);
-    let config = config.enable_domain_objects();
+    let config = configure(GenerationConfig::new(module_name));
     let g = Generator::new(config);
     let ms = g.generate(&schema).unwrap();
     let module = ms.modules().next().unwrap();

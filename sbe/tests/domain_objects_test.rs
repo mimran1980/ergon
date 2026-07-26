@@ -7,7 +7,10 @@
     unused
 )]
 mod common;
-use common::{Paths, compile_and_run, compile_and_run_serde, generate_domain as generate};
+use common::{
+    Paths, compile_and_run, compile_and_run_serde, generate_domain as generate,
+    generate_domain_with,
+};
 use std::path::PathBuf;
 
 fn l3_schema() -> PathBuf {
@@ -540,6 +543,57 @@ fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
         let mut tiny_buf = [0u8; 8];
         let err = d.encode(&mut tiny_buf);
         assert!(err.is_err(), "encode into 8-byte buffer must fail");
+    "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate_domain_with(&Paths::example_schema(), "car_dom_str", |c| {
+        c.enable_domain_objects(true)
+    });
+    assert!(
+        src.contains("pub manufacturer: String"),
+        "expected String var-data fields:\n{src}"
+    );
+    assert!(
+        src.contains("unwrap_or_default"),
+        "expected silent empty on invalid UTF-8:\n{src}"
+    );
+    compile_and_run(
+        "car_dom_str",
+        &src,
+        r#"
+        let mut buf = vec![0u8; 2048];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        car.serial_number(1).model_year(2020).available(BooleanType::T).code(Model::A);
+        car.some_numbers([0; 4]).vehicle_code([b'A'; 6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(1000, 4, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let complete = car
+            .fuel_figures(0, |_| Ok(()))?
+            .performance_figures(0, |_| Ok(()))?
+            .manufacturer(b"Honda")?
+            .model(b"Civic")?
+            .activation_code(b"abc")?;
+        let encoded = complete.as_bytes().to_vec();
+        let d = CarDomain::try_from_decoder(CarDecoder::try_from(&encoded[..])?)?;
+        assert_eq!(d.manufacturer, "Honda");
+        assert_eq!(d.model, "Civic");
+        assert_eq!(d.activation_code, "abc");
+
+        // Invalid UTF-8 in manufacturer → empty string (silent, not error, not U+FFFD)
+        let mut bad = encoded.clone();
+        if let Some(pos) = bad.windows(5).position(|w| w == b"Honda") {
+            bad[pos + 4] = 0xFF;
+        } else {
+            panic!("Honda not found in encoded buffer");
+        }
+        let d_bad = CarDomain::try_from_decoder(CarDecoder::try_from(&bad[..])?)?;
+        assert_eq!(d_bad.manufacturer, "");
+        assert_eq!(d_bad.model, "Civic");
+        println!("car_domain_string_var_data_and_invalid_utf8_empty: PASSED");
     "#,
     );
     Ok(())

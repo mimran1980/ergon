@@ -2720,7 +2720,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
     let ir = ergo_sbe::parse_file(&path).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("conv_domain")
-        .enable_domain_objects()
+        .enable_domain_objects(false)
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
     let g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();

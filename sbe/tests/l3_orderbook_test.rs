@@ -53,7 +53,7 @@ fn l3_domain_objects_generated() -> Result<(), Box<dyn std::error::Error>> {
     let ir = ergo_sbe::parse_file(&l3_schema()).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let mut config = ergo_sbe::GenerationConfig::new("l3book");
-    let config = config.enable_domain_objects();
+    let config = config.enable_domain_objects(false);
     let g = ergo_sbe::Generator::new(config);
     let src = g
         .generate(&schema)

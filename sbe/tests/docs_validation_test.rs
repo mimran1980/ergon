@@ -166,7 +166,7 @@ fn documented_generated_surface_strings() -> Result<(), Box<dyn std::error::Erro
     let ir = parse(&docs_schema_xml())?;
     let schema = Schema::from_ir(ir);
     let cfg = GenerationConfig::new("docs_codec")
-        .enable_domain_objects()
+        .enable_domain_objects(false)
         .with_keyword_append_token("_");
     let src = Generator::new(cfg)
         .generate(&schema)?
@@ -210,7 +210,7 @@ fn documented_encode_decode_smoke() -> Result<(), Box<dyn std::error::Error>> {
     // Compile generated module + exercise APIs described in crate rustdocs.
     let ir = parse(&docs_schema_xml())?;
     let schema = Schema::from_ir(ir);
-    let src = Generator::new(GenerationConfig::new("docs_run").enable_domain_objects())
+    let src = Generator::new(GenerationConfig::new("docs_run").enable_domain_objects(false))
         .generate(&schema)?
         .modules()
         .next()
@@ -245,7 +245,7 @@ use gen::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fixed length + try wrap (docs: safe decode/encode)
-    let mut buf = vec![0u8; HeartbeatEncoder::ENCODED_LENGTH];
+    let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
     {
         let mut enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
         enc.seq(7);

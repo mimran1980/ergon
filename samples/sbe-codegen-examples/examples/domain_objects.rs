@@ -1,6 +1,6 @@
 //! Owned domain-object generation.
 //!
-//! Same schema as the flyweight example, but with `enable_domain_objects()`.
+//! Same schema as the flyweight example, but with `enable_domain_objects(true)`.
 //! Each message gets an owned `MsgDomain` struct with `From<MsgDecoder>`,
 //! useful for persistence, cross-thread transfer, and serialization.
 //!
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(SCHEMA)?;
     let schema = Schema::from_ir(ir);
 
-    let config = GenerationConfig::new("car_codec").enable_domain_objects();
+    let config = GenerationConfig::new("car_codec").enable_domain_objects(true);
     let modules = Generator::new(config).generate(&schema)?;
 
     println!(

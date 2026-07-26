@@ -111,7 +111,8 @@
 //! stages prevent out-of-order writes):
 //!
 //! ```ignore
-//! let mut buf = vec![0u8; CarEncoder::ENCODED_LENGTH]; // or EncodedLength builder
+//! // Const length → stack array (no heap).
+//! let mut buf = [0u8; CarEncoder::ENCODED_LENGTH];
 //! let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
 //!     .serial_number(1234)
 //!     .model_year(2013)
@@ -125,15 +126,17 @@
 //!
 //! ## Buffer sizing
 //!
-//! Schema-aware helpers size the buffer **before** you allocate — including
+//! Schema-aware helpers size the buffer **before** you write — including
 //! nested groups and ragged var-data — so you do not hand-calculate wire length
-//! for complicated messages.
+//! for complicated messages. Prefer a **stack array** when the length is
+//! `const` (`ENCODED_LENGTH` / `compute_encoded_length_*`); for runtime
+//! lengths, size first then claim or encode into an exact-length slot.
 //!
-//! | Shape | API |
-//! |-------|-----|
-//! | Fixed-only | `CarEncoder::ENCODED_LENGTH` |
-//! | Flat / known tails | `compute_encoded_length_with_message_header(...)` |
-//! | Groups / nested / ragged | `CarEncodedLength::new()…encoded_length_with_header()` |
+//! | Shape | API | Prefer |
+//! |-------|-----|--------|
+//! | Fixed-only | `CarEncoder::ENCODED_LENGTH` | `[0u8; N]` on the stack |
+//! | Flat / known tails | `compute_encoded_length_with_message_header(...)` | stack when const |
+//! | Groups / nested / ragged | `CarEncodedLength::new()…encoded_length_with_header()` | exact claim / slot |
 //!
 //! ## Why wire order is compile-time
 //!
@@ -190,10 +193,14 @@
 //!
 //! ## Domain objects
 //!
-//! [`GenerationConfig::enable_domain_objects`] emits owned structs:
+//! [`GenerationConfig::enable_domain_objects`]`(string_var_data)` emits owned
+//! structs. Pass **`true`** for text-friendly DTOs (`manufacturer: String`;
+//! invalid UTF-8 becomes `""`). Pass **`false`** for byte-exact `Vec<u8>`.
 //!
 //! ```ignore
+//! // build.rs: .enable_domain_objects(true)
 //! let dto = CarDomain::from(CarDecoder::try_from(buf)?);
+//! assert_eq!(dto.manufacturer, "Honda");
 //! let n = dto.encode(&mut out)?; // re-encode; range-checks min/max on integers
 //! ```
 //!

@@ -180,7 +180,7 @@ fn domain_dto_range_validation_emitted() -> Result<(), Box<dyn std::error::Error
         </messageSchema>"#;
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
-    let out = Generator::new(GenerationConfig::new("m").enable_domain_objects())
+    let out = Generator::new(GenerationConfig::new("m").enable_domain_objects(false))
         .generate(&schema)?
         .modules()
         .next()
