@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="conset" id="82" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+        <enum name="Colour" encodingType="uint8"><validValue name="Red">1</validValue></enum>
+        <set name="Flags" encodingType="uint8"><choice name="A">0</choice></set>
+        <composite name="Inner"><type name="x" primitiveType="uint16"/></composite>
+    </types>
+    <sbe:message name="M" id="1">
+        <field name="defaultF" id="1" type="Flags" presence="constant" valueRef="Flags.A"/>
+        <field name="optFlags" id="2" type="Flags" presence="optional" nullValue="255"/>
+        <field name="optColour" id="3" type="Colour" presence="optional" nullValue="255"/>
+        <field name="optInner" id="4" type="Inner" presence="optional" nullValue="255"/>
+        <field name="optDouble" id="5" type="double" presence="optional" nullValue="255"/>
+    </sbe:message>
+</sbe:messageSchema>

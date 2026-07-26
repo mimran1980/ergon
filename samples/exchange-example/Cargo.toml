@@ -1,0 +1,56 @@
+[package]
+name = "exchange-example"
+version = "0.1.0"
+edition = "2024"
+description = "Multi-exchange IPC sample: Bitget + Binance WebSocket → Aeron IPC (+ domain objects / DTOs)"
+publish = false
+
+[dependencies]
+ergo-sbe = { path = "../../sbe" }
+rusteron-client = "0.2"
+rusteron-media-driver = "0.2"
+rust_decimal = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = "0.3"
+
+[build-dependencies]
+ergo-sbe = { path = "../../sbe" }
+
+[[test]]
+name = "roundtrip_test"
+path = "tests/roundtrip_test.rs"
+
+[[test]]
+name = "ipc_roundtrip_test"
+path = "tests/ipc_roundtrip_test.rs"
+
+[[test]]
+name = "allocation_test"
+path = "tests/allocation_test.rs"
+
+[[test]]
+name = "e2e_deterministic_test"
+path = "tests/e2e_deterministic_test.rs"
+
+[[test]]
+name = "bitget_state_test"
+path = "tests/bitget_state_test.rs"
+
+[[test]]
+name = "publication_test"
+path = "tests/publication_test.rs"
+
+[[test]]
+name = "decimal_adapter_test"
+path = "tests/decimal_adapter_test.rs"
+
+[features]
+default = []
+bound-check-disabled = []
+
+[dev-dependencies]
+tempfile = "3"
+ctrlc = "3"

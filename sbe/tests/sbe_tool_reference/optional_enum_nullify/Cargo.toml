@@ -1,0 +1,12 @@
+[package]
+name = "parity_optional_enum_nullify"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "optional enum nullify test case"
+edition = "2021"
+
+[lib]
+name = "parity_optional_enum_nullify"
+path = "src/lib.rs"
+
+[workspace]

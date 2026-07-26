@@ -1,0 +1,458 @@
+//! Shared test helpers for `ergon` integration tests.
+//!
+//! # Codegen bug workaround
+//!
+//! The current codegen emits several known-compile errors. `patch_source()`
+//! applies surgical string replacements so generated code compiles and runs
+//! in tests.  This is a stopgap — each patch is tracked against a fixup todo
+//! and should be removed once the codegen is fixed.
+
+#![allow(missing_docs)]
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+#![allow(clippy::restriction)]
+#![allow(unused)]
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
+
+pub struct Paths;
+
+impl Paths {
+    fn workspace_root() -> PathBuf {
+        let cwd = std::env::current_dir().unwrap();
+        for ancestor in cwd.ancestors() {
+            if ancestor.join("Cargo.toml").exists() && (ancestor.join("sbe").exists()) {
+                return ancestor.to_path_buf();
+            }
+        }
+        let fallback = PathBuf::from("../..");
+        if fallback.join("Cargo.toml").exists() {
+            return fallback;
+        }
+        panic!("Cannot find workspace root from {cwd:?}");
+    }
+
+    fn sbe_dir() -> PathBuf {
+        Self::workspace_root().join("sbe")
+    }
+
+    fn fixtures_dir() -> PathBuf {
+        Self::sbe_dir()
+            .join("tests")
+            .join("fixtures")
+            .join("schemas")
+    }
+
+    fn sbe_tool_test() -> PathBuf {
+        Self::fixtures_dir()
+    }
+
+    pub fn example_schema() -> PathBuf {
+        Self::fixtures_dir().join("example-schema.xml")
+    }
+
+    pub fn extension_schema() -> PathBuf {
+        Self::fixtures_dir().join("extension-schema.xml")
+    }
+
+    pub fn bigendian_schema() -> PathBuf {
+        Self::fixtures_dir().join("example-bigendian-test-schema.xml")
+    }
+
+    pub fn basic_variable_length_schema() -> PathBuf {
+        Self::fixtures_dir().join("basic-variable-length-schema.xml")
+    }
+
+    pub fn fixed_array_schema() -> PathBuf {
+        Self::fixtures_dir().join("fixed-sized-primitive-array-types.xml")
+    }
+
+    pub fn optional_enum_nullify_schema() -> PathBuf {
+        Self::fixtures_dir().join("optional_enum_nullify.xml")
+    }
+
+    pub fn float_composite_schema() -> PathBuf {
+        Self::fixtures_dir().join("float-composite-schema.xml")
+    }
+
+    pub fn all_types_le_schema() -> PathBuf {
+        Self::fixtures_dir().join("all-types-le-schema.xml")
+    }
+
+    pub fn all_types_be_schema() -> PathBuf {
+        Self::fixtures_dir().join("all-types-be-schema.xml")
+    }
+
+    pub fn issue_schema(num: &str) -> PathBuf {
+        Self::fixtures_dir().join(format!("issue{num}.xml"))
+    }
+
+    /// L3 orderbook: two sequential top-level groups (`bids` then `asks`), each
+    /// with a nested `orders` group + `orderId` var-data. The canonical
+    /// dual-group fixture for DECISIONS.md §3 consuming-stage proofs.
+    pub fn l3_orderbook_schema() -> PathBuf {
+        Self::fixtures_dir().join("l3-orderbook-schema.xml")
+    }
+
+    pub fn bool_semantic_schema() -> PathBuf {
+        Self::fixtures_dir().join("bool-semantic-schema.xml")
+    }
+
+    pub fn versioned_domain_schema() -> PathBuf {
+        Self::fixtures_dir().join("versioned-domain-schema.xml")
+    }
+
+    pub fn baseline_binary() -> PathBuf {
+        Self::sbe_dir()
+            .join("tests")
+            .join("fixtures")
+            .join("car_example_baseline_data.sbe")
+    }
+
+    pub fn extension_binary() -> PathBuf {
+        Self::sbe_dir()
+            .join("tests")
+            .join("fixtures")
+            .join("car_example_extension_data.sbe")
+    }
+
+    /// Generic path to a resource in `sbe-tool/src/test/resources/`.
+    pub fn sbe_tool_test_resource(name: &str) -> PathBuf {
+        Self::sbe_tool_test().join(name)
+    }
+
+    /// Checked-in sbe-tool Rust reference crate for dual-encode wire parity.
+    /// Layout: `sbe/tests/sbe_tool_reference/<key>/` (Cargo package `parity_<key>`).
+    pub fn sbe_tool_reference(key: &str) -> PathBuf {
+        Self::sbe_dir()
+            .join("tests")
+            .join("sbe_tool_reference")
+            .join(key)
+    }
+}
+
+pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
+    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let schema = Schema::from_ir(ir);
+    let g = Generator::new(GenerationConfig::new(module_name));
+    let ms = g.generate(&schema).unwrap();
+    let module = ms.modules().next().unwrap();
+    (schema, module.source.clone())
+}
+
+/// Verify generated source parses as valid Rust syntax and contains expected items.
+pub fn assert_source_ok(src: &str, expected: &[&str]) {
+    syn::parse_file(src).expect("generated code is not valid Rust");
+    for item in expected {
+        assert!(src.contains(item), "missing expected item: {item}");
+    }
+}
+
+/// Apply surgical patches for known codegen bugs.
+pub fn patch_source(src: &str) -> String {
+    // no patches needed currently; if a new codegen bug requires patching, add the patch here and record the bug; delete this function if it stays empty two releases
+    // Entry encoders use the unsafe borrow split directly.
+    // Message encoders take `mut self` by value so no borrow conflict.
+    src.to_string()
+}
+
+/// Write generated source + a `main()` test body into a temp crate, compile,
+/// and run.  `code` is placed directly inside `main()`.
+pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
+    _compile_and_run(module_name, source, code, &[], "");
+}
+
+/// Negative-proof helper: write generated source + a `main()` body into a temp
+/// crate and assert that it FAILS to compile. Used for compile-fail API proofs
+/// (DECISIONS.md §11 /): out-of-order tail access, reused consumed
+/// stages, etc. `code` is placed directly inside `main()`.
+pub fn compile_fails(module_name: &str, source: &str, code: &str) {
+    let dir = std::env::temp_dir().join(format!("ergo_test_cf_{module_name}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    let patched = patch_source(source);
+    fs::write(src.join(format!("{module_name}.rs")), &patched).unwrap();
+
+    let main = format!(
+        "#![allow(dead_code,unused_imports,unused_variables)]\n\
+         mod {module_name};\nuse {module_name}::*;\nfn main() {{\n{code}\n}}\n"
+    );
+    fs::write(src.join("main.rs"), &main).unwrap();
+
+    let cargo =
+        format!("[package]\nname=\"{module_name}_cf\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+
+    let target_dir = dir.join("target_ci");
+    let out = Command::new("cargo")
+        .args(["build"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .output()
+        .expect("cargo build failed");
+
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = fs::remove_dir_all(&dir);
+
+    if out.status.success() {
+        panic!(
+            "compile_fails {module_name}: expected a compile error, but the crate built successfully.\nstderr:\n{stderr}"
+        );
+    }
+    // Keep stderr reachable for diagnostics via the returned-into-owned value above;
+    // callers may extend this to assert specific error text.
+}
+
+/// Like `compile_and_run` but adds the given feature to `[features]` in the
+/// temp crate's `Cargo.toml` and passes `--features <feature>` at build time.
+pub fn compile_and_run_with_feature(module_name: &str, source: &str, code: &str, feature: &str) {
+    _compile_and_run(module_name, source, code, &[feature], "");
+}
+
+fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&str], deps: &str) {
+    let dir = std::env::temp_dir().join(format!("ergo_test_{module_name}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    let patched = patch_source(source);
+    fs::write(src.join(format!("{module_name}.rs")), &patched).unwrap();
+
+    let main = format!(
+        "#![allow(dead_code,unused_imports,unused_variables)]\n\
+         mod {module_name};\nuse {module_name}::*;\n\
+         fn main() -> Result<(), Box<dyn std::error::Error>> {{\n{code}\nOk(())\n}}\n"
+    );
+    fs::write(src.join("main.rs"), &main).unwrap();
+
+    let mut cargo =
+        format!("[package]\nname=\"{module_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    if !features.is_empty() {
+        cargo.push_str("[features]\n");
+        for f in features {
+            cargo.push_str(&format!("{f} = []\n"));
+        }
+    }
+    if !deps.is_empty() {
+        cargo.push_str("[dependencies]\n");
+        cargo.push_str(deps);
+    }
+    fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+
+    let mut args: Vec<&str> = vec!["run"];
+    for f in features {
+        args.push("--features");
+        args.push(f);
+    }
+    let target_dir = dir.join("target_ci");
+    let out = Command::new("cargo")
+        .args(&args)
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .output()
+        .expect("cargo run failed");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    if !out.status.success() {
+        let e = String::from_utf8_lossy(&out.stderr);
+        let o = String::from_utf8_lossy(&out.stdout);
+        panic!("test {module_name} FAILED\nstdout:\n{o}\nstderr:\n{e}");
+    }
+}
+
+/// Generate, compile, and run a test against a binary fixture.
+/// `code` is placed in `main()` and can refer to the fixture bytes via `FIXTURE`.
+pub fn run_fixture_test(name: &str, schema: &Path, fixture: &Path, code: &str) {
+    let bytes = fs::read(fixture).unwrap_or_else(|e| panic!("fixture {fixture:?}: {e}"));
+    let hex = bytes
+        .iter()
+        .map(|b| format!("0x{b:02x}u8"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (_, src) = generate(schema, name);
+    let body = format!("let FIXTE: &[u8] = &[{hex}];\n{code}");
+    compile_and_run(name, &src, &body);
+}
+
+/// Dual-encode wire parity: generate ergo-sbe for `schema`, path-depend on the
+/// checked-in sbe-tool reference crate `tool_key`, then compile+run `code`.
+///
+/// Inside `code`:
+/// - `use ergo::*;` is already applied
+/// - sbe-tool crate is available as `tool::...` (`package = "parity_<tool_key>"`)
+/// - helper `assert_frames_eq(label, ergo, tool)` is in scope
+///
+/// The test body should encode the same logical payload with both generators
+/// and call `assert_frames_eq`.
+pub fn dual_encode_run(test_name: &str, schema: &Path, tool_key: &str, code: &str) {
+    let (_, ergo_src) = generate(schema, "ergo");
+    let tool_path = Paths::sbe_tool_reference(tool_key);
+    assert!(
+        tool_path.join("Cargo.toml").is_file(),
+        "missing sbe-tool reference crate at {tool_path:?}; regenerate with scripts/regenerate-sbe-tool-reference.sh"
+    );
+    let tool_path_str = tool_path
+        .canonicalize()
+        .unwrap_or_else(|e| panic!("canonicalize {tool_path:?}: {e}"))
+        .display()
+        .to_string();
+    // Escape backslashes for Windows paths in TOML strings.
+    let tool_path_toml = tool_path_str.replace('\\', "/");
+    let package = format!("parity_{tool_key}");
+
+    let dir = std::env::temp_dir().join(format!("ergo_dual_{test_name}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    let patched = patch_source(&ergo_src);
+    fs::write(src.join("ergo.rs"), &patched).unwrap();
+
+    let main = format!(
+        r#"#![allow(dead_code, unused_imports, unused_variables, unused_mut, unused_assignments, clippy::all)]
+mod ergo;
+use ergo::*;
+
+fn assert_frames_eq(label: &str, ergo: &[u8], tool: &[u8]) {{
+    if ergo != tool {{
+        let n = ergo.len().min(tool.len());
+        let mut first = None;
+        for i in 0..n {{
+            if ergo[i] != tool[i] {{
+                first = Some(i);
+                break;
+            }}
+        }}
+        panic!(
+            "{{}}: frames differ ergo_len={{}} tool_len={{}} first_mismatch={{:?}}\\n  ergo[:64]={{:02x?}}\\n  tool[:64]={{:02x?}}",
+            label,
+            ergo.len(),
+            tool.len(),
+            first,
+            &ergo[..ergo.len().min(64)],
+            &tool[..tool.len().min(64)],
+        );
+    }}
+}}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {{
+{code}
+Ok(())
+}}
+"#
+    );
+    fs::write(src.join("main.rs"), &main).unwrap();
+
+    let cargo = format!(
+        r#"[package]
+name = "{test_name}_dual"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+tool = {{ path = "{tool_path_toml}", package = "{package}" }}
+"#
+    );
+    fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+
+    let target_dir = dir.join("target_ci");
+    let out = Command::new("cargo")
+        .args(["run", "--quiet"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .output()
+        .expect("cargo run failed to start");
+
+    if !out.status.success() {
+        let e = String::from_utf8_lossy(&out.stderr);
+        let o = String::from_utf8_lossy(&out.stdout);
+        // Keep the temp dir on failure for debugging.
+        panic!(
+            "dual_encode {test_name} FAILED (dir={})\nstdout:\n{o}\nstderr:\n{e}",
+            dir.display()
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Generate two modules, write them into the same temp crate, compile, and run.
+/// `module_a` / `source_a` and `module_b` / `source_b` are written as separate
+/// Rust source files; `code` goes inside `main()` and can `use` both modules.
+pub fn compile_and_run_two_modules(
+    test_name: &str,
+    module_a: &str,
+    source_a: &str,
+    module_b: &str,
+    source_b: &str,
+    code: &str,
+) {
+    let dir = std::env::temp_dir().join(format!("ergo_test_{test_name}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    fs::write(src.join(format!("{module_a}.rs")), source_a).unwrap();
+    fs::write(src.join(format!("{module_b}.rs")), source_b).unwrap();
+
+    let main = format!(
+        "#![allow(dead_code,unused_imports,unused_variables)]\n\
+         mod {module_a};\nmod {module_b};\n\
+         fn main() -> Result<(), Box<dyn std::error::Error>> {{\n{code}\nOk(())\n}}\n"
+    );
+    fs::write(src.join("main.rs"), &main).unwrap();
+
+    let cargo =
+        format!("[package]\nname=\"{test_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+
+    let target_dir = dir.join("target_ci");
+    let out = Command::new("cargo")
+        .args(["run"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .output()
+        .expect("cargo run failed");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    if !out.status.success() {
+        let e = String::from_utf8_lossy(&out.stderr);
+        let o = String::from_utf8_lossy(&out.stdout);
+        panic!("test {test_name} FAILED\nstdout:\n{o}\nstderr:\n{e}");
+    }
+}
+
+pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
+    generate_domain_with(xml_path, module_name, |c| {
+        c.enable_domain_objects(DomainVarData::Bytes)
+    })
+}
+
+pub fn generate_domain_with(
+    xml_path: &Path,
+    module_name: &str,
+    configure: impl FnOnce(GenerationConfig) -> GenerationConfig,
+) -> (Schema, String) {
+    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let schema = Schema::from_ir(ir);
+    let config = configure(GenerationConfig::new(module_name));
+    let g = Generator::new(config);
+    let ms = g.generate(&schema).unwrap();
+    let module = ms.modules().next().unwrap();
+    (schema, module.source.clone())
+}
+
+pub mod encoded_length_matrix;

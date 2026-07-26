@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="consthdr" id="201" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+      <!-- Constant field in header — does not occupy wire space -->
+      <type name="headerMagic" primitiveType="uint16" presence="constant" constantValue="4660">0x1234</type>
+    </composite>
+  </types>
+  <message name="Msg" id="1">
+    <field name="value" id="1" type="uint32" offset="0"/>
+  </message>
+</messageSchema>

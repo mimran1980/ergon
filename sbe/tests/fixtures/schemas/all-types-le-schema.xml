@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="all_types_test"
+                   id="42"
+                   semanticVersion="1.0"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Standard SBE header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <!-- Composite with all scalar types -->
+        <composite name="AllScalars">
+            <type name="i8_val" primitiveType="int8"/>
+            <type name="u8_val" primitiveType="uint8"/>
+            <type name="i16_val" primitiveType="int16"/>
+            <type name="u16_val" primitiveType="uint16"/>
+            <type name="i32_val" primitiveType="int32"/>
+            <type name="u32_val" primitiveType="uint32"/>
+            <type name="i64_val" primitiveType="int64"/>
+            <type name="u64_val" primitiveType="uint64"/>
+            <type name="f32_val" primitiveType="float"/>
+            <type name="f64_val" primitiveType="double"/>
+        </composite>
+        <!-- Float-only composite (should NOT derive Eq/Ord/Hash) -->
+        <composite name="FloatPair">
+            <type name="x" primitiveType="float"/>
+            <type name="y" primitiveType="float"/>
+        </composite>
+        <enum name="TestEnum" encodingType="uint8">
+            <validValue name="A">0</validValue>
+            <validValue name="B">1</validValue>
+            <validValue name="C">2</validValue>
+        </enum>
+        <set name="TestSet" encodingType="uint8">
+            <choice name="BIT0">0</choice>
+            <choice name="BIT1">1</choice>
+            <choice name="BIT2">2</choice>
+        </set>
+        <type name="CharArray" primitiveType="char" length="8"/>
+        <!-- VarData encoding composite (required by SBE for var-length data) -->
+        <composite name="varDataEncoding">
+            <type name="length" primitiveType="uint16"/>
+            <type name="varData" primitiveType="uint8" length="0"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Standard group dimension header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+    </types>
+    <sbe:message name="AllTypes" id="1" description="Message with every SBE field type">
+        <field name="scalarComposite" id="1" type="AllScalars"/>
+        <field name="floatPair" id="2" type="FloatPair"/>
+        <field name="enumField" id="3" type="TestEnum"/>
+        <field name="setField" id="4" type="TestSet"/>
+        <field name="fixedArray" id="5" type="CharArray"/>
+        <data name="varData" id="6" type="varDataEncoding"/>
+    </sbe:message>
+</sbe:messageSchema>

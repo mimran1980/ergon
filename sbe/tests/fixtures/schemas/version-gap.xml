@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<messageSchema package="SBE tests" id="104" version="1" semanticVersion="5.2"
+               description="Version gap test"
+               byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+    </types>
+    <message name="TestMessage" id="1">
+        <field name="field0" id="1" type="uint8"/>
+        <!-- sinceVersion=5 when schema version=1 => ResolveError -->
+        <field name="fieldFuture" id="2" type="uint8" sinceVersion="5"/>
+    </message>
+</messageSchema>

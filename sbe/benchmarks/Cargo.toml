@@ -1,0 +1,50 @@
+[package]
+name = "ergo-sbe-benchmarks"
+description = "ergon SBE benchmarks — generates SBE codecs on-the-fly via build.rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ergo-sbe = { path = ".." }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[build-dependencies]
+ergo-sbe = { path = ".." }
+
+[[bench]]
+name = "decode_bench"
+harness = false
+
+[[bench]]
+name = "encode_bench"
+harness = false
+
+[[bench]]
+name = "throughput_bench"
+harness = false
+
+[[bench]]
+name = "perf_parity_bench"
+harness = false
+
+[[bench]]
+name = "layout_access_bench"
+harness = false
+
+[[bench]]
+name = "encode_style_bench"
+harness = false
+
+[features]
+default = []
+
+[lints]
+workspace = true

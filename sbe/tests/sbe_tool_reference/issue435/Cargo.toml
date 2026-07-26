@@ -1,0 +1,12 @@
+[package]
+name = "parity_issue435"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "issue 435 test case"
+edition = "2021"
+
+[lib]
+name = "parity_issue435"
+path = "src/lib.rs"
+
+[workspace]

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="versioned_domain"
+                   id="201"
+                   version="2"
+                   semanticVersion="5.2"
+                   description="Versioned domain-object tests"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <enum name="BooleanType" encodingType="uint8">
+            <validValue name="F">0</validValue>
+            <validValue name="T">1</validValue>
+        </enum>
+        <composite name="Extra">
+            <type name="flags" primitiveType="uint32"/>
+            <type name="score" primitiveType="int16"/>
+        </composite>
+    </types>
+    <sbe:message name="Versioned" id="1">
+        <field name="active" id="1" type="BooleanType" sinceVersion="1"/>
+        <field name="extra" id="2" type="Extra" sinceVersion="2"/>
+        <field name="count" id="3" type="uint32"/>
+    </sbe:message>
+</sbe:messageSchema>

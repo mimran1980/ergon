@@ -1,0 +1,13 @@
+[package]
+name = "cluster-tutorial"
+version = "0.1.0"
+edition = "2024"
+description = "Aeron Cluster client tutorial — connect, offer, poll egress, keep-alive"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+ergo-aeron-cluster = { path = "../../cluster", features = ["test-harness"] }
+rusteron-client = "0.2"
+rusteron-archive = "0.2"
+rusteron-media-driver = "0.2"

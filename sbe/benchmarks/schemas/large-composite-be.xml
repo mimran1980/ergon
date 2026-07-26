@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Large big-endian composite for flyweight-vs-value field-access benches.
+     Wire image is 256 bytes (32 × uint64). Target field f15 sits mid-block. -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="layout_bench_be"
+                   id="99"
+                   version="0"
+                   semanticVersion="1.0"
+                   description="Large composite BE layout access bench schema"
+                   byteOrder="bigEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="BigBlock">
+            <type name="f0" primitiveType="uint64"/>
+            <type name="f1" primitiveType="uint64"/>
+            <type name="f2" primitiveType="uint64"/>
+            <type name="f3" primitiveType="uint64"/>
+            <type name="f4" primitiveType="uint64"/>
+            <type name="f5" primitiveType="uint64"/>
+            <type name="f6" primitiveType="uint64"/>
+            <type name="f7" primitiveType="uint64"/>
+            <type name="f8" primitiveType="uint64"/>
+            <type name="f9" primitiveType="uint64"/>
+            <type name="f10" primitiveType="uint64"/>
+            <type name="f11" primitiveType="uint64"/>
+            <type name="f12" primitiveType="uint64"/>
+            <type name="f13" primitiveType="uint64"/>
+            <type name="f14" primitiveType="uint64"/>
+            <type name="f15" primitiveType="uint64"/>
+            <type name="f16" primitiveType="uint64"/>
+            <type name="f17" primitiveType="uint64"/>
+            <type name="f18" primitiveType="uint64"/>
+            <type name="f19" primitiveType="uint64"/>
+            <type name="f20" primitiveType="uint64"/>
+            <type name="f21" primitiveType="uint64"/>
+            <type name="f22" primitiveType="uint64"/>
+            <type name="f23" primitiveType="uint64"/>
+            <type name="f24" primitiveType="uint64"/>
+            <type name="f25" primitiveType="uint64"/>
+            <type name="f26" primitiveType="uint64"/>
+            <type name="f27" primitiveType="uint64"/>
+            <type name="f28" primitiveType="uint64"/>
+            <type name="f29" primitiveType="uint64"/>
+            <type name="f30" primitiveType="uint64"/>
+            <type name="f31" primitiveType="uint64"/>
+        </composite>
+    </types>
+    <sbe:message name="Wide" id="1" description="Message with one large composite">
+        <field name="seq" id="1" type="uint64"/>
+        <field name="block" id="2" type="BigBlock"/>
+    </sbe:message>
+</sbe:messageSchema>

@@ -1,0 +1,268 @@
+//! Encode benchmarks for ergon-generated Car message codec.
+//!
+//! Measures encode throughput: scalar-only encode, full end-to-end encode
+//! with the checked API (`try_wrap_and_apply_header`), and the unchecked path
+//! (`wrap` + var-data variants).
+
+// Generated code generates lots of diagnostics; suppress across the crate.
+#![allow(
+    unsafe_code,
+    missing_docs,
+    unused_variables,
+    dead_code,
+    unused_mut,
+    unused_must_use,
+    unused_assignments,
+    unused_comparisons,
+    unused_attributes
+)]
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
+
+use ergo_sbe_benchmarks::ergo_car::*;
+
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+
+#[path = "_common.rs"]
+mod common;
+
+/// Encode a full Car message using the **checked** API.
+/// Returns the total encoded length (header + body).
+fn encode_checked(buf: &mut [u8]) -> usize {
+    let mut car = CarEncoder::wrap_and_apply_header(buf, 0);
+    car.serial_number(1234);
+    car.model_year(2013);
+    car.available(BooleanType::T);
+    car.code(Model::A);
+    car.some_numbers([1u32, 2, 3, 4]);
+    car.vehicle_code([97, 98, 99, 100, 101, 102]);
+    {
+        let mut extras = OptionalExtras::default();
+        extras.set_cruise_control(true);
+        extras.set_sports_pack(true);
+        car.extras(extras);
+    }
+    car.engine(Engine::new(
+        2000,
+        4,
+        [49, 0, 0],
+        0i8,
+        BooleanType::F,
+        Booster::new(BoostType::TURBO, 0),
+    ));
+
+    let car = car
+        .fuel_figures(3, |g| {
+            g.add(|e| {
+                e.speed(30).mpg(35.9);
+                Ok(())
+            })?;
+            g.add(|e| {
+                e.speed(45).mpg(28.4);
+                Ok(())
+            })?;
+            g.add(|e| {
+                e.speed(55).mpg(23.7);
+                Ok(())
+            })?;
+            Ok(())
+        })
+        .unwrap();
+
+    let car = car
+        .performance_figures(1, |g| {
+            g.add(|e| {
+                e.octane_rating(95);
+                e.acceleration(3, |a| {
+                    a.add(|x| {
+                        x.mph(30).seconds(4.0);
+                        Ok(())
+                    })?;
+                    a.add(|x| {
+                        x.mph(60).seconds(7.5);
+                        Ok(())
+                    })?;
+                    a.add(|x| {
+                        x.mph(100).seconds(12.2);
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        })
+        .unwrap();
+
+    let car = car.manufacturer(b"Honda").unwrap();
+    let car = car.model(b"Civic VTi").unwrap();
+    let encoded: CarComplete<'_> = car.activation_code(b"abcdef").unwrap();
+    encoded.encoded_length_with_header()
+}
+
+/// Encode the full Car message using the safe API (`wrap` +
+/// checked var-data setters with max-length validation).
+fn encode_full(buf: &mut [u8]) -> usize {
+    // Write header manually (wrap does not write it)
+    buf[0..8].copy_from_slice(&CarEncoder::<'_>::HEADER_TEMPLATE);
+
+    let mut car = CarEncoder::try_wrap(buf, 0).unwrap();
+    car.serial_number(1234);
+    car.model_year(2013);
+    car.available(BooleanType::T);
+    car.code(Model::A);
+    car.some_numbers([1u32, 2, 3, 4]);
+    car.vehicle_code([97, 98, 99, 100, 101, 102]);
+    {
+        let mut extras = OptionalExtras::default();
+        extras.set_cruise_control(true);
+        extras.set_sports_pack(true);
+        car.extras(extras);
+    }
+    car.engine(Engine::new(
+        2000,
+        4,
+        [49, 0, 0],
+        0i8,
+        BooleanType::F,
+        Booster::new(BoostType::TURBO, 0),
+    ));
+
+    let car = car
+        .fuel_figures(3, |g| {
+            g.add(|e| {
+                e.speed(30).mpg(35.9);
+                Ok(())
+            })?;
+            g.add(|e| {
+                e.speed(45).mpg(28.4);
+                Ok(())
+            })?;
+            g.add(|e| {
+                e.speed(55).mpg(23.7);
+                Ok(())
+            })?;
+            Ok(())
+        })
+        .unwrap();
+
+    let car = car
+        .performance_figures(1, |g| {
+            g.add(|e| {
+                e.octane_rating(95);
+                e.acceleration(3, |a| {
+                    a.add(|x| {
+                        x.mph(30).seconds(4.0);
+                        Ok(())
+                    })?;
+                    a.add(|x| {
+                        x.mph(60).seconds(7.5);
+                        Ok(())
+                    })?;
+                    a.add(|x| {
+                        x.mph(100).seconds(12.2);
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        })
+        .unwrap();
+
+    let car = car.manufacturer(b"Honda").unwrap();
+    let car = car.model(b"Civic VTi").unwrap();
+    let encoded = car.activation_code(b"abcdef").unwrap();
+    encoded.encoded_length_with_header()
+}
+
+fn bench_encode_checked(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode/checked");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("car_full", |b| {
+        let mut buf = [0u8; 1024];
+        b.iter(|| {
+            let n = encode_checked(black_box(&mut buf));
+            black_box(n);
+        });
+    });
+    group.finish();
+}
+
+fn bench_encode_safe(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode/safe");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("car_full", |b| {
+        let mut buf = [0u8; 1024];
+        b.iter(|| {
+            let n = encode_full(black_box(&mut buf));
+            black_box(n);
+        });
+    });
+    group.finish();
+}
+
+fn bench_encode_scalar_only(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode/scalar_only");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("checked", |b| {
+        let mut buf = [0u8; 1024];
+        b.iter(|| {
+            let mut car: CarEncoder<'_> = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+            car.serial_number(1234);
+            car.model_year(2013);
+            car.available(BooleanType::T);
+            car.code(Model::A);
+            car.some_numbers([1u32, 2, 3, 4]);
+            car.vehicle_code([97, 98, 99, 100, 101, 102]);
+            {
+                let mut extras = OptionalExtras::default();
+                extras.set_cruise_control(true);
+                extras.set_sports_pack(true);
+                car.extras(extras);
+            }
+            car.engine(Engine::new(
+                2000,
+                4,
+                [49, 0, 0],
+                0i8,
+                BooleanType::F,
+                Booster::new(BoostType::TURBO, 0),
+            ));
+            black_box(&car);
+        });
+    });
+    group.finish();
+}
+
+fn bench_encode_checked_vs_unchecked(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode/checked_vs_unchecked");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("checked_full", |b| {
+        let mut buf = [0u8; 1024];
+        b.iter(|| {
+            let n = encode_checked(black_box(&mut buf));
+            black_box(n);
+        });
+    });
+
+    group.bench_function("unchecked_full", |b| {
+        let mut buf = [0u8; 1024];
+        b.iter(|| {
+            let n = encode_full(black_box(&mut buf));
+            black_box(n);
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_encode_checked,
+    bench_encode_safe,
+    bench_encode_scalar_only,
+    bench_encode_checked_vs_unchecked,
+);
+criterion_main!(benches);

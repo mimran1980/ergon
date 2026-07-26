@@ -1,0 +1,12 @@
+[package]
+name = "parity_nested_composite"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "test case for nested composite field where the field name from the composite name"
+edition = "2021"
+
+[lib]
+name = "parity_nested_composite"
+path = "src/lib.rs"
+
+[workspace]

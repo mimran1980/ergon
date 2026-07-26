@@ -1,17 +1,178 @@
 name: CI
 
+# Auto-runs only on pushes to main. Use the "Run workflow" button
+# (workflow_dispatch) to invoke it manually on any branch/commit — e.g. to
+# validate first_cut before merge.
 on:
   push:
-  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
 
 jobs:
-  rust:
-    runs-on: ubuntu-latest
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+      - run: cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+      - run: cargo doc --no-deps --workspace
+
+  test:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=2
+      - run: cargo test -p ergo-aeron-cluster --lib
+      - run: cargo test --doc
+
+  msrv:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # MSRV 1.88 (edition 2024 + let-chains). Gate the publishable pure-Rust crate;
+      # cluster (rusteron native build) is exercised on the primary toolchain.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88.0"
+
+      - run: cargo +1.88.0 check -p ergo-sbe --all-targets --all-features
+      - run: cargo +1.88.0 test -p ergo-sbe --lib --all-features
+
+  aeron-cluster-integration:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build Aeron jars
+        run: cd aeron && ./gradlew :aeron-cluster:jar :aeron-archive:jar :aeron-all:jar :aeron-samples:jar
+
+      - name: Cluster integration tests
+        run: cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
+
+  samples:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+
+      - name: exchange-example (fmt, clippy, test)
+        run: |
+          cd samples/exchange-example
+          cargo fmt --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --lib -- --test-threads=1
+
+      - name: cluster-ha-orderbook (fmt, clippy, test)
+        run: |
+          cd samples/cluster-ha-orderbook
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --lib --test ha_offline_pipeline -- --test-threads=1
+
+      - name: cluster-rfq (fmt, clippy)
+        run: |
+          cd samples/cluster-rfq
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+
+  # clickhouse-live: disabled — ergo-clickhouse-persist not yet published
+  # Re-enable when the persist crate is ready.
+        run: cd samples/cluster-ha-orderbook && cargo test --test ha_latency_clickhouse -- --include-ignored --test-threads=1 --nocapture
+
+  build:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - run: cargo build --release --workspace --exclude ergo-aeron-cluster
+      - run: cargo build --release -p ergo-aeron-cluster
+
+  bench:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - run: cargo bench -p ergo-sbe-benchmarks
+      - run: cargo bench -p ergo-aeron-cluster --no-run
+
+  package:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - run: cargo package -p ergo-sbe
+      - run: cargo publish -p ergo-sbe --dry-run

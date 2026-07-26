@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="float_test"
+               id="99"
+               semanticVersion="1.0"
+               byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="FloatPair">
+            <type name="x" primitiveType="float"/>
+            <type name="y" primitiveType="float"/>
+        </composite>
+        <composite name="IntPair">
+            <type name="a" primitiveType="int32"/>
+            <type name="b" primitiveType="int32"/>
+        </composite>
+        <enum name="TestEnum" encodingType="uint8">
+            <validValue name="A">0</validValue>
+            <validValue name="B">1</validValue>
+        </enum>
+    </types>
+    <sbe:message name="FloatMsg" id="1" description="Message with float composite">
+        <field name="pos" id="1" type="FloatPair"/>
+        <field name="vals" id="2" type="IntPair"/>
+        <field name="kind" id="3" type="TestEnum"/>
+    </sbe:message>
+</sbe:messageSchema>
