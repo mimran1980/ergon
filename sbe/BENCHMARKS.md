@@ -10,7 +10,7 @@ than retaining dated point estimates as release guarantees.
 | | |
 |---|---|
 | **Date** | 2026-07-26 |
-| **Commit** | (this push) |
+| **Commit** | `05a4797` |
 | **Host** | Apple M4 (macOS Darwin, arm64) |
 | **Toolchain** | rustc 1.95.0 |
 | **SBE gate** | **8/8 PASS** |
