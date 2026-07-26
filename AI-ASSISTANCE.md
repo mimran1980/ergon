@@ -52,7 +52,7 @@ whether you continue evaluating the crate:
 | What independently constrains the output? | Official `sbe-tool` byte-for-byte comparisons, Java-produced fixtures, upstream schemas, compile-fail proofs, property tests, exact-length checks, allocation tests, and performance gates. |
 | Is it production-proven? | No. It remains experimental 0.x software. Production users should validate their own schemas, versions, message shapes, and traffic. |
 | What did the initial `0.1.0` development consume? | Roughly one month of intensive work and approximately **14 billion billed tokens across providers**. The token figure is an order-of-magnitude estimate rather than an invoice-grade reconciliation. |
-| What did it cost? | **$261.39 of identified personal spend**, including $77.39 for DeepSeek. The same 14-billion-token workload ranges from about $71 to more than $17,000 under the normalized public API assumptions in the [pay-as-you-go cost comparison](#normalised-pay-as-you-go-comparison). |
+| What did it cost? | **$261.39 of identified personal spend**, including $77.39 for DeepSeek. Scaling the observed DeepSeek V4 Flash/Pro blend to 14 billion tokens gives approximately **$103**. The same workload ranges from about $71 to more than $17,000 under the normalized public API assumptions in the [pay-as-you-go cost comparison](#normalised-pay-as-you-go-comparison). |
 | Which model did most of the work? | DeepSeek: V4 Flash handled much of the early UltraMode/subagent work; the later sequential development stayed primarily on V4 Pro. |
 
 Choose the path that matches why you are here:
@@ -1046,10 +1046,11 @@ isolating price; it does not predict the total cost of rerunning the project
 with another model.
 
 As a sanity check, scaling the observed DeepSeek charge
-($77.39 / 10.5229B tokens) to 14B gives roughly **$103**. This sits between the
-all-Flash and all-Pro modelled figures because the real workload mixed models.
-The selected cache screenshots are also samples of three days rather than a
-billing-complete token-category ledger for every day.
+($77.39 / 10.5229B tokens) to 14B gives **$102.96**, rounded to **$103**. This
+is the estimated 14-billion-token cost of the observed V4 Flash/V4 Pro blend.
+It sits between the all-Flash and all-Pro modelled figures because the real
+workload mixed both models. The selected cache screenshots are also samples of
+three days rather than a billing-complete token-category ledger for every day.
 
 ## What I learned about model “intelligence”
 
