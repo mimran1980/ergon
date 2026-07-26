@@ -10,7 +10,6 @@
 //! Proves: try_claim_owned → direct encode AppMessage(L2Book) → commit → decode.
 #![allow(unused)]
 
-
 use std::time::Duration;
 
 use exchange_example::config::CHANNEL;

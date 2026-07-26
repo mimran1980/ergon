@@ -19,10 +19,24 @@ fn generate_schema(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let generated_dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
-    generate_schema("schemas/normalized-app.xml", "normalized_app", true, &generated_dir)?;
-    generate_schema("schemas/bitget-spot.xml", "bitget_spot", false, &generated_dir)?;
-    generate_schema("schemas/binance-spot.xml", "binance_spot", false, &generated_dir)?;
+    let generated_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+    generate_schema(
+        "schemas/normalized-app.xml",
+        "normalized_app",
+        true,
+        &generated_dir,
+    )?;
+    generate_schema(
+        "schemas/bitget-spot.xml",
+        "bitget_spot",
+        false,
+        &generated_dir,
+    )?;
+    generate_schema(
+        "schemas/binance-spot.xml",
+        "binance_spot",
+        false,
+        &generated_dir,
+    )?;
     Ok(())
 }

@@ -120,12 +120,18 @@ pub fn generate_to_dir(
     let ir = parse_file(schema_path)?;
     let modules = write_generated(Schema::from_ir(ir), config, out_dir)?;
     println!("cargo::rerun-if-changed={}", schema_path.display());
-    // Stable, human-visible path (not hashed OUT_DIR) — open this after `cargo build`.
-    println!(
-        "cargo::warning=ergo-sbe wrote {} module(s) under {}",
-        modules.modules().len(),
-        out_dir.display()
-    );
+    // Point at stable IDE paths (e.g. src/generated). Skip for hashed OUT_DIR —
+    // that would spam every product/sample build that only uses generate_to_out_dir.
+    let is_cargo_out = env::var_os("OUT_DIR")
+        .map(|od| out_dir.starts_with(Path::new(&od)))
+        .unwrap_or(false);
+    if !is_cargo_out {
+        println!(
+            "cargo::warning=ergo-sbe wrote {} module(s) under {} (open for go-to-definition)",
+            modules.modules().len(),
+            out_dir.display()
+        );
+    }
     Ok(modules)
 }
 

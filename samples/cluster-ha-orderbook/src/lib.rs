@@ -3,6 +3,9 @@
 //! Recipes: `just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`.
 
 // Generated under `src/generated/normalized_app.rs` (gitignored).
+pub mod follower;
+pub mod ha_book;
+pub mod market;
 #[allow(
     dead_code,
     unused_imports,
@@ -16,7 +19,4 @@
 )]
 #[path = "generated/normalized_app.rs"]
 pub mod normalized_app;
-pub mod follower;
-pub mod ha_book;
-pub mod market;
 pub mod publish;

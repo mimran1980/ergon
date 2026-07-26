@@ -5,7 +5,7 @@
 //! And does a hand-written `#[repr(C, packed)]` overlay beat either?
 //!
 //! Fixture: `BigBlock` = 32 x u64 = **256 bytes**. Target field `f15` sits in
-//! the middle (offset 120). Message `Wide` = seq(u64) + BigBlock.
+//! the middle (offset 120). Message `Wide` = seq(u64) + `BigBlock`.
 //!
 //! Arms (nothing allocates on the timed path; buffers/values pre-sized):
 //!
@@ -29,16 +29,19 @@
     dead_code,
     unused_mut,
     unused_must_use,
-    clippy::all
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery
 )]
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use ergo_sbe_benchmarks::large_comp::*;
+use ergo_sbe_benchmarks::large_comp::{BigBlock, WideDecoder, WideEncoder};
 
 /// Mid-block field under test (schema name `f15`, offset 15 * 8 = 120).
 const TARGET_FIELD_VALUE: u64 = 0x0123_4567_89AB_CDEF;
 
-/// Hand-written LE packed overlay of the same 256-byte BigBlock layout.
+/// Hand-written LE packed overlay of the same 256-byte `BigBlock` layout.
 /// Field order and sizes must match the schema exactly (32 x u64).
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
@@ -136,11 +139,10 @@ fn bench_layout_access(c: &mut Criterion) {
     let block_bytes = block_bytes_from_fixture(&fixture);
     let preheld_value = BigBlock(block_bytes);
     let preheld_packed: PackedBigBlock =
-        unsafe { core::ptr::read_unaligned(block_bytes.as_ptr() as *const PackedBigBlock) };
+        unsafe { core::ptr::read_unaligned(block_bytes.as_ptr().cast::<PackedBigBlock>()) };
     let preheld_dec = WideDecoder::wrap(fixture.as_slice(), 8, WideDecoder::BLOCK_LENGTH, 0);
 
-    let packed_f15 =
-        unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(preheld_packed.f15)) };
+    let packed_f15 = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(preheld_packed.f15)) };
     assert_eq!(packed_f15, TARGET_FIELD_VALUE);
     assert_eq!(preheld_value.f15(), TARGET_FIELD_VALUE);
     assert_eq!(preheld_dec.block().f15(), TARGET_FIELD_VALUE);

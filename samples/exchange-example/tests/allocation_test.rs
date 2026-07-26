@@ -10,7 +10,6 @@
 //! Proves zero heap allocation on the hot path after warmup.
 #![allow(unused, unsafe_code)]
 
-
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,7 +44,9 @@ fn warm_up() {
 #[test]
 #[ignore = "pre-existing alloc count mismatch in playground sample"]
 fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::normalized_app::{AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt};
+    use exchange_example::normalized_app::{
+        AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
+    };
 
     warm_up();
 

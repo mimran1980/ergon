@@ -80,11 +80,7 @@ impl Publication for RecordingPublication {
         if let Some(reason) = self.fail_with {
             return PublishOutcome::Dropped(reason);
         }
-        let mut buf = {
-            let mut v = Vec::with_capacity(len.saturating_sub(self.short_by));
-            v.resize(len.saturating_sub(self.short_by), 0);
-            v
-        };
+        let mut buf = vec![0; len.saturating_sub(self.short_by)];
         match fill(&mut buf) {
             Ok(()) => {
                 self.claimed_lengths.push(len);

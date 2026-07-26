@@ -86,6 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_bid_price: u64 = 100;
     let mut next_correlation_id: u64 = 0;
 
+    #[allow(clippy::explicit_counter_loop)]
     for bid_num in 0..num_bids {
         let price = last_bid_price + (bid_num + 1) * 10;
         let cid = next_correlation_id;

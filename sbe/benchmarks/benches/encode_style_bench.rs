@@ -1,4 +1,4 @@
-//! Encode-style cost matrix — confirm FixedFields vs setters, composite
+//! Encode-style cost matrix — confirm `FixedFields` vs setters, composite
 //! bulk write, and LE vs BE multi-byte stores.
 //!
 //! Inputs are `black_box`'d so LLVM cannot constant-fold the entire encode
@@ -18,11 +18,16 @@
     dead_code,
     unused_mut,
     unused_must_use,
-    clippy::all
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery
 )]
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use ergo_sbe_benchmarks::ergo_car::*;
+use ergo_sbe_benchmarks::ergo_car::{
+    BooleanType, BoostType, Booster, CarEncoder, CarFixedFields, Engine, Model, OptionalExtras,
+};
 use ergo_sbe_benchmarks::large_comp as le;
 use ergo_sbe_benchmarks::large_comp_be as be;
 
@@ -32,11 +37,7 @@ fn engine_from_seed(seed: u64) -> Engine {
     Engine::new(
         s.wrapping_add(2000),
         (seed as u8).wrapping_add(4),
-        [
-            b'1'.wrapping_add((seed as u8) & 3),
-            b'2',
-            b'3',
-        ],
+        [b'1'.wrapping_add((seed as u8) & 3), b'2', b'3'],
         (seed as i8).wrapping_rem(50),
         if seed & 1 == 0 {
             BooleanType::F

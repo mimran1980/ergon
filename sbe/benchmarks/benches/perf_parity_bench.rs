@@ -96,13 +96,14 @@ fn bench_decode_scalar(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let bl = sbe_tool_block_length();
     let ver = sbe_tool_version();
-    let sbe_tool_car = ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default()
-        .wrap(
-            ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(BASELINE),
-            0,
-            bl,
-            ver,
-        );
+    let sbe_tool_car =
+        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default()
+            .wrap(
+                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(BASELINE),
+                0,
+                bl,
+                ver,
+            );
 
     let mut group = c.benchmark_group("parity/decode/scalar");
     group.throughput(Throughput::Elements(1));
@@ -130,13 +131,14 @@ fn bench_decode_array(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let bl = sbe_tool_block_length();
     let ver = sbe_tool_version();
-    let sbe_tool_car = ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default()
-        .wrap(
-            ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(BASELINE),
-            0,
-            bl,
-            ver,
-        );
+    let sbe_tool_car =
+        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder::default()
+            .wrap(
+                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::ReadBuf::new(BASELINE),
+                0,
+                bl,
+                ver,
+            );
 
     let mut group = c.benchmark_group("parity/decode/array");
     group.throughput(Throughput::Elements(1));
@@ -276,8 +278,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
     group.bench_function("ergo-sbe", |b| {
         let mut buf = [0u8; 512];
         b.iter(|| {
-            let mut car: CarEncoder<'_> =
-                CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+            let mut car: CarEncoder<'_> = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             car.serial_number(1234);
             car.model_year(2013);
             black_box(car);

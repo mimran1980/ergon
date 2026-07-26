@@ -25,13 +25,12 @@ use common::{Paths, compile_and_run, generate};
 
 /// Source shape: transparent `[u8; N]`, LE accessors, size_of assert, flyweight.
 #[test]
-fn composite_is_transparent_wire_image_not_repr_c_fields()
--> Result<(), Box<dyn std::error::Error>> {
+fn composite_is_transparent_wire_image_not_repr_c_fields() -> Result<(), Box<dyn std::error::Error>>
+{
     let (_schema, src) = generate(&Paths::example_schema(), "comp_layout_src");
 
     assert!(
-        src.contains("#[repr(transparent)]")
-            && src.contains("pub struct Engine(pub [u8; 10])"),
+        src.contains("#[repr(transparent)]") && src.contains("pub struct Engine(pub [u8; 10])"),
         "Engine must be a transparent wire-image over [u8; 10], not a native-field struct"
     );
     assert!(
@@ -46,8 +45,7 @@ fn composite_is_transparent_wire_image_not_repr_c_fields()
     );
     // Must NOT invent a native-layout overlay type.
     assert!(
-        !src.contains("#[repr(C)]\npub struct Engine {")
-            && !src.contains("#[repr(C, packed)]"),
+        !src.contains("#[repr(C)]\npub struct Engine {") && !src.contains("#[repr(C, packed)]"),
         "must not generate #[repr(C)] / packed native-field Engine overlays"
     );
     assert!(

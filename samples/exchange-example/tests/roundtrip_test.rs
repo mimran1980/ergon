@@ -14,12 +14,13 @@
 //!
 //! Run: `RUSTC_WRAPPER="" cargo test -- --test-threads=1 --nocapture`
 
-
 // ── Bitget: BestBidAsk (template 1002) ────────────────────────────────────
 
 #[test]
 fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5};
+    use exchange_example::bitget_spot::{
+        BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5,
+    };
 
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
@@ -294,7 +295,9 @@ fn binance_server_time_buffer_too_short() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
+    use exchange_example::bitget_spot::{
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+    };
 
     let trades_count = 2u16;
     let symbol = b"ETHUSDT";
@@ -388,7 +391,9 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
+    use exchange_example::bitget_spot::{
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+    };
 
     let sts_max = u64::MAX;
     let trades_count = 1u16;
@@ -436,7 +441,9 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
+    use exchange_example::bitget_spot::{
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+    };
 
     let trades_count = 1u16;
     let symbol = b"";
