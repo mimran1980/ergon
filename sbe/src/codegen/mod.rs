@@ -1275,10 +1275,14 @@ fn generate_message_decoder(
     // Prefer the resolved message block length (includes schema-declared
     // padding via `blockLength="…"`). Fall back to a tight field-span only if
     // resolve left it zero (should not happen for real messages).
-    let computed_block_length = msg.fields.iter().fold(0, |acc, f| {
-        let size = f.field_type.size();
-        acc.max(f.offset + size)
-    });
+    // Constant fields have zero wire footprint; skip them so block_length stays
+    // 0 for constant-only messages (e.g. value_ref MsgTwo–MsgFive).
+    let computed_block_length = msg.fields.iter()
+        .filter(|f| f.presence != Presence::Constant)
+        .fold(0, |acc, f| {
+            let size = f.field_type.size();
+            acc.max(f.offset + size)
+        });
     let block_length = msg.block_length.max(computed_block_length);
 
     let header_pascal = to_pascal_case(header_type);
@@ -1321,7 +1325,7 @@ fn generate_message_decoder(
     let mut max_tail = 0usize;
     for g in &msg.groups {
         let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
-        max_tail += dim_size + g.block_length;
+        max_tail += dim_size + g.effective_block_length();
     }
     for vd in &msg.var_data {
         let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
@@ -1813,8 +1817,9 @@ fn generate_message_decoder(
                 if f.presence == Presence::Constant {
                     if let Some(ref val) = f.constant_value {
                         let variant = val.rsplit('.').next().unwrap_or(val);
+                        let pascal_variant = to_pascal_case(variant);
                         let variant_ident =
-                            syn::Ident::new(variant, proc_macro2::Span::call_site());
+                            syn::Ident::new(&pascal_variant, proc_macro2::Span::call_site());
                         impl_body.extend(quote::quote! {
                             #[inline]
                             pub const fn #fname_ident(&self) -> #target_ident {
@@ -2247,7 +2252,7 @@ fn generate_message_decoder(
         let ds_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
         let dn_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
         let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let ebl_lit = syn::LitInt::new(&g.block_length.to_string(), proc_macro2::Span::call_site());
+        let ebl_lit = syn::LitInt::new(&g.effective_block_length().to_string(), proc_macro2::Span::call_site());
         let has_tails = !g.groups.is_empty() || !g.var_data.is_empty();
         let entry_dec_ident = {
             let raw = to_pascal_case(&g.name);
@@ -2895,7 +2900,7 @@ fn generate_domain_recursive(
                 let size = f.field_type.size();
                 acc.max(f.offset + size)
             }),
-            |acc, g| acc.max(g.block_length),
+            |acc, g| acc.max(g.effective_block_length()),
         );
         let entry_bl_lit = syn::LitInt::new(&entry_block_len.to_string(), span);
         let mut len_stmts = quote::quote! {
@@ -3270,7 +3275,7 @@ fn generate_group_decoder(
     let dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
     let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
     let block_len_lit =
-        syn::LitInt::new(&g.block_length.to_string(), proc_macro2::Span::call_site());
+        syn::LitInt::new(&g.effective_block_length().to_string(), proc_macro2::Span::call_site());
     let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
@@ -4880,7 +4885,7 @@ fn generate_encoded_length_builder(
 
             if is_flat_group {
                 // Flat group — no nested dynamics, count alone is enough.
-                let entry_bl = syn::LitInt::new(&g.block_length.to_string(), span);
+                let entry_bl = syn::LitInt::new(&g.effective_block_length().to_string(), span);
                 let entry_bl_usize: syn::Type = syn::parse_str("usize").unwrap();
                 ts.extend(quote::quote! {
                     impl #current_stage {
@@ -5051,7 +5056,7 @@ fn generate_encoded_length_builder(
 
         let sub_ts = generate_encoded_length_builder(
             scoped_name,
-            g.block_length,
+            g.effective_block_length(),
             0,
             &g.groups,
             &g.var_data,
@@ -5087,10 +5092,13 @@ fn generate_message_encoder(
     // Prefer the resolved message block length (includes schema-declared
     // padding via `blockLength="…"`). Fall back to a tight field-span only if
     // resolve left it zero (should not happen for real messages).
-    let computed_block_length = msg.fields.iter().fold(0, |acc, f| {
-        let size = f.field_type.size();
-        acc.max(f.offset + size)
-    });
+    // Constant fields have zero wire footprint.
+    let computed_block_length = msg.fields.iter()
+        .filter(|f| f.presence != Presence::Constant)
+        .fold(0, |acc, f| {
+            let size = f.field_type.size();
+            acc.max(f.offset + size)
+        });
     let block_length = msg.block_length.max(computed_block_length);
 
     #[expect(unused_variables)]
@@ -5110,7 +5118,7 @@ fn generate_message_encoder(
     let mut max_tail = 0usize;
     for g in &msg.groups {
         let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
-        max_tail += dim_size + g.block_length;
+        max_tail += dim_size + g.effective_block_length();
     }
     for vd in &msg.var_data {
         let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
@@ -6114,6 +6122,8 @@ fn generate_group_encoder(
     let (_, _, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
     let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
+    let group_block_length = g.effective_block_length();
+
     assert!(
         dim_size <= 32,
         "group dimension header larger than stack pad: {dim_size}"
@@ -6122,17 +6132,17 @@ fn generate_group_encoder(
     let dim_tpl = &mut dim_storage[..dim_size];
     match byte_order {
         ByteOrder::LittleEndian => {
-            dim_tpl[0..2].copy_from_slice(&(g.block_length as u16).to_le_bytes());
+            dim_tpl[0..2].copy_from_slice(&(group_block_length as u16).to_le_bytes());
         }
         ByteOrder::BigEndian => {
-            dim_tpl[0..2].copy_from_slice(&(g.block_length as u16).to_be_bytes());
+            dim_tpl[0..2].copy_from_slice(&(group_block_length as u16).to_be_bytes());
         }
     }
 
     let span = proc_macro2::Span::call_site();
     let group_enc_ident = syn::Ident::new(&format!("{}Encoder", name), span);
     let entry_enc_ident = syn::Ident::new(&format!("{}EntryEncoder", name), span);
-    let block_len_lit = syn::LitInt::new(&g.block_length.to_string(), span);
+    let block_len_lit = syn::LitInt::new(&group_block_length.to_string(), span);
     let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
     let dim_bytes: Vec<syn::LitInt> = dim_tpl
         .iter()

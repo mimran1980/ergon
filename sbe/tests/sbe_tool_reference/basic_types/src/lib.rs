@@ -6,7 +6,8 @@
 
 use ::core::{convert::TryInto};
 
-pub mod enum;
+#[path = "enum.rs"]
+pub mod enums;
 pub mod message_1_codec;
 pub mod message_1_with_offsets_codec;
 pub mod message_header_codec;

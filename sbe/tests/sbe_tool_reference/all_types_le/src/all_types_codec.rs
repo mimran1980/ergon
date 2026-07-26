@@ -1,35 +1,35 @@
 use crate::*;
 
-pub use decoder::Message1WithOffsetsDecoder;
-pub use encoder::Message1WithOffsetsEncoder;
+pub use decoder::AllTypesDecoder;
+pub use encoder::AllTypesEncoder;
 
 pub use crate::SBE_SCHEMA_ID;
 pub use crate::SBE_SCHEMA_VERSION;
 pub use crate::SBE_SEMANTIC_VERSION;
 
-pub const SBE_BLOCK_LENGTH: u16 = 144;
-pub const SBE_TEMPLATE_ID: u16 = 2;
+pub const SBE_BLOCK_LENGTH: u16 = 60;
+pub const SBE_TEMPLATE_ID: u16 = 1;
 
 pub mod encoder {
     use super::*;
     use message_header_codec::*;
 
     #[derive(Debug, Default)]
-    pub struct Message1WithOffsetsEncoder<'a> {
+    pub struct AllTypesEncoder<'a> {
         buf: WriteBuf<'a>,
         initial_offset: usize,
         offset: usize,
         limit: usize,
     }
 
-    impl<'a> Writer<'a> for Message1WithOffsetsEncoder<'a> {
+    impl<'a> Writer<'a> for AllTypesEncoder<'a> {
         #[inline]
         fn get_buf_mut(&mut self) -> &mut WriteBuf<'a> {
             &mut self.buf
         }
     }
 
-    impl<'a> Encoder<'a> for Message1WithOffsetsEncoder<'a> {
+    impl<'a> Encoder<'a> for AllTypesEncoder<'a> {
         #[inline]
         fn get_limit(&self) -> usize {
             self.limit
@@ -44,7 +44,12 @@ pub mod encoder {
         #[inline]
         fn nullify_optional_fields(&mut self) -> &mut Self {
             {
-                let mut composite_encoder = core::mem::take(self).header_encoder();
+                let mut composite_encoder = core::mem::take(self).scalar_composite_encoder();
+                composite_encoder.nullify_optional_fields();
+                *self = composite_encoder.parent().expect("parent missing");
+            }
+            {
+                let mut composite_encoder = core::mem::take(self).float_pair_encoder();
                 composite_encoder.nullify_optional_fields();
                 *self = composite_encoder.parent().expect("parent missing");
             }
@@ -52,7 +57,7 @@ pub mod encoder {
         }
     }
 
-    impl<'a> Message1WithOffsetsEncoder<'a> {
+    impl<'a> AllTypesEncoder<'a> {
         pub fn wrap(mut self, buf: WriteBuf<'a>, offset: usize) -> Self {
             let limit = offset + SBE_BLOCK_LENGTH as usize;
             self.buf = buf;
@@ -79,49 +84,70 @@ pub mod encoder {
 
         /// COMPOSITE ENCODER
         #[inline]
-        pub fn header_encoder(self) -> message_header_codec::MessageHeaderEncoder<Self> {
+        pub fn scalar_composite_encoder(self) -> all_scalars_codec::AllScalarsEncoder<Self> {
             let offset = self.offset;
-            message_header_codec::MessageHeaderEncoder::default().wrap(self, offset)
+            all_scalars_codec::AllScalarsEncoder::default().wrap(self, offset)
+        }
+
+        /// COMPOSITE ENCODER
+        #[inline]
+        pub fn float_pair_encoder(self) -> float_pair_codec::FloatPairEncoder<Self> {
+            let offset = self.offset + 42;
+            float_pair_codec::FloatPairEncoder::default().wrap(self, offset)
+        }
+
+        /// REQUIRED enum
+        #[inline]
+        pub fn enum_field(&mut self, value: test_enum::TestEnum) -> &mut Self {
+            let offset = self.offset + 50;
+            self.get_buf_mut().put_u8_at(offset, value as u8);
+            self
         }
 
         #[inline]
-        pub fn edt_field_at(&mut self, index: usize, value: u8) -> &mut Self {
-            let offset = self.offset + 8;
+        pub fn set_field(&mut self, value: test_set::TestSet) {
+            let offset = self.offset + 51;
+            self.get_buf_mut().put_u8_at(offset, value.0)
+        }
+
+        #[inline]
+        pub fn fixed_array_at(&mut self, index: usize, value: u8) -> &mut Self {
+            let offset = self.offset + 52;
             let buf = self.get_buf_mut();
             buf.put_u8_at(offset + index, value);
             self
         }
 
-        /// primitive array field 'EDTField'
+        /// primitive array field 'fixedArray'
         /// - min value: 32
         /// - max value: 126
         /// - null value: 0_u8
         /// - characterEncoding: US-ASCII
-        /// - semanticType: char
-        /// - encodedOffset: 8
-        /// - encodedLength: 20
+        /// - semanticType: null
+        /// - encodedOffset: 52
+        /// - encodedLength: 8
         /// - version: 0
         #[inline]
-        pub fn edt_field(&mut self, value: &[u8]) -> &mut Self {
-            debug_assert_eq!(20, value.len());
-            let offset = self.offset + 8;
+        pub fn fixed_array(&mut self, value: &[u8]) -> &mut Self {
+            debug_assert_eq!(8, value.len());
+            let offset = self.offset + 52;
             let buf = self.get_buf_mut();
             buf.put_slice_at(offset, value);
             self
         }
 
-        /// primitive array field 'EDTField' from an Iterator
+        /// primitive array field 'fixedArray' from an Iterator
         /// - min value: 32
         /// - max value: 126
         /// - null value: 0_u8
         /// - characterEncoding: US-ASCII
-        /// - semanticType: char
-        /// - encodedOffset: 8
-        /// - encodedLength: 20
+        /// - semanticType: null
+        /// - encodedOffset: 52
+        /// - encodedLength: 8
         /// - version: 0
         #[inline]
-        pub fn edt_field_from_iter(&mut self, iter: impl Iterator<Item = u8>) -> &mut Self {
-            let offset = self.offset + 8;
+        pub fn fixed_array_from_iter(&mut self, iter: impl Iterator<Item = u8>) -> &mut Self {
+            let offset = self.offset + 52;
             let buf = self.get_buf_mut();
             for (i, v) in iter.enumerate() {
                 buf.put_u8_at(offset + i, v);
@@ -129,49 +155,30 @@ pub mod encoder {
             self
         }
 
-        /// primitive array field 'EDTField' with zero padding
+        /// primitive array field 'fixedArray' with zero padding
         /// - min value: 32
         /// - max value: 126
         /// - null value: 0_u8
         /// - characterEncoding: US-ASCII
-        /// - semanticType: char
-        /// - encodedOffset: 8
-        /// - encodedLength: 20
-        /// - version: 0
-        #[inline]
-        pub fn edt_field_zero_padded(&mut self, value: &[u8]) -> &mut Self {
-            let iter = value.iter().copied().chain(std::iter::repeat(0_u8)).take(20);
-            self.edt_field_from_iter(iter);
-            self
-        }
-
-        /// REQUIRED enum
-        #[inline]
-        pub fn enum_field(&mut self, value: enums::ENUM) -> &mut Self {
-            let offset = self.offset + 32;
-            self.get_buf_mut().put_u8_at(offset, value as u8);
-            self
-        }
-
-        #[inline]
-        pub fn set_field(&mut self, value: set::SET) {
-            let offset = self.offset + 128;
-            self.get_buf_mut().put_u32_at(offset, value.0)
-        }
-
-        /// primitive field 'int64Field'
-        /// - min value: -9223372036854775807
-        /// - max value: 9223372036854775807
-        /// - null value: -9223372036854775808_i64
-        /// - characterEncoding: null
-        /// - semanticType: int
-        /// - encodedOffset: 136
+        /// - semanticType: null
+        /// - encodedOffset: 52
         /// - encodedLength: 8
         /// - version: 0
         #[inline]
-        pub fn int_64_field(&mut self, value: i64) -> &mut Self {
-            let offset = self.offset + 136;
-            self.get_buf_mut().put_i64_at(offset, value);
+        pub fn fixed_array_zero_padded(&mut self, value: &[u8]) -> &mut Self {
+            let iter = value.iter().copied().chain(std::iter::repeat(0_u8)).take(8);
+            self.fixed_array_from_iter(iter);
+            self
+        }
+
+        /// VAR_DATA ENCODER - character encoding: 'None'
+        #[inline]
+        pub fn var_data(&mut self, value: &[u8]) -> &mut Self {
+            let limit = self.get_limit();
+            let data_length = value.len().min((u16::MAX - 1) as usize);
+            self.set_limit(limit + 2 + data_length);
+            self.get_buf_mut().put_u16_at(limit, data_length as u16);
+            self.get_buf_mut().put_slice_at(limit + 2, &value[0..data_length]);
             self
         }
 
@@ -184,7 +191,7 @@ pub mod decoder {
     use message_header_codec::*;
 
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct Message1WithOffsetsDecoder<'a> {
+    pub struct AllTypesDecoder<'a> {
         buf: ReadBuf<'a>,
         initial_offset: usize,
         offset: usize,
@@ -193,21 +200,21 @@ pub mod decoder {
         pub acting_version: u16,
     }
 
-    impl ActingVersion for Message1WithOffsetsDecoder<'_> {
+    impl ActingVersion for AllTypesDecoder<'_> {
         #[inline]
         fn acting_version(&self) -> u16 {
             self.acting_version
         }
     }
 
-    impl<'a> Reader<'a> for Message1WithOffsetsDecoder<'a> {
+    impl<'a> Reader<'a> for AllTypesDecoder<'a> {
         #[inline]
         fn get_buf(&self) -> &ReadBuf<'a> {
             &self.buf
         }
     }
 
-    impl<'a> Decoder<'a> for Message1WithOffsetsDecoder<'a> {
+    impl<'a> Decoder<'a> for AllTypesDecoder<'a> {
         #[inline]
         fn get_limit(&self) -> usize {
             self.limit
@@ -219,7 +226,7 @@ pub mod decoder {
         }
     }
 
-    impl<'a> Message1WithOffsetsDecoder<'a> {
+    impl<'a> AllTypesDecoder<'a> {
         pub fn wrap(
             mut self,
             buf: ReadBuf<'a>,
@@ -258,33 +265,49 @@ pub mod decoder {
 
         /// COMPOSITE DECODER
         #[inline]
-        pub fn header_decoder(self) -> message_header_codec::MessageHeaderDecoder<Self> {
+        pub fn scalar_composite_decoder(self) -> all_scalars_codec::AllScalarsDecoder<Self> {
             let offset = self.offset;
-            message_header_codec::MessageHeaderDecoder::default().wrap(self, offset)
+            all_scalars_codec::AllScalarsDecoder::default().wrap(self, offset)
         }
 
+        /// COMPOSITE DECODER
         #[inline]
-        pub fn edt_field(&self) -> [u8; 20] {
-            let buf = self.get_buf();
-            ReadBuf::get_bytes_at(buf.data, self.offset + 8)
+        pub fn float_pair_decoder(self) -> float_pair_codec::FloatPairDecoder<Self> {
+            let offset = self.offset + 42;
+            float_pair_codec::FloatPairDecoder::default().wrap(self, offset)
         }
 
         /// REQUIRED enum
         #[inline]
-        pub fn enum_field(&self) -> enums::ENUM {
-            self.get_buf().get_u8_at(self.offset + 32).into()
+        pub fn enum_field(&self) -> test_enum::TestEnum {
+            self.get_buf().get_u8_at(self.offset + 50).into()
         }
 
         /// BIT SET DECODER
         #[inline]
-        pub fn set_field(&self) -> set::SET {
-            set::SET::new(self.get_buf().get_u32_at(self.offset + 128))
+        pub fn set_field(&self) -> test_set::TestSet {
+            test_set::TestSet::new(self.get_buf().get_u8_at(self.offset + 51))
         }
 
-        /// primitive field - 'REQUIRED'
         #[inline]
-        pub fn int_64_field(&self) -> i64 {
-            self.get_buf().get_i64_at(self.offset + 136)
+        pub fn fixed_array(&self) -> [u8; 8] {
+            let buf = self.get_buf();
+            ReadBuf::get_bytes_at(buf.data, self.offset + 52)
+        }
+
+        /// VAR_DATA DECODER - character encoding: 'None'
+        #[inline]
+        pub fn var_data_decoder(&mut self) -> (usize, usize) {
+            let offset = self.get_limit();
+            let data_length = self.get_buf().get_u16_at(offset) as usize;
+            self.set_limit(offset + 2 + data_length);
+            (offset + 2, data_length)
+        }
+
+        #[inline]
+        pub fn var_data_slice(&'a self, coordinates: (usize, usize)) -> &'a [u8] {
+            debug_assert!(self.get_limit() >= coordinates.0 + coordinates.1);
+            self.get_buf().get_slice_at(coordinates.0, coordinates.1)
         }
 
     }

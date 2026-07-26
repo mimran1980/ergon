@@ -147,7 +147,7 @@ pub mod encoder {
 
         /// REQUIRED enum
         #[inline]
-        pub fn enum_field(&mut self, value: enum::ENUM) -> &mut Self {
+        pub fn enum_field(&mut self, value: enums::ENUM) -> &mut Self {
             let offset = self.offset + 28;
             self.get_buf_mut().put_u8_at(offset, value as u8);
             self
@@ -271,7 +271,7 @@ pub mod decoder {
 
         /// REQUIRED enum
         #[inline]
-        pub fn enum_field(&self) -> enum::ENUM {
+        pub fn enum_field(&self) -> enums::ENUM {
             self.get_buf().get_u8_at(self.offset + 28).into()
         }
 

@@ -1607,7 +1607,7 @@ fn parse_message_child(
                                 "warning: valueRef '{s}' references unknown enum '{enum_name}'"
                             );
                         }
-                        variant_name.to_string()
+                        s.to_string()
                     } else {
                         // No dot — valueRef with no TypeName prefix, keep as-is
                         s.to_string()
@@ -1653,6 +1653,9 @@ fn parse_message_child(
             let dimension_type = node
                 .attribute("dimensionType")
                 .unwrap_or("groupSizeEncoding");
+            let group_block_length = node
+                .attribute("blockLength")
+                .and_then(|s| s.parse::<usize>().ok());
 
             tokens.push(Token {
                 id: Some(id),
@@ -1662,6 +1665,7 @@ fn parse_message_child(
                     since_version,
                     deprecated: group_deprecated,
                     description: collect_description(node),
+                    offset: group_block_length,
                     ..Encoding::default()
                 },
             });

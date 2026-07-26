@@ -148,6 +148,18 @@ pub(crate) struct MessageGroup {
     pub(crate) block_length: usize,
 }
 
+impl MessageGroup {
+    /// Block length effective at runtime: the max of the schema-declared
+    /// `blockLength` and the tight span of the group's fixed fields.
+    pub(crate) fn effective_block_length(&self) -> usize {
+        let computed = self.fields.iter().fold(0, |acc, f| {
+            let size = f.field_type.size();
+            acc.max(f.offset + size)
+        });
+        self.block_length.max(computed)
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct MessageVarData {
     pub(crate) name: String,

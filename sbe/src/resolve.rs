@@ -416,8 +416,13 @@ fn resolve_group_offsets(
         i = next_i;
     }
 
-    // The group's entry blockLength is the final offset of entry fields
-    let block_length = current_offset;
+    // The group's entry blockLength is the final offset of entry fields,
+    // but honour a schema-declared blockLength when it is larger (padding).
+    let declared = tokens[0].encoding.offset;
+    let block_length = match declared {
+        Some(d) if d > current_offset => d,
+        _ => current_offset,
+    };
     tokens[0].encoding.offset = Some(block_length);
     Ok(())
 }

@@ -785,7 +785,7 @@ pub mod encoder {
         /// - encodedLength: 1
         /// - version: 0
         #[inline]
-        pub fn r#super(&mut self, value: i8) -> &mut Self {
+        pub fn super_field(&mut self, value: i8) -> &mut Self {
             let offset = self.offset + 54;
             self.get_buf_mut().put_i8_at(offset, value);
             self
@@ -897,7 +897,7 @@ pub mod encoder {
         /// - encodedLength: 1
         /// - version: 0
         #[inline]
-        pub fn try(&mut self, value: i8) -> &mut Self {
+        pub fn r#try(&mut self, value: i8) -> &mut Self {
             let offset = self.offset + 61;
             self.get_buf_mut().put_i8_at(offset, value);
             self
@@ -1025,7 +1025,7 @@ pub mod encoder {
 
         /// REQUIRED enum
         #[inline]
-        pub fn _(&mut self, value: break::Break) -> &mut Self {
+        pub fn underscore_field(&mut self, value: breaks::Break) -> &mut Self {
             let offset = self.offset + 114;
             self.get_buf_mut().put_u8_at(offset, value as u8);
             self
@@ -1582,7 +1582,7 @@ pub mod encoder {
         /// - encodedLength: 4
         /// - version: 0
         #[inline]
-        pub fn try(&mut self, value: f32) -> &mut Self {
+        pub fn r#try(&mut self, value: f32) -> &mut Self {
             let offset = self.offset + 2;
             self.get_buf_mut().put_f32_at(offset, value);
             self
@@ -1987,7 +1987,7 @@ pub mod decoder {
 
         /// primitive field - 'REQUIRED'
         #[inline]
-        pub fn r#super(&self) -> i8 {
+        pub fn super_field(&self) -> i8 {
             self.get_buf().get_i8_at(self.offset + 54)
         }
 
@@ -2029,7 +2029,7 @@ pub mod decoder {
 
         /// primitive field - 'REQUIRED'
         #[inline]
-        pub fn try(&self) -> i8 {
+        pub fn r#try(&self) -> i8 {
             self.get_buf().get_i8_at(self.offset + 61)
         }
 
@@ -2072,7 +2072,7 @@ pub mod decoder {
 
         /// REQUIRED enum
         #[inline]
-        pub fn _(&self) -> break::Break {
+        pub fn underscore_field(&self) -> breaks::Break {
             self.get_buf().get_u8_at(self.offset + 114).into()
         }
 
@@ -2433,7 +2433,7 @@ pub mod decoder {
 
         /// primitive field - 'REQUIRED'
         #[inline]
-        pub fn try(&self) -> f32 {
+        pub fn r#try(&self) -> f32 {
             self.get_buf().get_f32_at(self.offset + 2)
         }
 

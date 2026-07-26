@@ -6,27 +6,17 @@
 
 use ::core::{convert::TryInto};
 
-pub mod array_pair_codec;
-pub mod boolean_type;
-pub mod boost_type;
-pub mod booster_tc_odec;
-#[path = "break.rs"]
-pub mod breaks;
-pub mod car_codec;
-pub mod engine_codec;
-pub mod global_keywords_codec;
-pub mod group_size_encoding_codec;
-pub mod lower_case_enum;
-pub mod lower_case_value_ref_codec;
+pub mod all_scalars_codec;
+pub mod all_types_codec;
+pub mod float_pair_codec;
 pub mod message_header_codec;
-pub mod model;
-pub mod optional_extras;
-pub mod var_ascii_string_encoding_codec;
-pub mod var_string_encoding_codec;
+pub mod test_enum;
+pub mod test_set;
+pub mod var_data_encoding_codec;
 
-pub const SBE_SCHEMA_ID: u16 = 6;
+pub const SBE_SCHEMA_ID: u16 = 42;
 pub const SBE_SCHEMA_VERSION: u16 = 0;
-pub const SBE_SEMANTIC_VERSION: &str = "5.2";
+pub const SBE_SEMANTIC_VERSION: &str = "1.0";
 
 pub type SbeResult<T> = core::result::Result<T, SbeErr>;
 

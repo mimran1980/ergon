@@ -265,6 +265,11 @@ pub(crate) fn is_rust_keyword(s: &str) -> bool {
 }
 
 fn avoid_keyword(mut name: String) -> String {
+    // `_` is a reserved identifier in Rust — can't be used as a raw ident (`r#_` also fails).
+    // Rename it explicitly so field/getter names don't break compilation.
+    if name == "_" {
+        return "underscore".to_string();
+    }
     if is_rust_keyword(&name) {
         name.push_str(&keyword_append_token());
     }
@@ -342,6 +347,27 @@ pub(crate) fn to_upper_snake_case(s: &str) -> String {
 }
 
 pub(crate) fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
+    // Convert dotted valueRef like "TimeUnit.nanosecond" → "TimeUnit::Nanosecond".
+    // When the field type is a plain primitive (not the enum itself), cast to the
+    // appropriate type so `fn field(&self) -> u8 { TimeUnit::Nanosecond as u8 }` works.
+    if let Some((enum_name, variant)) = val.split_once('.') {
+        let enum_ref = format!(
+            "{}::{}",
+            to_pascal_case(enum_name),
+            to_pascal_case(variant)
+        );
+        return match prim {
+            PrimitiveType::UInt8 => format!("{enum_ref} as u8"),
+            PrimitiveType::UInt16 => format!("{enum_ref} as u16"),
+            PrimitiveType::UInt32 => format!("{enum_ref} as u32"),
+            PrimitiveType::UInt64 => format!("{enum_ref} as u64"),
+            PrimitiveType::Int8 => format!("{enum_ref} as i8"),
+            PrimitiveType::Int16 => format!("{enum_ref} as i16"),
+            PrimitiveType::Int32 => format!("{enum_ref} as i32"),
+            PrimitiveType::Int64 => format!("{enum_ref} as i64"),
+            _ => enum_ref,
+        };
+    }
     match prim {
         // parser validates single-char constants, generator trusts it; add a debug_assert! if parser ever skips validation
         PrimitiveType::Char => format!("b'{}'", val),
@@ -1109,36 +1135,37 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     // MessageHeader convenience: peek methods + ENCODED_LENGTH so
     // callers don't re-copy the 8-byte header for dispatch.
     if raw_name == "messageHeader" {
+        let hs_lit = size_lit.clone();
         let extras = quote::quote! {
-            /// Canonical wire size of the SBE message header (always 8 bytes).
-            pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = 8;
+            /// Canonical wire size of the SBE message header.
+            pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = #hs_lit;
 
             impl #name_ident {
                 /// Read `(template_id, schema_id)` from a frame without
                 /// constructing a full `MessageHeader`. Returns `None`
-                /// when the buffer is shorter than 8 bytes.
+                /// when the buffer is shorter than the header.
                 #[inline]
                 pub fn peek_header(data: &[u8]) -> Option<(u16, u16)> {
-                    if data.len() < 8 {
+                    if data.len() < #hs_lit {
                         return None;
                     }
-                    let mut hdr = [0u8; 8];
-                    hdr.copy_from_slice(&data[..8]);
+                    let mut hdr = [0u8; #hs_lit];
+                    hdr.copy_from_slice(&data[..#hs_lit]);
                     let this = Self(hdr);
                     Some((this.template_id(), this.schema_id()))
                 }
 
                 /// Read `template_id` from a frame without constructing a full
                 /// `MessageHeader`. Returns `None` when the buffer is shorter
-                /// than the 8-byte header. For correct multi-schema dispatch,
+                /// than the header. For correct multi-schema dispatch,
                 /// prefer [`Self::peek_header`] which also returns `schema_id`.
                 #[inline]
                 pub fn peek_template_id(data: &[u8]) -> Option<u16> {
-                    if data.len() < 8 {
+                    if data.len() < #hs_lit {
                         return None;
                     }
-                    let mut hdr = [0u8; 8];
-                    hdr.copy_from_slice(&data[..8]);
+                    let mut hdr = [0u8; #hs_lit];
+                    hdr.copy_from_slice(&data[..#hs_lit]);
                     Some(Self(hdr).template_id())
                 }
 

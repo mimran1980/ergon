@@ -1,0 +1,6 @@
+[package]
+name = "parity_all_types_be"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]

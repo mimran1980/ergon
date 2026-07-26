@@ -6,27 +6,17 @@
 
 use ::core::{convert::TryInto};
 
-pub mod array_pair_codec;
-pub mod boolean_type;
-pub mod boost_type;
-pub mod booster_tc_odec;
-#[path = "break.rs"]
-pub mod breaks;
-pub mod car_codec;
-pub mod engine_codec;
-pub mod global_keywords_codec;
-pub mod group_size_encoding_codec;
-pub mod lower_case_enum;
-pub mod lower_case_value_ref_codec;
+pub mod all_scalars_codec;
+pub mod all_types_codec;
+pub mod float_pair_codec;
 pub mod message_header_codec;
-pub mod model;
-pub mod optional_extras;
-pub mod var_ascii_string_encoding_codec;
-pub mod var_string_encoding_codec;
+pub mod test_enum;
+pub mod test_set;
+pub mod var_data_encoding_codec;
 
-pub const SBE_SCHEMA_ID: u16 = 6;
+pub const SBE_SCHEMA_ID: u16 = 42;
 pub const SBE_SCHEMA_VERSION: u16 = 0;
-pub const SBE_SEMANTIC_VERSION: &str = "5.2";
+pub const SBE_SEMANTIC_VERSION: &str = "1.0";
 
 pub type SbeResult<T> = core::result::Result<T, SbeErr>;
 
@@ -102,47 +92,47 @@ impl<'a> ReadBuf<'a> {
 
     #[inline]
     pub fn get_i8_at(&self, index: usize) -> i8 {
-        i8::from_le_bytes(Self::get_bytes_at(self.data, index))
+        i8::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
     pub fn get_i16_at(&self, index: usize) -> i16 {
-        i16::from_le_bytes(Self::get_bytes_at(self.data, index))
+        i16::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
     pub fn get_i32_at(&self, index: usize) -> i32 {
-        i32::from_le_bytes(Self::get_bytes_at(self.data, index))
+        i32::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
     pub fn get_i64_at(&self, index: usize) -> i64 {
-        i64::from_le_bytes(Self::get_bytes_at(self.data, index))
+        i64::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
     pub fn get_u16_at(&self, index: usize) -> u16 {
-        u16::from_le_bytes(Self::get_bytes_at(self.data, index))
+        u16::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
     pub fn get_u32_at(&self, index: usize) -> u32 {
-        u32::from_le_bytes(Self::get_bytes_at(self.data, index))
+        u32::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
     pub fn get_u64_at(&self, index: usize) -> u64 {
-        u64::from_le_bytes(Self::get_bytes_at(self.data, index))
+        u64::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
     pub fn get_f32_at(&self, index: usize) -> f32 {
-        f32::from_le_bytes(Self::get_bytes_at(self.data, index))
+        f32::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
     pub fn get_f64_at(&self, index: usize) -> f64 {
-        f64::from_le_bytes(Self::get_bytes_at(self.data, index))
+        f64::from_be_bytes(Self::get_bytes_at(self.data, index))
     }
 
     #[inline]
@@ -174,47 +164,47 @@ impl<'a> WriteBuf<'a> {
 
     #[inline]
     pub fn put_i8_at(&mut self, index: usize, value: i8) {
-        self.put_bytes_at(index, &i8::to_le_bytes(value));
+        self.put_bytes_at(index, &i8::to_be_bytes(value));
     }
 
     #[inline]
     pub fn put_i16_at(&mut self, index: usize, value: i16) {
-        self.put_bytes_at(index, &i16::to_le_bytes(value));
+        self.put_bytes_at(index, &i16::to_be_bytes(value));
     }
 
     #[inline]
     pub fn put_i32_at(&mut self, index: usize, value: i32) {
-        self.put_bytes_at(index, &i32::to_le_bytes(value));
+        self.put_bytes_at(index, &i32::to_be_bytes(value));
     }
 
     #[inline]
     pub fn put_i64_at(&mut self, index: usize, value: i64) {
-        self.put_bytes_at(index, &i64::to_le_bytes(value));
+        self.put_bytes_at(index, &i64::to_be_bytes(value));
     }
 
     #[inline]
     pub fn put_u16_at(&mut self, index: usize, value: u16) {
-        self.put_bytes_at(index, &u16::to_le_bytes(value));
+        self.put_bytes_at(index, &u16::to_be_bytes(value));
     }
 
     #[inline]
     pub fn put_u32_at(&mut self, index: usize, value: u32) {
-        self.put_bytes_at(index, &u32::to_le_bytes(value));
+        self.put_bytes_at(index, &u32::to_be_bytes(value));
     }
 
     #[inline]
     pub fn put_u64_at(&mut self, index: usize, value: u64) {
-        self.put_bytes_at(index, &u64::to_le_bytes(value));
+        self.put_bytes_at(index, &u64::to_be_bytes(value));
     }
 
     #[inline]
     pub fn put_f32_at(&mut self, index: usize, value: f32) {
-        self.put_bytes_at(index, &f32::to_le_bytes(value));
+        self.put_bytes_at(index, &f32::to_be_bytes(value));
     }
 
     #[inline]
     pub fn put_f64_at(&mut self, index: usize, value: f64) {
-        self.put_bytes_at(index, &f64::to_le_bytes(value));
+        self.put_bytes_at(index, &f64::to_be_bytes(value));
     }
 
     #[inline]

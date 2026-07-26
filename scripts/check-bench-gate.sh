@@ -50,6 +50,7 @@ pairs=(
     "encode/scalar|ergo-sbe|sbe-tool"
     "encode/throughput_10k|ergo-sbe|sbe-tool"
     "throughput/batch_10k|ergo-sbe|sbe-tool"
+    "wire_parity/encode_full|ergo-sbe|sbe-tool"
 )
 
 for pair in "${pairs[@]}"; do

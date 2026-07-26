@@ -10,7 +10,8 @@ pub mod array_pair_codec;
 pub mod boolean_type;
 pub mod boost_type;
 pub mod booster_codec;
-pub mod break;
+#[path = "break.rs"]
+pub mod breaks;
 pub mod byte_pair_codec;
 pub mod engine_codec;
 pub mod extended_car_codec;
