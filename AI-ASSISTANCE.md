@@ -55,12 +55,6 @@ whether you continue evaluating the crate:
 | What did it cost? | **$261.39 of identified personal spend**, including $77.39 for DeepSeek. The same 14-billion-token workload ranges from about $71 to more than $17,000 under the normalized public API assumptions in the [pay-as-you-go cost comparison](#normalised-pay-as-you-go-comparison). |
 | Which model did most of the work? | DeepSeek: V4 Flash handled much of the early UltraMode/subagent work; the later sequential development stayed primarily on V4 Pro. |
 
-The Git history corroborates an iterative development process: hundreds of
-small changes, early worktree-agent merges, reverts, regression repairs,
-benchmark investigations, API redesigns, and later parity hardening. It does
-**not** prove correctness. The independent wire comparisons and behavioural
-tests are more important evidence.
-
 Choose the path that matches why you are here:
 
 - **Evaluating the crate:** read [what I reviewed](#what-i-reviewedand-what-i-did-not),
