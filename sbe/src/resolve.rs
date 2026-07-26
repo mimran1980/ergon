@@ -96,6 +96,24 @@ pub enum ResolveError {
         #[label("sinceVersion too high")]
         span: Option<miette::SourceSpan>,
     },
+    /// A declared message or group block length cannot contain its fixed fields.
+    #[error("declared blockLength {declared} is smaller than required {required} for {name}")]
+    #[diagnostic(code(ergo_sbe::resolve::block_length_too_short))]
+    #[diagnostic(help("increase blockLength to at least the end offset of the final fixed field"))]
+    BlockLengthTooShort {
+        /// Message or group name.
+        name: String,
+        /// Schema-declared block length.
+        declared: usize,
+        /// Minimum block length required by the fixed fields.
+        required: usize,
+        /// Source document for miette span rendering.
+        #[source_code]
+        source_code: Option<miette::NamedSource<String>>,
+        /// Span pointing at the declaration, when available.
+        #[label("insufficient blockLength")]
+        span: Option<miette::SourceSpan>,
+    },
 }
 
 impl ResolveError {
@@ -109,6 +127,7 @@ impl ResolveError {
             ResolveError::InvalidOffset { source_code, .. } => source_code.take(),
             ResolveError::EmptyComposite { source_code, .. } => source_code.take(),
             ResolveError::SinceVersionBeyondSchema { source_code, .. } => source_code.take(),
+            ResolveError::BlockLengthTooShort { source_code, .. } => source_code.take(),
         }
     }
 }
@@ -295,6 +314,13 @@ fn resolve_composite_offsets(
         } else {
             current_offset
         };
+        if resolved_offset < current_offset {
+            return Err(ResolveError::InvalidOffset {
+                offset: resolved_offset,
+                source_code: src.clone(),
+                span: None,
+            });
+        }
 
         tokens[i].encoding.offset = Some(resolved_offset);
 
@@ -355,6 +381,13 @@ fn resolve_message_offsets(
         } else {
             current_offset
         };
+        if resolved_offset < current_offset {
+            return Err(ResolveError::InvalidOffset {
+                offset: resolved_offset,
+                source_code: src.clone(),
+                span: None,
+            });
+        }
 
         tokens[i].encoding.offset = Some(resolved_offset);
         current_offset = resolved_offset + size;
@@ -365,6 +398,18 @@ fn resolve_message_offsets(
     // (padding). Matches sbe-tool / official SBE: the header and encoder walk
     // use the declared root block length, not the tight field packing size.
     let declared = tokens[0].encoding.offset;
+    if let Some(declared) = declared
+        && declared != 0
+        && declared < current_offset
+    {
+        return Err(ResolveError::BlockLengthTooShort {
+            name: tokens[0].name.clone(),
+            declared,
+            required: current_offset,
+            source_code: src.clone(),
+            span: None,
+        });
+    }
     let block_length = match declared {
         Some(d) if d > current_offset => d,
         _ => current_offset,
@@ -411,6 +456,13 @@ fn resolve_group_offsets(
         } else {
             current_offset
         };
+        if resolved_offset < current_offset {
+            return Err(ResolveError::InvalidOffset {
+                offset: resolved_offset,
+                source_code: src.clone(),
+                span: None,
+            });
+        }
         tokens[i].encoding.offset = Some(resolved_offset);
         current_offset = resolved_offset + size;
         i = next_i;
@@ -419,6 +471,18 @@ fn resolve_group_offsets(
     // The group's entry blockLength is the final offset of entry fields,
     // but honour a schema-declared blockLength when it is larger (padding).
     let declared = tokens[0].encoding.offset;
+    if let Some(declared) = declared
+        && declared != 0
+        && declared < current_offset
+    {
+        return Err(ResolveError::BlockLengthTooShort {
+            name: tokens[0].name.clone(),
+            declared,
+            required: current_offset,
+            source_code: src.clone(),
+            span: None,
+        });
+    }
     let block_length = match declared {
         Some(d) if d > current_offset => d,
         _ => current_offset,

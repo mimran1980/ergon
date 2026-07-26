@@ -6,7 +6,6 @@ description = "HA sample: AppMessage books via ergo-aeron-cluster try_claim + ne
 publish = false
 
 [dependencies]
-ergo-sbe = { path = "../../sbe" }
 ergo-aeron-cluster = { path = "../../cluster" }
 serde = { version = "1", features = ["derive"] }
 

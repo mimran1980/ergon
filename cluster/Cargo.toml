@@ -1,6 +1,6 @@
 [package]
 name = "ergo-aeron-cluster"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Experimental Ergo Aeron Cluster client (rusteron transport + ergo-sbe codecs)"
 keywords = ["aeron", "aeron-cluster", "cluster", "sbe"]
@@ -27,7 +27,7 @@ exclude = [
 rusteron-client = { workspace = true }
 thiserror = "2"
 # Runtime dep for `sbe_mod!` (generated codecs live in OUT_DIR).
-ergo-sbe = { version = "0.1.0", path = "../sbe" }
+ergo-sbe = { version = "0.1.1", path = "../sbe" }
 # Optional: only with feature `test-harness` (Java multi-node spawn helpers).
 rusteron-archive = { workspace = true, optional = true }
 
@@ -60,7 +60,7 @@ serial_test = { version = "3", features = ["file_locks"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [build-dependencies]
-ergo-sbe = { version = "0.1.0", path = "../sbe" }
+ergo-sbe = { version = "0.1.1", path = "../sbe" }
 
 [[bench]]
 name = "cluster_codec_bench"

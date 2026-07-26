@@ -16,7 +16,7 @@
 #![allow(unused)]
 
 mod common;
-use common::{Paths, assert_source_ok, generate};
+use common::{Paths, assert_source_ok, compile_and_run, generate};
 
 fn assert_tool_schema(name: &str, filename: &str, expected: &[&str]) {
     let (_schema, src) = generate(&Paths::sbe_tool_test_resource(filename), name);
@@ -374,17 +374,16 @@ fn unit_attribute_types_exist() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Group entry with versioned fields: verify schema parses and generates
-/// valid Rust. The generated `EntryDecoder::skip()` currently ignores the
-/// wire `block_len` from the dimension header and uses the compiled
-/// `ENTRY_BLOCK_LENGTH` constant — a classic SBE versioning bug.
-/// This test asserts structural validity; a full wire-parity test will
-/// need a binary fixture encoded at an earlier schema version.
+/// Decode older group-entry layouts using the acting block length carried in
+/// the wire dimension header, rather than the latest compiled entry size.
 #[test]
 fn group_extension_types_exist() -> Result<(), Box<dyn std::error::Error>> {
-    assert_tool_schema(
+    let (_schema, src) = generate(
+        &Paths::sbe_tool_test_resource("group-extension-test-schema.xml"),
         "grp_ext",
-        "group-extension-test-schema.xml",
+    );
+    assert_source_ok(
+        &src,
         &[
             "GroupExtensionMessageDecoder",
             "GroupExtensionMessageEncoder",
@@ -392,6 +391,139 @@ fn group_extension_types_exist() -> Result<(), Box<dyn std::error::Error>> {
             "EntriesEntryDecoder",
             "ENTRY_BLOCK_LENGTH",
         ],
+    );
+    compile_and_run(
+        "grp_ext",
+        &src,
+        r#"
+        fn append_u16(buf: &mut Vec<u8>, value: u16) {
+            buf.extend_from_slice(&value.to_le_bytes());
+        }
+        fn append_u32(buf: &mut Vec<u8>, value: u32) {
+            buf.extend_from_slice(&value.to_le_bytes());
+        }
+        fn append_u64(buf: &mut Vec<u8>, value: u64) {
+            buf.extend_from_slice(&value.to_le_bytes());
+        }
+
+        // Version 0: group entries contain only price + volume (12 bytes).
+        let mut v0 = Vec::new();
+        append_u16(&mut v0, 4);   // root blockLength
+        append_u16(&mut v0, 1);   // templateId
+        append_u16(&mut v0, 303); // schemaId
+        append_u16(&mut v0, 0);   // acting version
+        append_u32(&mut v0, 77);  // seqNum
+        append_u16(&mut v0, 12);  // acting entry blockLength
+        append_u16(&mut v0, 2);   // count
+        append_u64(&mut v0, 101);
+        append_u32(&mut v0, 11);
+        append_u64(&mut v0, 202);
+        append_u32(&mut v0, 22);
+
+        let decoded = GroupExtensionMessageDecoder::try_from(v0.as_slice())?;
+        assert_eq!(decoded.seq_num(), 77);
+        let rows: Vec<_> = decoded.into_entries()?.collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].price(), 101);
+        assert_eq!(rows[0].volume(), 11);
+        assert_eq!(rows[0].counterparty_id(), None);
+        assert_eq!(rows[0].flags(), None);
+        assert_eq!(rows[1].price(), 202);
+        assert_eq!(rows[1].volume(), 22);
+
+        // Version 1: counterpartyId is present; flags is not. Two entries
+        // prove that iteration advances by wire blockLength=20, not latest=21.
+        let mut v1 = Vec::new();
+        append_u16(&mut v1, 4);
+        append_u16(&mut v1, 1);
+        append_u16(&mut v1, 303);
+        append_u16(&mut v1, 1);
+        append_u32(&mut v1, 88);
+        append_u16(&mut v1, 20);
+        append_u16(&mut v1, 2);
+        append_u64(&mut v1, 303);
+        append_u32(&mut v1, 33);
+        append_u64(&mut v1, 3003);
+        append_u64(&mut v1, 404);
+        append_u32(&mut v1, 44);
+        append_u64(&mut v1, 4004);
+
+        let decoded = GroupExtensionMessageDecoder::try_from(v1.as_slice())?;
+        let rows: Vec<_> = decoded.into_entries()?.collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].price(), 303);
+        assert_eq!(rows[0].volume(), 33);
+        assert_eq!(rows[0].counterparty_id(), Some(3003));
+        assert_eq!(rows[0].flags(), None);
+        assert_eq!(rows[1].price(), 404);
+        assert_eq!(rows[1].volume(), 44);
+        assert_eq!(rows[1].counterparty_id(), Some(4004));
+        assert_eq!(rows[1].flags(), None);
+        "#,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &Paths::sbe_tool_test_resource("group-versioned-types-schema.xml"),
+        "grp_versioned_types",
+    );
+    compile_and_run(
+        "grp_versioned_types",
+        &src,
+        r#"
+        // Version-0 frame decoded by the version-1 schema. The entry block
+        // contains only `base`; all sinceVersion=1 members are absent.
+        let wire = [
+            0, 0,       // root blockLength
+            1, 0,       // templateId
+            48, 1,      // schemaId 304
+            0, 0,       // acting version
+            1, 0,       // entry blockLength
+            2, 0,       // count
+            7, 9,       // two version-0 entries
+        ];
+        let decoded = VersionedGroupMessageDecoder::try_from(wire.as_slice())?;
+        let rows: Vec<_> = decoded.into_entries()?.collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].base(), 7);
+        assert_eq!(rows[1].base(), 9);
+        for row in rows {
+            assert_eq!(row.later_array(), [0, 0]);
+            assert!(row.later_composite().is_none());
+            assert_eq!(row.later_composite_value(), None);
+            assert_eq!(row.raw_later_composite(), None);
+            assert_eq!(row.later_enum(), None);
+            assert_eq!(row.raw_later_enum(), None);
+            assert_eq!(row.later_set(), None);
+            assert_eq!(row.raw_later_set(), None);
+        }
+
+        // Latest-version add_struct covers multi-byte primitive arrays plus
+        // composite/enum/set fields in a flat group entry.
+        let mut latest = [0u8; 64];
+        let enc = VersionedGroupMessageEncoder::wrap_and_apply_header(&mut latest, 0);
+        let enc = enc.entries(1, |group| {
+            group.add_struct(&EntriesEntry {
+                base: 5,
+                later_array: [0x1122, 0x3344],
+                later_composite: LaterComposite::new(0x5566),
+                later_enum: LaterEnum::A,
+                later_set: LaterSet(1),
+            })
+        })?;
+        let decoded = VersionedGroupMessageDecoder::try_from(enc.as_bytes())?;
+        let row = decoded.into_entries()?.next().unwrap();
+        assert_eq!(row.base(), 5);
+        assert_eq!(row.later_array(), [0x1122, 0x3344]);
+        assert_eq!(row.later_composite_value(), Some(LaterComposite::new(0x5566)));
+        assert_eq!(row.later_enum(), Some(LaterEnum::A));
+        assert_eq!(row.later_set(), Some(LaterSet(1)));
+        "#,
     );
 
     Ok(())

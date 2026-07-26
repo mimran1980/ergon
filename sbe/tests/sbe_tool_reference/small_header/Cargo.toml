@@ -1,0 +1,12 @@
+[package]
+name = "parity_small_header"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Message format for XXXXXX"
+edition = "2021"
+
+[lib]
+name = "parity_small_header"
+path = "src/lib.rs"
+
+[workspace]

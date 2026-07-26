@@ -1408,6 +1408,8 @@ fn parse_message(
     let block_length = opt_u16_attr(node, "blockLength", "blockLength")?;
     let message_deprecated = node.attribute("deprecated").is_some();
 
+    validate_message_member_order(node)?;
+
     tokens.push(Token {
         id: Some(id),
         name: name.clone(),
@@ -1444,10 +1446,6 @@ fn parse_message(
     };
     let mut seen_names: HashSet<String> = HashSet::new();
     let mut prev_offset: Option<usize> = None;
-
-    let mut expected_block_len: usize = 0;
-    let mut all_fields_have_offsets = true;
-    let mut any_field_counted = false;
 
     for child in element_children(node) {
         parse_message_child(child, registry, tokens)?;
@@ -1492,47 +1490,33 @@ fn parse_message(
                 }
             }
         }
-
-        if child.tag_name().name() == "field"
-            && child.attribute("presence").unwrap_or("required") != "constant"
-        {
-            any_field_counted = true;
-            if let Some(offset_str) = child.attribute("offset") {
-                if let Ok(offset) = offset_str.parse::<usize>() {
-                    if let Some(type_name) = child.attribute("type") {
-                        if let Some(size) = compute_type_size(type_name, registry) {
-                            let end = offset + size;
-                            if end > expected_block_len {
-                                expected_block_len = end;
-                            }
-                        }
-                    }
-                }
-            } else {
-                all_fields_have_offsets = false;
-            }
-        }
-    }
-
-    // Validate blockLength when declared and all fields carry explicit offsets.
-    // Uses a warning (not an error) to match sbe-tool behavior — the
-    // upstream tool accepts whatever blockLength the schema declares without
-    // validation, and several official test schemas have intentionally differing
-    // values.
-    if let Some(declared_bl) = block_length {
-        if all_fields_have_offsets
-            && any_field_counted
-            && declared_bl as usize != expected_block_len
-        {
-            eprintln!(
-                "warning: message '{}' blockLength mismatch: declared {declared_bl}, \
-                 expected {expected_block_len} (sum of fixed-field offset + sizes)",
-                name,
-            );
-        }
     }
 
     tokens.push(structural(&name, Signal::EndMessage));
+    Ok(())
+}
+
+fn validate_message_member_order(node: Node<'_, '_>) -> Result<(), Fault> {
+    let mut phase = 0u8;
+    for child in element_children(node) {
+        let next_phase = match child.tag_name().name() {
+            "field" => 0,
+            "group" => 1,
+            "data" => 2,
+            _ => continue,
+        };
+        if next_phase < phase {
+            return Err(Fault::invalid(
+                child,
+                "message member order",
+                "fixed fields must precede groups, and groups must precede data fields",
+            ));
+        }
+        phase = next_phase;
+        if child.tag_name().name() == "group" {
+            validate_message_member_order(child)?;
+        }
+    }
     Ok(())
 }
 
@@ -1702,6 +1686,18 @@ fn parse_message_child(
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             let data_deprecated = node.attribute("deprecated").is_some();
             let type_name = node.attribute("type").unwrap_or("varDataEncoding");
+            let data_presence = node
+                .attribute("presence")
+                .map(|value| parse_presence(node, value))
+                .transpose()?
+                .unwrap_or(Presence::Required);
+            if data_presence != Presence::Required {
+                return Err(Fault::invalid(
+                    node,
+                    "data presence",
+                    "variable-length data cannot be optional or constant",
+                ));
+            }
 
             tokens.push(Token {
                 id: Some(id),
@@ -1716,20 +1712,72 @@ fn parse_message_child(
             });
 
             if let Some(type_tokens) = registry.registry.get(type_name) {
-                // Validate the var-data composite has length and varData fields.
-                let has_length = type_tokens
+                // FIX SBE variable-data encodings consist of exactly two
+                // scalar members named `length` and `varData`, in that order.
+                // The generated codecs write the prefix at the start of the
+                // composite and the octets immediately after it, so accepting
+                // a different layout would silently generate the wrong wire.
+                let members: Vec<&Token> = type_tokens
                     .iter()
-                    .any(|t| t.signal == Signal::BeginField && t.name == "length");
-                let has_var_data = type_tokens
-                    .iter()
-                    .any(|t| t.signal == Signal::BeginField && t.name == "varData");
-                if !has_length || !has_var_data {
+                    .filter(|token| token.signal == Signal::BeginField)
+                    .collect();
+                if members.len() != 2 || members[0].name != "length" || members[1].name != "varData"
+                {
                     return Err(Fault::invalid(
                         node,
                         "data type",
-                        format!("{type_name}: expected 'length' and 'varData' fields"),
+                        format!("{type_name}: expected exactly 'length' then 'varData' members"),
                     ));
                 }
+
+                let length = members[0];
+                let length_primitive = length.encoding.primitive_type.ok_or_else(|| {
+                    Fault::invalid(
+                        node,
+                        "data length type",
+                        format!("{type_name}.length must be a primitive unsigned integer"),
+                    )
+                })?;
+                if !matches!(
+                    length_primitive,
+                    PrimitiveType::UInt8
+                        | PrimitiveType::UInt16
+                        | PrimitiveType::UInt32
+                        | PrimitiveType::UInt64
+                ) || length.encoding.presence != Presence::Required
+                    || length.encoding.length.unwrap_or(1) != 1
+                    || length.encoding.offset.is_some_and(|offset| offset != 0)
+                {
+                    return Err(Fault::invalid(
+                        node,
+                        "data length type",
+                        format!(
+                            "{type_name}.length must be a required scalar unsigned integer at offset 0"
+                        ),
+                    ));
+                }
+
+                let var_data = members[1];
+                let expected_data_offset = length_primitive.size();
+                if !matches!(
+                    var_data.encoding.primitive_type,
+                    Some(PrimitiveType::Char | PrimitiveType::UInt8)
+                ) || var_data.encoding.presence != Presence::Required
+                    || var_data.encoding.length.unwrap_or(0) != 0
+                    || var_data
+                        .encoding
+                        .offset
+                        .is_some_and(|offset| offset != expected_data_offset)
+                {
+                    return Err(Fault::invalid(
+                        node,
+                        "data payload type",
+                        format!(
+                            "{type_name}.varData must be required variable-length octets immediately after length"
+                        ),
+                    ));
+                }
+
                 // Clone and mark the varData member as variable-length
                 // (sbe-tool makeDataFieldCompositeType equivalent — gap 10).
                 let mut data_tokens = type_tokens.clone();
@@ -2011,33 +2059,85 @@ fn parse_primitive_type(node: Node<'_, '_>, s: &str) -> Result<PrimitiveType, Fa
 /// Validate that the header type composite has the required SBE fields.
 ///
 /// The header type must be a composite with at least `blockLength`, `templateId`,
-/// `schemaId`, and `version` fields (all typically `uint16`). Returns `Ok(())`
-/// on success or a `Fault` referencing the last-checked element.
+/// `schemaId`, and `version` scalar unsigned-integer fields. Returns `Ok(())`
+/// on success or a `Fault` referencing the invalid declaration.
 ///
 /// # Gap 3 — well-formedness constraints
 ///
-/// sbe-tool validates that the header type carries these four mandatory fields.
-/// If the header type is not found in the registry it isn't flagged here
-/// (the missing type error will surface elsewhere, e.g. in resolution).
+/// This mirrors the normative message-header constraints instead of assuming
+/// the common all-`uint16` layout.
 fn validate_header_type(header_type: &str, registry: &TypeRegistry) -> Result<(), Fault> {
     let tokens = match registry.registry.get(header_type) {
         Some(t) if !t.is_empty() && t[0].signal == Signal::BeginComposite => t,
-        _ => return Ok(()), // Not in the registry or not a composite — skip
+        _ => {
+            return Err(Fault {
+                kind: FaultKind::Invalid {
+                    what: "headerType".to_string(),
+                    value: format!("{header_type}: expected a defined composite"),
+                },
+                span: None,
+            });
+        }
     };
 
-    let field_names: HashSet<&str> = tokens
+    let fields: HashMap<&str, &Token> = tokens
         .iter()
         .filter(|t| t.signal == Signal::BeginField)
-        .map(|t| t.name.as_str())
+        .map(|t| (t.name.as_str(), t))
         .collect();
 
     for required_name in &["blockLength", "templateId", "schemaId", "version"] {
-        if !field_names.contains(required_name) {
-            // Build a fault; we have no single node to point at, so no span.
+        let Some(field) = fields.get(required_name) else {
             return Err(Fault {
                 kind: FaultKind::Invalid {
                     what: "headerType".to_string(),
                     value: format!("{header_type}: missing required field '{required_name}'"),
+                },
+                span: None,
+            });
+        };
+        if !matches!(
+            field.encoding.primitive_type,
+            Some(
+                PrimitiveType::UInt8
+                    | PrimitiveType::UInt16
+                    | PrimitiveType::UInt32
+                    | PrimitiveType::UInt64
+            )
+        ) || field.encoding.length.unwrap_or(1) != 1
+            || field.encoding.presence == Presence::Optional
+        {
+            return Err(Fault {
+                kind: FaultKind::Invalid {
+                    what: "headerType".to_string(),
+                    value: format!(
+                        "{header_type}.{required_name}: expected a required or constant scalar unsigned integer"
+                    ),
+                },
+                span: None,
+            });
+        }
+    }
+
+    for count_name in ["numGroups", "numVarDataFields"] {
+        if let Some(field) = fields.get(count_name)
+            && (!matches!(
+                field.encoding.primitive_type,
+                Some(
+                    PrimitiveType::UInt8
+                        | PrimitiveType::UInt16
+                        | PrimitiveType::UInt32
+                        | PrimitiveType::UInt64
+                )
+            ) || field.encoding.length.unwrap_or(1) != 1
+                || field.encoding.presence == Presence::Optional)
+        {
+            return Err(Fault {
+                kind: FaultKind::Invalid {
+                    what: "headerType".to_string(),
+                    value: format!(
+                        "{header_type}.{count_name}: expected a required or constant scalar unsigned integer"
+                    ),
                 },
                 span: None,
             });
@@ -3126,6 +3226,7 @@ mod tests {
     fn invalid_primitive_error_describes_and_spans() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse(
             r#"<messageSchema package="x" id="1" version="0">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <message name="M" id="1"><field name="f" id="1" type="bogus"/></message>
 </messageSchema>"#,
         )
@@ -3257,6 +3358,7 @@ mod tests {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
     <type name="MyType" primitiveType="uint32" presence="required" nullValue="999"/>
   </types>
   <message name="M" id="1">
@@ -3274,6 +3376,7 @@ mod tests {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
     <type name="MT" primitiveType="uint32"/>
   </types>
   <message name="M" id="1">
@@ -3348,6 +3451,7 @@ mod tests {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
     <type name="CC" primitiveType="char" length="3" presence="constant">ABC</type>
   </types>
   <message name="M" id="1">
@@ -3507,6 +3611,75 @@ mod tests {
     }
 
     #[test]
+    fn malformed_variable_data_encodings_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let cases = [
+            (
+                "reversed members",
+                r#"<type name="varData" primitiveType="uint8" length="0"/>
+                   <type name="length" primitiveType="uint16"/>"#,
+                "",
+            ),
+            (
+                "interposed member",
+                r#"<type name="length" primitiveType="uint16"/>
+                   <type name="flags" primitiveType="uint8"/>
+                   <type name="varData" primitiveType="uint8" length="0"/>"#,
+                "",
+            ),
+            (
+                "signed length",
+                r#"<type name="length" primitiveType="int16"/>
+                   <type name="varData" primitiveType="uint8" length="0"/>"#,
+                "",
+            ),
+            (
+                "nullable length",
+                r#"<type name="length" primitiveType="uint16" presence="optional"/>
+                   <type name="varData" primitiveType="uint8" length="0"/>"#,
+                "",
+            ),
+            (
+                "non-octet payload",
+                r#"<type name="length" primitiveType="uint16"/>
+                   <type name="varData" primitiveType="uint16" length="0"/>"#,
+                "",
+            ),
+            (
+                "gap before payload",
+                r#"<type name="length" primitiveType="uint16"/>
+                   <type name="varData" primitiveType="uint8" length="0" offset="4"/>"#,
+                "",
+            ),
+            (
+                "optional data field",
+                r#"<type name="length" primitiveType="uint16"/>
+                   <type name="varData" primitiveType="uint8" length="0"/>"#,
+                r#" presence="optional""#,
+            ),
+        ];
+
+        for (name, members, data_attrs) in cases {
+            let schema = format!(
+                r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <composite name="badVarData">{members}</composite>
+  </types>
+  <message name="M" id="1">
+    <data name="d" id="1" type="badVarData"{data_attrs}/>
+  </message>
+</messageSchema>"#
+            );
+            assert!(
+                parse(&schema).is_err(),
+                "{name} must not be accepted as a variable-data encoding"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn block_length_validation_passes_for_correct_value() -> Result<(), Box<dyn std::error::Error>>
     {
         // Computed: uint64@0=8, uint16@8=2, uint8@10=1 → 11
@@ -3532,9 +3705,7 @@ mod tests {
     }
 
     #[test]
-    fn block_length_mismatch_warns_but_does_not_error() -> Result<(), Box<dyn std::error::Error>> {
-        // Mismatched blockLength is a warning (matching sbe-tool),
-        // not a parse error.
+    fn larger_block_length_is_legal_padding() -> Result<(), Box<dyn std::error::Error>> {
         let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -3551,8 +3722,123 @@ mod tests {
     <field name="c" id="3" type="uint8"  offset="10"/>
   </message>
 </messageSchema>"#;
-        // Must parse successfully despite mismatched blockLength.
-        parse(schema).unwrap();
+        let ir = parse(schema).unwrap();
+        let message = ir
+            .tokens
+            .iter()
+            .find(|token| token.signal == Signal::BeginMessage)
+            .unwrap();
+        assert_eq!(message.encoding.offset, Some(99));
+
+        Ok(())
+    }
+
+    #[test]
+    fn overlapping_fixed_field_offsets_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let cases = [
+            (
+                "message",
+                format!(
+                    r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+    <field name="a" id="1" type="uint32" offset="0"/>
+    <field name="b" id="2" type="uint16" offset="2"/>
+  </message>
+</messageSchema>"#
+                ),
+            ),
+            (
+                "group",
+                format!(
+                    r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <group name="g" id="1" dimensionType="groupSizeEncoding">
+      <field name="a" id="2" type="uint32" offset="0"/>
+      <field name="b" id="3" type="uint16" offset="2"/>
+    </group>
+  </message>
+</messageSchema>"#
+                ),
+            ),
+            (
+                "composite",
+                format!(
+                    r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <composite name="Overlap">
+      <type name="a" primitiveType="uint32"/>
+      <type name="b" primitiveType="uint16" offset="2"/>
+    </composite>
+  </types>
+  <message name="M" id="1"><field name="c" id="1" type="Overlap"/></message>
+</messageSchema>"#
+                ),
+            ),
+        ];
+
+        for (name, schema) in cases {
+            assert!(
+                parse(&schema).is_err(),
+                "{name} overlapping offsets must be rejected"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn undersized_message_and_group_block_lengths_are_rejected()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let cases = [
+            (
+                "message",
+                format!(
+                    r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1" blockLength="2">
+    <field name="a" id="1" type="uint32"/>
+  </message>
+</messageSchema>"#
+                ),
+            ),
+            (
+                "group",
+                format!(
+                    r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <group name="g" id="1" dimensionType="groupSizeEncoding" blockLength="2">
+      <field name="a" id="2" type="uint32"/>
+    </group>
+  </message>
+</messageSchema>"#
+                ),
+            ),
+        ];
+
+        for (name, schema) in cases {
+            assert!(
+                parse(&schema).is_err(),
+                "{name} blockLength must cover its fixed fields"
+            );
+        }
 
         Ok(())
     }
@@ -3732,6 +4018,145 @@ mod tests {
             msg.contains("schemaId"),
             "expected error about missing schemaId, got: {msg}"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_message_header_fields_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let cases = [
+            (
+                "missing header composite",
+                r#"<type name="NotAHeader" primitiveType="uint16"/>"#,
+            ),
+            (
+                "signed blockLength",
+                r#"<composite name="messageHeader">
+                    <type name="blockLength" primitiveType="int16"/>
+                    <type name="templateId" primitiveType="uint16"/>
+                    <type name="schemaId" primitiveType="uint16"/>
+                    <type name="version" primitiveType="uint16"/>
+                   </composite>"#,
+            ),
+            (
+                "signed templateId",
+                r#"<composite name="messageHeader">
+                    <type name="blockLength" primitiveType="uint16"/>
+                    <type name="templateId" primitiveType="int32"/>
+                    <type name="schemaId" primitiveType="uint16"/>
+                    <type name="version" primitiveType="uint16"/>
+                   </composite>"#,
+            ),
+            (
+                "array schemaId",
+                r#"<composite name="messageHeader">
+                    <type name="blockLength" primitiveType="uint16"/>
+                    <type name="templateId" primitiveType="uint16"/>
+                    <type name="schemaId" primitiveType="uint16" length="2"/>
+                    <type name="version" primitiveType="uint16"/>
+                   </composite>"#,
+            ),
+            (
+                "optional version",
+                r#"<composite name="messageHeader">
+                    <type name="blockLength" primitiveType="uint16"/>
+                    <type name="templateId" primitiveType="uint16"/>
+                    <type name="schemaId" primitiveType="uint16"/>
+                    <type name="version" primitiveType="uint16" presence="optional"/>
+                   </composite>"#,
+            ),
+            (
+                "optional group count",
+                r#"<composite name="messageHeader">
+                    <type name="blockLength" primitiveType="uint16"/>
+                    <type name="templateId" primitiveType="uint16"/>
+                    <type name="schemaId" primitiveType="uint16"/>
+                    <type name="version" primitiveType="uint16"/>
+                    <type name="numGroups" primitiveType="uint16" presence="optional"/>
+                   </composite>"#,
+            ),
+        ];
+
+        for (name, header) in cases {
+            let schema = format!(
+                r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{header}</types>
+  <message name="M" id="1"><field name="x" id="1" type="uint8"/></message>
+</messageSchema>"#
+            );
+            assert!(parse(&schema).is_err(), "{name} must be rejected");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn message_members_must_follow_fixed_group_data_order() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let types = format!(
+            r#"{HEADER_TYPES}
+<composite name="groupSizeEncoding">
+  <type name="blockLength" primitiveType="uint16"/>
+  <type name="numInGroup" primitiveType="uint16"/>
+</composite>
+<composite name="varDataEncoding">
+  <type name="length" primitiveType="uint16"/>
+  <type name="varData" primitiveType="uint8" length="0"/>
+</composite>"#
+        );
+        let invalid_bodies = [
+            (
+                "field after group",
+                r#"<group name="g" id="1"><field name="a" id="2" type="uint8"/></group>
+                   <field name="late" id="3" type="uint8"/>"#,
+            ),
+            (
+                "field after data",
+                r#"<data name="d" id="1" type="varDataEncoding"/>
+                   <field name="late" id="2" type="uint8"/>"#,
+            ),
+            (
+                "group after data",
+                r#"<data name="d" id="1" type="varDataEncoding"/>
+                   <group name="g" id="2"><field name="a" id="3" type="uint8"/></group>"#,
+            ),
+            (
+                "nested field after data",
+                r#"<group name="g" id="1">
+                     <data name="d" id="2" type="varDataEncoding"/>
+                     <field name="late" id="3" type="uint8"/>
+                   </group>"#,
+            ),
+        ];
+
+        for (name, body) in invalid_bodies {
+            let schema = format!(
+                r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{types}</types>
+  <message name="M" id="1">{body}</message>
+</messageSchema>"#
+            );
+            let error = parse(&schema).expect_err(name);
+            assert!(
+                format!("{error}").contains("message member order"),
+                "{name} failed for an unrelated reason: {error}"
+            );
+        }
+
+        let valid = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>{types}</types>
+  <message name="M" id="1">
+    <field name="fixed" id="1" type="uint8"/>
+    <group name="g" id="2"><field name="entry" id="3" type="uint8"/></group>
+    <data name="d" id="4" type="varDataEncoding"/>
+  </message>
+</messageSchema>"#
+        );
+        parse(&valid)?;
 
         Ok(())
     }

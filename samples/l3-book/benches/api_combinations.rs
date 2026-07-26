@@ -1,189 +1,64 @@
-//! Benchmarks exercising every group-encode API combination.
-//! Run with: `cargo bench`
+//! Benchmarks the current nested-group sample API.
+//!
+//! Run with:
+//! `cargo bench --manifest-path samples/l3-book/Cargo.toml --bench api_combinations`
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use l3_book::*;
+use std::hint::black_box;
 
-const T: u64 = 1_720_000_000_000_000_000;
-const BUF_SZ: usize = 65536;
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use l3_book::{book_encoded_length, encode_book};
+use rust_decimal::Decimal;
 
-fn fixed() -> L3BookFixedFields {
-    L3BookFixedFields { exchange_timestamp: T, sequence: 42 }
+const BUFFER_CAPACITY: usize = 65_536;
+
+fn decimal(value: i64) -> Decimal {
+    Decimal::new(value, 0)
 }
 
-fn bench_explicit_count_add(c: &mut Criterion) {
-    let mut g = c.benchmark_group("group/explicit_count");
-    g.throughput(Throughput::Elements(1));
-    g.bench_function("10_bids_5_asks_add", |b| {
-        let mut buf = [0u8; BUF_SZ];
-        b.iter(|| {
-            let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                .fixed(&fixed())
-                .bids(10, |bg| {
-                    for i in 0..10u16 {
-                        bg.add(|e| { e.price(i as i64 * 100).size(i as i64 * 10); Ok(()) }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .asks(5, |ag| {
-                    for i in 0..5u16 {
-                        ag.add(|e| { e.price(i as i64 * 200).size(i as i64 * 20); Ok(()) }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .symbol(black_box(b"BTCUSDT")).unwrap();
-            black_box(complete.encoded_length());
+fn bench_nested_known_counts(c: &mut Criterion) {
+    let bid_orders = [
+        (1_u64, decimal(2)),
+        (2_u64, decimal(3)),
+        (3_u64, decimal(5)),
+    ];
+    let ask_orders = [(4_u64, decimal(7)), (5_u64, decimal(11))];
+    let bids = [
+        (decimal(50_800), decimal(10), bid_orders.as_slice()),
+        (decimal(50_750), decimal(20), bid_orders.as_slice()),
+    ];
+    let asks = [
+        (decimal(50_850), decimal(15), ask_orders.as_slice()),
+        (decimal(50_900), decimal(25), ask_orders.as_slice()),
+    ];
+    let expected = book_encoded_length(&bids, &asks, b"BTCUSDT")
+        .expect("static benchmark shape must have a valid encoded length");
+
+    let mut group = c.benchmark_group("l3_book/current_api");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("size_nested_book", |bencher| {
+        bencher.iter(|| {
+            black_box(
+                book_encoded_length(black_box(&bids), black_box(&asks), black_box(b"BTCUSDT"))
+                    .expect("static benchmark shape must remain valid"),
+            )
         });
     });
-    g.finish();
-}
-
-fn bench_unknown_size_add(c: &mut Criterion) {
-    let mut g = c.benchmark_group("group/unknown_size");
-    g.throughput(Throughput::Elements(1));
-    g.bench_function("10_bids_5_asks_add", |b| {
-        let mut buf = [0u8; BUF_SZ];
-        b.iter(|| {
-            let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                .fixed(&fixed())
-                .bids_unknown_size(|bg| {
-                    for i in 0..10u16 {
-                        bg.add(|e| { e.price(i as i64 * 100).size(i as i64 * 10); Ok(()) }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .asks_unknown_size(|ag| {
-                    for i in 0..5u16 {
-                        ag.add(|e| { e.price(i as i64 * 200).size(i as i64 * 20); Ok(()) }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .symbol(black_box(b"BTCUSDT")).unwrap();
-            black_box(complete.encoded_length());
+    group.bench_function("encode_nested_book", |bencher| {
+        let mut storage = [0_u8; BUFFER_CAPACITY];
+        bencher.iter(|| {
+            let written = encode_book(
+                black_box(&mut storage[..expected]),
+                black_box(&bids),
+                black_box(&asks),
+                black_box(b"BTCUSDT"),
+            )
+            .expect("pre-sized benchmark buffer must encode");
+            assert_eq!(written, expected);
+            black_box(written)
         });
     });
-    g.finish();
+    group.finish();
 }
 
-fn bench_explicit_count_add_struct(c: &mut Criterion) {
-    let mut g = c.benchmark_group("group/explicit_count_add_struct");
-    g.throughput(Throughput::Elements(1));
-    g.bench_function("3_bids_2_nested_orders_struct", |b| {
-        let mut buf = [0u8; BUF_SZ];
-        b.iter(|| {
-            let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                .fixed(&fixed())
-                .bids(3, |bg| {
-                    for i in 0..3u16 {
-                        bg.add(|e| {
-                            e.price(i as i64 * 100).size(i as i64 * 10);
-                            e.orders(2, |og| {
-                                og.add_struct(&BidsOrdersEntry { order_id: i as u64, quantity: 1, price: i as i64 * 100 }).unwrap();
-                                og.add_struct(&BidsOrdersEntry { order_id: i as u64 + 100, quantity: 2, price: i as i64 * 100 + 1 }).unwrap();
-                                Ok(())
-                            }).unwrap();
-                            Ok(())
-                        }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .asks(3, |ag| {
-                    for i in 0..3u16 {
-                        ag.add(|e| {
-                            e.price(i as i64 * 200).size(i as i64 * 20);
-                            e.orders(2, |og| {
-                                og.add_struct(&AsksOrdersEntry { order_id: i as u64 + 200, quantity: 1, price: i as i64 * 200 }).unwrap();
-                                og.add_struct(&AsksOrdersEntry { order_id: i as u64 + 300, quantity: 2, price: i as i64 * 200 + 1 }).unwrap();
-                                Ok(())
-                            }).unwrap();
-                            Ok(())
-                        }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .symbol(black_box(b"BTCUSDT")).unwrap();
-            black_box(complete.encoded_length());
-        });
-    });
-    g.finish();
-}
-
-fn bench_mixed_unknown_struct(c: &mut Criterion) {
-    let mut g = c.benchmark_group("group/mixed_unknown_struct");
-    g.throughput(Throughput::Elements(1));
-    g.bench_function("5_bids_nested_unknown_struct", |b| {
-        let mut buf = [0u8; BUF_SZ];
-        b.iter(|| {
-            let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                .fixed(&fixed())
-                .bids_unknown_size(|bg| {
-                    for i in 0..5u16 {
-                        bg.add(|e| {
-                            e.price(i as i64 * 100).size(i as i64 * 10);
-                            e.orders_unknown_size(|og| {
-                                og.add_struct(&BidsOrdersEntry { order_id: i as u64, quantity: 1, price: i as i64 * 100 }).unwrap();
-                                og.add_struct(&BidsOrdersEntry { order_id: i as u64 + 100, quantity: 2, price: i as i64 * 100 + 1 }).unwrap();
-                                Ok(())
-                            }).unwrap();
-                            Ok(())
-                        }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .asks_unknown_size(|ag| {
-                    for i in 0..5u16 {
-                        ag.add(|e| {
-                            e.price(i as i64 * 200).size(i as i64 * 20);
-                            e.orders_unknown_size(|og| {
-                                og.add_struct(&AsksOrdersEntry { order_id: i as u64 + 200, quantity: 1, price: i as i64 * 200 }).unwrap();
-                                og.add_struct(&AsksOrdersEntry { order_id: i as u64 + 300, quantity: 2, price: i as i64 * 200 + 1 }).unwrap();
-                                Ok(())
-                            }).unwrap();
-                            Ok(())
-                        }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .symbol(black_box(b"BTCUSDT")).unwrap();
-            black_box(complete.encoded_length());
-        });
-    });
-    g.finish();
-}
-
-fn bench_large_batch(c: &mut Criterion) {
-    let mut g = c.benchmark_group("group/large_batch");
-    g.throughput(Throughput::Elements(1));
-    g.bench_function("100_bids_50_asks", |b| {
-        let mut buf = [0u8; BUF_SZ];
-        b.iter(|| {
-            let complete = L3BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                .fixed(&fixed())
-                .bids_unknown_size(|bg| {
-                    for i in 0..100u16 {
-                        bg.add(|e| { e.price(i as i64).size(i as i64 * 2); Ok(()) }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .asks_unknown_size(|ag| {
-                    for i in 0..50u16 {
-                        ag.add(|e| { e.price(i as i64 + 1000).size(i as i64 * 3); Ok(()) }).unwrap();
-                    }
-                    Ok(())
-                }).unwrap()
-                .symbol(black_box(b"MANY")).unwrap();
-            black_box(complete.encoded_length());
-        });
-    });
-    g.finish();
-}
-
-criterion_group!(
-    benches,
-    bench_explicit_count_add,
-    bench_unknown_size_add,
-    bench_explicit_count_add_struct,
-    bench_mixed_unknown_struct,
-    bench_large_batch,
-);
+criterion_group!(benches, bench_nested_known_counts);
 criterion_main!(benches);

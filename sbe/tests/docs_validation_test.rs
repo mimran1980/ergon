@@ -61,6 +61,20 @@ fn docs_schema_xml() -> String {
     )
 }
 
+fn docs_codec_source() -> Result<String, Box<dyn std::error::Error>> {
+    let ir = parse(&docs_schema_xml())?;
+    let schema = Schema::from_ir(ir);
+    Ok(Generator::new(
+        GenerationConfig::new("docs_codec").enable_domain_objects(DomainVarData::Bytes),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .ok_or("no generated docs module")?
+    .source
+    .clone())
+}
+
 fn extract_rust_fences(md: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut rest = md;
@@ -86,12 +100,15 @@ fn extract_rust_fences(md: &str) -> Vec<(usize, String)> {
 
 fn wrap_snippet(body: &str) -> String {
     let trimmed = body.trim();
+    let prelude = "#![allow(dead_code, unused_imports, unused_variables, unused_mut)]\n\
+                   mod docs_codec;\n\
+                   use docs_codec::*;\n";
     if trimmed.contains("fn main") {
         // Allow snippets that already form a program.
-        format!("#![allow(dead_code, unused_imports, unused_variables, unused_mut)]\n{trimmed}\n")
+        format!("{prelude}{trimmed}\n")
     } else {
         format!(
-            "#![allow(dead_code, unused_imports, unused_variables, unused_mut)]\n\
+            "{prelude}\
              fn main() -> Result<(), Box<dyn std::error::Error>> {{\n\
              {trimmed}\n\
              Ok(())\n\
@@ -100,7 +117,12 @@ fn wrap_snippet(body: &str) -> String {
     }
 }
 
-fn compile_snippet(tmp_root: &Path, name: &str, body: &str) -> Result<(), String> {
+fn compile_snippet(
+    tmp_root: &Path,
+    name: &str,
+    body: &str,
+    docs_codec: &str,
+) -> Result<(), String> {
     let crate_dir = tmp_root.join(name);
     fs::create_dir_all(crate_dir.join("src")).map_err(|e| e.to_string())?;
     let ergo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -116,6 +138,7 @@ ergo-sbe = {{ path = "{ergo}" }}
         ergo = ergo_path.display()
     );
     fs::write(crate_dir.join("Cargo.toml"), cargo_toml).map_err(|e| e.to_string())?;
+    fs::write(crate_dir.join("src/docs_codec.rs"), docs_codec).map_err(|e| e.to_string())?;
     fs::write(crate_dir.join("src/main.rs"), wrap_snippet(body)).map_err(|e| e.to_string())?;
 
     let target_dir = tmp_root.join("target");
@@ -143,10 +166,12 @@ fn readme_rust_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     let md = fs::read_to_string(&readme_path)?;
     let fences = extract_rust_fences(&md);
     assert!(
-        !fences.is_empty(),
-        "expected at least one ```rust fence in README.md"
+        fences.len() >= 8,
+        "expected at least eight compile-checked ```rust fences in README.md, found {}",
+        fences.len()
     );
 
+    let docs_codec = docs_codec_source()?;
     let tmp = tempfile::tempdir()?;
     for (i, (line, body)) in fences.iter().enumerate() {
         // Skip pure include! shape that needs OUT_DIR — those should be rust,ignore.
@@ -154,7 +179,7 @@ fn readme_rust_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         let name = format!("readme_snip_{i}");
-        compile_snippet(tmp.path(), &name, body).map_err(|e| {
+        compile_snippet(tmp.path(), &name, body, &docs_codec).map_err(|e| {
             format!(
                 "README.md rust fence near line {line} failed to compile:\n{e}\n--- body ---\n{body}"
             )

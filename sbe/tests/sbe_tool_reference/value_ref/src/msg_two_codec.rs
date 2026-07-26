@@ -149,7 +149,7 @@ pub mod decoder {
             )
         }
 
-        /// CONSTANT 
+        /// CONSTANT
         #[inline]
         pub fn time_unit_type_one(&self) -> u8 {
             3
@@ -158,4 +158,3 @@ pub mod decoder {
     }
 
 } // end decoder
-

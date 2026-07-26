@@ -63,7 +63,7 @@ pub mod encoder {
         }
 
     }
-} // end encoder mod 
+} // end encoder mod
 
 pub mod decoder {
     use super::*;
@@ -106,11 +106,11 @@ pub mod decoder {
             self.get_buf().get_i32_at(self.offset)
         }
 
-        /// CONSTANT 
+        /// CONSTANT
         #[inline]
         pub fn exponent(&self) -> i8 {
             0
         }
 
     }
-} // end decoder mod 
+} // end decoder mod

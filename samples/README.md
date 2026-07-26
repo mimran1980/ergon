@@ -38,14 +38,14 @@ library at runtime.
 |---------|----------------------|----------------|-------------|
 | **Build only** (**product / samples default**) | `ergo-sbe` | — | `generate_to_dir` → `src/generated/` (gitignored) + `#[path = "generated/….rs"]` |
 | **OUT_DIR only** | `ergo-sbe` | — | `generate_to_out_dir` + `include!(concat!(env!("OUT_DIR"), …))` — fine for apps; **poor IDE go-to-def** |
-| **Build + runtime** | `ergo-sbe` | `ergo-sbe` | Macros / generator helpers at runtime (`sbe_mod!`) |
+| **Build + runtime** | `ergo-sbe` | `ergo-sbe` | Macros such as `sbe_mod!` plus build-time generation |
 | **Runtime only** | — | `ergo-sbe` | Call `parse` / `Generator` as a library (no `build.rs`) |
 
 | Sample | Pattern | Purpose | External requirements |
 |---|---|---|---|
 | [`sbe-feature-tour/`](sbe-feature-tour/) | **Build only** | **Teaching / feature map** — EncodedLength, stages, DTO, AnyMessage, **both** conversion styles | None |
 | [`l3-book/`](l3-book/) | **Build only** | Nested/ragged L3 books; **`with_domain_type` only** | None for local tests |
-| [`exchange-example/`](exchange-example/) | **Build + runtime** (decimal helpers) | Multi-schema + **`with_conversion` only** + Aeron IPC | Network only for live exchange paths |
+| [`exchange-example/`](exchange-example/) | **Build only** | Multi-schema + **`with_conversion` only** + Aeron IPC | Network only for live exchange paths |
 | [`cluster-rfq/`](cluster-rfq/) | **Build only** | RFQ / auction protocol codecs + cluster examples | Java harness for live examples |
 | [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | **Build only** (may still dep cluster) | Claim-based Cluster publishing + HA-shaped book | Java harness only for leader-kill coverage |
 | [`sbe-codegen-examples/`](sbe-codegen-examples/) | **Runtime only** | Generator API as a library (no `build.rs`) | None |

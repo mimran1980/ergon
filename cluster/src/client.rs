@@ -2,13 +2,7 @@
 //! full SBE session handshake. Java-parity entry point for the **Ergo Aeron
 //! Cluster** client (experimental prototype on `rusteron-client`):
 //!
-//! ```ignore
-//! let mut client = AeronCluster::connect(builder, aeron_dir)?;
-//! client.offer(b"hello")?;
-//! client.poll_egress(&mut adapter, 10)?;
-//! client.send_keep_alive()?;
-//! client.close()?;
-//! ```
+//! → [`cluster/tests`](https://github.com/mimran1980/ergon/blob/main/cluster/tests/cluster_connect_test.rs)
 //!
 //! Hot path: [`AeronCluster::try_claim`] writes SessionMessageHeader via ergo-sbe
 //! into the claim; fill app payload then [`ClusterClaim::commit`].

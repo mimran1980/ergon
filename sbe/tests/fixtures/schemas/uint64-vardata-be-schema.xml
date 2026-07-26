@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="uint64_vardata_test"
+                   id="260"
+                   version="1"
+                   semanticVersion="1.0"
+                   byteOrder="bigEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="varDataEncoding64">
+            <type name="length" primitiveType="uint64"/>
+            <type name="varData" primitiveType="uint8" length="0"/>
+        </composite>
+    </types>
+    <sbe:message name="WideData" id="9">
+        <field name="sequence" id="1" type="uint32"/>
+        <data name="payload" id="2" type="varDataEncoding64"/>
+    </sbe:message>
+</sbe:messageSchema>

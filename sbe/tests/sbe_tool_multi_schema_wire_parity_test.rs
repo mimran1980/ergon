@@ -17,24 +17,305 @@
 //! (or in `sbe_tool_wire_parity_test` for deep Car). Non-empty payloads where
 //! the message has fields.
 //!
-//! ## Permanent exclusions (sbe-tool crate does not compile as Rust)
-//!
-//! - **basic_types**: sbe-tool emits `pub mod enum` (Rust keyword) — crate
-//!   does not compile.
-//! - **code_generation** / **dto_test**: sbe-tool emits `pub mod break` and
-//!   enum variants `false`/`true` (Rust keywords) — crates do not compile.
-//! - **issue1028 / issue1057**: large B3 FIXP messages; not dual-encoded here
-//!   (scope bound); packages remain vendored for future expansion.
-//! - **fix_messages**: huge multi-message FIX sample set; representative
-//!   FIX shape covered via `new_order_single` (same generation pipeline).
+//! The pinned sbe-tool Rust backend emits invalid Rust identifiers for three
+//! schemas. The regeneration script applies documented compile-only keyword
+//! repairs to those packages so every reference header can be exercised.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, unused)]
 
 mod common;
-use common::{Paths, dual_encode_run};
+use common::{Paths, dual_encode_run, dual_header_decode_run};
 
 fn schema(name: &str) -> std::path::PathBuf {
     Paths::sbe_tool_test_resource(name)
+}
+
+/// Every checked-in sbe-tool package must agree with ergo-sbe on decoding and
+/// encoding the schema-declared message-header byte order. This is separate
+/// from full-frame encoder parity so an encoder/decoder disagreement cannot be
+/// hidden by a self-roundtrip.
+#[test]
+fn all_reference_message_headers_follow_schema_byte_order() {
+    let cases = [
+        ("basic_schema", "basic-schema.xml", false),
+        ("basic_types", "basic-types-schema.xml", false),
+        ("basic_group", "basic-group-schema.xml", false),
+        ("nested_group", "nested-group-schema.xml", false),
+        ("group_with_data", "group-with-data-schema.xml", false),
+        ("composite_elements", "composite-elements-schema.xml", false),
+        ("encoding_types", "encoding-types-schema.xml", false),
+        ("code_generation", "code-generation-schema.xml", false),
+        ("value_ref", "value-ref-schema.xml", false),
+        (
+            "embedded_length",
+            "embedded-length-and-count-schema.xml",
+            false,
+        ),
+        ("new_order_single", "new-order-single-schema.xml", false),
+        ("block_length", "block-length-schema.xml", false),
+        ("dto_test", "dto-test-schema.xml", false),
+        (
+            "basic_var_length",
+            "basic-variable-length-schema.xml",
+            false,
+        ),
+        ("issue435", "issue435.xml", true),
+        ("issue895", "issue895.xml", true),
+        ("issue972", "issue972.xml", false),
+        ("issue984", "issue984.xml", false),
+        ("issue987", "issue987.xml", false),
+        ("issue1028", "issue1028.xml", false),
+        ("issue1057", "issue1057.xml", false),
+        ("issue1066", "issue1066.xml", false),
+        ("optional_enum_nullify", "optional_enum_nullify.xml", false),
+        (
+            "fixed_array",
+            "fixed-sized-primitive-array-types.xml",
+            false,
+        ),
+        ("nested_composite", "nested-composite-name.xml", false),
+        ("bigendian", "example-bigendian-test-schema.xml", true),
+        ("baseline", "example-schema.xml", false),
+        ("extension", "example-extension-schema.xml", false),
+        ("bench_car", "car.xml", false),
+        ("fix_messages", "fix-message-samples.xml", false),
+        ("all_types_le", "all-types-le-schema.xml", false),
+        ("all_types_be", "all-types-be-schema.xml", true),
+        ("uint64_vardata_be", "uint64-vardata-be-schema.xml", true),
+    ];
+
+    for (key, schema_name, big_endian) in cases {
+        dual_header_decode_run(
+            &format!("header_{key}"),
+            &schema(schema_name),
+            key,
+            big_endian,
+        );
+    }
+}
+
+/// sbe-tool's own regression schema uses a seven-byte message header with
+/// uint8 templateId, version, and blockLength fields. Exercise the exact bytes
+/// and both cross-decoding directions so the general header path cannot
+/// silently assume the recommended four-uint16 layout.
+#[test]
+fn small_width_message_header_is_byte_identical_and_cross_decodable() {
+    dual_encode_run(
+        "small_width_message_header",
+        &schema("npe-small-header.xml"),
+        "small_header",
+        r###"
+        use tool::{
+            Decoder, Encoder, ReadBuf, WriteBuf,
+            message_header_codec::MessageHeaderDecoder as ToolHeaderDec,
+            ping_codec::{
+                PingDecoder as ToolDec,
+                PingEncoder as ToolEnc,
+            },
+        };
+
+        let mut ergo_buf = [0u8; 32];
+        let _ergo_enc = PingEncoder::wrap_and_apply_header(&mut ergo_buf, 0);
+        let ergo_len = PingEncoder::ENCODED_LENGTH;
+
+        let mut tool_buf = [0u8; 32];
+        let mut tool_enc = ToolEnc::default().wrap(
+            WriteBuf::new(&mut tool_buf),
+            tool::message_header_codec::ENCODED_LENGTH,
+        );
+        tool_enc = tool_enc.header(0).parent().unwrap();
+        let tool_len = tool_enc.get_limit();
+
+        let expected = [0xd1, 0x07, 1, 0, 0, 0, 0];
+        assert_eq!(PingEncoder::HEADER_LENGTH, 7);
+        assert_eq!(tool::message_header_codec::ENCODED_LENGTH, 7);
+        assert_eq!(&ergo_buf[..ergo_len], &expected);
+        assert_frames_eq(
+            "small-width message header",
+            &ergo_buf[..ergo_len],
+            &tool_buf[..tool_len],
+        );
+
+        // Ergo encoding -> independent sbe-tool decoding.
+        let tool_header =
+            ToolHeaderDec::default().wrap(ReadBuf::new(&ergo_buf[..ergo_len]), 0);
+        assert_eq!(tool_header.schema_id(), 2001);
+        assert_eq!(tool_header.version(), 1);
+        assert_eq!(tool_header.template_id(), 0);
+        assert_eq!(tool_header.block_length(), 0);
+        assert_eq!(tool_header.num_groups(), 0);
+        assert_eq!(tool_header.num_var_data_fields(), 0);
+        let tool_dec = ToolDec::default().header(tool_header, 0);
+        assert_eq!(tool_dec.encoded_length(), 0);
+
+        // sbe-tool encoding -> Ergo decoding and schema dispatch helpers.
+        let ergo_dec = PingDecoder::try_from(&tool_buf[..tool_len]).unwrap();
+        assert_eq!(ergo_dec.acting_version(), 1);
+        assert_eq!(ergo_dec.acting_block_length(), 0);
+        assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some((0, 2001)));
+        assert_eq!(schema_id_from_header(&tool_buf[..tool_len]), Some(2001));
+        match AnyMessage::decode(&tool_buf[..tool_len], 0).unwrap() {
+            AnyMessage::Ping(_) => {}
+            AnyMessage::Unknown { .. } => panic!("known Ping decoded as unknown"),
+        }
+        println!("PASS: small_width_message_header");
+        "###,
+    );
+}
+
+/// The common eight-byte header matrix above intentionally constructs four
+/// `uint16` fields. This separate oracle covers the standard's supported
+/// non-recommended blockLength width and schema-defined composite padding.
+#[test]
+fn custom_message_header_layout_is_byte_identical_and_cross_decodable() {
+    dual_encode_run(
+        "custom_header_layout",
+        &Paths::custom_header_layout_schema(),
+        "custom_header_layout",
+        r###"
+        use tool::{
+            Decoder, Encoder, ReadBuf, WriteBuf,
+            custom_message_codec::{
+                CustomMessageDecoder as ToolDec,
+                CustomMessageEncoder as ToolEnc,
+            },
+            message_header_codec::MessageHeaderDecoder as ToolHeaderDec,
+        };
+
+        for value in [0u32, 1, 0x1234_5678, u32::MAX - 1] {
+            let mut ergo_buf = [0u8; 64];
+            let mut ergo_enc =
+                CustomMessageEncoder::wrap_and_apply_header(&mut ergo_buf, 0);
+            ergo_enc.value(value);
+            let ergo_len = CustomMessageEncoder::ENCODED_LENGTH;
+
+            let mut tool_buf = [0u8; 64];
+            let mut tool_enc = ToolEnc::default().wrap(
+                WriteBuf::new(&mut tool_buf),
+                tool::message_header_codec::ENCODED_LENGTH,
+            );
+            tool_enc = tool_enc.header(0).parent().unwrap();
+            tool_enc.value(value);
+            let tool_len = tool_enc.get_limit();
+
+            assert_eq!(CustomMessageEncoder::HEADER_LENGTH, 14);
+            assert_eq!(tool::message_header_codec::ENCODED_LENGTH, 14);
+            assert_frames_eq(
+                &format!("custom header value={value}"),
+                &ergo_buf[..ergo_len],
+                &tool_buf[..tool_len],
+            );
+
+            let mut expected = [0u8; 18];
+            expected[..14].copy_from_slice(&[
+                4,       // uint8 blockLength at offset 0
+                0, 0,    // schema padding
+                7, 0,    // templateId at offset 3
+                2, 1,    // schemaId 258 at offset 5
+                3, 0,    // version at offset 7
+                0,       // schema padding
+                0, 0,    // numGroups
+                0, 0,    // numVarDataFields
+            ]);
+            expected[14..18].copy_from_slice(&value.to_le_bytes());
+            assert_eq!(&ergo_buf[..ergo_len], &expected);
+
+            // Ergo encoding -> independent sbe-tool decoding.
+            let tool_header =
+                ToolHeaderDec::default().wrap(ReadBuf::new(&ergo_buf[..ergo_len]), 0);
+            assert_eq!(tool_header.block_length(), 4);
+            assert_eq!(tool_header.template_id(), 7);
+            assert_eq!(tool_header.schema_id(), 258);
+            assert_eq!(tool_header.version(), 3);
+            let tool_dec =
+                ToolDec::default().header(tool_header, 0);
+            assert_eq!(tool_dec.value(), value);
+
+            // sbe-tool encoding -> Ergo decoding, including dispatch helpers.
+            let ergo_dec =
+                CustomMessageDecoder::try_from(&tool_buf[..tool_len]).unwrap();
+            assert_eq!(ergo_dec.value(), value);
+            assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some((7, 258)));
+            assert_eq!(schema_id_from_header(&tool_buf[..tool_len]), Some(258));
+        }
+        println!("PASS: custom_message_header_layout");
+        "###,
+    );
+}
+
+#[test]
+fn custom_big_endian_message_header_layout_is_byte_identical_and_cross_decodable() {
+    dual_encode_run(
+        "custom_header_layout_be",
+        &Paths::custom_header_layout_be_schema(),
+        "custom_header_layout_be",
+        r###"
+        use tool::{
+            Decoder, Encoder, ReadBuf, WriteBuf,
+            custom_be_message_codec::{
+                CustomBeMessageDecoder as ToolDec,
+                CustomBeMessageEncoder as ToolEnc,
+            },
+            message_header_codec::MessageHeaderDecoder as ToolHeaderDec,
+        };
+
+        for value in [0u32, 1, 0x1234_5678, u32::MAX - 1] {
+            let mut ergo_buf = [0u8; 64];
+            let mut ergo_enc =
+                CustomBeMessageEncoder::wrap_and_apply_header(&mut ergo_buf, 0);
+            ergo_enc.value(value);
+            let ergo_len = CustomBeMessageEncoder::ENCODED_LENGTH;
+
+            let mut tool_buf = [0u8; 64];
+            let mut tool_enc = ToolEnc::default().wrap(
+                WriteBuf::new(&mut tool_buf),
+                tool::message_header_codec::ENCODED_LENGTH,
+            );
+            tool_enc = tool_enc.header(0).parent().unwrap();
+            tool_enc.value(value);
+            let tool_len = tool_enc.get_limit();
+
+            assert_eq!(CustomBeMessageEncoder::HEADER_LENGTH, 17);
+            assert_eq!(tool::message_header_codec::ENCODED_LENGTH, 17);
+            assert_frames_eq(
+                &format!("custom BE header value={value}"),
+                &ergo_buf[..ergo_len],
+                &tool_buf[..tool_len],
+            );
+
+            let mut expected = [0u8; 21];
+            expected[..17].copy_from_slice(&[
+                0,             // schema padding
+                0, 0, 0, 4,   // uint32 blockLength at offset 1
+                0,             // schema padding
+                0, 8,          // templateId at offset 6
+                1, 3,          // schemaId 259 at offset 8
+                0, 4,          // version at offset 10
+                0,             // schema padding
+                0, 0,          // numGroups
+                0, 0,          // numVarDataFields
+            ]);
+            expected[17..21].copy_from_slice(&value.to_be_bytes());
+            assert_eq!(&ergo_buf[..ergo_len], &expected);
+
+            let tool_header =
+                ToolHeaderDec::default().wrap(ReadBuf::new(&ergo_buf[..ergo_len]), 0);
+            assert_eq!(tool_header.block_length(), 4);
+            assert_eq!(tool_header.template_id(), 8);
+            assert_eq!(tool_header.schema_id(), 259);
+            assert_eq!(tool_header.version(), 4);
+            let tool_dec = ToolDec::default().header(tool_header, 0);
+            assert_eq!(tool_dec.value(), value);
+
+            let ergo_dec =
+                CustomBeMessageDecoder::try_from(&tool_buf[..tool_len]).unwrap();
+            assert_eq!(ergo_dec.value(), value);
+            assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some((8, 259)));
+            assert_eq!(schema_id_from_header(&tool_buf[..tool_len]), Some(259));
+        }
+        println!("PASS: custom_big_endian_message_header_layout");
+        "###,
+    );
 }
 
 // ── basic_schema ──────────────────────────────────────────────────────────
@@ -67,6 +348,89 @@ fn basic_schema_fixed_scalar_matrix() {
             assert_frames_eq(&format!("basic_schema tag={tag}"), &ebuf[..el], &tbuf[..tl]);
         }
         println!("PASS: basic_schema_fixed_scalar_matrix");
+        "###,
+    );
+}
+
+/// A constant required header member has zero wire footprint. This upstream
+/// sbe-tool parser fixture therefore has a six-byte header even though
+/// `schemaId` remains observable as the constant value `1`.
+#[test]
+fn constant_schema_id_header_is_byte_identical_and_cross_decodable() {
+    dual_encode_run(
+        "constant_schema_id_header",
+        &schema("basic-schema-constant-header-field.xml"),
+        "constant_header",
+        r###"
+        use tool::{
+            Decoder, Encoder, ReadBuf, WriteBuf,
+            message_header_codec::MessageHeaderDecoder as ToolHeaderDec,
+            test_message_50001_codec::{
+                TestMessage50001Decoder as ToolDec,
+                TestMessage50001Encoder as ToolEnc,
+            },
+        };
+
+        for tag in [0u32, 1, 0x1234_5678, u32::MAX - 1] {
+            let mut ergo_buf = [0u8; 64];
+            let mut ergo_enc =
+                TestMessage50001Encoder::wrap_and_apply_header(&mut ergo_buf, 0);
+            ergo_enc.tag40001(tag);
+            let ergo_len = TestMessage50001Encoder::ENCODED_LENGTH;
+
+            let mut tool_buf = [0u8; 64];
+            let mut tool_enc = ToolEnc::default().wrap(
+                WriteBuf::new(&mut tool_buf),
+                tool::message_header_codec::ENCODED_LENGTH,
+            );
+            tool_enc = tool_enc.header(0).parent().unwrap();
+            tool_enc.tag_40001(tag);
+            let tool_len = tool_enc.get_limit();
+
+            assert_eq!(TestMessage50001Encoder::HEADER_LENGTH, 6);
+            assert_eq!(tool::message_header_codec::ENCODED_LENGTH, 6);
+            assert_frames_eq(
+                &format!("constant schemaId header tag={tag}"),
+                &ergo_buf[..ergo_len],
+                &tool_buf[..tool_len],
+            );
+
+            let mut expected = [0u8; 22];
+            expected[..6].copy_from_slice(&[16, 0, 0x51, 0xc3, 0, 0]);
+            expected[6..10].copy_from_slice(&tag.to_le_bytes());
+            assert_eq!(&ergo_buf[..ergo_len], &expected);
+
+            // Ergo encoding -> independent sbe-tool decoding.
+            let tool_header =
+                ToolHeaderDec::default().wrap(ReadBuf::new(&ergo_buf[..ergo_len]), 0);
+            assert_eq!(tool_header.block_length(), 16);
+            assert_eq!(tool_header.template_id(), 50001);
+            assert_eq!(tool_header.schema_id(), 1);
+            assert_eq!(tool_header.version(), 0);
+            let tool_dec = ToolDec::default().header(tool_header, 0);
+            assert_eq!(tool_dec.tag_40001(), tag);
+
+            // sbe-tool encoding -> Ergo decoding and dispatch helpers.
+            let ergo_dec =
+                TestMessage50001Decoder::try_from(&tool_buf[..tool_len]).unwrap();
+            assert_eq!(ergo_dec.tag40001(), tag);
+            assert_eq!(
+                MessageHeader::peek_header(&tool_buf[..tool_len]),
+                Some((50001, 1)),
+            );
+            assert_eq!(schema_id_from_header(&tool_buf[..tool_len]), Some(1));
+            assert_eq!(schema_id_from_header(&[]), None);
+            assert_eq!(schema_id_from_header(&tool_buf[..5]), None);
+            match AnyMessage::decode(&tool_buf[..tool_len], 0).unwrap() {
+                AnyMessage::TestMessage50001(decoder) => {
+                    assert_eq!(decoder.tag40001(), tag);
+                }
+                AnyMessage::Unknown { .. } => {
+                    panic!("known TestMessage50001 decoded as unknown");
+                }
+            }
+        }
+        println!("PASS: constant_schema_id_header");
         "###,
     );
 }
@@ -667,6 +1031,7 @@ fn bigendian_car_empty() {
             car_codec::encoder::{
                 CarEncoder as ToolEnc, FuelFiguresEncoder, PerformanceFiguresEncoder,
             },
+            car_codec::decoder::CarDecoder as ToolDec,
             message_header_codec,
             model::Model as ToolModel,
             optional_extras::OptionalExtras as ToolExtras,
@@ -719,6 +1084,20 @@ fn bigendian_car_empty() {
         t.manufacturer("").model("").activation_code("");
         let tl = t.get_limit();
         assert_frames_eq("bigendian empty", &ebuf[..el], &tbuf[..tl]);
+
+        // Cross-decode the complete BE frame in both directions. Full-frame
+        // encode equality alone cannot catch a decoder using the wrong order.
+        let ergo_from_tool = CarDecoder::try_from(&tbuf[..tl])?;
+        assert_eq!(ergo_from_tool.serial_number(), 1);
+        assert_eq!(ergo_from_tool.model_year(), 2000);
+        assert_eq!(ergo_from_tool.code(), Model::B);
+
+        let tool_header = tool::message_header_codec::MessageHeaderDecoder::default()
+            .wrap(tool::ReadBuf::new(&ebuf[..el]), 0);
+        let tool_from_ergo = ToolDec::default().header(tool_header, 0);
+        assert_eq!(tool_from_ergo.serial_number(), 1);
+        assert_eq!(tool_from_ergo.model_year(), 2000);
+        assert_eq!(tool_from_ergo.code(), ToolModel::B);
 
         // Non-trivial: one fuel entry with non-zero data, short var-data
         {
@@ -803,6 +1182,22 @@ fn basic_var_length_passwords() {
             let tl = t.get_limit();
             assert_frames_eq(&format!("var_len len={len}"), &ebuf[..el], &tbuf[..tl]);
         }
+
+        // Even the explicitly unchecked API may bypass only the schema's
+        // maxValue; it must never truncate a length that does not fit the
+        // uint8 wire prefix.
+        let overflow = vec![b'x'; 256];
+        let mut overflow_buf = vec![0u8; 512];
+        let overflow_enc =
+            TestMessage1Encoder::wrap_and_apply_header(&mut overflow_buf, 0);
+        assert!(matches!(
+            overflow_enc.encrypted_new_password_unchecked(&overflow),
+            Err(sbe_rt::EncodeError::VarDataTooLong {
+                max_length: 255,
+                actual: 256,
+                ..
+            })
+        ));
         println!("PASS: basic_var_length_passwords");
         "###,
     );
@@ -1389,7 +1784,10 @@ fn issue895_optional_floats() {
         use tool::{
             Encoder, WriteBuf,
             message_header_codec,
-            issue_895_codec::Issue895Encoder as ToolEnc,
+            issue_895_codec::{
+                Issue895Decoder as ToolDec,
+                Issue895Encoder as ToolEnc,
+            },
         };
 
         // Present floats only — null sentinels differ between generators when
@@ -1409,6 +1807,16 @@ fn issue895_optional_floats() {
             t.optional_double(d);
             let tl = t.get_limit();
             assert_frames_eq(&format!("issue895 {f} {d}"), &ebuf[..el], &tbuf[..tl]);
+
+            let ergo_from_tool = Issue895Decoder::try_from(&tbuf[..tl])?;
+            assert_eq!(ergo_from_tool.optional_float(), Some(f));
+            assert_eq!(ergo_from_tool.optional_double(), Some(d));
+
+            let tool_header = tool::message_header_codec::MessageHeaderDecoder::default()
+                .wrap(tool::ReadBuf::new(&ebuf[..el]), 0);
+            let tool_from_ergo = ToolDec::default().header(tool_header, 0);
+            assert_eq!(tool_from_ergo.optional_float(), Some(f));
+            assert_eq!(tool_from_ergo.optional_double(), Some(d));
         }
         println!("PASS: issue895_optional_floats");
         "###,
@@ -2322,7 +2730,10 @@ fn issue435_set_ref_in_header() {
         use tool::{
             Encoder, WriteBuf,
             message_header_codec,
-            issue_435_codec::Issue435Encoder as ToolEnc,
+            issue_435_codec::{
+                Issue435Decoder as ToolDec,
+                Issue435Encoder as ToolEnc,
+            },
             example_ref_codec::ExampleRefEncoder,
             enum_ref::EnumRef as ToolEnum,
         };
@@ -2349,12 +2760,19 @@ fn issue435_set_ref_in_header() {
                 ergo_bytes,
                 &tbuf[..tl],
             );
+
+            let ergo_from_tool = Issue435Decoder::try_from(&tbuf[..tl])?;
+            assert_eq!(ergo_from_tool.example_value().e(), ev);
+
+            let tool_header = tool::message_header_codec::MessageHeaderDecoder::default()
+                .wrap(tool::ReadBuf::new(ergo_bytes), 0);
+            let tool_from_ergo = ToolDec::default().header(tool_header, 0);
+            assert_eq!(tool_from_ergo.example_decoder().e(), e_val);
         }
         println!("PASS: issue435_set_ref_in_header");
         "###,
     );
 }
-
 
 // ── issue1028 / issue1057: FIXP execution reports ────────────────────────
 
@@ -2541,7 +2959,7 @@ fn dual_decode_group_cross_roundtrip() {
     );
 }
 
-// ── all_types_le: uint16 var-data length, all scalar types, big-endian ───
+// ── all_types_le: uint16 var-data length and scalar fields, little-endian ─
 
 #[test]
 fn all_types_le_uint16_var_data_and_scalars() {
@@ -2552,7 +2970,10 @@ fn all_types_le_uint16_var_data_and_scalars() {
         r###"
         use tool::{
             Encoder, WriteBuf, message_header_codec,
-            all_types_codec::AllTypesEncoder as ToolEnc,
+            all_types_codec::{
+                AllTypesDecoder as ToolDec,
+                AllTypesEncoder as ToolEnc,
+            },
             test_enum::TestEnum as ToolEnum,
         };
 
@@ -2591,7 +3012,10 @@ fn all_types_be_big_endian() {
         r###"
         use tool::{
             Encoder, WriteBuf, message_header_codec,
-            all_types_codec::AllTypesEncoder as ToolEnc,
+            all_types_codec::{
+                AllTypesDecoder as ToolDec,
+                AllTypesEncoder as ToolEnc,
+            },
             test_enum::TestEnum as ToolEnum,
         };
 
@@ -2612,7 +3036,99 @@ fn all_types_be_big_endian() {
         t.var_data(data);
         let tl = t.get_limit();
         assert_frames_eq("all_types_be", ergo_bytes, &tbuf[..tl]);
+
+        let ergo_from_tool = AllTypesDecoder::try_from(&tbuf[..tl])?;
+        assert_eq!(ergo_from_tool.enum_field(), TestEnum::A);
+        let (decoded_data, _complete) = ergo_from_tool.into_var_data()?;
+        assert_eq!(decoded_data, data);
+
+        let tool_header = tool::message_header_codec::MessageHeaderDecoder::default()
+            .wrap(tool::ReadBuf::new(ergo_bytes), 0);
+        let mut tool_from_ergo = ToolDec::default().header(tool_header, 0);
+        assert_eq!(tool_from_ergo.enum_field(), ToolEnum::A);
+        let coordinates = tool_from_ergo.var_data_decoder();
+        assert_eq!(tool_from_ergo.var_data_slice(coordinates), data);
         println!("PASS: all_types_be_big_endian");
+        "###,
+    );
+}
+
+#[test]
+fn uint64_var_data_length_is_byte_identical_and_cross_decodable() {
+    dual_encode_run(
+        "duali_u64_vardata_be",
+        &Paths::uint64_vardata_be_schema(),
+        "uint64_vardata_be",
+        r###"
+        use tool::{
+            Decoder, Encoder, ReadBuf, WriteBuf,
+            message_header_codec,
+            wide_data_codec::{
+                WideDataDecoder as ToolDec,
+                WideDataEncoder as ToolEnc,
+            },
+        };
+
+        for data in [
+            Vec::new(),
+            vec![0xa5],
+            (0..=255u8).cycle().take(300).collect::<Vec<_>>(),
+        ] {
+            let sequence = 0x1234_5678;
+
+            let mut ergo_buf = vec![0u8; 1024];
+            let mut ergo_enc = WideDataEncoder::wrap_and_apply_header(&mut ergo_buf, 0);
+            ergo_enc.sequence(sequence);
+            let ergo_complete = ergo_enc.payload(&data)?;
+            let ergo_len = ergo_complete.encoded_length_with_header();
+
+            let mut tool_buf = vec![0u8; 1024];
+            let mut tool_enc = ToolEnc::default().wrap(
+                WriteBuf::new(&mut tool_buf),
+                message_header_codec::ENCODED_LENGTH,
+            );
+            tool_enc = tool_enc.header(0).parent().unwrap();
+            tool_enc.sequence(sequence).payload(&data);
+            let tool_len = tool_enc.get_limit();
+
+            assert_frames_eq(
+                &format!("uint64 BE var-data len={}", data.len()),
+                &ergo_buf[..ergo_len],
+                &tool_buf[..tool_len],
+            );
+            assert_eq!(
+                &ergo_buf[12..20],
+                &(data.len() as u64).to_be_bytes(),
+                "the length prefix must occupy eight big-endian bytes",
+            );
+
+            let ergo_from_tool = WideDataDecoder::try_from(&tool_buf[..tool_len])?;
+            assert_eq!(ergo_from_tool.sequence(), sequence);
+            assert_eq!(ergo_from_tool.payload_slice()?, data.as_slice());
+            let (ergo_payload, _complete) = ergo_from_tool.into_payload()?;
+            assert_eq!(ergo_payload, data.as_slice());
+
+            let tool_header = tool::message_header_codec::MessageHeaderDecoder::default()
+                .wrap(ReadBuf::new(&ergo_buf[..ergo_len]), 0);
+            let mut tool_from_ergo = ToolDec::default().header(tool_header, 0);
+            assert_eq!(tool_from_ergo.sequence(), sequence);
+            let coordinates = tool_from_ergo.payload_decoder();
+            assert_eq!(tool_from_ergo.payload_slice(coordinates), data.as_slice());
+        }
+
+        // A malicious 64-bit prefix must return an error, never truncate on a
+        // narrower target or overflow offset arithmetic.
+        let mut malformed = vec![0u8; 20];
+        let mut malformed_enc =
+            WideDataEncoder::wrap_and_apply_header(&mut malformed, 0);
+        malformed_enc.sequence(1);
+        let malformed_complete = malformed_enc.payload(&[])?;
+        assert_eq!(malformed_complete.encoded_length_with_header(), 20);
+        malformed[12..20].copy_from_slice(&(u64::MAX - 1).to_be_bytes());
+        let malformed_dec = WideDataDecoder::try_from(malformed.as_slice())?;
+        assert!(malformed_dec.payload_slice().is_err());
+        assert!(WideDataDecoder::verify(&malformed).is_err());
+        println!("PASS: uint64_var_data_length_is_byte_identical_and_cross_decodable");
         "###,
     );
 }
@@ -2688,32 +3204,51 @@ fn extension_car_versioned_fields() {
     );
 }
 
-// ── inventory + permanent exclusions ──────────────────────────────────────
+// ── reference inventory ───────────────────────────────────────────────────
 
 #[test]
 fn all_vendored_reference_crates_have_manifests() {
     let keys = [
-        "baseline", "basic_schema", "basic_group", "nested_group",
-        "composite_elements", "issue984", "bigendian", "nested_composite",
-        "group_with_data", "basic_var_length", "fixed_array", "basic_types",
-        "issue435", "issue895", "issue972", "issue987", "issue1028",
-        "issue1057", "issue1066", "optional_enum_nullify", "new_order_single",
-        "code_generation", "dto_test", "extension", "bench_car", "fix_messages",
-        "all_types_le", "all_types_be",
-        "value_ref", "block_length", "embedded_length", "encoding_types",
+        "baseline",
+        "basic_schema",
+        "basic_group",
+        "nested_group",
+        "constant_header",
+        "composite_elements",
+        "issue984",
+        "bigendian",
+        "nested_composite",
+        "group_with_data",
+        "basic_var_length",
+        "fixed_array",
+        "basic_types",
+        "issue435",
+        "issue895",
+        "issue972",
+        "issue987",
+        "issue1028",
+        "issue1057",
+        "issue1066",
+        "optional_enum_nullify",
+        "new_order_single",
+        "code_generation",
+        "dto_test",
+        "extension",
+        "bench_car",
+        "fix_messages",
+        "all_types_le",
+        "all_types_be",
+        "value_ref",
+        "block_length",
+        "embedded_length",
+        "encoding_types",
+        "custom_header_layout",
+        "custom_header_layout_be",
+        "uint64_vardata_be",
+        "small_header",
     ];
     for k in keys {
         let p = Paths::sbe_tool_reference(k).join("Cargo.toml");
         assert!(p.is_file(), "missing vendored sbe-tool crate: {p:?}");
     }
 }
-
-/// Every vendored sbe-tool crate now compiles — either natively or patched
-/// (keyword conflicts in code_generation/dto_test resolved by renaming).
-#[test]
-fn permanent_exclusions_tool_crates_fail_to_compile() {
-    // All crates compile now — test is a no-op but kept as documentation.
-    let all_compile = true;
-    assert!(all_compile);
-}
-

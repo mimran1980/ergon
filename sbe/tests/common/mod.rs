@@ -87,6 +87,18 @@ impl Paths {
         Self::fixtures_dir().join("all-types-be-schema.xml")
     }
 
+    pub fn custom_header_layout_schema() -> PathBuf {
+        Self::fixtures_dir().join("custom-header-layout-schema.xml")
+    }
+
+    pub fn custom_header_layout_be_schema() -> PathBuf {
+        Self::fixtures_dir().join("custom-header-layout-be-schema.xml")
+    }
+
+    pub fn uint64_vardata_be_schema() -> PathBuf {
+        Self::fixtures_dir().join("uint64-vardata-be-schema.xml")
+    }
+
     pub fn issue_schema(num: &str) -> PathBuf {
         Self::fixtures_dir().join(format!("issue{num}.xml"))
     }
@@ -385,6 +397,64 @@ tool = {{ path = "{tool_path_toml}", package = "{package}" }}
         );
     }
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// Cross-check the generated message-header decoder against the matching
+/// sbe-tool codec and independently constructed wire bytes.
+///
+/// This deliberately exercises decoding separately from full-frame encoder
+/// parity: an encoder and decoder can disagree while self-roundtrip tests still
+/// pass. `big_endian` is supplied by the test matrix rather than read from
+/// ergo-sbe's IR, so a byte-order regression cannot bless itself.
+pub fn dual_header_decode_run(test_name: &str, schema: &Path, tool_key: &str, big_endian: bool) {
+    let code = format!(
+        r###"
+        use tool::message_header_codec::MessageHeaderDecoder as ToolHeaderDecoder;
+
+        let cases = [
+            (0u16, 1u16, 2u16, 3u16),
+            (0x1234u16, 0x5678u16, 0x2345u16, 0x6789u16),
+            (u16::MAX - 1, u16::MAX - 2, u16::MAX - 3, u16::MAX - 4),
+        ];
+
+        for (block_length, template_id, schema_id, version) in cases {{
+            let to_wire = |value: u16| -> [u8; 2] {{
+                if {big_endian} {{
+                    value.to_be_bytes()
+                }} else {{
+                    value.to_le_bytes()
+                }}
+            }};
+
+            let mut wire = [0u8; MESSAGE_HEADER_ENCODED_LENGTH];
+            wire[0..2].copy_from_slice(&to_wire(block_length));
+            wire[2..4].copy_from_slice(&to_wire(template_id));
+            wire[4..6].copy_from_slice(&to_wire(schema_id));
+            wire[6..8].copy_from_slice(&to_wire(version));
+
+            let ergo_header = MessageHeader(wire);
+            assert_eq!(ergo_header.block_length(), block_length, "ergo blockLength");
+            assert_eq!(ergo_header.template_id(), template_id, "ergo templateId");
+            assert_eq!(ergo_header.schema_id(), schema_id, "ergo schemaId");
+            assert_eq!(ergo_header.version(), version, "ergo version");
+            assert_eq!(
+                MessageHeader::peek_header(&wire),
+                Some((template_id, schema_id)),
+                "ergo header peek",
+            );
+
+            let tool_header =
+                ToolHeaderDecoder::default().wrap(tool::ReadBuf::new(&wire), 0);
+            assert_eq!(tool_header.block_length(), block_length, "tool blockLength");
+            assert_eq!(tool_header.template_id(), template_id, "tool templateId");
+            assert_eq!(tool_header.schema_id(), schema_id, "tool schemaId");
+            assert_eq!(tool_header.version(), version, "tool version");
+
+        }}
+        println!("PASS: {test_name}");
+        "###,
+    );
+    dual_encode_run(test_name, schema, tool_key, &code);
 }
 
 /// Generate two modules, write them into the same temp crate, compile, and run.

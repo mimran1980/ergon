@@ -3,6 +3,12 @@
                description="Duplicate message ID test"
                byteOrder="littleEndian">
     <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
         <type name="TypeToTest" primitiveType="char"/>
     </types>
     <message name="Message1" id="1">

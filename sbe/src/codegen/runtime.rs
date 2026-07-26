@@ -16,7 +16,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 BufferTooShort { field: &'static str, needed: usize, available: usize },
                 WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
                 UnknownTemplateLength { template_id: u16 },
-                InvalidVarDataLength { field: &'static str, length: u32, max_length: u32 },
+                InvalidHeaderValue { field: &'static str, value: u64, maximum: u64 },
+                InvalidVarDataLength { field: &'static str, length: u64, max_length: u64 },
                 /// Field/group/data was added in a schema version later than the wire message.
                 FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
                 InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
@@ -30,6 +31,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::BufferTooShort { field, needed, available } => write!(f, "field '{}': needed {} bytes, {} available", field, needed, available),
                         Self::WrongSchema { expected, actual, expected_name } => write!(f, "wrong schema: expected id {} ({}), got id {}", expected, expected_name, actual),
                         Self::UnknownTemplateLength { template_id } => write!(f, "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.", template_id),
+                        Self::InvalidHeaderValue { field, value, maximum } => write!(f, "message header field '{}': value {} exceeds supported maximum {}", field, value, maximum),
                         Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}: length {} exceeds max {}", field, length, max_length),
                         Self::FieldNotInVersion { field, wire_version, since_version } => write!(f, "field '{}' not in wire version {} (added in version {})", field, wire_version, since_version),
                         Self::InvalidUtf8 { field, error } => write!(f, "field '{}': invalid UTF-8: {}", field, error),
@@ -101,7 +103,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 HeaderTooShort,
                 InvalidBlockLength { expected_min: usize, actual: usize },
                 GroupDimOutOfBounds { field: &'static str, offset: usize },
-                VarDataOutOfBounds { field: &'static str, offset: usize, length: u32 },
+                VarDataOutOfBounds { field: &'static str, offset: usize, length: u64 },
                 MessageTooShort { needed: usize, available: usize },
                 DecodeError(DecodeError),
             }
@@ -127,6 +129,71 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             }
 
             impl core::error::Error for VerifyError {}
+
+            /// Convert a wire var-data length without truncation and validate
+            /// the complete region with overflow-safe offset arithmetic.
+            #[inline]
+            pub(crate) fn checked_var_data_bounds(
+                field: &'static str,
+                offset: usize,
+                prefix_size: usize,
+                wire_length: u64,
+                buffer_length: usize,
+            ) -> Result<(usize, usize), DecodeError> {
+                let length = usize::try_from(wire_length).map_err(|_| {
+                    DecodeError::InvalidVarDataLength {
+                        field,
+                        length: wire_length,
+                        max_length: usize::MAX as u64,
+                    }
+                })?;
+                let data_start = offset.checked_add(prefix_size).ok_or(
+                    DecodeError::BufferTooShort {
+                        field,
+                        needed: usize::MAX,
+                        available: buffer_length.saturating_sub(offset),
+                    },
+                )?;
+                let data_end = data_start.checked_add(length).ok_or(
+                    DecodeError::BufferTooShort {
+                        field,
+                        needed: usize::MAX,
+                        available: buffer_length.saturating_sub(offset),
+                    },
+                )?;
+                if data_end > buffer_length {
+                    return Err(DecodeError::BufferTooShort {
+                        field,
+                        needed: prefix_size.saturating_add(length),
+                        available: buffer_length.saturating_sub(offset),
+                    });
+                }
+                Ok((data_start, data_end))
+            }
+
+            #[inline]
+            pub(crate) fn checked_header_u16(
+                field: &'static str,
+                value: u64,
+            ) -> Result<u16, DecodeError> {
+                u16::try_from(value).map_err(|_| DecodeError::InvalidHeaderValue {
+                    field,
+                    value,
+                    maximum: u16::MAX as u64,
+                })
+            }
+
+            #[inline]
+            pub(crate) fn checked_header_usize(
+                field: &'static str,
+                value: u64,
+            ) -> Result<usize, DecodeError> {
+                usize::try_from(value).map_err(|_| DecodeError::InvalidHeaderValue {
+                    field,
+                    value,
+                    maximum: usize::MAX as u64,
+                })
+            }
 
             #[diagnostic::on_unimplemented(
                 message = "`{Self}` is not a generated SBE message type",
@@ -353,11 +420,7 @@ pub(crate) fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
     if let Some((enum_name, variant)) = val.split_once('.')
         && enum_name.chars().any(|c| !c.is_ascii_digit())
     {
-        let enum_ref = format!(
-            "{}::{}",
-            to_pascal_case(enum_name),
-            to_pascal_case(variant)
-        );
+        let enum_ref = format!("{}::{}", to_pascal_case(enum_name), to_pascal_case(variant));
         return match prim {
             PrimitiveType::UInt8 => format!("{enum_ref} as u8"),
             PrimitiveType::UInt16 => format!("{enum_ref} as u16"),
@@ -1134,8 +1197,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
 
     src.push_str(&ts.to_string());
 
-    // MessageHeader convenience: peek methods + ENCODED_LENGTH so
-    // callers don't re-copy the 8-byte header for dispatch.
+    // MessageHeader convenience: peek methods + ENCODED_LENGTH so callers
+    // do not duplicate the schema-declared header layout for dispatch.
     if raw_name == "messageHeader" {
         let hs_lit = size_lit.clone();
         let extras = quote::quote! {
@@ -1154,7 +1217,11 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     let mut hdr = [0u8; #hs_lit];
                     hdr.copy_from_slice(&data[..#hs_lit]);
                     let this = Self(hdr);
-                    Some((this.template_id(), this.schema_id()))
+                    let template_id =
+                        u16::try_from(this.template_id() as u64).ok()?;
+                    let schema_id =
+                        u16::try_from(this.schema_id() as u64).ok()?;
+                    Some((template_id, schema_id))
                 }
 
                 /// Read `template_id` from a frame without constructing a full
@@ -1168,7 +1235,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     }
                     let mut hdr = [0u8; #hs_lit];
                     hdr.copy_from_slice(&data[..#hs_lit]);
-                    Some(Self(hdr).template_id())
+                    u16::try_from(Self(hdr).template_id() as u64).ok()
                 }
 
                 /// Validate `schema_id` and return `template_id`. Returns
@@ -1418,19 +1485,83 @@ pub(crate) fn generate_schema_id_from_header(
         ByteOrder::BigEndian => "be",
     };
 
-    let schema_id_offset = elements
+    let schema_id = elements
         .composites
         .iter()
         .find(|c| c[0].name == header_type)
         .and_then(|comp| {
             parse_composite_members(comp)
-                .iter()
+                .into_iter()
                 .find(|m| m.name.to_lowercase().contains("schemaid"))
-                .map(|m| m.offset)
-        })
-        .unwrap_or(4);
+                .map(|member| {
+                    let (primitive, presence, constant_value) = match member.member_type {
+                        MemberType::Primitive {
+                            prim,
+                            presence,
+                            constant_value,
+                            ..
+                        } => (prim, presence, constant_value),
+                        _ => unreachable!("validated schemaId must be primitive"),
+                    };
+                    let header_size = comp[0].encoding.offset.unwrap_or(0);
+                    (
+                        member.offset,
+                        primitive,
+                        presence,
+                        constant_value,
+                        header_size,
+                    )
+                })
+        });
+    let Some((
+        schema_id_offset,
+        schema_id_primitive,
+        schema_id_presence,
+        schema_id_constant,
+        header_size,
+    )) = schema_id
+    else {
+        src.push_str(
+            "#[inline]\npub const fn schema_id_from_header(_buf: &[u8]) -> Option<u16> { None }\n",
+        );
+        return;
+    };
+
+    if schema_id_presence == Presence::Constant {
+        let Some(value) = schema_id_constant else {
+            src.push_str(
+                "#[inline]\npub const fn schema_id_from_header(_buf: &[u8]) -> Option<u16> { None }\n",
+            );
+            return;
+        };
+        let value_expr = constant_value_expr(schema_id_primitive, &value);
+        let value_expr: syn::Expr = syn::parse_str(&value_expr)
+            .expect("validated constant schemaId must be a Rust expression");
+        let header_size =
+            syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
+        let ts = quote::quote! {
+            #[inline]
+            pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
+                if buf.len() < #header_size {
+                    return None;
+                }
+                u16::try_from((#value_expr) as u64).ok()
+            }
+        };
+        src.push_str(&ts.to_string());
+        src.push('\n');
+        return;
+    }
 
     let sid = syn::Index::from(schema_id_offset);
+    let sid_size = syn::LitInt::new(
+        &schema_id_primitive.size().to_string(),
+        proc_macro2::Span::call_site(),
+    );
+    let sid_type = syn::Ident::new(
+        rust_type(schema_id_primitive),
+        proc_macro2::Span::call_site(),
+    );
     let order_fn = syn::Ident::new(
         &format!("from_{order_suffix}_bytes"),
         proc_macro2::Span::call_site(),
@@ -1438,11 +1569,12 @@ pub(crate) fn generate_schema_id_from_header(
     let ts = quote::quote! {
         #[inline]
         pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
-            if buf.len() < #sid + 2 {
+            if buf.len() < #sid + #sid_size {
                 return None;
             }
-            let bytes = read_bytes::<2>(buf, #sid);
-            Some(u16::#order_fn(bytes))
+            let bytes = read_bytes::<#sid_size>(buf, #sid);
+            let value = #sid_type::#order_fn(bytes) as u64;
+            u16::try_from(value).ok()
         }
     };
     src.push_str(&ts.to_string());
@@ -1463,11 +1595,12 @@ pub(crate) fn generate_any_message(
         .and_then(|c| c[0].encoding.offset)
         .unwrap_or(8);
 
-    let (header_bl, header_ti, header_si, header_vr) = {
+    let (header_bl, header_ti, header_si, header_vr, header_si_constant) = {
         let mut bl = "block_length".to_string();
         let mut ti = "template_id".to_string();
         let mut si = "schema_id".to_string();
         let mut vr = "version".to_string();
+        let mut si_constant = false;
         if let Some(comp) = elements
             .composites
             .iter()
@@ -1476,18 +1609,26 @@ pub(crate) fn generate_any_message(
             let members = parse_composite_members(comp);
             for m in members {
                 let lower = m.name.to_lowercase();
+                let is_constant = matches!(
+                    m.member_type,
+                    MemberType::Primitive {
+                        presence: Presence::Constant,
+                        ..
+                    }
+                );
                 if lower.contains("blocklength") {
                     bl = to_snake_case(&m.name);
                 } else if lower.contains("templateid") {
                     ti = to_snake_case(&m.name);
                 } else if lower.contains("schemaid") {
                     si = to_snake_case(&m.name);
+                    si_constant = is_constant;
                 } else if lower.contains("version") {
                     vr = to_snake_case(&m.name);
                 }
             }
         }
-        (bl, ti, si, vr)
+        (bl, ti, si, vr, si_constant)
     };
 
     let span = proc_macro2::Span::call_site();
@@ -1498,6 +1639,19 @@ pub(crate) fn generate_any_message(
     let ti_ident = syn::Ident::new(&header_ti, span);
     let si_ident = syn::Ident::new(&header_si, span);
     let vr_ident = syn::Ident::new(&header_vr, span);
+    let schema_id_validation = if header_si_constant {
+        quote::quote! {}
+    } else {
+        quote::quote! {
+            if schema_id != #schema_id_lit {
+                return Err(sbe_rt::DecodeError::WrongSchema {
+                    expected: #schema_id_lit,
+                    actual: schema_id,
+                    expected_name: #schema_name,
+                });
+            }
+        }
+    };
 
     let mut out = proc_macro2::TokenStream::new();
 
@@ -1562,7 +1716,7 @@ pub(crate) fn generate_any_message(
                 }
                 let (header_len, frame_len) = match self.framing {
                     FramingPolicy::LengthPrefixU32 => {
-                        if self.pos + 4 > self.buf.len() {
+                        if 4 > self.buf.len().saturating_sub(self.pos) {
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 4,
@@ -1574,7 +1728,7 @@ pub(crate) fn generate_any_message(
                         (4, len)
                     }
                     FramingPolicy::LengthPrefixU16 => {
-                        if self.pos + 2 > self.buf.len() {
+                        if 2 > self.buf.len().saturating_sub(self.pos) {
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 2,
@@ -1588,18 +1742,37 @@ pub(crate) fn generate_any_message(
                     FramingPolicy::Fixed(len) => (0, len),
                 };
 
-                if self.pos + header_len + frame_len > self.buf.len() {
+                let frame_start = match self.pos.checked_add(header_len) {
+                    Some(value) => value,
+                    None => {
+                        return Some(Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "frame bounds",
+                            needed: usize::MAX,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        }));
+                    }
+                };
+                let frame_end = match frame_start.checked_add(frame_len) {
+                    Some(value) => value,
+                    None => {
+                        return Some(Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "frame bounds",
+                            needed: usize::MAX,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        }));
+                    }
+                };
+                if frame_end > self.buf.len() {
                     return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "frame bounds",
-                        needed: header_len + frame_len,
+                        needed: header_len.saturating_add(frame_len),
                         available: self.buf.len().saturating_sub(self.pos),
                     }));
                 }
-                let off = self.pos + header_len;
-                let res = AnyMessage::decode_frame(self.buf, off, frame_len);
+                let res = AnyMessage::decode_frame(self.buf, frame_start, frame_len);
                 match res {
                     Ok(frame) => {
-                        self.pos += header_len + frame_len;
+                        self.pos = frame_end;
                         Some(Ok(frame))
                     }
                     Err(e) => Some(Err(e)),
@@ -1623,7 +1796,7 @@ pub(crate) fn generate_any_message(
             impl<'a> AnyMessage<'a> {
                 #[inline]
                 pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                    if pos + #header_size_lit > buf.len() {
+                    if #header_size_lit > buf.len().saturating_sub(pos) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
@@ -1632,19 +1805,25 @@ pub(crate) fn generate_any_message(
                     }
                     let header_bytes = read_bytes::<#header_size_lit>(buf, pos);
                     let header = #header_type_ident(header_bytes);
-                    let template_id = header.#ti_ident();
-                    let schema_id = header.#si_ident();
-                    let version = header.#vr_ident();
-                    let block_length = header.#bl_ident() as usize;
+                    let template_id = sbe_rt::checked_header_u16(
+                        "templateId",
+                        header.#ti_ident() as u64,
+                    )?;
+                    let schema_id = sbe_rt::checked_header_u16(
+                        "schemaId",
+                        header.#si_ident() as u64,
+                    )?;
+                    let version = sbe_rt::checked_header_u16(
+                        "version",
+                        header.#vr_ident() as u64,
+                    )?;
+                    let block_length = sbe_rt::checked_header_usize(
+                        "blockLength",
+                        header.#bl_ident() as u64,
+                    )?;
                     let body_pos = pos + #header_size_lit;
 
-                    if schema_id != #schema_id_lit {
-                        return Err(sbe_rt::DecodeError::WrongSchema {
-                            expected: #schema_id_lit,
-                            actual: schema_id,
-                            expected_name: #schema_name,
-                        });
-                    }
+                    #schema_id_validation
 
                     match template_id {
                         #decode_arms
@@ -1687,7 +1866,7 @@ pub(crate) fn generate_any_message(
                 #[inline]
                 pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
                     // Trust boundary: always validate header fits
-                    if pos + #header_size_lit > buf.len() {
+                    if #header_size_lit > buf.len().saturating_sub(pos) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
@@ -1696,24 +1875,30 @@ pub(crate) fn generate_any_message(
                     }
                     let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(buf, pos);
                     let header = #header_type_ident(header_bytes);
-                    let template_id = header.#ti_ident();
-                    let schema_id = header.#si_ident();
-                    let version = header.#vr_ident();
-                    let block_length = header.#bl_ident() as usize;
+                    let template_id = sbe_rt::checked_header_u16(
+                        "templateId",
+                        header.#ti_ident() as u64,
+                    )?;
+                    let schema_id = sbe_rt::checked_header_u16(
+                        "schemaId",
+                        header.#si_ident() as u64,
+                    )?;
+                    let version = sbe_rt::checked_header_u16(
+                        "version",
+                        header.#vr_ident() as u64,
+                    )?;
+                    let block_length = sbe_rt::checked_header_usize(
+                        "blockLength",
+                        header.#bl_ident() as u64,
+                    )?;
                     let body_pos = pos + #header_size_lit;
 
-                    if schema_id != #schema_id_lit {
-                        return Err(sbe_rt::DecodeError::WrongSchema {
-                            expected: #schema_id_lit,
-                            actual: schema_id,
-                            expected_name: #schema_name,
-                        });
-                    }
+                    #schema_id_validation
 
                     match template_id {
                         #decode_frame_arms
                         _ => {
-                            if pos + frame_len > buf.len() {
+                            if frame_len > buf.len().saturating_sub(pos) {
                                 return Err(sbe_rt::DecodeError::BufferTooShort {
                                     field: "template body",
                                     needed: frame_len,
@@ -1837,7 +2022,7 @@ pub(crate) fn generate_any_message(
                 #(#visitor_methods)*
 
                 /// Called for unknown template IDs (not in this schema).
-                /// `header` is the raw 8-byte MessageHeader; `payload` is
+                /// `header` is the raw schema-declared MessageHeader; `payload` is
                 /// the bytes after the header. Default returns `unimplemented!()`.
                 fn visit_unknown(
                     &mut self,
@@ -2045,7 +2230,9 @@ pub(crate) fn extend_opt_str(buf: &mut Vec<u8>, s: Option<&str>) {
 /// as a compile-time constant slice.
 ///
 /// Emits:
-/// ```ignore
+/// Emitted module layout:
+///
+/// ```
 /// pub mod car_field_meta {
 ///     pub struct FieldInfo {
 ///         pub name: &'static str,
@@ -2056,7 +2243,7 @@ pub(crate) fn extend_opt_str(buf: &mut Vec<u8>, s: Option<&str>) {
 ///     }
 ///     pub const FIELDS: &[FieldInfo] = &[
 ///         FieldInfo { name: "serialNumber", id: 1, offset: 0, since_version: 0, field_type: "uint64" },
-///         ...
+///         FieldInfo { name: "modelYear", id: 2, offset: 8, since_version: 0, field_type: "uint16" },
 ///     ];
 /// }
 /// ```

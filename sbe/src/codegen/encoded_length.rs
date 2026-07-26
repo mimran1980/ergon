@@ -729,7 +729,7 @@ fn generate_direct(
             len
         }
 
-        /// Compute the exact SBE message length including the standard
+        /// Compute the exact SBE message length including the schema-declared
         /// message header.
         #[inline]
         pub const fn compute_encoded_length_with_message_header(

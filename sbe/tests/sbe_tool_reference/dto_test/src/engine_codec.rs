@@ -178,7 +178,7 @@ pub mod encoder {
         }
 
     }
-} // end encoder mod 
+} // end encoder mod
 
 pub mod decoder {
     use super::*;
@@ -227,7 +227,7 @@ pub mod decoder {
             self.get_buf().get_u8_at(self.offset + 2)
         }
 
-        /// CONSTANT 
+        /// CONSTANT
         #[inline]
         pub fn max_rpm(&self) -> u16 {
             9000
@@ -239,7 +239,7 @@ pub mod decoder {
             ReadBuf::get_bytes_at(buf.data, self.offset + 3)
         }
 
-        /// CONSTANT 
+        /// CONSTANT
         /// characterEncoding: 'US-ASCII'
         #[inline]
         pub fn fuel(&self) -> &'static [u8] {
@@ -266,4 +266,4 @@ pub mod decoder {
         }
 
     }
-} // end decoder mod 
+} // end decoder mod

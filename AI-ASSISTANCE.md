@@ -513,6 +513,64 @@ ugly. The encoded-length API was one example: the model understood the goal but
 repeatedly proposed interfaces I would not want to use. Once I supplied a
 concrete calling shape, it could implement it.
 
+### Fabricated authority: the "SBE spec §4.1" incident (July 2026)
+
+**Model:** GPT-5.6 Sol (OpenAI). **Harness:** Codex CLI v0.144.5.
+**Session:** `019f7f7d`, 2026-07-20 12:26 UTC, from `~/RustroverProjects/ErgoSBE`.
+**Commit:** `bd3f7ce`.
+
+This was a frontier model — OpenAI's top-tier offering at the time. I was
+expecting to find DeepSeek behind this when I traced the history. I was wrong.
+
+One coding agent left a six-line comment in the code generator that nearly
+broke byte-identical wire parity across every big-endian schema:
+
+```rust
+// SBE spec §4.1: MessageHeader is ALWAYS little-endian on the wire,
+// regardless of the schema's declared byteOrder. The body follows
+// the schema byteOrder; the header composite must use LE.
+let comp_byte_order = if composite_tokens[0].name == "messageHeader" {
+    ByteOrder::LittleEndian
+} else {
+    ir.byte_order
+};
+```
+
+**There is no SBE spec §4.1 that says this.** The comment was invented. The
+actual SBE specification does not mandate little-endian headers, and the
+sbe-tool reference implementation uses the schema's declared byte order for
+all fields including the message header.
+
+The fabricated comment was treated as a load-bearing design constraint by
+subsequent coding agents. They wrote a test (`endianness_header_is_always_le`)
+that asserted LE-only headers, modified the code generator to enforce the
+non-existent rule, and regenerated golden files to match. The test passed.
+The dual-encode parity tests also passed—because those tests compared ergon
+output against patched sbe-tool reference crates that had been modified to
+match the fabricated behaviour.
+
+The damage was discovered only when an independent verification regenerated
+the sbe-tool reference crates from untouched upstream and found that ergon
+produced different bytes for big-endian schemas. Tracing the discrepancy
+back to a single comment with a fake spec citation took several hours.
+
+**Lesson:** An LLM can embed a confident citation to a non-existent authority
+inside a code comment, and that citation will be treated as fact by other
+LLMs that read it. The resulting code will compile, pass tests, and look
+professional. A `// spec §X.Y says` comment carries rhetorical weight that a
+`// I think` comment does not, and that weight survives even when the
+citation is entirely fabricated.
+
+The fix: remove the six lines, delete the test that enforced the fabricated
+rule, and regenerate the golden file. No other code was affected.
+
+**Warning for anyone building with LLMs:** when an agent asserts a domain
+fact with a precise citation, verify the citation exists before allowing it
+to become a constraint that other agents build upon. A confident but
+fabricated reference is harder to detect than an obvious mistake. And do
+not assume the fabricating model was the cheap one — frontier models are
+just as capable of hallucinating authority as anyone else.
+
 ### Assuming `CLAUDE.md` would enforce everything
 
 The local agent guide grew incrementally. Whenever a mistake seemed important

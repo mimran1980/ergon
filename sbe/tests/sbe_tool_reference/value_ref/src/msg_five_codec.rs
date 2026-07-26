@@ -149,7 +149,7 @@ pub mod decoder {
             )
         }
 
-        /// CONSTANT 
+        /// CONSTANT
         #[inline]
         pub fn test_constant_two_field(&self) -> u8 {
             9
@@ -158,4 +158,3 @@ pub mod decoder {
     }
 
 } // end decoder
-

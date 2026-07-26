@@ -63,25 +63,23 @@ mod sbe_tool_car;
 
 use ergo::{
     BooleanType as ErgoBool, BoostType as ErgoBoost, Booster as ErgoBooster, CarDecoder as ErgoDec,
-    CarEncoder as ErgoEnc, Engine as ErgoEngine, Model as ErgoModel,
-    OptionalExtras as ErgoExtras,
+    CarEncoder as ErgoEnc, Engine as ErgoEngine, Model as ErgoModel, OptionalExtras as ErgoExtras,
 };
 use sbe_tool_car::sbe_tool::{
-    Encoder, ReadBuf, WriteBuf,
+    Encoder, ReadBuf, SBE_SCHEMA_ID, SBE_SCHEMA_VERSION, WriteBuf,
     boolean_type::BooleanType as ToolBool,
     boost_type::BoostType as ToolBoost,
     car_codec::{
+        SBE_BLOCK_LENGTH, SBE_TEMPLATE_ID,
         decoder::CarDecoder as ToolDec,
         encoder::{
             AccelerationEncoder, CarEncoder as ToolEnc, FuelFiguresEncoder,
             PerformanceFiguresEncoder,
         },
-        SBE_BLOCK_LENGTH, SBE_TEMPLATE_ID,
     },
     message_header_codec::{self, decoder::MessageHeaderDecoder},
     model::Model as ToolModel,
     optional_extras::OptionalExtras as ToolExtras,
-    SBE_SCHEMA_ID, SBE_SCHEMA_VERSION,
 };
 
 // ── Logical payload (shared by both encoders) ─────────────────────────────
@@ -232,19 +230,11 @@ impl CarPayload {
     }
 
     fn ergo_bool(v: bool) -> ErgoBool {
-        if v {
-            ErgoBool::T
-        } else {
-            ErgoBool::F
-        }
+        if v { ErgoBool::T } else { ErgoBool::F }
     }
 
     fn tool_bool(v: bool) -> ToolBool {
-        if v {
-            ToolBool::T
-        } else {
-            ToolBool::F
-        }
+        if v { ToolBool::T } else { ToolBool::F }
     }
 
     fn ergo_model(&self) -> ErgoModel {
@@ -351,10 +341,7 @@ impl CarPayload {
         let mut performance_figures = PerformanceFiguresEncoder::default();
         let mut acceleration = AccelerationEncoder::default();
 
-        car = car.wrap(
-            WriteBuf::new(buf),
-            message_header_codec::ENCODED_LENGTH,
-        );
+        car = car.wrap(WriteBuf::new(buf), message_header_codec::ENCODED_LENGTH);
         car = car.header(0).parent().expect("header parent");
 
         car.serial_number(self.serial)
@@ -799,7 +786,8 @@ fn fuel_and_performance_combined_shapes() {
         (5, 2, 0),
     ];
     for &(nf, np, na) in shapes {
-        let mut p = CarPayload::empty_tails(300 + nf as u64 * 100 + np as u64 * 10 + na as u64, 2023);
+        let mut p =
+            CarPayload::empty_tails(300 + nf as u64 * 100 + np as u64 * 10 + na as u64, 2023);
         p.fuel = (0..nf)
             .map(|i| FuelEntry {
                 speed: 10 + i as u16,
@@ -855,13 +843,7 @@ fn some_numbers_and_vehicle_code_patterns() {
         [u32::MAX - 1; 4],
         [0, u32::MAX - 1, 1, 2],
     ];
-    let vehicle_cases = [
-        [0u8; 6],
-        *b"abcdef",
-        *b"XYZXYZ",
-        *b"~~~~~~",
-        *b"      ",
-    ];
+    let vehicle_cases = [[0u8; 6], *b"abcdef", *b"XYZXYZ", *b"~~~~~~", *b"      "];
     for (i, nums) in number_cases.iter().enumerate() {
         for (j, vc) in vehicle_cases.iter().enumerate() {
             let mut p = CarPayload::empty_tails(500 + i as u64 * 10 + j as u64, 2025);
@@ -891,10 +873,8 @@ fn var_data_length_matrix_dual_encode() {
     for (i, mfr) in samples.iter().enumerate() {
         for (j, model) in samples.iter().enumerate().take(4) {
             for (k, code) in samples.iter().enumerate().take(4) {
-                let mut p = CarPayload::empty_tails(
-                    600 + i as u64 * 100 + j as u64 * 10 + k as u64,
-                    2026,
-                );
+                let mut p =
+                    CarPayload::empty_tails(600 + i as u64 * 100 + j as u64 * 10 + k as u64, 2026);
                 p.manufacturer = mfr;
                 p.model_name = model;
                 p.activation_code = code;
@@ -966,7 +946,11 @@ fn cross_decode_sparse_shapes_both_directions() {
         let mut tool_buf = vec![0u8; 2048];
         let el = p.encode_ergo(&mut ergo_buf);
         let tl = p.encode_tool(&mut tool_buf);
-        assert_frames_eq(&format!("cross_shape_{i}_bytes"), &ergo_buf[..el], &tool_buf[..tl]);
+        assert_frames_eq(
+            &format!("cross_shape_{i}_bytes"),
+            &ergo_buf[..el],
+            &tool_buf[..tl],
+        );
         assert_ergo_decodes_payload(&tool_buf[..tl], p);
         assert_tool_decodes_payload(&ergo_buf[..el], p);
     }
@@ -1032,7 +1016,10 @@ fn stress_many_randomish_payloads_dual_encode() {
     // limit bugs without a proptest dependency.
     let mut n_ok = 0u32;
     for seed in 0u64..64 {
-        let mut p = CarPayload::empty_tails(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15), (2000 + (seed % 50)) as u16);
+        let mut p = CarPayload::empty_tails(
+            seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            (2000 + (seed % 50)) as u16,
+        );
         p.available = seed % 2 == 0;
         p.model = (seed % 3) as u8;
         p.extras_bits = (seed % 8) as u8;

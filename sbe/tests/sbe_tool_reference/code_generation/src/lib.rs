@@ -231,4 +231,3 @@ impl<'a> From<&'a mut WriteBuf<'a>> for &'a mut [u8] {
         buf.data
     }
 }
-
