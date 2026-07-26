@@ -17,7 +17,6 @@ proptest = "1.11"
 [build-dependencies]
 ergo-sbe = { path = "../../sbe" }
 
-# TODO: rewrite api_combinations bench for current schema/API (old types removed)
-# [[bench]]
-# name = "api_combinations"
-# harness = false
+[[bench]]
+name = "api_combinations"
+harness = false

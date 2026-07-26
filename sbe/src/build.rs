@@ -204,10 +204,10 @@ fn write_generated(
 
 /// Include a module written by [`generate_to_out_dir`] / [`generate_str_to_out_dir`].
 ///
-/// ```ignore
-/// // After generate_to_out_dir(..., GenerationConfig::new("messages")):
-/// ergo_sbe::include_sbe!("messages");
-/// ```
+/// After `generate_to_out_dir(..., GenerationConfig::new("messages"))`:
+/// `ergo_sbe::include_sbe!("messages");`
+///
+/// → [`samples/sbe-feature-tour/build.rs`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/build.rs)
 ///
 /// Expands to `include!(concat!(env!("OUT_DIR"), "/messages.rs"))`.
 #[macro_export]
@@ -224,16 +224,12 @@ macro_rules! include_sbe {
 ///
 /// Applies the usual `allow`s for generated code (snake/camel, unused, …).
 ///
-/// ```ignore
-/// // build.rs wrote $OUT_DIR/messages.rs
-/// ergo_sbe::sbe_mod!(messages);
-/// // → mod messages { #![allow(...)] include!(.../messages.rs); }
+/// After build.rs generates `$OUT_DIR/messages.rs`:
+/// `ergo_sbe::sbe_mod!(messages);` → `mod messages { ... include!(.../messages.rs); }`
+/// `ergo_sbe::sbe_mod!(pub codecs);` → public module `codecs` → `codecs.rs`
+/// `ergo_sbe::sbe_mod!(pub ergo_car = "car_bench");` → `car_bench.rs`
 ///
-/// ergo_sbe::sbe_mod!(pub codecs); // public module `codecs` → codecs.rs
-///
-/// // Module name differs from the generated file stem:
-/// ergo_sbe::sbe_mod!(pub ergo_car = "car_bench"); // → car_bench.rs
-/// ```
+/// → [`samples/sbe-feature-tour/src/lib.rs`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs)
 #[macro_export]
 macro_rules! sbe_mod {
     ($name:ident) => {

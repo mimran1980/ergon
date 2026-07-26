@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="custom_header_layout_be"
+                   id="259"
+                   version="4"
+                   semanticVersion="1.0"
+                   byteOrder="bigEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint32" offset="1"/>
+            <type name="templateId" primitiveType="uint16" offset="6"/>
+            <type name="schemaId" primitiveType="uint16" offset="8"/>
+            <type name="version" primitiveType="uint16" offset="10"/>
+            <type name="numGroups" primitiveType="uint16" offset="13"/>
+            <type name="numVarDataFields" primitiveType="uint16" offset="15"/>
+        </composite>
+    </types>
+    <sbe:message name="CustomBeMessage" id="8" blockLength="4">
+        <field name="value" id="1" type="uint32"/>
+    </sbe:message>
+</sbe:messageSchema>

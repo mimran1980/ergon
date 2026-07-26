@@ -10,29 +10,35 @@ than retaining dated point estimates as release guarantees.
 | | |
 |---|---|
 | **Date** | 2026-07-26 |
-| **Commit** | `05a4797` |
+| **Release tree** | 0.1.1 release candidate |
 | **Host** | Apple M4 (macOS Darwin, arm64) |
 | **Toolchain** | rustc 1.95.0 |
-| **SBE gate** | **8/8 PASS** |
+| **SBE gate** | **9/9 PASS** |
 | **Cluster gate** | **5/5 PASS** |
 
 ### SBE codec gate — `just bench`
 
-All 8 maintained scenarios pass (ratio = ergo-sbe / sbe-tool, ≤ 1.005):
+All 9 maintained scenarios pass (ratio = ergo-sbe / sbe-tool; target ≤ 1.00
+with the gate's 0.5% noise tolerance):
 
 | Scenario | Ratio | Status |
 |----------|-------|--------|
-| decode_scalar | 0.9999 | PASS |
-| decode_array | 1.0024 | PASS |
-| decode_composite | 1.0019 | PASS |
-| decode_full_message | 0.8752 | PASS |
-| decode_entry_point | 0.8061 | PASS |
-| encode/scalar | 0.6739 | PASS |
-| encode/throughput_10k | 0.9674 | PASS |
-| throughput/batch_10k | 0.9613 | PASS |
+| decode_scalar | 0.9993 | PASS |
+| decode_array | 1.0013 | PASS |
+| decode_composite | 1.0029 | PASS |
+| decode_full_message | 0.8853 | PASS |
+| decode_entry_point | 0.8873 | PASS |
+| encode/scalar | 0.6943 | PASS |
+| encode/throughput_10k | 0.9701 | PASS |
+| throughput/batch_10k | 0.9665 | PASS |
+| wire_parity/encode_full | 0.7041 | PASS |
 
 Notes from this cycle:
 
+- The full `ergo-sbe-benchmarks` package was run, covering all six Criterion
+  binaries. The maintained parity gate and all diagnostic suites completed.
+- `wire_parity/encode_full` is now a ninth maintained gate and compares
+  byte-identical full-message encodes.
 - Encode benches **reuse pre-sized buffers** outside `b.iter` (no alloc on the
   timed path). Batch encode previously used `iter_batched(|| vec![…])`, which
   still allocated between iterations.
@@ -47,11 +53,11 @@ All 5 maintained scenarios pass:
 
 | Scenario | Ratio | Status |
 |----------|-------|--------|
-| encode/session_message_header | 0.7238 | PASS |
-| encode/session_keep_alive | 0.6065 | PASS |
-| decode/session_message_header | 0.7026 | PASS |
-| decode/session_event | 0.8001 | PASS |
-| encode/claim_shaped_header_plus_app | 0.8343 | PASS |
+| encode/session_message_header | 0.7464 | PASS |
+| encode/session_keep_alive | 0.6213 | PASS |
+| decode/session_message_header | 0.8968 | PASS |
+| decode/session_event | 0.8209 | PASS |
+| encode/claim_shaped_header_plus_app | 0.8288 | PASS |
 
 Cluster encode arms also reuse one pre-sized buffer per function (no
 `iter_batched` alloc).
@@ -64,10 +70,10 @@ Not a ≤1.00 gate. Compares **flyweight vs wire-image value vs
 
 | Arm | Median (this host) |
 |-----|--------------------|
-| flyweight_f15 | ~0.41 ns |
-| value_preheld_f15 | ~0.42 ns |
-| packed_preheld_f15 | ~0.42 ns |
-| value_copy_then_f15 (copy 256 B first) | ~24 ns |
+| flyweight_f15 | ~0.415 ns |
+| value_preheld_f15 | ~0.431 ns |
+| packed_preheld_f15 | ~0.426 ns |
+| value_copy_then_f15 (copy 256 B first) | ~25.8 ns |
 
 **Conclusion:** single-field access is one load for flyweight, preheld
 `[u8; N]` wire image, and packed overlay alike. Packing does **not** beat the
@@ -86,14 +92,14 @@ Not a ≤1.00 gate. Confirms FixedFields vs setters, composite write, LE vs BE
 
 | Arm | Median (this host) |
 |-----|--------------------|
-| setters_all_fixed | ~2.63 ns |
-| fixed_struct (`.fixed`) | ~2.60 ns |
-| engine_new_then_write (+ fixed prelude) | ~5.30 ns |
-| engine_preheld_write (+ fixed prelude) | ~5.65 ns |
+| setters_all_fixed | ~2.65 ns |
+| fixed_struct (`.fixed`) | ~2.64 ns |
+| engine_new_then_write (+ fixed prelude) | ~5.31 ns |
+| engine_preheld_write (+ fixed prelude) | ~5.67 ns |
 | le_block_new_then_write (256 B) | ~26.1 ns |
 | be_block_new_then_write (256 B) | ~27.5 ns |
 | le_block_preheld_memcpy | ~77.1 ns |
-| be_block_preheld_memcpy | ~77.0 ns |
+| be_block_preheld_memcpy | ~77.2 ns |
 
 **Conclusion:** `.fixed` ≈ setters; preheld composite write ≈ build+write for a
 small engine once the rest of the fixed block is written; BE build is slightly

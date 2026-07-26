@@ -60,11 +60,8 @@ use sha2::{Digest, Sha256};
 ///
 /// Write `source` to `OUT_DIR.join(path)` from `build.rs`, then:
 ///
-/// ```ignore
-/// mod msgs {
-///     include!(concat!(env!("OUT_DIR"), "/msgs.rs"));
-/// }
-/// ```
+/// Write `source` to `OUT_DIR.join(path)` from `build.rs`, then:
+/// `mod msgs { include!(concat!(env!("OUT_DIR"), "/msgs.rs")); }`
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedModule {
     /// Relative path, e.g. `"messages.rs"` or `"common_types.rs"`.
@@ -75,14 +72,18 @@ pub struct GeneratedModule {
 
 /// Set of modules from [`Generator::generate`] or [`Generator::generate_multi`].
 ///
-/// ```ignore
-/// let set = generator.generate(&schema)?;
+/// ```
+/// # use std::path::Path;
+/// # fn example(generator: &ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// let set = generator.generate(schema)?;
 /// for m in set.modules() {
 ///     std::fs::write(out_dir.join(&m.path), &m.source)?;
 /// }
 /// for w in set.warnings() {
 ///     println!("cargo:warning={w}");
 /// }
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GeneratedModuleSet {
@@ -95,6 +96,18 @@ pub struct GeneratedModuleSet {
 /// is invalid for the given schema.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GenerateError {
+    /// A schema value cannot be represented by its declared message-header
+    /// field without using a reserved/null value.
+    HeaderValueOutOfRange {
+        /// Header field name.
+        field: String,
+        /// Schema value that would be written.
+        value: u64,
+        /// Maximum value declared by the field encoding.
+        maximum: u64,
+        /// Schema or message that supplied the value.
+        context: String,
+    },
     /// A conversion selector matched no fields, or a domain type path is invalid.
     InvalidConversion {
         /// Description of the selector.
@@ -116,6 +129,17 @@ pub enum GenerateError {
 impl core::fmt::Display for GenerateError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::HeaderValueOutOfRange {
+                field,
+                value,
+                maximum,
+                context,
+            } => {
+                write!(
+                    f,
+                    "message header field '{field}' value {value} for {context} exceeds declared maximum {maximum}"
+                )
+            }
             Self::InvalidConversion { selector, reason } => {
                 write!(f, "invalid conversion '{selector}': {reason}")
             }
@@ -328,6 +352,56 @@ impl Generator {
         Self { config }
     }
 
+    fn validate_header_values(&self, schema: &Schema) -> Result<(), GenerateError> {
+        let elements = partition_tokens(&schema.ir.tokens);
+        let Some(header) = elements
+            .composites
+            .iter()
+            .find(|tokens| tokens[0].name == schema.ir.header_type)
+        else {
+            // Synthetic `Schema::new` values used by metadata-only callers may
+            // contain no messages or header tokens. XML-parsed schemas have
+            // already had their header structure validated.
+            return Ok(());
+        };
+
+        let check = |field_name: &str, value: u64, context: String| -> Result<(), GenerateError> {
+            let Some(field) = header
+                .iter()
+                .find(|token| token.signal == Signal::BeginField && token.name == field_name)
+            else {
+                return Ok(());
+            };
+            if field.encoding.presence == Presence::Constant {
+                return Ok(());
+            }
+            let maximum = field.encoding.max_value.unwrap_or(u64::MAX);
+            if value > maximum {
+                return Err(GenerateError::HeaderValueOutOfRange {
+                    field: field_name.to_string(),
+                    value,
+                    maximum,
+                    context,
+                });
+            }
+            Ok(())
+        };
+
+        let schema_context = format!("schema '{}'", schema.package);
+        check("schemaId", u64::from(schema.id), schema_context.clone())?;
+        check("version", u64::from(schema.version), schema_context)?;
+
+        for message_tokens in &elements.messages {
+            let message = parse_message_structure(message_tokens, &elements);
+            let context = format!("message '{}'", message.name);
+            check("templateId", u64::from(message.id), context.clone())?;
+            let block_length = u64::try_from(message.block_length).unwrap_or(u64::MAX);
+            check("blockLength", block_length, context)?;
+        }
+
+        Ok(())
+    }
+
     fn validate_conversions(&self, schema: &Schema) -> Result<(), GenerateError> {
         if !self.config.has_conversions() {
             return Ok(());
@@ -413,6 +487,7 @@ impl Generator {
     pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
+                self.validate_header_values(schema)?;
                 self.validate_conversions(schema)?;
                 let mut modules = GeneratedModuleSet::default();
                 let src = self.gen_schema(schema, &HashSet::new(), false, true);
@@ -456,6 +531,7 @@ impl Generator {
         let empty_set: HashSet<String> = HashSet::new();
 
         for (i, (schema, module_name)) in schemas.iter().enumerate() {
+            self.validate_header_values(schema)?;
             if i == 0 {
                 let elements = partition_tokens(&schema.ir.tokens);
                 for et in &elements.enums {
@@ -580,14 +656,7 @@ impl Generator {
             if shared.contains(&type_name) {
                 continue;
             }
-            // SBE spec §4.1: MessageHeader is ALWAYS little-endian on the wire,
-            // regardless of the schema's declared byteOrder. The body follows
-            // the schema byteOrder; the header composite must use LE.
-            let comp_byte_order = if composite_tokens[0].name == "messageHeader" {
-                ByteOrder::LittleEndian
-            } else {
-                ir.byte_order
-            };
+            let comp_byte_order = ir.byte_order;
             generate_composite(&mut src, composite_tokens, comp_byte_order);
         }
 
@@ -782,6 +851,7 @@ fn generate_owner_consuming_stages(
     initial_ident: syn::Ident,
     stage_prefix: &str,
     header_size: usize,
+    byte_order: ByteOrder,
     groups: &[OwnerTailGroup],
     vardata: &[OwnerTailVarData],
 ) -> proc_macro2::TokenStream {
@@ -882,8 +952,14 @@ fn generate_owner_consuming_stages(
         let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
         let slice_ident = syn::Ident::new(&format!("{}_slice", vd.accessor_snake), span);
         let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
-        let vd_type_ident = syn::Ident::new(&vd.type_pascal, span);
-        let len_field_ident = syn::Ident::new(&vd.len_field, span);
+        let len_type_ident = syn::Ident::new(rust_type(vd.len_type), span);
+        let len_from_endian = syn::Ident::new(
+            match byte_order {
+                ByteOrder::LittleEndian => "from_le_bytes",
+                ByteOrder::BigEndian => "from_be_bytes",
+            },
+            span,
+        );
         let vd_name_lit = syn::LitStr::new(&vd.name, span);
         let se = start_expr(i);
         let mut max_check = proc_macro2::TokenStream::new();
@@ -893,8 +969,8 @@ fn generate_owner_consuming_stages(
                 if len > #max_lit {
                     return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                         field: #vd_name_lit,
-                        length: len as u32,
-                        max_length: #max_lit,
+                        length: len,
+                        max_length: #max_lit as u64,
                     });
                 }
             });
@@ -921,26 +997,21 @@ fn generate_owner_consuming_stages(
                         )
                     };
                     // Direct integer read — avoids constructing the var-data
-                    // encoding struct (VarAsciiEncoding etc.) for the length.
-                    let len = match #prefix_size_lit {
-                        1 => bytes[0] as usize,
-                        2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
-                        _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
-                    };
+                    // encoding struct while preserving its width and schema byte order.
+                    let len = #len_type_ident::#len_from_endian(bytes) as u64;
                     #max_check
-                    let data_start = offset + #prefix_size_lit;
-                    if data_start + len > self.buf.len() {
-                        return Err(sbe_rt::DecodeError::BufferTooShort {
-                            field: #vd_name_lit,
-                            needed: #prefix_size_lit + len,
-                            available: self.buf.len().saturating_sub(offset),
-                        });
-                    }
-                    let data = &self.buf[data_start..data_start + len];
+                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                        #vd_name_lit,
+                        offset,
+                        #prefix_size_lit,
+                        len,
+                        self.buf.len(),
+                    )?;
+                    let data = &self.buf[data_start..data_end];
                     let next = #next_stage {
                         buf: self.buf,
                         pos: self.pos,
-                        tail_start: data_start + len,
+                        tail_start: data_end,
                         acting_version: self.acting_version,
                         acting_block_length: self.acting_block_length,
                     };
@@ -966,22 +1037,17 @@ fn generate_owner_consuming_stages(
                         )
                     };
                     // Direct integer read — avoids constructing the var-data
-                    // encoding struct (VarAsciiEncoding etc.) for the length.
-                    let len = match #prefix_size_lit {
-                        1 => bytes[0] as usize,
-                        2 => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
-                        _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
-                    };
+                    // encoding struct while preserving its width and schema byte order.
+                    let len = #len_type_ident::#len_from_endian(bytes) as u64;
                     #max_check
-                    let data_start = offset + #prefix_size_lit;
-                    if data_start + len > self.buf.len() {
-                        return Err(sbe_rt::DecodeError::BufferTooShort {
-                            field: #vd_name_lit,
-                            needed: #prefix_size_lit + len,
-                            available: self.buf.len().saturating_sub(offset),
-                        });
-                    }
-                    Ok(&self.buf[data_start..data_start + len])
+                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                        #vd_name_lit,
+                        offset,
+                        #prefix_size_lit,
+                        len,
+                        self.buf.len(),
+                    )?;
+                    Ok(&self.buf[data_start..data_end])
                 }
             }
         });
@@ -1167,6 +1233,7 @@ fn generate_decoder_consuming_stages(
     elements: &SchemaElements,
     name: &str,
     header_size: usize,
+    byte_order: ByteOrder,
     _multi_message: bool,
     group_unique_names: &[String],
 ) -> proc_macro2::TokenStream {
@@ -1188,7 +1255,7 @@ fn generate_decoder_consuming_stages(
         .var_data
         .iter()
         .map(|vd| {
-            let (type_pascal, prefix_size, len_field, _) =
+            let (type_pascal, prefix_size, len_field, len_type) =
                 get_vardata_info(elements, &vd.type_name);
             OwnerTailVarData {
                 accessor_snake: to_snake_case(&vd.name),
@@ -1196,13 +1263,21 @@ fn generate_decoder_consuming_stages(
                 type_pascal,
                 prefix_size,
                 len_field,
+                len_type,
                 max_length: vd.max_length,
                 name: vd.name.clone(),
                 character_encoding: vd.character_encoding.clone(),
             }
         })
         .collect();
-    generate_owner_consuming_stages(initial_ident, &stage_prefix, header_size, &groups, &vardata)
+    generate_owner_consuming_stages(
+        initial_ident,
+        &stage_prefix,
+        header_size,
+        byte_order,
+        &groups,
+        &vardata,
+    )
 }
 
 /// Entry-level consuming tail stages for a group whose entries have nested
@@ -1212,6 +1287,7 @@ fn generate_entry_consuming_stages(
     g: &MessageGroup,
     elements: &SchemaElements,
     name: &str,
+    byte_order: ByteOrder,
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let entry_prefix = format!("{name}EntryDecoder");
@@ -1233,7 +1309,7 @@ fn generate_entry_consuming_stages(
         .var_data
         .iter()
         .map(|vd| {
-            let (type_pascal, prefix_size, len_field, _) =
+            let (type_pascal, prefix_size, len_field, len_type) =
                 get_vardata_info(elements, &vd.type_name);
             OwnerTailVarData {
                 accessor_snake: to_snake_case(&vd.name),
@@ -1241,13 +1317,21 @@ fn generate_entry_consuming_stages(
                 type_pascal,
                 prefix_size,
                 len_field,
+                len_type,
                 max_length: vd.max_length,
                 name: vd.name.clone(),
                 character_encoding: vd.character_encoding.clone(),
             }
         })
         .collect();
-    generate_owner_consuming_stages(initial_ident, &entry_prefix, 0, &groups, &vardata)
+    generate_owner_consuming_stages(
+        initial_ident,
+        &entry_prefix,
+        0,
+        byte_order,
+        &groups,
+        &vardata,
+    )
 }
 
 fn generate_message_decoder(
@@ -1277,7 +1361,9 @@ fn generate_message_decoder(
     // resolve left it zero (should not happen for real messages).
     // Constant fields have zero wire footprint; skip them so block_length stays
     // 0 for constant-only messages (e.g. value_ref MsgTwo–MsgFive).
-    let computed_block_length = msg.fields.iter()
+    let computed_block_length = msg
+        .fields
+        .iter()
         .filter(|f| f.presence != Presence::Constant)
         .fold(0, |acc, f| {
             let size = f.field_type.size();
@@ -1286,11 +1372,13 @@ fn generate_message_decoder(
     let block_length = msg.block_length.max(computed_block_length);
 
     let header_pascal = to_pascal_case(header_type);
-    let (header_bl, header_ti, header_si, header_vr) = {
+    let (header_bl, header_ti, header_si, header_vr, header_ti_constant, header_si_constant) = {
         let mut bl = "block_length".to_string();
         let mut ti = "template_id".to_string();
         let mut si = "schema_id".to_string();
         let mut vr = "version".to_string();
+        let mut ti_constant = false;
+        let mut si_constant = false;
         if let Some(comp) = elements
             .composites
             .iter()
@@ -1299,18 +1387,27 @@ fn generate_message_decoder(
             let members = parse_composite_members(comp);
             for m in members {
                 let lower = m.name.to_lowercase();
+                let is_constant = matches!(
+                    m.member_type,
+                    MemberType::Primitive {
+                        presence: Presence::Constant,
+                        ..
+                    }
+                );
                 if lower.contains("blocklength") {
                     bl = to_snake_case(&m.name);
                 } else if lower.contains("templateid") {
                     ti = to_snake_case(&m.name);
+                    ti_constant = is_constant;
                 } else if lower.contains("schemaid") {
                     si = to_snake_case(&m.name);
+                    si_constant = is_constant;
                 } else if lower.contains("version") {
                     vr = to_snake_case(&m.name);
                 }
             }
         }
-        (bl, ti, si, vr)
+        (bl, ti, si, vr, ti_constant, si_constant)
     };
 
     let header_size = elements
@@ -1325,13 +1422,15 @@ fn generate_message_decoder(
     let mut max_tail = 0usize;
     for g in &msg.groups {
         let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
-        max_tail += dim_size + g.effective_block_length();
+        max_tail = max_tail.saturating_add(dim_size.saturating_add(g.effective_block_length()));
     }
     for vd in &msg.var_data {
         let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
-        max_tail += prefix_size + vd.max_length.unwrap_or(0);
+        max_tail = max_tail.saturating_add(prefix_size.saturating_add(vd.max_length.unwrap_or(0)));
     }
-    let max_encoded_length = header_size + block_length + max_tail;
+    let max_encoded_length = header_size
+        .saturating_add(block_length)
+        .saturating_add(max_tail);
 
     let _name_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
     let decoder_ident =
@@ -1381,7 +1480,7 @@ fn generate_message_decoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #bl_lit;
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #bl_lit);
-            /// Message header size in bytes (standard SBE header is 8).
+            /// Schema-declared message header size in bytes.
             pub const HEADER_LENGTH: usize = #hdr_size_lit;
             /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`
             /// Header-inclusive fixed length (header + body). For session
@@ -1418,7 +1517,7 @@ fn generate_message_decoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #bl_lit;
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #bl_lit);
-            /// Message header size in bytes (standard SBE header is 8).
+            /// Schema-declared message header size in bytes.
             pub const HEADER_LENGTH: usize = #hdr_size_lit;
             #[doc = #max_doc_lit]
             pub const MAX_ENCODED_LENGTH: usize = #max_encoded_lit;
@@ -1446,13 +1545,39 @@ fn generate_message_decoder(
         let hbl = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
         let hvr = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
         let en = syn::LitStr::new(&schema_name, proc_macro2::Span::call_site());
+        let template_id_validation = if header_ti_constant {
+            quote::quote! {}
+        } else {
+            quote::quote! {
+                if template_id != Self::TEMPLATE_ID {
+                    return Err(sbe_rt::DecodeError::WrongSchema {
+                        expected: Self::TEMPLATE_ID,
+                        actual: template_id,
+                        expected_name: #en,
+                    });
+                }
+            }
+        };
+        let schema_id_validation = if header_si_constant {
+            quote::quote! {}
+        } else {
+            quote::quote! {
+                if schema_id != Self::SCHEMA_ID {
+                    return Err(sbe_rt::DecodeError::WrongSchema {
+                        expected: Self::SCHEMA_ID,
+                        actual: schema_id,
+                        expected_name: #en,
+                    });
+                }
+            }
+        };
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn try_wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // Decoder trust boundary: validate buffer bounds + schema_id + template_id.
                 // This is the one place the decoder checks — all field accessors
                 // after this are infallible (offsets are within the validated block).
-                if pos + #hs > buf.len() {
+                if #hs > buf.len().saturating_sub(pos) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "message header",
                         needed: #hs,
@@ -1461,29 +1586,33 @@ fn generate_message_decoder(
                 }
                 let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
                 let header = #hp(header_bytes);
-                if header.#hti() != Self::TEMPLATE_ID {
-                    return Err(sbe_rt::DecodeError::WrongSchema {
-                        expected: Self::TEMPLATE_ID,
-                        actual: header.#hti(),
-                        expected_name: #en,
-                    });
-                }
-                if header.#hsi() != Self::SCHEMA_ID {
-                    return Err(sbe_rt::DecodeError::WrongSchema {
-                        expected: Self::SCHEMA_ID,
-                        actual: header.#hsi(),
-                        expected_name: #en,
-                    });
-                }
-                let acting_block_length = header.#hbl() as usize;
-                if pos + #hs + acting_block_length > buf.len() {
+                let template_id = sbe_rt::checked_header_u16(
+                    "templateId",
+                    header.#hti() as u64,
+                )?;
+                #template_id_validation
+                let schema_id = sbe_rt::checked_header_u16(
+                    "schemaId",
+                    header.#hsi() as u64,
+                )?;
+                #schema_id_validation
+                let acting_block_length = sbe_rt::checked_header_usize(
+                    "blockLength",
+                    header.#hbl() as u64,
+                )?;
+                let body_pos = pos + #hs;
+                if acting_block_length > buf.len().saturating_sub(body_pos) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "message body",
-                        needed: #hs + acting_block_length,
+                        needed: (#hs as usize).saturating_add(acting_block_length),
                         available: buf.len().saturating_sub(pos),
                     });
                 }
-                Ok(Self::wrap(buf, pos + #hs, acting_block_length, header.#hvr()))
+                let acting_version = sbe_rt::checked_header_u16(
+                    "version",
+                    header.#hvr() as u64,
+                )?;
+                Ok(Self::wrap(buf, body_pos, acting_block_length, acting_version))
             }
         });
     }
@@ -2009,34 +2138,38 @@ fn generate_message_decoder(
     // VarData tail offsets
     for vd in &msg.var_data {
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let k1 = k + 1;
         let prefix_size_lit =
             syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
         let vd_type_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
         let vd_len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
-        let vd_tail = format!(
-            "    #[inline]\n\
-             fn tail_offset_{k1}(&self) -> Result<usize, sbe_rt::DecodeError> {{\n\
-                 let start = self.tail_offset_{k}()?;\n\
-                 if start + {ps} > self.buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps}, available: self.buf.len().saturating_sub(start) }});\n\
-                 }}\n\
-                 let bytes: [u8; {ps}] = read_bytes::<{ps}>(self.buf, start);\n\
-                 let header = {tp}(bytes);\n\
-                 let len = header.{lf}() as usize;\n\
-                 if start + {ps} + len > self.buf.len() {{\n\
-                     return Err(sbe_rt::DecodeError::BufferTooShort {{ field: \"{vn}\", needed: {ps} + len, available: self.buf.len().saturating_sub(start) }});\n\
-                 }}\n\
-                 Ok(start + {ps} + len)\n\
-             }}",
-            k1 = k1,
-            k = k,
-            ps = prefix_size,
-            vn = vd.name,
-            tp = type_pascal,
-            lf = len_field,
-        );
-        impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(&vd_tail).unwrap());
+        let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
+        let tail_k_ident = quote::format_ident!("tail_offset_{}", k);
+        let tail_k1_ident = quote::format_ident!("tail_offset_{}", k + 1);
+        impl_body.extend(quote::quote! {
+            #[inline]
+            fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                let start = self.#tail_k_ident()?;
+                if #prefix_size_lit > self.buf.len().saturating_sub(start) {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: #vd_name_lit,
+                        needed: #prefix_size_lit,
+                        available: self.buf.len().saturating_sub(start),
+                    });
+                }
+                let bytes: [u8; #prefix_size_lit] =
+                    read_bytes::<#prefix_size_lit>(self.buf, start);
+                let header = #vd_type_ident(bytes);
+                let wire_length = header.#vd_len_field_ident() as u64;
+                let (_, data_end) = sbe_rt::checked_var_data_bounds(
+                    #vd_name_lit,
+                    start,
+                    #prefix_size_lit,
+                    wire_length,
+                    self.buf.len(),
+                )?;
+                Ok(data_end)
+            }
+        });
         k += 1;
     }
 
@@ -2122,16 +2255,22 @@ fn generate_message_decoder(
                 let offset = self.#vd_tail_ident()?;
                 let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                 let header = #type_pascal_ident(bytes);
-                let len = header.#len_field_ident() as usize;
-                if len > #max_lit {
+                let wire_length = header.#len_field_ident() as u64;
+                if wire_length > #max_lit as u64 {
                     return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                         field: stringify!(#vd_snake_ident),
-                        length: len as u32,
-                        max_length: #max_lit,
+                        length: wire_length,
+                        max_length: #max_lit as u64,
                     });
                 }
-                let data_offset = offset + #prefix_size_lit;
-                Ok(&self.buf[data_offset .. data_offset + len])
+                let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                    stringify!(#vd_snake_ident),
+                    offset,
+                    #prefix_size_lit,
+                    wire_length,
+                    self.buf.len(),
+                )?;
+                Ok(&self.buf[data_start..data_end])
             }
         });
 
@@ -2228,14 +2367,22 @@ fn generate_message_decoder(
         }
         let header_bytes: [u8; #hs_lit] = read_bytes::<#hs_lit>(buf, 0);
         let header = #hp_ident(header_bytes);
-        let block_length = header.#hbl_ident() as usize;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.#hbl_ident() as u64,
+        )?;
         if block_length < Self::BLOCK_LENGTH {
             return Err(sbe_rt::VerifyError::InvalidBlockLength {
                 expected_min: Self::BLOCK_LENGTH,
                 actual: block_length,
             });
         }
-        let body_end = #hs_lit + block_length;
+        let body_end = (#hs_lit as usize).checked_add(block_length).ok_or(
+            sbe_rt::VerifyError::MessageTooShort {
+                needed: usize::MAX,
+                available: buf.len(),
+            },
+        )?;
         if body_end > buf.len() {
             return Err(sbe_rt::VerifyError::MessageTooShort {
                 needed: body_end,
@@ -2252,7 +2399,10 @@ fn generate_message_decoder(
         let ds_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
         let dn_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
         let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let ebl_lit = syn::LitInt::new(&g.effective_block_length().to_string(), proc_macro2::Span::call_site());
+        let ebl_lit = syn::LitInt::new(
+            &g.effective_block_length().to_string(),
+            proc_macro2::Span::call_site(),
+        );
         let has_tails = !g.groups.is_empty() || !g.var_data.is_empty();
         let entry_dec_ident = {
             let raw = to_pascal_case(&g.name);
@@ -2322,7 +2472,7 @@ fn generate_message_decoder(
         let lf_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
         verify_stmts.push(quote::quote! {
             {
-                if offset + #ps_lit > buf.len() {
+                if #ps_lit > buf.len().saturating_sub(offset) {
                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
                         field: #vd_snake,
                         offset,
@@ -2331,15 +2481,21 @@ fn generate_message_decoder(
                 }
                 let bytes: [u8; #ps_lit] = read_bytes::<#ps_lit>(buf, offset);
                 let var_header = #tp_ident(bytes);
-                let len = var_header.#lf_ident();
-                let data_end = offset + #ps_lit + len as usize;
-                if data_end > buf.len() {
-                    return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                let len = var_header.#lf_ident() as u64;
+                let (_, data_end) = match sbe_rt::checked_var_data_bounds(
+                    #vd_snake,
+                    offset,
+                    #ps_lit,
+                    len,
+                    buf.len(),
+                ) {
+                    Ok(bounds) => bounds,
+                    Err(_) => return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
                         field: #vd_snake,
                         offset,
-                        length: len as u32,
-                    });
-                }
+                        length: len,
+                    }),
+                };
                 offset = data_end;
             }
         });
@@ -2416,6 +2572,7 @@ fn generate_message_decoder(
         elements,
         &name,
         header_size,
+        byte_order,
         multi_message,
         &group_unique_names,
     ));
@@ -2638,18 +2795,34 @@ fn generate_domain_recursive(
                         } else {
                             f_ident.clone()
                         };
-                    struct_fields.push(quote::quote! { pub #f_ident: #scalar_ty });
-                    from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
-                    // Range-check wire-typed DTOs only (converted domain types are app-side).
-                    let range_check = if scalar_domain.is_none() {
-                        dto_range_check_tokens(f, *prim, quote::quote! { self.#f_ident }, span)
+                    if f.since_version > 0 {
+                        struct_fields.push(quote::quote! { pub #f_ident: Option<#scalar_ty> });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
+                        let range_check = if scalar_domain.is_none() {
+                            dto_range_check_tokens(f, *prim, quote::quote! { v }, span)
+                        } else {
+                            quote::quote! {}
+                        };
+                        encode_stmts.push(quote::quote! {
+                            if let Some(v) = self.#f_ident {
+                                #range_check
+                                enc.#enc_setter(v);
+                            }
+                        });
                     } else {
-                        quote::quote! {}
-                    };
-                    encode_stmts.push(quote::quote! {
-                        #range_check
-                        enc.#enc_setter(self.#f_ident);
-                    });
+                        struct_fields.push(quote::quote! { pub #f_ident: #scalar_ty });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
+                        // Range-check wire-typed DTOs only (converted domain types are app-side).
+                        let range_check = if scalar_domain.is_none() {
+                            dto_range_check_tokens(f, *prim, quote::quote! { self.#f_ident }, span)
+                        } else {
+                            quote::quote! {}
+                        };
+                        encode_stmts.push(quote::quote! {
+                            #range_check
+                            enc.#enc_setter(self.#f_ident);
+                        });
+                    }
                 }
             }
             FieldType::Composite {
@@ -2675,7 +2848,7 @@ fn generate_domain_recursive(
                 };
                 // Drive-by fix: versioned composites return Option<T> on decoders,
                 // so the DTO field must also be optional.
-                if !is_entry && f.since_version > 0 {
+                if f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#field_ty> });
                     if domain_ty.is_some() {
                         from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
@@ -2703,7 +2876,7 @@ fn generate_domain_recursive(
                 if is_bool_enum(elements, enum_name) {
                     // bool enums → plain bool in DTO
                     let bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
-                    if !is_entry && f.since_version > 0 {
+                    if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<bool> });
                         from_exprs.push(quote::quote! { #f_ident: dec.#bool_ident() });
                         encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#bool_ident(v); } });
@@ -2714,7 +2887,7 @@ fn generate_domain_recursive(
                     }
                 } else {
                     let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
-                    if !is_entry && f.since_version > 0 {
+                    if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
                         from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
                         encode_stmts.push(
@@ -2731,7 +2904,7 @@ fn generate_domain_recursive(
                 name: enum_name, ..
             } => {
                 let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
-                if !is_entry && f.since_version > 0 {
+                if f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
                     encode_stmts.push(
                         quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
@@ -2814,7 +2987,7 @@ fn generate_domain_recursive(
             &conversions,
             domain_types,
             domain_var_data,
-            true, // is_entry — group entries always return T for enums
+            true,
             ts,
             span,
         );
@@ -3274,11 +3447,34 @@ fn generate_group_decoder(
     let order_fn = quote::format_ident!("from_{}_bytes", order_suffix);
     let dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
     let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-    let block_len_lit =
-        syn::LitInt::new(&g.effective_block_length().to_string(), proc_macro2::Span::call_site());
+    let block_len_lit = syn::LitInt::new(
+        &g.effective_block_length().to_string(),
+        proc_macro2::Span::call_site(),
+    );
     let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
+    let total_tail = g.groups.len() + g.var_data.len();
+    let fixed_extent_validation = if total_tail == 0 {
+        quote::quote! {
+            let entries_length = count.checked_mul(block_length).ok_or(
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: #g_name_lit,
+                    needed: usize::MAX,
+                    available: buf.len().saturating_sub(entries_start),
+                },
+            )?;
+            if entries_length > buf.len().saturating_sub(entries_start) {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: #g_name_lit,
+                    needed: entries_length,
+                    available: buf.len().saturating_sub(entries_start),
+                });
+            }
+        }
+    } else {
+        quote::quote! {}
+    };
 
     // Struct definition + wrap() + wrap_with_parent() + is_empty()
     if let Some(ref desc) = g.description {
@@ -3320,7 +3516,7 @@ fn generate_group_decoder(
                 parent_block_length: usize,
             ) -> Result<Self, sbe_rt::DecodeError> {
                 // Trust boundary: always validate dimension header fits in buffer
-                if pos + #dim_size_lit > buf.len() {
+                if #dim_size_lit > buf.len().saturating_sub(pos) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #g_name_lit,
                         needed: #dim_size_lit,
@@ -3331,11 +3527,13 @@ fn generate_group_decoder(
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
                 let block_length = header.#bl_field_ident() as usize;
+                let entries_start = pos + #dim_size_lit;
+                #fixed_extent_validation
                 Ok(Self {
                     buf,
-                    pos: pos + #dim_size_lit,
+                    pos: entries_start,
                     count,
-                    start: pos + #dim_size_lit,
+                    start: entries_start,
                     total: count,
                     acting_version,
                     acting_block_length: block_length,
@@ -3386,8 +3584,6 @@ fn generate_group_decoder(
         }
     });
 
-    let total_tail = g.groups.len() + g.var_data.len();
-
     // skip_n()
     if total_tail == 0 {
         ts.extend(quote::quote! {
@@ -3430,30 +3626,78 @@ fn generate_group_decoder(
         });
     }
 
-    // nth()
-    ts.extend(quote::quote! {
-        impl<'a> #decoder_ident<'a> {
-            #[inline]
-            pub fn nth(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
-                if idx >= self.total {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #g_name_lit,
-                        needed: (idx + 1) * self.acting_block_length,
-                        available: self.total * self.acting_block_length,
-                    });
+    // Random access is direct for fixed entries. Entries with nested tails
+    // must be walked because their encoded lengths are not a constant stride.
+    if total_tail == 0 {
+        ts.extend(quote::quote! {
+            impl<'a> #decoder_ident<'a> {
+                #[inline]
+                pub fn nth(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
+                    if idx >= self.total {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: idx.saturating_add(1).saturating_mul(self.acting_block_length),
+                            available: self.total.saturating_mul(self.acting_block_length),
+                        });
+                    }
+                    let byte_offset = idx.checked_mul(self.acting_block_length).ok_or(
+                        sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: usize::MAX,
+                            available: self.buf.len().saturating_sub(self.start),
+                        },
+                    )?;
+                    let offset = self.start.checked_add(byte_offset).ok_or(
+                        sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: usize::MAX,
+                            available: self.buf.len().saturating_sub(self.start),
+                        },
+                    )?;
+                    if self.acting_block_length > self.buf.len().saturating_sub(offset) {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: self.acting_block_length,
+                            available: self.buf.len().saturating_sub(offset),
+                        });
+                    }
+                    Ok(#entry_decoder_ident::wrap(self.buf, offset, self.acting_block_length, self.acting_version))
                 }
-                let offset = self.start + idx * self.acting_block_length;
-                if offset + self.acting_block_length > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #g_name_lit,
-                        needed: self.acting_block_length,
-                        available: self.buf.len().saturating_sub(offset),
-                    });
-                }
-                Ok(#entry_decoder_ident::wrap(self.buf, offset, self.acting_block_length, self.acting_version))
             }
-        }
-    });
+        });
+    } else {
+        ts.extend(quote::quote! {
+            impl<'a> #decoder_ident<'a> {
+                #[inline]
+                pub fn nth(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
+                    if idx >= self.total {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: idx.saturating_add(1).saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                            available: self.total.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                        });
+                    }
+                    let mut offset = self.start;
+                    for _ in 0..idx {
+                        offset = #entry_decoder_ident::skip(
+                            self.buf,
+                            offset,
+                            self.acting_block_length,
+                            self.acting_version,
+                        )?;
+                    }
+                    let entry = #entry_decoder_ident::wrap(
+                        self.buf,
+                        offset,
+                        self.acting_block_length,
+                        self.acting_version,
+                    );
+                    entry.encoded_length()?;
+                    Ok(entry)
+                }
+            }
+        });
+    }
 
     if total_tail == 0 {
         ts.extend(quote::quote! {
@@ -3587,6 +3831,14 @@ fn generate_group_decoder(
                         &(prim_size * len).to_string(),
                         proc_macro2::Span::call_site(),
                     );
+                    let offset_end_lit = syn::LitInt::new(
+                        &(f.offset + prim_size * len).to_string(),
+                        proc_macro2::Span::call_site(),
+                    );
+                    let since_lit = syn::LitInt::new(
+                        &f.since_version.to_string(),
+                        proc_macro2::Span::call_site(),
+                    );
                     let mut elem_exprs: Vec<proc_macro2::TokenStream> = Vec::new();
                     for i in 0..*len {
                         let start = i * prim_size;
@@ -3601,8 +3853,12 @@ fn generate_group_decoder(
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_ident(&self) -> [#r_type_ty; #len_lit] {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return [0 as #r_type_ty; #len_lit];
+                            }
                             let offset = self.pos + #offset_lit;
-                            let size = #total_size_lit;
                             let all: [u8; #total_size_lit] = read_bytes_unchecked::<#total_size_lit>(self.buf, offset);
                             [#(#elem_exprs),*]
                         }
@@ -3617,10 +3873,23 @@ fn generate_group_decoder(
                         format!("val == {}_u64 as {}", null_val, r_type)
                     };
                     let null_check_expr: syn::Expr = syn::parse_str(&null_check).unwrap();
+                    let offset_end_lit = syn::LitInt::new(
+                        &(f.offset + prim_size).to_string(),
+                        proc_macro2::Span::call_site(),
+                    );
+                    let since_lit = syn::LitInt::new(
+                        &f.since_version.to_string(),
+                        proc_macro2::Span::call_site(),
+                    );
 
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_ident(&self) -> Option<#r_type_ty> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
                             let offset = self.pos + #offset_lit;
                             let val = #r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset));
                             if #null_check_expr {
@@ -3628,6 +3897,29 @@ fn generate_group_decoder(
                             } else {
                                 Some(val)
                             }
+                        }
+                    });
+                } else if f.since_version > 0 {
+                    let offset_end_lit = syn::LitInt::new(
+                        &(f.offset + prim_size).to_string(),
+                        proc_macro2::Span::call_site(),
+                    );
+                    let since_lit = syn::LitInt::new(
+                        &f.since_version.to_string(),
+                        proc_macro2::Span::call_site(),
+                    );
+                    entry_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #f_name_ident(&self) -> Option<#r_type_ty> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#r_type_ty::#order_fn(
+                                read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
+                            ))
                         }
                     });
                 } else {
@@ -3653,34 +3945,84 @@ fn generate_group_decoder(
                     proc_macro2::Span::call_site(),
                 );
 
-                // Default: flyweight (zero-copy)
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
-                        let offset = self.pos + #offset_lit;
-                        #target_decoder_name { buf: self.buf, pos: offset }
-                    }
-                });
+                let offset_end_lit = syn::LitInt::new(
+                    &(f.offset + comp_size).to_string(),
+                    proc_macro2::Span::call_site(),
+                );
+                let since_lit =
+                    syn::LitInt::new(&f.since_version.to_string(), proc_macro2::Span::call_site());
+
+                // Default: flyweight (zero-copy).
+                if f.since_version > 0 {
+                    entry_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #f_name_ident(&self) -> Option<#target_decoder_name<'_>> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_decoder_name { buf: self.buf, pos: offset })
+                        }
+                    });
+                } else {
+                    entry_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
+                            let offset = self.pos + #offset_lit;
+                            #target_decoder_name { buf: self.buf, pos: offset }
+                        }
+                    });
+                }
 
                 let as_struct_ident =
                     syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub fn #as_struct_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
-                    }
-                });
+                if f.since_version > 0 {
+                    entry_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #as_struct_ident(&self) -> Option<#target_ident> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_ident(
+                                read_bytes_unchecked::<#comp_size_lit>(self.buf, offset)
+                            ))
+                        }
 
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #comp_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #comp_size_lit) });
-                        #target_ident(bytes)
-                    }
-                });
+                        #[inline]
+                        pub fn #raw_ident(&self) -> Option<#target_ident> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_ident(
+                                read_bytes_unchecked::<#comp_size_lit>(self.buf, offset)
+                            ))
+                        }
+                    });
+                } else {
+                    entry_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #as_struct_ident(&self) -> #target_ident {
+                            let offset = self.pos + #offset_lit;
+                            #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
+                        }
+
+                        #[inline]
+                        pub const fn #raw_ident(&self) -> #target_ident {
+                            let offset = self.pos + #offset_lit;
+                            let mut bytes = [0u8; #comp_size_lit];
+                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #comp_size_lit) });
+                            #target_ident(bytes)
+                        }
+                    });
+                }
 
                 // no lazy alias, base accessor is canonical; delete branch if lazy aliases never return
             }
@@ -3696,34 +4038,77 @@ fn generate_group_decoder(
                 let prim_size_lit =
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub fn #f_name_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
-                    }
-                });
-
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #r_type_ty {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #prim_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                        #r_type_ty::#order_fn(bytes)
-                    }
-                });
-
-                if is_bool_enum(elements, enum_name) {
-                    // Use the const raw primitive accessor — the typed
-                    // enum getter is not const (from_raw is runtime).
-                    let bool_ident = quote::format_ident!("{}_bool", f_name);
+                let offset_end_lit = syn::LitInt::new(
+                    &(f.offset + prim_size).to_string(),
+                    proc_macro2::Span::call_site(),
+                );
+                let since_lit =
+                    syn::LitInt::new(&f.since_version.to_string(), proc_macro2::Span::call_site());
+                if f.since_version > 0 {
                     entry_body.extend(quote::quote! {
                         #[inline]
-                        pub const fn #bool_ident(&self) -> bool {
-                            self.#raw_ident() != 0
+                        pub fn #f_name_ident(&self) -> Option<#target_ident> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(
+                                read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
+                            )))
+                        }
+
+                        #[inline]
+                        pub fn #raw_ident(&self) -> Option<#r_type_ty> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#r_type_ty::#order_fn(
+                                read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
+                            ))
                         }
                     });
+                } else {
+                    entry_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #f_name_ident(&self) -> #target_ident {
+                            let offset = self.pos + #offset_lit;
+                            #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                        }
+
+                        #[inline]
+                        pub const fn #raw_ident(&self) -> #r_type_ty {
+                            let offset = self.pos + #offset_lit;
+                            let mut bytes = [0u8; #prim_size_lit];
+                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                            #r_type_ty::#order_fn(bytes)
+                        }
+                    });
+                }
+
+                if is_bool_enum(elements, enum_name) {
+                    let bool_ident = quote::format_ident!("{}_bool", f_name);
+                    if f.since_version > 0 {
+                        entry_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #bool_ident(&self) -> Option<bool> {
+                                self.#raw_ident().map(|value| value != 0)
+                            }
+                        });
+                    } else {
+                        // Use the const raw primitive accessor — the typed
+                        // enum getter is not const (from_raw is runtime).
+                        entry_body.extend(quote::quote! {
+                            #[inline]
+                            pub const fn #bool_ident(&self) -> bool {
+                                self.#raw_ident() != 0
+                            }
+                        });
+                    }
                 }
             }
             FieldType::Set {
@@ -3738,23 +4123,57 @@ fn generate_group_decoder(
                 let prim_size_lit =
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub fn #f_name_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
-                    }
-                });
+                let offset_end_lit = syn::LitInt::new(
+                    &(f.offset + prim_size).to_string(),
+                    proc_macro2::Span::call_site(),
+                );
+                let since_lit =
+                    syn::LitInt::new(&f.since_version.to_string(), proc_macro2::Span::call_site());
+                if f.since_version > 0 {
+                    entry_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #f_name_ident(&self) -> Option<#target_ident> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#target_ident(#r_type_ty::#order_fn(
+                                read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
+                            )))
+                        }
 
-                entry_body.extend(quote::quote! {
-                    #[inline]
-                    pub const fn #raw_ident(&self) -> #r_type_ty {
-                        let offset = self.pos + #offset_lit;
-                        let mut bytes = [0u8; #prim_size_lit];
-                        bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                        #target_ident(#r_type_ty::#order_fn(bytes)).0
-                    }
-                });
+                        #[inline]
+                        pub fn #raw_ident(&self) -> Option<#r_type_ty> {
+                            if self.acting_version < #since_lit
+                                || #offset_end_lit > self.acting_block_length
+                            {
+                                return None;
+                            }
+                            let offset = self.pos + #offset_lit;
+                            Some(#r_type_ty::#order_fn(
+                                read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
+                            ))
+                        }
+                    });
+                } else {
+                    entry_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #f_name_ident(&self) -> #target_ident {
+                            let offset = self.pos + #offset_lit;
+                            #target_ident(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                        }
+
+                        #[inline]
+                        pub const fn #raw_ident(&self) -> #r_type_ty {
+                            let offset = self.pos + #offset_lit;
+                            let mut bytes = [0u8; #prim_size_lit];
+                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                            #target_ident(#r_type_ty::#order_fn(bytes)).0
+                        }
+                    });
+                }
             }
         }
         let fconsts_ts = emit_field_consts(f);
@@ -3813,8 +4232,6 @@ fn generate_group_decoder(
         let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
         let prefix_size_lit =
             syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let k_lit = syn::LitInt::new(&k.to_string(), proc_macro2::Span::call_site());
-        let k_plus_lit = syn::LitInt::new(&(k + 1).to_string(), proc_macro2::Span::call_site());
         let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
 
         let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
@@ -3823,16 +4240,20 @@ fn generate_group_decoder(
             #[inline]
             fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
                 let start = self.#tail_k_fn()?;
-                if start + #prefix_size_lit > self.buf.len() {
+                if #prefix_size_lit > self.buf.len().saturating_sub(start) {
                     return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit, available: self.buf.len().saturating_sub(start) });
                 }
                 let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, start);
                 let header = #type_pascal_ident(bytes);
-                let len = header.#len_field_ident() as usize;
-                if start + #prefix_size_lit + len > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit + len, available: self.buf.len().saturating_sub(start) });
-                }
-                Ok(start + #prefix_size_lit + len)
+                let wire_length = header.#len_field_ident() as u64;
+                let (_, data_end) = sbe_rt::checked_var_data_bounds(
+                    #vd_name_lit,
+                    start,
+                    #prefix_size_lit,
+                    wire_length,
+                    self.buf.len(),
+                )?;
+                Ok(data_end)
             }
         });
         k += 1;
@@ -3872,8 +4293,6 @@ fn generate_group_decoder(
             syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
         let vd_snake = to_snake_case(&vd.name);
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
-        let nvd_idx_lit = syn::LitInt::new(&nvd_idx.to_string(), proc_macro2::Span::call_site());
-
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
         if nvd_idx + 1 == total_tail {
             // Last tail component: a warm tail-end cache (filled by the
@@ -3883,8 +4302,14 @@ fn generate_group_decoder(
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = self.#tail_nvd_fn()?;
-                    let data_offset = offset + #prefix_size_lit;
                     if let Some(end) = self.tail_end.get() {
+                        let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
+                            sbe_rt::DecodeError::BufferTooShort {
+                                field: stringify!(#vd_snake_ident),
+                                needed: usize::MAX,
+                                available: self.buf.len().saturating_sub(offset),
+                            },
+                        )?;
                         // SAFETY: `tail_end` is only ever set by
                         // `encoded_length` from `tail_offset_N`, which
                         // bounds-checked `end <= buf.len()` and
@@ -3895,8 +4320,15 @@ fn generate_group_decoder(
                     }
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
-                    let len = header.#len_field_ident() as usize;
-                    Ok(&self.buf[data_offset .. data_offset + len])
+                    let wire_length = header.#len_field_ident() as u64;
+                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                        stringify!(#vd_snake_ident),
+                        offset,
+                        #prefix_size_lit,
+                        wire_length,
+                        self.buf.len(),
+                    )?;
+                    Ok(&self.buf[data_start..data_end])
                 }
             });
         } else {
@@ -3906,9 +4338,15 @@ fn generate_group_decoder(
                     let offset = self.#tail_nvd_fn()?;
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
-                    let len = header.#len_field_ident() as usize;
-                    let data_offset = offset + #prefix_size_lit;
-                    Ok(&self.buf[data_offset .. data_offset + len])
+                    let wire_length = header.#len_field_ident() as u64;
+                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                        stringify!(#vd_snake_ident),
+                        offset,
+                        #prefix_size_lit,
+                        wire_length,
+                        self.buf.len(),
+                    )?;
+                    Ok(&self.buf[data_start..data_end])
                 }
             });
         }
@@ -4116,7 +4554,9 @@ fn generate_group_decoder(
     // entries that have nested groups and/or var-data. Additive: the legacy
     // `&self` entry accessors remain. Emitted after the nested group decoders
     // above so `finish()` can name them.
-    ts.extend(generate_entry_consuming_stages(g, elements, &name));
+    ts.extend(generate_entry_consuming_stages(
+        g, elements, &name, byte_order,
+    ));
 
     ts
 }
@@ -5028,11 +5468,11 @@ fn generate_encoded_length_builder(
         let complete_ident = &stage_idents[total_tail];
         ts.extend(quote::quote! {
             impl #complete_ident {
-                /// SBE message body length (excluding the standard header).
+                /// SBE message body length (excluding the message header).
                 pub fn encoded_length(&self) -> usize { self.len }
 
-                /// Total SBE message length including the standard message
-                /// header (`HEADER_LENGTH`).
+                /// Total SBE message length including the schema-declared
+                /// message header (`HEADER_LENGTH`).
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.len + #prefix_ident::HEADER_LENGTH
                 }
@@ -5070,6 +5510,98 @@ fn generate_encoded_length_builder(
     ts
 }
 
+fn message_header_template(
+    elements: &SchemaElements,
+    header_type: &str,
+    header_size: usize,
+    byte_order: ByteOrder,
+    block_length: usize,
+    template_id: u16,
+    schema_id: u16,
+    schema_version: u16,
+) -> Vec<u8> {
+    let header = elements
+        .composites
+        .iter()
+        .find(|composite| composite[0].name == header_type)
+        .unwrap_or_else(|| panic!("resolved message header composite '{header_type}' is missing"));
+    let members = parse_composite_members(header);
+    let mut bytes = vec![0u8; header_size];
+
+    for (field_name, value) in [
+        ("blockLength", block_length as u64),
+        ("templateId", u64::from(template_id)),
+        ("schemaId", u64::from(schema_id)),
+        ("version", u64::from(schema_version)),
+    ] {
+        let member = members
+            .iter()
+            .find(|member| member.name == field_name)
+            .unwrap_or_else(|| panic!("message header is missing required field '{field_name}'"));
+        let MemberType::Primitive {
+            prim,
+            length,
+            presence,
+            ..
+        } = member.member_type
+        else {
+            panic!("message header field '{field_name}' is not a primitive integer");
+        };
+        assert_eq!(
+            length.unwrap_or(1),
+            1,
+            "message header field '{field_name}' must be scalar"
+        );
+        if presence == Presence::Constant {
+            continue;
+        }
+        assert_eq!(
+            presence,
+            Presence::Required,
+            "message header field '{field_name}' must be required or constant"
+        );
+
+        let offset = member.offset;
+        match prim {
+            PrimitiveType::UInt8 => {
+                bytes[offset] = u8::try_from(value).unwrap_or_else(|_| {
+                    panic!("message header field '{field_name}' value {value} exceeds uint8")
+                });
+            }
+            PrimitiveType::UInt16 => {
+                let encoded = u16::try_from(value).unwrap_or_else(|_| {
+                    panic!("message header field '{field_name}' value {value} exceeds uint16")
+                });
+                let encoded = match byte_order {
+                    ByteOrder::LittleEndian => encoded.to_le_bytes(),
+                    ByteOrder::BigEndian => encoded.to_be_bytes(),
+                };
+                bytes[offset..offset + 2].copy_from_slice(&encoded);
+            }
+            PrimitiveType::UInt32 => {
+                let encoded = u32::try_from(value).unwrap_or_else(|_| {
+                    panic!("message header field '{field_name}' value {value} exceeds uint32")
+                });
+                let encoded = match byte_order {
+                    ByteOrder::LittleEndian => encoded.to_le_bytes(),
+                    ByteOrder::BigEndian => encoded.to_be_bytes(),
+                };
+                bytes[offset..offset + 4].copy_from_slice(&encoded);
+            }
+            PrimitiveType::UInt64 => {
+                let encoded = match byte_order {
+                    ByteOrder::LittleEndian => value.to_le_bytes(),
+                    ByteOrder::BigEndian => value.to_be_bytes(),
+                };
+                bytes[offset..offset + 8].copy_from_slice(&encoded);
+            }
+            _ => panic!("message header field '{field_name}' must be an unsigned integer"),
+        }
+    }
+
+    bytes
+}
+
 fn generate_message_encoder(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -5093,7 +5625,9 @@ fn generate_message_encoder(
     // padding via `blockLength="…"`). Fall back to a tight field-span only if
     // resolve left it zero (should not happen for real messages).
     // Constant fields have zero wire footprint.
-    let computed_block_length = msg.fields.iter()
+    let computed_block_length = msg
+        .fields
+        .iter()
         .filter(|f| f.presence != Presence::Constant)
         .fold(0, |acc, f| {
             let size = f.field_type.size();
@@ -5118,13 +5652,15 @@ fn generate_message_encoder(
     let mut max_tail = 0usize;
     for g in &msg.groups {
         let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
-        max_tail += dim_size + g.effective_block_length();
+        max_tail = max_tail.saturating_add(dim_size.saturating_add(g.effective_block_length()));
     }
     for vd in &msg.var_data {
         let (_, prefix_size, _, _) = get_vardata_info(elements, &vd.type_name);
-        max_tail += prefix_size + vd.max_length.unwrap_or(0);
+        max_tail = max_tail.saturating_add(prefix_size.saturating_add(vd.max_length.unwrap_or(0)));
     }
-    let max_encoded_length = header_size + block_length + max_tail;
+    let max_encoded_length = header_size
+        .saturating_add(block_length)
+        .saturating_add(max_tail);
 
     const STACK_LIMIT: usize = 65536;
     let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
@@ -5135,27 +5671,19 @@ fn generate_message_encoder(
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
     let name_decoder_ident = syn::Ident::new(&format!("{}Decoder", name), span);
 
-    // Pre-compute HEADER_TEMPLATE bytes. Official sbe-tool writes the message
-    // header with the schema's byteOrder (same as the body). Matching that is
-    // required for dual-encode wire identity against sbe-tool Rust/Java codecs.
-    // Known size at generate-time (standard SBE header is 8); stack, not vec!.
-    assert!(
-        header_size <= 32,
-        "message header larger than stack pad: {header_size}"
+    // Pre-compute the exact schema-declared header wire image. Composite
+    // offsets may introduce padding and blockLength may use another unsigned
+    // primitive width; every multi-octet member follows schema byteOrder.
+    let header_tpl = message_header_template(
+        elements,
+        header_type,
+        header_size,
+        byte_order,
+        block_length,
+        msg.id,
+        schema_id,
+        schema_version,
     );
-    let mut header_tpl = [0u8; 32];
-    let header_tpl = &mut header_tpl[..header_size];
-    let hdr_bl = block_length as u16;
-    let to_bytes = |v: u16| -> [u8; 2] {
-        match byte_order {
-            ByteOrder::LittleEndian => v.to_le_bytes(),
-            ByteOrder::BigEndian => v.to_be_bytes(),
-        }
-    };
-    header_tpl[0..2].copy_from_slice(&to_bytes(hdr_bl));
-    header_tpl[2..4].copy_from_slice(&to_bytes(msg.id));
-    header_tpl[4..6].copy_from_slice(&to_bytes(schema_id));
-    header_tpl[6..8].copy_from_slice(&to_bytes(schema_version));
     let hdr_lits: Vec<syn::LitInt> = header_tpl
         .iter()
         .map(|b| syn::LitInt::new(&b.to_string(), span))
@@ -5247,7 +5775,7 @@ fn generate_message_encoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #block_length_lit;
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #block_length_lit);
-            /// Message header size in bytes (standard SBE header is 8).
+            /// Schema-declared message header size in bytes.
             pub const HEADER_LENGTH: usize = #header_size_lit;
             /// Stack-allocate with `let mut buf = [0u8; Msg::ENCODED_LENGTH];`
             /// Header-inclusive fixed length. Claim/app framing: payload starts
@@ -5279,7 +5807,7 @@ fn generate_message_encoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #block_length_lit;
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #block_length_lit);
-            /// Message header size in bytes (standard SBE header is 8).
+            /// Schema-declared message header size in bytes.
             pub const HEADER_LENGTH: usize = #header_size_lit;
             #max_doc_attr
             pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
@@ -5329,7 +5857,7 @@ fn generate_message_encoder(
         /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
         #[inline]
         pub fn try_wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
-            if pos.wrapping_add(#needed_lit) > buf.len() {
+            if #needed_lit > buf.len().saturating_sub(pos) {
                 return Err(Self::buffer_too_short(buf, pos, #needed_lit));
             }
             Ok(Self {
@@ -5344,7 +5872,7 @@ fn generate_message_encoder(
     let wrap_apply_body = quote::quote! {
         // Optional-field nullification is NOT applied by default — call
         // `apply_nulls()` if you want null sentinels.
-        if pos.wrapping_add(#needed_lit) > buf.len() {
+        if #needed_lit > buf.len().saturating_sub(pos) {
             return Err(Self::buffer_too_short(buf, pos, #needed_lit));
         }
         buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
@@ -5893,7 +6421,14 @@ fn generate_message_encoder(
                         available: self.buf.len().saturating_sub(self.pos),
                     });
                 }
-                let len_bytes = (data.len() as #len_rust_type).#to_endian();
+                let wire_length = <#len_rust_type>::try_from(data.len()).map_err(|_| {
+                    sbe_rt::EncodeError::VarDataTooLong {
+                        field: stringify!(#vd_snake),
+                        max_length: <#len_rust_type>::MAX as usize,
+                        actual: data.len(),
+                    }
+                })?;
+                let len_bytes = wire_length.#to_endian();
                 self.buf[self.pos..self.pos + #prefix_size_lit]
                     .copy_from_slice(&len_bytes);
                 let start = self.pos + #prefix_size_lit;
@@ -5958,7 +6493,14 @@ fn generate_message_encoder(
                                 available: self.buf.len().saturating_sub(self.pos),
                             }.into());
                         }
-                        let len_bytes = (exact_len as #len_rust_type).#to_endian();
+                        let wire_length = <#len_rust_type>::try_from(exact_len).map_err(|_| {
+                            sbe_rt::EncodeError::VarDataTooLong {
+                                field: stringify!(#vd_snake),
+                                max_length: <#len_rust_type>::MAX as usize,
+                                actual: exact_len,
+                            }
+                        })?;
+                        let len_bytes = wire_length.#to_endian();
                         self.buf[self.pos..self.pos + #prefix_size_lit]
                             .copy_from_slice(&len_bytes);
                         let start = self.pos + #prefix_size_lit;
@@ -6288,15 +6830,23 @@ fn generate_group_encoder(
                     let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
                     struct_write.extend(quote::quote! {
                         self.buf[pos + #f_offset..][..#f_size]
-                            .copy_from_slice(&(entry.#f_name as #r_ty).#to_endian());
+                            .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
                     });
                 }
-                FieldType::Primitive(pt, Some(_len)) if pt.size() == 1 => {
+                FieldType::Primitive(pt, Some(len)) => {
+                    let len_lit = syn::LitInt::new(&len.to_string(), span);
+                    let prim_size_lit = syn::LitInt::new(&pt.size().to_string(), span);
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name);
+                        let mut idx = 0usize;
+                        while idx < #len_lit {
+                            let offset = pos + #f_offset + idx * #prim_size_lit;
+                            self.buf[offset..][..#prim_size_lit]
+                                .copy_from_slice(&entry.#f_name[idx].#to_endian());
+                            idx += 1;
+                        }
                     });
                 }
-                FieldType::Primitive(..) => {
+                FieldType::Primitive(_, None) => {
                     struct_write.extend(quote::quote! {
                         self.buf[pos + #f_offset..][..#f_size]
                             .copy_from_slice(&entry.#f_name.#to_endian());
@@ -6547,6 +7097,7 @@ fn generate_group_encoder(
         let (_, prefix_sz, _, len_type) = get_vardata_info(elements, &vd.type_name);
         let pfx = syn::LitInt::new(&prefix_sz.to_string(), span);
         let len_ty = syn::Ident::new(&rust_type(len_type), span);
+        let vd_name_lit = syn::LitStr::new(&vd.name, span);
 
         entry_methods.extend(quote::quote! {
             #[must_use]
@@ -6555,7 +7106,14 @@ fn generate_group_encoder(
                 if self.pos + needed > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: self.buf.len().saturating_sub(self.pos) });
                 }
-                let len_bytes = (data.len() as #len_ty).#to_endian();
+                let wire_length = #len_ty::try_from(data.len()).map_err(|_| {
+                    sbe_rt::EncodeError::VarDataTooLong {
+                        field: #vd_name_lit,
+                        max_length: #len_ty::MAX as usize,
+                        actual: data.len(),
+                    }
+                })?;
+                let len_bytes = wire_length.#to_endian();
                 self.buf[self.pos..self.pos + #pfx].copy_from_slice(&len_bytes);
                 let start = self.pos + #pfx;
                 self.buf[start..start + data.len()].copy_from_slice(data);
@@ -6915,5 +7473,43 @@ mod tests {
             "should generate TryFromSbe impl"
         );
         Ok(())
+    }
+
+    #[test]
+    fn narrow_message_header_rejects_values_above_declared_field_maximum() {
+        fn generate(xml: &str) -> Result<super::GeneratedModuleSet, super::GenerateError> {
+            let ir = crate::parse(xml).expect("schema should parse before codegen validation");
+            let schema = crate::Schema::from_ir(ir);
+            crate::Generator::new(crate::GenerationConfig::new("narrow")).generate(&schema)
+        }
+
+        fn schema(schema_id: u16, version: u16, template_id: u16, block_length: u16) -> String {
+            format!(
+                r#"<messageSchema package="test" id="{schema_id}" version="{version}" byteOrder="littleEndian">
+                  <types>
+                    <composite name="messageHeader">
+                      <type name="schemaId" primitiveType="uint8"/>
+                      <type name="version" primitiveType="uint8"/>
+                      <type name="templateId" primitiveType="uint8"/>
+                      <type name="blockLength" primitiveType="uint8"/>
+                    </composite>
+                  </types>
+                  <message name="M" id="{template_id}" blockLength="{block_length}"/>
+                </messageSchema>"#
+            )
+        }
+
+        for (xml, field) in [
+            (schema(255, 1, 1, 0), "schemaId"),
+            (schema(1, 255, 1, 0), "version"),
+            (schema(1, 1, 255, 0), "templateId"),
+            (schema(1, 1, 1, 255), "blockLength"),
+        ] {
+            let error = generate(&xml).expect_err("reserved null/max value must be rejected");
+            assert!(
+                error.to_string().contains(field),
+                "expected {field} error, got: {error}"
+            );
+        }
     }
 }

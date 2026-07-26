@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="custom_header_layout"
+                   id="258"
+                   version="3"
+                   semanticVersion="1.0"
+                   byteOrder="littleEndian">
+    <types>
+        <!--
+          Legal non-recommended layout used to prove that codecs honor the
+          schema-defined primitive widths, offsets, padding, and total size.
+        -->
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint8" offset="0"/>
+            <type name="templateId" primitiveType="uint16" offset="3"/>
+            <type name="schemaId" primitiveType="uint16" offset="5"/>
+            <type name="version" primitiveType="uint16" offset="7"/>
+            <type name="numGroups" primitiveType="uint16" offset="10"/>
+            <type name="numVarDataFields" primitiveType="uint16" offset="12"/>
+        </composite>
+    </types>
+    <sbe:message name="CustomMessage" id="7" blockLength="4">
+        <field name="value" id="1" type="uint32"/>
+    </sbe:message>
+</sbe:messageSchema>

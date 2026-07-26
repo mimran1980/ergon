@@ -199,7 +199,8 @@ impl GenerationConfig {
     ///
     /// `path` must work in `pub use <path> as sbe_rt;`.
     ///
-    /// ```ignore
+    /// ```
+    /// # use ergo_sbe::GenerationConfig;
     /// // first module embeds sbe_rt; later modules do:
     /// // pub use crate::common::sbe_rt as sbe_rt;
     /// GenerationConfig::new("md")
@@ -215,17 +216,10 @@ impl GenerationConfig {
     ///
     /// # Generated API
     ///
-    /// ```ignore
-    /// // build.rs
-    /// .with_conversion(ConversionSelector::named_type("Decimal"))
+    /// In build.rs: `.with_conversion(ConversionSelector::named_type("Decimal"))`.
+    /// Application code: `enc.price_from(&my_price)?;` / `dec.price_as::<MyPrice>()?`.
     ///
-    /// // application (you implement TryFromSbe / TryToSbe for MyPrice)
-    /// enc.price_from(&my_price)?;
-    /// let my_price: MyPrice = dec.price_as()?;
-    /// let wire = dec.price_value(); // still available
-    /// // encode setter for wire type is often renamed:
-    /// enc.price_wire(wire_decimal);
-    /// ```
+    /// → [`sbe/tests/conversion_selector_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/conversion_selector_test.rs)
     ///
     /// Prefer [`Self::with_domain_type`] when one concrete Rust type is enough.
     /// Duplicate selectors are ignored; selectors matching nothing error at
@@ -246,17 +240,8 @@ impl GenerationConfig {
     ///
     /// # Generated API
     ///
-    /// ```ignore
-    /// // build.rs
-    /// .with_domain_type(
-    ///     ConversionSelector::named_type("Decimal"),
-    ///     "rust_decimal::Decimal",
-    /// )
-    ///
-    /// // application
-    /// enc.price(rust_decimal::Decimal::new(12345, 2));
-    /// let p: rust_decimal::Decimal = dec.price();
-    /// ```
+    /// In build.rs: `.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")`
+    /// Application: `enc.price(rust_decimal::Decimal::new(12345, 2))` / `let p = dec.price()`.
     ///
     /// Do **not** also call [`Self::with_conversion`] for the same selector.
     #[must_use]
@@ -278,14 +263,8 @@ impl GenerationConfig {
 
     /// Emit `From<sbe_rt::EncodeError>` / `From<sbe_rt::DecodeError>` for your error type.
     ///
-    /// ```ignore
-    /// // build.rs
-    /// .enable_error_from_impls("crate::AppError")
-    ///
-    /// // app: fn encode(...) -> Result<(), AppError> {
-    /// //     enc.group(...)?;  // EncodeError converts via From
-    /// // }
-    /// ```
+    /// In build.rs: `.enable_error_from_impls("crate::AppError")`.
+    /// Application code: `enc.group(...)?;` — `EncodeError` auto-converts via `From`.
     #[must_use]
     pub fn enable_error_from_impls(mut self, path: impl Into<String>) -> Self {
         self.error_from_path = Some(path.into());
@@ -312,13 +291,10 @@ impl GenerationConfig {
     ///
     /// # Generated API
     ///
-    /// ```ignore
-    /// // DomainVarData::LossyStrings → manufacturer: String
-    /// // DomainVarData::Bytes        → manufacturer: Vec<u8>
-    /// let dto = CarDomain::from(CarDecoder::try_from(buf)?);
-    /// assert_eq!(dto.serial_number, 1234);
-    /// let n = dto.encode(&mut out)?; // range-checks integer min/max
-    /// ```
+    /// `DomainVarData::LossyStrings` → `manufacturer: String`.
+    /// `DomainVarData::Bytes` → `manufacturer: Vec<u8>`.
+    ///
+    /// → [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
     #[must_use]
     pub fn enable_domain_objects(mut self, var_data: DomainVarData) -> Self {
         self.domain_objects = true;
@@ -338,10 +314,8 @@ impl GenerationConfig {
 
     /// Emit `_unchecked` companion methods for micro-benchmarks.
     ///
-    /// ```ignore
-    /// // hot path after you have already validated bounds:
-    /// let n = car.serial_number_unchecked();
-    /// ```
+    /// Hot path after you have already validated bounds:
+    /// `car.serial_number_unchecked()`.
     #[must_use]
     pub fn with_unchecked_companions(mut self) -> Self {
         self.unchecked_companions = true;

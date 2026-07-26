@@ -16,18 +16,23 @@
 
 use serial_test::serial;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::hint::black_box;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
-static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static MEASURING: Cell<bool> = const { Cell::new(false) };
+    static MEASURED_ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
+}
 
 struct CountingAllocator;
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-        ALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        MEASURING.with(|measuring| {
+            if measuring.get() {
+                MEASURED_ALLOCATIONS.with(|count| count.set(count.get() + 1));
+            }
+        });
         unsafe { System.alloc(layout) }
     }
 
@@ -41,9 +46,11 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 
 fn measure(label: &str, f: impl FnOnce()) {
     warm_up_all();
-    let start = ALLOC_COUNT.load(Ordering::Relaxed);
+    MEASURED_ALLOCATIONS.with(|count| count.set(0));
+    MEASURING.with(|measuring| measuring.set(true));
     f();
-    let allocs = ALLOC_COUNT.load(Ordering::Relaxed) - start;
+    MEASURING.with(|measuring| measuring.set(false));
+    let allocs = MEASURED_ALLOCATIONS.with(Cell::get);
     assert_eq!(allocs, 0, "{label} allocated {allocs} times");
 }
 
@@ -132,12 +139,17 @@ fn warm_up_all() {
     // Settle EncodedLength builder (uniform_length_builder test)
     let _len = CarEncodedLength::new()
         .fuel_figures(2)
-        .usage_description(5).unwrap()
+        .usage_description(5)
+        .unwrap()
         .performance_figures(0)
-        .acceleration(0).unwrap()
-        .manufacturer(5).unwrap()
-        .model(4).unwrap()
-        .activation_code(3).unwrap()
+        .acceleration(0)
+        .unwrap()
+        .manufacturer(5)
+        .unwrap()
+        .model(4)
+        .unwrap()
+        .activation_code(3)
+        .unwrap()
         .encoded_length_with_header();
 }
 
@@ -160,7 +172,12 @@ fn decode_entrypoint_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 fn raw_scalar_accessor_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     measure("scalar accessors", || {
-        black_box((car.serial_number(), car.model_year(), car.available(), car.code()));
+        black_box((
+            car.serial_number(),
+            car.model_year(),
+            car.available(),
+            car.code(),
+        ));
     });
     Ok(())
 }
@@ -209,12 +226,17 @@ fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>>
     measure("uniform length builder", || {
         let len = CarEncodedLength::new()
             .fuel_figures(2)
-            .usage_description(5).unwrap()
+            .usage_description(5)
+            .unwrap()
             .performance_figures(0)
-            .acceleration(0).unwrap()
-            .manufacturer(5).unwrap()
-            .model(4).unwrap()
-            .activation_code(3).unwrap()
+            .acceleration(0)
+            .unwrap()
+            .manufacturer(5)
+            .unwrap()
+            .model(4)
+            .unwrap()
+            .activation_code(3)
+            .unwrap()
             .encoded_length_with_header();
         black_box(len);
     });
@@ -226,11 +248,17 @@ fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>>
 fn vardata_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     measure("var-data decode", || {
-        let (mfr, a1) = car.into_fuel_figures().unwrap()
-            .finish().unwrap()
-            .into_performance_figures().unwrap()
-            .finish().unwrap()
-            .into_manufacturer().unwrap();
+        let (mfr, a1) = car
+            .into_fuel_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_performance_figures()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_manufacturer()
+            .unwrap();
         let (model, _done) = a1.into_model().unwrap();
         black_box((mfr, model));
     });

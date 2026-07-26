@@ -19,9 +19,19 @@ cargo test -p ergo-sbe --test sbe_tool_multi_schema_wire_parity_test --test sbe_
 
 Requires Java + Gradle (submodule build).
 
+The script regenerates all 37 packages from the pinned submodule without
+modifying the submodule. Three packages receive documented compile-only Rust
+keyword repairs after generation (`basic_types`, `code_generation`, and
+`dto_test`). The `constant_header` package receives one compile-only repair:
+the Rust backend calls a nonexistent setter for a constant `schemaId`, so the
+impossible call is removed. A constant has zero wire footprint; none of these
+repairs changes generated wire logic.
+
 ## Coverage
 
-Every package key is either dual-encoded in the multi-schema / Car suites or
-listed under **Permanent exclusions** in
-`sbe_tool_multi_schema_wire_parity_test.rs` (with reason). Do not hand-edit
-generated sources; re-run the script after bumping the submodule.
+Every package header is cross-decoded against independently constructed bytes.
+The two `custom_header_layout*` packages additionally prove schema-defined
+padding and shifted offsets with `uint8`/`uint32` block lengths in both byte
+orders. Payload coverage combines full-frame dual encoding, bidirectional
+cross-decoding, and the deep Car matrix. Do not hand-edit generated sources;
+re-run the script after bumping the submodule.

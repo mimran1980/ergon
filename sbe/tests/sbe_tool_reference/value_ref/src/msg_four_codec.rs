@@ -149,7 +149,7 @@ pub mod decoder {
             )
         }
 
-        /// CONSTANT 
+        /// CONSTANT
         #[inline]
         pub fn test_constant_one_field(&self) -> u8 {
             7
@@ -158,4 +158,3 @@ pub mod decoder {
     }
 
 } // end decoder
-

@@ -106,33 +106,15 @@
 //!
 //! ## Decode flyweight
 //!
-//! ```ignore
-//! let car = CarDecoder::try_from(buf)?;           // checks header + schema id
-//! let n = car.serial_number();                    // u64
-//! let year = car.model_year();                    // u16
-//! let acting = car.acting_version();              // wire version
-//! ```
+//! → [`samples/sbe-feature-tour`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs)
 //!
-//! Trusted buffers (already validated): `CarDecoder::wrap(...)`.
+//! ## Encode + type-state tails (buffer sizing)
 //!
-//! ## Encode + type-state tails
+//! **Size the buffer first** with the staged `*EncodedLength` builder —
+//! never guess with a large `vec![0u8; 4096]`. For fixed-only messages
+//! use the const `ENCODED_LENGTH`.
 //!
-//! Fixed fields first, then groups / var-data in **wire order** (compile-time
-//! stages prevent out-of-order writes):
-//!
-//! ```ignore
-//! // Const length → stack array (no heap).
-//! let mut buf = [0u8; CarEncoder::ENCODED_LENGTH];
-//! let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-//!     .serial_number(1234)
-//!     .model_year(2013)
-//!     .fuel_figures(1, |g| {
-//!         g.add(|e| { e.speed(30).mpg(35.5); Ok(()) })?;
-//!         Ok(())
-//!     })?
-//!     .manufacturer(b"Honda")?;
-//! let len = done.encoded_length_with_header();
-//! ```
+//! → [`samples/sbe-feature-tour`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs)
 //!
 //! ## Buffer sizing
 //!
@@ -144,7 +126,7 @@
 //!
 //! | Shape | API | Prefer |
 //! |-------|-----|--------|
-//! | Fixed-only | `CarEncoder::ENCODED_LENGTH` | `[0u8; N]` on the stack |
+//! | Fixed-only | `HeartbeatEncoder::ENCODED_LENGTH` (const) | `[0u8; N]` stack |
 //! | Flat / known tails | `compute_encoded_length_with_message_header(...)` | stack when const |
 //! | Groups / nested / ragged | `CarEncodedLength::new()…encoded_length_with_header()` | exact claim / slot |
 //!
@@ -156,11 +138,7 @@
 //!
 //! ## Field metadata (Java parity)
 //!
-//! ```ignore
-//! assert_eq!(CarDecoder::SERIAL_NUMBER_ID, 1);
-//! assert_eq!(CarDecoder::SERIAL_NUMBER_ENCODING_OFFSET, 0);
-//! CarDecoder::serial_number_meta_attribute(sbe_rt::MetaAttribute::Presence);
-//! ```
+//! → [`sbe/tests/java_parity_features_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs)
 //!
 //! ## Conversion: `with_conversion` vs `with_domain_type`
 //!
@@ -186,20 +164,8 @@
 //!     );
 //! ```
 //!
-//! Generated use after **A**:
-//!
-//! ```ignore
-//! enc.price_from(&app_price)?;
-//! let app: MyType = dec.price_as()?;
-//! let wire = dec.price_value(); // wire composite still available
-//! ```
-//!
-//! Generated use after **B**:
-//!
-//! ```ignore
-//! enc.price(rust_decimal::Decimal::new(12345, 2));
-//! let p: rust_decimal::Decimal = dec.price();
-//! ```
+//! See [`sbe/converter`](https://github.com/mimran1980/ergon/blob/main/sbe/src/converter.rs)
+//! and [`sbe/tests/conversion_selector_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/conversion_selector_test.rs)
 //!
 //! ## Domain objects
 //!
@@ -207,32 +173,15 @@
 //! owned structs. Use [`DomainVarData::LossyStrings`] for text (`String`;
 //! invalid UTF-8 → `""`) or [`DomainVarData::Bytes`] for `Vec<u8>`.
 //!
-//! ```ignore
-//! // build.rs: .enable_domain_objects(DomainVarData::LossyStrings)
-//! let dto = CarDomain::from(CarDecoder::try_from(buf)?);
-//! assert_eq!(dto.manufacturer, "Honda");
-//! let n = dto.encode(&mut out)?; // re-encode; range-checks min/max on integers
-//! ```
+//! See [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
 //!
 //! ## Multi-message dispatch
 //!
-//! ```ignore
-//! match AnyMessage::decode_frame(buf, 0, frame_len)? {
-//!     AnyMessage::Car(c) => { let _ = c.serial_number(); }
-//!     AnyMessage::Heartbeat(h) => { let _ = h.sequence(); }
-//! }
-//! for frame in FrameCursor::new(stream, FramingPolicy::LengthPrefixedU32Le) {
-//!     let _ = frame?;
-//! }
-//! ```
+//! See [`sbe/tests/frame_cursor_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/frame_cursor_test.rs)
 //!
 //! ## Fixed arrays / char fields
 //!
-//! ```ignore
-//! enc.put_some_numbers(1, 2, 3, 4);       // unrolled put for length 2..=8
-//! enc.vehicle_code_str("abcdef")?;        // zero-padded; FixedArrayTooLong if too long
-//! let n = dec.copy_vehicle_code(&mut dst);
-//! ```
+//! See [`sbe/tests/fixed_array_helpers_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/fixed_array_helpers_test.rs)
 //!
 //! ## Keywords in schema names
 //!

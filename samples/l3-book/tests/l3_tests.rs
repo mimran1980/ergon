@@ -1,8 +1,10 @@
 use l3_book::*;
-use rust_decimal::Decimal as Rd;
 use proptest::prelude::*;
+use rust_decimal::Decimal as Rd;
 
-fn d(val: i64) -> Rd { Rd::new(val, 0) }
+fn d(val: i64) -> Rd {
+    Rd::new(val, 0)
+}
 
 // ── L3Book (fixed orderId) ──────────────────────────────────────────────
 
@@ -10,10 +12,13 @@ fn d(val: i64) -> Rd { Rd::new(val, 0) }
 fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
     let len = L3BookEncodedLength::new()
         .bids_ragged(1, |g| {
-            g.add()?.orders(|og| { og.add()?; Ok(()) })?;
+            g.add()?.orders(|og| {
+                og.add()?;
+                Ok(())
+            })?;
             Ok(())
         })?
-        .asks_ragged(0, |g| Ok(()))?
+        .asks_ragged(0, |_g| Ok(()))?
         .symbol(b"X".len())?
         .encoded_length_with_header();
     let mut buf_storage = [0u8; 8192];
@@ -27,8 +32,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
         })
         .bids(1, |g| {
             g.add(|e| {
-                e.price(d(50800)).size(d(15));
-                e.orders(1, |og| {
+                e.price(d(50800)).size(d(15)).orders(1, |og| {
                     og.add_struct(&L3BookBidsOrdersEntry {
                         order_id: 1,
                         quantity: l3_book::Decimal::new(5, 0),
@@ -40,7 +44,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
         })?
         .asks(0, |_| Ok(()))?
         .symbol(b"X")?;
-    let len = complete.encoded_length_with_header();
+    let _len = complete.encoded_length_with_header();
 
     let dec = L3BookDecoder::try_from(complete.as_bytes())?;
     let _ts = dec.exchange_timestamp();
@@ -54,15 +58,19 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
     let len = L3BookEncodedLength::new()
-        .bids_ragged(0, |g| Ok(()))?
-        .asks_ragged(0, |g| Ok(()))?
+        .bids_ragged(0, |_g| Ok(()))?
+        .asks_ragged(0, |_g| Ok(()))?
         .symbol(b"".len())?
         .encoded_length_with_header();
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..len];
     let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-        .fixed(&L3BookFixedFields { exchange_timestamp: 0, sequence: 0, is_active: BooleanType::False })
+        .fixed(&L3BookFixedFields {
+            exchange_timestamp: 0,
+            sequence: 0,
+            is_active: BooleanType::False,
+        })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
         .symbol(b"")?;
@@ -98,10 +106,12 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
         .bids(bids.len() as u16, |g| {
             for (_, _, orders) in bids {
                 g.add(|e| {
-                    e.price(d(1)).size(d(1));
-                    e.orders(orders.len() as u16, |og| {
+                    e.price(d(1)).size(d(1)).orders(orders.len() as u16, |og| {
                         for (q, oid) in *orders {
-                            og.add(|o| { o.quantity(*q).order_id(oid)?; Ok(()) })?;
+                            og.add(|o| {
+                                o.quantity(*q).order_id(oid)?;
+                                Ok(())
+                            })?;
                         }
                         Ok(())
                     })?;
@@ -113,10 +123,12 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
         .asks(asks.len() as u16, |g| {
             for (_, _, orders) in asks {
                 g.add(|e| {
-                    e.price(d(1)).size(d(1));
-                    e.orders(orders.len() as u16, |og| {
+                    e.price(d(1)).size(d(1)).orders(orders.len() as u16, |og| {
                         for (q, oid) in *orders {
-                            og.add(|o| { o.quantity(*q).order_id(oid)?; Ok(()) })?;
+                            og.add(|o| {
+                                o.quantity(*q).order_id(oid)?;
+                                Ok(())
+                            })?;
                         }
                         Ok(())
                     })?;
@@ -158,13 +170,23 @@ fn l3book_unknown_size_length_matches_encoded() -> Result<(), Box<dyn std::error
     let staged = L3BookEncodedLength::new()
         .bids_unknown_size(|g| {
             for (_, _, orders) in bids {
-                g.add()?.orders(|og| { for _ in 0..orders.len() { og.add()?; } Ok(()) })?;
+                g.add()?.orders(|og| {
+                    for _ in 0..orders.len() {
+                        og.add()?;
+                    }
+                    Ok(())
+                })?;
             }
             Ok(())
         })?
         .asks_unknown_size(|g| {
             for (_, _, orders) in asks {
-                g.add()?.orders(|og| { for _ in 0..orders.len() { og.add()?; } Ok(()) })?;
+                g.add()?.orders(|og| {
+                    for _ in 0..orders.len() {
+                        og.add()?;
+                    }
+                    Ok(())
+                })?;
             }
             Ok(())
         })?
@@ -203,20 +225,33 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     let staged = L3BookEncodedLength::new()
         .bids_ragged(bids.len() as u16, |g| {
             for (_, _, orders) in bids {
-                g.add()?.orders(|og| { for _ in 0..orders.len() { og.add()?; } Ok(()) })?;
+                g.add()?.orders(|og| {
+                    for _ in 0..orders.len() {
+                        og.add()?;
+                    }
+                    Ok(())
+                })?;
             }
             Ok(())
         })?
         .asks_ragged(asks.len() as u16, |g| {
             for (_, _, orders) in asks {
-                g.add()?.orders(|og| { for _ in 0..orders.len() { og.add()?; } Ok(()) })?;
+                g.add()?.orders(|og| {
+                    for _ in 0..orders.len() {
+                        og.add()?;
+                    }
+                    Ok(())
+                })?;
             }
             Ok(())
         })?
         .symbol(symbol.len())?
         .encoded_length_with_header();
 
-    assert_eq!(actual, staged, "staged L3BookEncodedLength must match actual");
+    assert_eq!(
+        actual, staged,
+        "staged L3BookEncodedLength must match actual"
+    );
     Ok(())
 }
 
@@ -231,7 +266,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
             })?;
             Ok(())
         })?
-        .asks_ragged(0, |g| Ok(()))?
+        .asks_ragged(0, |_g| Ok(()))?
         .symbol(b"BTCUSDT".len())?
         .encoded_length_with_header();
     let mut buf_storage = [0u8; 8192];
@@ -245,8 +280,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
         })
         .bids(1, |g| {
             g.add(|e| {
-                e.price(d(50800)).size(d(15));
-                e.orders(2, |og| {
+                e.price(d(50800)).size(d(15)).orders(2, |og| {
                     og.add(|o| {
                         o.quantity(d(5)).order_id(b"ORD-1")?;
                         Ok(())
@@ -297,7 +331,7 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             Ok(())
         })?
-        .asks_ragged(0, |g| Ok(()))?
+        .asks_ragged(0, |_g| Ok(()))?
         .symbol(b"".len())?
         .encoded_length_with_header();
     let mut buf_storage = [0u8; 8192];
@@ -305,23 +339,35 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = &mut buf_storage[..len];
     let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
-            exchange_timestamp: 0, sequence: 0, is_active: BooleanType::False,
+            exchange_timestamp: 0,
+            sequence: 0,
+            is_active: BooleanType::False,
         })
         .bids(2, |g| {
             g.add(|e| {
-                e.price(d(100)).size(d(10));
-                e.orders(1, |og| {
-                    og.add(|o| { o.quantity(d(1)).order_id(b"ABC")?; Ok(()) })?;
+                e.price(d(100)).size(d(10)).orders(1, |og| {
+                    og.add(|o| {
+                        o.quantity(d(1)).order_id(b"ABC")?;
+                        Ok(())
+                    })?;
                     Ok(())
                 })?;
                 Ok(())
             })?;
             g.add(|e| {
-                e.price(d(200)).size(d(20));
-                e.orders(3, |og| {
-                    og.add(|o| { o.quantity(d(2)).order_id(b"ID-AA")?; Ok(()) })?;
-                    og.add(|o| { o.quantity(d(3)).order_id(b"ID-BB")?; Ok(()) })?;
-                    og.add(|o| { o.quantity(d(4)).order_id(b"ID-C")?; Ok(()) })?;
+                e.price(d(200)).size(d(20)).orders(3, |og| {
+                    og.add(|o| {
+                        o.quantity(d(2)).order_id(b"ID-AA")?;
+                        Ok(())
+                    })?;
+                    og.add(|o| {
+                        o.quantity(d(3)).order_id(b"ID-BB")?;
+                        Ok(())
+                    })?;
+                    og.add(|o| {
+                        o.quantity(d(4)).order_id(b"ID-C")?;
+                        Ok(())
+                    })?;
                     Ok(())
                 })?;
                 Ok(())
@@ -330,7 +376,7 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
         })?
         .asks(0, |_| Ok(()))?
         .symbol(b"")?;
-    let actual = complete.encoded_length_with_header();
+    let _actual = complete.encoded_length_with_header();
 
     // Verify ragged structure.
     let dec = L3BookVarDataDecoder::try_from(complete.as_bytes())?;
@@ -342,8 +388,14 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
 
     let e2 = bids.next().transpose()?.unwrap();
     let mut o2 = e2.into_orders()?;
-    assert_eq!(o2.next().transpose()?.unwrap().order_id().unwrap(), b"ID-AA");
-    assert_eq!(o2.next().transpose()?.unwrap().order_id().unwrap(), b"ID-BB");
+    assert_eq!(
+        o2.next().transpose()?.unwrap().order_id().unwrap(),
+        b"ID-AA"
+    );
+    assert_eq!(
+        o2.next().transpose()?.unwrap().order_id().unwrap(),
+        b"ID-BB"
+    );
     assert_eq!(o2.next().transpose()?.unwrap().order_id().unwrap(), b"ID-C");
     assert!(bids.next().transpose()?.is_none());
     Ok(())
@@ -372,20 +424,32 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
     let dec_debug = format!("{:?}", dec);
     eprintln!("decoder Display: {dec_display}");
     eprintln!("decoder Debug:   {dec_debug}");
-    assert!(dec_display.contains("BTC"), "decoder Display must show symbol as string");
-    assert!(dec_display.contains("50000"), "decoder Display must show price");
+    assert!(
+        dec_display.contains("BTC"),
+        "decoder Display must show symbol as string"
+    );
+    assert!(
+        dec_display.contains("50000"),
+        "decoder Display must show price"
+    );
 
     // 2. Encoder Display + Debug — delegates to decoder for field values.
     let enc = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
     let enc_display = format!("{}", enc);
     eprintln!("encoder Display: {enc_display}");
-    assert!(enc_display.contains("BTC"), "encoder Display must show symbol");
+    assert!(
+        enc_display.contains("BTC"),
+        "encoder Display must show symbol"
+    );
 
     // 3. DTO Debug — domain-typed fields.
     let dto = L3BookDomain::from(L3BookDecoder::try_from(&buf[..actual])?);
     let dto_debug = format!("{:?}", dto);
     eprintln!("DTO Debug:       {dto_debug}");
-    assert!(dto_debug.contains("66"), "DTO Debug must contain symbol byte values");
+    assert!(
+        dto_debug.contains("66"),
+        "DTO Debug must contain symbol byte values"
+    );
 
     // 4. Panic safety: truncated buffer (header only, no body).
     let truncated = &buf[..8]; // just the 8-byte message header
@@ -422,8 +486,8 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         let symbol = b"BTC";
         let len = l3_book::book_encoded_length(bids, asks, symbol)?;
         let mut buf_storage = [0u8; 8192];
-    assert!(len <= buf_storage.len(), "len exceeds stack pad");
-    let mut buf = &mut buf_storage[..len];
+        assert!(len <= buf_storage.len(), "len exceeds stack pad");
+        let mut buf = &mut buf_storage[..len];
         let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
         assert_eq!(len, actual);
 
@@ -444,10 +508,14 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         let dto_debug = format!("{dto:?}");
         eprintln!("[L3Book] DTO Debug: {dto_debug}");
         let mut buf2_storage = [0u8; 8192];
-    assert!(len <= buf2_storage.len(), "len exceeds stack pad");
-    let mut buf2 = &mut buf2_storage[..len];
+        assert!(len <= buf2_storage.len(), "len exceeds stack pad");
+        let mut buf2 = &mut buf2_storage[..len];
         let n = dto.encode(&mut buf2)?;
-        assert_eq!(&buf[..actual], &buf2[..n], "L3Book DTO round-trip must be byte-identical");
+        assert_eq!(
+            &buf[..actual],
+            &buf2[..n],
+            "L3Book DTO round-trip must be byte-identical"
+        );
 
         // Truncated (header only) — must not panic.
         if let Ok(td) = L3BookDecoder::try_from(&buf[..8]) {
@@ -462,15 +530,12 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         let o1: [(Rd, &[u8]); 2] = [(d(1), b"ORD-1"), (d(2), b"ORD-22")];
         let o2: [(Rd, &[u8]); 1] = [(d(3), b"X")];
         let bids: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(100), d(10), &o1), (d(200), d(5), &o2)];
-        let asks: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(150), d(8), &[(
-            d(1),
-            b"AA",
-        )])];
+        let asks: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(150), d(8), &[(d(1), b"AA")])];
         let symbol = b"LINK";
         let len = l3_book::vardata_book_encoded_length(bids, asks, symbol)?;
         let mut buf_storage = [0u8; 8192];
-    assert!(len <= buf_storage.len(), "len exceeds stack pad");
-    let mut buf = &mut buf_storage[..len];
+        assert!(len <= buf_storage.len(), "len exceeds stack pad");
+        let mut buf = &mut buf_storage[..len];
         let actual = l3_book::encode_vardata_book(&mut buf, bids, asks, symbol)?;
         assert_eq!(len, actual);
 
@@ -497,8 +562,8 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         let desc = b"test";
         let len = l3_book::depth3_encoded_length(levels, desc)?;
         let mut buf_storage = [0u8; 8192];
-    assert!(len <= buf_storage.len(), "len exceeds stack pad");
-    let mut buf = &mut buf_storage[..len];
+        assert!(len <= buf_storage.len(), "len exceeds stack pad");
+        let mut buf = &mut buf_storage[..len];
         let actual = l3_book::encode_depth3(&mut buf, 99, levels, desc)?;
         assert_eq!(len, actual);
 
@@ -537,8 +602,8 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
             .symbol(0)?
             .encoded_length_with_header();
         let mut buf_storage = [0u8; 8192];
-    assert!(len <= buf_storage.len(), "len exceeds stack pad");
-    let mut buf = &mut buf_storage[..len];
+        assert!(len <= buf_storage.len(), "len exceeds stack pad");
+        let mut buf = &mut buf_storage[..len];
         let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&L3BookFixedFields {
                 exchange_timestamp: 0,
@@ -672,7 +737,10 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
                     e.name(*name);
                     e.items(items.len() as u16, |ig| {
                         for (value, tag) in *items {
-                            ig.add(|i| { i.value(*value).tag(tag)?; Ok(()) })?;
+                            ig.add(|i| {
+                                i.value(*value).tag(tag)?;
+                                Ok(())
+                            })?;
                         }
                         Ok(())
                     })?;

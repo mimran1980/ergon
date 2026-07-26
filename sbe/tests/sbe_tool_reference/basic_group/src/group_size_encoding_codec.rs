@@ -79,7 +79,7 @@ pub mod encoder {
         }
 
     }
-} // end encoder mod 
+} // end encoder mod
 
 pub mod decoder {
     use super::*;
@@ -129,4 +129,4 @@ pub mod decoder {
         }
 
     }
-} // end decoder mod 
+} // end decoder mod

@@ -210,8 +210,9 @@ fn issue567_invalid_group_dimension() -> Result<(), Box<dyn std::error::Error>> 
     let xml = fs::read_to_string(issue_schema("567-invalid")).unwrap();
     let meta = parse_xml_meta(&xml);
     assert_eq!(meta.id, 1);
-    // uint32 numInGroup WITHOUT maxValue — invalid by SBE spec.
-    // Our parser should reject this later.
+    // The pinned sbe-tool rejects uint32 numInGroup without maxValue because
+    // its generated codecs constrain counts to signed-32-bit addressable sizes.
+    // This is an implementation constraint, not a general FIX SBE prohibition.
     // Use a targeted regex: the numInGroup type element should lack maxValue.
     assert!(xml.contains("primitiveType=\"uint32\""));
     if let Some(start) = xml.find("groupSizeEncoding") {

@@ -1,8 +1,7 @@
 //! Generate L3 book codecs into `src/generated/` (gitignored) for IDE navigation.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let generated_dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+    let generated_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
         .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_unchecked_companions()

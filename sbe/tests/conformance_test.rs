@@ -290,7 +290,7 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
         let mut buf = [0u8; 4096];
         let mut enc = NestedGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
         enc.exchange_id(8888);
-        let complete = enc.bids(1, |bids| {
+        let complete = enc.bids(2, |bids| {
             bids.add(|entry| {
                 entry.price(5000i64).qty(100i32);
                 entry.orders(2, |orders| {
@@ -299,6 +299,12 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
                     Ok(())
                 })?;
                 entry.venue(b"NASDAQ")?;
+                Ok(())
+            })?;
+            bids.add(|entry| {
+                entry.price(4999i64).qty(25i32);
+                entry.orders(0, |_orders| Ok(()))?;
+                entry.venue(b"X")?;
                 Ok(())
             })?;
             Ok(())
@@ -323,9 +329,15 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
         let dec = NestedGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.exchange_id(), 8888, "exchange_id");
 
+        // nth() must walk the first entry's nested group and var-data rather
+        // than assuming root blockLength is the complete entry stride.
         let mut bids = dec.into_bids()?;
+        let b1 = bids.nth(1)?;
+        assert_eq!(b1.price(), 4999, "random bid[1].price");
+        assert_eq!(b1.venue()?, b"X", "random bid[1].venue");
+
         let bid_entries: Vec<_> = bids.by_ref().collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(bid_entries.len(), 1, "expected 1 bid");
+        assert_eq!(bid_entries.len(), 2, "expected 2 bids");
         let b0 = &bid_entries[0];
         assert_eq!(b0.price(), 5000, "bid.price");
         assert_eq!(b0.qty(), 100, "bid.qty");
@@ -647,6 +659,22 @@ fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::er
             sbe_rt::DecodeError::BufferTooShort { .. } => {}
             other => panic!("unexpected error: {other:?}"),
         }
+
+        // A complete dimension header with a malicious count must be rejected
+        // before exposing an infallible fixed-entry iterator. Otherwise its
+        // unchecked scalar accessors could read beyond the supplied frame.
+        let mut truncated_group = [0u8; 20];
+        truncated_group[0..2].copy_from_slice(&8u16.to_le_bytes());
+        truncated_group[2..4].copy_from_slice(&2u16.to_le_bytes());
+        truncated_group[4..6].copy_from_slice(&99u16.to_le_bytes());
+        truncated_group[6..8].copy_from_slice(&0u16.to_le_bytes());
+        truncated_group[16..18].copy_from_slice(&12u16.to_le_bytes());
+        truncated_group[18..20].copy_from_slice(&2u16.to_le_bytes());
+        let decoded = FlatGroupDecoder::try_from(truncated_group.as_slice())?;
+        assert!(
+            decoded.into_bids().is_err(),
+            "fixed-entry group extent must be validated before iteration"
+        );
 
         println!("PASS: conformance_error_buffer_too_short");
         "#,

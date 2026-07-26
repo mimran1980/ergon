@@ -1600,6 +1600,15 @@ fn encoder_wrap_short_buffer_returns_error() -> Result<(), Box<dyn std::error::E
             Err(sbe_rt::EncodeError::BufferTooShort { .. })
         ));
 
+        // Hostile caller offsets must return errors, never wrap around and
+        // panic while slicing a small buffer.
+        let mut scratch = [0u8; 64];
+        assert!(CarEncoder::try_wrap(&mut scratch, usize::MAX).is_err());
+        assert!(CarEncoder::try_wrap_and_apply_header(&mut scratch, usize::MAX).is_err());
+        assert!(CarDecoder::try_wrap_and_apply_header(&scratch, usize::MAX).is_err());
+        assert!(AnyMessage::decode(&scratch, usize::MAX).is_err());
+        assert!(AnyMessage::decode_frame(&scratch, usize::MAX, 1).is_err());
+
         let mut exact_storage = [0u8; 8192];
         assert!(total_needed <= exact_storage.len());
         let mut exact = &mut exact_storage[..total_needed];
@@ -2514,10 +2523,10 @@ fn decimal_converter_skips_non_decimal_fields_and_messages()
     Ok(())
 }
 
-/// A var-data composite whose `length` member is not the first member still
-/// resolves the length field's max value.
+/// A var-data composite whose `length` member is not first cannot represent
+/// the required SBE length-prefix-then-payload wire layout.
 #[test]
-fn vardata_composite_with_length_not_first_member_generates()
+fn vardata_composite_with_length_not_first_member_is_rejected()
 -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="revvar" id="97" version="0" byteOrder="littleEndian">
@@ -2533,11 +2542,11 @@ fn vardata_composite_with_length_not_first_member_generates()
   <data name="blob" id="2" type="oddVarEncoding"/>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).unwrap();
-    let schema = ergo_sbe::Schema::from_ir(ir);
-    let g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("revvar"));
-    let modules = g.generate(&schema).unwrap();
-    assert!(!modules.modules().next().unwrap().source.is_empty());
+    let err = ergo_sbe::parse(xml).expect_err("reversed var-data members must be rejected");
+    assert!(
+        format!("{err}").contains("expected exactly 'length' then 'varData'"),
+        "unexpected diagnostic: {err}"
+    );
     Ok(())
 }
 
@@ -2569,11 +2578,10 @@ fn group_entry_constant_field_without_value_is_skipped() -> Result<(), Box<dyn s
     Ok(())
 }
 
-/// A schema whose headerType composite is absent falls back to the default
-/// header member names during generation.
+/// The default `headerType="messageHeader"` still requires that composite to
+/// be declared, matching sbe-tool's schema validation.
 #[test]
-fn schema_without_header_composite_uses_default_member_names()
--> Result<(), Box<dyn std::error::Error>> {
+fn schema_without_header_composite_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="nohdr" id="95" version="0" byteOrder="littleEndian">
 <types>
@@ -2581,16 +2589,12 @@ fn schema_without_header_composite_uses_default_member_names()
 </types>
 <sbe:message name="M" id="1"><field name="a" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    match ergo_sbe::parse(xml) {
-        Ok(ir) => {
-            let schema = ergo_sbe::Schema::from_ir(ir);
-            let g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("nohdr"));
-            let modules = g.generate(&schema).unwrap();
-            assert!(!modules.modules().next().unwrap().source.is_empty());
-            Ok(())
-        }
-        Err(e) => panic!("headerless schema rejected at parse: {e}"),
-    }
+    let err = ergo_sbe::parse(xml).expect_err("headerless schema must be rejected");
+    assert!(
+        format!("{err}").contains("messageHeader: expected a defined composite"),
+        "unexpected diagnostic: {err}"
+    );
+    Ok(())
 }
 
 /// Manual group entry via start_entry produces identical bytes to closure API.

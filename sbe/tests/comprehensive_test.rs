@@ -752,11 +752,9 @@ fn all_types_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// SBE spec §4.1: the message header is ALWAYS little-endian,
-/// regardless of the schema's declared byteOrder. The body fields
-/// follow the schema byteOrder. This test proves both properties.
+/// The message header and body both follow the schema's declared byte order.
 #[test]
-fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn std::error::Error>> {
+fn endianness_header_and_body_follow_schema() -> Result<(), Box<dyn std::error::Error>> {
     let (_le_schema, le_src) = generate(&Paths::all_types_le_schema(), "endian_le");
     let (_be_schema, be_src) = generate(&Paths::all_types_be_schema(), "endian_be");
 
@@ -782,7 +780,7 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
         enc.fixed_array([b'A'; 8]);
         let _ = enc.var_data(b"endian-test").unwrap();
 
-        // Verify header bytes: ALWAYS LE (SBE spec §4.1)
+        // Verify header bytes follow schema byteOrder (LE for LE schema)
         // blockLength (LE u16 at offset 0): body is 52 bytes (AllScalars=41 + FloatPair=8 + enum=1 + set=1 + array=1)
         let block_len = u16::from_le_bytes([buf[0], buf[1]]);
         assert!(block_len > 0, "blockLength must be non-zero: {block_len}");
@@ -829,11 +827,11 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
         enc.fixed_array([b'A'; 8]);
         let _ = enc.var_data(b"endian-test").unwrap();
 
-        // CRITICAL: header must STILL be LE even in a BE schema
-        let tid = u16::from_le_bytes([buf[2], buf[3]]);
-        assert_eq!(tid, 1, "templateId must be LE in BE schema too");
-        let sid = u16::from_le_bytes([buf[4], buf[5]]);
-        assert_eq!(sid, 42, "schemaId must be LE in BE schema too");
+        // Header follows schema byteOrder (BE) — matching sbe-tool wire output.
+        let tid = u16::from_be_bytes([buf[2], buf[3]]);
+        assert_eq!(tid, 1, "templateId must match schema byteOrder (BE)");
+        let sid = u16::from_be_bytes([buf[4], buf[5]]);
+        assert_eq!(sid, 42, "schemaId must match schema byteOrder (BE)");
 
         // Prove body uses BE: u16_val (50000 = 0xC350) → BE bytes [0xC3, 0x50]
         let body_start = 8;
@@ -841,9 +839,9 @@ fn endianness_header_is_always_le_body_follows_schema() -> Result<(), Box<dyn st
         let u16_val_be = u16::from_be_bytes(be_bytes);
         assert_eq!(u16_val_be, 50000u16, "BE body: u16_val should be 50000 in BE bytes");
 
-        // The LE read of the same bytes should NOT be 50000 (it would be byteswapped)
+        // The LE read of the same BE-encoded bytes should be byteswapped
         let u16_val_le = u16::from_le_bytes(be_bytes);
-        assert_ne!(u16_val_le, 50000u16, "BE body: u16_val should NOT be 50000 when read as LE");
+        assert_ne!(u16_val_le, 50000u16, "BE body: LE-read should byteswap");
 
         let dec = AllTypesDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let s = dec.scalar_composite_value();

@@ -27,7 +27,10 @@ fn example_1_uniform() -> Result<(), Box<dyn std::error::Error>> {
 
     // All bids have 2 orders, all asks have 1 order.
     let o = [(1u64, dec!(5.00)), (2, dec!(10.00))];
-    let bids = [(dec!(50000), dec!(10), o.as_slice()), (dec!(50100), dec!(20), o.as_slice())];
+    let bids = [
+        (dec!(50000), dec!(10), o.as_slice()),
+        (dec!(50100), dec!(20), o.as_slice()),
+    ];
     let o2 = [(3u64, dec!(7.50))];
     let asks = [(dec!(50200), dec!(15), o2.as_slice())];
     let symbol = b"ETH";
@@ -55,7 +58,10 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
 
     let o1 = [(101u64, dec!(5.25)), (102, dec!(10.50))];
     let o2 = [(103u64, dec!(25.75))];
-    let bids = [(dec!(50800.50), dec!(15.25), o1.as_slice()), (dec!(50750.25), dec!(40.10), o2.as_slice())];
+    let bids = [
+        (dec!(50800.50), dec!(15.25), o1.as_slice()),
+        (dec!(50750.25), dec!(40.10), o2.as_slice()),
+    ];
     let o3 = [(201u64, dec!(10.30))];
     let o4 = [(202u64, dec!(20.00))];
     let o5 = [(203u64, dec!(40.15))];
@@ -81,7 +87,11 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
     let dto = l3_book::L3BookDomain::from(l3_book::L3BookDecoder::try_from(&buf[..actual])?);
     let mut storage2 = [0u8; 4096];
     let encoded2 = dto.encode(&mut storage2[..len])?;
-    assert_eq!(&buf[..actual], &storage2[..encoded2], "DTO round-trip must be byte-identical");
+    assert_eq!(
+        &buf[..actual],
+        &storage2[..encoded2],
+        "DTO round-trip must be byte-identical"
+    );
     println!("  DTO round-trip: byte-identical ({actual} bytes)\n");
     Ok(())
 }
@@ -97,14 +107,20 @@ fn example_3_vardata() -> Result<(), Box<dyn std::error::Error>> {
 
     let o1 = [(dec!(1.50), &b"ORD-1"[..]), (dec!(2.00), &b"ORD-22"[..])];
     let o2 = [(dec!(3.75), &b"X"[..])];
-    let bids = [(dec!(100), dec!(10), o1.as_slice()), (dec!(200), dec!(5), o2.as_slice())];
+    let bids = [
+        (dec!(100), dec!(10), o1.as_slice()),
+        (dec!(200), dec!(5), o2.as_slice()),
+    ];
     let o3 = [(dec!(0.50), &b"AA"[..])];
     let asks = [(dec!(150), dec!(8), o3.as_slice())];
     let symbol = b"LINK";
 
     let len = l3_book::vardata_book_encoded_length(&bids, &asks, symbol)?;
     let mut storage = [0u8; 4096];
-    assert!(len <= storage.len(), "vardata book len {len} exceeds stack pad");
+    assert!(
+        len <= storage.len(),
+        "vardata book len {len} exceeds stack pad"
+    );
     let buf = &mut storage[..len];
     let actual = l3_book::encode_vardata_book(buf, &bids, &asks, symbol)?;
     assert_eq!(len, actual);

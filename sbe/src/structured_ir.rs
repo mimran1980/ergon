@@ -703,6 +703,7 @@ pub(crate) struct OwnerTailVarData {
     pub(crate) type_pascal: String,
     pub(crate) prefix_size: usize,
     pub(crate) len_field: String,
+    pub(crate) len_type: PrimitiveType,
     pub(crate) max_length: Option<usize>,
     pub(crate) name: String,
     pub(crate) character_encoding: Option<String>,
