@@ -46,19 +46,21 @@ dated figures as a historical record, not a permanent promise.
 4. [Authorship](#authorship-what-was-mine-and-what-was-generated)
 5. [What I reviewed—and what I did not](#what-i-reviewedand-what-i-did-not)
 6. [The actual working loop](#the-actual-working-loop)
-7. [What did not work](#what-did-not-work)
-8. [Verification](#verification-why-the-tests-matter-so-much)
-9. [Performance](#performance-was-part-of-correctness)
-10. [Unsafe code and the trust boundary](#unsafe-code-and-the-trust-boundary)
-11. [Tools and models](#tools-models-and-what-each-contributed)
-12. [Long context and caching](#long-context-and-why-caching-changed-the-economics)
-13. [Observed usage and spend](#observed-usage-and-actual-spend)
-14. [Pay-as-you-go comparison](#normalised-pay-as-you-go-comparison)
-15. [The personal experience](#the-personal-experience-pride-enjoyment-and-review-fatigue)
-16. [Why the crate is experimental](#why-this-crate-is-still-experimental)
-17. [What production users should verify](#what-a-prospective-production-user-should-verify)
-18. [AI-assisted contributions](#ai-assisted-contributions)
-19. [Final assessment](#final-assessment)
+7. [How the project evolved](#how-the-project-evolved)
+8. [What did not work](#what-did-not-work)
+9. [Verification](#verification-why-the-tests-matter-so-much)
+10. [Performance](#performance-was-part-of-correctness)
+11. [Unsafe code and the trust boundary](#unsafe-code-and-the-trust-boundary)
+12. [Tools and models](#tools-models-and-what-each-contributed)
+13. [Long context, O(n²), and caching](#long-context-the-on²-mental-model-and-caching)
+14. [Observed usage and spend](#observed-usage-and-actual-spend)
+15. [Pay-as-you-go comparison](#normalised-pay-as-you-go-comparison)
+16. [A practical playbook](#a-practical-playbook-for-other-developers)
+17. [The personal experience](#the-personal-experience-pride-enjoyment-and-review-fatigue)
+18. [Why the crate is experimental](#why-this-crate-is-still-experimental)
+19. [What production users should verify](#what-a-prospective-production-user-should-verify)
+20. [AI-assisted contributions](#ai-assisted-contributions)
+21. [Final assessment](#final-assessment)
 
 ## Why this page exists
 
@@ -310,6 +312,79 @@ A typical successful loop was:
 
 The short feedback loop mattered more than one-shot model intelligence.
 
+## How the project evolved
+
+Looking back, the work divided into several recognisable phases. This matters
+because the workflow that appeared successful in the first phase was not the
+workflow that completed the project.
+
+### Phase 1: the spectacular greenfield demo
+
+At the beginning, specifications, issues, subagents, and separate worktrees
+looked almost magical. There was no established architecture to collide with,
+so several agents could create apparently useful pieces at once. This is the
+part of agentic development that makes the best video: a blank repository
+becomes a compiling application while multiple streams of activity scroll
+past.
+
+It was real progress, but it created the wrong expectation. Parallel output is
+not the same thing as an integrated design. As soon as type-state transitions,
+generator conventions, error handling, wire offsets, and generated API style
+became shared constraints, locally reasonable changes stopped composing.
+
+### Phase 2: shared invariants forced sequential work
+
+The project became productive again when I reduced the unit of work and made
+the feedback loop mostly sequential. One agent changed one connected area,
+regenerated the codecs, ran the focused tests, showed me the result, and
+received a correction. This was less theatrical and much more effective.
+
+At this stage I learned that I needed to inspect the artefact closest to the
+contract. For `ergo-sbe`, that was normally the emitted Rust, the calling API,
+the encoded bytes, or the benchmark—not the syntax-tree construction that
+produced it. I could identify a bad offset or ugly repeating-group API quickly
+in generated code. The same mistake was much harder to see by mentally
+executing hundreds of lines of `syn` and `quote`.
+
+### Phase 3: performance invalidated an elegant design
+
+The first type-state design used generics because I assumed the abstraction
+would be free after monomorphisation. It was elegant and enforced the ordering
+requirement, but the benchmark showed an encoding regression of roughly 17%.
+That was a useful humiliation: a design can be type-safe, idiomatic, tested,
+and still fail the product requirement.
+
+The LLM helped explain why the generated machine code differed and proposed
+concrete named stage types. I accepted the concrete representation because the
+measured result mattered more than abstract neatness. From then on, benchmark
+parity became part of the definition of done for relevant changes.
+
+### Phase 4: cheap implementation expanded the product
+
+Once the core generator was working, features that would have been too
+expensive in a four-to-six-month manual schedule became plausible. Exact
+encoded length, DTOs, converters, richer samples, schema-evolution cases, and
+more exhaustive generated APIs all grew during this period.
+
+This is one of the genuine advantages of LLM implementation: it lowers the
+cost of trying a design. I could ask for a complete version, inspect the
+result, reject it, and try a different shape without feeling attached to the
+discarded code. The disadvantage is that every cheap feature creates an
+expensive verification and review obligation. Generated code is cheap;
+confidence is not.
+
+### Phase 5: hardening and disclosure
+
+The final phase was less about visible capability and more about earning
+confidence: official fixture decoding, byte-for-byte dual encoding, multiple
+official schemas, compile-fail tests, exact-size matrices, allocation checks,
+unsafe audits, benchmark gates, documentation, and this disclosure.
+
+The project crossed a line during this phase. It was no longer merely an
+exercise in learning agents. It had become a crate I wanted other SBE
+developers to evaluate. That raised the standard and is why the work continued
+past the holiday.
+
 ## What did not work
 
 ### Large parallel-agent plans
@@ -398,15 +473,15 @@ The checked-in suite includes:
 
 See:
 
-- [`sbe_tool_wire_parity_test.rs`](tests/sbe_tool_wire_parity_test.rs)
-- [`sbe_tool_multi_schema_wire_parity_test.rs`](tests/sbe_tool_multi_schema_wire_parity_test.rs)
-- [`baseline_test.rs`](tests/baseline_test.rs)
-- [`proptest_roundtrip.rs`](tests/proptest_roundtrip.rs)
-- [`allocation_count_test.rs`](tests/allocation_count_test.rs)
-- [`ordered_decoder_stages_test.rs`](tests/ordered_decoder_stages_test.rs)
-- [`l3_consuming_stages_test.rs`](tests/l3_consuming_stages_test.rs)
-- [`encoded_length_api_test.rs`](tests/encoded_length_api_test.rs)
-- [`sbe_tool_reference/README.md`](tests/sbe_tool_reference/README.md)
+- [`sbe_tool_wire_parity_test.rs`](sbe/tests/sbe_tool_wire_parity_test.rs)
+- [`sbe_tool_multi_schema_wire_parity_test.rs`](sbe/tests/sbe_tool_multi_schema_wire_parity_test.rs)
+- [`baseline_test.rs`](sbe/tests/baseline_test.rs)
+- [`proptest_roundtrip.rs`](sbe/tests/proptest_roundtrip.rs)
+- [`allocation_count_test.rs`](sbe/tests/allocation_count_test.rs)
+- [`ordered_decoder_stages_test.rs`](sbe/tests/ordered_decoder_stages_test.rs)
+- [`l3_consuming_stages_test.rs`](sbe/tests/l3_consuming_stages_test.rs)
+- [`encoded_length_api_test.rs`](sbe/tests/encoded_length_api_test.rs)
+- [`sbe_tool_reference/README.md`](sbe/tests/sbe_tool_reference/README.md)
 
 The strongest compatibility test is differential, not self-referential. For
 the same schema and logical values, the suite encodes with both `ergo-sbe` and
@@ -451,7 +526,7 @@ included asymmetric allocation or different buffer traversal. One official
 encode arm even risked overlapping header and body work. These were corrected
 so the maintained comparison uses the same input or byte-identical output and
 equivalent field work. The current methodology is documented in
-[`BENCHMARKS.md`](BENCHMARKS.md).
+[`BENCHMARKS.md`](sbe/BENCHMARKS.md).
 
 Repeated benchmark execution likely explains part of the enormous token count.
 An agent would implement a change, benchmark it, discover a regression, revise
@@ -538,7 +613,7 @@ I used GLM-5.2 and GLM-4.7 substantially, particularly early in the project.
 The 30-day screenshot below records approximately 3.28 billion GLM tokens,
 including 2.65 billion on GLM-5.2.
 
-![GLM model usage over 30 days](https://raw.githubusercontent.com/mimran1980/ergon/first_cut/assets/ai-assistance/glm-30-day-model-usage.jpg)
+![GLM model usage over 30 days](assets/ai-assistance/glm-30-day-model-usage.jpg)
 
 I bought the highest coding-plan tier I was using—about **$114**—and still hit
 limits during the intensive development schedule.
@@ -556,7 +631,7 @@ Cross-model review is useful, but agreement among models is not independent
 proof. They can share training patterns and repeat the same plausible
 misunderstanding. Official bytes and behavioural tests are stronger evidence.
 
-## Long context and why caching changed the economics
+## Long context, the O(n²) mental model, and caching
 
 Both DeepSeek V4 Flash and V4 Pro exposed a one-million-token context window. I
 usually kept one long session and reused it, compacting only once or twice.
@@ -570,32 +645,115 @@ sometimes noticed forgotten details after compaction.
 Those are personal observations, not controlled experiments. They do,
 however, explain the usage shape.
 
-My informal developer's mental model was “roughly N-squared in requests”: as a
-session grows, every new exchange carries an ever larger history, so reaching a
-very large context requires paying for all the preceding turns along the way.
-That is not a literal description of every provider's inference
-implementation. KV caching, prompt caching, compaction, and model architecture
-change the compute, and I do not know whether a provider stores a particular
-cache in RAM, on disk, or elsewhere. It was nevertheless a useful intuition
-for understanding why repeated context, rather than only the latest answer,
-dominated the token ledger.
+### What I mean by “O(n²)”
 
-In an agent conversation, each new turn includes a large amount of prior
-context. Providers can serve repeated prefixes from a prompt cache, but cache
-hits are still billable tokens. The headline uncached input and output prices
-therefore do not describe the economics of a long coding session. Cache-hit
-price, cache-write policy, context thresholds, and long-context multipliers
-matter enormously.
+My informal developer's mental model became “roughly O(n²) in requests.” Here,
+`n` means the number of turns or requests in a growing conversation—not the
+number of tokens in one request.
 
-I originally thought about models mainly through benchmark rank and ordinary
-input/output price. This project changed that. DeepSeek's cache-hit price was
-so low that I could keep a large, useful context alive without repeatedly
-hitting a subscription ceiling.
+Suppose, only to make the intuition concrete, that each turn adds `d` tokens of
+new conversation, source code, tool output, test logs, and model response. If
+the complete conversation is sent again on every turn, the prompt at turn `i`
+contains approximately `i × d` tokens. Across `k` turns the cumulative input
+presented is approximately:
 
-One correction is important: the sampled screenshots show roughly **99% of
-token volume** as cache hits. That does **not** mean 99% of dollar cost came
-from cache hits. Because cache hits are heavily discounted, uncached input and
-output contribute a much larger share of cost than their token percentages.
+```text
+d + 2d + 3d + ... + kd
+= d × (1 + 2 + 3 + ... + k)
+= d × k × (k + 1) / 2
+```
+
+That sum grows quadratically with the number of turns. A simple worked example
+shows why the final context-window size is misleading:
+
+- 100 turns each add an average of 10,000 tokens;
+- the final prompt is approximately 1,000,000 tokens;
+- but the cumulative prompt volume across the 100 turns is approximately
+  50,500,000 tokens before counting output separately.
+
+So a one-million-token context window does not mean that a one-million-token
+conversation costs only one million input tokens over its lifetime. The route
+to that final context has repeatedly carried most of the earlier conversation.
+Real coding sessions are messier: turns add different amounts, tool results can
+be enormous, agents reread files, benchmarks print logs, and compaction changes
+the curve. The formula is a mental model, not an invoice.
+
+It is also not a claim that every provider literally recomputes every
+transformer operation from scratch on every request. Model-side KV caching,
+provider prompt caching, routing, cache eviction, attention implementations,
+and other infrastructure all affect actual compute. I do not know whether a
+particular provider keeps a cache in RAM, on disk, or in some other tier, and
+the storage detail is not required for the economic point.
+
+The economic point is simpler: the API token ledger still records a very large
+repeated prefix, and that repeated prefix normally has a price. This is how a
+project using a model with a one-million-token window can plausibly accumulate
+billions of billed tokens.
+
+### A cache hit is discounted, not free
+
+In an agent conversation, a request can be thought of as three economically
+different categories:
+
+1. **Input cache hits:** the provider recognises a previously processed prefix
+   and charges its cache-hit rate.
+2. **Input cache misses or cache writes:** new or changed input must be
+   processed and, depending on the provider, written into the prompt cache.
+3. **Output:** new model tokens, including any billed reasoning tokens under
+   the provider's accounting.
+
+The headline “input price” and “output price” therefore do not describe a long
+agent session. A useful comparison must ask:
+
+- What does a cache hit cost?
+- What does a miss or write cost?
+- How long is the cache retained?
+- Which prefix changes invalidate it?
+- Does the provider apply a long-context multiplier?
+- At what threshold does that multiplier begin?
+- Is the advertised context size actually available at the standard rate?
+- How much output or hidden reasoning does the model generate for equal work?
+
+The last question is why the counterfactual table later in this document holds
+token usage constant. It isolates pricing, but it cannot prove what another
+model would actually consume.
+
+### Why the cache price changed the project
+
+I originally compared models mainly through benchmark rank and ordinary
+input/output price. That missed the largest category in this workload:
+repeated context. The selected dashboard samples later in this page show that
+approximately **98.66% of token volume** was served as input cache hits.
+
+DeepSeek's cache-hit rate was so low that keeping a large and useful context
+alive became affordable. This mattered more to my workflow than a modest
+benchmark advantage from a model that I could use only intermittently. I could
+keep giving feedback, retain design history, run another test, inspect another
+generated file, and try again.
+
+That does not mean cheap cache hits make the entire bill negligible. One
+correction is essential: roughly 99% of **token volume** being cache hits does
+not mean 99% of **dollar cost** came from cache hits. Hits are heavily
+discounted. The much smaller quantities of misses and output can contribute a
+large portion of the final dollars. The correct calculation prices all three
+categories independently.
+
+### Context was part of the model's effective intelligence
+
+For this project, the long session held decisions that were not easily reduced
+to a short prompt: why a particular API had been rejected, how an offset bug
+had presented, which benchmark had regressed, which generated style I wanted,
+and how official output behaved. Retaining that history made the workhorse
+model feel more capable.
+
+I compacted the DeepSeek session only once or twice and did not notice a
+material loss immediately afterwards. In my separate experience with Sonnet
+and a smaller context window, I have sometimes noticed forgotten decisions
+after compaction. That is personal observation, not a controlled model
+comparison. It nevertheless changed how I think about model selection:
+effective intelligence is a combination of the base model, the context it can
+retain, the quality of the feedback, and whether I can afford enough turns to
+finish the loop.
 
 ## Observed usage and actual spend
 
@@ -605,16 +763,16 @@ The DeepSeek dashboard for the displayed 30-day window shows:
 - **47,668 API requests**
 - **$77.39**
 
-![DeepSeek 30-day usage summary](https://raw.githubusercontent.com/mimran1980/ergon/first_cut/assets/ai-assistance/deepseek-30-day-summary.jpg)
+![DeepSeek 30-day usage summary](assets/ai-assistance/deepseek-30-day-summary.jpg)
 
 The model split shown by the dashboard was:
 
 - DeepSeek V4 Flash: 3,392,304,915 tokens across 29,015 requests
 - DeepSeek V4 Pro: 7,130,554,978 tokens across 18,653 requests
 
-![DeepSeek V4 Flash and V4 Pro usage, upper dashboard](https://raw.githubusercontent.com/mimran1980/ergon/first_cut/assets/ai-assistance/deepseek-v4-model-usage-upper.jpg)
+![DeepSeek V4 Flash and V4 Pro usage, upper dashboard](assets/ai-assistance/deepseek-v4-model-usage-upper.jpg)
 
-![DeepSeek V4 Flash and V4 Pro usage, lower dashboard](https://raw.githubusercontent.com/mimran1980/ergon/first_cut/assets/ai-assistance/deepseek-v4-model-usage-lower.jpg)
+![DeepSeek V4 Flash and V4 Pro usage, lower dashboard](assets/ai-assistance/deepseek-v4-model-usage-lower.jpg)
 
 My rounded estimate for the full project period is approximately **14 billion
 tokens** across providers:
@@ -651,11 +809,11 @@ that comparison.
 The dashboard screenshots expose the input-cache-hit, input-cache-miss, and
 output split for three selected days:
 
-![DeepSeek V4 Flash cache split on 7 July 2026](https://raw.githubusercontent.com/mimran1980/ergon/first_cut/assets/ai-assistance/deepseek-v4-flash-cache-2026-07-07.jpg)
+![DeepSeek V4 Flash cache split on 7 July 2026](assets/ai-assistance/deepseek-v4-flash-cache-2026-07-07.jpg)
 
-![DeepSeek V4 Pro cache split on 9 July 2026](https://raw.githubusercontent.com/mimran1980/ergon/first_cut/assets/ai-assistance/deepseek-v4-pro-cache-2026-07-09.jpg)
+![DeepSeek V4 Pro cache split on 9 July 2026](assets/ai-assistance/deepseek-v4-pro-cache-2026-07-09.jpg)
 
-![DeepSeek V4 Pro cache split on 24 July 2026](https://raw.githubusercontent.com/mimran1980/ergon/first_cut/assets/ai-assistance/deepseek-v4-pro-cache-2026-07-24.jpg)
+![DeepSeek V4 Pro cache split on 24 July 2026](assets/ai-assistance/deepseek-v4-pro-cache-2026-07-24.jpg)
 
 Combined, those samples contain:
 
@@ -803,6 +961,258 @@ would now be to start with a small amount of inexpensive pay-as-you-go credit.
 It is difficult to learn sustained feedback loops when a premium subscription
 repeatedly stops the session at its usage limit.
 
+## A practical playbook for other developers
+
+This project does not provide a universal recipe for AI-generated software.
+The conditions were unusually favourable. It does, however, suggest a
+repeatable method for projects where the developer already understands the
+domain and correctness can be made observable.
+
+### 1. Choose a problem with an oracle
+
+The best agent task is not merely one that can be described. It is one whose
+result can be disproved.
+
+For this project, official SBE bytes were the strongest oracle. Compilation,
+round trips, generated-source inspection, exact lengths, allocation counts,
+and benchmark results supplied additional independent signals. If the only
+acceptance criterion had been “the API looks plausible,” I would not trust the
+result.
+
+Before delegating a large implementation, ask what will turn a model's mistake
+into a concrete failure. If the answer is “a human will eventually notice,”
+the feedback loop is too weak.
+
+### 2. Keep domain authority with a person who understands the problem
+
+I did not ask the models to decide what SBE should mean. I knew the ordering
+rules, group structure, variable-data behaviour, schema-evolution concerns,
+and practical user mistakes before the project started.
+
+An agent can implement a wrong specification extremely well. Tests derived
+only from the same wrong specification may all pass. The responsible person
+must be able to explain the invariant, recognise a plausible
+misinterpretation, and reject an API even when it is polished.
+
+This is why I would not generalise my DeepSeek result to somebody learning SBE
+from the model while simultaneously asking it to build the generator. In that
+situation, there is no independent domain authority in the loop.
+
+### 3. Define the observable contract before discussing implementation
+
+I obtained better results when I said what generated calling code should look
+like, which illegal sequence should fail to compile, or which exact bytes
+should be produced. Vague goals such as “make it idiomatic” gave the agent too
+much freedom and usually created an ugly API.
+
+A useful task statement includes:
+
+- a representative input;
+- the desired public call site;
+- the expected output or failure;
+- the invariant being protected;
+- the tests that must pass; and
+- the benchmark or allocation condition, if performance matters.
+
+The model can then explore implementation details without owning the product
+decision.
+
+### 4. Review the artefact closest to the real contract
+
+Reviewing every generated line is ideal when it is practical, but enormous
+AI-authored diffs can exceed honest human review capacity. That does not
+justify pretending they were reviewed.
+
+Instead, identify where your expertise has the highest leverage. I reviewed
+emitted Rust, public API shape, stage transitions, bytes, exact lengths, and
+performance more deeply than the `syn`/`quote` machinery. In another project
+the right surface might be SQL plans, a protocol trace, a rendered page, or a
+machine-generated configuration.
+
+Be explicit about what this choice leaves unreviewed. Behavioural evidence
+narrows a trust boundary; it does not make the boundary disappear.
+
+### 5. Prefer independent references over self-consistency
+
+A codec that encodes and then decodes its own incorrect format can pass every
+round-trip test. A generator and a test written by the same model can share the
+same misunderstanding.
+
+The most valuable tests compare against something independent:
+
+- an official implementation;
+- a protocol fixture produced by another language;
+- a published conformance suite;
+- a hand-calculated small example;
+- an external parser or validator; or
+- a previous production implementation.
+
+For `ergo-sbe`, having both official `sbe-tool` generated Rust and the new
+generator encode the same logical message to identical bytes is far stronger
+than either codec decoding its own output.
+
+### 6. Use short, mostly sequential loops after shared invariants emerge
+
+Parallel agents are useful for truly independent research or isolated files.
+They were counterproductive when several branches changed the same generator
+conventions and API model.
+
+The loop that worked was small: test, edit, regenerate, run, inspect, correct.
+When an agent moved in the wrong direction, stopping after minutes was better
+than reviewing an hour of coherent but unsuitable work.
+
+The unit of delegation should shrink as the codebase becomes more coupled.
+Greenfield parallelism is not evidence that late-stage parallelism will work.
+
+### 7. Give one editor ownership of an active change
+
+I had less success when I manually edited files while an agent retained an
+older view of them. The agent's context was part of its working state. Silent
+external edits made that state stale.
+
+My practical solution was to explain the correction and let the active agent
+make it. This is not a rule that humans must never code. It is a coordination
+rule: avoid two editors changing the same conceptual unit without an explicit
+reload and reconciliation step.
+
+### 8. Treat agent guides as memory, not enforcement
+
+`CLAUDE.md` was valuable for accumulating project preferences and previous
+mistakes. It did not reliably stop the agents from reintroducing `unwrap()` or
+non-chained examples.
+
+If a rule is important, promote it from prose to something executable:
+
+- a compiler error;
+- a lint;
+- a compile-fail test;
+- a source scan;
+- a formatter;
+- a golden file; or
+- a CI check.
+
+Instructions influence probability. Automation changes the acceptance
+boundary.
+
+### 9. Put performance in the definition of done
+
+Performance-sensitive abstractions should be benchmarked from the beginning,
+not after the API has hardened. The generic type-state design taught me this
+the expensive way.
+
+For every relevant change, the agent had to rerun benchmarks and investigate a
+regression rather than merely report it. This increased token use, but it
+prevented performance debt from accumulating invisibly.
+
+Benchmark equal work. A comparison is meaningless if one side encodes fewer
+fields, omits a group, performs less validation, or uses a different buffer
+lifecycle. Generated APIs make accidental unequal work especially easy to
+hide.
+
+### 10. Experiment with unsafe code; do not assume it is faster
+
+I asked the agents to try unsafe variants because a checked boundary can make
+some repeated bounds checks redundant. Some experiments improved performance;
+others made no meaningful difference and were removed.
+
+Every retained unsafe block needs:
+
+- a stated invariant;
+- a place where that invariant is established;
+- tests around the boundary;
+- a measured reason to keep it, unless borrowing genuinely requires it; and
+- a clear distinction between checked and trusted public entry points.
+
+“The LLM wrote it” is neither a safety proof nor a reason to reject it. The
+proof must stand independently of its author.
+
+### 11. Preserve context deliberately and compact with a handoff
+
+Long context helped because it contained rejected designs, benchmark history,
+style corrections, and domain explanations. Throwing that away too often made
+the agent repeat old mistakes.
+
+At the same time, unlimited history increases cost and can bury the current
+task. A good compaction or handoff should preserve:
+
+- decisions and their reasons;
+- invariants;
+- known failure modes;
+- commands that prove completion;
+- current benchmark baselines; and
+- unfinished work.
+
+Do not retain a million tokens merely because the window exists. Retain them
+when the accumulated decisions improve the next turn enough to justify their
+cache cost.
+
+### 12. Price the workload, not the marketing number
+
+For agentic coding, compare at least cache hits, cache writes or misses, output,
+context thresholds, and rate limits. A model with cheaper ordinary input may
+still be expensive for a repeated-prefix workload. A subscription that looks
+cheap may stop an intensive day halfway through.
+
+Use your own dashboard split when possible. Then calculate:
+
+```text
+hit tokens × hit price
++ miss/write tokens × miss/write price
++ output tokens × output price
+```
+
+Apply any long-context multiplier separately. Keep clear whether you are
+comparing equal token volume, equal elapsed time, or equal completed work.
+Those answer different questions.
+
+### 13. Separate the agent harness from the model
+
+Most implementation happened through Claude Code, but most implementation was
+not performed by a Claude model. The harness provided file access, tool use,
+session management, and interaction conventions. DeepSeek or GLM supplied the
+model behind it.
+
+This distinction matters when reporting results and when reproducing them. A
+good model in a poor harness may be frustrating; a good harness can make a
+less expensive model highly productive. “I used Claude Code” is not a complete
+model-provenance statement.
+
+### 14. Use frontier-model reviews as another opinion, not proof
+
+Claude, OpenAI, and Grok reviews were useful. They sometimes expressed a
+problem better or found a slightly different angle. They were not an
+independent conformance oracle, and none rescued a task that DeepSeek could not
+complete in this project.
+
+Models can share the same training-derived assumptions. Several agreeing that
+code looks correct is weaker than one official byte comparison demonstrating
+that it is correct for a specific case.
+
+### 15. Stop if you cannot explain the result
+
+The human responsible for merging a change should be able to explain:
+
+- what requirement changed;
+- why the implementation satisfies it;
+- what evidence would fail if it were wrong;
+- which surfaces remain unreviewed; and
+- what operational risk remains.
+
+If the explanation is “the agent seemed confident and all of its own tests
+passed,” the work is not ready.
+
+### 16. Publish the uncomfortable facts
+
+AI-assisted projects need more provenance, not less. State how much code was
+generated, where human review concentrated, which models and harnesses were
+used, which evidence is independent, what the work cost, and why the maturity
+label remains.
+
+This disclosure is long because “AI-assisted” covers everything from
+autocomplete to a project in which an agent wrote nearly every implementation
+line. Users deciding whether to put a codec near money deserve the meaningful
+version.
+
 ## The personal experience: pride, enjoyment, and review fatigue
 
 I have written another open-source project almost entirely by hand. I felt a
@@ -870,7 +1280,7 @@ of real users who tell me:
 - what defects or operational surprises they found.
 
 The reports I most want are already listed in the
-[`ergo-sbe` README](README.md): multi-schema streams, DTO use, exact sizing with
+[`ergo-sbe` README](sbe/README.md): multi-schema streams, DTO use, exact sizing with
 Aeron/IPC claims, nested or ragged books, and mixed acting versions.
 
 Until that evidence exists, treat the crate as 0.x experimental software. Pin
