@@ -38,6 +38,50 @@ This account describes the initial intensive development period ending in July
 2026. Prices, model names, repository state, and my process will change. Treat
 dated figures as a historical record, not a permanent promise.
 
+## Read this first
+
+This article is long because “AI-assisted” is too vague to be useful on its
+own. If you only have a minute, these are the facts that should determine
+whether you continue evaluating the crate:
+
+| Question | Short answer |
+|---|---|
+| How much was written by AI? | Most of the implementation, tests, benchmarks, samples, and documentation. I did very little direct coding. |
+| What was the human contribution? | More than a decade of SBE experience, the product requirements, API judgment, domain corrections, acceptance criteria, and release decisions. |
+| What received human review? | Primarily the generated Rust API and source, encoded bytes, test failures, and benchmark results—not an exhaustive line-by-line audit of the `syn`/`quote` generator internals. |
+| What independently constrains the output? | Official `sbe-tool` byte-for-byte comparisons, Java-produced fixtures, upstream schemas, compile-fail proofs, property tests, exact-length checks, allocation tests, and performance gates. |
+| Is it production-proven? | No. It remains experimental 0.x software. Production users should validate their own schemas, versions, message shapes, and traffic. |
+| What did the initial `0.1.0` development consume? | Roughly one month of intensive work and approximately **14 billion billed tokens across providers**. The token figure is an order-of-magnitude estimate rather than an invoice-grade reconciliation. |
+| What did it cost? | **$261.39 of identified personal spend**, including $77.39 for DeepSeek. The same 14-billion-token workload ranges from about $71 to more than $17,000 under the normalized public API assumptions in the [pay-as-you-go cost comparison](#normalised-pay-as-you-go-comparison). |
+| Which model did most of the work? | DeepSeek: V4 Flash handled much of the early UltraMode/subagent work; the later sequential development stayed primarily on V4 Pro. |
+
+The Git history corroborates an iterative development process: hundreds of
+small changes, early worktree-agent merges, reverts, regression repairs,
+benchmark investigations, API redesigns, and later parity hardening. It does
+**not** prove correctness. The independent wire comparisons and behavioural
+tests are more important evidence.
+
+Choose the path that matches why you are here:
+
+- **Evaluating the crate:** read [what I reviewed](#what-i-reviewedand-what-i-did-not),
+  [verification](#verification-why-the-tests-matter-so-much),
+  [unsafe code and the trust boundary](#unsafe-code-and-the-trust-boundary),
+  [why it is experimental](#why-this-crate-is-still-experimental), and the
+  [production checklist](#what-a-prospective-production-user-should-verify).
+- **Learning from the development method:** read the
+  [working loop](#the-actual-working-loop),
+  [project phases](#how-the-project-evolved),
+  [Git history](#what-the-git-history-shows),
+  [failed approaches](#what-did-not-work), and the
+  [practical playbook](#a-practical-playbook-for-other-developers).
+- **Understanding model economics:** read the
+  [O(n²) and caching explanation](#long-context-the-on²-mental-model-and-caching),
+  [observed usage and spend](#observed-usage-and-actual-spend),
+  [cache sample](#the-cache-sample-used-for-the-cost-comparison), and
+  [normalized pay-as-you-go comparison](#normalised-pay-as-you-go-comparison).
+- **Contributing:** read the
+  [AI-assisted contribution policy](#ai-assisted-contributions).
+
 ## Contents
 
 1. [Why this page exists](#why-this-page-exists)
@@ -287,10 +331,10 @@ learn the tool used at work and because its endpoint configuration let me run
 DeepSeek and GLM through the same agent workflow.
 
 The work ran on a Mac mini at home. I connected with JetBrains **RustRover
-Remote Development**, the Claude Code app, ordinary SSH, and sometimes an SSH
-terminal from my phone. I used [Herdr](https://herdr.dev/), an agent-aware
-persistent terminal multiplexer, so the Claude Code session survived
-disconnects and I could reattach from another device.
+Remote Development**, the Claude Code app, and ordinary SSH. I used
+[Herdr](https://herdr.dev/), an agent-aware persistent terminal multiplexer,
+so the Claude Code session survived disconnects and I could reattach from
+another device.
 
 This made long-running work convenient, but not unattended. There were two
 review modes:
