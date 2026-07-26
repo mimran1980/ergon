@@ -1,7 +1,22 @@
 //! L3 order book codecs — generated from schemas/l3-book.xml.
 //! Demonstrates nested repeating groups with domain-type converters.
+//!
+//! **Build-dep only:** `ergo-sbe` is a `[build-dependencies]` entry; this crate
+//! does not link it at runtime. Codecs are plain `include!` of `$OUT_DIR`.
 
-#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all)]
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unused_assignments,
+    unused_must_use,
+    unused_comparisons,
+    non_camel_case_types,
+    non_snake_case,
+    unexpected_cfgs,
+    clippy::all
+)]
 mod l3_codec {
     include!(concat!(env!("OUT_DIR"), "/l3_codec.rs"));
 }

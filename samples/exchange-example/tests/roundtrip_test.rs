@@ -14,15 +14,9 @@
 //!
 //! Run: `RUSTC_WRAPPER="" cargo test -- --test-threads=1 --nocapture`
 
-mod bitget_spot {
-    include!(concat!(env!("OUT_DIR"), "/bitget_spot.rs"));
-}
-mod binance_spot {
-    include!(concat!(env!("OUT_DIR"), "/binance_spot.rs"));
-}
-mod normalized_app {
-    include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
-}
+ergo_sbe::sbe_mod!(bitget_spot);
+ergo_sbe::sbe_mod!(binance_spot);
+ergo_sbe::sbe_mod!(normalized_app);
 
 // ── Bitget: BestBidAsk (template 1002) ────────────────────────────────────
 
@@ -509,8 +503,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     let mut buf = vec![0u8; buf_len];
 
     // Encode
-    let mut encoder =
-        WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder
         .authorized_since(1712345678000000i64)
         .connected_since(1712345679000000i64)

@@ -6,9 +6,11 @@ no `with_domain_type`. `publish = false`.
 ## Conversion style
 
 ```rust
-// build.rs
+// build.rs — multi-schema via generate_to_out_dir
 let config = GenerationConfig::new(module_name)
     .with_conversion(ConversionSelector::named_type("Decimal"));
+ergo_sbe::generate_to_out_dir("schemas/normalized-app.xml", config)?;
+// lib.rs: ergo_sbe::sbe_mod!(pub normalized_app);
 ```
 
 That emits **generic** methods. The app supplies `TryFromSbe` / `TryToSbe`

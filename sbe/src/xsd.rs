@@ -133,9 +133,11 @@ fn check_attrs(
     for attr in node.attributes() {
         let name = local_name(attr.name());
         // Allow xmlns:* and xsi:* freely.
-        if name.starts_with("xmlns") || attr.namespace().is_some_and(|ns| {
-            ns.contains("XMLSchema-instance") || ns.contains("www.w3.org/2000/xmlns")
-        }) {
+        if name.starts_with("xmlns")
+            || attr.namespace().is_some_and(|ns| {
+                ns.contains("XMLSchema-instance") || ns.contains("www.w3.org/2000/xmlns")
+            })
+        {
             continue;
         }
         if attr.name().contains(':') {

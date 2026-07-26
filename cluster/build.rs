@@ -1,5 +1,4 @@
-//! Build script: generate the cluster SBE codecs from vendored schemas
-//! using ergo-sbe, writing to OUT_DIR.
+//! Generate cluster SBE codecs from vendored schemas into `OUT_DIR`.
 //!
 //! Schemas (vendored under cluster/schemas/):
 //!   cluster/schemas/aeron-cluster-codecs.xml
@@ -11,45 +10,27 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn generate_schema(schema_path: &std::path::Path, module: &str, out_dir: &std::path::Path) {
-    if !schema_path.exists() {
-        panic!(
-            "SBE schema not found at {}. \
-             For Aeron schemas run `git submodule update --init aeron`.",
-            schema_path.display()
-        );
-    }
-    let xml_src = fs::read_to_string(schema_path).unwrap_or_else(|e| panic!("read {}: {e}", schema_path.display()));
-    let ir = ergo_sbe::parse(&xml_src).unwrap_or_else(|e| panic!("parse {}: {e}", schema_path.display()));
-    let schema = ergo_sbe::Schema::from_ir(ir);
-    let cfg = ergo_sbe::GenerationConfig::new(module);
-    let generator = ergo_sbe::Generator::new(cfg);
-    let modules = generator
-        .generate(&schema)
-        .unwrap_or_else(|e| panic!("generate {}: {e}", schema_path.display()));
-    let m = modules
-        .modules()
-        .next()
-        .unwrap_or_else(|| panic!("no module generated for {}", schema_path.display()));
-    let out_path = out_dir.join(format!("{module}.rs"));
-    fs::write(&out_path, &m.source).unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
-    println!("cargo::rerun-if-changed={}", schema_path.display());
-}
-
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Production codecs are ergo-sbe-only (OUT_DIR). Residual sbe-tool trees
     // under src/codecs/{cluster_codecs,rfq_codecs} remain for head-to-head
     // benches only — no sbe-tool regeneration here.
 
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
     let schema_dir = manifest_dir.join("schemas");
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
     for (xml, module) in [
         ("aeron-cluster-codecs.xml", "session"),
         ("aeron-cluster-mark-codecs.xml", "mark"),
     ] {
-        generate_schema(&schema_dir.join(xml), module, &out_dir);
+        let schema_path = schema_dir.join(xml);
+        if !schema_path.exists() {
+            panic!(
+                "SBE schema not found at {}. \
+                 For Aeron schemas run `git submodule update --init aeron`.",
+                schema_path.display()
+            );
+        }
+        ergo_sbe::generate_to_out_dir(&schema_path, ergo_sbe::GenerationConfig::new(module))?;
     }
 
     println!("cargo::rerun-if-changed=../sbe/src/codegen.rs");
@@ -64,6 +45,7 @@ fn main() {
         let aeron = manifest_dir.join("..").join("aeron");
         compile_test_harness_java(&manifest_dir, &aeron);
     }
+    Ok(())
 }
 
 /// Build Aeron jars if missing and compile `ClusterLauncher` onto the samples classpath.

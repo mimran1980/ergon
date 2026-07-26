@@ -10,9 +10,7 @@
 //! Proves zero heap allocation on the hot path after warmup.
 #![allow(unused, unsafe_code)]
 
-mod normalized_app {
-    include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
-}
+ergo_sbe::sbe_mod!(normalized_app);
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;

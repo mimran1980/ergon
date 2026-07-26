@@ -1,17 +1,45 @@
 # Samples
 
-These five standalone crates exercise repository APIs in larger flows. They are
+These standalone crates exercise repository APIs in larger flows. They are
 excluded from the workspace, set `publish = false`, and are not reference
 implementations.
 
-| Sample | Purpose | External requirements |
-|---|---|---|
-| [`sbe-feature-tour/`](sbe-feature-tour/) | **ErgoSBE feature map** — EncodedLength, encode/decode, DTO, AnyMessage, **and both** `with_domain_type` + `with_conversion` | None |
-| [`exchange-example/`](exchange-example/) | Multi-schema + **`with_conversion` only** (app-side `TryFromSbe` for rust_decimal) + Aeron IPC | Network only for live exchange paths |
-| [`l3-book/`](l3-book/) | Nested/ragged L3 books; **`with_domain_type` only** (concrete `price() -> Decimal`, etc.) | None for local tests |
-| [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | Claim-based Cluster publishing and an HA-shaped order-book flow | Java harness only for leader-kill coverage |
-| [`cluster-rfq/`](cluster-rfq/) | RFQ and auction application-protocol experiments | Java harness for live examples |
-| [`cluster-tutorial/`](cluster-tutorial/) | Connect, offer, poll, keep-alive, and close walkthrough | Java 17+ and built Aeron artifacts |
+## `ergo-sbe`: build dependency vs application dependency
+
+Generated codecs ship their own embedded `sbe_rt` module. Linking the **app**
+does not require `ergo-sbe` unless you use its macros or call the generator
+library at runtime.
+
+| Pattern | `build-dependencies` | `dependencies` | Typical use |
+|---------|----------------------|----------------|-------------|
+| **Build only** | `ergo-sbe` | — | Product path: `generate_to_out_dir` in `build.rs`, then plain `include!(concat!(env!("OUT_DIR"), "/….rs"))` |
+| **Build + runtime** | `ergo-sbe` | `ergo-sbe` | Same codegen, plus `ergo_sbe::sbe_mod!` / `include_sbe!` convenience macros |
+| **Runtime only** | — | `ergo-sbe` | Call `parse` / `Generator` as a library (no `build.rs`) |
+
+| Sample | Pattern | Purpose | External requirements |
+|---|---|---|---|
+| [`l3-book/`](l3-book/) | **Build only** | Nested/ragged L3 books; **`with_domain_type` only** | None for local tests |
+| [`cluster-rfq/`](cluster-rfq/) | **Build only** | RFQ / auction protocol codecs + cluster examples | Java harness for live examples |
+| [`sbe-feature-tour/`](sbe-feature-tour/) | **Build + runtime** | **ErgoSBE feature map** — EncodedLength, stages, DTO, AnyMessage, **both** conversion styles; uses `sbe_mod!` | None |
+| [`exchange-example/`](exchange-example/) | **Build + runtime** | Multi-schema + **`with_conversion` only** + Aeron IPC; uses `sbe_mod!` | Network only for live exchange paths |
+| [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | **Build + runtime** | Claim-based Cluster publishing + HA-shaped book; uses `sbe_mod!` | Java harness only for leader-kill coverage |
+| [`sbe-codegen-examples/`](sbe-codegen-examples/) | **Runtime only** | Generator API as a library (no `build.rs`) | None |
+| [`cluster-tutorial/`](cluster-tutorial/) | **Neither** (uses `ergo-aeron-cluster`) | Connect, offer, poll, keep-alive, close walkthrough | Java 17+ and built Aeron artifacts |
+
+**Build-only include shape** (no runtime `ergo-sbe`):
+
+```rust
+#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all)]
+mod messages {
+    include!(concat!(env!("OUT_DIR"), "/messages.rs"));
+}
+```
+
+**Build + runtime** (macro):
+
+```rust
+ergo_sbe::sbe_mod!(messages);
+```
 
 ## Check each sample
 
@@ -74,7 +102,8 @@ cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml
 ## L3 sample
 
 Deep nested/ragged books; **`with_domain_type` only** (concrete decimals /
-chrono / bool). See [`l3-book/README.md`](l3-book/README.md).
+chrono / bool). **Build-dep only** — no application `ergo-sbe` link. See
+[`l3-book/README.md`](l3-book/README.md).
 
 ## Rules
 

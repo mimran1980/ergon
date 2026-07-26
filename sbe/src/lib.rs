@@ -125,10 +125,21 @@
 //!
 //! ## Buffer sizing
 //!
+//! Schema-aware helpers size the buffer **before** you allocate — including
+//! nested groups and ragged var-data — so you do not hand-calculate wire length
+//! for complicated messages.
+//!
 //! | Shape | API |
 //! |-------|-----|
 //! | Fixed-only | `CarEncoder::ENCODED_LENGTH` |
-//! | Dynamic tails | `CarEncodedLength::new()...encoded_length_with_header()` |
+//! | Flat / known tails | `compute_encoded_length_with_message_header(...)` |
+//! | Groups / nested / ragged | `CarEncodedLength::new()…encoded_length_with_header()` |
+//!
+//! ## Why wire order is compile-time
+//!
+//! SBE is positional. Two adjacent identical groups (e.g. bids then asks) are
+//! common in market data; swapping them still produces “valid” bytes and only
+//! fails in production. Named stage structs make the wrong order a type error.
 //!
 //! ## Field metadata (Java parity)
 //!
@@ -229,6 +240,8 @@
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
 
+/// Cargo `build.rs` helpers ([`generate_to_out_dir`], [`sbe_mod!`]).
+pub mod build;
 /// Codec generation ([`Generator`]).
 pub mod codegen;
 /// [`GenerationConfig`] — conversions, domain objects, keywords, etc.
@@ -246,6 +259,9 @@ pub mod xml;
 /// Optional XSD-shaped validation ([`validate_against_sbe_xsd`], [`SBE_XSD`]).
 pub mod xsd;
 
+pub use build::{
+    BuildError, generate_str_to_dir, generate_str_to_out_dir, generate_to_out_dir, out_dir,
+};
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{ConversionSelector, GenerationConfig};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};

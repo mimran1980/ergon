@@ -8,22 +8,8 @@
 //! - Three-thread architecture: producer, SHARED driver, consumer
 
 /// Generated SBE codecs for the normalized application schema
-/// (AppMessage/L2Book/Trade). Generated at build time into `OUT_DIR`.
-// generated code carries benign unused/mut warnings; suppress at
-// the include boundary until the templates themselves are warning-clean.
-#[allow(
-    dead_code,
-    unused_imports,
-    unused_variables,
-    unused_mut,
-    unused_assignments,
-    unused_must_use,
-    clippy::all,
-    clippy::pedantic
-)]
-pub mod normalized_app {
-    include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
-}
+/// (AppMessage/L2Book/Trade). Built via `generate_to_out_dir` into `OUT_DIR`.
+ergo_sbe::sbe_mod!(pub normalized_app);
 
 pub mod bitget;
 pub mod config;

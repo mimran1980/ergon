@@ -1,7 +1,7 @@
 //! ErgoSBE feature tour — live demos of generated APIs.
 //!
 //! Schema: [`schemas/feature-tour.xml`](../schemas/feature-tour.xml)  
-//! Generated module: written by `build.rs` to `OUT_DIR/feature_tour.rs`
+//! Generated module: `generate_to_out_dir` → `OUT_DIR/feature_tour.rs`
 //! (inspect after `cargo build` under `target/.../out/feature_tour.rs`).
 //!
 //! # Features covered
@@ -26,12 +26,9 @@
     clippy::all
 )]
 
-/// Generated codecs (session types live in this module).
-pub mod codecs {
-    include!(concat!(env!("OUT_DIR"), "/feature_tour.rs"));
-}
-
-pub use codecs::*;
+// Generated codecs (written by `build.rs` to `OUT_DIR/feature_tour.rs`).
+ergo_sbe::sbe_mod!(pub feature_tour);
+pub use feature_tour::*;
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal as Rd;

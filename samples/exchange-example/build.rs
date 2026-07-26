@@ -1,46 +1,28 @@
-//! Build script: generate SBE codecs for all sample schemas.
+//! Generate SBE codecs for all sample schemas.
 //! Pure SBE — no JSON, no REST, no external protocol translation.
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
 
-fn generate_schema(out_dir: &Path, xml_path: &str, module_name: &str, decimal: bool) {
-    let path = PathBuf::from(xml_path);
-    if !path.exists() {
+fn generate_schema(
+    xml_path: &str,
+    module_name: &str,
+    decimal: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !std::path::Path::new(xml_path).exists() {
         println!("cargo:warning=schema not found: {xml_path}");
-        return;
+        return Ok(());
     }
-    let xml = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {xml_path}: {e}"));
-    let ir = ergo_sbe::parse(&xml).unwrap_or_else(|e| panic!("parse {xml_path}: {e}"));
-    let schema = ergo_sbe::Schema::from_ir(ir);
-
     // Flyweight codecs. Decimal uses with_conversion only (generic price_as /
     // price_from + app TryFromSbe in src/decimal.rs) — not with_domain_type.
     let mut config = ergo_sbe::GenerationConfig::new(module_name);
     if decimal {
         config = config.with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
     }
-    let generator = ergo_sbe::Generator::new(config);
-    let modules = generator
-        .generate(&schema)
-        .unwrap_or_else(|e| panic!("SBE generation failed for {xml_path}: {e}"));
-    for m in modules.modules() {
-        let dest = out_dir.join(&m.path);
-        fs::create_dir_all(dest.parent().unwrap()).unwrap();
-        fs::write(&dest, &m.source).unwrap();
-    }
-    println!("cargo:rerun-if-changed={xml_path}");
+    ergo_sbe::generate_to_out_dir(xml_path, config)?;
+    Ok(())
 }
 
-fn main() {
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-
-    generate_schema(
-        &out_dir,
-        "schemas/normalized-app.xml",
-        "normalized_app",
-        true,
-    );
-    generate_schema(&out_dir, "schemas/bitget-spot.xml", "bitget_spot", false);
-    generate_schema(&out_dir, "schemas/binance-spot.xml", "binance_spot", false);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    generate_schema("schemas/normalized-app.xml", "normalized_app", true)?;
+    generate_schema("schemas/bitget-spot.xml", "bitget_spot", false)?;
+    generate_schema("schemas/binance-spot.xml", "binance_spot", false)?;
+    Ok(())
 }

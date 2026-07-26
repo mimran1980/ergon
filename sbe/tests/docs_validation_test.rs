@@ -9,11 +9,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergo_sbe::{
-    GenerationConfig, Generator, Schema, parse, validate_against_sbe_xsd, SBE_XSD,
-};
+use ergo_sbe::{GenerationConfig, Generator, SBE_XSD, Schema, parse, validate_against_sbe_xsd};
 
-fn header_and_types() -> &'static str {
+const fn header_and_types() -> &'static str {
     r#"
   <types>
     <composite name="messageHeader">
@@ -88,9 +86,7 @@ fn wrap_snippet(body: &str) -> String {
     let trimmed = body.trim();
     if trimmed.contains("fn main") {
         // Allow snippets that already form a program.
-        format!(
-            "#![allow(dead_code, unused_imports, unused_variables, unused_mut)]\n{trimmed}\n"
-        )
+        format!("#![allow(dead_code, unused_imports, unused_variables, unused_mut)]\n{trimmed}\n")
     } else {
         format!(
             "#![allow(dead_code, unused_imports, unused_variables, unused_mut)]\n\
@@ -122,11 +118,7 @@ ergo-sbe = {{ path = "{ergo}" }}
 
     let target_dir = tmp_root.join("target");
     let out = Command::new("cargo")
-        .args([
-            "check",
-            "--quiet",
-            "--manifest-path",
-        ])
+        .args(["check", "--quiet", "--manifest-path"])
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(&target_dir)

@@ -106,16 +106,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = AddInstrumentEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
+            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
                 .timestamp(0);
         }
         {
-            let mut enc =
-                AddInstrumentEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0);
+            let mut enc = AddInstrumentEncoder::wrap_and_apply_header(&mut msg[hdr..hdr + body], 0);
             let _ = enc
                 .correlation(pad36("add-instr-001"))
                 .cusip(cusip)
@@ -140,8 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = CreateRfqCommandEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
+            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)

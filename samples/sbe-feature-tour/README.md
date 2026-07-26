@@ -9,16 +9,21 @@ links here with absolute GitHub URLs.
 [`build.rs`](build.rs) uses **different APIs for different selectors**:
 
 ```rust
-GenerationConfig::new("feature_tour")
-    .enable_domain_objects()
-    // Concrete methods: available() -> bool, timestamp() -> DateTime<Utc>
-    .with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
-    .with_domain_type(
-        ConversionSelector::semantic_type("UTCTimestamp"),
-        "chrono::DateTime<chrono::Utc>",
-    )
-    // Generic only on Quote.price / size — you implement TryFromSbe
-    .with_conversion(ConversionSelector::named_type("Decimal"));
+// build.rs
+ergo_sbe::generate_to_out_dir(
+    "schemas/feature-tour.xml",
+    GenerationConfig::new("feature_tour")
+        .enable_domain_objects()
+        // Concrete methods: available() -> bool, timestamp() -> DateTime<Utc>
+        .with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
+        .with_domain_type(
+            ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>",
+        )
+        // Generic only on Quote.price / size — you implement TryFromSbe
+        .with_conversion(ConversionSelector::named_type("Decimal")),
+)?;
+// lib.rs: ergo_sbe::sbe_mod!(pub feature_tour);
 ```
 
 | Selector | Config | Decode API | Encode API |

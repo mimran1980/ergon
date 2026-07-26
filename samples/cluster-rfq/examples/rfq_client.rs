@@ -104,8 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = CreateRfqCommandEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
+            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -142,8 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = QuoteRfqCommandEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
+            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -176,8 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = AcceptRfqCommandEncoder::ENCODED_LENGTH;
         let mut msg = vec![0u8; hdr + body];
         {
-            let mut sh =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
+            let mut sh = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut msg[..hdr], 0);
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)

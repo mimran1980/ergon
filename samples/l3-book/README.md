@@ -6,12 +6,19 @@ Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
 
 ```rust
 // build.rs — one canonical Rust type per field
-.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
-.with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
-.with_domain_type(
-    ConversionSelector::semantic_type("UTCTimestamp"),
-    "chrono::DateTime<chrono::Utc>",
-)
+ergo_sbe::generate_to_out_dir(
+    "schemas/l3-book.xml",
+    GenerationConfig::new("l3_codec")
+        .enable_domain_objects()
+        .with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
+        .with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
+        .with_domain_type(
+            ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>",
+        ),
+)?;
+// lib.rs — plain include (build-dep only; no runtime ergo-sbe):
+// mod l3_codec { include!(concat!(env!("OUT_DIR"), "/l3_codec.rs")); }
 ```
 
 **Generated API (concrete):**
@@ -36,8 +43,8 @@ call `with_conversion(Decimal)` here — it would not change the surface.
 | Path | Role |
 |------|------|
 | `schemas/l3-book.xml` | Nested bids/asks, orders, var-data tails |
-| `build.rs` | Domain objects + `with_domain_type` |
-| `src/lib.rs` | EncodedLength + encode helpers |
+| `build.rs` | `generate_to_out_dir` + domain objects / `with_domain_type` (**build-dep only**) |
+| `src/lib.rs` | plain `include!` of `$OUT_DIR` + EncodedLength helpers |
 | `src/main.rs` | Runnable demos |
 | `tests/l3_tests.rs` | Round-trips |
 

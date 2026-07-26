@@ -439,7 +439,9 @@ impl Generator {
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
         with_keyword_append(&self.config.keyword_append_token, || {
-            with_deprecated_attrs(self.config.deprecated_attrs, || self.generate_multi_inner(schemas))
+            with_deprecated_attrs(self.config.deprecated_attrs, || {
+                self.generate_multi_inner(schemas)
+            })
         })
     }
 
@@ -2483,7 +2485,10 @@ fn dto_range_check_tokens(
     let min_i = to_i128(min);
     let max_i = to_i128(max);
     // Skip no-op ranges that cover the full native type width.
-    if min_i == to_i128(0) && max_i >= (i128::from(u64::MAX) - 1) && matches!(prim, PrimitiveType::UInt64) {
+    if min_i == to_i128(0)
+        && max_i >= (i128::from(u64::MAX) - 1)
+        && matches!(prim, PrimitiveType::UInt64)
+    {
         // still check — MAX is often max-1 for null reserved
     }
     let min_lit = syn::LitInt::new(&format!("{min_i}"), span);

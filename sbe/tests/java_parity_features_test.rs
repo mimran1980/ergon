@@ -8,8 +8,8 @@
 #![allow(unused)]
 
 use ergo_sbe::{
-    GenerationConfig, Generator, Schema, parse, parse_with_xsd_validation, validate_against_sbe_xsd,
-    SBE_XSD,
+    GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_xsd_validation,
+    validate_against_sbe_xsd,
 };
 
 #[test]
@@ -42,8 +42,14 @@ fn field_metadata_constants_and_meta_attribute() -> Result<(), Box<dyn std::erro
 
     assert!(out.contains("pub const TS_ID: u16 = 7"), "{out}");
     assert!(out.contains("pub const TS_SINCE_VERSION: u16 = 0"), "{out}");
-    assert!(out.contains("pub const TS_ENCODING_OFFSET: usize = 0"), "{out}");
-    assert!(out.contains("pub const TS_ENCODING_LENGTH: usize = 8"), "{out}");
+    assert!(
+        out.contains("pub const TS_ENCODING_OFFSET: usize = 0"),
+        "{out}"
+    );
+    assert!(
+        out.contains("pub const TS_ENCODING_LENGTH: usize = 8"),
+        "{out}"
+    );
     assert!(out.contains("fn ts_meta_attribute"), "{out}");
     assert!(out.contains("enum MetaAttribute"), "{out}");
     assert!(out.contains("Some(\"unix\")"), "{out}");
@@ -117,8 +123,14 @@ fn keyword_append_rewrites_type_field() -> Result<(), Box<dyn std::error::Error>
         .clone();
 
     // snake_case("type") is keyword → type_
-    assert!(out.contains("fn type_"), "expected type_ accessor, got:\n{out}");
-    assert!(out.contains("TYPE__ID") || out.contains("TYPE__SINCE") || out.contains("TYPE_"), "{out}");
+    assert!(
+        out.contains("fn type_"),
+        "expected type_ accessor, got:\n{out}"
+    );
+    assert!(
+        out.contains("TYPE__ID") || out.contains("TYPE__SINCE") || out.contains("TYPE_"),
+        "{out}"
+    );
     Ok(())
 }
 
@@ -179,7 +191,10 @@ fn domain_dto_range_validation_emitted() -> Result<(), Box<dyn std::error::Error
     assert!(out.contains("ValueOutOfRange"), "{out}");
     assert!(out.contains("OrderDomain"), "{out}");
     // min=1 max=1000 should appear in the generated check
-    assert!(out.contains("min: 1") || out.contains("min: 1i128") || out.contains("1"), "{out}");
+    assert!(
+        out.contains("min: 1") || out.contains("min: 1i128") || out.contains("1"),
+        "{out}"
+    );
     Ok(())
 }
 
@@ -251,8 +266,14 @@ fn bitset_display_and_fromstr_emitted() -> Result<(), Box<dyn std::error::Error>
         .source
         .clone();
 
-    assert!(out.contains("impl core::fmt::Display for OptionalExtras"), "{out}");
-    assert!(out.contains("impl core::str::FromStr for OptionalExtras"), "{out}");
+    assert!(
+        out.contains("impl core::fmt::Display for OptionalExtras"),
+        "{out}"
+    );
+    assert!(
+        out.contains("impl core::str::FromStr for OptionalExtras"),
+        "{out}"
+    );
     // Display/FromStr use the schema choice names (faithful, round-trips).
     assert!(out.contains("\"sunRoof\""), "{out}");
     assert!(out.contains("\"sportsPack\""), "{out}");
@@ -318,7 +339,8 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
         </messageSchema>"#;
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
-    let out = Generator::new(GenerationConfig::new("m"))
+    // `#[deprecated]` emission is opt-in (cascades to types/impls).
+    let out = Generator::new(GenerationConfig::new("m").with_deprecated_attrs())
         .generate(&schema)?
         .modules()
         .next()
@@ -343,9 +365,9 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
         "deprecated attr not adjacent to legacy getter:\n{between}"
     );
     // Non-deprecated field's getter has no adjacent #[deprecated].
-    let current = out.find("pub fn current(&self)").ok_or_else(|| {
-        format!("current getter missing in:\n{out}")
-    })?;
+    let current = out
+        .find("pub fn current(&self)")
+        .ok_or_else(|| format!("current getter missing in:\n{out}"))?;
     let cur_between = &out[out[..current].rfind("#[deprecated]").unwrap_or(0)..current];
     assert!(
         !cur_between.contains("pub fn current"),

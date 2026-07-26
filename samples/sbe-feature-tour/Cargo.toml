@@ -6,6 +6,8 @@ publish = false
 description = "ErgoSBE feature tour — EncodedLength, encode/decode stages, DTO, AnyMessage (schema + generated codecs)"
 
 [dependencies]
+# Runtime dep for `sbe_mod!` / generated codecs; also used as build-dep below.
+ergo-sbe = { path = "../../sbe" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 # Used only with with_conversion(Decimal) demos (generic price_as / price_from).
 rust_decimal = { version = "1", default-features = false, features = ["std"] }

@@ -5,8 +5,8 @@ edition = "2024"
 publish = false
 description = "L3 order book sample — nested groups encode/decode with dummy data"
 
+# Build-dep only: generated codecs embed sbe_rt; no runtime ergo-sbe link.
 [dependencies]
-ergo-sbe = { path = "../../sbe" }
 chrono = "0.4"
 rust_decimal = { version = "1", features = ["macros"] }
 

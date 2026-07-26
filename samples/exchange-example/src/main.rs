@@ -10,7 +10,6 @@ use rusteron_client::cformat;
 use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};

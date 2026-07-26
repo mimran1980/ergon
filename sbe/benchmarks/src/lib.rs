@@ -21,10 +21,8 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 #![allow(non_camel_case_types, non_snake_case)]
 
-/// ergon-generated Car codec (from build.rs).
-pub mod ergo_car {
-    include!(concat!(env!("OUT_DIR"), "/car_bench.rs"));
-}
+// ergon-generated Car codec (from build.rs → `car_bench.rs`).
+ergo_sbe::sbe_mod!(pub ergo_car = "car_bench");
 
 /// Aeron-generated Car codec (checked in, stable reference).
 pub mod aeron_car {

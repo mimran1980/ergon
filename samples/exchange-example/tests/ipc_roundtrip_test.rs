@@ -10,9 +10,7 @@
 //! Proves: try_claim_owned → direct encode AppMessage(L2Book) → commit → decode.
 #![allow(unused)]
 
-mod normalized_app {
-    include!(concat!(env!("OUT_DIR"), "/normalized_app.rs"));
-}
+ergo_sbe::sbe_mod!(normalized_app);
 
 use std::time::Duration;
 
@@ -100,8 +98,7 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
     {
         let buf = claim.data();
         assert_eq!(buf.len(), outer_len);
-        let mut outer =
-            AppMessageEncoder::wrap_and_apply_header(buf, 0);
+        let mut outer = AppMessageEncoder::wrap_and_apply_header(buf, 0);
         outer.sent_ts(epoch_ns);
         let complete = outer
             .app_name(app_name)

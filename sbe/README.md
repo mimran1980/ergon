@@ -4,7 +4,7 @@
 (SBE) schemas and generates **Rust codecs that are binary-compatible with the
 official SBE wire format** (header, field layout, groups, var-data, byte order).
 
-It is **not** a line-for-line port of the Java/C++/C# sbe-tool stubs. The
+It is **not** a line-for-line port of the java/rust sbe-tool stubs. The
 goals for the generated API are:
 
 1. **Easier to use** — especially nested groups and var-data under Rust’s
@@ -64,9 +64,10 @@ gate versus sbe-tool-generated codecs in the monorepo (see
 
 ## Contents
 
-1. [Quick start](#quick-start) — `build.rs` → `include!` → first encode/decode  
-2. [Core ideas](#core-ideas) — trust boundary, wire order, sizing, **flyweight vs whole struct**  
-3. [Feature matrix](#feature-matrix) — full capability scan (★ = differs from sbe-tool)  
+1. [Quick start](#quick-start) — `generate_to_out_dir` + `sbe_mod!` → first encode/decode  
+2. [Core ideas](#core-ideas) — trust boundary, wire order, **buffer sizing**, flyweight vs whole struct  
+3. [Feature matrix](#feature-matrix) — full capability scan  
+
 4. [Recipes](#recipes) — encode known/unknown groups, Display, DTO, conversion  
 5. [Configuration](#configuration) — wire vs app types, `with_conversion` / `with_domain_type`  
 6. [Samples](#samples)  
@@ -81,59 +82,74 @@ methods follow **your** schema names.
 
 ### 1. Depend on the generator
 
+**Minimal product path** — codegen only; generated codecs embed their own
+`sbe_rt` and do **not** link `ergo-sbe` into the application:
+
 ```toml
 [build-dependencies]
 ergo-sbe = "0.1"
+# no [dependencies] ergo-sbe
 ```
 
-### 2. Generate in `build.rs`
+**Convenience path** — also pull `ergo-sbe` as a normal dependency when you use
+`sbe_mod!` / `include_sbe!` (macros expand in the app crate):
 
-```rust
-use std::path::PathBuf;
+```toml
+[build-dependencies]
+ergo-sbe = "0.1"
 
+[dependencies]
+ergo-sbe = "0.1"   # only needed for sbe_mod! / include_sbe!
+```
+
+See [Samples](#samples) for monorepo crates that use each pattern.
+
+### 2. Generate in `build.rs` (short form)
+
+[`generate_to_out_dir`](https://docs.rs/ergo-sbe/latest/ergo_sbe/fn.generate_to_out_dir.html)
+parses the schema file, generates codecs, writes `$OUT_DIR/{module}.rs`, and
+emits `cargo::rerun-if-changed` for you:
+
+```rust,ignore
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Prefer parse_file("schemas/messages.xml") when the schema lives on disk.
-    let schema_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
-    <messageSchema package="example" id="1" version="0" byteOrder="littleEndian">
-      <types>
-        <composite name="messageHeader">
-          <type name="blockLength" primitiveType="uint16"/>
-          <type name="templateId" primitiveType="uint16"/>
-          <type name="schemaId" primitiveType="uint16"/>
-          <type name="version" primitiveType="uint16"/>
-        </composite>
-      </types>
-      <message name="Heartbeat" id="1">
-        <field name="seq" id="1" type="uint32" offset="0"/>
-      </message>
-    </messageSchema>"#;
-
-    let ir = ergo_sbe::parse(schema_xml)?;
-    let schema = ergo_sbe::Schema::from_ir(ir);
-    let generated = ergo_sbe::Generator::new(
+    ergo_sbe::generate_to_out_dir(
+        "schemas/messages.xml",
         ergo_sbe::GenerationConfig::new("messages"),
-    )
-    .generate(&schema)?;
-
-    let module = generated.modules().next().ok_or_else(|| {
-        std::io::Error::other("schema generated no Rust module")
-    })?;
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap_or_else(|_| ".".into()));
-    std::fs::write(out_dir.join(&module.path), &module.source)?;
-    println!("cargo::rerun-if-changed=schemas/messages.xml");
+        // .enable_domain_objects()
+        // .with_domain_type(…)?
+    )?;
     Ok(())
 }
 ```
 
+Schema from a string / `include_str!`:
+[`generate_str_to_out_dir`](https://docs.rs/ergo-sbe/latest/ergo_sbe/fn.generate_str_to_out_dir.html)
+(add your own `cargo::rerun-if-changed` for the file you included).
+
+Need multi-schema or custom output paths? Use the lower-level
+[`parse_file`](https://docs.rs/ergo-sbe/latest/ergo_sbe/fn.parse_file.html) +
+[`Generator`](https://docs.rs/ergo-sbe/latest/ergo_sbe/struct.Generator.html)
+API (same steps the helper runs).
+
 ### 3. Include generated code
 
+**Build-dep only** (no runtime `ergo-sbe`):
+
 ```rust,ignore
-// Needs OUT_DIR from a real Cargo build.
-#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case)]
+// Module name must match GenerationConfig::new("messages") → messages.rs
+#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all)]
 mod messages {
     include!(concat!(env!("OUT_DIR"), "/messages.rs"));
 }
 use messages::*;
+```
+
+**With runtime dep** — `sbe_mod!` applies the same `allow`s for you:
+
+```rust,ignore
+ergo_sbe::sbe_mod!(messages);
+use messages::*;
+// Or only the include: ergo_sbe::include_sbe!("messages");
 ```
 
 ### 4. Encode and decode (fixed message)
@@ -163,79 +179,90 @@ More patterns: [Recipes](#recipes). Full tour:
 | `wrap` / trusted companions | Buffer already validated (or built by you this turn) |
 | `verify` | Walk the full dynamic tail before trusting accessors |
 
-### Wire order via **named stage structs** (★ vs sbe-tool)
+### Wire order via **named stage structs**
 
-Order is enforced at compile time with the **same idea** as the classic
-type-state pattern (`Encoder<State>` / `PhantomData`), but **not** that
-implementation.
+SBE is a **positional** wire format: groups and var-data appear in a fixed
+schema order with no per-field tags on the wire. That matters a lot in
+financial markets, where it is common to have **two nearly identical repeating
+groups** back-to-back — e.g. **bids then asks** (same entry layout, different
+meaning). If you encode or decode them in the wrong order, the bytes still look
+like a valid message: prices and sizes land in the opposite book side. You only
+discover the disaster at **runtime** (wrong trades, inverted books, silent
+corruption). Compile-time order exists so that mistake becomes a **type error**
+while you still have the schema in front of you, not a production incident.
 
-**Why:** an early design **did** use generic type-state stages. On some encode
-paths that was about **~17% slower** than sbe-tool. Profiling pointed at LLVM
-failing to optimise through the type-parameter stage chain the way it does for
-plain monomorphic code. The API was switched to **named stage structs** —
-same compile-time “you can only call the next legal method” behaviour, without
-the generic tax on the hot path.
+Order is enforced with the **same idea** as the classic type-state pattern
+(`Encoder<State>` / `PhantomData`), but **not** that implementation.
+
+**Implementation note:** an early design **did** use generic type-state stages.
+On some encode paths that was about **~17% slower** than comparable free-order
+flyweights. Profiling pointed at LLVM failing to optimise through the
+type-parameter stage chain the way it does for plain monomorphic code. The API
+was switched to **named stage structs** — same compile-time “you can only call
+the next legal method” behaviour, without the generic tax on the hot path.
 
 Generated code emits **separate types** for each stage, same fields, different
 methods:
 
 ```rust,ignore
-// Approximate generated shape — not Encoder<AfterFuel>:
-pub struct CarEncoder<'a> { /* buf, pos, … */ }
-pub struct CarAfterFuelFigures<'a> { /* same layout */ }
-pub struct CarAfterManufacturer<'a> { /* same layout */ }
+// Approximate generated shape — not Encoder<AfterBids>:
+pub struct BookEncoder<'a> { /* buf, pos, … */ }
+pub struct BookAfterBids<'a> { /* same layout */ }
+pub struct BookAfterAsks<'a> { /* same layout */ }
 // …
 
-impl CarEncoder<'a> {
-    pub fn fuel_figures(self, …) -> Result<CarAfterFuelFigures<'a>, …> { … }
+impl BookEncoder<'a> {
+    pub fn bids(self, …) -> Result<BookAfterBids<'a>, …> { … }
+    // no asks() here — bids first on the wire
 }
-impl CarAfterFuelFigures<'a> {
-    pub fn manufacturer(self, …) -> Result<CarAfterManufacturer<'a>, …> { … }
-    // no fuel_figures here — already done
+impl BookAfterBids<'a> {
+    pub fn asks(self, …) -> Result<BookAfterAsks<'a>, …> { … }
+    // no bids() here — already done
 }
 ```
 
 So after fixed fields you may only call the **next** group/var-data in schema
-order. Calling `manufacturer` before `fuel_figures` is a **type error**
-(`CarEncoder` has no `manufacturer` method).
+order. Calling `asks` before `bids` is a **type error** (`BookEncoder` has no
+`asks` method). Decoders use the same idea: consuming stages
+(`BookDecoder` → `BookDecoderAfterBids` → …).
 
-Decoders use the same idea: consuming stages
-(`CarDecoder` → `CarDecoderAfterFuelFigures` → …) with `into_fuel_figures()`,
-etc.
-
-Group bodies are written with **`|g| { g.add(|e| { … }) }`** so the outer
-encoder is not left half-borrowed while you fill nested levels — the closure
-ends, then chaining continues. That is intentional **API ergonomics for Rust**,
-not a port of sbe-tool’s `.parent()` style.
-
-sbe-tool typically uses free-order mutable flyweights (optional runtime
-precedence checks). ergo-sbe prefers **compile-time order**, **stage structs**
-(LLVM-friendly monomorphisation), and **closures** so complicated schemas stay
-readable.
+Group bodies use **`|g| { g.add(|e| { … }) }`** so the outer encoder is not left
+half-borrowed while you fill nested levels — the closure ends, then chaining
+continues. That is intentional **API ergonomics for Rust** (avoids `.parent()`
+style ownership hand-offs that fight the borrow checker on deep books).
 
 ### Buffer sizing
 
-| Message shape | How to size |
-|---------------|-------------|
-| Fixed block only | `MessageEncoder::ENCODED_LENGTH` |
-| Directly sized tails | `compute_encoded_length_with_message_header(...)` |
-| Groups / nested / ragged | `{Message}EncodedLength` staged builder |
+**Ergonomic length APIs:** for messages with groups, nested groups, or
+variable-length tails, you no longer hand-calculate wire size (header + block
++ Σ(group headers × count) + Σ(var-data lengths) + …). Codegen emits a
+**schema-aware length API** so you declare the *structure* of the payload you
+are about to encode; it returns the exact byte count for a first-time
+allocation (or Aeron claim) with no trial encode and no oversized guess buffer.
+
+| Message shape | How to size (generated) |
+|---------------|-------------------------|
+| Fixed block only | `MessageEncoder::ENCODED_LENGTH` (const) |
+| Flat / known tail lengths | `compute_encoded_length_with_message_header(...)` |
+| Groups / nested / ragged | `{Message}EncodedLength` staged builder (same wire order as encode) |
 
 ```rust,ignore
-// Ragged: declare entry count, then each entry’s tail contribution.
+// Nested / ragged example: count + per-entry tails — no mental arithmetic.
 let complete = MessageEncodedLength::new().entries_ragged(2, |entries| {
     entries.add()?.payload(first_payload.len())?;
     entries.add()?.payload(second_payload.len())?;
     Ok(())
 })?;
 let len = complete.encoded_length_with_header();
-let mut buffer = vec![0u8; len];
+let mut buffer = vec![0u8; len]; // exact fit
+// … then encode into `buffer` with the matching encoder stages …
 ```
 
-See [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs)
-and [l3-book helpers](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs).
+Real nested book: [`book_encoded_length`](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs)
+in the l3-book sample. API matrix:
+[encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs).
 
-### Flyweight (per-field) vs whole struct ★
+### Flyweight (per-field) vs whole struct
 
 You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 **whole struct**. Use the style that matches how much of the message you touch.
@@ -322,39 +349,38 @@ compile-time breakage on schema growth. More on DTOs in
 
 ## Feature matrix
 
-Scannable map of capabilities. **★** = intentionally different from Java
-sbe-tool. Use **More** for samples/tests when you want depth.
+Scannable map of capabilities. Use the **More** links for samples and tests.
 
-| Feature | What it does | How to use / snippet | ★ vs sbe-tool | More |
-|---------|--------------|----------------------|---------------|------|
-| **`build.rs` codegen** | Compile-time schema → Rust module in `OUT_DIR` | `Generator::new(config).generate(&schema)?` + `include!` | No separate Java jar step | [Quick start](#quick-start) · [codegen examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
-| **Wire compatibility** | Same on-wire layout as official SBE | Golden fixtures + parity benches | Compatible **bytes**, different **API** | [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) · [stability_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/stability_test.rs) · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
-| **Flyweight decode** | Zero-copy over `&[u8]` | `CarDecoder::try_from(buf)?; car.serial_number()` | Borrow + `Result` entry | [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Per-field vs whole struct** ★ | Flyweight **or** `*FixedFields` / `*Domain` | Single field: flyweight · Always fill fixed block: `.fixed(&CarFixedFields { … })` · Whole message owned: `CarDomain` | Struct path breaks at compile time when schema adds required fields | [Core ideas](#flyweight-per-field-vs-whole-struct-) · [feature-tour `.fixed`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Stage-struct encode + closures** ★ | Wire order like type-state, but **named** stages (not `Encoder<State>`); groups use nested closures (no `.parent()`) | `fuel_figures(n, \|g\| g.add(\|e\| …))?` · wrong order = missing method | Generic type-state was ~**17% slower** encode vs sbe-tool on some paths (LLVM); monomorphic stages recovered parity while keeping compile-time order | [Core ideas](#wire-order-via-named-stage-structs--vs-sbe-tool) · [Recipes](#encode-known-count-or-unknown-size) · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) |
-| **Consuming decode stages** ★ | Same: distinct after-stage decoder types | `into_fuel_figures()?` → next named stage | Stronger than free whole-message iteration | [ordered_decoder_stages_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/ordered_decoder_stages_test.rs) · [l3_consuming_stages_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_consuming_stages_test.rs) |
-| **Checked vs trusted** ★ | Explicit trust boundary | `try_*` untrusted · `wrap` trusted · `verify` full tail | Clearer API split | [demo_try_vs_trusted](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Exact buffer sizing** ★ | Size before allocate | `ENCODED_LENGTH` / `*EncodedLength` | First-class staged / ragged builders | [Core ideas](#buffer-sizing) · [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs) |
-| **Schema docs → rustdoc** ★ | XML descriptions become item docs | `description="…"` / `<description>` / `<comment>` / `<!-- -->` | Docs ship with generated API | [schema_docs_provenance_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/schema_docs_provenance_test.rs) |
-| **`Display` / `Debug`** | Diagnostic print (not wire format) | `println!("{car}");` / `println!("{car:?}");` | Guarded on truncated buffers | [Recipes](#display--debug) · [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Field metadata** | Id / offset / length / since / meta | `SERIAL_NUMBER_ID` · `serial_number_meta_attribute(…)` | Like sbe-tool statics | [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
-| **NULL / MIN / MAX** | Schema sentinels as consts | `MODEL_YEAR_NULL` | Similar elsewhere | [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
-| **Version-aware fields** | `sinceVersion` / acting version | `Option` or skip on older wire | Core SBE | [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
-| **Groups / nested groups** | Repeating dimensions | `bids(n, \|g\| g.add(…))?` | Type-state nesting | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [l3_orderbook_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_orderbook_test.rs) |
-| **Var-data / text** | Length-prefix; optional UTF-8/ASCII | `manufacturer(b"Honda")?` · `*_as_str` when encoding set | Strict errors | [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Fixed arrays + bulk helpers** | Arrays, put, pad string, copy-out | `put_some_numbers(…)` · `vehicle_code_str` · `copy_vehicle_code` | Extra ergonomics | [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
-| **Enums / sets / bool** | Wire enums, bitsets, `_bool` | `available()` / `available_bool(true)` | + domain bool mapping | [comprehensive_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs) |
-| **`with_conversion`** ★ | Wire type → **any** app type you impl | `price_from(&Cents)?` / `price_as::<Cents>()?` | Pluggable adapters | [Configuration](#configuration) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) |
-| **`with_domain_type`** ★ | Wire type → **one** fixed Rust path | `enc.price(d); let d = dec.price()` | Baked-in app type | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [Configuration](#configuration) |
-| **Domain DTOs** ★ | Owned structs + re-encode (ease > zero-copy) | `CarDomain::try_from_decoder` · `dto.encode` | Optional app-layer path | [Recipes](#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
-| **`AnyMessage` + frames** | Multi-template + framed streams | `AnyMessage::decode` · `FrameCursor` | Rust enum dispatch | [demo_any_message](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **`verify`** | Full tail bounds check | `car.verify()?` | Explicit | feature-tour try/trusted demos |
-| **Schema identity** | Id / version / hashes | `SCHEMA_ID`, `SCHEMA_HASH`, `SCHEMA_SHA256_HEX` | Registry / drift | generated module header |
-| **Multi-schema shared types** ★ | Dedup across packages | `.with_shared_module` + `generate_multi` | Multi-module layout | [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
-| **Keyword-safe names** | `type` → `type_` | `.with_keyword_append_token("_")` | Avoids reserved-word breaks | [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
-| **XSD-shaped validation** | Structural check before parse | `validate_against_sbe_xsd` / `parse_with_xsd_validation` | Not a full W3C XSD engine | [xsd.rs](https://github.com/mimran1980/ergon/blob/main/sbe/src/xsd.rs) |
-| **Zero-alloc hot path** | Flyweights + caller buffers | See allocation tests + benches | Design goal | [allocation_count_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/allocation_count_test.rs) · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) |
-| **Property round-trip** | Random messages encode→decode | `cargo test -p ergo-sbe --test proptest_roundtrip` | Extra confidence | [proptest_roundtrip](https://github.com/mimran1980/ergon/blob/main/sbe/tests/proptest_roundtrip.rs) |
+| Feature | What it does | How to use / more |
+|---------|--------------|-------------------|
+| **`build.rs` codegen** | Compile-time schema → Rust module in `OUT_DIR` | `generate_to_out_dir("schemas/….xml", config)?` · plain `include!` or `sbe_mod!(name)` · [Quick start](#quick-start) · [codegen examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
+| **Wire compatibility** | Same on-wire layout as official SBE | Golden fixtures + parity benches · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) · [stability_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/stability_test.rs) · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
+| **Flyweight decode** | Zero-copy over `&[u8]` | `CarDecoder::try_from(buf)?; car.serial_number()` · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| **Per-field vs whole struct** | Flyweight **or** `*FixedFields` / `*Domain` | Single field: flyweight · always fill fixed block: `.fixed(&CarFixedFields { … })` · whole message owned: `CarDomain` · [Core ideas](#flyweight-per-field-vs-whole-struct) · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| **Stage-struct encode + closures** | Wire order as **named** monomorphic stages; groups via nested closures | `bids(n, \|g\| g.add(\|e\| …))?` · wrong order = missing method · [Core ideas](#wire-order-via-named-stage-structs) · [Recipes](#encode-known-count-or-unknown-size) · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) |
+| **Consuming decode stages** | Distinct after-stage decoder types | `into_bids()?` → next named stage · [ordered_decoder_stages_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/ordered_decoder_stages_test.rs) · [l3_consuming_stages_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_consuming_stages_test.rs) |
+| **Checked vs trusted** | Explicit trust boundary | `try_*` untrusted · `wrap` trusted · `verify` full tail · [demo_try_vs_trusted](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| **Exact buffer sizing** | Schema-aware length for nested/ragged msgs — no hand-calculated sizes | `ENCODED_LENGTH` · `compute_encoded_length_*` · `*EncodedLength` · [Core ideas](#buffer-sizing) · [l3-book](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) · [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs) |
+| **Schema docs → rustdoc** | XML descriptions become item docs | `description="…"` / `<description>` / `<comment>` / `<!-- -->` · [schema_docs_provenance_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/schema_docs_provenance_test.rs) |
+| **`Display` / `Debug`** | Diagnostic print (not wire format) | `println!("{car}");` · [Recipes](#display--debug) · [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| **Field metadata** | Id / offset / length / since / meta | `SERIAL_NUMBER_ID` · `serial_number_meta_attribute(…)` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
+| **NULL / MIN / MAX** | Schema sentinels as consts | `MODEL_YEAR_NULL` · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
+| **Version-aware fields** | `sinceVersion` / acting version | `Option` or skip on older wire · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
+| **Groups / nested groups** | Repeating dimensions | `bids(n, \|g\| g.add(…))?` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [l3_orderbook_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_orderbook_test.rs) |
+| **Var-data / text** | Length-prefix; optional UTF-8/ASCII | `manufacturer(b"Honda")?` · `*_as_str` when encoding set · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| **Fixed arrays + bulk helpers** | Arrays, put, pad string, copy-out | `put_some_numbers(…)` · `vehicle_code_str` · `copy_vehicle_code` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
+| **Enums / sets / bool** | Wire enums, bitsets, `_bool` | `available()` / `available_bool(true)` · [comprehensive_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs) |
+| **`with_conversion`** | Wire type → **any** app type you impl | `price_from(&Cents)?` / `price_as::<Cents>()?` · [Configuration](#configuration) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) |
+| **`with_domain_type`** | Wire type → **one** fixed Rust path | `enc.price(d); let d = dec.price()` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [Configuration](#configuration) |
+| **Domain DTOs** | Owned structs + re-encode (ease > zero-copy) | `CarDomain::try_from_decoder` · `dto.encode` · [Recipes](#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
+| **`AnyMessage` + frames** | Multi-template + framed streams | `AnyMessage::decode` · `FrameCursor` · [demo_any_message](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| **`verify`** | Full tail bounds check | `car.verify()?` · feature-tour try/trusted demos |
+| **Schema identity** | Id / version / hashes | `SCHEMA_ID`, `SCHEMA_HASH`, `SCHEMA_SHA256_HEX` · generated module header |
+| **Multi-schema shared types** | Dedup across packages | `.with_shared_module` + `generate_multi` · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
+| **Keyword-safe names** | `type` → `type_` | `.with_keyword_append_token("_")` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
+| **XSD-shaped validation** | Structural check before parse | `validate_against_sbe_xsd` / `parse_with_xsd_validation` · [xsd.rs](https://github.com/mimran1980/ergon/blob/main/sbe/src/xsd.rs) |
+| **Zero-alloc hot path** | Flyweights + caller buffers | [allocation_count_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/allocation_count_test.rs) · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) |
+| **Property round-trip** | Random messages encode→decode | `cargo test -p ergo-sbe --test proptest_roundtrip` · [proptest_roundtrip](https://github.com/mimran1980/ergon/blob/main/sbe/tests/proptest_roundtrip.rs) |
 
 ---
 
@@ -576,15 +602,29 @@ diagnostic only.
 
 ## Samples
 
-Monorepo only (not on crates.io). Absolute links for docs.rs:
+Monorepo only (not on crates.io). Absolute links for docs.rs.
+
+### Where `ergo-sbe` sits in `Cargo.toml`
+
+Generated codecs embed their own `sbe_rt` runtime. You do **not** need
+`ergo-sbe` as an application dependency just to encode/decode — only as a
+**build** dependency to run codegen. A normal dependency is only required for
+macros (`sbe_mod!` / `include_sbe!`) or when you call the generator **as a
+library** at runtime.
+
+| Pattern | `build-dependencies` | `dependencies` | What for | Sample |
+|---------|----------------------|----------------|----------|--------|
+| **Build only** (product default) | yes | **no** | `generate_to_out_dir` in `build.rs`; plain `include!(concat!(env!("OUT_DIR"), …))` | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [cluster-rfq](https://github.com/mimran1980/ergon/tree/main/samples/cluster-rfq) |
+| **Build + runtime** (convenience) | yes | yes | Same codegen **plus** `sbe_mod!` / `include_sbe!` in app code | [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [cluster-ha-orderbook](https://github.com/mimran1980/ergon/tree/main/samples/cluster-ha-orderbook) |
+| **Runtime only** (library API) | no | yes | Call `parse` / `Generator` from an example or tool — no `build.rs` | [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
 
 | Sample | Focus |
 |--------|--------|
 | [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour) | Full API map; both conversion styles; `demo_*` functions |
-| [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) | Nested books; **`with_domain_type` only** |
-| [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) | Multi-schema; **`with_conversion` only** |
-| [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) | Minimal generate demos |
-| [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md) | Index |
+| [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) | Nested books; **`with_domain_type` only**; **build-dep only** |
+| [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) | Multi-schema; **`with_conversion` only**; `sbe_mod!` |
+| [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) | Generator-as-library demos (no `build.rs`) |
+| [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md) | Full index + dependency matrix |
 
 ```sh
 git clone https://github.com/mimran1980/ergon.git && cd ergon

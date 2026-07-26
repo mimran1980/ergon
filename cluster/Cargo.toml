@@ -23,6 +23,8 @@ exclude = [
 [dependencies]
 rusteron-client = { workspace = true }
 thiserror = "2"
+# Runtime dep for `sbe_mod!` (generated codecs live in OUT_DIR).
+ergo-sbe = { version = "0.1.0", path = "../sbe" }
 # Optional: only with feature `test-harness` (Java multi-node spawn helpers).
 rusteron-archive = { workspace = true, optional = true }
 
