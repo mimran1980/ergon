@@ -680,8 +680,18 @@ models.
 ### DeepSeek
 
 DeepSeek V4 Flash and V4 Pro performed most of the implementation work. I
-started using DeepSeek because I repeatedly exhausted other subscription or
-coding-plan limits. I expected it to be a fallback. It became the workhorse.
+had never planned to use DeepSeek for this project. My initial model choices
+were elsewhere, but during the intensive development period I repeatedly hit
+five-hour or weekly subscription and coding-plan limits. Waiting for a limit
+to reset would have stopped the development flow, so I connected Claude Code
+to DeepSeek's pay-as-you-go API and carried on working.
+
+I initially regarded DeepSeek as temporary overflow capacity: something to use
+until another plan reset. Only after using it for longer sessions did I realise
+how capable it was for this particular workflow and, especially, how
+cost-efficient its cache-hit pricing made sustained agentic development. What
+began as an unplanned way to avoid an interruption became the project's main
+implementation workhorse.
 
 The model split also reflects the change in development style. Early in the
 project I was using **UltraMode through Claude Code CLI**. UltraMode created
