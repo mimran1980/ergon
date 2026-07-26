@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
 
 pub struct Paths;
 
@@ -207,14 +207,6 @@ pub fn compile_and_run_with_feature(module_name: &str, source: &str, code: &str,
     _compile_and_run(module_name, source, code, &[feature], "");
 }
 
-/// Like `compile_and_run` but enables the generated module's `serde` feature
-/// and adds serde + serde_json as dependencies, for Serialize/Deserialize
-/// round-trip tests. Requires the crates in the cargo registry cache.
-pub fn compile_and_run_serde(module_name: &str, source: &str, code: &str) {
-    const DEPS: &str = "serde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n";
-    _compile_and_run(module_name, source, code, &["serde"], DEPS);
-}
-
 fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&str], deps: &str) {
     let dir = std::env::temp_dir().join(format!("ergo_test_{module_name}"));
     let _ = fs::remove_dir_all(&dir);
@@ -331,7 +323,9 @@ pub fn compile_and_run_two_modules(
 }
 
 pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
-    generate_domain_with(xml_path, module_name, |c| c.enable_domain_objects(false))
+    generate_domain_with(xml_path, module_name, |c| {
+        c.enable_domain_objects(DomainVarData::Bytes)
+    })
 }
 
 pub fn generate_domain_with(

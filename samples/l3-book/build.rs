@@ -4,7 +4,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Concrete app types (implies conversion). For generic price_as::<T> only,
     // see samples/exchange-example and samples/sbe-feature-tour.
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
-        .enable_domain_objects(false)
+        .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_unchecked_companions()
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),

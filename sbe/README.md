@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ergo_sbe::generate_to_out_dir(
         "schemas/messages.xml",
         ergo_sbe::GenerationConfig::new("messages"),
-        // .enable_domain_objects(true)  // String var-data on DTOs
+        // .enable_domain_objects(DomainVarData::LossyStrings)  // String var-data on DTOs
         // .with_domain_type(…)?
     )?;
     Ok(())
@@ -276,7 +276,7 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 |-------|-----------|------|------------------|
 | **Flyweight (per-field)** | You only **read** one or a few fields; hot path | Zero-copy; no heap | New fields are optional at call sites (you simply don’t read them) |
 | **`*FixedFields` + `.fixed(...)`** | You always write the **entire fixed block** | One struct write, still flyweight buffer | Adding a **required fixed field** to the schema → **compile error** until you set it in the struct |
-| **`*Domain` DTO** (`.enable_domain_objects(true\|false)`) | Whole message as owned data; bool picks `String` vs `Vec<u8>` var-data | Allocates; easier app code | Same idea: regenerating after a schema change forces you to fill new struct fields |
+| **`*Domain` DTO** (`.enable_domain_objects(DomainVarData::…)`) | Whole message as owned data; enum picks `String` vs `Vec<u8>` var-data | Allocates; easier app code | Same idea: regenerating after a schema change forces you to fill new struct fields |
 
 #### Encode — individual fields (flyweight)
 
@@ -338,7 +338,7 @@ When you always need (almost) everything, or want to pass a value across threads
 / into non-SBE code:
 
 ```rust,ignore
-// build.rs: .enable_domain_objects(true)
+// build.rs: .enable_domain_objects(DomainVarData::LossyStrings)
 let dto = CarDomain::try_from_decoder(CarDecoder::try_from(buf)?)?;
 // dto is a plain Rust struct: Vecs for groups/strings, owned fields.
 process_order(&dto);
@@ -377,7 +377,7 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **Enums / sets / bool** | Wire enums, bitsets, `_bool` | `available()` / `available_bool(true)` · [comprehensive_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs) |
 | **`with_conversion`** | Wire type → **any** app type you impl | `price_from(&Cents)?` / `price_as::<Cents>()?` · [Configuration](#configuration) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) |
 | **`with_domain_type`** | Wire type → **one** fixed Rust path | `enc.price(d); let d = dec.price()` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [Configuration](#configuration) |
-| **Domain DTOs** | Owned structs + re-encode; var-data `String` or `Vec<u8>` via bool | `.enable_domain_objects(true)` · [Recipes](#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
+| **Domain DTOs** | Owned structs + re-encode; var-data via [`DomainVarData`] | `.enable_domain_objects(DomainVarData::LossyStrings)` · [Recipes](#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
 | **`AnyMessage` + frames** | Multi-template + framed streams | `AnyMessage::decode` · `FrameCursor` · [demo_any_message](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **`verify`** | Full tail bounds check | `car.verify()?` · feature-tour try/trusted demos |
 | **Schema identity** | Id / version / hashes | `SCHEMA_ID`, `SCHEMA_HASH`, `SCHEMA_SHA256_HEX` · generated module header |
@@ -464,11 +464,11 @@ structs — **not** the zero-copy hot path. Flyweights stay faster for
 low-latency applications.
 
 ```rust,ignore
-// build.rs — the bool is a big deal (DTO var-data type):
-.enable_domain_objects(true)   // manufacturer: String  (easiest for text)
-// .enable_domain_objects(false) // manufacturer: Vec<u8> (byte-exact)
+// build.rs — DomainVarData is a big deal (DTO var-data type):
+.enable_domain_objects(DomainVarData::LossyStrings) // manufacturer: String (invalid UTF-8 → "")
+// .enable_domain_objects(DomainVarData::Bytes)      // manufacturer: Vec<u8> (byte-exact)
 
-// --- generated shape with enable_domain_objects(true) ---
+// --- generated shape with DomainVarData::LossyStrings ---
 // pub struct CarDomain {
 //     pub serial_number: u64,
 //     pub model_year: u16,
@@ -500,18 +500,18 @@ let n = dto.encode(&mut out[..len])?;
 println!("re-encoded {n} bytes");
 ```
 
-#### `enable_domain_objects(string_var_data: bool)`
+#### `enable_domain_objects(DomainVarData)`
 
-SBE `<data>` is length-prefixed **bytes**. The boolean picks the DTO field type:
+SBE `<data>` is length-prefixed **bytes**. The enum picks the DTO field type:
 
 | Call | Field type | Invalid UTF-8 | When to use |
 |------|------------|---------------|-------------|
-| `.enable_domain_objects(true)` | `String` | **silently becomes `""`** (empty; not U+FFFD, not an error) | Text schemas; **easiest** app API |
-| `.enable_domain_objects(false)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
+| `.enable_domain_objects(DomainVarData::LossyStrings)` | `String` | **silent empty `""`** (not U+FFFD, not an error) | Text schemas; **easiest** app API |
+| `.enable_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
 
-With `true`, a field that was invalid UTF-8 on the wire materialises as empty
-and re-encodes as empty var-data (not a copy of the bad bytes). Prefer `false`
-when you must preserve non-UTF-8 payloads.
+With `LossyStrings`, a field that was invalid UTF-8 on the wire materialises as
+empty and re-encodes as empty var-data (not a copy of the bad bytes). Prefer
+`Bytes` when you must preserve non-UTF-8 payloads.
 
 Flyweight path is unchanged: with schema `characterEncoding="UTF-8"` you still
 get `into_manufacturer_as_str()` without a DTO.
@@ -619,7 +619,7 @@ Both styles on different fields:
 
 | Option | Purpose |
 |--------|---------|
-| `enable_domain_objects(true\|false)` | Owned `*Domain` + `encode`; **`true`** → var-data `String` (bad UTF-8 → `""`), **`false`** → `Vec<u8>` |
+| `enable_domain_objects(DomainVarData::…)` | Owned `*Domain` + `encode`; **`LossyStrings`** → `String` (bad UTF-8 → `""`), **`Bytes`** → `Vec<u8>` |
 | `with_shared_module` / `generate_multi` | Multi-schema shared types |
 | `with_external_sbe_rt` | Share one `sbe_rt` runtime module |
 | `enable_error_from_impls` | `From<EncodeError/DecodeError>` for your error type |

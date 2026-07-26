@@ -8,7 +8,7 @@
 #![allow(unused)]
 
 use ergo_sbe::{
-    GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_xsd_validation,
+    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_xsd_validation,
     validate_against_sbe_xsd,
 };
 
@@ -180,13 +180,14 @@ fn domain_dto_range_validation_emitted() -> Result<(), Box<dyn std::error::Error
         </messageSchema>"#;
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
-    let out = Generator::new(GenerationConfig::new("m").enable_domain_objects(false))
-        .generate(&schema)?
-        .modules()
-        .next()
-        .unwrap()
-        .source
-        .clone();
+    let out =
+        Generator::new(GenerationConfig::new("m").enable_domain_objects(DomainVarData::Bytes))
+            .generate(&schema)?
+            .modules()
+            .next()
+            .unwrap()
+            .source
+            .clone();
 
     assert!(out.contains("ValueOutOfRange"), "{out}");
     assert!(out.contains("OrderDomain"), "{out}");

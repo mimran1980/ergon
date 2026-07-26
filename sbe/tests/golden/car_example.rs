@@ -243,7 +243,6 @@ pub mod sbe_rt {
 ///Boolean Type.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BooleanType {
     F = 0,
     T = 1,
@@ -308,7 +307,6 @@ impl From<BooleanType> for bool {
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Model {
     A = b'A',
     B = b'B',
@@ -365,7 +363,6 @@ impl core::str::FromStr for Model {
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BoostType {
     TURBO = b'T',
     SUPERCHARGER = b'S',
@@ -425,7 +422,6 @@ impl core::str::FromStr for BoostType {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct OptionalExtras(pub u8);
 impl OptionalExtras {
@@ -536,7 +532,6 @@ impl core::str::FromStr for OptionalExtras {
 }
 ///Message identifiers and length of message root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct MessageHeader(pub [u8; 8]);
 impl MessageHeader {
@@ -642,7 +637,6 @@ impl<'a> MessageHeaderDecoder<'a> {
 }
 ///Repeating group dimensions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct GroupSizeEncoding(pub [u8; 4]);
 impl GroupSizeEncoding {
@@ -683,7 +677,6 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
 }
 ///Variable length UTF-8 String.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct VarStringEncoding(pub [u8; 4]);
 impl VarStringEncoding {
@@ -721,7 +714,6 @@ impl<'a> VarStringEncodingDecoder<'a> {
 }
 ///Variable length ASCII String.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct VarAsciiEncoding(pub [u8; 4]);
 impl VarAsciiEncoding {
@@ -759,7 +751,6 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
 }
 ///Variable length binary blob.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct VarDataEncoding(pub [u8; 4]);
 impl VarDataEncoding {
@@ -796,7 +787,6 @@ impl<'a> VarDataEncodingDecoder<'a> {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct Booster(pub [u8; 2]);
 impl Booster {
@@ -836,7 +826,6 @@ impl<'a> BoosterDecoder<'a> {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct Engine(pub [u8; 10]);
 impl Engine {
@@ -3711,7 +3700,6 @@ impl<'a> CarDecoderComplete<'a> {
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
 /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarFuelFiguresEntryDomain {
     pub speed: u16,
     pub mpg: f32,
@@ -3780,7 +3768,6 @@ impl CarFuelFiguresEntryDomain {
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
 /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarPerformanceFiguresEntryAccelerationEntryDomain {
     pub mph: u16,
     pub seconds: f32,
@@ -3836,7 +3823,6 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
 /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarPerformanceFiguresEntryDomain {
     pub octane_rating: u8,
     pub acceleration: Vec<CarPerformanceFiguresEntryAccelerationEntryDomain>,
@@ -3915,7 +3901,6 @@ impl CarPerformanceFiguresEntryDomain {
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
 /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarDomain {
     pub serial_number: u64,
     pub model_year: u16,

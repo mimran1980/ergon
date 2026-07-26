@@ -13,7 +13,7 @@ links here with absolute GitHub URLs.
 ergo_sbe::generate_to_out_dir(
     "schemas/feature-tour.xml",
     GenerationConfig::new("feature_tour")
-        .enable_domain_objects(true) // String var-data (invalid UTF-8 → "")
+        .enable_domain_objects(DomainVarData::LossyStrings) // String var-data (invalid UTF-8 → "")
         // Concrete methods: available() -> bool, timestamp() -> DateTime<Utc>
         .with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
         .with_domain_type(

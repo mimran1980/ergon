@@ -29,7 +29,7 @@
 //!
 //! | Builder | What generated code looks like |
 //! |---------|--------------------------------|
-//! | [`enable_domain_objects`](GenerationConfig::enable_domain_objects) | `CarDomain::from(dec)`, `dto.encode` — pass `true` for `String` var-data |
+//! | [`enable_domain_objects`](GenerationConfig::enable_domain_objects) | `CarDomain` DTOs; pass [`DomainVarData`] for var-data shape |
 //! | [`with_shared_module`](GenerationConfig::with_shared_module) | Multi-schema: shared types in one module, `pub use super::common::*` |
 //! | [`with_external_sbe_rt`](GenerationConfig::with_external_sbe_rt) | `pub use path::sbe_rt as sbe_rt` instead of inlining runtime |
 //! | [`enable_error_from_impls`](GenerationConfig::enable_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
@@ -83,16 +83,37 @@ impl ConversionSelector {
     }
 }
 
+/// How owned domain DTO `<data>` / var-data fields are typed.
+///
+/// Passed to [`GenerationConfig::enable_domain_objects`]. Wire is always
+/// length-prefixed **bytes**; this only chooses the **owned** DTO field type.
+///
+/// | Variant | DTO field | Invalid UTF-8 on materialise |
+/// |---------|-----------|------------------------------|
+/// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
+/// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **silent empty `""`** (not U+FFFD, not an error) |
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum DomainVarData {
+    /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
+    #[default]
+    Bytes,
+    /// Text-friendly var-data (`String`). Invalid UTF-8 becomes `""` (empty).
+    ///
+    /// Re-encode writes `as_bytes()`, so a field that was invalid on the wire
+    /// becomes empty var-data (not a copy of the bad bytes).
+    LossyStrings,
+}
+
 /// Options that shape generated Rust codecs.
 ///
 /// Start with [`GenerationConfig::new`], chain builder methods, then pass to
 /// [`crate::Generator::new`].
 ///
 /// ```rust
-/// use ergo_sbe::{GenerationConfig, ConversionSelector};
+/// use ergo_sbe::{DomainVarData, GenerationConfig, ConversionSelector};
 ///
 /// let config = GenerationConfig::new("market_data")
-///     .enable_domain_objects(true) // String var-data on DTOs (easiest for text)
+///     .enable_domain_objects(DomainVarData::LossyStrings)
 ///     .with_domain_type(
 ///         ConversionSelector::named_type("Decimal"),
 ///         "rust_decimal::Decimal",
@@ -106,9 +127,8 @@ pub struct GenerationConfig {
     pub(crate) shared_module: Option<String>,
     /// Emit owned `*Domain` structs + `From<Decoder>` / `encode`.
     pub(crate) domain_objects: bool,
-    /// When true, DTO var-data fields are `String` (invalid UTF-8 → `""`).
-    /// When false, `Vec<u8>` (byte-exact). Only meaningful if `domain_objects`.
-    pub(crate) domain_string_var_data: bool,
+    /// Var-data shape on DTOs when `domain_objects` is set.
+    pub(crate) domain_var_data: DomainVarData,
     /// Selectors for generic `*_as` / `*_from` conversion methods.
     pub(crate) conversions: Vec<ConversionSelector>,
     /// Domain-type mappings: `(selector, rust_type_path)`.
@@ -139,7 +159,7 @@ impl GenerationConfig {
             module_name: module_name.into(),
             shared_module: None,
             domain_objects: false,
-            domain_string_var_data: false,
+            domain_var_data: DomainVarData::Bytes,
             conversions: Vec::new(),
             domain_types: Vec::new(),
             external_sbe_rt_path: None,
@@ -270,39 +290,35 @@ impl GenerationConfig {
 
     /// Generate owned domain structs next to flyweight codecs.
     ///
-    /// # `string_var_data` — important choice
+    /// # `var_data` — important choice ([`DomainVarData`])
     ///
-    /// SBE `<data>` is length-prefixed **bytes**. This flag controls the DTO field type:
+    /// | Mode | DTO field | Invalid UTF-8 |
+    /// |------|-----------|---------------|
+    /// | [`DomainVarData::Bytes`] | `Vec<u8>` | n/a |
+    /// | [`DomainVarData::LossyStrings`] | `String` | silent empty `""` |
     ///
-    /// | `string_var_data` | DTO field | Invalid UTF-8 | Use when |
-    /// |-------------------|-----------|---------------|----------|
-    /// | **`false`** | `Vec<u8>` | n/a (raw bytes) | Binary tails, or **byte-exact** re-encode |
-    /// | **`true`** | `String` | **silently becomes `""`** (empty) | Text schemas; easiest app API |
-    ///
-    /// With `true`, bad UTF-8 does **not** error and does **not** insert U+FFFD —
-    /// the field is simply cleared to empty. Encode writes `as_bytes()` (so a
-    /// field that was invalid on the wire becomes an empty var-data on re-encode).
+    /// ```rust
+    /// use ergo_sbe::{DomainVarData, GenerationConfig};
+    /// let text = GenerationConfig::new("msgs")
+    ///     .enable_domain_objects(DomainVarData::LossyStrings);
+    /// let bytes = GenerationConfig::new("msgs")
+    ///     .enable_domain_objects(DomainVarData::Bytes);
+    /// let _ = (text, bytes);
+    /// ```
     ///
     /// # Generated API
     ///
     /// ```ignore
-    /// // string_var_data = true  →  manufacturer: String
-    /// // string_var_data = false →  manufacturer: Vec<u8>
+    /// // DomainVarData::LossyStrings → manufacturer: String
+    /// // DomainVarData::Bytes        → manufacturer: Vec<u8>
     /// let dto = CarDomain::from(CarDecoder::try_from(buf)?);
     /// assert_eq!(dto.serial_number, 1234);
     /// let n = dto.encode(&mut out)?; // range-checks integer min/max
     /// ```
-    ///
-    /// ```rust
-    /// use ergo_sbe::GenerationConfig;
-    /// let text = GenerationConfig::new("msgs").enable_domain_objects(true);
-    /// let bytes = GenerationConfig::new("msgs").enable_domain_objects(false);
-    /// let _ = (text, bytes);
-    /// ```
     #[must_use]
-    pub fn enable_domain_objects(mut self, string_var_data: bool) -> Self {
+    pub fn enable_domain_objects(mut self, var_data: DomainVarData) -> Self {
         self.domain_objects = true;
-        self.domain_string_var_data = string_var_data;
+        self.domain_var_data = var_data;
         self
     }
 
@@ -363,7 +379,7 @@ impl Default for GenerationConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConversionSelector, GenerationConfig};
+    use super::{ConversionSelector, DomainVarData, GenerationConfig};
 
     #[test]
     fn default_config_is_clean() -> Result<(), Box<dyn std::error::Error>> {
@@ -433,18 +449,18 @@ mod tests {
         assert!(!config.domain_objects_enabled());
         assert!(config.conversions.is_empty());
         assert!(config.domain_types.is_empty());
-        assert!(!config.domain_string_var_data);
+        assert_eq!(config.domain_var_data, DomainVarData::Bytes);
         Ok(())
     }
 
     #[test]
-    fn enable_domain_objects_string_flag() -> Result<(), Box<dyn std::error::Error>> {
-        let text = GenerationConfig::new("m").enable_domain_objects(true);
+    fn enable_domain_objects_var_data_modes() -> Result<(), Box<dyn std::error::Error>> {
+        let text = GenerationConfig::new("m").enable_domain_objects(DomainVarData::LossyStrings);
         assert!(text.domain_objects_enabled());
-        assert!(text.domain_string_var_data);
-        let bytes = GenerationConfig::new("m").enable_domain_objects(false);
+        assert_eq!(text.domain_var_data, DomainVarData::LossyStrings);
+        let bytes = GenerationConfig::new("m").enable_domain_objects(DomainVarData::Bytes);
         assert!(bytes.domain_objects_enabled());
-        assert!(!bytes.domain_string_var_data);
+        assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);
         Ok(())
     }
 }

@@ -9,7 +9,7 @@
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ergo_sbe::GenerationConfig::new("feature_tour")
-        .enable_domain_objects(true)
+        .enable_domain_objects(ergo_sbe::DomainVarData::LossyStrings)
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("BooleanType"),
             "bool",

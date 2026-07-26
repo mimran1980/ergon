@@ -7,8 +7,8 @@
 //! - Decimal adapter and domain-object mapping
 //! - Three-thread architecture: producer, SHARED driver, consumer
 
-/// Generated SBE codecs for the normalized application schema
-/// (AppMessage/L2Book/Trade). Built via `generate_to_out_dir` into `OUT_DIR`.
+// Generated SBE codecs for the normalized application schema
+// (AppMessage/L2Book/Trade). Built via `generate_to_out_dir` into `OUT_DIR`.
 ergo_sbe::sbe_mod!(pub normalized_app);
 
 pub mod bitget;

@@ -9,7 +9,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergo_sbe::{GenerationConfig, Generator, SBE_XSD, Schema, parse, validate_against_sbe_xsd};
+use ergo_sbe::{
+    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, validate_against_sbe_xsd,
+};
 
 const fn header_and_types() -> &'static str {
     r#"
@@ -166,7 +168,7 @@ fn documented_generated_surface_strings() -> Result<(), Box<dyn std::error::Erro
     let ir = parse(&docs_schema_xml())?;
     let schema = Schema::from_ir(ir);
     let cfg = GenerationConfig::new("docs_codec")
-        .enable_domain_objects(false)
+        .enable_domain_objects(DomainVarData::Bytes)
         .with_keyword_append_token("_");
     let src = Generator::new(cfg)
         .generate(&schema)?
@@ -210,13 +212,15 @@ fn documented_encode_decode_smoke() -> Result<(), Box<dyn std::error::Error>> {
     // Compile generated module + exercise APIs described in crate rustdocs.
     let ir = parse(&docs_schema_xml())?;
     let schema = Schema::from_ir(ir);
-    let src = Generator::new(GenerationConfig::new("docs_run").enable_domain_objects(false))
-        .generate(&schema)?
-        .modules()
-        .next()
-        .ok_or("no module")?
-        .source
-        .clone();
+    let src = Generator::new(
+        GenerationConfig::new("docs_run").enable_domain_objects(DomainVarData::Bytes),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .ok_or("no module")?
+    .source
+    .clone();
 
     let tmp = tempfile::tempdir()?;
     let crate_dir = tmp.path().join("docs_run");

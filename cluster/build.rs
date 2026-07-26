@@ -35,10 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo::rerun-if-changed=../sbe/src/codegen.rs");
     println!("cargo::rerun-if-changed=../sbe/src/schema.rs");
-    // The generated codecs reference `cfg(feature = "serde")`; declare it so
-    // rustc's check-cfg does not warn (serde is an opt-in the cluster crate
-    // does not enable).
-    println!("cargo::rustc-check-cfg=cfg(feature, values(\"serde\", \"test-harness\"))");
+    println!("cargo::rustc-check-cfg=cfg(feature, values(\"test-harness\"))");
 
     // Java ClusterLauncher only when building with `--features test-harness`.
     if std::env::var_os("CARGO_FEATURE_TEST_HARNESS").is_some() {

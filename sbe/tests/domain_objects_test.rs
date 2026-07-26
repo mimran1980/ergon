@@ -7,10 +7,8 @@
     unused
 )]
 mod common;
-use common::{
-    Paths, compile_and_run, compile_and_run_serde, generate_domain as generate,
-    generate_domain_with,
-};
+use common::{Paths, compile_and_run, generate_domain as generate, generate_domain_with};
+use ergo_sbe::DomainVarData;
 use std::path::PathBuf;
 
 fn l3_schema() -> PathBuf {
@@ -355,47 +353,6 @@ fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[test]
-fn car_serde_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "car_serde");
-    compile_and_run_serde(
-        "car_serde",
-        &src,
-        r#"
-        let mut buf = vec![0u8; 2048];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
-        car.serial_number(1234).model_year(2013).available(BooleanType::T).code(Model::A);
-        car.some_numbers([10u32, 20, 30, 40]);
-        car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
-        let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        car.extras(extras);
-        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
-            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
-            Ok(())
-        })?;
-        let car = car.performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;
-        let car = car.manufacturer(b"Honda")?;
-        let complete = car.model(b"Civic")?.activation_code(b"abc")?;
-        assert!(complete.encoded_length_with_header() > 0);
-        let encoded = complete.as_bytes().to_vec();
-
-        let d1: CarDomain = CarDecoder::try_from(&encoded[..]).unwrap().into();
-
-        let json = serde_json::to_string(&d1).expect("serialize");
-        let d2: CarDomain = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(d1, d2, "serde JSON round-trip must preserve the domain");
-
-        // Sanity: the derives produce real values, not an empty/null payload.
-        assert!(json.contains("\"serial_number\":1234"), "json missing serial_number: {json}");
-        assert!(json.contains("\"model_year\":2013"), "json missing model_year: {json}");
-        println!("car_serde_round_trip: PASSED json_len={}", json.len());
-    "#,
-    );
-    Ok(())
-}
-
 /// Versioned fields: since>0 bool enum → `Option<bool>`, since>0 composite → `Option<T>`.
 #[test]
 fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> {
@@ -551,7 +508,7 @@ fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate_domain_with(&Paths::example_schema(), "car_dom_str", |c| {
-        c.enable_domain_objects(true)
+        c.enable_domain_objects(DomainVarData::LossyStrings)
     });
     assert!(
         src.contains("pub manufacturer: String"),

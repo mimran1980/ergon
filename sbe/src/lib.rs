@@ -193,12 +193,12 @@
 //!
 //! ## Domain objects
 //!
-//! [`GenerationConfig::enable_domain_objects`]`(string_var_data)` emits owned
-//! structs. Pass **`true`** for text-friendly DTOs (`manufacturer: String`;
-//! invalid UTF-8 becomes `""`). Pass **`false`** for byte-exact `Vec<u8>`.
+//! [`GenerationConfig::enable_domain_objects`]`(`[`DomainVarData`]`)` emits
+//! owned structs. Use [`DomainVarData::LossyStrings`] for text (`String`;
+//! invalid UTF-8 → `""`) or [`DomainVarData::Bytes`] for `Vec<u8>`.
 //!
 //! ```ignore
-//! // build.rs: .enable_domain_objects(true)
+//! // build.rs: .enable_domain_objects(DomainVarData::LossyStrings)
 //! let dto = CarDomain::from(CarDecoder::try_from(buf)?);
 //! assert_eq!(dto.manufacturer, "Honda");
 //! let n = dto.encode(&mut out)?; // re-encode; range-checks min/max on integers
@@ -270,7 +270,7 @@ pub use build::{
     BuildError, generate_str_to_dir, generate_str_to_out_dir, generate_to_out_dir, out_dir,
 };
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
-pub use config::{ConversionSelector, GenerationConfig};
+pub use config::{ConversionSelector, DomainVarData, GenerationConfig};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;

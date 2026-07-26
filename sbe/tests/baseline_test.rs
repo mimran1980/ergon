@@ -192,7 +192,7 @@ fn generate_multi_message_schema() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn generator_constructs_with_config() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{GenerationConfig, Generator};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator};
     let _generator = Generator::new(GenerationConfig::new("cfg_test"));
     Ok(())
 }
@@ -201,7 +201,7 @@ fn generator_constructs_with_config() -> Result<(), Box<dyn std::error::Error>> 
 fn generate_multi_schema_entry_point() -> Result<(), Box<dyn std::error::Error>> {
     // generate_multi() generates multiple schemas into separate modules with
     // shared-type tracking. No other test exercises it.
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
     let ir1 = parse_file(&Paths::example_schema()).unwrap();
     let s1 = Schema::from_ir(ir1);
     let ir2 = parse_file(&Paths::l3_orderbook_schema()).unwrap();
@@ -2720,7 +2720,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
     let ir = ergo_sbe::parse_file(&path).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("conv_domain")
-        .enable_domain_objects(false)
+        .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
     let g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();

@@ -1,6 +1,6 @@
 //! Owned domain-object generation.
 //!
-//! Same schema as the flyweight example, but with `enable_domain_objects(true)`.
+//! Same schema as the flyweight example, but with `enable_domain_objects(DomainVarData::LossyStrings)`.
 //! Each message gets an owned `MsgDomain` struct with `From<MsgDecoder>`,
 //! useful for persistence, cross-thread transfer, and serialization.
 //!
@@ -8,7 +8,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
 
 const SCHEMA: &str = include_str!("../schemas/car-schema.xml");
 
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(SCHEMA)?;
     let schema = Schema::from_ir(ir);
 
-    let config = GenerationConfig::new("car_codec").enable_domain_objects(true);
+    let config = GenerationConfig::new("car_codec").enable_domain_objects(DomainVarData::LossyStrings);
     let modules = Generator::new(config).generate(&schema)?;
 
     println!(
