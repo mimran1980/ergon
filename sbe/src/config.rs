@@ -92,6 +92,9 @@ impl ConversionSelector {
 /// |---------|-----------|------------------------------|
 /// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
 /// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **silent empty `""`** (not U+FFFD, not an error) |
+///
+/// **`LossyStrings` is not lossless on re-encode** of invalid UTF-8: materialise
+/// clears the field to `""`, and `dto.encode` writes empty var-data.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
     /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
@@ -100,7 +103,8 @@ pub enum DomainVarData {
     /// Text-friendly var-data (`String`). Invalid UTF-8 becomes `""` (empty).
     ///
     /// Re-encode writes `as_bytes()`, so a field that was invalid on the wire
-    /// becomes empty var-data (not a copy of the bad bytes).
+    /// becomes empty var-data (not a copy of the bad bytes). Prefer
+    /// [`DomainVarData::Bytes`] for audit/replay fidelity of non-UTF-8 tails.
     LossyStrings,
 }
 

@@ -1581,12 +1581,24 @@ fn generate_message_decoder(
                     // structurally malformed buffer shorter than its declared
                     // block_length, in which case read_bytes panics — same as Aeron's
                     // try_into. This matches Aeron's `[T; N]` signature and perf.
-                    impl_body.extend(quote::quote! {
-                        #[inline]
-                        pub fn #fn_snake_ident(&self) -> [#r_type_ty; #len_lit] {
+                    // Skip `acting_version < 0` (always false for u16); keep block-length guard.
+                    let version_guard = if since > 0 {
+                        quote::quote! {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return [0 as #r_type_ty; #len_lit];
                             }
+                        }
+                    } else {
+                        quote::quote! {
+                            if #offset_end_lit > self.acting_block_length {
+                                return [0 as #r_type_ty; #len_lit];
+                            }
+                        }
+                    };
+                    impl_body.extend(quote::quote! {
+                        #[inline]
+                        pub fn #fn_snake_ident(&self) -> [#r_type_ty; #len_lit] {
+                            #version_guard
                             let offset = self.pos + #offset_lit;
                             let all: [u8; #total_size_lit] = read_bytes_unchecked::<#total_size_lit>(self.buf, offset);
                             [#(#elements),*]
@@ -1633,12 +1645,23 @@ fn generate_message_decoder(
                             impl_body.extend(doc_attr_tokens(desc));
                         }
                         impl_body.extend(deprecated_attr_tokens(f.deprecated));
+                        let version_guard = if since > 0 {
+                            format!(
+                                "if self.acting_version < {since} || {offset_end} > self.acting_block_length {{\n\
+                                     return None;\n\
+                                 }}\n"
+                            )
+                        } else {
+                            format!(
+                                "if {offset_end} > self.acting_block_length {{\n\
+                                     return None;\n\
+                                 }}\n"
+                            )
+                        };
                         let accessor = format!(
                             "#[inline]\n\
                              pub fn {snake}(&self) -> Option<{rt}> {{\n\
-                                 if self.acting_version < {since} || {offset_end} > self.acting_block_length {{\n\
-                                     return None;\n\
-                                 }}\n\
+                                 {version_guard}\
                                  let offset = self.pos + {offset};\n\
                                  let val = {rt}::{order}(read_bytes_unchecked::<{ps}>(self.buf, offset));\n\
                                  if {null_check} {{\n\
@@ -1649,8 +1672,7 @@ fn generate_message_decoder(
                              }}\n",
                             snake = fname_snake,
                             rt = r_type,
-                            since = since,
-                            offset_end = offset_end,
+                            version_guard = version_guard,
                             offset = offset,
                             order = order_fn,
                             ps = prim_size,
@@ -2021,12 +2043,11 @@ fn generate_message_decoder(
             &format!("tail_offset_{}", g_idx),
             proc_macro2::Span::call_site(),
         );
-        let g_since_lit =
-            syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
         let g_snake_str = g_snake.clone();
-        impl_body.extend(quote::quote! {
-            #[inline]
-            fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+        let version_check = if g.since_version > 0 {
+            let g_since_lit =
+                syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
+            quote::quote! {
                 if self.acting_version < #g_since_lit {
                     return Err(sbe_rt::DecodeError::FieldNotInVersion {
                         field: #g_snake_str,
@@ -2034,6 +2055,14 @@ fn generate_message_decoder(
                         since_version: #g_since_lit,
                     });
                 }
+            }
+        } else {
+            quote::quote! {}
+        };
+        impl_body.extend(quote::quote! {
+            #[inline]
+            fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+                #version_check
                 let offset = self.#tail_offset_ident()?;
                 #g_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }
@@ -2059,14 +2088,13 @@ fn generate_message_decoder(
         // primitive, so max_length is always Some. The else branch can't fire.
         let max = vd.max_length.unwrap_or(0);
         let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
-        let vd_since_lit = syn::LitInt::new(
-            &vd.since_version.to_string(),
-            proc_macro2::Span::call_site(),
-        );
         let vd_snake_str = vd_snake.clone();
-        impl_body.extend(quote::quote! {
-            #[inline]
-            fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let version_check = if vd.since_version > 0 {
+            let vd_since_lit = syn::LitInt::new(
+                &vd.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
                 if self.acting_version < #vd_since_lit {
                     return Err(sbe_rt::DecodeError::FieldNotInVersion {
                         field: #vd_snake_str,
@@ -2074,6 +2102,14 @@ fn generate_message_decoder(
                         since_version: #vd_since_lit,
                     });
                 }
+            }
+        } else {
+            quote::quote! {}
+        };
+        impl_body.extend(quote::quote! {
+            #[inline]
+            fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                #version_check
                 let offset = self.#vd_tail_ident()?;
                 let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                 let header = #type_pascal_ident(bytes);

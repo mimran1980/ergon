@@ -87,6 +87,9 @@ pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>>
         .activation_code(6)? // "abcdef"
         .encoded_length_with_header();
 
+    // Exact size from EncodedLength — not an oversize guess buffer.
+    // (Runtime `len` needs a heap or claim slot; const messages use stack
+    // `[0u8; MsgEncoder::ENCODED_LENGTH]` instead.)
     let mut buf = vec![0u8; complete_len];
     let written = encode_sample_car(&mut buf)?;
     assert_eq!(

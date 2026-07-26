@@ -61,6 +61,16 @@ gate versus sbe-tool-generated codecs in the monorepo (see
 > discussion). Hearing from heavy production users is how this banner goes
 > away. Until then, expect possible API and generated-surface churn on the
 > `0.x` series, and pin versions deliberately.
+>
+> **What we most want reports on** (open an issue titled e.g.
+> `production-use: <your domain>`):
+>
+> 1. Live multi-schema / multi-template streams (not only unit fixtures)
+> 2. Domain DTOs (`enable_domain_objects`) in a real app path — especially
+>    `DomainVarData::LossyStrings` re-encode behaviour
+> 3. Exact buffer sizing + Aeron/IPC **try_claim** (no oversize scratch buffers)
+> 4. Nested/ragged books or similar twin groups (bids/asks order safety)
+> 5. Schema evolution (`sinceVersion`) under mixed acting versions
 
 ## Contents
 
@@ -133,7 +143,8 @@ API (same steps the helper runs).
 
 ### 3. Include generated code
 
-**Build-dep only** (no runtime `ergo-sbe`):
+**Prefer build-dep only for product crates** (no runtime `ergo-sbe` link).
+Generated codecs embed `sbe_rt`; plain `include!` is enough:
 
 ```rust,ignore
 // Module name must match GenerationConfig::new("messages") → messages.rs
@@ -144,18 +155,23 @@ mod messages {
 use messages::*;
 ```
 
-**With runtime dep** — `sbe_mod!` applies the same `allow`s for you:
+**Optional convenience** — `sbe_mod!` needs `ergo-sbe` as a normal dependency
+(macro expansion only; not required for encode/decode):
 
 ```rust,ignore
+// Cargo.toml: [dependencies] ergo-sbe = "0.1"
 ergo_sbe::sbe_mod!(messages);
 use messages::*;
 // Or only the include: ergo_sbe::include_sbe!("messages");
 ```
 
+See [Samples](#samples) · [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md)
+for which crates use which pattern.
+
 ### 4. Encode and decode (fixed message)
 
 ```rust,ignore
-// Const length → stack array (no heap).
+// Const length → stack array (no heap). Prefer this over vec![0u8; N].
 let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
 {
     let mut enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
@@ -165,8 +181,10 @@ let dec = HeartbeatDecoder::try_from(buf.as_slice())?;
 assert_eq!(dec.seq(), 7);
 ```
 
-More patterns: [Recipes](#recipes). Full tour:
-[sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour).
+**Start here for a full runnable map of features:**
+[sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
+(`cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml`).  
+More recipes: [Recipes](#recipes).
 
 ---
 
@@ -425,14 +443,20 @@ println!("bytes={}", done.encoded_length_with_header());
 
 ### Display / Debug
 
-Diagnostic only — **not** a stable wire or log schema. Real output from the
-feature-tour Car (`demo_car_size_and_encode` → `CarDecoder`;
-`Display` currently forwards to `Debug`):
+Diagnostic only — **not** a stable wire or log schema. Do **not** treat either
+format as a protocol or long-term log contract.
+
+**`Display` currently equals `Debug`** for generated decoders (`{car}` and
+`{car:?}` print the same text). Prefer `Debug` in logs if you want that intent
+to stay obvious when/if the two diverge later.
+
+Real output from the feature-tour Car (`demo_car_size_and_encode` →
+`CarDecoder`):
 
 ```rust,ignore
 let car = CarDecoder::try_from(buf.as_slice())?;
 println!("{car}");
-println!("{car:?}");
+println!("{car:?}"); // same text as Display today
 ```
 
 ```text
@@ -509,12 +533,16 @@ SBE `<data>` is length-prefixed **bytes**. The enum picks the DTO field type:
 | `.enable_domain_objects(DomainVarData::LossyStrings)` | `String` | **silent empty `""`** (not U+FFFD, not an error) | Text schemas; **easiest** app API |
 | `.enable_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
 
-With `LossyStrings`, a field that was invalid UTF-8 on the wire materialises as
-empty and re-encodes as empty var-data (not a copy of the bad bytes). Prefer
-`Bytes` when you must preserve non-UTF-8 payloads.
+**`LossyStrings` is not lossless on re-encode.** Materialise clears invalid
+UTF-8 to `""`; `dto.encode` then writes empty var-data, so the bad bytes are
+**not** preserved. Use `Bytes` (or stay on flyweights) when you need audit /
+replay fidelity of non-UTF-8 tails.
 
-Flyweight path is unchanged: with schema `characterEncoding="UTF-8"` you still
-get `into_manufacturer_as_str()` without a DTO.
+Runnable demo (text path):
+[sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
+uses `DomainVarData::LossyStrings`. Flyweight path is unchanged: with schema
+`characterEncoding="UTF-8"` you still get `into_manufacturer_as_str()` without
+a DTO.
 
 [demo_car_domain_dto](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) ·
 [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs).
@@ -629,7 +657,7 @@ Both styles on different fields:
 
 Text fields stay bytes unless the schema declares a supported character
 encoding (then strict UTF-8/ASCII helpers apply). `Display`/`Debug` are
-diagnostic only.
+diagnostic only (`Display` currently equals `Debug` on generated decoders).
 
 ---
 
@@ -637,33 +665,36 @@ diagnostic only.
 
 Monorepo only (not on crates.io). Absolute links for docs.rs.
 
+### Start here (product teaching path)
+
+1. **[sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)** — **golden path.** Runnable map of encode/decode stages, `EncodedLength`, trust boundary, Display, DTO (`DomainVarData::LossyStrings`), both conversion styles.  
+   `cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml`
+2. **Conversion choice** — pick **one** sample that matches your app style:  
+   - [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) → `with_domain_type` only (+ **build-dep only** include)  
+   - [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) → `with_conversion` only (+ IPC)
+3. **Optional** — [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) (generator as library); cluster samples for Aeron integration.
+
+Full table and dependency patterns:
+[samples/README.md](https://github.com/mimran1980/ergon/blob/main/samples/README.md).
+
 ### Where `ergo-sbe` sits in `Cargo.toml`
 
 Generated codecs embed their own `sbe_rt` runtime. You do **not** need
 `ergo-sbe` as an application dependency just to encode/decode — only as a
-**build** dependency to run codegen. A normal dependency is only required for
-macros (`sbe_mod!` / `include_sbe!`) or when you call the generator **as a
-library** at runtime.
+**build** dependency to run codegen. Prefer **build-only** for published
+products; add a runtime dep only for `sbe_mod!` convenience or library-API use.
 
 | Pattern | `build-dependencies` | `dependencies` | What for | Sample |
 |---------|----------------------|----------------|----------|--------|
-| **Build only** (product default) | yes | **no** | `generate_to_out_dir` in `build.rs`; plain `include!(concat!(env!("OUT_DIR"), …))` | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [cluster-rfq](https://github.com/mimran1980/ergon/tree/main/samples/cluster-rfq) |
-| **Build + runtime** (convenience) | yes | yes | Same codegen **plus** `sbe_mod!` / `include_sbe!` in app code | [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [cluster-ha-orderbook](https://github.com/mimran1980/ergon/tree/main/samples/cluster-ha-orderbook) |
-| **Runtime only** (library API) | no | yes | Call `parse` / `Generator` from an example or tool — no `build.rs` | [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
-
-| Sample | Focus |
-|--------|--------|
-| [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour) | Full API map; both conversion styles; `demo_*` functions |
-| [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) | Nested books; **`with_domain_type` only**; **build-dep only** |
-| [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) | Multi-schema; **`with_conversion` only**; `sbe_mod!` |
-| [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) | Generator-as-library demos (no `build.rs`) |
-| [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md) | Full index + dependency matrix |
+| **Build only** (**product default**) | yes | **no** | `generate_to_out_dir` + plain `include!` | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [cluster-rfq](https://github.com/mimran1980/ergon/tree/main/samples/cluster-rfq) |
+| **Build + runtime** (macros) | yes | yes | Same + `sbe_mod!` / `include_sbe!` | [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) |
+| **Runtime only** (library API) | no | yes | `parse` / `Generator` in-process; no `build.rs` | [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
 
 ```sh
 git clone https://github.com/mimran1980/ergon.git && cd ergon
-cargo run  --manifest-path samples/sbe-feature-tour/Cargo.toml
-cargo test --manifest-path samples/exchange-example/Cargo.toml
-cargo run  --manifest-path samples/l3-book/Cargo.toml
+cargo run  --manifest-path samples/sbe-feature-tour/Cargo.toml   # start here
+cargo run  --manifest-path samples/l3-book/Cargo.toml            # domain_type + build-only
+cargo test --manifest-path samples/exchange-example/Cargo.toml   # conversion only
 ```
 
 ---

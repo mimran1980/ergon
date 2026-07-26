@@ -1120,7 +1120,7 @@ impl<'a> CarDecoder<'a> {
     pub const CODE_NULL: Model = Model::NullVal;
     #[inline]
     pub fn some_numbers(&self) -> [u32; 4] {
-        if self.acting_version < 0 || 28 > self.acting_block_length {
+        if 28 > self.acting_block_length {
             return [0 as u32; 4];
         }
         let offset = self.pos + 12;
@@ -1152,7 +1152,7 @@ impl<'a> CarDecoder<'a> {
     pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
     #[inline]
     pub fn vehicle_code(&self) -> [u8; 6] {
-        if self.acting_version < 0 || 34 > self.acting_block_length {
+        if 34 > self.acting_block_length {
             return [0 as u8; 6];
         }
         let offset = self.pos + 28;
@@ -1389,13 +1389,6 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
-        if self.acting_version < 0 {
-            return Err(sbe_rt::DecodeError::FieldNotInVersion {
-                field: "fuel_figures",
-                wire_version: self.acting_version,
-                since_version: 0,
-            });
-        }
         let offset = self.tail_offset_0()?;
         FuelFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
@@ -1403,25 +1396,11 @@ impl<'a> CarDecoder<'a> {
     fn performance_figures(
         &self,
     ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
-        if self.acting_version < 0 {
-            return Err(sbe_rt::DecodeError::FieldNotInVersion {
-                field: "performance_figures",
-                wire_version: self.acting_version,
-                since_version: 0,
-            });
-        }
         let offset = self.tail_offset_1()?;
         PerformanceFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
     #[inline]
     fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        if self.acting_version < 0 {
-            return Err(sbe_rt::DecodeError::FieldNotInVersion {
-                field: "manufacturer",
-                wire_version: self.acting_version,
-                since_version: 0,
-            });
-        }
         let offset = self.tail_offset_2()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
@@ -1459,13 +1438,6 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        if self.acting_version < 0 {
-            return Err(sbe_rt::DecodeError::FieldNotInVersion {
-                field: "model",
-                wire_version: self.acting_version,
-                since_version: 0,
-            });
-        }
         let offset = self.tail_offset_3()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
@@ -1503,13 +1475,6 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        if self.acting_version < 0 {
-            return Err(sbe_rt::DecodeError::FieldNotInVersion {
-                field: "activation_code",
-                wire_version: self.acting_version,
-                since_version: 0,
-            });
-        }
         let offset = self.tail_offset_4()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
