@@ -1,13 +1,9 @@
-//! Generate codecs from `schemas/feature-tour.xml`.
-//!
-//! Conversion (two different styles on purpose):
-//! - `with_domain_type` → concrete `available() -> bool`, `timestamp() -> DateTime`
-//! - `with_conversion`  → generic `price_as::<T>` / `price_from` on Quote (see
-//!   `demo_conversion_only` in `src/lib.rs`)
-//!
-//! Do not call both for the same selector.
+//! Generate codecs into `src/generated/` (gitignored) for IDE go-to-definition.
+//! After `cargo build`, open `src/generated/feature_tour.rs`.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let generated_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
     let config = ergo_sbe::GenerationConfig::new("feature_tour")
         .enable_domain_objects(ergo_sbe::DomainVarData::LossyStrings)
         .with_domain_type(
@@ -20,6 +16,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
 
-    ergo_sbe::generate_to_out_dir("schemas/feature-tour.xml", config)?;
+    ergo_sbe::generate_to_dir("schemas/feature-tour.xml", config, &generated_dir)?;
     Ok(())
 }

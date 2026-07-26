@@ -36,33 +36,49 @@ library at runtime.
 
 | Pattern | `build-dependencies` | `dependencies` | Typical use |
 |---------|----------------------|----------------|-------------|
-| **Build only** (**product default**) | `ergo-sbe` | — | `generate_to_out_dir` in `build.rs`, then plain `include!(concat!(env!("OUT_DIR"), "/….rs"))` |
-| **Build + runtime** (convenience) | `ergo-sbe` | `ergo-sbe` | Same codegen, plus `ergo_sbe::sbe_mod!` / `include_sbe!` |
+| **Build only** (**product / samples default**) | `ergo-sbe` | — | `generate_to_dir` → `src/generated/` (gitignored) + `#[path = "generated/….rs"]` |
+| **OUT_DIR only** | `ergo-sbe` | — | `generate_to_out_dir` + `include!(concat!(env!("OUT_DIR"), …))` — fine for apps; **poor IDE go-to-def** |
+| **Build + runtime** | `ergo-sbe` | `ergo-sbe` | Macros / generator helpers at runtime (`sbe_mod!`) |
 | **Runtime only** | — | `ergo-sbe` | Call `parse` / `Generator` as a library (no `build.rs`) |
 
 | Sample | Pattern | Purpose | External requirements |
 |---|---|---|---|
-| [`sbe-feature-tour/`](sbe-feature-tour/) | **Build + runtime** | **Teaching / feature map** — EncodedLength, stages, DTO, AnyMessage, **both** conversion styles | None |
+| [`sbe-feature-tour/`](sbe-feature-tour/) | **Build only** | **Teaching / feature map** — EncodedLength, stages, DTO, AnyMessage, **both** conversion styles | None |
 | [`l3-book/`](l3-book/) | **Build only** | Nested/ragged L3 books; **`with_domain_type` only** | None for local tests |
-| [`exchange-example/`](exchange-example/) | **Build + runtime** | Multi-schema + **`with_conversion` only** + Aeron IPC | Network only for live exchange paths |
+| [`exchange-example/`](exchange-example/) | **Build + runtime** (decimal helpers) | Multi-schema + **`with_conversion` only** + Aeron IPC | Network only for live exchange paths |
 | [`cluster-rfq/`](cluster-rfq/) | **Build only** | RFQ / auction protocol codecs + cluster examples | Java harness for live examples |
-| [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | **Build + runtime** | Claim-based Cluster publishing + HA-shaped book | Java harness only for leader-kill coverage |
+| [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | **Build only** (may still dep cluster) | Claim-based Cluster publishing + HA-shaped book | Java harness only for leader-kill coverage |
 | [`sbe-codegen-examples/`](sbe-codegen-examples/) | **Runtime only** | Generator API as a library (no `build.rs`) | None |
 | [`cluster-tutorial/`](cluster-tutorial/) | **Neither** (uses `ergo-aeron-cluster`) | Connect, offer, poll, keep-alive, close walkthrough | Java 17+ and built Aeron artifacts |
 
-**Build-only include shape** (preferred for products — no runtime `ergo-sbe`):
+### Seeing generated code (without committing it)
 
-```rust
-#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all)]
-mod messages {
-    include!(concat!(env!("OUT_DIR"), "/messages.rs"));
-}
+`include!(concat!(env!("OUT_DIR"), …))` and `sbe_mod!` put files under a
+hashed path like `target/debug/build/<crate>-<hash>/out/….rs` — hard to find
+and rust-analyzer usually **cannot** jump into them.
+
+Samples instead write to a **stable, local path**:
+
+```text
+samples/<name>/src/generated/*.rs   # created on cargo build, gitignored
 ```
 
-**Build + runtime** (macro convenience):
+1. `cargo build --manifest-path samples/sbe-feature-tour/Cargo.toml`
+2. Open `samples/sbe-feature-tour/src/generated/feature_tour.rs`
+3. From app code, **Go to definition** on `CarEncoder` / etc. should land there
+
+Root `.gitignore` has `**/src/generated/`. Do **not** commit those trees
+(Binance alone is multi‑MB). Rebuild after a clean clone.
 
 ```rust
-ergo_sbe::sbe_mod!(messages);
+// build.rs
+let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+ergo_sbe::generate_to_dir("schemas/messages.xml", config, &out)?;
+
+// src/lib.rs — real path → IDE go-to-definition works
+#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all, warnings)]
+#[path = "generated/messages.rs"]
+mod messages;
 ```
 
 ## Buffer sizing (samples & tests)

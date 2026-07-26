@@ -10,7 +10,6 @@
 //! Proves zero heap allocation on the hot path after warmup.
 #![allow(unused, unsafe_code)]
 
-ergo_sbe::sbe_mod!(normalized_app);
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
@@ -33,7 +32,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 static GLOBAL: CountingAllocator = CountingAllocator;
 
 fn warm_up() {
-    use normalized_app::{
+    use exchange_example::normalized_app::{
         AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
     let mut buf = [0u8; 256];
@@ -46,7 +45,7 @@ fn warm_up() {
 #[test]
 #[ignore = "pre-existing alloc count mismatch in playground sample"]
 fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    use normalized_app::{AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt};
+    use exchange_example::normalized_app::{AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt};
 
     warm_up();
 
@@ -99,7 +98,7 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 #[ignore = "pre-existing alloc count mismatch in playground sample"]
 fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    use normalized_app::{
+    use exchange_example::normalized_app::{
         AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
 

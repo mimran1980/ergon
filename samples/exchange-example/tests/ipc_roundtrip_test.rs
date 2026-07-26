@@ -10,7 +10,6 @@
 //! Proves: try_claim_owned → direct encode AppMessage(L2Book) → commit → decode.
 #![allow(unused)]
 
-ergo_sbe::sbe_mod!(normalized_app);
 
 use std::time::Duration;
 
@@ -44,7 +43,7 @@ fn embedded_driver_launches_and_pub_sub_created() -> Result<(), Box<dyn std::err
 /// Full roundtrip: claim, direct-encode AppMessage(L2Book), commit, decode.
 #[test]
 fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use normalized_app::{
+    use exchange_example::normalized_app::{
         AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
 
@@ -149,7 +148,7 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
 
 // fn pointer — can't capture, state flows through ctx param
 fn handle_fragment(received: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
-    use normalized_app::{AnyMessage, AppMessageDecoder, Source};
+    use exchange_example::normalized_app::{AnyMessage, AppMessageDecoder, Source};
 
     let outer = AppMessageDecoder::try_wrap_and_apply_header(buf, 0).expect("wrap decoder");
     assert_eq!(outer.sent_ts(), 1_700_000_000_000_000_000);

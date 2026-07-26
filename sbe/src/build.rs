@@ -74,10 +74,58 @@ pub fn generate_to_out_dir(
     schema_path: impl AsRef<Path>,
     config: GenerationConfig,
 ) -> Result<GeneratedModuleSet, BuildError> {
+    generate_to_dir(schema_path, config, &out_dir()?)
+}
+
+/// Parse a schema **file**, generate codecs, write every module under `out_dir`.
+///
+/// Same as [`generate_to_out_dir`] but with an explicit output directory.
+///
+/// **Samples:** write to `src/generated/` (gitignored) so rust-analyzer / IDE
+/// go-to-definition works on real `.rs` files. Do **not** commit those files —
+/// they are large and change whenever the generator does.
+///
+/// Prints `cargo::rerun-if-changed=<schema_path>` and generation warnings.
+///
+/// # Errors
+///
+/// Parse, generate, or I/O failures.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // build.rs
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+///     ergo_sbe::generate_to_dir(
+///         "schemas/feature-tour.xml",
+///         ergo_sbe::GenerationConfig::new("feature_tour"),
+///         &out,
+///     )?;
+///     Ok(())
+/// }
+///
+/// // src/lib.rs — real path so the IDE can jump into the implementation
+/// #[path = "generated/feature_tour.rs"]
+/// mod feature_tour;
+/// ```
+pub fn generate_to_dir(
+    schema_path: impl AsRef<Path>,
+    config: GenerationConfig,
+    out_dir: impl AsRef<Path>,
+) -> Result<GeneratedModuleSet, BuildError> {
     let schema_path = schema_path.as_ref();
+    let out_dir = out_dir.as_ref();
+    fs::create_dir_all(out_dir)?;
     let ir = parse_file(schema_path)?;
-    let modules = write_generated(Schema::from_ir(ir), config, &out_dir()?)?;
+    let modules = write_generated(Schema::from_ir(ir), config, out_dir)?;
     println!("cargo::rerun-if-changed={}", schema_path.display());
+    // Stable, human-visible path (not hashed OUT_DIR) — open this after `cargo build`.
+    println!(
+        "cargo::warning=ergo-sbe wrote {} module(s) under {}",
+        modules.modules().len(),
+        out_dir.display()
+    );
     Ok(modules)
 }
 

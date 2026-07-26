@@ -2,9 +2,20 @@
 //!
 //! Recipes: `just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`.
 
-// Generated AppMessage / L2Book codecs (`generate_to_out_dir` → OUT_DIR).
-ergo_sbe::sbe_mod!(pub normalized_app);
-
+// Generated under `src/generated/normalized_app.rs` (gitignored).
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unused_must_use,
+    non_camel_case_types,
+    non_snake_case,
+    clippy::all,
+    warnings
+)]
+#[path = "generated/normalized_app.rs"]
+pub mod normalized_app;
 pub mod follower;
 pub mod ha_book;
 pub mod market;

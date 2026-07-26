@@ -1,8 +1,8 @@
 //! ErgoSBE feature tour — live demos of generated APIs.
 //!
 //! Schema: [`schemas/feature-tour.xml`](../schemas/feature-tour.xml)  
-//! Generated module: `generate_to_out_dir` → `OUT_DIR/feature_tour.rs`
-//! (inspect after `cargo build` under `target/.../out/feature_tour.rs`).
+//! Generated codecs: `src/generated/feature_tour.rs` after `cargo build`
+//! (gitignored — open that path for go-to-definition / browsing).
 //!
 //! # Features covered
 //!
@@ -26,8 +26,21 @@
     clippy::all
 )]
 
-// Generated codecs (written by `build.rs` to `OUT_DIR/feature_tour.rs`).
-ergo_sbe::sbe_mod!(pub feature_tour);
+// Real file path (not OUT_DIR include) so rust-analyzer can jump into impls.
+// Created by build.rs; listed in root `.gitignore` as `**/src/generated/`.
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unused_must_use,
+    non_camel_case_types,
+    non_snake_case,
+    clippy::all,
+    warnings
+)]
+#[path = "generated/feature_tour.rs"]
+pub mod feature_tour;
 pub use feature_tour::*;
 
 use chrono::{DateTime, Utc};

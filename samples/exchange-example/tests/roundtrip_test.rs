@@ -14,15 +14,12 @@
 //!
 //! Run: `RUSTC_WRAPPER="" cargo test -- --test-threads=1 --nocapture`
 
-ergo_sbe::sbe_mod!(bitget_spot);
-ergo_sbe::sbe_mod!(binance_spot);
-ergo_sbe::sbe_mod!(normalized_app);
 
 // ── Bitget: BestBidAsk (template 1002) ────────────────────────────────────
 
 #[test]
 fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5};
+    use exchange_example::bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5};
 
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
@@ -75,7 +72,7 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>> {
-    use bitget_spot::{BestBidAskDecoder, BestBidAskEncoder};
+    use exchange_example::bitget_spot::{BestBidAskDecoder, BestBidAskEncoder};
 
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
@@ -94,8 +91,8 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
         .size_exponent(-2)
         .seq(10)
         .sts(20)
-        .category(bitget_spot::InstCategory::Spot)
-        .padding(bitget_spot::Padding5([0u8; 5]));
+        .category(exchange_example::bitget_spot::InstCategory::Spot)
+        .padding(exchange_example::bitget_spot::Padding5([0u8; 5]));
     let complete = encoder.symbol(symbol).unwrap();
     let encoded = complete.as_bytes();
 
@@ -108,7 +105,7 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use bitget_spot::{Depth50Decoder, Depth50Encoder, InstCategory, Padding5};
+    use exchange_example::bitget_spot::{Depth50Decoder, Depth50Encoder, InstCategory, Padding5};
 
     let asks_count = 3u16;
     let bids_count = 2u16;
@@ -222,7 +219,7 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bitget_buffer_too_short_for_header() -> Result<(), Box<dyn std::error::Error>> {
-    use bitget_spot::BestBidAskDecoder;
+    use exchange_example::bitget_spot::BestBidAskDecoder;
 
     let too_short = [0u8; 4];
     let result = BestBidAskDecoder::try_from(&too_short[..]);
@@ -233,7 +230,7 @@ fn bitget_buffer_too_short_for_header() -> Result<(), Box<dyn std::error::Error>
 
 #[test]
 fn bitget_verify_too_short() -> Result<(), Box<dyn std::error::Error>> {
-    use bitget_spot::BestBidAskDecoder;
+    use exchange_example::bitget_spot::BestBidAskDecoder;
 
     let too_short = [0u8; 4];
     let result = BestBidAskDecoder::verify(&too_short[..]);
@@ -249,8 +246,8 @@ fn bitget_verify_too_short() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use binance_spot::ServerTimeResponseDecoder;
-    use binance_spot::ServerTimeResponseEncoder;
+    use exchange_example::binance_spot::ServerTimeResponseDecoder;
+    use exchange_example::binance_spot::ServerTimeResponseEncoder;
 
     let expected_ts: i64 = 1712345678000123;
 
@@ -270,8 +267,8 @@ fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn binance_server_time_verify_passes() -> Result<(), Box<dyn std::error::Error>> {
-    use binance_spot::ServerTimeResponseDecoder;
-    use binance_spot::ServerTimeResponseEncoder;
+    use exchange_example::binance_spot::ServerTimeResponseDecoder;
+    use exchange_example::binance_spot::ServerTimeResponseEncoder;
 
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
     let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -285,7 +282,7 @@ fn binance_server_time_verify_passes() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn binance_server_time_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
-    use binance_spot::ServerTimeResponseDecoder;
+    use exchange_example::binance_spot::ServerTimeResponseDecoder;
 
     let result = ServerTimeResponseDecoder::try_from(&[0u8; 4][..]);
     assert!(result.is_err(), "decoding from a 4-byte buffer should fail");
@@ -297,7 +294,7 @@ fn binance_server_time_buffer_too_short() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
+    use exchange_example::bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
 
     let trades_count = 2u16;
     let symbol = b"ETHUSDT";
@@ -391,7 +388,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
-    use bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
+    use exchange_example::bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
 
     let sts_max = u64::MAX;
     let trades_count = 1u16;
@@ -439,7 +436,7 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
-    use bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
+    use exchange_example::bitget_spot::{InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide};
 
     let trades_count = 1u16;
     let symbol = b"";
@@ -504,7 +501,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use binance_spot::{
+    use exchange_example::binance_spot::{
         BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder,
     };
 
@@ -568,7 +565,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
 
 #[test]
 fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use binance_spot::{
+    use exchange_example::binance_spot::{
         BoolEnum, RateLimitInterval, RateLimitType, WebSocketResponseDecoder,
         WebSocketResponseEncoder,
     };
@@ -694,7 +691,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
 
 #[test]
 fn binance_websocket_response_group_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
-    use binance_spot::WebSocketResponseDecoder;
+    use exchange_example::binance_spot::WebSocketResponseDecoder;
 
     // Encode a valid header + body but truncate before the group data
     let mut buf = [0u8; 11];
@@ -720,8 +717,8 @@ fn binance_websocket_response_group_buffer_too_short() -> Result<(), Box<dyn std
 
 #[test]
 fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::error::Error>> {
-    use binance_spot::WebSocketResponseDecoder;
-    use bitget_spot::{BestBidAskEncoder, InstCategory, Padding5};
+    use exchange_example::binance_spot::WebSocketResponseDecoder;
+    use exchange_example::bitget_spot::{BestBidAskEncoder, InstCategory, Padding5};
 
     // Encode a valid bitget BestBidAsk message
     let symbol = b"BTCUSDT";
@@ -764,66 +761,66 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
 fn bitget_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
     // BestBidAskDecoder (template 1002) — verify SCHEMA_ID, SCHEMA_VERSION, TEMPLATE_ID
     assert_eq!(
-        bitget_spot::BestBidAskDecoder::SCHEMA_ID,
+        exchange_example::bitget_spot::BestBidAskDecoder::SCHEMA_ID,
         1,
         "BestBidAskDecoder::SCHEMA_ID"
     );
     assert_eq!(
-        bitget_spot::BestBidAskDecoder::SCHEMA_VERSION,
+        exchange_example::bitget_spot::BestBidAskDecoder::SCHEMA_VERSION,
         3,
         "BestBidAskDecoder::SCHEMA_VERSION"
     );
     assert_eq!(
-        bitget_spot::BestBidAskDecoder::TEMPLATE_ID,
+        exchange_example::bitget_spot::BestBidAskDecoder::TEMPLATE_ID,
         1002,
         "BestBidAskDecoder::TEMPLATE_ID"
     );
 
     // Depth50Decoder (template 1001)
     assert_eq!(
-        bitget_spot::Depth50Decoder::SCHEMA_ID,
+        exchange_example::bitget_spot::Depth50Decoder::SCHEMA_ID,
         1,
         "Depth50Decoder::SCHEMA_ID"
     );
     assert_eq!(
-        bitget_spot::Depth50Decoder::TEMPLATE_ID,
+        exchange_example::bitget_spot::Depth50Decoder::TEMPLATE_ID,
         1001,
         "Depth50Decoder::TEMPLATE_ID"
     );
 
     // TradeDecoder (template 1003)
     assert_eq!(
-        bitget_spot::TradeDecoder::SCHEMA_ID,
+        exchange_example::bitget_spot::TradeDecoder::SCHEMA_ID,
         1,
         "TradeDecoder::SCHEMA_ID"
     );
     assert_eq!(
-        bitget_spot::TradeDecoder::TEMPLATE_ID,
+        exchange_example::bitget_spot::TradeDecoder::TEMPLATE_ID,
         1003,
         "TradeDecoder::TEMPLATE_ID"
     );
 
     // Free function schema_id_from_header
-    let header = bitget_spot::MessageHeader([32, 0, 233, 3, 1, 0, 3, 0]); // Depth50 header
+    let header = exchange_example::bitget_spot::MessageHeader([32, 0, 233, 3, 1, 0, 3, 0]); // Depth50 header
     assert_eq!(
-        bitget_spot::schema_id_from_header(&header.0),
+        exchange_example::bitget_spot::schema_id_from_header(&header.0),
         Some(1),
         "schema_id_from_header should return SCHEMA_ID for valid header"
     );
     assert_eq!(
-        bitget_spot::schema_id_from_header(&[0u8; 8]),
+        exchange_example::bitget_spot::schema_id_from_header(&[0u8; 8]),
         Some(0),
         "schema_id_from_header on all-zeros header"
     );
     assert_eq!(
-        bitget_spot::schema_id_from_header(&[0u8; 4]),
+        exchange_example::bitget_spot::schema_id_from_header(&[0u8; 4]),
         None,
         "schema_id_from_header on too-short buffer"
     );
 
     // Module-level constants
     assert_eq!(
-        bitget_spot::SEMANTIC_VERSION,
+        exchange_example::bitget_spot::SEMANTIC_VERSION,
         "1.0.0",
         "bitget SCHEMA_SEMANTIC_VERSION"
     );
@@ -835,56 +832,56 @@ fn bitget_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
 fn binance_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
     // WebSocketSessionLogonResponseDecoder
     assert_eq!(
-        binance_spot::WebSocketSessionLogonResponseDecoder::SCHEMA_ID,
+        exchange_example::binance_spot::WebSocketSessionLogonResponseDecoder::SCHEMA_ID,
         3,
         "WebSocketSessionLogonResponseDecoder::SCHEMA_ID"
     );
     assert_eq!(
-        binance_spot::WebSocketSessionLogonResponseDecoder::TEMPLATE_ID,
+        exchange_example::binance_spot::WebSocketSessionLogonResponseDecoder::TEMPLATE_ID,
         51,
         "WebSocketSessionLogonResponseDecoder::TEMPLATE_ID"
     );
 
     // WebSocketResponseDecoder (template 50)
     assert_eq!(
-        binance_spot::WebSocketResponseDecoder::SCHEMA_ID,
+        exchange_example::binance_spot::WebSocketResponseDecoder::SCHEMA_ID,
         3,
         "WebSocketResponseDecoder::SCHEMA_ID"
     );
     assert_eq!(
-        binance_spot::WebSocketResponseDecoder::TEMPLATE_ID,
+        exchange_example::binance_spot::WebSocketResponseDecoder::TEMPLATE_ID,
         50,
         "WebSocketResponseDecoder::TEMPLATE_ID"
     );
 
     // ServerTimeResponseDecoder (template 102)
     assert_eq!(
-        binance_spot::ServerTimeResponseDecoder::SCHEMA_ID,
+        exchange_example::binance_spot::ServerTimeResponseDecoder::SCHEMA_ID,
         3,
         "ServerTimeResponseDecoder::SCHEMA_ID"
     );
     assert_eq!(
-        binance_spot::ServerTimeResponseDecoder::TEMPLATE_ID,
+        exchange_example::binance_spot::ServerTimeResponseDecoder::TEMPLATE_ID,
         102,
         "ServerTimeResponseDecoder::TEMPLATE_ID"
     );
 
     // Free function schema_id_from_header
-    let header = binance_spot::MessageHeader([0, 0, 102, 0, 3, 0, 5, 0]); // ServerTimeResponse header
+    let header = exchange_example::binance_spot::MessageHeader([0, 0, 102, 0, 3, 0, 5, 0]); // ServerTimeResponse header
     assert_eq!(
-        binance_spot::schema_id_from_header(&header.0),
+        exchange_example::binance_spot::schema_id_from_header(&header.0),
         Some(3),
         "schema_id_from_header should return SCHEMA_ID for valid header"
     );
     assert_eq!(
-        binance_spot::schema_id_from_header(&[0u8; 4]),
+        exchange_example::binance_spot::schema_id_from_header(&[0u8; 4]),
         None,
         "schema_id_from_header on too-short buffer"
     );
 
     // Module-level constants
     assert_eq!(
-        binance_spot::SEMANTIC_VERSION,
+        exchange_example::binance_spot::SEMANTIC_VERSION,
         "5.2",
         "binance SEMANTIC_VERSION"
     );
@@ -894,8 +891,8 @@ fn binance_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::error::Error>> {
-    use binance_spot::ServerTimeResponseEncoder;
-    use bitget_spot::BestBidAskDecoder;
+    use exchange_example::binance_spot::ServerTimeResponseEncoder;
+    use exchange_example::bitget_spot::BestBidAskDecoder;
 
     // Encode a valid binance ServerTimeResponse message
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
@@ -917,7 +914,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
 
 #[test]
 fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use normalized_app::{
+    use exchange_example::normalized_app::{
         AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
     };
 

@@ -277,7 +277,8 @@ pub mod xml;
 pub mod xsd;
 
 pub use build::{
-    BuildError, generate_str_to_dir, generate_str_to_out_dir, generate_to_out_dir, out_dir,
+    BuildError, generate_str_to_dir, generate_str_to_out_dir, generate_to_dir, generate_to_out_dir,
+    out_dir,
 };
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{ConversionSelector, DomainVarData, GenerationConfig};

@@ -7,9 +7,48 @@
 //! - Decimal adapter and domain-object mapping
 //! - Three-thread architecture: producer, SHARED driver, consumer
 
-// Generated SBE codecs for the normalized application schema
-// (AppMessage/L2Book/Trade). Built via `generate_to_out_dir` into `OUT_DIR`.
-ergo_sbe::sbe_mod!(pub normalized_app);
+// Generated codecs under `src/generated/` (gitignored) — IDE can go-to-def.
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unused_must_use,
+    non_camel_case_types,
+    non_snake_case,
+    clippy::all,
+    warnings
+)]
+#[path = "generated/normalized_app.rs"]
+pub mod normalized_app;
+
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unused_must_use,
+    non_camel_case_types,
+    non_snake_case,
+    clippy::all,
+    warnings
+)]
+#[path = "generated/bitget_spot.rs"]
+pub mod bitget_spot;
+
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unused_must_use,
+    non_camel_case_types,
+    non_snake_case,
+    clippy::all,
+    warnings
+)]
+#[path = "generated/binance_spot.rs"]
+pub mod binance_spot;
 
 pub mod bitget;
 pub mod config;

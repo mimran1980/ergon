@@ -2,7 +2,7 @@
 //! Demonstrates nested repeating groups with domain-type converters.
 //!
 //! **Build-dep only:** `ergo-sbe` is a `[build-dependencies]` entry; this crate
-//! does not link it at runtime. Codecs are plain `include!` of `$OUT_DIR`.
+//! does not link it at runtime. Codecs: `src/generated/l3_codec.rs` (gitignored).
 
 #[allow(
     dead_code,
@@ -15,11 +15,11 @@
     non_camel_case_types,
     non_snake_case,
     unexpected_cfgs,
-    clippy::all
+    clippy::all,
+    warnings
 )]
-mod l3_codec {
-    include!(concat!(env!("OUT_DIR"), "/l3_codec.rs"));
-}
+#[path = "generated/l3_codec.rs"]
+mod l3_codec;
 pub use l3_codec::*;
 use l3_codec::Decimal as SbeDecimal;
 
