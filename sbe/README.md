@@ -1,5 +1,9 @@
 # ergo-sbe
 
+> **AI assistance.** Large parts of this project were written **with heavy AI
+> assistance**. Humans directed the work, approved designs, and ran verification.
+> Details of process and ownership: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
+
 `ergo-sbe` parses [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/)
 (SBE) schemas and generates **Rust codecs that are binary-compatible with the
 official SBE wire format** (header, field layout, groups, var-data, byte order).
@@ -252,79 +256,46 @@ style ownership hand-offs that fight the borrow checker on deep books).
 
 ### Buffer sizing
 
-**Ergonomic length APIs:** for messages with groups, nested groups, or
-variable-length tails, you no longer hand-calculate wire size (header + block
-+ Σ(group headers × count) + Σ(var-data lengths) + …). Codegen emits a
-**schema-aware length API** so you declare the *structure* of the payload you
-are about to encode; it returns the exact byte count for a first-time
-stack buffer, claim, or write with no trial encode and no oversized guess.
+**Why this exists:** true zero-copy publish on Aeron (and similar systems) uses
+**`try_claim` / a pre-sized slot**. The transport hands you a buffer of a
+**known length**; you must know the full encoded message size **before** you
+write. Guessing with an oversized scratch `Vec` and copying later defeats that
+model and is easy to get wrong for groups and var-data.
 
-Using the example **Car** schema (groups + nested groups + var-data tails):
+ergo-sbe therefore generates **schema-aware length APIs** so you describe the
+shape you are about to encode (counts, nested groups, var-data byte lengths)
+and get an **exact** size first — safer and easier than hand-computing header +
+block + Σ(groups) + Σ(var-data).
 
-| Message shape | How to size (generated) | Prefer |
-|---------------|-------------------------|--------|
-| Fixed block only (no groups/var-data) | `{Msg}Encoder::ENCODED_LENGTH` (**const**) | stack `[0u8; N]` |
-| Flat / known tail lengths | `try_compute_encoded_length_with_header(...)` when emitted | stack `[0u8; N]` |
-| Groups / nested / ragged (Car) | `CarEncodedLength` staged builder | size first → claim / encode into that exact slice |
+| Message shape | Generated sizing | Prefer |
+|---------------|------------------|--------|
+| Fixed only | `{Msg}Encoder::ENCODED_LENGTH` (**const**) | stack / claim of that length |
+| Groups / nested / ragged | `{Msg}EncodedLength` staged builder | `len` then encode into a claim/slot of `len` |
 
 ```rust,ignore
-// Uniform Car: every fuelFigures entry has the same shape (same
-// usageDescription length). Fastest path — multiplies one entry shape by count.
-// (Matches the generated CarEncodedLength API for example-schema.)
+// Exact size first (Car example), then encode into a slot of that length —
+// e.g. Aeron try_claim, or any &mut [u8] with len == claim.
 let len = CarEncodedLength::new()
     .fuel_figures(2)
-    .usage_description(5)?            // bytes per fuel entry's usageDescription
+    .usage_description(5)?
     .performance_figures(1)
-    .acceleration(2)?                 // nested group count per performance entry
-    .manufacturer(5)?                 // "Honda"
-    .model(9)?                        // "Civic VTi"
-    .activation_code(6)?              // "abcdef"
-    .encoded_length_with_header();
-
-// Exact slice — stack when `len` is const-known, else claim / Vec of that size.
-let mut buf = vec![0u8; len];
-let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .fixed(&fields)
-    .fuel_figures(2, |g| {
-        g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
-        g.add(|e| { e.speed(60).mpg(25.0); e.usage_description(b"Hwy!!")?; Ok(()) })?;
-        Ok(())
-    })?
-    .performance_figures(1, |g| {
-        g.add(|e| {
-            e.octane_rating(95);
-            e.acceleration(2, |a| {
-                a.add(|x| { x.mph(30).seconds(4.0); Ok(()) })?;
-                a.add(|x| { x.mph(60).seconds(7.5); Ok(()) })?;
-                Ok(())
-            })?;
-            Ok(())
-        })?;
-        Ok(())
-    })?
-    .manufacturer(b"Honda")?
-    .model(b"Civic VTi")?
-    .activation_code(b"abcdef")?;
-
-// Ragged Car: fuel entries may have *different* usageDescription lengths.
-// Declare count up-front; describe each entry's variable tail in the closure.
-let len = CarEncodedLength::new()
-    .fuel_figures_ragged(2, |ff| {
-        ff.add()?.usage_description(5)?;    // first entry: 5-byte description
-        ff.add()?.usage_description(12)?;   // second entry: 12-byte description
-        Ok(())
-    })?
-    .performance_figures(0)
-    .acceleration(0)?
+    .acceleration(2)?
     .manufacturer(5)?
-    .model(5)?
-    .activation_code(3)?
+    .model(9)?
+    .activation_code(6)?
     .encoded_length_with_header();
+
+// claim_or_slot.len() == len — no oversize guess buffer.
+let done = CarEncoder::try_wrap_and_apply_header(&mut claim_or_slot, 0)?
+    .fixed(&fields)
+    .fuel_figures(2, |g| { /* … */ Ok(()) })?
+    // …
+    ;
 ```
 
-Same idea on a real nested book:
-[`book_encoded_length`](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs)
-in the l3-book sample. API matrix:
+Nested books:
+[`book_encoded_length`](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs).
+API matrix:
 [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs).
 
 ### Flyweight (per-field) vs whole struct

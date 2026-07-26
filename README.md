@@ -1,5 +1,9 @@
 # ergon
 
+> **AI assistance.** This monorepo was developed **with heavy AI assistance**.
+> Humans directed the problems, approved designs, and verified results. Process
+> notes: [AI-ASSISTANCE.md](AI-ASSISTANCE.md).
+
 ergon is an experimental Rust workspace for two related projects:
 
 - **ergo-sbe** generates Rust codecs from Simple Binary Encoding (SBE)
@@ -60,6 +64,7 @@ build, test, interoperability, and benchmark recipes.
 - [`cluster/README.md`](cluster/README.md) — Cluster client scope and usage
 - [`samples/README.md`](samples/README.md) — sample inventory and commands
 - [`sbe/BENCHMARKS.md`](sbe/BENCHMARKS.md) — benchmark method and gates
+- [`AI-ASSISTANCE.md`](AI-ASSISTANCE.md) — AI-assisted development process
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution and verification rules
 - [`CHANGELOG.md`](CHANGELOG.md) — user-facing changes
 
