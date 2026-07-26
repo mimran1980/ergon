@@ -887,9 +887,9 @@ The model split shown by the dashboard was:
 - DeepSeek V4 Flash: 3,392,304,915 tokens across 29,015 requests
 - DeepSeek V4 Pro: 7,130,554,978 tokens across 18,653 requests
 
-![DeepSeek V4 Flash and V4 Pro usage, upper dashboard](assets/ai-assistance/deepseek-v4-model-usage-upper.jpg)
+![DeepSeek V4 Flash usage](assets/ai-assistance/deepseek-v4-model-usage-upper.jpg)
 
-![DeepSeek V4 Flash and V4 Pro usage, lower dashboard](assets/ai-assistance/deepseek-v4-model-usage-lower.jpg)
+![DeepSeek V4 Pro usage](assets/ai-assistance/deepseek-v4-model-usage-lower.jpg)
 
 My rounded estimate for the full project period is approximately **14 billion
 tokens** across providers:
