@@ -223,11 +223,10 @@ let expected = QuoteEncoder::try_compute_encoded_length_with_header(1, 2)?;
 let mut buf = [0u8; 256];
 let buf = &mut buf[..expected];
 let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-enc.seq(1)
+let complete = enc.seq(1)
     .put_some_numbers(10, 20, 30, 40)
     .vehicle_code_str("ABCDEF")?
-    .qty(25);
-let complete = enc
+    .qty(25)
     .legs(1, |legs| {
         legs.add(|leg| {
             leg.value(99);
@@ -249,11 +248,12 @@ let len = QuoteEncoder::try_compute_encoded_length_with_header(0, 0)?;
 let mut buf = [0u8; 256];
 let buf = &mut buf[..len];
 let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-enc.seq(7)
+let complete = enc.seq(7)
     .put_some_numbers(1, 2, 3, 4)
     .vehicle_code_str("EURUSD")?
-    .qty(10);
-let complete = enc.legs(0, |_| Ok(()))?.note(b"")?;
+    .qty(10)
+    .legs(0, |_| Ok(()))?
+    .note(b"")?;
 
 let quote = QuoteDecoder::try_from(complete.as_bytes())?;
 assert_eq!(quote.some_numbers(), [1, 2, 3, 4]);
@@ -277,11 +277,10 @@ let len = QuoteEncoder::try_compute_encoded_length_with_header(1, 5)?;
 let mut buf = [0u8; 256];
 let buf = &mut buf[..len];
 let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-enc.seq(1)
+let complete = enc.seq(1)
     .put_some_numbers(1, 2, 3, 4)
     .vehicle_code_str("ABCDEF")?
-    .qty(10);
-let complete = enc
+    .qty(10)
     .legs(1, |legs| {
         legs.add(|leg| {
             leg.value(99);
@@ -327,11 +326,12 @@ let len = QuoteEncoder::try_compute_encoded_length_with_header(0, 2)?;
 let mut buf = [0u8; 256];
 let buf = &mut buf[..len];
 let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-enc.seq(3)
+let complete = enc.seq(3)
     .put_some_numbers(1, 2, 3, 4)
     .vehicle_code_str("ABCDEF")?
-    .qty(10);
-let complete = enc.legs(0, |_| Ok(()))?.note(b"\x00\xff")?;
+    .qty(10)
+    .legs(0, |_| Ok(()))?
+    .note(b"\x00\xff")?;
 
 let dto = QuoteDomain::try_from_decoder(QuoteDecoder::try_from(complete.as_bytes())?)?;
 assert_eq!(dto.note, b"\x00\xff");
