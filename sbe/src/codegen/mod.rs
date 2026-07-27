@@ -766,8 +766,6 @@ impl Generator {
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
         write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
-        // 7.5. Generate allocation-free schema/message/member descriptors.
-        generate_static_metadata(&mut src, &messages, &elements);
         // 7.6. Generate prelude module — single import surface for users
         generate_prelude(&mut src, &elements, &messages, ir.id, ir.version);
         // 7.6b. Opt-in From<EncodeError/DecodeError> for user error type

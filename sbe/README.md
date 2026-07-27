@@ -217,24 +217,25 @@ intermediate encoder variables.
 
 **Prefer (one chain, one `let`):**
 
-```rust,ignore
-let len = OrderEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .fixed(&fields)
-    .bids(2, |bids| {
-        bids.add(|bid| {
-            bid.price(100i64)
-                .qty(10i64)
-                .orders(1, |orders| {
-                    orders.add(|o| { o.order_id(7u64)?; Ok(()) })?;
-                    Ok(())
-                })?
-                .venue(b"XNYS")?;
+```rust
+let expected = QuoteEncoder::try_compute_encoded_length_with_header(1, 5)?;
+let mut buf = [0u8; 256];
+let buf = &mut buf[..expected];
+let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+    .fixed(&QuoteFixedFields {
+        seq: 1,
+        some_numbers: [10, 20, 30, 40],
+        vehicle_code: *b"ABCDEF",
+        qty: 25,
+    })
+    .legs(1, |legs| {
+        legs.add(|leg| {
+            leg.value(99);
             Ok(())
         })?;
         Ok(())
     })?
-    .asks(0, |_| Ok(()))?
-    .symbol(b"IBM")?
+    .note(b"ok")?
     .encoded_length_with_header();
 ```
 
@@ -451,21 +452,6 @@ assert_eq!(
     QuoteDecoder::seq_meta_attribute(sbe_rt::MetaAttribute::Presence),
     Some("required")
 );
-```
-
-Each generated schema also exposes an allocation-free descriptor registry.
-Lookup is keyed by both schema and template ID, and nested group/var-data
-descriptors are static slices:
-
-```rust
-let quote = message_descriptor(QuoteDecoder::SCHEMA_ID, QuoteDecoder::TEMPLATE_ID)
-    .expect("Quote is registered");
-assert_eq!(quote.name, "Quote");
-assert_eq!(quote.template_id, QuoteEncoder::TEMPLATE_ID);
-assert_eq!(quote.fields[0].name, "seq");
-assert_eq!(quote.groups[0].name, "legs");
-assert_eq!(quote.var_data[0].name, "note");
-assert!(message_descriptor(u16::MAX, QuoteDecoder::TEMPLATE_ID).is_none());
 ```
 
 ### Consuming decode stages
@@ -880,7 +866,6 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **Exact buffer sizing** | Schema-aware length for nested/ragged msgs — no hand-calculated sizes | `ENCODED_LENGTH` · `compute_encoded_length_*` · `*EncodedLength` · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#buffer-sizing) · [l3-book](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) · [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs) |
 | **Schema docs → rustdoc** | XML descriptions become item docs | `description="…"` / `<description>` / `<comment>` / `<!-- -->` · [schema_docs_provenance_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/schema_docs_provenance_test.rs) |
 | **`Display` / `Debug`** | Diagnostic print (not wire format) | `println!("{car}");` · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#display--debug) · [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Static metadata** | Schema-qualified messages, nested groups/var-data, field id / offset / type / version | `MESSAGE_DESCRIPTORS` · `message_descriptor(schema_id, template_id)` · existing per-field constants and `*_meta_attribute(…)` |
 | **NULL / MIN / MAX** | Schema sentinels as consts | `MODEL_YEAR_NULL` · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
 | **Version-aware fields** | `sinceVersion` / acting version | `Option` or skip on older wire · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
 | **Groups / nested groups** | Repeating dimensions | `bids(n, \|g\| g.add(…))?` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [l3_orderbook_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_orderbook_test.rs) |

@@ -68,6 +68,9 @@ check-products:
     cargo fmt --all --check
     cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+    ./scripts/regenerate-sbe-tool-reference.sh --check
+    cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
+    cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
     cargo test -p ergo-sbe --all-features -- --test-threads=1
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
@@ -103,6 +106,9 @@ test:
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     @echo "=== 3/6 unit + integration tests ==="
+    ./scripts/regenerate-sbe-tool-reference.sh --check
+    cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
+    cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
     @echo "=== 4/6 ergo-sbe doctests + rustdoc (-D warnings) + docs_validation ==="
@@ -134,6 +140,19 @@ test-unit:
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
 
+# Rebuild every pinned official sbe-tool reference in a temporary directory.
+check-sbe-references:
+    ./scripts/regenerate-sbe-tool-reference.sh --check
+
+# Compile all libFuzzer targets and run the deterministic corpus replay.
+check-fuzz:
+    cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
+    cargo test -p ergo-sbe --test hostile_input_replay_test -- --test-threads=1
+
+# Run and compare line/function/region coverage with the checked-in ratchet.
+check-coverage:
+    ./scripts/check-coverage-ratchet.sh
+
 # ── formatting ─────────────────────────────────────────────────────────────
 
 # Format all handwritten source.
@@ -163,6 +182,21 @@ bench:
     @echo ""
     @echo "=== Gate ==="
     ./scripts/check-bench-gate.sh target/criterion
+
+# Expanded non-gating codec matrix and offset/alignment diagnostics.
+bench-diagnostics:
+    cargo bench -p ergo-sbe-benchmarks --bench codec_matrix_bench
+    cargo bench -p ergo-sbe-benchmarks --bench alignment_bench
+    cargo bench -p ergo-sbe-benchmarks --bench cold_path_bench
+    cargo bench -p ergo-sbe-benchmarks --bench latency_distribution
+
+# Fresh generated-crate compile/source/binary-size report.
+bench-cold:
+    ./scripts/measure-codegen-cold-path.sh
+
+# Linux/Valgrind instruction counts (requires iai-callgrind-runner).
+bench-instructions:
+    cargo bench -p ergo-sbe-benchmarks --bench instruction_counts
 
 # Cluster codec benchmarks (ergo-sbe vs sbe-tool head-to-head).
 bench-cluster:

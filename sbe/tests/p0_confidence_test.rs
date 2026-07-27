@@ -456,7 +456,8 @@ fn every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data()
             .encoded_length_with_header();
         assert_all_cuts("var-data", &data[..data_len], WithDataDecoder::verify);
         assert!(WithDataEncoder::try_compute_encoded_length_with_header(4097).is_err());
-        let mut oversized_storage = vec![0u8; 8192];
+        let max_len = WithDataEncoder::try_compute_encoded_length_with_header(4096)?;
+        let mut oversized_storage = vec![0u8; max_len];
         let oversized = WithDataEncoder::try_wrap_and_apply_header(&mut oversized_storage, 0)?
             .fixed(&WithDataFixedFields { seq: 4 })
             .payload(&[0u8; 4097]);

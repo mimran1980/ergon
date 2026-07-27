@@ -13,6 +13,12 @@ use std::path::PathBuf;
 
 use common::{Paths, compile_and_run, generate};
 
+/// Format a byte slice as a Rust `vec!` literal (e.g. `vec![0u8, 1u8, 255u8]`).
+fn bytes_to_vec_literal(bytes: &[u8]) -> String {
+    let inner = bytes.iter().map(u8::to_string).collect::<Vec<_>>().join(",");
+    format!("vec![{inner}]")
+}
+
 #[test]
 fn every_schema_fixture_and_deterministic_parser_mutation_is_panic_free()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -62,14 +68,7 @@ fn generated_verify_dispatch_cursor_and_nested_decode_corpus_is_panic_free()
         .map(fs::read)
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .map(|bytes| {
-            let bytes = bytes
-                .iter()
-                .map(u8::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("vec![{bytes}]")
-        })
+        .map(|bytes| bytes_to_vec_literal(&bytes))
         .collect::<Vec<_>>()
         .join(",");
     let body = format!(

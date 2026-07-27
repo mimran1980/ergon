@@ -272,17 +272,6 @@ fn bench_dispatch_metadata_dto_and_nested(c: &mut Criterion) {
     group.bench_function("any_message", |b| {
         b.iter(|| black_box(AnyMessage::decode(black_box(&fixed16), 0).unwrap()));
     });
-    group.bench_function("metadata_lookup", |b| {
-        b.iter(|| {
-            black_box(
-                message_descriptor(
-                    black_box(Fixed16Decoder::SCHEMA_ID),
-                    black_box(Fixed16Decoder::TEMPLATE_ID),
-                )
-                .unwrap(),
-            )
-        });
-    });
     group.bench_function("dto_conversion", |b| {
         b.iter(|| {
             black_box(

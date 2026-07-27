@@ -274,7 +274,7 @@ impl TypeRegistry {
     /// re-declaring or re-`<include>`-ing them. Bare top-level `<type>`
     /// typedefs don't round-trip through `Ir` (they're inlined and dropped
     /// during parsing) — only composites, enums, and sets are recovered here.
-    fn from_ir(ir: &Ir) -> Self {
+    fn from_parsed_schema(ir: &Ir) -> Self {
         let mut registry = Self::new();
         let mut i = 0;
         while i < ir.tokens.len() {
@@ -415,7 +415,7 @@ pub fn parse(xml: &str) -> Result<Ir, ParseError> {
 /// Same as [`parse`].
 #[allow(clippy::result_large_err)]
 pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
-    parse_with_context(xml, None, &mut HashSet::new(), TypeRegistry::from_ir(shared))
+    parse_with_context(xml, None, &mut HashSet::new(), TypeRegistry::from_parsed_schema(shared))
 }
 
 /// [`parse`] after [`crate::validate_against_sbe_xsd`].
@@ -475,7 +475,7 @@ pub fn parse_file_with_shared(path: impl AsRef<Path>, shared: &Ir) -> Result<Ir,
     if let Ok(canon) = path.canonicalize() {
         seen.insert(canon);
     }
-    parse_with_context(&xml, base_dir, &mut seen, TypeRegistry::from_ir(shared))
+    parse_with_context(&xml, base_dir, &mut seen, TypeRegistry::from_parsed_schema(shared))
 }
 
 /// Internal: parse with optional base directory for include resolution and
