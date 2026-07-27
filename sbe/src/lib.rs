@@ -234,5 +234,8 @@ pub use config::{ConversionSelector, DomainVarData, GenerationConfig};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;
-pub use xml::{ParseError, parse, parse_file, parse_with_xsd_validation};
+pub use xml::{
+    ParseError, parse, parse_file, parse_file_with_shared, parse_with_shared,
+    parse_with_xsd_validation,
+};
 pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};

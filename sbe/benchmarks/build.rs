@@ -32,6 +32,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ergo_sbe::GenerationConfig::new("large_comp_be_bench"),
     )?;
 
+    let matrix_schema = manifest.join("schemas/codec-matrix.xml");
+    ergo_sbe::generate_to_out_dir(
+        &matrix_schema,
+        ergo_sbe::GenerationConfig::new("codec_matrix_bench")
+            .enable_domain_objects(ergo_sbe::DomainVarData::Bytes),
+    )?;
+
+    let matrix_be_schema = manifest.join("schemas/codec-matrix-be.xml");
+    ergo_sbe::generate_to_out_dir(
+        &matrix_be_schema,
+        ergo_sbe::GenerationConfig::new("codec_matrix_be_bench"),
+    )?;
+
+    let matrix_custom_header_schema = manifest.join("schemas/codec-matrix-custom-header.xml");
+    ergo_sbe::generate_to_out_dir(
+        &matrix_custom_header_schema,
+        ergo_sbe::GenerationConfig::new("codec_matrix_custom_header_bench"),
+    )?;
+
     println!("cargo:rerun-if-changed=../src/codegen");
     println!("cargo:rerun-if-changed=../src/codegen/mod.rs");
     println!("cargo:rerun-if-changed=../src/codegen/runtime.rs");
@@ -40,5 +59,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../src/config.rs");
     println!("cargo:rerun-if-changed=schemas/large-composite.xml");
     println!("cargo:rerun-if-changed=schemas/large-composite-be.xml");
+    println!("cargo:rerun-if-changed=schemas/codec-matrix.xml");
+    println!("cargo:rerun-if-changed=schemas/codec-matrix-be.xml");
+    println!("cargo:rerun-if-changed=schemas/codec-matrix-custom-header.xml");
     Ok(())
 }

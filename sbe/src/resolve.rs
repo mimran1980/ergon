@@ -130,6 +130,25 @@ impl ResolveError {
             ResolveError::BlockLengthTooShort { source_code, .. } => source_code.take(),
         }
     }
+
+    /// Take the label spans, leaving `None` in their place.
+    /// Returns `(primary, secondary)` for forwarding to [`ParseError::Resolve`].
+    pub(crate) fn take_spans(
+        &mut self,
+    ) -> (Option<miette::SourceSpan>, Option<miette::SourceSpan>) {
+        match self {
+            ResolveError::DuplicateTemplateId {
+                first_label,
+                second_label,
+                ..
+            } => (first_label.take(), second_label.take()),
+            ResolveError::UnknownType { span, .. }
+            | ResolveError::InvalidOffset { span, .. }
+            | ResolveError::EmptyComposite { span, .. }
+            | ResolveError::SinceVersionBeyondSchema { span, .. }
+            | ResolveError::BlockLengthTooShort { span, .. } => (span.take(), None),
+        }
+    }
 }
 
 /// Resolve offsets, block lengths, and default null/min/max on `ir` in place.
@@ -145,17 +164,21 @@ pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveEr
     let src = source.map(|s| miette::NamedSource::new("schema.xml", s.to_owned()));
 
     {
-        let mut seen_ids: std::collections::HashMap<u16, &str> = std::collections::HashMap::new();
+        let mut seen_ids: std::collections::HashMap<u16, (&str, Option<std::ops::Range<usize>>)> =
+            std::collections::HashMap::new();
         for token in &ir.tokens {
             if token.signal == Signal::BeginMessage {
                 if let Some(id) = token.id {
-                    if seen_ids.insert(id, &token.name).is_some() {
+                    if let Some((_prev_name, prev_span)) = seen_ids.insert(
+                        id,
+                        (&token.name, token.span.clone()),
+                    ) {
                         return Err(ResolveError::DuplicateTemplateId {
                             id,
                             name: token.name.clone(),
                             source_code: src.clone(),
-                            first_label: None,
-                            second_label: None,
+                            first_label: prev_span.map(miette::SourceSpan::from),
+                            second_label: token.span.clone().map(miette::SourceSpan::from),
                         });
                     }
                 }
@@ -171,7 +194,7 @@ pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveEr
                 schema_version: ir.version,
                 name: token.name.clone(),
                 source_code: src.clone(),
-                span: None,
+                span: token.span.clone().map(miette::SourceSpan::from),
             });
         }
     }
@@ -318,7 +341,7 @@ fn resolve_composite_offsets(
             return Err(ResolveError::InvalidOffset {
                 offset: resolved_offset,
                 source_code: src.clone(),
-                span: None,
+                span: tokens[i].span.clone().map(miette::SourceSpan::from),
             });
         }
 
@@ -385,7 +408,7 @@ fn resolve_message_offsets(
             return Err(ResolveError::InvalidOffset {
                 offset: resolved_offset,
                 source_code: src.clone(),
-                span: None,
+                span: tokens[i].span.clone().map(miette::SourceSpan::from),
             });
         }
 
@@ -407,7 +430,7 @@ fn resolve_message_offsets(
             declared,
             required: current_offset,
             source_code: src.clone(),
-            span: None,
+            span: tokens[0].span.clone().map(miette::SourceSpan::from),
         });
     }
     let block_length = match declared {
@@ -460,7 +483,7 @@ fn resolve_group_offsets(
             return Err(ResolveError::InvalidOffset {
                 offset: resolved_offset,
                 source_code: src.clone(),
-                span: None,
+                span: tokens[i].span.clone().map(miette::SourceSpan::from),
             });
         }
         tokens[i].encoding.offset = Some(resolved_offset);
@@ -480,7 +503,7 @@ fn resolve_group_offsets(
             declared,
             required: current_offset,
             source_code: src.clone(),
-            span: None,
+            span: tokens[0].span.clone().map(miette::SourceSpan::from),
         });
     }
     let block_length = match declared {
@@ -1067,12 +1090,14 @@ mod tests {
                     name: "A".to_string(),
                     signal: Signal::BeginMessage,
                     encoding: crate::ir::Encoding::default(),
+                    span: None,
                 },
                 Token {
                     id: None,
                     name: "A".to_string(),
                     signal: Signal::EndMessage,
                     encoding: crate::ir::Encoding::default(),
+                    span: None,
                 },
             ],
         };
@@ -1091,12 +1116,14 @@ mod tests {
                 name: "X".to_string(),
                 signal: Signal::BeginComposite,
                 encoding: crate::ir::Encoding::default(),
+                span: None,
             },
             Token {
                 id: None,
                 name: "Y".to_string(),
                 signal: Signal::BeginField,
                 encoding: crate::ir::Encoding::default(),
+                span: None,
             },
         ];
         // find_matching_end should return tokens.len() - 1 as fallback
@@ -1114,6 +1141,7 @@ mod tests {
             name: "X".to_string(),
             signal: Signal::EndField,
             encoding: crate::ir::Encoding::default(),
+            span: None,
         }];
         let (size, next) = get_token_block_size(&tokens, 0);
         assert_eq!(size, 0);
@@ -1131,6 +1159,7 @@ mod tests {
                 name: "grp".to_string(),
                 signal: Signal::BeginGroup,
                 encoding: crate::ir::Encoding::default(),
+                span: None,
             },
             // No BeginComposite — jump straight to a field
             Token {
@@ -1141,18 +1170,21 @@ mod tests {
                     primitive_type: Some(PrimitiveType::UInt32),
                     ..crate::ir::Encoding::default()
                 },
+                span: None,
             },
             Token {
                 id: None,
                 name: "field".to_string(),
                 signal: Signal::EndField,
                 encoding: crate::ir::Encoding::default(),
+                span: None,
             },
             Token {
                 id: None,
                 name: "grp".to_string(),
                 signal: Signal::EndGroup,
                 encoding: crate::ir::Encoding::default(),
+                span: None,
             },
         ];
         let src: Option<miette::NamedSource<String>> = None;
@@ -1172,6 +1204,7 @@ mod tests {
                 name: "data".to_string(),
                 signal: Signal::BeginVarData,
                 encoding: crate::ir::Encoding::default(),
+                span: None,
             },
             // No BeginComposite — just EndVarData
             Token {
@@ -1179,6 +1212,7 @@ mod tests {
                 name: "data".to_string(),
                 signal: Signal::EndVarData,
                 encoding: crate::ir::Encoding::default(),
+                span: None,
             },
         ];
         let src: Option<miette::NamedSource<String>> = None;

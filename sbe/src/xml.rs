@@ -49,6 +49,9 @@ pub enum ParseError {
         /// The source document, for span rendering.
         #[source_code]
         source_code: miette::NamedSource<String>,
+        /// The offending location, when available.
+        #[label("here")]
+        span: Option<miette::SourceSpan>,
     },
     /// A required attribute or element was missing.
     #[error("missing {what}")]
@@ -85,9 +88,12 @@ pub enum ParseError {
         /// The source document, for span rendering.
         #[source_code]
         source_code: miette::NamedSource<String>,
-        /// The offending location (for miette label).
-        #[label("resolution error")]
+        /// The primary offending location.
+        #[label("here")]
         span: Option<miette::SourceSpan>,
+        /// Secondary label (e.g. for duplicate definitions).
+        #[label("related")]
+        second_label: Option<miette::SourceSpan>,
         /// The underlying resolution error.
         #[source]
         error: Box<crate::resolve::ResolveError>,
@@ -112,6 +118,7 @@ impl ParseError {
         Self::MalformedXml {
             message: message.into(),
             source_code: named_source(xml),
+            span: None,
         }
     }
 
@@ -146,9 +153,11 @@ impl From<crate::resolve::ResolveError> for ParseError {
         let source_code = e
             .take_source_code()
             .unwrap_or_else(|| miette::NamedSource::new("schema.xml", String::new()));
+        let (span, second_label) = e.take_spans();
         Self::Resolve {
             source_code,
-            span: None,
+            span,
+            second_label,
             error: Box::new(e),
         }
     }
@@ -259,6 +268,33 @@ impl TypeRegistry {
             encodings,
         }
     }
+
+    /// Rebuild a registry from an already-parsed schema's flat token stream,
+    /// so a second schema can resolve its composite/enum/set types without
+    /// re-declaring or re-`<include>`-ing them. Bare top-level `<type>`
+    /// typedefs don't round-trip through `Ir` (they're inlined and dropped
+    /// during parsing) — only composites, enums, and sets are recovered here.
+    fn from_ir(ir: &Ir) -> Self {
+        let mut registry = Self::new();
+        let mut i = 0;
+        while i < ir.tokens.len() {
+            let (begin, end) = match ir.tokens[i].signal {
+                Signal::BeginComposite => (Signal::BeginComposite, Signal::EndComposite),
+                Signal::BeginEnum => (Signal::BeginEnum, Signal::EndEnum),
+                Signal::BeginSet => (Signal::BeginSet, Signal::EndSet),
+                _ => {
+                    i += 1;
+                    continue;
+                }
+            };
+            let end_idx = crate::codegen::find_matching_end(&ir.tokens, i, begin, end);
+            registry
+                .registry
+                .insert(ir.tokens[i].name.clone(), ir.tokens[i..=end_idx].to_vec());
+            i = end_idx + 1;
+        }
+        registry
+    }
 }
 
 /// Helper to parse optional u64 values from strings (like nullValue).
@@ -300,6 +336,7 @@ fn resolve_type_to_tokens(
     id: Option<u16>,
     registry: &TypeRegistry,
     since_version: u16,
+    span: Option<std::ops::Range<usize>>,
 ) -> Option<Vec<Token>> {
     if let Some(encoding) = registry.encodings.get(type_name) {
         let mut field_enc = encoding.clone();
@@ -312,12 +349,14 @@ fn resolve_type_to_tokens(
                 name: field_name.to_string(),
                 signal: Signal::BeginField,
                 encoding: field_enc,
+                span: span.clone(),
             },
             Token {
                 id: None,
                 name: field_name.to_string(),
                 signal: Signal::EndField,
                 encoding: Encoding::default(),
+                span,
             },
         ])
     } else if let Some(tokens) = registry.registry.get(type_name) {
@@ -330,6 +369,7 @@ fn resolve_type_to_tokens(
                 since_version,
                 ..Encoding::default()
             },
+            span: span.clone(),
         });
         for t in tokens {
             inlined.push(t.clone());
@@ -339,6 +379,7 @@ fn resolve_type_to_tokens(
             name: field_name.to_string(),
             signal: Signal::EndField,
             encoding: Encoding::default(),
+            span,
         });
         Some(inlined)
     } else {
@@ -357,7 +398,24 @@ fn resolve_type_to_tokens(
 /// attributes/types fail validation.
 #[allow(clippy::result_large_err)]
 pub fn parse(xml: &str) -> Result<Ir, ParseError> {
-    parse_with_context(xml, None, &mut HashSet::new())
+    parse_with_context(xml, None, &mut HashSet::new(), TypeRegistry::new())
+}
+
+/// [`parse`], resolving type references against an already-parsed shared
+/// schema's composites/enums/sets first — so `xml` need not `<include>` or
+/// redeclare them.
+///
+/// Only composites, enums, and sets round-trip through `shared`'s [`Ir`];
+/// bare top-level `<type>` typedefs are inlined and dropped during parsing,
+/// so reference those via a `<composite>`/`<enum>`/`<set>` in the shared
+/// schema instead.
+///
+/// # Errors
+///
+/// Same as [`parse`].
+#[allow(clippy::result_large_err)]
+pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
+    parse_with_context(xml, None, &mut HashSet::new(), TypeRegistry::from_ir(shared))
 }
 
 /// [`parse`] after [`crate::validate_against_sbe_xsd`].
@@ -397,14 +455,36 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
     if let Ok(canon) = path.canonicalize() {
         seen.insert(canon);
     }
-    parse_with_context(&xml, base_dir, &mut seen)
+    parse_with_context(&xml, base_dir, &mut seen, TypeRegistry::new())
 }
 
-/// Internal: parse with optional base directory for include resolution.
+/// [`parse_file`], resolving type references against an already-parsed
+/// shared schema first — see [`parse_with_shared`].
+///
+/// # Errors
+///
+/// Same as [`parse_file`].
+#[allow(clippy::result_large_err)]
+pub fn parse_file_with_shared(path: impl AsRef<Path>, shared: &Ir) -> Result<Ir, ParseError> {
+    let path = path.as_ref();
+    let xml = std::fs::read_to_string(path).map_err(|e| {
+        ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
+    })?;
+    let base_dir = path.parent();
+    let mut seen = HashSet::new();
+    if let Ok(canon) = path.canonicalize() {
+        seen.insert(canon);
+    }
+    parse_with_context(&xml, base_dir, &mut seen, TypeRegistry::from_ir(shared))
+}
+
+/// Internal: parse with optional base directory for include resolution and
+/// an initial type registry (seeded from a shared schema, or empty).
 fn parse_with_context(
     xml: &str,
     base_dir: Option<&Path>,
     seen: &mut HashSet<PathBuf>,
+    initial_registry: TypeRegistry,
 ) -> Result<Ir, ParseError> {
     let doc = match Document::parse(xml) {
         Ok(d) => d,
@@ -426,8 +506,8 @@ fn parse_with_context(
             input,
         ));
     }
-    let mut ir =
-        parse_schema(root, base_dir, seen).map_err(|fault| ParseError::from_fault(fault, input))?;
+    let mut ir = parse_schema(root, base_dir, seen, initial_registry)
+        .map_err(|fault| ParseError::from_fault(fault, input))?;
     crate::resolve::resolve_schema(&mut ir, Some(input))?;
     Ok(ir)
 }
@@ -640,6 +720,7 @@ fn parse_schema(
     root: Node<'_, '_>,
     base_dir: Option<&Path>,
     seen: &mut HashSet<PathBuf>,
+    initial_registry: TypeRegistry,
 ) -> Result<Ir, Fault> {
     let package = string_attr(root, "package", "messageSchema @package")?;
     let id = u16_attr(root, "id", "messageSchema @id")?;
@@ -657,7 +738,7 @@ fn parse_schema(
         .unwrap_or("messageHeader")
         .to_string();
 
-    let mut registry = TypeRegistry::new();
+    let mut registry = initial_registry;
     let mut tokens = Vec::new();
 
     // First pass: Parse all types, including included files
@@ -844,6 +925,7 @@ fn parse_composite(
             semantic_type: node.attribute("semanticType").map(str::to_string),
             ..Encoding::default()
         },
+        span: None,
     });
 
     // Occupied exclusive ranges [start, end) for explicit member offsets.
@@ -871,7 +953,7 @@ fn parse_composite(
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             if let Some(resolved) =
-                resolve_type_to_tokens(&enum_name, &enum_name, None, registry, since_val)
+                resolve_type_to_tokens(&enum_name, &enum_name, None, registry, since_val, Some(child.range()))
             {
                 composite_tokens.extend(resolved);
             }
@@ -884,7 +966,7 @@ fn parse_composite(
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             if let Some(resolved) =
-                resolve_type_to_tokens(&set_name, &set_name, None, registry, since_val)
+                resolve_type_to_tokens(&set_name, &set_name, None, registry, since_val, Some(child.range()))
             {
                 composite_tokens.extend(resolved);
             }
@@ -920,7 +1002,7 @@ fn parse_composite(
                 occupied_offsets.push((off, end));
             }
             if let Some(resolved) =
-                resolve_type_to_tokens(&nested_name, &nested_name, None, registry, since_val)
+                resolve_type_to_tokens(&nested_name, &nested_name, None, registry, since_val, Some(child.range()))
             {
                 // Apply explicit member offset onto the BeginField wrapper.
                 if let Some(off) = opt_usize_attr(child, "offset", "offset")? {
@@ -970,7 +1052,7 @@ fn parse_composite(
                 occupied_offsets.push((off, end));
             }
             if let Some(resolved) =
-                resolve_type_to_tokens(&member_name, ref_name, None, registry, since_val)
+                resolve_type_to_tokens(&member_name, ref_name, None, registry, since_val, Some(child.range()))
             {
                 composite_tokens.extend(resolved);
             }
@@ -1052,15 +1134,17 @@ fn parse_composite(
                         name: member_name.clone(),
                         signal: Signal::BeginField,
                         encoding: encoding.clone(),
+                        span: None,
                     });
                     composite_tokens.push(Token {
                         id: None,
                         name: member_name.clone(),
                         signal: Signal::EndField,
                         encoding: Encoding::default(),
+                        span: None,
                     });
                 } else if let Some(resolved) =
-                    resolve_type_to_tokens(&member_name, t_name, None, registry, since_val)
+                    resolve_type_to_tokens(&member_name, t_name, None, registry, since_val, Some(child.range()))
                 {
                     composite_tokens.extend(resolved);
                 } else {
@@ -1073,12 +1157,14 @@ fn parse_composite(
                         name: member_name.clone(),
                         signal: Signal::BeginField,
                         encoding: encoding.clone(),
+                        span: None,
                     });
                     composite_tokens.push(Token {
                         id: None,
                         name: member_name.clone(),
                         signal: Signal::EndField,
                         encoding: Encoding::default(),
+                        span: None,
                     });
                 }
             } else {
@@ -1091,18 +1177,20 @@ fn parse_composite(
                     name: member_name.clone(),
                     signal: Signal::BeginField,
                     encoding: encoding.clone(),
+                    span: None,
                 });
                 composite_tokens.push(Token {
                     id: None,
                     name: member_name.clone(),
                     signal: Signal::EndField,
                     encoding: Encoding::default(),
+                    span: None,
                 });
             }
         }
     }
 
-    composite_tokens.push(structural(&name, Signal::EndComposite));
+    composite_tokens.push(structural(&name, Signal::EndComposite, Some(node.range())));
 
     registry
         .registry
@@ -1161,6 +1249,7 @@ fn parse_enum(
             semantic_type,
             ..Encoding::default()
         },
+        span: None,
     });
 
     // Resolve null sentinel for the enum's encoding type (sbe-tool: valid values
@@ -1266,11 +1355,12 @@ fn parse_enum(
                     description: collect_description(child),
                     ..Encoding::default()
                 },
+                span: None,
             });
         }
     }
 
-    enum_tokens.push(structural(&name, Signal::EndEnum));
+    enum_tokens.push(structural(&name, Signal::EndEnum, Some(node.range())));
 
     registry.registry.insert(name, enum_tokens.clone());
     tokens.extend(enum_tokens);
@@ -1321,6 +1411,7 @@ fn parse_set(
             description: collect_description(node),
             ..Encoding::default()
         },
+        span: None,
     });
 
     let mut seen_choice_names = HashSet::new();
@@ -1379,11 +1470,12 @@ fn parse_set(
                     description: collect_description(child),
                     ..Encoding::default()
                 },
+                span: None,
             });
         }
     }
 
-    set_tokens.push(structural(&name, Signal::EndSet));
+    set_tokens.push(structural(&name, Signal::EndSet, Some(node.range())));
 
     registry.registry.insert(name, set_tokens.clone());
     tokens.extend(set_tokens);
@@ -1425,6 +1517,7 @@ fn parse_message(
             offset: block_length.map(|b| b as usize),
             ..Encoding::default()
         },
+        span: None,
     });
 
     // Gap 3: pre-populate seen_ids with the header type's field IDs so that
@@ -1492,7 +1585,7 @@ fn parse_message(
         }
     }
 
-    tokens.push(structural(&name, Signal::EndMessage));
+    tokens.push(structural(&name, Signal::EndMessage, Some(node.range())));
     Ok(())
 }
 
@@ -1602,7 +1695,7 @@ fn parse_message_child(
             };
 
             if let Some(resolved) =
-                resolve_type_to_tokens(&field_name, &type_name, Some(id), registry, since_version)
+                resolve_type_to_tokens(&field_name, &type_name, Some(id), registry, since_version, Some(node.range()))
             {
                 let mut inlined = resolved;
                 if let Some(first) = inlined.first_mut() {
@@ -1652,6 +1745,7 @@ fn parse_message_child(
                     offset: group_block_length,
                     ..Encoding::default()
                 },
+                span: None,
             });
 
             if let Some(dim_tokens) = registry.registry.get(dimension_type) {
@@ -1678,7 +1772,7 @@ fn parse_message_child(
                 parse_message_child(child, registry, tokens)?;
             }
 
-            tokens.push(structural(&group_name, Signal::EndGroup));
+            tokens.push(structural(&group_name, Signal::EndGroup, Some(node.range())));
         }
         "data" => {
             let data_name = string_attr(node, "name", "data @name")?;
@@ -1709,6 +1803,7 @@ fn parse_message_child(
                     description: collect_description(node),
                     ..Encoding::default()
                 },
+                span: None,
             });
 
             if let Some(type_tokens) = registry.registry.get(type_name) {
@@ -1800,7 +1895,7 @@ fn parse_message_child(
                 return Err(Fault::invalid(node, "data type", type_name));
             }
 
-            tokens.push(structural(&data_name, Signal::EndVarData));
+            tokens.push(structural(&data_name, Signal::EndVarData, Some(node.range())));
         }
         other => {
             return Err(Fault::invalid(
@@ -1814,12 +1909,13 @@ fn parse_message_child(
 }
 
 /// Construct a structural token (no wire encoding).
-fn structural(name: &str, signal: Signal) -> Token {
+fn structural(name: &str, signal: Signal, span: Option<std::ops::Range<usize>>) -> Token {
     Token {
         id: None,
         name: name.to_string(),
         signal,
         encoding: Encoding::default(),
+        span,
     }
 }
 
@@ -2556,7 +2652,7 @@ mod tests {
                 ..Encoding::default()
             },
         );
-        let result = resolve_type_to_tokens("f", "myType", Some(1), &registry, 5);
+        let result = resolve_type_to_tokens("f", "myType", Some(1), &registry, 5, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap()[0].encoding.since_version, 5);
 
@@ -2605,6 +2701,7 @@ mod tests {
                 name: "C".into(),
                 signal: Signal::BeginComposite,
                 encoding: Encoding::default(),
+                span: None,
             },
             Token {
                 id: None,
@@ -2616,18 +2713,21 @@ mod tests {
                     presence: Presence::Required,
                     ..Encoding::default()
                 },
+                span: None,
             },
             Token {
                 id: None,
                 name: "x".into(),
                 signal: Signal::EndField,
                 encoding: Encoding::default(),
+                span: None,
             },
             Token {
                 id: None,
                 name: "C".into(),
                 signal: Signal::EndComposite,
                 encoding: Encoding::default(),
+                span: None,
             },
         ];
         registry.registry.insert("C".into(), ct);
@@ -2641,6 +2741,7 @@ mod tests {
                 primitive_type: Some(PrimitiveType::UInt8),
                 ..Encoding::default()
             },
+            span: None,
         }];
         registry.registry.insert("E".into(), et);
         assert_eq!(compute_type_size("E", &registry), Some(1));
@@ -2653,6 +2754,7 @@ mod tests {
                 primitive_type: Some(PrimitiveType::UInt16),
                 ..Encoding::default()
             },
+            span: None,
         }];
         registry.registry.insert("S".into(), st);
         assert_eq!(compute_type_size("S", &registry), Some(2));
@@ -2989,6 +3091,7 @@ mod tests {
                 name: "C".into(),
                 signal: Signal::BeginComposite,
                 encoding: Encoding::default(),
+                span: None,
             },
             Token {
                 id: None,
@@ -3000,12 +3103,14 @@ mod tests {
                     presence: Presence::Required,
                     ..Encoding::default()
                 },
+                span: None,
             },
             Token {
                 id: None,
                 name: "arr".into(),
                 signal: Signal::EndField,
                 encoding: Encoding::default(),
+                span: None,
             },
             Token {
                 id: None,
@@ -3017,18 +3122,21 @@ mod tests {
                     presence: Presence::Constant,
                     ..Encoding::default()
                 },
+                span: None,
             },
             Token {
                 id: None,
                 name: "c".into(),
                 signal: Signal::EndField,
                 encoding: Encoding::default(),
+                span: None,
             },
             Token {
                 id: None,
                 name: "C".into(),
                 signal: Signal::EndComposite,
                 encoding: Encoding::default(),
+                span: None,
             },
         ];
         registry.registry.insert("C".into(), ct);
@@ -3045,6 +3153,7 @@ mod tests {
             name: "X".into(),
             signal: Signal::Encoding,
             encoding: Encoding::default(),
+            span: None,
         }];
         registry.registry.insert("X".into(), tokens);
         assert_eq!(compute_type_size("X", &registry), None);
@@ -3107,6 +3216,7 @@ mod tests {
             name: name.to_string(),
             signal,
             encoding: Encoding::default(),
+            span: None,
         }
     }
 
@@ -3129,12 +3239,14 @@ mod tests {
                 name: name.to_string(),
                 signal: Signal::BeginField,
                 encoding,
+                span: None,
             },
             Token {
                 id: None,
                 name: name.to_string(),
                 signal: Signal::EndField,
                 encoding: Encoding::default(),
+                span: None,
             },
         ]
     }
@@ -3178,6 +3290,7 @@ mod tests {
                 semantic_type: Some(String::new()),
                 ..Encoding::default()
             },
+            span: None,
         });
         expected.extend(field(
             "serialNumber",
@@ -3201,7 +3314,13 @@ mod tests {
         };
         crate::resolve::resolve_schema(&mut expected_ir, None).unwrap();
 
-        assert_eq!(ir.tokens, expected_ir.tokens);
+        // Normalise spans — parsed tokens carry real source locations but
+        // expected tokens are hand-built with `None`.
+        let mut actual_tokens = ir.tokens;
+        for t in &mut actual_tokens {
+            t.span = None;
+        }
+        assert_eq!(actual_tokens, expected_ir.tokens);
 
         Ok(())
     }
@@ -3314,6 +3433,52 @@ mod tests {
         assert!(
             ir.tokens.iter().any(|t| t.name == "varDataEncoding"),
             "expected varDataEncoding from included common-types.xml"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_with_shared_resolves_types_without_include() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let common = parse(
+            r#"<?xml version="1.0"?>
+<messageSchema package="common" id="0" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="Price">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8"/>
+    </composite>
+  </types>
+</messageSchema>"#,
+        )
+        .unwrap();
+
+        // No <types> or <include> of common-types.xml here — both messageHeader
+        // and Price must resolve from `common`'s seeded registry.
+        let orders = parse_with_shared(
+            r#"<?xml version="1.0"?>
+<messageSchema package="orders" id="1" version="1" byteOrder="littleEndian"
+               headerType="messageHeader">
+  <message name="NewOrder" id="1">
+    <field name="price" id="1" type="Price"/>
+  </message>
+</messageSchema>"#,
+            &common,
+        )?;
+
+        assert!(
+            orders
+                .tokens
+                .iter()
+                .any(|t| t.name == "price" && t.signal == Signal::BeginField),
+            "expected `price` field resolved from the shared `Price` composite"
         );
 
         Ok(())

@@ -1,0 +1,338 @@
+version = 1
+
+# Every checked-in official sbe-tool Rust crate has an exact-encoding oracle,
+# an independent cross-decoder, and an explicit byte-order oracle. Tests shared
+# by all cases iterate the full reference inventory rather than silently
+# blessing only one schema.
+
+[[case]]
+key = "all_types_be"
+exact_encode = ["all_types_be_big_endian"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "all_types_le"
+exact_encode = ["all_types_le_uint16_var_data_and_scalars"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "baseline"
+exact_encode = ["baseline_car_empty_and_minimal", "full_car_ergo_matches_sbe_tool_bytes"]
+cross_decode = ["dual_encode_matches_java_and_cross_decodes"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "basic_group"
+exact_encode = ["basic_group_counts_and_symbols"]
+cross_decode = ["dual_decode_group_cross_roundtrip"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "basic_schema"
+exact_encode = ["basic_schema_fixed_scalar_matrix"]
+cross_decode = ["dual_decode_basic_schema_scalar_roundtrip"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "basic_types"
+exact_encode = ["basic_types_message1"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "basic_var_length"
+exact_encode = ["basic_var_length_passwords"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "bench_car"
+exact_encode = ["bench_car_empty"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "bigendian"
+exact_encode = ["bigendian_car_empty"]
+cross_decode = ["bigendian_car_empty"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "block_length"
+exact_encode = [
+    "block_length_message4_var_data",
+    "block_length_no_block_length_message1",
+    "block_length_on_message2",
+    "block_length_on_group_message3",
+]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "code_generation"
+exact_encode = ["code_generation_car"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "composite_elements"
+exact_encode = ["composite_elements_structure_variants"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "constant_header"
+exact_encode = ["constant_schema_id_header_is_byte_identical_and_cross_decodable"]
+cross_decode = ["constant_schema_id_header_is_byte_identical_and_cross_decodable"]
+endian = ["constant_schema_id_header_is_byte_identical_and_cross_decodable"]
+versioning = []
+
+[[case]]
+key = "custom_header_layout"
+exact_encode = ["custom_message_header_layout_is_byte_identical_and_cross_decodable"]
+cross_decode = ["custom_message_header_layout_is_byte_identical_and_cross_decodable"]
+endian = ["custom_message_header_layout_is_byte_identical_and_cross_decodable"]
+versioning = []
+
+[[case]]
+key = "custom_header_layout_be"
+exact_encode = ["custom_big_endian_message_header_layout_is_byte_identical_and_cross_decodable"]
+cross_decode = ["custom_big_endian_message_header_layout_is_byte_identical_and_cross_decodable"]
+endian = ["custom_big_endian_message_header_layout_is_byte_identical_and_cross_decodable"]
+versioning = []
+
+[[case]]
+key = "dto_test"
+exact_encode = ["dto_test_car"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "embedded_length"
+exact_encode = ["embedded_length_message2", "embedded_length_group_with_dimension_message1"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "encoding_types"
+exact_encode = ["encoding_types_message1"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "extension"
+exact_encode = ["extension_car_empty", "extension_car_versioned_fields"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = ["extension_car_versioned_fields"]
+
+[[case]]
+key = "fix_messages"
+exact_encode = ["all_reference_message_headers_follow_schema_byte_order"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "fixed_array"
+exact_encode = ["fixed_array_u8_and_i8_patterns", "fixed_array_multibyte_types"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "group_with_data"
+exact_encode = [
+    "group_with_data_message1",
+    "group_with_data_multi_var_data_message2",
+    "group_with_data_nested_group_message3",
+    "group_with_data_var_data_only_message4",
+]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue1028"
+exact_encode = ["issue1028_execution_report"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue1057"
+exact_encode = ["issue1057_execution_report"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue1066"
+exact_encode = ["issue1066_optional_field"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue435"
+exact_encode = ["issue435_set_ref_in_header"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue895"
+exact_encode = ["issue895_optional_floats", "float_wire_bits_match_sbe_tool_for_all_ieee_classes"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue972"
+exact_encode = ["issue972_optional_composite"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue984"
+exact_encode = ["issue984_group_fixed_strings"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue987"
+exact_encode = ["issue987_composite_field"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "nested_composite"
+exact_encode = ["nested_composite_ref_field"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "nested_group"
+exact_encode = ["nested_group_depth_matrix"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "new_order_single"
+exact_encode = ["new_order_single_payload"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "optional_enum_nullify"
+exact_encode = ["optional_enum_nullify_values"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "small_header"
+exact_encode = ["small_width_message_header_is_byte_identical_and_cross_decodable"]
+cross_decode = ["small_width_message_header_is_byte_identical_and_cross_decodable"]
+endian = ["small_width_message_header_is_byte_identical_and_cross_decodable"]
+versioning = []
+
+[[case]]
+key = "uint64_vardata_be"
+exact_encode = ["uint64_var_data_length_is_byte_identical_and_cross_decodable"]
+cross_decode = ["uint64_var_data_length_is_byte_identical_and_cross_decodable"]
+endian = ["uint64_var_data_length_is_byte_identical_and_cross_decodable"]
+versioning = []
+
+[[case]]
+key = "value_ref"
+exact_encode = ["value_ref_constant_messages"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[feature]]
+name = "big_endian"
+tests = ["all_types_be_big_endian", "bigendian_car_empty"]
+
+[[feature]]
+name = "custom_headers"
+tests = [
+    "custom_message_header_layout_is_byte_identical_and_cross_decodable",
+    "custom_big_endian_message_header_layout_is_byte_identical_and_cross_decodable",
+    "small_width_message_header_is_byte_identical_and_cross_decodable",
+]
+
+[[feature]]
+name = "dimension_u8_u16_u32"
+tests = ["dimension_composites_are_byte_exact_for_u8_u16_u32_and_both_endians"]
+
+[[feature]]
+name = "exhaustive_truncation"
+tests = ["every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data"]
+
+[[feature]]
+name = "explicit_implicit_offsets"
+tests = ["explicit_implicit_offsets_and_derived_block_lengths_are_byte_exact"]
+
+[[feature]]
+name = "fixed_arrays"
+tests = ["fixed_array_u8_and_i8_patterns", "fixed_array_multibyte_types"]
+
+[[feature]]
+name = "float_wire_bits"
+tests = ["float_wire_bits_match_sbe_tool_for_all_ieee_classes"]
+
+[[feature]]
+name = "groups"
+tests = ["basic_group_counts_and_symbols", "group_with_data_message1"]
+
+[[feature]]
+name = "name_collisions"
+tests = ["name_collisions_compile_execute_and_preserve_wire_bytes"]
+
+[[feature]]
+name = "nested_groups"
+tests = ["nested_group_depth_matrix", "group_with_data_nested_group_message3"]
+
+[[feature]]
+name = "schema_versioning"
+tests = [
+    "extension_car_versioned_fields",
+    "backward_compat_v1_decoder_reads_v2_bytes",
+    "forward_compat_v2_decoder_reads_v1_bytes",
+]
+
+[[feature]]
+name = "var_data"
+tests = [
+    "basic_var_length_passwords",
+    "uint64_var_data_length_is_byte_identical_and_cross_decodable",
+]
+
+[[feature]]
+name = "write_offsets_and_canaries"
+tests = ["message_offsets_0_through_63_preserve_prefix_and_suffix_canaries"]

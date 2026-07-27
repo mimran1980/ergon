@@ -28,6 +28,12 @@ ergo_sbe::sbe_mod!(pub ergo_car = "car_bench");
 ergo_sbe::sbe_mod!(pub large_comp = "large_comp_bench");
 // Same shape, big-endian body — for encode LE vs BE cost.
 ergo_sbe::sbe_mod!(pub large_comp_be = "large_comp_be_bench");
+// LE payload/operation benchmark matrix, including owned DTOs.
+ergo_sbe::sbe_mod!(pub codec_matrix = "codec_matrix_bench");
+// BE fixed-block benchmark probe.
+ergo_sbe::sbe_mod!(pub codec_matrix_be = "codec_matrix_be_bench");
+// Custom-header fixed-block benchmark probe.
+ergo_sbe::sbe_mod!(pub codec_matrix_custom_header = "codec_matrix_custom_header_bench");
 /// sbe-tool-generated Car codec (checked in, stable reference).
 pub mod sbe_tool_car {
     include!("sbe_tool_car_patched.rs");

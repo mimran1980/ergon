@@ -178,11 +178,31 @@ pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
     _compile_and_run(module_name, source, code, &[], "");
 }
 
-/// Negative-proof helper: write generated source + a `main()` body into a temp
-/// crate and assert that it FAILS to compile. Used for compile-fail API proofs
-/// (DECISIONS.md §11 /): out-of-order tail access, reused consumed
-/// stages, etc. `code` is placed directly inside `main()`.
-pub fn compile_fails(module_name: &str, source: &str, code: &str) {
+/// Like [`compile_and_run`] but appends `deps` to `[dependencies]` in the
+/// temp crate's `Cargo.toml` (e.g. `"chrono = \"0.4\"\n"`).
+pub fn compile_and_run_with_deps(
+    module_name: &str,
+    source: &str,
+    code: &str,
+    deps: &str,
+) {
+    _compile_and_run(module_name, source, code, &[], deps);
+}
+
+/// Diagnostic-checked negative proof: write generated source + a `main()` body
+/// into a temp crate and require both a compile failure and every supplied
+/// diagnostic fragment. This prevents an unrelated syntax/import error from
+/// making a UI contract test pass accidentally.
+pub fn compile_fails_with_diagnostics(
+    module_name: &str,
+    source: &str,
+    code: &str,
+    expected_diagnostics: &[&str],
+) {
+    assert!(
+        !expected_diagnostics.is_empty(),
+        "compile-fail test {module_name} must name its intended diagnostic"
+    );
     let dir = std::env::temp_dir().join(format!("ergo_test_cf_{module_name}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -215,11 +235,15 @@ pub fn compile_fails(module_name: &str, source: &str, code: &str) {
 
     if out.status.success() {
         panic!(
-            "compile_fails {module_name}: expected a compile error, but the crate built successfully.\nstderr:\n{stderr}"
+            "compile_fails_with_diagnostics {module_name}: expected a compile error, but the crate built successfully.\nstderr:\n{stderr}"
         );
     }
-    // Keep stderr reachable for diagnostics via the returned-into-owned value above;
-    // callers may extend this to assert specific error text.
+    for expected in expected_diagnostics {
+        assert!(
+            stderr.contains(expected),
+            "compile-fail {module_name} failed for the wrong reason: missing diagnostic fragment {expected:?}\nstderr:\n{stderr}"
+        );
+    }
 }
 
 /// Like `compile_and_run` but adds the given feature to `[features]` in the

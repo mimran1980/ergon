@@ -2039,8 +2039,8 @@ impl<'a> FuelFiguresDecoder<'a> {
         if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
-                needed: n * Self::ENTRY_BLOCK_LENGTH,
-                available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                needed: n.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                available: self.count.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
             });
         }
         for _ in 0..n {
@@ -2186,6 +2186,13 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+        if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "group entry",
+                needed: self.acting_block_length,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
         Ok(self.pos + self.acting_block_length)
     }
     #[inline]
@@ -2212,6 +2219,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     }
     #[inline]
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        if let Some(end) = self.tail_end.get() {
+            let data_offset = self.pos + self.acting_block_length + 4;
+            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+        }
         let offset = self.tail_offset_0()?;
         if let Some(end) = self.tail_end.get() {
             let data_offset = offset
@@ -2554,8 +2565,8 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
-                needed: n * Self::ENTRY_BLOCK_LENGTH,
-                available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                needed: n.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                available: self.count.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
             });
         }
         for _ in 0..n {
@@ -2683,6 +2694,13 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const OCTANE_RATING_MAX: u8 = 110_u8;
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+        if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "group entry",
+                needed: self.acting_block_length,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
         Ok(self.pos + self.acting_block_length)
     }
     #[inline]
@@ -2716,6 +2734,16 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub fn acceleration(
         &self,
     ) -> Result<PerformanceFiguresAccelerationDecoder<'a>, sbe_rt::DecodeError> {
+        if self.tail_end.get().is_some() {
+            let offset = self.pos + self.acting_block_length;
+            return Ok(PerformanceFiguresAccelerationDecoder::wrap_trusted(
+                self.buf,
+                offset,
+                self.acting_version,
+                0,
+                0,
+            ));
+        }
         let offset = self.tail_offset_0()?;
         if self.tail_end.get().is_some() {
             return Ok(PerformanceFiguresAccelerationDecoder::wrap_trusted(
@@ -2887,11 +2915,11 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
-                needed: n * self.acting_block_length,
-                available: self.count * self.acting_block_length,
+                needed: n.saturating_mul(self.acting_block_length),
+                available: self.count.saturating_mul(self.acting_block_length),
             });
         }
-        self.pos += n * self.acting_block_length;
+        self.pos += n.saturating_mul(self.acting_block_length);
         self.count -= n;
         Ok(())
     }
@@ -3029,6 +3057,13 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+        if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "group entry",
+                needed: self.acting_block_length,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
         Ok(self.pos + self.acting_block_length)
     }
     #[inline]
@@ -3042,6 +3077,13 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         block_len: usize,
         _acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
+        if block_len > buf.len().saturating_sub(pos) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "group entry",
+                needed: block_len,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
         Ok(pos + block_len)
     }
 }
@@ -6431,15 +6473,319 @@ pub const SCHEMA_SHA256: [u8; 32] = [
 ];
 pub const SCHEMA_SHA256_HEX: &str =
     "2495bff8729099272fbd82b5c1ba60c6fe51b20f36e55a020a42f4d4a4883680";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MessageDescriptor {
+    pub schema_id: u16,
+    pub template_id: u16,
+    pub name: &'static str,
+    pub since_version: u16,
+    pub block_length: usize,
+    pub semantic_type: Option<&'static str>,
+    pub description: Option<&'static str>,
+    pub fields: &'static [FieldDescriptor],
+    pub groups: &'static [GroupDescriptor],
+    pub var_data: &'static [VarDataDescriptor],
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldDescriptor {
+    pub name: &'static str,
+    pub id: u16,
+    pub offset: usize,
+    pub encoded_length: usize,
+    pub field_type: &'static str,
+    pub presence: &'static str,
+    pub since_version: u16,
+    pub semantic_type: Option<&'static str>,
+    pub description: Option<&'static str>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroupDescriptor {
+    pub name: &'static str,
+    pub id: u16,
+    pub since_version: u16,
+    pub dimension_type: &'static str,
+    pub block_length: usize,
+    pub fields: &'static [FieldDescriptor],
+    pub groups: &'static [GroupDescriptor],
+    pub var_data: &'static [VarDataDescriptor],
+    pub description: Option<&'static str>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VarDataDescriptor {
+    pub name: &'static str,
+    pub id: u16,
+    pub since_version: u16,
+    pub length_type: &'static str,
+    pub character_encoding: Option<&'static str>,
+    pub maximum: Option<usize>,
+    pub description: Option<&'static str>,
+}
+const __CAR_FUEL_FIGURES_FIELDS: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        name: "speed",
+        id: 11u16,
+        offset: 0usize,
+        encoded_length: 2usize,
+        field_type: "u16",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "mpg",
+        id: 12u16,
+        offset: 2usize,
+        encoded_length: 4usize,
+        field_type: "f32",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+];
+const __CAR_FUEL_FIGURES_GROUPS: &[GroupDescriptor] = &[];
+const __CAR_FUEL_FIGURES_VAR_DATA: &[VarDataDescriptor] = &[VarDataDescriptor {
+    name: "usageDescription",
+    id: 200u16,
+    since_version: 0u16,
+    length_type: "u32",
+    character_encoding: Some("ASCII"),
+    maximum: Some(1073741824usize),
+    description: None,
+}];
+const __CAR_PERFORMANCE_FIGURES_ACCELERATION_FIELDS: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        name: "mph",
+        id: 16u16,
+        offset: 0usize,
+        encoded_length: 2usize,
+        field_type: "u16",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "seconds",
+        id: 17u16,
+        offset: 2usize,
+        encoded_length: 4usize,
+        field_type: "f32",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+];
+const __CAR_PERFORMANCE_FIGURES_ACCELERATION_GROUPS: &[GroupDescriptor] = &[];
+const __CAR_PERFORMANCE_FIGURES_ACCELERATION_VAR_DATA: &[VarDataDescriptor] = &[];
+const __CAR_PERFORMANCE_FIGURES_FIELDS: &[FieldDescriptor] = &[FieldDescriptor {
+    name: "octaneRating",
+    id: 14u16,
+    offset: 0usize,
+    encoded_length: 1usize,
+    field_type: "u8",
+    presence: "required",
+    since_version: 0u16,
+    semantic_type: None,
+    description: None,
+}];
+const __CAR_PERFORMANCE_FIGURES_GROUPS: &[GroupDescriptor] = &[GroupDescriptor {
+    name: "acceleration",
+    id: 15u16,
+    since_version: 0u16,
+    dimension_type: "groupSizeEncoding",
+    block_length: 6usize,
+    fields: __CAR_PERFORMANCE_FIGURES_ACCELERATION_FIELDS,
+    groups: __CAR_PERFORMANCE_FIGURES_ACCELERATION_GROUPS,
+    var_data: __CAR_PERFORMANCE_FIGURES_ACCELERATION_VAR_DATA,
+    description: None,
+}];
+const __CAR_PERFORMANCE_FIGURES_VAR_DATA: &[VarDataDescriptor] = &[];
+const __CAR_MESSAGE_FIELDS: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        name: "serialNumber",
+        id: 1u16,
+        offset: 0usize,
+        encoded_length: 8usize,
+        field_type: "u64",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "modelYear",
+        id: 2u16,
+        offset: 8usize,
+        encoded_length: 2usize,
+        field_type: "u16",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "available",
+        id: 3u16,
+        offset: 10usize,
+        encoded_length: 1usize,
+        field_type: "BooleanType",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "code",
+        id: 4u16,
+        offset: 11usize,
+        encoded_length: 1usize,
+        field_type: "Model",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "someNumbers",
+        id: 5u16,
+        offset: 12usize,
+        encoded_length: 16usize,
+        field_type: "u32",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "vehicleCode",
+        id: 6u16,
+        offset: 28usize,
+        encoded_length: 6usize,
+        field_type: "u8",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "extras",
+        id: 7u16,
+        offset: 34usize,
+        encoded_length: 1usize,
+        field_type: "OptionalExtras",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "discountedModel",
+        id: 8u16,
+        offset: 35usize,
+        encoded_length: 1usize,
+        field_type: "Model",
+        presence: "constant",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+    FieldDescriptor {
+        name: "engine",
+        id: 9u16,
+        offset: 35usize,
+        encoded_length: 10usize,
+        field_type: "Engine",
+        presence: "required",
+        since_version: 0u16,
+        semantic_type: None,
+        description: None,
+    },
+];
+const __CAR_MESSAGE_GROUPS: &[GroupDescriptor] = &[
+    GroupDescriptor {
+        name: "fuelFigures",
+        id: 10u16,
+        since_version: 0u16,
+        dimension_type: "groupSizeEncoding",
+        block_length: 6usize,
+        fields: __CAR_FUEL_FIGURES_FIELDS,
+        groups: __CAR_FUEL_FIGURES_GROUPS,
+        var_data: __CAR_FUEL_FIGURES_VAR_DATA,
+        description: None,
+    },
+    GroupDescriptor {
+        name: "performanceFigures",
+        id: 13u16,
+        since_version: 0u16,
+        dimension_type: "groupSizeEncoding",
+        block_length: 1usize,
+        fields: __CAR_PERFORMANCE_FIGURES_FIELDS,
+        groups: __CAR_PERFORMANCE_FIGURES_GROUPS,
+        var_data: __CAR_PERFORMANCE_FIGURES_VAR_DATA,
+        description: None,
+    },
+];
+const __CAR_MESSAGE_VAR_DATA: &[VarDataDescriptor] = &[
+    VarDataDescriptor {
+        name: "manufacturer",
+        id: 18u16,
+        since_version: 0u16,
+        length_type: "u32",
+        character_encoding: Some("UTF-8"),
+        maximum: Some(1073741824usize),
+        description: None,
+    },
+    VarDataDescriptor {
+        name: "model",
+        id: 19u16,
+        since_version: 0u16,
+        length_type: "u32",
+        character_encoding: Some("UTF-8"),
+        maximum: Some(1073741824usize),
+        description: None,
+    },
+    VarDataDescriptor {
+        name: "activationCode",
+        id: 20u16,
+        since_version: 0u16,
+        length_type: "u32",
+        character_encoding: Some("ASCII"),
+        maximum: Some(1073741824usize),
+        description: None,
+    },
+];
+pub const MESSAGE_DESCRIPTORS: &[MessageDescriptor] = &[MessageDescriptor {
+    schema_id: CarDecoder::SCHEMA_ID,
+    template_id: CarDecoder::TEMPLATE_ID,
+    name: "Car",
+    since_version: 0u16,
+    block_length: CarDecoder::BLOCK_LENGTH,
+    semantic_type: None,
+    description: Some("Description of a basic Car"),
+    fields: __CAR_MESSAGE_FIELDS,
+    groups: __CAR_MESSAGE_GROUPS,
+    var_data: __CAR_MESSAGE_VAR_DATA,
+}];
+#[inline]
+pub fn message_descriptor(schema_id: u16, template_id: u16) -> Option<&'static MessageDescriptor> {
+    match (schema_id, template_id) {
+        (CarDecoder::SCHEMA_ID, CarDecoder::TEMPLATE_ID) => Some(&MESSAGE_DESCRIPTORS[0usize]),
+        _ => None,
+    }
+}
 pub const SCHEMA_ID: u16 = 1;
 pub const SCHEMA_VERSION: u16 = 0;
 pub mod prelude {
     pub use super::sbe_rt::{DecodeError, EncodeError, MetaAttribute, SbeMessage, VerifyError};
     pub use super::{
         AnyMessage, BooleanType, BoostType, Booster, BoosterDecoder, CarDecoder, CarEncoder,
-        DecodedFrame, Engine, EngineDecoder, FrameCursor, FramingPolicy, GroupSizeEncoding,
-        GroupSizeEncodingDecoder, MessageHeader, MessageHeaderDecoder, MessageVisitor, Model,
-        OptionalExtras, VarAsciiEncoding, VarAsciiEncodingDecoder, VarDataEncoding,
+        DecodedFrame, Engine, EngineDecoder, FieldDescriptor, FrameCursor, FramingPolicy,
+        GroupDescriptor, GroupSizeEncoding, GroupSizeEncodingDecoder, MessageDescriptor,
+        MessageHeader, MessageHeaderDecoder, MessageVisitor, Model, OptionalExtras,
+        VarAsciiEncoding, VarAsciiEncodingDecoder, VarDataDescriptor, VarDataEncoding,
         VarDataEncodingDecoder, VarStringEncoding, VarStringEncodingDecoder,
     };
 }
@@ -6610,7 +6956,7 @@ impl<'a> AnyMessage<'a> {
             });
         }
         match template_id {
-            1 => Ok(Self::Car(CarDecoder::wrap(
+            CarDecoder::TEMPLATE_ID => Ok(Self::Car(CarDecoder::wrap(
                 buf,
                 body_pos,
                 block_length,
@@ -6650,7 +6996,7 @@ impl<'a> AnyMessage<'a> {
             });
         }
         match template_id {
-            1 => {
+            CarDecoder::TEMPLATE_ID => {
                 let decoder = CarDecoder::wrap(buf, body_pos, block_length, version);
                 let total_len = decoder.encoded_length_with_header()?;
                 if total_len > frame_len {

@@ -766,6 +766,8 @@ impl Generator {
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
         write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
+        // 7.5. Generate allocation-free schema/message/member descriptors.
+        generate_static_metadata(&mut src, &messages, &elements);
         // 7.6. Generate prelude module — single import surface for users
         generate_prelude(&mut src, &elements, &messages, ir.id, ir.version);
         // 7.6b. Opt-in From<EncodeError/DecodeError> for user error type
@@ -3593,11 +3595,11 @@ fn generate_group_decoder(
                     if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: n * self.acting_block_length,
-                            available: self.count * self.acting_block_length,
+                            needed: n.saturating_mul(self.acting_block_length),
+                            available: self.count.saturating_mul(self.acting_block_length),
                         });
                     }
-                    self.pos += n * self.acting_block_length;
+                    self.pos += n.saturating_mul(self.acting_block_length);
                     self.count -= n;
                     Ok(())
                 }
@@ -3611,8 +3613,8 @@ fn generate_group_decoder(
                     if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: n * Self::ENTRY_BLOCK_LENGTH,
-                            available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                            needed: n.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                            available: self.count.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
                         });
                     }
                     for _ in 0..n {
@@ -4183,6 +4185,13 @@ fn generate_group_decoder(
     entry_body.extend(quote::quote! {
         #[inline]
         fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+            if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "group entry",
+                    needed: self.acting_block_length,
+                    available: self.buf.len().saturating_sub(self.pos),
+                });
+            }
             Ok(self.pos + self.acting_block_length)
         }
     });
@@ -4269,9 +4278,24 @@ fn generate_group_decoder(
         let ng_idx_lit = syn::LitInt::new(&ng_idx.to_string(), proc_macro2::Span::call_site());
 
         let tail_ng_fn = quote::format_ident!("tail_offset_{}", ng_idx);
+        let cached_first_tail = if ng_idx == 0 {
+            quote::quote! {
+                // `Iterator::next` cached the complete validated entry extent,
+                // so this first-tail offset cannot overflow or exceed `buf`.
+                if self.tail_end.get().is_some() {
+                    let offset = self.pos + self.acting_block_length;
+                    return Ok(#ng_decoder_ident::wrap_trusted(
+                        self.buf, offset, self.acting_version, 0, 0,
+                    ));
+                }
+            }
+        } else {
+            quote::quote! {}
+        };
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
+                #cached_first_tail
                 let offset = self.#tail_ng_fn()?;
                 if self.tail_end.get().is_some() {
                     return Ok(#ng_decoder_ident::wrap_trusted(
@@ -4295,12 +4319,26 @@ fn generate_group_decoder(
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
         if nvd_idx + 1 == total_tail {
+            let cached_first_tail = if nvd_idx == 0 {
+                quote::quote! {
+                    // `Iterator::next` cached the complete validated entry
+                    // extent, including this prefix and payload.
+                    if let Some(end) = self.tail_end.get() {
+                        let data_offset =
+                            self.pos + self.acting_block_length + #prefix_size_lit;
+                        return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+                    }
+                }
+            } else {
+                quote::quote! {}
+            };
             // Last tail component: a warm tail-end cache (filled by the
             // iterator's encoded_length) gives the slice end directly —
             // no second length-header read, bounds already validated.
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    #cached_first_tail
                     let offset = self.#tail_nvd_fn()?;
                     if let Some(end) = self.tail_end.get() {
                         let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
@@ -4364,6 +4402,13 @@ fn generate_group_decoder(
             }
             #[inline]
             pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+                if block_len > buf.len().saturating_sub(pos) {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "group entry",
+                        needed: block_len,
+                        available: buf.len().saturating_sub(pos),
+                    });
+                }
                 Ok(pos + block_len)
             }
         });
@@ -6551,9 +6596,31 @@ fn generate_message_encoder(
         });
     } else {
         ts.extend(quote::quote! {
+            impl<'a> #name_encoder_ident<'a> {
+                /// Returns the complete fixed-length SBE message bytes
+                /// (header + body).
+                #[inline]
+                pub fn as_bytes(&self) -> &[u8] {
+                    &self.buf[self.message_start..self.pos]
+                }
+                /// Explicit header-inclusive view (alias for `as_bytes()`).
+                #[inline]
+                pub fn as_bytes_with_header(&self) -> &[u8] {
+                    self.as_bytes()
+                }
+                #[inline]
+                pub fn encoded_length(&self) -> usize {
+                    self.pos - self.message_start - #header_size_lit
+                }
+                #[inline]
+                pub fn encoded_length_with_header(&self) -> usize {
+                    self.pos - self.message_start
+                }
+            }
+
             impl<'a> AsRef<[u8]> for #name_encoder_ident<'a> {
                 fn as_ref(&self) -> &[u8] {
-                    &self.buf[self.message_start..self.pos]
+                    self.as_bytes()
                 }
             }
         });
@@ -6661,6 +6728,7 @@ fn generate_group_encoder(
         ByteOrder::BigEndian => "be",
     };
     let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+    let (block_offset, block_size, block_prim) = get_dim_block_layout(elements, &g.dimension_type);
     let (_, _, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
     let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
@@ -6672,13 +6740,36 @@ fn generate_group_encoder(
     );
     let mut dim_storage = [0u8; 32];
     let dim_tpl = &mut dim_storage[..dim_size];
-    match byte_order {
-        ByteOrder::LittleEndian => {
-            dim_tpl[0..2].copy_from_slice(&(group_block_length as u16).to_le_bytes());
+    assert!(
+        block_offset
+            .checked_add(block_size)
+            .is_some_and(|end| end <= dim_size),
+        "group dimension blockLength is outside its composite"
+    );
+    match block_prim {
+        PrimitiveType::UInt8 => {
+            dim_tpl[block_offset] = u8::try_from(group_block_length)
+                .expect("group blockLength exceeds uint8 dimension field");
         }
-        ByteOrder::BigEndian => {
-            dim_tpl[0..2].copy_from_slice(&(group_block_length as u16).to_be_bytes());
+        PrimitiveType::UInt16 => {
+            let value = u16::try_from(group_block_length)
+                .expect("group blockLength exceeds uint16 dimension field");
+            let bytes = match byte_order {
+                ByteOrder::LittleEndian => value.to_le_bytes(),
+                ByteOrder::BigEndian => value.to_be_bytes(),
+            };
+            dim_tpl[block_offset..block_offset + 2].copy_from_slice(&bytes);
         }
+        PrimitiveType::UInt32 => {
+            let value = u32::try_from(group_block_length)
+                .expect("group blockLength exceeds uint32 dimension field");
+            let bytes = match byte_order {
+                ByteOrder::LittleEndian => value.to_le_bytes(),
+                ByteOrder::BigEndian => value.to_be_bytes(),
+            };
+            dim_tpl[block_offset..block_offset + 4].copy_from_slice(&bytes);
+        }
+        _ => panic!("group dimension blockLength must use an unsigned integer type"),
     }
 
     let span = proc_macro2::Span::call_site();
@@ -7247,6 +7338,7 @@ mod tests {
             name: String::new(),
             signal,
             encoding: Encoding::default(),
+            span: None,
         }
     }
 

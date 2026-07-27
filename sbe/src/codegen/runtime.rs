@@ -1460,9 +1460,13 @@ pub(crate) fn generate_prelude(
     for ty in &[
         "AnyMessage",
         "DecodedFrame",
+        "FieldDescriptor",
         "FrameCursor",
         "FramingPolicy",
+        "GroupDescriptor",
+        "MessageDescriptor",
         "MessageVisitor",
+        "VarDataDescriptor",
     ] {
         writeln!(src, "        {ty},").unwrap();
     }
@@ -1786,9 +1790,10 @@ pub(crate) fn generate_any_message(
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
-            let id = syn::LitInt::new(&m.id.to_string(), span);
             decode_arms.extend(quote::quote! {
-                #id => Ok(Self::#name(#decoder::wrap(buf, body_pos, block_length, version))),
+                #decoder::TEMPLATE_ID => {
+                    Ok(Self::#name(#decoder::wrap(buf, body_pos, block_length, version)))
+                }
             });
         }
 
@@ -1839,10 +1844,9 @@ pub(crate) fn generate_any_message(
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
-            let id = syn::LitInt::new(&m.id.to_string(), span);
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
-                #id => {
+                #decoder::TEMPLATE_ID => {
                     let decoder = #decoder::wrap(buf, body_pos, block_length, version);
                     let total_len = decoder.encoded_length_with_header()?;
                     if total_len > frame_len {
@@ -2325,6 +2329,279 @@ pub(crate) fn generate_message_field_meta(src: &mut String, msg: &MessageStructu
             pub const FIELDS: &[FieldInfo] = &[
                 #(#fields)*
             ];
+        }
+    };
+
+    let formatted = syn::parse_str::<syn::File>(&tokens.to_string())
+        .map(|file| prettyplease::unparse(&file))
+        .unwrap_or_else(|_| tokens.to_string());
+    src.push_str(&formatted);
+    src.push('\n');
+}
+
+fn static_option_str(value: Option<&str>) -> proc_macro2::TokenStream {
+    value.map_or_else(
+        || quote::quote! { None },
+        |value| {
+            let value = syn::LitStr::new(value, proc_macro2::Span::call_site());
+            quote::quote! { Some(#value) }
+        },
+    )
+}
+
+fn static_field_descriptors(fields: &[MessageField]) -> Vec<proc_macro2::TokenStream> {
+    fields
+        .iter()
+        .map(|field| {
+            let name = syn::LitStr::new(&field.name, proc_macro2::Span::call_site());
+            let id = field.id.unwrap_or(0);
+            let offset = field.offset;
+            let encoded_length = field.field_type.size();
+            let since_version = field.since_version;
+            let field_type = match &field.field_type {
+                FieldType::Primitive(primitive, _) => rust_type(*primitive).to_string(),
+                FieldType::Composite { name, .. }
+                | FieldType::Enum { name, .. }
+                | FieldType::Set { name, .. } => to_pascal_case(name),
+            };
+            let field_type = syn::LitStr::new(&field_type, proc_macro2::Span::call_site());
+            let presence = match field.presence {
+                Presence::Required => "required",
+                Presence::Optional => "optional",
+                Presence::Constant => "constant",
+            };
+            let presence = syn::LitStr::new(presence, proc_macro2::Span::call_site());
+            let semantic_type = static_option_str(field.semantic_type.as_deref());
+            let description = static_option_str(field.description.as_deref());
+
+            quote::quote! {
+                FieldDescriptor {
+                    name: #name,
+                    id: #id,
+                    offset: #offset,
+                    encoded_length: #encoded_length,
+                    field_type: #field_type,
+                    presence: #presence,
+                    since_version: #since_version,
+                    semantic_type: #semantic_type,
+                    description: #description,
+                }
+            }
+        })
+        .collect()
+}
+
+fn static_var_data_descriptors(
+    var_data: &[MessageVarData],
+    elements: &SchemaElements,
+) -> Vec<proc_macro2::TokenStream> {
+    var_data
+        .iter()
+        .map(|data| {
+            let name = syn::LitStr::new(&data.name, proc_macro2::Span::call_site());
+            let id = data.id;
+            let since_version = data.since_version;
+            let (_, _, _, length_primitive) = get_vardata_info(elements, &data.type_name);
+            let length_type =
+                syn::LitStr::new(rust_type(length_primitive), proc_macro2::Span::call_site());
+            let character_encoding = static_option_str(data.character_encoding.as_deref());
+            let maximum = data.max_length.map_or_else(
+                || quote::quote! { None },
+                |maximum| quote::quote! { Some(#maximum) },
+            );
+            let description = static_option_str(data.description.as_deref());
+
+            quote::quote! {
+                VarDataDescriptor {
+                    name: #name,
+                    id: #id,
+                    since_version: #since_version,
+                    length_type: #length_type,
+                    character_encoding: #character_encoding,
+                    maximum: #maximum,
+                    description: #description,
+                }
+            }
+        })
+        .collect()
+}
+
+fn static_group_descriptor(
+    definitions: &mut proc_macro2::TokenStream,
+    group: &MessageGroup,
+    elements: &SchemaElements,
+    path: &str,
+) -> proc_macro2::TokenStream {
+    let path = path.to_ascii_uppercase();
+    let fields_ident = format_ident!("__{}_FIELDS", path);
+    let groups_ident = format_ident!("__{}_GROUPS", path);
+    let var_data_ident = format_ident!("__{}_VAR_DATA", path);
+    let fields = static_field_descriptors(&group.fields);
+    let var_data = static_var_data_descriptors(&group.var_data, elements);
+    let nested_groups: Vec<_> = group
+        .groups
+        .iter()
+        .map(|nested| {
+            let nested_path = format!("{path}_{}", to_snake_case(&nested.name));
+            static_group_descriptor(definitions, nested, elements, &nested_path)
+        })
+        .collect();
+
+    definitions.extend(quote::quote! {
+        const #fields_ident: &[FieldDescriptor] = &[#(#fields),*];
+        const #groups_ident: &[GroupDescriptor] = &[#(#nested_groups),*];
+        const #var_data_ident: &[VarDataDescriptor] = &[#(#var_data),*];
+    });
+
+    let name = syn::LitStr::new(&group.name, proc_macro2::Span::call_site());
+    let id = group.id;
+    let since_version = group.since_version;
+    let dimension_type = syn::LitStr::new(&group.dimension_type, proc_macro2::Span::call_site());
+    let block_length = group.effective_block_length();
+    let description = static_option_str(group.description.as_deref());
+
+    quote::quote! {
+        GroupDescriptor {
+            name: #name,
+            id: #id,
+            since_version: #since_version,
+            dimension_type: #dimension_type,
+            block_length: #block_length,
+            fields: #fields_ident,
+            groups: #groups_ident,
+            var_data: #var_data_ident,
+            description: #description,
+        }
+    }
+}
+
+/// Generate a schema-local, allocation-free metadata registry.
+///
+/// The registry is keyed by `(schema_id, template_id)` and all values are
+/// compile-time slices. Message identities refer to the decoder constants also
+/// used by `AnyMessage`, preventing dispatch and reflection metadata drift.
+pub(crate) fn generate_static_metadata(
+    src: &mut String,
+    messages: &[MessageStructure],
+    elements: &SchemaElements,
+) {
+    let mut definitions = proc_macro2::TokenStream::new();
+    let mut message_descriptors = Vec::new();
+    let mut lookup_arms = Vec::new();
+
+    for (index, message) in messages.iter().enumerate() {
+        let path = to_snake_case(&message.name);
+        let upper_path = path.to_ascii_uppercase();
+        let fields_ident = format_ident!("__{}_MESSAGE_FIELDS", upper_path);
+        let groups_ident = format_ident!("__{}_MESSAGE_GROUPS", upper_path);
+        let var_data_ident = format_ident!("__{}_MESSAGE_VAR_DATA", upper_path);
+        let fields = static_field_descriptors(&message.fields);
+        let var_data = static_var_data_descriptors(&message.var_data, elements);
+        let groups: Vec<_> = message
+            .groups
+            .iter()
+            .map(|group| {
+                let group_path = format!("{path}_{}", to_snake_case(&group.name));
+                static_group_descriptor(&mut definitions, group, elements, &group_path)
+            })
+            .collect();
+        definitions.extend(quote::quote! {
+            const #fields_ident: &[FieldDescriptor] = &[#(#fields),*];
+            const #groups_ident: &[GroupDescriptor] = &[#(#groups),*];
+            const #var_data_ident: &[VarDataDescriptor] = &[#(#var_data),*];
+        });
+
+        let decoder = format_ident!("{}Decoder", to_pascal_case(&message.name));
+        let name = syn::LitStr::new(&message.name, proc_macro2::Span::call_site());
+        let since_version = message.since_version;
+        let semantic_type = static_option_str(message.semantic_type.as_deref());
+        let description = static_option_str(message.description.as_deref());
+        message_descriptors.push(quote::quote! {
+            MessageDescriptor {
+                schema_id: #decoder::SCHEMA_ID,
+                template_id: #decoder::TEMPLATE_ID,
+                name: #name,
+                since_version: #since_version,
+                block_length: #decoder::BLOCK_LENGTH,
+                semantic_type: #semantic_type,
+                description: #description,
+                fields: #fields_ident,
+                groups: #groups_ident,
+                var_data: #var_data_ident,
+            }
+        });
+        lookup_arms.push(quote::quote! {
+            (#decoder::SCHEMA_ID, #decoder::TEMPLATE_ID) => Some(&MESSAGE_DESCRIPTORS[#index])
+        });
+    }
+
+    let tokens = quote::quote! {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct MessageDescriptor {
+            pub schema_id: u16,
+            pub template_id: u16,
+            pub name: &'static str,
+            pub since_version: u16,
+            pub block_length: usize,
+            pub semantic_type: Option<&'static str>,
+            pub description: Option<&'static str>,
+            pub fields: &'static [FieldDescriptor],
+            pub groups: &'static [GroupDescriptor],
+            pub var_data: &'static [VarDataDescriptor],
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct FieldDescriptor {
+            pub name: &'static str,
+            pub id: u16,
+            pub offset: usize,
+            pub encoded_length: usize,
+            pub field_type: &'static str,
+            pub presence: &'static str,
+            pub since_version: u16,
+            pub semantic_type: Option<&'static str>,
+            pub description: Option<&'static str>,
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct GroupDescriptor {
+            pub name: &'static str,
+            pub id: u16,
+            pub since_version: u16,
+            pub dimension_type: &'static str,
+            pub block_length: usize,
+            pub fields: &'static [FieldDescriptor],
+            pub groups: &'static [GroupDescriptor],
+            pub var_data: &'static [VarDataDescriptor],
+            pub description: Option<&'static str>,
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct VarDataDescriptor {
+            pub name: &'static str,
+            pub id: u16,
+            pub since_version: u16,
+            pub length_type: &'static str,
+            pub character_encoding: Option<&'static str>,
+            pub maximum: Option<usize>,
+            pub description: Option<&'static str>,
+        }
+
+        #definitions
+
+        pub const MESSAGE_DESCRIPTORS: &[MessageDescriptor] = &[
+            #(#message_descriptors),*
+        ];
+
+        #[inline]
+        pub fn message_descriptor(
+            schema_id: u16,
+            template_id: u16,
+        ) -> Option<&'static MessageDescriptor> {
+            match (schema_id, template_id) {
+                #(#lookup_arms,)*
+                _ => None,
+            }
         }
     };
 

@@ -154,7 +154,8 @@ Schema from a string / `include_str!`:
 Need multi-schema or custom output paths? Use the lower-level
 [`parse_file`](https://docs.rs/ergo-sbe/latest/ergo_sbe/fn.parse_file.html) +
 [`Generator`](https://docs.rs/ergo-sbe/latest/ergo_sbe/struct.Generator.html)
-API (same steps the helper runs).
+API (same steps the helper runs). For shared types across schemas, see
+[Multi-schema patterns](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#multi-schema-patterns) below.
 
 ### 3. Include generated code
 
@@ -185,14 +186,19 @@ for which crates use which pattern.
 
 ### 4. Encode and decode (fixed message)
 
+**Preferred encode style:** keep the entire staged encode in one expression,
+from `try_wrap_and_apply_header` through `.fixed(...)` and every dynamic tail,
+ending in `.encoded_length_with_header()`. Bind only the resulting `len`, then
+pass `&buf[..len]` to decoders or transports. Do not retain an `enc`,
+`complete`, or `done` stage solely to ask it for its length or bytes.
+
 ```rust
 // Const length → stack array (no heap). Prefer this over vec![0u8; N].
 let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
-{
-    let mut enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-    enc.seq(7);
-}
-let dec = HeartbeatDecoder::try_from(buf.as_slice())?;
+let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&HeartbeatFixedFields { seq: 7 })
+    .encoded_length_with_header();
+let dec = HeartbeatDecoder::try_from(&buf[..len])?;
 assert_eq!(dec.seq(), 7);
 ```
 
@@ -200,6 +206,180 @@ assert_eq!(dec.seq(), 7);
 [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
 (`cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml`).  
 More recipes: [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#recipes).
+
+### 5. Method chaining — the preferred encode style
+
+ergo-sbe encoders are designed so **the entire encode reads as one expression**,
+from `try_wrap_and_apply_header` through `.fixed(...)` and every dynamic tail,
+ending in `.encoded_length_with_header()` (or `.as_bytes()` on a complete stage
+when you need the raw slice). Bind only the resulting length; do not retain
+intermediate encoder variables.
+
+**Prefer (one chain, one `let`):**
+
+```rust,ignore
+let len = OrderEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&fields)
+    .bids(2, |bids| {
+        bids.add(|bid| {
+            bid.price(100i64)
+                .qty(10i64)
+                .orders(1, |orders| {
+                    orders.add(|o| { o.order_id(7u64)?; Ok(()) })?;
+                    Ok(())
+                })?
+                .venue(b"XNYS")?;
+            Ok(())
+        })?;
+        Ok(())
+    })?
+    .asks(0, |_| Ok(()))?
+    .symbol(b"IBM")?
+    .encoded_length_with_header();
+```
+
+**Over (interrupted chain, rebinding):**
+
+```rust,ignore
+// Each `let` breaks the chain and splays the pipeline across the screen.
+// The `.unwrap()` calls are a code smell — the fallible chain should use `?`.
+let enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?.fixed(&fields);
+let enc = enc.legs(1, |legs| {
+    legs.add(|leg| { leg.value(99); Ok(()) })?;
+    Ok(())
+}).unwrap();
+let enc = enc.note(b"ok").unwrap();
+let len = enc.encoded_length_with_header();
+```
+
+**Every setter is chainable** — `price()`, `qty()`, `orders()`, `venue()` all
+return `Result<&mut Self, _>` and compose with `?` in a single expression.
+Intermediary `let` rebinding and manual `.unwrap()` defeat this design.
+
+### Multi-schema patterns
+
+SBE schemas often share types (`messageHeader`, `groupSizeEncoding`,
+composites, enums, sets). ergo-sbe supports two approaches:
+
+| Approach | When | Method |
+|----------|------|--------|
+| **`xi:include`** (standard) | Schema files live together; official SBE portability matters | `<include href="common-types.xml"/>` — `parse_file` resolves includes relative to the base dir |
+| **Shared `Ir`** (programmatic) | Schemas are parsed from strings, generated, or live in separate repos; no filesystem dependency | `parse_with_shared` / `parse_file_with_shared` — seed one parse from another's resolved types |
+
+The `<include>` path is what the SBE spec expects. The shared-`Ir` path is a
+convenience for tooling, build scripts, and any workflow where you already have
+the shared schema parsed in memory.
+
+#### Shared `Ir` — parse, then share
+
+```rust,ignore
+// 1. Parse the shared schema once (composites, enums, sets).
+let common = ergo_sbe::parse_file("schemas/common-types.xml")?;
+
+// 2. Parse a consumer schema — no <include> needed.
+let orders = ergo_sbe::parse_file_with_shared("schemas/orders.xml", &common)?;
+
+// 3. Each schema gets its own module.
+let generator = ergo_sbe::Generator::new(
+    ergo_sbe::GenerationConfig::new("common_types").with_shared_module("common_types"),
+);
+let modules = generator.generate_multi(&[
+    (&ergo_sbe::Schema::from_ir(common), "common_types"),
+    (&ergo_sbe::Schema::from_ir(orders), "orders"),
+])?;
+```
+
+With `with_shared_module("common_types")`, the first entry owns the shared
+enums/sets/composites; later entries `pub use super::common_types::*` and skip
+duplicate type generation.
+
+#### `parse_with_shared` from in-memory strings
+
+```rust,ignore
+let common = ergo_sbe::parse(
+    r#"<?xml version="1.0"?>
+<messageSchema package="common" id="0" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="Price">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8"/>
+    </composite>
+  </types>
+</messageSchema>"#,
+)?;
+
+// No <types> / <include> — Price resolves from `common`.
+let orders = ergo_sbe::parse_with_shared(
+    r#"<?xml version="1.0"?>
+<messageSchema package="orders" id="1" version="1" byteOrder="littleEndian"
+               headerType="messageHeader">
+  <message name="NewOrder" id="1">
+    <field name="price" id="1" type="Price"/>
+  </message>
+</messageSchema>"#,
+    &common,
+)?;
+```
+
+The shared `Ir` path does **not** recover bare top-level `<type>` typedefs
+(those are inlined during parsing and dropped from the token stream). Reference
+them through a `<composite>` / `<enum>` / `<set>` in the shared schema instead.
+
+#### Full `build.rs` — parse → share → generate
+
+```rust,ignore
+// build.rs
+fn main() -> miette::Result<()> {
+    let common = ergo_sbe::parse_file("schemas/common-types.xml")?;
+    let orders = ergo_sbe::parse_file_with_shared("schemas/orders.xml", &common)?;
+    let fills  = ergo_sbe::parse_file_with_shared("schemas/fills.xml", &common)?;
+
+    let generator = ergo_sbe::Generator::new(
+        ergo_sbe::GenerationConfig::new("common_types")
+            .with_shared_module("common_types"),
+    );
+    let modules = generator.generate_multi(&[
+        (&ergo_sbe::Schema::from_ir(common), "common_types"),
+        (&ergo_sbe::Schema::from_ir(orders), "orders"),
+        (&ergo_sbe::Schema::from_ir(fills),  "fills"),
+    ])?;
+
+    for m in modules {
+        let out = std::path::Path::new(&std::env::var("OUT_DIR")?).join(&m.path);
+        std::fs::write(&out, m.source)?;
+        println!("cargo::rerun-if-changed=schemas/{}", m.path.replace(".rs", ".xml"));
+    }
+    Ok(())
+}
+```
+
+Consumer modules import the shared module for cross-schema type resolution:
+
+```rust,ignore
+mod common_types { include!(concat!(env!("OUT_DIR"), "/common_types.rs")); }
+mod orders {
+    use super::common_types::*;       // shared types + header composite
+    include!(concat!(env!("OUT_DIR"), "/orders.rs"));
+}
+mod fills {
+    use super::common_types::*;
+    include!(concat!(env!("OUT_DIR"), "/fills.rs"));
+}
+```
+
+See also:
+[sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples)
+(reusable generator setup),
+[multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs)
+(versioned schemas with shared types),
+[exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example)
+(multi-schema exchange feed with IPC).
 
 ---
 
@@ -222,11 +402,13 @@ wire order:
 let expected = QuoteEncoder::try_compute_encoded_length_with_header(1, 2)?;
 let mut buf = [0u8; 256];
 let buf = &mut buf[..expected];
-let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-let complete = enc.seq(1)
-    .put_some_numbers(10, 20, 30, 40)
-    .vehicle_code_str("ABCDEF")?
-    .qty(25)
+let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+    .fixed(&QuoteFixedFields {
+        seq: 1,
+        some_numbers: [10, 20, 30, 40],
+        vehicle_code: *b"ABCDEF",
+        qty: 25,
+    })
     .legs(1, |legs| {
         legs.add(|leg| {
             leg.value(99);
@@ -234,8 +416,9 @@ let complete = enc.seq(1)
         })?;
         Ok(())
     })?
-    .note(b"ok")?;
-assert_eq!(complete.encoded_length_with_header(), expected);
+    .note(b"ok")?
+    .encoded_length_with_header();
+assert_eq!(len, expected);
 ```
 
 ### Bulk arrays and metadata
@@ -244,18 +427,21 @@ Generated bulk helpers avoid per-element boilerplate, while constants and
 `MetaAttribute` expose schema metadata:
 
 ```rust
-let len = QuoteEncoder::try_compute_encoded_length_with_header(0, 0)?;
+let expected = QuoteEncoder::try_compute_encoded_length_with_header(0, 0)?;
 let mut buf = [0u8; 256];
-let buf = &mut buf[..len];
-let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-let complete = enc.seq(7)
-    .put_some_numbers(1, 2, 3, 4)
-    .vehicle_code_str("EURUSD")?
-    .qty(10)
+let buf = &mut buf[..expected];
+let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+    .fixed(&QuoteFixedFields {
+        seq: 7,
+        some_numbers: [1, 2, 3, 4],
+        vehicle_code: *b"EURUSD",
+        qty: 10,
+    })
     .legs(0, |_| Ok(()))?
-    .note(b"")?;
+    .note(b"")?
+    .encoded_length_with_header();
 
-let quote = QuoteDecoder::try_from(complete.as_bytes())?;
+let quote = QuoteDecoder::try_from(&buf[..len])?;
 assert_eq!(quote.some_numbers(), [1, 2, 3, 4]);
 let mut code = [0u8; 6];
 assert_eq!(quote.copy_vehicle_code(&mut code), code.len());
@@ -267,36 +453,53 @@ assert_eq!(
 );
 ```
 
+Each generated schema also exposes an allocation-free descriptor registry.
+Lookup is keyed by both schema and template ID, and nested group/var-data
+descriptors are static slices:
+
+```rust
+let quote = message_descriptor(QuoteDecoder::SCHEMA_ID, QuoteDecoder::TEMPLATE_ID)
+    .expect("Quote is registered");
+assert_eq!(quote.name, "Quote");
+assert_eq!(quote.template_id, QuoteEncoder::TEMPLATE_ID);
+assert_eq!(quote.fields[0].name, "seq");
+assert_eq!(quote.groups[0].name, "legs");
+assert_eq!(quote.var_data[0].name, "note");
+assert!(message_descriptor(u16::MAX, QuoteDecoder::TEMPLATE_ID).is_none());
+```
+
 ### Consuming decode stages
 
 Groups and var-data are consumed in schema order. `finish()` hands the next
 named stage back to you:
 
 ```rust
-let len = QuoteEncoder::try_compute_encoded_length_with_header(1, 5)?;
+let expected = QuoteEncoder::try_compute_encoded_length_with_header(1, 5)?;
 let mut buf = [0u8; 256];
-let buf = &mut buf[..len];
-let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-let complete = enc.seq(1)
-    .put_some_numbers(1, 2, 3, 4)
-    .vehicle_code_str("ABCDEF")?
-    .qty(10)
+let buf = &mut buf[..expected];
+let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+    .fixed(&QuoteFixedFields {
+        seq: 1,
+        some_numbers: [1, 2, 3, 4],
+        vehicle_code: *b"ABCDEF",
+        qty: 10,
+    })
     .legs(1, |legs| {
         legs.add(|leg| {
             leg.value(99);
             Ok(())
         })
     })?
-    .note(b"hello")?;
+    .note(b"hello")?
+    .encoded_length_with_header();
 
-let quote = QuoteDecoder::try_from(complete.as_bytes())?;
+let quote = QuoteDecoder::try_from(&buf[..len])?;
 let mut legs = quote.into_legs()?;
 let leg = legs.next().expect("one leg was encoded");
 assert_eq!(leg.value(), 99);
 let after_legs = legs.finish()?;
-let (note, done) = after_legs.into_note()?;
+let (note, _) = after_legs.into_note()?;
 assert_eq!(note, b"hello");
-assert_eq!(done.encoded_length_with_header(), complete.encoded_length_with_header());
 ```
 
 ### Validate untrusted input
@@ -306,11 +509,12 @@ walks the complete dynamic tail before trusted access:
 
 ```rust
 let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
-let mut enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-enc.seq(42);
+let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&HeartbeatFixedFields { seq: 42 })
+    .encoded_length_with_header();
 
-HeartbeatDecoder::verify(buf.as_slice())?;
-assert_eq!(HeartbeatDecoder::try_from(buf.as_slice())?.seq(), 42);
+HeartbeatDecoder::verify(&buf[..len])?;
+assert_eq!(HeartbeatDecoder::try_from(&buf[..len])?.seq(), 42);
 assert!(HeartbeatDecoder::try_from(&buf[..4]).is_err());
 assert!(HeartbeatDecoder::verify(&buf[..4]).is_err());
 ```
@@ -322,23 +526,26 @@ more convenient than a zero-copy flyweight. This fixture uses
 `DomainVarData::Bytes`, so re-encoding preserves arbitrary bytes:
 
 ```rust
-let len = QuoteEncoder::try_compute_encoded_length_with_header(0, 2)?;
+let expected = QuoteEncoder::try_compute_encoded_length_with_header(0, 2)?;
 let mut buf = [0u8; 256];
-let buf = &mut buf[..len];
-let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-let complete = enc.seq(3)
-    .put_some_numbers(1, 2, 3, 4)
-    .vehicle_code_str("ABCDEF")?
-    .qty(10)
+let buf = &mut buf[..expected];
+let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+    .fixed(&QuoteFixedFields {
+        seq: 3,
+        some_numbers: [1, 2, 3, 4],
+        vehicle_code: *b"ABCDEF",
+        qty: 10,
+    })
     .legs(0, |_| Ok(()))?
-    .note(b"\x00\xff")?;
+    .note(b"\x00\xff")?
+    .encoded_length_with_header();
 
-let dto = QuoteDomain::try_from_decoder(QuoteDecoder::try_from(complete.as_bytes())?)?;
+let dto = QuoteDomain::try_from_decoder(QuoteDecoder::try_from(&buf[..len])?)?;
 assert_eq!(dto.note, b"\x00\xff");
 let expected = dto.encoded_length_with_header()?;
 let mut output = [0u8; 256];
 let written = dto.encode(&mut output[..expected])?;
-assert_eq!(&output[..written], complete.as_bytes());
+assert_eq!(&output[..written], &buf[..len]);
 ```
 
 ### Multi-template dispatch
@@ -348,10 +555,11 @@ ID:
 
 ```rust
 let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
-let mut enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-enc.seq(11);
+let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&HeartbeatFixedFields { seq: 11 })
+    .encoded_length_with_header();
 
-match AnyMessage::decode(buf.as_slice(), 0)? {
+match AnyMessage::decode(&buf[..len], 0)? {
     AnyMessage::Heartbeat(heartbeat) => assert_eq!(heartbeat.seq(), 11),
     AnyMessage::Quote(_) | AnyMessage::Unknown { .. } => {
         return Err("expected Heartbeat".into());
@@ -460,11 +668,15 @@ let len = CarEncodedLength::new()
     .encoded_length_with_header();
 
 // claim_or_slot.len() == len — no oversize guess buffer.
-let done = CarEncoder::try_wrap_and_apply_header(&mut claim_or_slot, 0)?
+let actual_len = CarEncoder::try_wrap_and_apply_header(&mut claim_or_slot, 0)?
     .fixed(&fields)
     .fuel_figures(2, |g| { /* … */ Ok(()) })?
-    // …
-    ;
+    .performance_figures(1, |g| { /* … */ Ok(()) })?
+    .manufacturer(b"Honda")?
+    .model(b"Civic")?
+    .activation_code(b"active")?
+    .encoded_length_with_header();
+assert_eq!(actual_len, len);
 ```
 
 Nested books:
@@ -483,14 +695,13 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 | **`*FixedFields` + `.fixed(...)`** | You always write the **entire fixed block** | One struct write, still flyweight buffer | Adding a **required fixed field** to the schema → **compile error** until you set it in the struct |
 | **`*Domain` DTO** (`.enable_domain_objects(DomainVarData::…)`) | Whole message as owned data; enum picks `String` vs `Vec<u8>` var-data | Allocates; easier app code | Same idea: regenerating after a schema change forces you to fill new struct fields |
 
-#### Encode — individual fields (flyweight)
+#### Decode — individual fields (flyweight)
 
 ```rust,ignore
-// Only set what you need; good when optional tails differ per message.
-let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-enc.serial_number(1234)
-    .model_year(2013);
-// … more fixed setters, then groups / var-data in wire order …
+// Only read what you need; no owned DTO or whole-message materialisation.
+let car = CarDecoder::try_from(buf)?;
+let serial_number = car.serial_number();
+let model_year = car.model_year();
 ```
 
 #### Encode — whole fixed block as a struct
@@ -511,7 +722,7 @@ additions break at **compile time**:
 //     pub engine: Engine,
 // }
 
-let complete = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+let len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&CarFixedFields {
         serial_number: 1234,
         model_year: 2013,
@@ -522,8 +733,13 @@ let complete = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         extras,
         engine,
     })
-    .fuel_figures(0, |_| Ok(()))?   // then tails as usual
-    .manufacturer(b"Honda")?;
+    .fuel_figures(0, |_| Ok(()))?
+    .performance_figures(0, |_| Ok(()))?
+    .manufacturer(b"Honda")?
+    .model(b"Civic")?
+    .activation_code(b"active")?
+    .encoded_length_with_header();
+let frame = &buf[..len];
 
 // If the schema later adds `paint_code` to the fixed block, this stops compiling
 // until you add `paint_code: …` to the struct literal — you cannot silently omit it.
@@ -664,7 +880,7 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **Exact buffer sizing** | Schema-aware length for nested/ragged msgs — no hand-calculated sizes | `ENCODED_LENGTH` · `compute_encoded_length_*` · `*EncodedLength` · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#buffer-sizing) · [l3-book](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) · [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs) |
 | **Schema docs → rustdoc** | XML descriptions become item docs | `description="…"` / `<description>` / `<comment>` / `<!-- -->` · [schema_docs_provenance_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/schema_docs_provenance_test.rs) |
 | **`Display` / `Debug`** | Diagnostic print (not wire format) | `println!("{car}");` · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#display--debug) · [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Field metadata** | Id / offset / length / since / meta | `SERIAL_NUMBER_ID` · `serial_number_meta_attribute(…)` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
+| **Static metadata** | Schema-qualified messages, nested groups/var-data, field id / offset / type / version | `MESSAGE_DESCRIPTORS` · `message_descriptor(schema_id, template_id)` · existing per-field constants and `*_meta_attribute(…)` |
 | **NULL / MIN / MAX** | Schema sentinels as consts | `MODEL_YEAR_NULL` · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
 | **Version-aware fields** | `sinceVersion` / acting version | `Option` or skip on older wire · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
 | **Groups / nested groups** | Repeating dimensions | `bids(n, \|g\| g.add(…))?` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [l3_orderbook_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_orderbook_test.rs) |
@@ -691,20 +907,22 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 
 ```rust,ignore
 // Known count (must add() exactly `count` times):
-let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .serial_number(1234)
-    .model_year(2013)
+let known_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&fields)
     .fuel_figures(2, |g| {
         g.add(|e| { e.speed(30).mpg(35.5); Ok(()) })?;
         g.add(|e| { e.speed(55).mpg(49.0); Ok(()) })?;
         Ok(())
     })?
-    .manufacturer(b"Honda")?;
+    .performance_figures(0, |_| Ok(()))?
+    .manufacturer(b"Honda")?
+    .model(b"Civic")?
+    .activation_code(b"active")?
+    .encoded_length_with_header();
 
 // Unknown size: count back-patched after the closure (streaming producers).
-let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .serial_number(1234)
-    .model_year(2013)
+let unknown_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&fields)
     .fuel_figures_unknown_size(|g| {
         for row in rows {
             g.add(|e| {
@@ -714,9 +932,13 @@ let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         }
         Ok(())
     })?
-    .manufacturer(b"Honda")?;
+    .performance_figures(0, |_| Ok(()))?
+    .manufacturer(b"Honda")?
+    .model(b"Civic")?
+    .activation_code(b"active")?
+    .encoded_length_with_header();
 
-println!("bytes={}", done.encoded_length_with_header());
+println!("known={known_len} unknown={unknown_len}");
 ```
 
 ### Display / Debug
@@ -830,6 +1052,138 @@ a DTO.
 See [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) — start with **wire type vs app type**, then
 Option A (`Cents` + `with_conversion`) or Option B (`rust_decimal` +
 `with_domain_type`).
+
+### Multiple timestamp precisions → one Rust type
+
+Three wire `uint64` fields, each a different timestamp precision on the wire,
+but **all mapping to `chrono::DateTime<Utc>`** in Rust. The generated
+`u64`↔`DateTime` converter always uses **nanosecond** precision, so millis and
+micros need their own `TryFromSbe`/`TryToSbe` impls. Distinguish them with
+`FieldPath` selectors:
+
+```xml
+<!-- schema fragment — three uint64 fields, same wire type, three precisions -->
+<field name="created_at"  id="1" type="uint64" semanticType="UTCTimestamp"/>
+<field name="updated_at"  id="2" type="uint64" semanticType="UTCTimestampMicros"/>
+<field name="received_at" id="3" type="uint64" semanticType="UTCTimestampMillis"/>
+```
+
+```rust,ignore
+// build.rs — register converters for all three
+let config = GenerationConfig::new("msgs")
+    .with_conversion(ConversionSelector::field_path("Event.created_at"))   // nanos, built-in
+    .with_conversion(ConversionSelector::field_path("Event.updated_at"))   // micros, custom
+    .with_conversion(ConversionSelector::field_path("Event.received_at")); // millis, custom
+```
+
+The built-in nano converter works for `created_at`. Write micro/milli converters by hand:
+
+```rust,ignore
+use ergo_sbe::{TryFromSbe, TryToSbe};
+
+// Wire u64 is microseconds → DateTime<Utc>
+impl TryFromSbe<u64> for chrono::DateTime<chrono::Utc> {
+    type Error = &'static str;
+    fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> {
+        let secs = (wire / 1_000_000) as i64;
+        let nsec = ((wire % 1_000_000) * 1_000) as u32;
+        chrono::DateTime::from_timestamp(secs, nsec)
+            .ok_or("timestamp out of range for DateTime<Utc>")
+    }
+}
+impl TryToSbe<u64> for chrono::DateTime<chrono::Utc> {
+    type Error = &'static str;
+    fn try_to_sbe(&self) -> Result<u64, Self::Error> {
+        Ok(self.timestamp_micros() as u64)
+    }
+}
+```
+
+But that blanket impl clashes with the nano one the generator already emits
+(`TryFromSbe<u64>` can only exist once). Resolve this by naming the wire
+fields unique types — the idiomatic pattern when three `uint64` columns mean
+three different things:
+
+```xml
+<!-- Distinguish wire types by name — all are uint64 under the hood -->
+<composite name="TimestampNanos">  <type name="ts" primitiveType="uint64"/>  </composite>
+<composite name="TimestampMicros"> <type name="ts" primitiveType="uint64"/>  </composite>
+<composite name="TimestampMillis"> <type name="ts" primitiveType="uint64"/>  </composite>
+
+<message name="Event" id="1">
+  <field name="created_at"  id="1" type="TimestampNanos"/>
+  <field name="updated_at"  id="2" type="TimestampMicros"/>
+  <field name="received_at" id="3" type="TimestampMillis"/>
+</message>
+```
+
+Now each wire type generates a distinct Rust newtype (`TimestampNanos`,
+`TimestampMicros`, `TimestampMillis` — all `#[repr(transparent)]` wrappers
+around `u64`). Implement the converters per-type, no blanket-clash:
+
+```rust,ignore
+// Nanos — trivially delegates to the built-in logic
+impl TryFromSbe<TimestampNanos> for chrono::DateTime<chrono::Utc> {
+    type Error = &'static str;
+    fn try_from_sbe(wire: TimestampNanos) -> Result<Self, Self::Error> {
+        chrono::DateTime::from_timestamp(
+            (wire.0 / 1_000_000_000) as i64,
+            (wire.0 % 1_000_000_000) as u32,
+        )
+        .ok_or("timestamp out of range")
+    }
+}
+// … TryToSbe, etc.
+
+// Micros
+impl TryFromSbe<TimestampMicros> for chrono::DateTime<chrono::Utc> {
+    type Error = &'static str;
+    fn try_from_sbe(wire: TimestampMicros) -> Result<Self, Self::Error> {
+        chrono::DateTime::from_timestamp(
+            (wire.0 / 1_000_000) as i64,
+            ((wire.0 % 1_000_000) * 1_000) as u32,
+        )
+        .ok_or("timestamp out of range")
+    }
+}
+
+// Millis
+impl TryFromSbe<TimestampMillis> for chrono::DateTime<chrono::Utc> {
+    type Error = &'static str;
+    fn try_from_sbe(wire: TimestampMillis) -> Result<Self, Self::Error> {
+        chrono::DateTime::from_timestamp(
+            (wire.0 / 1_000) as i64,
+            ((wire.0 % 1_000) * 1_000_000) as u32,
+        )
+        .ok_or("timestamp out of range")
+    }
+}
+```
+
+```rust,ignore
+// build.rs — three selectors, each naming a distinct named type
+let config = GenerationConfig::new("msgs")
+    .with_conversion(ConversionSelector::named_type("TimestampNanos"))
+    .with_conversion(ConversionSelector::named_type("TimestampMicros"))
+    .with_conversion(ConversionSelector::named_type("TimestampMillis"));
+```
+
+```rust,ignore
+// Encode — all use the same Rust type, with the wire precision implicit
+let now = chrono::Utc::now();
+enc.created_at_from(&now)?;      // → TimestampNanos  (wire: u64 nanos)
+enc.updated_at_from(&now)?;      // → TimestampMicros (wire: u64 micros)
+enc.received_at_from(&now)?;     // → TimestampMillis (wire: u64 millis)
+
+// Decode — all return chrono::DateTime<Utc>, precision transparent
+let created:  chrono::DateTime<chrono::Utc> = dec.created_at_as()?;
+let updated:  chrono::DateTime<chrono::Utc> = dec.updated_at_as()?;
+let received: chrono::DateTime<chrono::Utc> = dec.received_at_as()?;
+```
+
+The pattern generalises: **one Rust type, N wire representations** → one
+single-field composite per representation, each with its own `TryFromSbe` /
+`TryToSbe` impl, all distinguished by `ConversionSelector::named_type`.
 
 ---
 

@@ -644,6 +644,39 @@ pub(crate) fn get_dim_num_layout(
     (offset, size, prim)
 }
 
+/// Returns (offset, size, primitive) of the blockLength field within a
+/// dimension composite. Dimension members may be reordered, padded, and use
+/// any unsigned integer width supported by SBE.
+pub(crate) fn get_dim_block_layout(
+    elements: &SchemaElements,
+    dim_type: &str,
+) -> (usize, usize, PrimitiveType) {
+    let mut offset = 0;
+    let mut size = 2;
+    let mut prim = PrimitiveType::UInt16;
+    if let Some(comp) = elements
+        .composites
+        .iter()
+        .find(|composite| composite[0].name == dim_type)
+    {
+        for member in parse_composite_members(comp) {
+            if member.name.to_lowercase().contains("blocklength") {
+                offset = member.offset;
+                if let MemberType::Primitive {
+                    prim: primitive,
+                    length,
+                    ..
+                } = member.member_type
+                {
+                    prim = primitive;
+                    size = primitive.size() * length.unwrap_or(1);
+                }
+            }
+        }
+    }
+    (offset, size, prim)
+}
+
 pub(crate) fn get_vardata_info(
     elements: &SchemaElements,
     type_name: &str,
@@ -707,4 +740,48 @@ pub(crate) struct OwnerTailVarData {
     pub(crate) max_length: Option<usize>,
     pub(crate) name: String,
     pub(crate) character_encoding: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Encoding;
+
+    fn token(name: &str, signal: Signal, encoding: Encoding) -> Token {
+        Token {
+            id: None,
+            name: name.to_string(),
+            signal,
+            encoding,
+            span: None,
+        }
+    }
+
+    #[test]
+    fn unresolved_nested_composite_size_falls_back_to_member_scan() {
+        let primitive = Encoding {
+            primitive_type: Some(PrimitiveType::UInt16),
+            length: Some(2),
+            ..Encoding::default()
+        };
+        let tokens = vec![
+            token("Outer", Signal::BeginComposite, Encoding::default()),
+            token("nested", Signal::BeginField, Encoding::default()),
+            token("Inner", Signal::BeginComposite, Encoding::default()),
+            token("values", Signal::BeginField, primitive),
+            token("values", Signal::Encoding, Encoding::default()),
+            token("values", Signal::EndField, Encoding::default()),
+            token("Inner", Signal::EndComposite, Encoding::default()),
+            token("nested", Signal::EndField, Encoding::default()),
+            token("Outer", Signal::EndComposite, Encoding::default()),
+        ];
+
+        let members = parse_composite_members(&tokens);
+
+        assert_eq!(members.len(), 1);
+        assert!(matches!(
+            members[0].member_type,
+            MemberType::Composite { size: 4, .. }
+        ));
+    }
 }
