@@ -2959,19 +2959,50 @@ fn generate_domain_recursive(
 
         let (_, _, count_prim) = get_dim_num_layout(elements, &g.dimension_type);
         let count_ty: syn::Type = syn::parse_str(rust_type(count_prim)).unwrap();
-        group_encode_stmts.push(quote::quote! {
-            let enc = enc.#g_field_ident(
-                self.#g_field_ident.len() as #count_ty,
-                |g| -> Result<(), sbe_rt::EncodeError> {
-                    for e in &self.#g_field_ident {
-                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                            e.encode_into(entry)
-                        })?;
+        // Use bulk_add for flat groups whose entry fields have no
+        // domain conversions — the domain entry struct mirrors the wire
+        // entry struct.
+        let can_bulk = !has_tail
+            && g.fields.iter().all(|f| {
+                f.presence != Presence::Optional
+                    && f.since_version == 0
+                    && !field_has_conversion_free(f, conversions)
+                    && find_domain_type(f, domain_types).is_none()
+            });
+        if can_bulk {
+            let wire_entry_ident = syn::Ident::new(
+                &format!("{g_scoped}Entry"),
+                span,
+            );
+            group_encode_stmts.push(quote::quote! {
+                let wire_entries: Vec<#wire_entry_ident> = self
+                    .#g_field_ident
+                    .iter()
+                    .map(|e| e.to_wire_entry())
+                    .collect();
+                let enc = enc.#g_field_ident(
+                    self.#g_field_ident.len() as #count_ty,
+                    |g| -> Result<(), sbe_rt::EncodeError> {
+                        g.bulk_add(&wire_entries)?;
+                        Ok(())
                     }
-                    Ok(())
-                }
-            )?;
-        });
+                )?;
+            });
+        } else {
+            group_encode_stmts.push(quote::quote! {
+                let enc = enc.#g_field_ident(
+                    self.#g_field_ident.len() as #count_ty,
+                    |g| -> Result<(), sbe_rt::EncodeError> {
+                        for e in &self.#g_field_ident {
+                            g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                                e.encode_into(entry)
+                            })?;
+                        }
+                        Ok(())
+                    }
+                )?;
+            });
+        }
 
         let entry_prefix = format!("{struct_prefix}{g_pascal}Entry");
         let entry_decoder_name = format!("{g_scoped}Entry");
@@ -3130,6 +3161,43 @@ fn generate_domain_recursive(
                 }
             }
         });
+
+        // For flat entries with no domain conversions or optional fields,
+        // generate to_wire_entry() so DTO encode can use bulk_add.
+        // Optional fields are excluded because the domain type wraps them
+        // in Option<T> while the wire type is bare T — to_wire_entry
+        // can't automatically resolve the null case.
+        let entry_is_flat = groups.is_empty() && var_data.is_empty();
+        let entry_has_no_conversions = fields.iter().all(|f| {
+            f.presence != Presence::Constant
+                && f.presence != Presence::Optional
+                && f.since_version == 0
+                && !field_has_conversion_free(f, conversions)
+                && find_domain_type(f, domain_types).is_none()
+        });
+        if entry_is_flat && entry_has_no_conversions {
+            let wire_entry_ident = syn::Ident::new(decoder_name, span);
+            let mut wire_fields = proc_macro2::TokenStream::new();
+            for f in fields {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
+                wire_fields.extend(quote::quote! {
+                    #f_ident: self.#f_ident,
+                });
+            }
+            ts.extend(quote::quote! {
+                impl #domain_ident {
+                    /// Convert to the wire entry struct for bulk encoding.
+                    pub fn to_wire_entry(&self) -> #wire_entry_ident {
+                        #wire_entry_ident {
+                            #wire_fields
+                        }
+                    }
+                }
+            });
+        }
     } else {
         // Message domains: full encode via wrap_and_apply_header
         let has_optional = fields
@@ -5924,6 +5992,13 @@ fn generate_message_encoder(
             /// at `frame[Self::ENCODED_LENGTH..]`.
             pub const ENCODED_LENGTH: usize = #encoded_length_lit;
             const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            /// Header-inclusive encoded length. Same as [`Self::ENCODED_LENGTH`];
+            /// provided for API consistency with flat and complex message
+            /// shapes so every encoder has a `compute_length` method.
+            #[inline]
+            pub const fn compute_length() -> usize {
+                Self::ENCODED_LENGTH
+            }
             /// Slice after one full header-inclusive message of this type.
             #[inline]
             pub fn after_this_message(frame: &[u8]) -> Option<&[u8]> {

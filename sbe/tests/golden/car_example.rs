@@ -4011,6 +4011,15 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
         Ok(len)
     }
 }
+impl CarPerformanceFiguresEntryAccelerationEntryDomain {
+    /// Convert to the wire entry struct for bulk encoding.
+    pub fn to_wire_entry(&self) -> PerformanceFiguresAccelerationEntry {
+        PerformanceFiguresAccelerationEntry {
+            mph: self.mph,
+            seconds: self.seconds,
+        }
+    }
+}
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
 /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
@@ -4062,15 +4071,16 @@ impl CarPerformanceFiguresEntryDomain {
             }
         }
         enc.octane_rating(self.octane_rating);
+        let wire_entries: Vec<PerformanceFiguresAccelerationEntry> = self
+            .acceleration
+            .iter()
+            .map(|e| e.to_wire_entry())
+            .collect();
         let enc = enc
             .acceleration(
                 self.acceleration.len() as u16,
                 |g| -> Result<(), sbe_rt::EncodeError> {
-                    for e in &self.acceleration {
-                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                            e.encode_into(entry)
-                        })?;
-                    }
+                    g.bulk_add(&wire_entries)?;
                     Ok(())
                 },
             )?;
