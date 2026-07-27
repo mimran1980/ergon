@@ -82,15 +82,15 @@ and a maintained benchmark gate versus sbe-tool-generated codecs (see
 
 ## Contents
 
-1. [Quick start](#quick-start) — `generate_to_out_dir` + `sbe_mod!` → first encode/decode
-2. [Compile-checked feature tour](#compile-checked-feature-tour) — fixed/dynamic messages, arrays, stages, DTOs, dispatch
-3. [Core ideas](#core-ideas) — trust boundary, wire order, **buffer sizing**, flyweight vs whole struct, **composite LE layout**
-4. [Feature matrix](#feature-matrix) — full capability scan
+1. [Quick start](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#quick-start) — `generate_to_out_dir` + `sbe_mod!` → first encode/decode
+2. [Compile-checked feature tour](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#compile-checked-feature-tour) — fixed/dynamic messages, arrays, stages, DTOs, dispatch
+3. [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#core-ideas) — trust boundary, wire order, **buffer sizing**, flyweight vs whole struct, **composite LE layout**
+4. [Feature matrix](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#feature-matrix) — full capability scan
 
-5. [Recipes](#recipes) — encode known/unknown groups, Display, DTO, conversion
-6. [Configuration](#configuration) — wire vs app types, `with_conversion` / `with_domain_type`
-7. [Samples](#samples)
-8. [Rust version](#rust-version-and-edition) · [Verify](#verify-the-crate) · [Package scope](#package-scope)
+5. [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#recipes) — encode known/unknown groups, Display, DTO, conversion
+6. [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) — wire vs app types, `with_conversion` / `with_domain_type`
+7. [Samples](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#samples)
+8. [Rust version](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#rust-version-and-edition) · [Verify](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#verify-the-crate) · [Package scope](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#package-scope)
 
 Names in snippets use a fictional `Car` / `Quote` schema — **your** types and
 methods follow **your** schema names.
@@ -127,7 +127,7 @@ ergo-sbe = "0.1"
 ergo-sbe = "0.1"   # only needed for sbe_mod! / include_sbe!
 ```
 
-See [Samples](#samples) for monorepo crates that use each pattern.
+See [Samples](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#samples) for monorepo crates that use each pattern.
 
 ### 2. Generate in `build.rs` (short form)
 
@@ -180,7 +180,7 @@ use messages::*;
 // Or only the include: ergo_sbe::include_sbe!("messages");
 ```
 
-See [Samples](#samples) · [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md)
+See [Samples](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#samples) · [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md)
 for which crates use which pattern.
 
 ### 4. Encode and decode (fixed message)
@@ -199,7 +199,7 @@ assert_eq!(dec.seq(), 7);
 **Start here for a full runnable map of features:**
 [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
 (`cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml`).  
-More recipes: [Recipes](#recipes).
+More recipes: [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#recipes).
 
 ---
 
@@ -553,7 +553,7 @@ let n = dto.encode(&mut out)?; // round-trip back to wire when needed
 **Rule of thumb:** one field on the hot path → **flyweight**. Always fill or
 always consume the whole message → **`FixedFields` / `Domain`** for clarity and
 compile-time breakage on schema growth. More on DTOs in
-[Recipes](#domain-dto-ease-of-use).
+[Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#domain-dto-ease-of-use).
 
 ### Composite layout & little-endian
 
@@ -653,17 +653,17 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 
 | Feature | What it does | How to use / more |
 |---------|--------------|-------------------|
-| **`build.rs` codegen** | Compile-time schema → Rust module in `OUT_DIR` | `generate_to_out_dir("schemas/….xml", config)?` · plain `include!` or `sbe_mod!(name)` · [Quick start](#quick-start) · [codegen examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
+| **`build.rs` codegen** | Compile-time schema → Rust module in `OUT_DIR` | `generate_to_out_dir("schemas/….xml", config)?` · plain `include!` or `sbe_mod!(name)` · [Quick start](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#quick-start) · [codegen examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
 | **Wire compatibility** | Same on-wire layout as official SBE | Dual encode ergo vs sbe-tool · [sbe_tool_wire_parity_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/sbe_tool_wire_parity_test.rs) · golden fixtures · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
 | **Flyweight decode** | Zero-copy over `&[u8]` | `CarDecoder::try_from(buf)?; car.serial_number()` · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Composite wire image** | `#[repr(transparent)] Engine([u8; N])` + LE accessors; flyweight default | Not a `repr(C)` overlay · [Core ideas](#composite-layout--little-endian) · [composite_layout_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/composite_layout_test.rs) |
-| **Per-field vs whole struct** | Flyweight **or** `*FixedFields` / `*Domain` | Single field: flyweight · always fill fixed block: `.fixed(&CarFixedFields { … })` · whole message owned: `CarDomain` · [Core ideas](#flyweight-per-field-vs-whole-struct) · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Stage-struct encode + closures** | Wire order as **named** monomorphic stages; groups via nested closures | `bids(n, \|g\| g.add(\|e\| …))?` · wrong order = missing method · [Core ideas](#wire-order-via-named-stage-structs) · [Recipes](#encode-known-count-or-unknown-size) · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) |
+| **Composite wire image** | `#[repr(transparent)] Engine([u8; N])` + LE accessors; flyweight default | Not a `repr(C)` overlay · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#composite-layout--little-endian) · [composite_layout_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/composite_layout_test.rs) |
+| **Per-field vs whole struct** | Flyweight **or** `*FixedFields` / `*Domain` | Single field: flyweight · always fill fixed block: `.fixed(&CarFixedFields { … })` · whole message owned: `CarDomain` · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#flyweight-per-field-vs-whole-struct) · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| **Stage-struct encode + closures** | Wire order as **named** monomorphic stages; groups via nested closures | `bids(n, \|g\| g.add(\|e\| …))?` · wrong order = missing method · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#wire-order-via-named-stage-structs) · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#encode-known-count-or-unknown-size) · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) |
 | **Consuming decode stages** | Distinct after-stage decoder types | `into_bids()?` → next named stage · [ordered_decoder_stages_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/ordered_decoder_stages_test.rs) · [l3_consuming_stages_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_consuming_stages_test.rs) |
 | **Checked vs trusted** | Explicit trust boundary | `try_*` untrusted · `wrap` trusted · `verify` full tail · [demo_try_vs_trusted](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Exact buffer sizing** | Schema-aware length for nested/ragged msgs — no hand-calculated sizes | `ENCODED_LENGTH` · `compute_encoded_length_*` · `*EncodedLength` · [Core ideas](#buffer-sizing) · [l3-book](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) · [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs) |
+| **Exact buffer sizing** | Schema-aware length for nested/ragged msgs — no hand-calculated sizes | `ENCODED_LENGTH` · `compute_encoded_length_*` · `*EncodedLength` · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#buffer-sizing) · [l3-book](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) · [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs) |
 | **Schema docs → rustdoc** | XML descriptions become item docs | `description="…"` / `<description>` / `<comment>` / `<!-- -->` · [schema_docs_provenance_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/schema_docs_provenance_test.rs) |
-| **`Display` / `Debug`** | Diagnostic print (not wire format) | `println!("{car}");` · [Recipes](#display--debug) · [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| **`Display` / `Debug`** | Diagnostic print (not wire format) | `println!("{car}");` · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#display--debug) · [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **Field metadata** | Id / offset / length / since / meta | `SERIAL_NUMBER_ID` · `serial_number_meta_attribute(…)` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
 | **NULL / MIN / MAX** | Schema sentinels as consts | `MODEL_YEAR_NULL` · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
 | **Version-aware fields** | `sinceVersion` / acting version | `Option` or skip on older wire · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
@@ -671,9 +671,9 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **Var-data / text** | Length-prefix; optional UTF-8/ASCII | `manufacturer(b"Honda")?` · `*_as_str` when encoding set · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **Fixed arrays + bulk helpers** | Arrays, put, pad string, copy-out | `put_some_numbers(…)` · `vehicle_code_str` · `copy_vehicle_code` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
 | **Enums / sets / bool** | Wire enums, bitsets, `_bool` | `available()` / `available_bool(true)` · [comprehensive_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs) |
-| **`with_conversion`** | Wire type → **any** app type you impl | `price_from(&Cents)?` / `price_as::<Cents>()?` · [Configuration](#configuration) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) |
-| **`with_domain_type`** | Wire type → **one** fixed Rust path | `enc.price(d); let d = dec.price()` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [Configuration](#configuration) |
-| **Domain DTOs** | Owned structs + re-encode; var-data via [`DomainVarData`] | `.enable_domain_objects(DomainVarData::LossyStrings)` · [Recipes](#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
+| **`with_conversion`** | Wire type → **any** app type you impl | `price_from(&Cents)?` / `price_as::<Cents>()?` · [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) |
+| **`with_domain_type`** | Wire type → **one** fixed Rust path | `enc.price(d); let d = dec.price()` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) |
+| **Domain DTOs** | Owned structs + re-encode; var-data via [`DomainVarData`] | `.enable_domain_objects(DomainVarData::LossyStrings)` · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
 | **`AnyMessage` + frames** | Multi-template + framed streams | `AnyMessage::decode` · `FrameCursor` · [demo_any_message](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **`verify`** | Full tail bounds check | `car.verify()?` · feature-tour try/trusted demos |
 | **Schema identity** | Id / version / hashes | `SCHEMA_ID`, `SCHEMA_HASH`, `SCHEMA_SHA256_HEX` · generated module header |
@@ -827,7 +827,7 @@ a DTO.
 
 ### App types on top of wire composites
 
-See [Configuration](#configuration) — start with **wire type vs app type**, then
+See [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) — start with **wire type vs app type**, then
 Option A (`Cents` + `with_conversion`) or Option B (`rust_decimal` +
 `with_domain_type`).
 
