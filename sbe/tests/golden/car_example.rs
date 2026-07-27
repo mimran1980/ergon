@@ -2907,6 +2907,41 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         self.count -= n;
         Ok(())
     }
+    /// Bulk-decode all remaining entries into a `Vec`.
+    /// One bounds check for the whole batch — faster than
+    /// iterating with [`Iterator::next`] when materialising
+    /// the entire group (DTO construction, snapshots).
+    pub fn bulk_decode(
+        &mut self,
+    ) -> Result<Vec<PerformanceFiguresAccelerationEntry>, sbe_rt::DecodeError> {
+        let needed = self
+            .count
+            .checked_mul(self.acting_block_length)
+            .ok_or(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: usize::MAX,
+                available: 0,
+            })?;
+        if self.pos + needed > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
+        let cap = self.count;
+        let mut out = Vec::with_capacity(cap);
+        for _ in 0..cap {
+            let pos = self.pos;
+            self.pos += self.acting_block_length;
+            out.push(PerformanceFiguresAccelerationEntry {
+                mph: u16::from_le_bytes(self.buf[pos + 0..][..2].try_into().unwrap()),
+                seconds: f32::from_le_bytes(self.buf[pos + 2..][..4].try_into().unwrap()),
+            });
+        }
+        self.count = 0;
+        Ok(out)
+    }
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     #[inline]

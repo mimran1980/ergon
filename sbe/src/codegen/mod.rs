@@ -3435,6 +3435,7 @@ fn generate_group_decoder(
     domain_types: &[(crate::ConversionSelector, String)],
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
+    let span = proc_macro2::Span::call_site();
     let name = scoped_name.to_string();
     let decoder_ident = quote::format_ident!("{}Decoder", name);
     let entry_decoder_ident = quote::format_ident!("{}EntryDecoder", name);
@@ -3586,6 +3587,64 @@ fn generate_group_decoder(
 
     // skip_n()
     if total_tail == 0 {
+        // Build field read expressions for bulk_decode (reverse of
+        // add_struct's struct_write in generate_group_encoder).
+        let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
+        let mut field_reads = proc_macro2::TokenStream::new();
+        for f in &g.fields {
+            if f.presence == Presence::Constant {
+                continue;
+            }
+            let f_name = syn::Ident::new(&to_snake_case(&f.name), span);
+            let f_offset = syn::Index::from(f.offset);
+            let f_size = syn::LitInt::new(&f.field_type.size().to_string(), span);
+            match &f.field_type {
+                FieldType::Composite { .. } => {
+                    let f_ty = field_type_ident(&f.field_type, span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let mut bytes = [0u8; #f_size];
+                            bytes.copy_from_slice(&self.buf[pos + #f_offset..][..#f_size]);
+                            #f_ty(bytes)
+                        },
+                    });
+                }
+                FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
+                    let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let raw = #r_ty::#order_fn(
+                                self.buf[pos + #f_offset..][..#f_size].try_into().unwrap()
+                            );
+                            raw.into()
+                        },
+                    });
+                }
+                FieldType::Primitive(pt, Some(len)) => {
+                    let len_lit = syn::LitInt::new(&len.to_string(), span);
+                    let prim_size = pt.size();
+                    let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let mut arr = [0u8; #len_lit * #prim_size_lit];
+                            arr.copy_from_slice(
+                                &self.buf[pos + #f_offset..][..#len_lit * #prim_size_lit],
+                            );
+                            arr
+                        },
+                    });
+                }
+                FieldType::Primitive(pt, None) => {
+                    let r_ty = syn::Ident::new(&rust_type(*pt), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: #r_ty::#order_fn(
+                            self.buf[pos + #f_offset..][..#f_size].try_into().unwrap()
+                        ),
+                    });
+                }
+            }
+        }
+
         ts.extend(quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #[inline]
@@ -3600,6 +3659,35 @@ fn generate_group_decoder(
                     self.pos += n.saturating_mul(self.acting_block_length);
                     self.count -= n;
                     Ok(())
+                }
+
+                /// Bulk-decode all remaining entries into a `Vec`.
+                /// One bounds check for the whole batch — faster than
+                /// iterating with [`Iterator::next`] when materialising
+                /// the entire group (DTO construction, snapshots).
+                pub fn bulk_decode(&mut self) -> Result<Vec<#entry_struct_ident>, sbe_rt::DecodeError> {
+                    let needed = self.count.checked_mul(self.acting_block_length)
+                        .ok_or(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: usize::MAX,
+                            available: 0,
+                        })?;
+                    if self.pos + needed > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        });
+                    }
+                    let cap = self.count;
+                    let mut out = Vec::with_capacity(cap);
+                    for _ in 0..cap {
+                        let pos = self.pos;
+                        self.pos += self.acting_block_length;
+                        out.push(#entry_struct_ident { #field_reads });
+                    }
+                    self.count = 0;
+                    Ok(out)
                 }
             }
         });
@@ -4714,13 +4802,24 @@ fn generate_conversion_impl_blocks(
     }
 
     if has_decimal_conv {
-        let dec_name = elements
+        let dec_composite = elements
             .composites
             .iter()
-            .find(|c| c[0].name == "Decimal")
+            .find(|c| c[0].name == "Decimal");
+        let dec_name = dec_composite
             .map(|c| to_pascal_case(&c[0].name))
             .unwrap_or_else(|| "Decimal".to_string());
         let dec_ident = syn::Ident::new(&dec_name, span);
+        // Check if the schema's Decimal composite has a constant exponent.
+        let exponent_is_constant = dec_composite
+            .and_then(|c| c.iter().find(|t| t.name == "exponent"))
+            .map(|t| t.encoding.presence == crate::ir::Presence::Constant)
+            .unwrap_or(false);
+        let dec_new_call: proc_macro2::TokenStream = if exponent_is_constant {
+            quote::quote! { #dec_ident::new(mantissa) }
+        } else {
+            quote::quote! { #dec_ident::new(mantissa, -(self.scale() as i8)) }
+        };
         let ts = quote::quote! {
             impl TryFromSbe<#dec_ident> for rust_decimal::Decimal {
                 type Error = &'static str;
@@ -4746,7 +4845,7 @@ fn generate_conversion_impl_blocks(
                     let mantissa: i64 = self.mantissa()
                         .try_into()
                         .map_err(|_| "Decimal mantissa overflow i64")?;
-                    Ok(#dec_ident::new(mantissa, -(self.scale() as i8)))
+                    Ok(#dec_new_call)
                 }
             }
         };

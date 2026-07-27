@@ -12,6 +12,7 @@ path = "src/lib.rs"
 
 [dependencies]
 ergo-sbe = { path = ".." }
+rust_decimal = "1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -66,6 +67,9 @@ name = "cold_path_bench"
 harness = false
 [[bench]]
 name = "group_encode_bench"
+harness = false
+[[bench]]
+name = "l2_book_bench"
 harness = false
 
 [features]
