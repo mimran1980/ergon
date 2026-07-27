@@ -16,3 +16,4 @@ tmp/
 aeron-cluster-[0-9]/
 .idea/
 .superpowers/
+docs/superpowers/
