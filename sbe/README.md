@@ -220,22 +220,22 @@ wire order:
 
 ```rust
 let expected = QuoteEncoder::try_compute_encoded_length_with_header(1, 2)?;
-
-let mut storage = [0u8; 64];
-let buf = &mut storage[..expected];
+let mut buf = [0u8; 256];
+let buf = &mut buf[..expected];
 let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
-enc.seq(1);
-enc.put_some_numbers(10, 20, 30, 40);
-enc.vehicle_code_str("ABCDEF")?;
-enc.qty(25);
-let enc = enc.legs(1, |legs| {
-    legs.add(|leg| {
-        leg.value(99);
+enc.seq(1)
+    .put_some_numbers(10, 20, 30, 40)
+    .vehicle_code_str("ABCDEF")?
+    .qty(25);
+let complete = enc
+    .legs(1, |legs| {
+        legs.add(|leg| {
+            leg.value(99);
+            Ok(())
+        })?;
         Ok(())
-    })?;
-    Ok(())
-})?;
-let complete = enc.note(b"ok")?;
+    })?
+    .note(b"ok")?;
 assert_eq!(complete.encoded_length_with_header(), expected);
 ```
 
@@ -245,12 +245,14 @@ Generated bulk helpers avoid per-element boilerplate, while constants and
 `MetaAttribute` expose schema metadata:
 
 ```rust
-let mut buf = [0u8; 64];
-let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-enc.seq(7);
-enc.put_some_numbers(1, 2, 3, 4);
-enc.vehicle_code_str("EURUSD")?;
-enc.qty(10);
+let len = QuoteEncoder::try_compute_encoded_length_with_header(0, 0)?;
+let mut buf = [0u8; 256];
+let buf = &mut buf[..len];
+let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
+enc.seq(7)
+    .put_some_numbers(1, 2, 3, 4)
+    .vehicle_code_str("EURUSD")?
+    .qty(10);
 let complete = enc.legs(0, |_| Ok(()))?.note(b"")?;
 
 let quote = QuoteDecoder::try_from(complete.as_bytes())?;
@@ -271,12 +273,14 @@ Groups and var-data are consumed in schema order. `finish()` hands the next
 named stage back to you:
 
 ```rust
-let mut buf = [0u8; 64];
-let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-enc.seq(1);
-enc.put_some_numbers(1, 2, 3, 4);
-enc.vehicle_code_str("ABCDEF")?;
-enc.qty(10);
+let len = QuoteEncoder::try_compute_encoded_length_with_header(1, 5)?;
+let mut buf = [0u8; 256];
+let buf = &mut buf[..len];
+let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
+enc.seq(1)
+    .put_some_numbers(1, 2, 3, 4)
+    .vehicle_code_str("ABCDEF")?
+    .qty(10);
 let complete = enc
     .legs(1, |legs| {
         legs.add(|leg| {
@@ -319,18 +323,20 @@ more convenient than a zero-copy flyweight. This fixture uses
 `DomainVarData::Bytes`, so re-encoding preserves arbitrary bytes:
 
 ```rust
-let mut buf = [0u8; 64];
-let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-enc.seq(3);
-enc.put_some_numbers(1, 2, 3, 4);
-enc.vehicle_code_str("ABCDEF")?;
-enc.qty(10);
+let len = QuoteEncoder::try_compute_encoded_length_with_header(0, 2)?;
+let mut buf = [0u8; 256];
+let buf = &mut buf[..len];
+let mut enc = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?;
+enc.seq(3)
+    .put_some_numbers(1, 2, 3, 4)
+    .vehicle_code_str("ABCDEF")?
+    .qty(10);
 let complete = enc.legs(0, |_| Ok(()))?.note(b"\x00\xff")?;
 
 let dto = QuoteDomain::try_from_decoder(QuoteDecoder::try_from(complete.as_bytes())?)?;
 assert_eq!(dto.note, b"\x00\xff");
 let expected = dto.encoded_length_with_header()?;
-let mut output = [0u8; 64];
+let mut output = [0u8; 256];
 let written = dto.encode(&mut output[..expected])?;
 assert_eq!(&output[..written], complete.as_bytes());
 ```
@@ -509,7 +515,7 @@ let complete = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&CarFixedFields {
         serial_number: 1234,
         model_year: 2013,
-        available: BooleanType::T,
+        available: true.into(),
         code: Model::A,
         some_numbers: [10, 20, 30, 40],
         vehicle_code: *b"ABCDEF",
