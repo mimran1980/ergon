@@ -34,6 +34,8 @@ ergo_sbe::sbe_mod!(pub codec_matrix = "codec_matrix_bench");
 ergo_sbe::sbe_mod!(pub codec_matrix_be = "codec_matrix_be_bench");
 // Custom-header fixed-block benchmark probe.
 ergo_sbe::sbe_mod!(pub codec_matrix_custom_header = "codec_matrix_custom_header_bench");
+// Orderbook-like group schema for bulk_add benchmarks.
+ergo_sbe::sbe_mod!(pub orderbook = "orderbook_bench");
 /// sbe-tool-generated Car codec (checked in, stable reference).
 pub mod sbe_tool_car {
     include!("sbe_tool_car_patched.rs");

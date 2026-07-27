@@ -61,6 +61,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=schemas/large-composite-be.xml");
     println!("cargo:rerun-if-changed=schemas/codec-matrix.xml");
     println!("cargo:rerun-if-changed=schemas/codec-matrix-be.xml");
+    let orderbook_schema = manifest.join("schemas/orderbook.xml");
+    ergo_sbe::generate_to_out_dir(
+        &orderbook_schema,
+        ergo_sbe::GenerationConfig::new("orderbook_bench"),
+    )?;
+
     println!("cargo:rerun-if-changed=schemas/codec-matrix-custom-header.xml");
+    println!("cargo:rerun-if-changed=schemas/orderbook.xml");
     Ok(())
 }

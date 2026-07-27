@@ -401,3 +401,4 @@ fn production_schemas_generate_valid_rust() -> Result<(), Box<dyn std::error::Er
     }
     Ok(())
 }
+

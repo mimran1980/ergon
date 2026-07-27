@@ -64,6 +64,9 @@ harness = false
 [[bench]]
 name = "cold_path_bench"
 harness = false
+[[bench]]
+name = "group_encode_bench"
+harness = false
 
 [features]
 default = []

@@ -6974,6 +6974,41 @@ fn generate_group_encoder(
                     #struct_write
                     Ok(())
                 }
+
+                /// Bulk-encode a slice of entries. Bounds checks are hoisted
+                /// outside the loop so LLVM can auto-vectorise the field writes.
+                /// Prefer this over repeated [`Self::add_struct`] calls when
+                /// you already have a `&[#entry_struct_ident]`.
+                pub fn bulk_add(&mut self, entries: &[#entry_struct_ident]) -> Result<(), sbe_rt::EncodeError> {
+                    let count: usize = entries.len();
+                    if count == 0 {
+                        return Ok(());
+                    }
+                    // Pre-flight capacity check (once, not per-entry)
+                    if (self.written as usize).saturating_add(count) > self.count as usize {
+                        return Err(sbe_rt::EncodeError::GroupFull {
+                            declared: self.count as u32,
+                            attempted: (self.written as u32).saturating_add(count as u32),
+                        });
+                    }
+                    let block_len = Self::ENTRY_BLOCK_LENGTH;
+                    let needed = count.checked_mul(block_len).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    if self.pos + needed > self.buf.len() {
+                        return Err(sbe_rt::EncodeError::BufferTooShort {
+                            needed,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        });
+                    }
+                    // Tight inner loop — no per-entry bounds checks.
+                    // LLVM will auto-vectorise sequential copy_from_slice calls.
+                    for entry in entries {
+                        let pos = self.pos;
+                        self.pos += block_len;
+                        #struct_write
+                    }
+                    self.written = self.written.saturating_add(count as #count_ty);
+                    Ok(())
+                }
             }
         });
     }
