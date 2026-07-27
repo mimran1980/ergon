@@ -488,8 +488,8 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 ```rust,ignore
 // Only set what you need; good when optional tails differ per message.
 let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-enc.serial_number(1234);
-enc.model_year(2013);
+enc.serial_number(1234)
+    .model_year(2013);
 // … more fixed setters, then groups / var-data in wire order …
 ```
 
