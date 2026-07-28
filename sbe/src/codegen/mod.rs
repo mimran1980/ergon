@@ -3687,14 +3687,18 @@ fn generate_group_decoder(
                 }
                 FieldType::Primitive(pt, Some(len)) => {
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
-                    let prim_size = pt.size();
-                    let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
+                    let r_ty = syn::Ident::new(&rust_type(*pt), span);
                     field_reads.extend(quote::quote! {
                         #f_name: {
-                            let mut arr = [0u8; #len_lit * #prim_size_lit];
-                            arr.copy_from_slice(
-                                &self.buf[pos + #f_offset..][..#len_lit * #prim_size_lit],
-                            );
+                            let mut arr = [0 as #r_ty; #len_lit];
+                            let mut i = 0usize;
+                            while i < #len_lit {
+                                let elem_offset = pos + #f_offset + i * core::mem::size_of::<#r_ty>();
+                                arr[i] = #r_ty::#order_fn(
+                                    self.buf[elem_offset..][..core::mem::size_of::<#r_ty>()].try_into().unwrap()
+                                );
+                                i += 1;
+                            }
                             arr
                         },
                     });
