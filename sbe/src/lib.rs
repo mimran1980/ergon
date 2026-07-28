@@ -206,6 +206,11 @@
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
 
+/// Re-exported so `build.rs` can return [`miette::Result`] without an extra
+/// dependency. Enable the crate's `fancy` feature for graphical rendering
+/// (source snippet + span) instead of the plain fallback.
+pub use miette;
+
 /// Cargo `build.rs` helpers ([`generate_to_out_dir`], [`sbe_mod!`]).
 pub mod build;
 /// Codec generation ([`Generator`]).

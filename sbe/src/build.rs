@@ -3,8 +3,10 @@
 //! Prefer these over hand-rolling parse → generate → write → `rerun-if-changed`.
 //!
 //! ```rust,ignore
-//! // build.rs
-//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // build.rs — with `ergo-sbe` build-dependency feature `fancy` enabled,
+//! // ergo_sbe::miette::Result renders schema errors with a source snippet;
+//! // Box<dyn std::error::Error> prints a raw Debug dump instead.
+//! fn main() -> ergo_sbe::miette::Result<()> {
 //!     ergo_sbe::generate_to_out_dir(
 //!         "schemas/messages.xml",
 //!         ergo_sbe::GenerationConfig::new("messages"),
@@ -27,10 +29,16 @@ use crate::schema::Schema;
 use crate::xml::{ParseError, parse, parse_file};
 
 /// Errors from [`generate_to_out_dir`] / [`generate_str_to_out_dir`].
-#[derive(Debug, thiserror::Error)]
+///
+/// Implements [`miette::Diagnostic`] so `fn main() -> miette::Result<()>` in a
+/// `build.rs` renders schema parse errors with a source snippet and span
+/// instead of a raw `Debug` dump. Plain `Box<dyn std::error::Error>` prints
+/// `{:?}` on failure — use `miette::Result` to get the readable form.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum BuildError {
     /// Schema XML could not be parsed or resolved.
     #[error(transparent)]
+    #[diagnostic(transparent)]
     Parse(#[from] ParseError),
     /// Code generation failed (e.g. invalid conversion config).
     #[error(transparent)]
@@ -327,6 +335,17 @@ mod tests {
         </messageSchema>"#
     }
 
+    /// Proves `ergo_sbe::miette` is publicly re-exported and usable as a
+    /// `build.rs` return type without the caller adding a direct `miette`
+    /// dependency. If this re-export is ever removed or made private, this
+    /// fails to compile.
+    #[test]
+    fn miette_is_reexported_for_build_rs_return_type() {
+        fn _build_rs_main() -> crate::miette::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn generate_str_to_dir_writes_module() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile_dir()?;
@@ -338,6 +357,42 @@ mod tests {
         assert!(src.contains("PingEncoder"), "{src}");
         assert!(src.contains("PingDecoder"), "{src}");
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// Proves `BuildError::Parse` forwards the inner `ParseError`'s source +
+    /// span through `#[diagnostic(transparent)]` — the wrapped error still
+    /// renders a real snippet, not just the outer `{}`/`{:?}` message. This is
+    /// what a `build.rs` returning `miette::Result<()>` actually shows on a
+    /// malformed schema, instead of the raw `Debug` dump you get from
+    /// `Box<dyn std::error::Error>`.
+    #[test]
+    fn build_error_parse_variant_renders_source_snippet_via_miette()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let bad_xml = r#"<messageSchema package="x" id="1" version="0">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <message name="M" id="1"><field name="f" id="1" type="bogus"/></message>
+</messageSchema>"#;
+
+        let dir = tempfile_dir()?;
+        let err = generate_str_to_dir(bad_xml, GenerationConfig::new("bad"), &dir).unwrap_err();
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(
+            matches!(err, BuildError::Parse(_)),
+            "expected BuildError::Parse, got {err:?}"
+        );
+
+        let mut rendered = String::new();
+        miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor())
+            .render_report(&mut rendered, &err)?;
+
+        assert!(rendered.contains("bogus"), "rendered:\n{rendered}");
+        assert!(
+            rendered.lines().count() > 1,
+            "expected a multi-line snippet through the transparent wrapper, got:\n{rendered}"
+        );
+
         Ok(())
     }
 

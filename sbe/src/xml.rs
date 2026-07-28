@@ -36,6 +36,21 @@ use roxmltree::{Document, Node, NodeType};
 
 use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 
+/// De-duplicates parser warnings within a process. `xi:include` inlines a
+/// shared schema (e.g. `common-types.xml`) into every consuming file, so a
+/// naive `eprintln!` fires once per consumer parsed in the same `cargo build`
+/// — N sibling schema files sharing one included type multiply the same
+/// warning N times. Keyed on the exact message text, so distinct warnings are
+/// never suppressed by this.
+fn warn_once(message: &str) {
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    if seen.lock().unwrap().insert(message.to_string()) {
+        eprintln!("{message}");
+    }
+}
+
 /// Errors raised while parsing an SBE schema. Carries a [`miette`] source span
 /// so the offending XML element is highlighted in the rendered diagnostic.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -852,10 +867,10 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
         .and_then(|s| parse_u64_val(s, primitive_type));
     if null_value.is_some() && presence != Presence::Optional {
         let type_name = node.attribute("name").unwrap_or("<unnamed>");
-        eprintln!(
+        warn_once(&format!(
             "warning: nullValue specified on non-optional type '{type_name}' \
              \u{2014} nullValue is only meaningful for optional types"
-        );
+        ));
     }
     let min_value = node
         .attribute("minValue")
@@ -1684,10 +1699,10 @@ fn parse_message_child(
                     .unwrap_or(Presence::Required)
             };
             if node.attribute("nullValue").is_some() && presence != Presence::Optional {
-                eprintln!(
+                warn_once(&format!(
                     "warning: nullValue specified on non-optional field '{field_name}' \
                      \u{2014} nullValue is only meaningful for optional fields"
-                );
+                ));
             }
             let constant_value = if presence == Presence::Constant {
                 if node.attribute("constantValue").is_none() && node.attribute("valueRef").is_none()
@@ -1715,9 +1730,9 @@ fn parse_message_child(
                         // before the codec is used.
                         if !registry.registry.contains_key(enum_name) {
                             // non-fatal warning: old behaviour was silent strip
-                            eprintln!(
+                            warn_once(&format!(
                                 "warning: valueRef '{s}' references unknown enum '{enum_name}'"
-                            );
+                            ));
                         }
                         s.to_string()
                     } else {
@@ -3401,6 +3416,37 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("invalid primitive type"), "{msg}");
         assert!(err.labels().is_some(), "expected a span label attached");
+
+        Ok(())
+    }
+
+    /// Proves the whole miette pipeline renders a real source snippet, not just
+    /// that `.labels()` / `.source_code()` return `Some`. A `build.rs` that
+    /// returns `Box<dyn std::error::Error>` from `main` prints this error via
+    /// `{:?}` (a raw struct dump) instead — `fn main() -> miette::Result<()>`
+    /// is what actually produces this graphical output.
+    #[test]
+    fn invalid_primitive_error_renders_source_snippet_via_miette()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<messageSchema package="x" id="1" version="0">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <message name="M" id="1"><field name="f" id="1" type="bogus"/></message>
+</messageSchema>"#;
+        let err = parse(xml).unwrap_err();
+
+        let mut rendered = String::new();
+        miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor())
+            .render_report(&mut rendered, &err)?;
+
+        assert!(rendered.contains("bogus"), "rendered:\n{rendered}");
+        assert!(
+            rendered.contains("invalid primitive type"),
+            "rendered:\n{rendered}"
+        );
+        assert!(
+            rendered.lines().count() > 1,
+            "expected a multi-line snippet, got:\n{rendered}"
+        );
 
         Ok(())
     }

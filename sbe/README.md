@@ -126,11 +126,13 @@ examples stale.
 ### 1. Depend on the generator
 
 **Minimal product path** — codegen only; generated codecs embed their own
-`sbe_rt` and do **not** link `ergo-sbe` into the application:
+`sbe_rt` and do **not** link `ergo-sbe` into the application. Enable `fancy`
+so a malformed schema renders a source snippet (line + span) instead of a
+plain fallback message:
 
 ```toml
 [build-dependencies]
-ergo-sbe = "0.1"
+ergo-sbe = { version = "0.1", features = ["fancy"] }
 # no [dependencies] ergo-sbe
 ```
 
@@ -155,7 +157,13 @@ emits `cargo::rerun-if-changed` for you:
 
 ```rust,no_run
 // build.rs
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+//
+// Use `ergo_sbe::miette::Result`, not `Box<dyn std::error::Error>` — on a
+// malformed schema, `Box<dyn Error>` prints a raw `Debug` dump (unreadable
+// struct fields). `miette::Result` renders the actual XML snippet with a span
+// pointing at the bad element instead — requires the `fancy` feature above,
+// no separate `miette` dependency needed (re-exported).
+fn main() -> ergo_sbe::miette::Result<()> {
     ergo_sbe::generate_to_out_dir(
         "schemas/messages.xml",
         ergo_sbe::GenerationConfig::new("messages"),
