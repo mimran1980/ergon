@@ -5,10 +5,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
         .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_unchecked_companions()
-        .enable_bool_domain_type()
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
+        )
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("BooleanType"),
+            "bool",
         )
         .with_domain_type(
             ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
