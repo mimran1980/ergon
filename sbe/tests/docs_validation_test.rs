@@ -56,6 +56,9 @@ fn docs_schema_xml() -> String {
         <message name="Heartbeat" id="2" blockLength="4">
           <field name="seq" id="1" type="uint32" offset="0"/>
         </message>
+        <message name="FixedString" id="3" blockLength="6">
+          <field name="code" id="1" type="Code" offset="0"/>
+        </message>
         </messageSchema>"#,
         types = header_and_types()
     )
@@ -321,7 +324,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // AnyMessage dispatch (crate docs)
     match AnyMessage::decode(buf.as_slice(), 0)? {
         AnyMessage::Heartbeat(h) => assert_eq!(h.seq(), 7),
-        AnyMessage::Quote(_) | AnyMessage::Unknown { .. } => {
+        AnyMessage::Quote(_) | AnyMessage::FixedString(_) | AnyMessage::Unknown { .. } => {
             panic!("expected Heartbeat")
         }
     }

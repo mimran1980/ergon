@@ -234,21 +234,17 @@ let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .encoded_length_with_header();
 ```
 
-**C-style fixed-width strings:** `vehicle_code_str("ABC")` auto-pads short strings
-with NUL bytes. On decode, `copy_vehicle_code` copies the field into your buffer:
+**C-style fixed-width strings:** pass a shorter `&str` — auto-padded with NULs.
+On decode, `copy_*` copies the raw bytes into your buffer:
 
 ```rust
-let mut buf = [0u8; 256];
-let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .put_some_numbers(0, 0, 0, 0)
-    .qty(1)
-    .vehicle_code_str("ABC")?
-    .legs(0, |_| Ok(()))?
-    .note(b"")?
+let mut buf = [0u8; FixedStringEncoder::compute_length_with_header()];
+let len = FixedStringEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .code_str("ABC")?
     .encoded_length_with_header();
-let dec = QuoteDecoder::try_from(&buf[..len])?;
+let dec = FixedStringDecoder::try_from(&buf[..len])?;
 let mut code = [0u8; 6];
-dec.copy_vehicle_code(&mut code);
+dec.copy_code(&mut code);
 assert_eq!(&code, b"ABC\0\0\0");
 ```
 
@@ -592,7 +588,7 @@ let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
 
 match AnyMessage::decode(&buf[..len], 0)? {
     AnyMessage::Heartbeat(heartbeat) => assert_eq!(heartbeat.seq(), 11),
-    AnyMessage::Quote(_) | AnyMessage::Unknown { .. } => {
+    AnyMessage::Quote(_) | AnyMessage::FixedString(_) | AnyMessage::Unknown { .. } => {
         return Err("expected Heartbeat".into());
     }
 }
