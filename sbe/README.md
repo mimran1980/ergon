@@ -605,6 +605,9 @@ focused nested/ragged group sizing is in
 
 ## Core ideas
 
+> Design rationale and internal details — skip this section on first read.
+> The [Quick start](#quick-start) and [Recipes](#recipes) cover everyday usage.
+
 ### Trust boundary
 
 | API | When |
