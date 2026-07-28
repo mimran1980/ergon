@@ -99,18 +99,20 @@ generated API is purpose-built for Rust rather than ported from Java.
 
 ## Contents
 
-1. [Quick start](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#quick-start) — `generate_to_out_dir` + `sbe_mod!` → first encode/decode
-2. [Compile-checked feature tour](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#compile-checked-feature-tour) — fixed/dynamic messages, arrays, stages, DTOs, dispatch
-3. [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#core-ideas) — trust boundary, wire order, **buffer sizing**, flyweight vs whole struct, **composite LE layout**
-4. [Feature matrix](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#feature-matrix) — full capability scan
+| Section | What |
+|---------|------|
+| [Quick start](#quick-start) | `build.rs` → include → first encode/decode |
+| [Recipes](#recipes) | Common patterns with links to compilable samples |
+| [Feature tour](#compile-checked-feature-tour) | Every feature with runnable examples |
+| [Core ideas](#core-ideas) | Trust boundary, wire order, buffer sizing, composites |
+| [Feature matrix](#feature-matrix) | Full capability scan |
+| [Configuration](#configuration) | `with_conversion`, `with_domain_type`, `enable_bool_domain_type` |
+| [Samples](#samples) | Monorepo sample crates |
+| [Why ergo-sbe](#why-ergo-sbe) | What's different from sbe-tool |
 
-5. [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#recipes) — encode known/unknown groups, Display, DTO, conversion
-6. [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) — wire vs app types, `with_conversion` / `with_domain_type`
-7. [Samples](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#samples)
-8. [Rust version](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#rust-version-and-edition) · [Verify](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#verify-the-crate) · [Package scope](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#package-scope)
-
-Names in snippets use a fictional `Car` / `Quote` schema — **your** types and
-methods follow **your** schema names.
+Names in snippets use `Heartbeat`, `Quote`, or `FixedString` from the
+docs_codec fixture — **your** types follow **your** schema names.
+Every bare `rust` fence compiles via `docs_validation_test`.
 
 Every bare `rust` fence in this README is extracted and compiled by
 `docs_validation_test`. Schematic fragments (build scripts, config, generated
