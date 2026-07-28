@@ -12,9 +12,12 @@ path = "src/lib.rs"
 
 [dependencies]
 ergo-sbe = { path = ".." }
+rust_decimal = "1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+hdrhistogram = "7"
+iai-callgrind = "0.16.1"
 
 [build-dependencies]
 ergo-sbe = { path = ".." }
@@ -41,6 +44,32 @@ harness = false
 
 [[bench]]
 name = "encode_style_bench"
+harness = false
+
+[[bench]]
+name = "codec_matrix_bench"
+harness = false
+
+[[bench]]
+name = "alignment_bench"
+harness = false
+
+[[bench]]
+name = "instruction_counts"
+harness = false
+
+[[bench]]
+name = "latency_distribution"
+harness = false
+
+[[bench]]
+name = "cold_path_bench"
+harness = false
+[[bench]]
+name = "group_encode_bench"
+harness = false
+[[bench]]
+name = "l2_book_bench"
 harness = false
 
 [features]

@@ -151,6 +151,9 @@ pub struct Token {
     pub signal: Signal,
     /// Wire-encoding metadata. Populated on `BeginField`; default elsewhere.
     pub encoding: Encoding,
+    /// Source span into the input XML text, for miette diagnostics.
+    /// `None` for synthetic tokens not originating from the schema source.
+    pub span: Option<std::ops::Range<usize>>,
 }
 
 /// The parsed schema IR: schema-level metadata plus the token stream.

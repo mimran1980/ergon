@@ -2039,8 +2039,8 @@ impl<'a> FuelFiguresDecoder<'a> {
         if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
-                needed: n * Self::ENTRY_BLOCK_LENGTH,
-                available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                needed: n.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                available: self.count.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
             });
         }
         for _ in 0..n {
@@ -2186,6 +2186,13 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+        if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "group entry",
+                needed: self.acting_block_length,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
         Ok(self.pos + self.acting_block_length)
     }
     #[inline]
@@ -2212,6 +2219,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     }
     #[inline]
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        if let Some(end) = self.tail_end.get() {
+            let data_offset = self.pos + self.acting_block_length + 4;
+            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+        }
         let offset = self.tail_offset_0()?;
         if let Some(end) = self.tail_end.get() {
             let data_offset = offset
@@ -2554,8 +2565,8 @@ impl<'a> PerformanceFiguresDecoder<'a> {
         if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
-                needed: n * Self::ENTRY_BLOCK_LENGTH,
-                available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                needed: n.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                available: self.count.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
             });
         }
         for _ in 0..n {
@@ -2683,6 +2694,13 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub const OCTANE_RATING_MAX: u8 = 110_u8;
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+        if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "group entry",
+                needed: self.acting_block_length,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
         Ok(self.pos + self.acting_block_length)
     }
     #[inline]
@@ -2716,6 +2734,16 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     pub fn acceleration(
         &self,
     ) -> Result<PerformanceFiguresAccelerationDecoder<'a>, sbe_rt::DecodeError> {
+        if self.tail_end.get().is_some() {
+            let offset = self.pos + self.acting_block_length;
+            return Ok(PerformanceFiguresAccelerationDecoder::wrap_trusted(
+                self.buf,
+                offset,
+                self.acting_version,
+                0,
+                0,
+            ));
+        }
         let offset = self.tail_offset_0()?;
         if self.tail_end.get().is_some() {
             return Ok(PerformanceFiguresAccelerationDecoder::wrap_trusted(
@@ -2887,13 +2915,47 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         if n > self.count {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
-                needed: n * self.acting_block_length,
-                available: self.count * self.acting_block_length,
+                needed: n.saturating_mul(self.acting_block_length),
+                available: self.count.saturating_mul(self.acting_block_length),
             });
         }
-        self.pos += n * self.acting_block_length;
+        self.pos += n.saturating_mul(self.acting_block_length);
         self.count -= n;
         Ok(())
+    }
+    /// Bulk-decode all remaining entries into a `Vec`.
+    /// One bounds check for the whole batch — faster than
+    /// iterating with [`Iterator::next`] when materialising
+    /// the entire group (DTO construction, snapshots).
+    pub fn bulk_decode(
+        &mut self,
+    ) -> Result<Vec<PerformanceFiguresAccelerationEntry>, sbe_rt::DecodeError> {
+        let needed = self.count.checked_mul(self.acting_block_length).ok_or(
+            sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: usize::MAX,
+                available: 0,
+            },
+        )?;
+        if self.pos + needed > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
+        let cap = self.count;
+        let mut out = Vec::with_capacity(cap);
+        for _ in 0..cap {
+            let pos = self.pos;
+            self.pos += self.acting_block_length;
+            out.push(PerformanceFiguresAccelerationEntry {
+                mph: u16::from_le_bytes(self.buf[pos + 0..][..2].try_into().unwrap()),
+                seconds: f32::from_le_bytes(self.buf[pos + 2..][..4].try_into().unwrap()),
+            });
+        }
+        self.count = 0;
+        Ok(out)
     }
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
@@ -3029,6 +3091,13 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+        if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "group entry",
+                needed: self.acting_block_length,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
         Ok(self.pos + self.acting_block_length)
     }
     #[inline]
@@ -3042,6 +3111,13 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         block_len: usize,
         _acting_version: u16,
     ) -> Result<usize, sbe_rt::DecodeError> {
+        if block_len > buf.len().saturating_sub(pos) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "group entry",
+                needed: block_len,
+                available: buf.len().saturating_sub(pos),
+            });
+        }
         Ok(pos + block_len)
     }
 }
@@ -3870,6 +3946,15 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
         Ok(len)
     }
 }
+impl CarPerformanceFiguresEntryAccelerationEntryDomain {
+    /// Convert to the wire entry struct for bulk encoding.
+    pub fn to_wire_entry(&self) -> PerformanceFiguresAccelerationEntry {
+        PerformanceFiguresAccelerationEntry {
+            mph: self.mph,
+            seconds: self.seconds,
+        }
+    }
+}
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
 /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
 #[derive(Debug, Clone, PartialEq)]
@@ -3920,12 +4005,15 @@ impl CarPerformanceFiguresEntryDomain {
             }
         }
         enc.octane_rating(self.octane_rating);
+        let wire_entries: Vec<PerformanceFiguresAccelerationEntry> = self
+            .acceleration
+            .iter()
+            .map(|e| e.to_wire_entry())
+            .collect();
         let enc = enc.acceleration(
             self.acceleration.len() as u16,
             |g| -> Result<(), sbe_rt::EncodeError> {
-                for e in &self.acceleration {
-                    g.add(|entry| -> Result<(), sbe_rt::EncodeError> { e.encode_into(entry) })?;
-                }
+                g.bulk_add(&wire_entries)?;
                 Ok(())
             },
         )?;
@@ -5574,6 +5662,43 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         self.buf[pos + 2..][..4].copy_from_slice(&entry.seconds.to_le_bytes());
         Ok(())
     }
+    /// Bulk-encode a slice of entries. Bounds checks are hoisted
+    /// outside the loop so LLVM can auto-vectorise the field writes.
+    /// Prefer this over repeated [`Self::add_struct`] calls when
+    /// you already have a `&[#entry_struct_ident]`.
+    pub fn bulk_add(
+        &mut self,
+        entries: &[PerformanceFiguresAccelerationEntry],
+    ) -> Result<(), sbe_rt::EncodeError> {
+        let count: usize = entries.len();
+        if count == 0 {
+            return Ok(());
+        }
+        if (self.written as usize).saturating_add(count) > self.count as usize {
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count as u32,
+                attempted: (self.written as u32).saturating_add(count as u32),
+            });
+        }
+        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let needed = count
+            .checked_mul(block_len)
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        if self.pos + needed > self.buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
+        for entry in entries {
+            let pos = self.pos;
+            self.pos += block_len;
+            self.buf[pos + 0..][..2].copy_from_slice(&entry.mph.to_le_bytes());
+            self.buf[pos + 2..][..4].copy_from_slice(&entry.seconds.to_le_bytes());
+        }
+        self.written = self.written.saturating_add(count as u16);
+        Ok(())
+    }
 }
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
@@ -6610,7 +6735,7 @@ impl<'a> AnyMessage<'a> {
             });
         }
         match template_id {
-            1 => Ok(Self::Car(CarDecoder::wrap(
+            CarDecoder::TEMPLATE_ID => Ok(Self::Car(CarDecoder::wrap(
                 buf,
                 body_pos,
                 block_length,
@@ -6650,7 +6775,7 @@ impl<'a> AnyMessage<'a> {
             });
         }
         match template_id {
-            1 => {
+            CarDecoder::TEMPLATE_ID => {
                 let decoder = CarDecoder::wrap(buf, body_pos, block_length, version);
                 let total_len = decoder.encoded_length_with_header()?;
                 if total_len > frame_len {

@@ -9,8 +9,8 @@ than retaining dated point estimates as release guarantees.
 
 | | |
 |---|---|
-| **Date** | 2026-07-26 |
-| **Release tree** | 0.1.1 release candidate |
+| **Date** | 2026-07-27 |
+| **Release tree** | 0.1.2 working tree |
 | **Host** | Apple M4 (macOS Darwin, arm64) |
 | **Toolchain** | rustc 1.95.0 |
 | **SBE gate** | **9/9 PASS** |
@@ -23,20 +23,20 @@ with the gate's 0.5% noise tolerance):
 
 | Scenario | Ratio | Status |
 |----------|-------|--------|
-| decode_scalar | 0.9993 | PASS |
-| decode_array | 1.0013 | PASS |
-| decode_composite | 1.0029 | PASS |
-| decode_full_message | 0.8853 | PASS |
-| decode_entry_point | 0.8873 | PASS |
-| encode/scalar | 0.6943 | PASS |
+| decode_scalar | 1.0000 | PASS |
+| decode_array | 0.9990 | PASS |
+| decode_composite | 1.0037 | PASS |
+| decode_full_message | 0.9190 | PASS |
+| decode_entry_point | 0.8517 | PASS |
+| encode/scalar | 0.7527 | PASS |
 | encode/throughput_10k | 0.9701 | PASS |
-| throughput/batch_10k | 0.9665 | PASS |
+| throughput/batch_10k | 0.9679 | PASS |
 | wire_parity/encode_full | 0.7041 | PASS |
 
 Notes from this cycle:
 
-- The full `ergo-sbe-benchmarks` package was run, covering all six Criterion
-  binaries. The maintained parity gate and all diagnostic suites completed.
+- The maintained parity gate and the expanded matrix, alignment, cold-path,
+  and warmed-HDR diagnostic suites completed.
 - `wire_parity/encode_full` is now a ninth maintained gate and compares
   byte-identical full-message encodes.
 - Encode benches **reuse pre-sized buffers** outside `b.iter` (no alloc on the
@@ -141,6 +141,133 @@ comparison must:
 - identify templates and schemas from codec contracts rather than stale
   literals;
 - produce an ergo-sbe/sbe-tool ratio no greater than `1.00`.
+
+## Expanded codec matrix
+
+The maintained ratio suite remains the generated ergo-sbe versus official
+sbe-tool comparison. The additive matrix is diagnostic and never uses
+IronSBE, rustysbe, handwritten offsets, or a custom wire format as an oracle.
+
+```sh
+just bench-diagnostics
+```
+
+`codec_matrix_bench` covers:
+
+| Dimension | Cases |
+|---|---|
+| Fixed block | 16, 64, 256 bytes |
+| Group count | 0, 1, 5, 20, 100 |
+| Var-data | 0, 8, 128, 4096, schema maximum (8192) bytes |
+| Dynamic shape | sequential flat groups; ragged nested groups with nested var-data |
+| Wire configuration | little-endian, big-endian, custom header |
+| Evolution | acting version 0 and current version 1 |
+| Operations | checked/trusted entry, full `verify`, scalar read, traversal, `nth`, encode, exact sizing, `AnyMessage`, static metadata lookup, DTO conversion, round trip |
+
+The timed encode paths reuse caller-owned buffers. Metadata lookup is the
+generated static `(schema_id, template_id)` match and is also protected by the
+allocation-count test suite.
+
+Representative Apple M4 medians from the complete 2026-07-27 matrix run:
+
+| Case | Median |
+|---|---:|
+| Checked scalar read, 64-byte fixed block | 0.684 ns |
+| Traverse 100 group entries | 14.943 ns |
+| Encode 100 group entries | 10.571 ns |
+| Round trip 4,096 bytes of var-data | 42.347 ns |
+| `AnyMessage` dispatch | 13.813 ns |
+| Static metadata lookup | 0.697 ns |
+| DTO conversion | 2.386 ns |
+| Ragged nested-group traversal | 37.425 ns |
+| LE / BE / custom-header scalar read | 0.712 / 0.748 / 1.000 ns |
+
+These numbers are diagnostic observations, not cross-machine thresholds.
+
+### Alignment experiment
+
+`alignment_bench` exercises message offsets `0..=63` for ordinary stack
+arrays, reused `Vec` storage, and a `#[repr(align(64))]` test buffer. It exists
+to measure the effect, not to justify a mandatory aligned-buffer or pool API.
+SBE frames remain valid at arbitrary caller-selected offsets.
+
+```sh
+cargo bench -p ergo-sbe-benchmarks --bench alignment_bench
+```
+
+Apple M4 results on 2026-07-27 (Criterion median across each individual
+offset):
+
+| Storage | Median range over offsets | Mean of per-offset medians |
+|---|---:|---:|
+| Stack array | 1.047–1.107 ns | 1.056 ns |
+| Reused `Vec` | 1.041–1.137 ns | 1.055 ns |
+| 64-byte-aligned test buffer | 1.047–1.764 ns | 1.073 ns |
+
+The aligned buffer did not improve the aggregate result, so this release adds
+no mandatory aligned-buffer or pooling API.
+
+### Stable instruction counts
+
+`instruction_counts` uses Iai-Callgrind for checked entry, trusted scalar
+access, full verification, and metadata lookup. The weekly Linux job publishes
+the `target/iai` result as an artifact. This avoids treating sub-nanosecond
+wall-clock noise as an instruction regression.
+
+```sh
+# Linux with Valgrind and iai-callgrind-runner 0.16.1 installed
+just bench-instructions
+```
+
+### Warmed latency distributions
+
+HDR Histogram is reserved for warmed batches where timer resolution is
+meaningful. `latency_distribution` reports p50, p99, and p99.9 for batches of
+1,000 decoded messages after warm-up. Per-field microbenchmarks continue to use
+Criterion medians and confidence intervals.
+
+Apple M4 results on 2026-07-27: p50 250 ns, p99 292 ns, p99.9 375 ns per
+warmed 1,000-message batch.
+
+### Cold paths and artifact sizes
+
+```sh
+cargo bench -p ergo-sbe-benchmarks --bench cold_path_bench
+just bench-cold
+```
+
+The Criterion cold-path suite measures schema parse and parse-plus-codegen.
+The fresh-crate probe reports generated source bytes, generated-crate compile
+time, final binary bytes, and platform `size` sections when available.
+
+Latest fresh probe on the Apple M4 host (2026-07-27, rustc 1.95.0):
+
+| Measurement | Result |
+|---|---:|
+| In-memory matrix schema parse | 20.873 µs |
+| In-memory matrix parse plus codegen | 19.339 ms |
+| Matrix generated source | 300,652 bytes |
+| Generated Car source | 239,709 bytes |
+| Fresh release compile (wall) | 7.75 s |
+| Final probe binary | 428,176 bytes |
+
+## Regression policy
+
+- Every machine keeps the existing sbe-tool equal-work ratio gate.
+- Shared GitHub runners compile every benchmark and publish Criterion
+  diagnostics; raw nanosecond deltas do not block merges.
+- A dedicated stable runner, when configured, must reject a hot-path median
+  regression above 3%, an Iai instruction-count regression above 2%, any new
+  allocation, or a warmed batch/cluster p99 regression above 5%.
+- Criterion medians and confidence intervals are the authority for
+  microbenchmarks. HDR p50/p99/p99.9 applies only to warmed batch and
+  Aeron/cluster end-to-end measurements.
+
+The expanded Criterion matrix, alignment, cold-path, and HDR suites were
+executed on 2026-07-27 with rustc 1.95.0; Iai-Callgrind was compile-validated
+and is executed by the Linux/Valgrind job. Machine-specific observations
+belong in CI artifacts or a release record; they are not portable API
+promises.
 
 ## Cluster codec gate
 

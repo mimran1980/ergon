@@ -2959,19 +2959,47 @@ fn generate_domain_recursive(
 
         let (_, _, count_prim) = get_dim_num_layout(elements, &g.dimension_type);
         let count_ty: syn::Type = syn::parse_str(rust_type(count_prim)).unwrap();
-        group_encode_stmts.push(quote::quote! {
-            let enc = enc.#g_field_ident(
-                self.#g_field_ident.len() as #count_ty,
-                |g| -> Result<(), sbe_rt::EncodeError> {
-                    for e in &self.#g_field_ident {
-                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                            e.encode_into(entry)
-                        })?;
+        // Use bulk_add for flat groups whose entry fields have no
+        // domain conversions — the domain entry struct mirrors the wire
+        // entry struct.
+        let can_bulk = !has_tail
+            && g.fields.iter().all(|f| {
+                f.presence != Presence::Optional
+                    && f.since_version == 0
+                    && !field_has_conversion_free(f, conversions)
+                    && find_domain_type(f, domain_types).is_none()
+            });
+        if can_bulk {
+            let wire_entry_ident = syn::Ident::new(&format!("{g_scoped}Entry"), span);
+            group_encode_stmts.push(quote::quote! {
+                let wire_entries: Vec<#wire_entry_ident> = self
+                    .#g_field_ident
+                    .iter()
+                    .map(|e| e.to_wire_entry())
+                    .collect();
+                let enc = enc.#g_field_ident(
+                    self.#g_field_ident.len() as #count_ty,
+                    |g| -> Result<(), sbe_rt::EncodeError> {
+                        g.bulk_add(&wire_entries)?;
+                        Ok(())
                     }
-                    Ok(())
-                }
-            )?;
-        });
+                )?;
+            });
+        } else {
+            group_encode_stmts.push(quote::quote! {
+                let enc = enc.#g_field_ident(
+                    self.#g_field_ident.len() as #count_ty,
+                    |g| -> Result<(), sbe_rt::EncodeError> {
+                        for e in &self.#g_field_ident {
+                            g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                                e.encode_into(entry)
+                            })?;
+                        }
+                        Ok(())
+                    }
+                )?;
+            });
+        }
 
         let entry_prefix = format!("{struct_prefix}{g_pascal}Entry");
         let entry_decoder_name = format!("{g_scoped}Entry");
@@ -3130,6 +3158,43 @@ fn generate_domain_recursive(
                 }
             }
         });
+
+        // For flat entries with no domain conversions or optional fields,
+        // generate to_wire_entry() so DTO encode can use bulk_add.
+        // Optional fields are excluded because the domain type wraps them
+        // in Option<T> while the wire type is bare T — to_wire_entry
+        // can't automatically resolve the null case.
+        let entry_is_flat = groups.is_empty() && var_data.is_empty();
+        let entry_has_no_conversions = fields.iter().all(|f| {
+            f.presence != Presence::Constant
+                && f.presence != Presence::Optional
+                && f.since_version == 0
+                && !field_has_conversion_free(f, conversions)
+                && find_domain_type(f, domain_types).is_none()
+        });
+        if entry_is_flat && entry_has_no_conversions {
+            let wire_entry_ident = syn::Ident::new(decoder_name, span);
+            let mut wire_fields = proc_macro2::TokenStream::new();
+            for f in fields {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
+                wire_fields.extend(quote::quote! {
+                    #f_ident: self.#f_ident,
+                });
+            }
+            ts.extend(quote::quote! {
+                impl #domain_ident {
+                    /// Convert to the wire entry struct for bulk encoding.
+                    pub fn to_wire_entry(&self) -> #wire_entry_ident {
+                        #wire_entry_ident {
+                            #wire_fields
+                        }
+                    }
+                }
+            });
+        }
     } else {
         // Message domains: full encode via wrap_and_apply_header
         let has_optional = fields
@@ -3435,6 +3500,7 @@ fn generate_group_decoder(
     domain_types: &[(crate::ConversionSelector, String)],
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
+    let span = proc_macro2::Span::call_site();
     let name = scoped_name.to_string();
     let decoder_ident = quote::format_ident!("{}Decoder", name);
     let entry_decoder_ident = quote::format_ident!("{}EntryDecoder", name);
@@ -3586,6 +3652,68 @@ fn generate_group_decoder(
 
     // skip_n()
     if total_tail == 0 {
+        // Build field read expressions for bulk_decode (reverse of
+        // add_struct's struct_write in generate_group_encoder).
+        let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
+        let mut field_reads = proc_macro2::TokenStream::new();
+        for f in &g.fields {
+            if f.presence == Presence::Constant {
+                continue;
+            }
+            let f_name = syn::Ident::new(&to_snake_case(&f.name), span);
+            let f_offset = syn::Index::from(f.offset);
+            let f_size = syn::LitInt::new(&f.field_type.size().to_string(), span);
+            match &f.field_type {
+                FieldType::Composite { .. } => {
+                    let f_ty = field_type_ident(&f.field_type, span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let mut bytes = [0u8; #f_size];
+                            bytes.copy_from_slice(&self.buf[pos + #f_offset..][..#f_size]);
+                            #f_ty(bytes)
+                        },
+                    });
+                }
+                FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
+                    let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let raw = #r_ty::#order_fn(
+                                self.buf[pos + #f_offset..][..#f_size].try_into().unwrap()
+                            );
+                            raw.into()
+                        },
+                    });
+                }
+                FieldType::Primitive(pt, Some(len)) => {
+                    let len_lit = syn::LitInt::new(&len.to_string(), span);
+                    let r_ty = syn::Ident::new(&rust_type(*pt), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let mut arr = [0 as #r_ty; #len_lit];
+                            let mut i = 0usize;
+                            while i < #len_lit {
+                                let elem_offset = pos + #f_offset + i * core::mem::size_of::<#r_ty>();
+                                arr[i] = #r_ty::#order_fn(
+                                    self.buf[elem_offset..][..core::mem::size_of::<#r_ty>()].try_into().unwrap()
+                                );
+                                i += 1;
+                            }
+                            arr
+                        },
+                    });
+                }
+                FieldType::Primitive(pt, None) => {
+                    let r_ty = syn::Ident::new(&rust_type(*pt), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: #r_ty::#order_fn(
+                            self.buf[pos + #f_offset..][..#f_size].try_into().unwrap()
+                        ),
+                    });
+                }
+            }
+        }
+
         ts.extend(quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #[inline]
@@ -3593,13 +3721,42 @@ fn generate_group_decoder(
                     if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: n * self.acting_block_length,
-                            available: self.count * self.acting_block_length,
+                            needed: n.saturating_mul(self.acting_block_length),
+                            available: self.count.saturating_mul(self.acting_block_length),
                         });
                     }
-                    self.pos += n * self.acting_block_length;
+                    self.pos += n.saturating_mul(self.acting_block_length);
                     self.count -= n;
                     Ok(())
+                }
+
+                /// Bulk-decode all remaining entries into a `Vec`.
+                /// One bounds check for the whole batch — faster than
+                /// iterating with [`Iterator::next`] when materialising
+                /// the entire group (DTO construction, snapshots).
+                pub fn bulk_decode(&mut self) -> Result<Vec<#entry_struct_ident>, sbe_rt::DecodeError> {
+                    let needed = self.count.checked_mul(self.acting_block_length)
+                        .ok_or(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: usize::MAX,
+                            available: 0,
+                        })?;
+                    if self.pos + needed > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        });
+                    }
+                    let cap = self.count;
+                    let mut out = Vec::with_capacity(cap);
+                    for _ in 0..cap {
+                        let pos = self.pos;
+                        self.pos += self.acting_block_length;
+                        out.push(#entry_struct_ident { #field_reads });
+                    }
+                    self.count = 0;
+                    Ok(out)
                 }
             }
         });
@@ -3611,8 +3768,8 @@ fn generate_group_decoder(
                     if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: n * Self::ENTRY_BLOCK_LENGTH,
-                            available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                            needed: n.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                            available: self.count.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
                         });
                     }
                     for _ in 0..n {
@@ -4183,6 +4340,13 @@ fn generate_group_decoder(
     entry_body.extend(quote::quote! {
         #[inline]
         fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+            if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "group entry",
+                    needed: self.acting_block_length,
+                    available: self.buf.len().saturating_sub(self.pos),
+                });
+            }
             Ok(self.pos + self.acting_block_length)
         }
     });
@@ -4269,9 +4433,24 @@ fn generate_group_decoder(
         let ng_idx_lit = syn::LitInt::new(&ng_idx.to_string(), proc_macro2::Span::call_site());
 
         let tail_ng_fn = quote::format_ident!("tail_offset_{}", ng_idx);
+        let cached_first_tail = if ng_idx == 0 {
+            quote::quote! {
+                // `Iterator::next` cached the complete validated entry extent,
+                // so this first-tail offset cannot overflow or exceed `buf`.
+                if self.tail_end.get().is_some() {
+                    let offset = self.pos + self.acting_block_length;
+                    return Ok(#ng_decoder_ident::wrap_trusted(
+                        self.buf, offset, self.acting_version, 0, 0,
+                    ));
+                }
+            }
+        } else {
+            quote::quote! {}
+        };
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
+                #cached_first_tail
                 let offset = self.#tail_ng_fn()?;
                 if self.tail_end.get().is_some() {
                     return Ok(#ng_decoder_ident::wrap_trusted(
@@ -4295,12 +4474,26 @@ fn generate_group_decoder(
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
         if nvd_idx + 1 == total_tail {
+            let cached_first_tail = if nvd_idx == 0 {
+                quote::quote! {
+                    // `Iterator::next` cached the complete validated entry
+                    // extent, including this prefix and payload.
+                    if let Some(end) = self.tail_end.get() {
+                        let data_offset =
+                            self.pos + self.acting_block_length + #prefix_size_lit;
+                        return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+                    }
+                }
+            } else {
+                quote::quote! {}
+            };
             // Last tail component: a warm tail-end cache (filled by the
             // iterator's encoded_length) gives the slice end directly —
             // no second length-header read, bounds already validated.
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    #cached_first_tail
                     let offset = self.#tail_nvd_fn()?;
                     if let Some(end) = self.tail_end.get() {
                         let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
@@ -4364,6 +4557,13 @@ fn generate_group_decoder(
             }
             #[inline]
             pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+                if block_len > buf.len().saturating_sub(pos) {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "group entry",
+                        needed: block_len,
+                        available: buf.len().saturating_sub(pos),
+                    });
+                }
                 Ok(pos + block_len)
             }
         });
@@ -4671,13 +4871,21 @@ fn generate_conversion_impl_blocks(
     }
 
     if has_decimal_conv {
-        let dec_name = elements
-            .composites
-            .iter()
-            .find(|c| c[0].name == "Decimal")
+        let dec_composite = elements.composites.iter().find(|c| c[0].name == "Decimal");
+        let dec_name = dec_composite
             .map(|c| to_pascal_case(&c[0].name))
             .unwrap_or_else(|| "Decimal".to_string());
         let dec_ident = syn::Ident::new(&dec_name, span);
+        // Check if the schema's Decimal composite has a constant exponent.
+        let exponent_is_constant = dec_composite
+            .and_then(|c| c.iter().find(|t| t.name == "exponent"))
+            .map(|t| t.encoding.presence == crate::ir::Presence::Constant)
+            .unwrap_or(false);
+        let dec_new_call: proc_macro2::TokenStream = if exponent_is_constant {
+            quote::quote! { #dec_ident::new(mantissa) }
+        } else {
+            quote::quote! { #dec_ident::new(mantissa, -(self.scale() as i8)) }
+        };
         let ts = quote::quote! {
             impl TryFromSbe<#dec_ident> for rust_decimal::Decimal {
                 type Error = &'static str;
@@ -4703,7 +4911,7 @@ fn generate_conversion_impl_blocks(
                     let mantissa: i64 = self.mantissa()
                         .try_into()
                         .map_err(|_| "Decimal mantissa overflow i64")?;
-                    Ok(#dec_ident::new(mantissa, -(self.scale() as i8)))
+                    Ok(#dec_new_call)
                 }
             }
         };
@@ -5782,6 +5990,13 @@ fn generate_message_encoder(
             /// at `frame[Self::ENCODED_LENGTH..]`.
             pub const ENCODED_LENGTH: usize = #encoded_length_lit;
             const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            /// Header-inclusive encoded length. Same as [`Self::ENCODED_LENGTH`];
+            /// provided for API consistency with flat and complex message
+            /// shapes so every encoder has a `compute_length_with_header` method.
+            #[inline]
+            pub const fn compute_length_with_header() -> usize {
+                Self::ENCODED_LENGTH
+            }
             /// Slice after one full header-inclusive message of this type.
             #[inline]
             pub fn after_this_message(frame: &[u8]) -> Option<&[u8]> {
@@ -6551,9 +6766,31 @@ fn generate_message_encoder(
         });
     } else {
         ts.extend(quote::quote! {
+            impl<'a> #name_encoder_ident<'a> {
+                /// Returns the complete fixed-length SBE message bytes
+                /// (header + body).
+                #[inline]
+                pub fn as_bytes(&self) -> &[u8] {
+                    &self.buf[self.message_start..self.pos]
+                }
+                /// Explicit header-inclusive view (alias for `as_bytes()`).
+                #[inline]
+                pub fn as_bytes_with_header(&self) -> &[u8] {
+                    self.as_bytes()
+                }
+                #[inline]
+                pub fn encoded_length(&self) -> usize {
+                    self.pos - self.message_start - #header_size_lit
+                }
+                #[inline]
+                pub fn encoded_length_with_header(&self) -> usize {
+                    self.pos - self.message_start
+                }
+            }
+
             impl<'a> AsRef<[u8]> for #name_encoder_ident<'a> {
                 fn as_ref(&self) -> &[u8] {
-                    &self.buf[self.message_start..self.pos]
+                    self.as_bytes()
                 }
             }
         });
@@ -6661,6 +6898,7 @@ fn generate_group_encoder(
         ByteOrder::BigEndian => "be",
     };
     let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+    let (block_offset, block_size, block_prim) = get_dim_block_layout(elements, &g.dimension_type);
     let (_, _, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
     let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
@@ -6672,13 +6910,36 @@ fn generate_group_encoder(
     );
     let mut dim_storage = [0u8; 32];
     let dim_tpl = &mut dim_storage[..dim_size];
-    match byte_order {
-        ByteOrder::LittleEndian => {
-            dim_tpl[0..2].copy_from_slice(&(group_block_length as u16).to_le_bytes());
+    assert!(
+        block_offset
+            .checked_add(block_size)
+            .is_some_and(|end| end <= dim_size),
+        "group dimension blockLength is outside its composite"
+    );
+    match block_prim {
+        PrimitiveType::UInt8 => {
+            dim_tpl[block_offset] = u8::try_from(group_block_length)
+                .expect("group blockLength exceeds uint8 dimension field");
         }
-        ByteOrder::BigEndian => {
-            dim_tpl[0..2].copy_from_slice(&(group_block_length as u16).to_be_bytes());
+        PrimitiveType::UInt16 => {
+            let value = u16::try_from(group_block_length)
+                .expect("group blockLength exceeds uint16 dimension field");
+            let bytes = match byte_order {
+                ByteOrder::LittleEndian => value.to_le_bytes(),
+                ByteOrder::BigEndian => value.to_be_bytes(),
+            };
+            dim_tpl[block_offset..block_offset + 2].copy_from_slice(&bytes);
         }
+        PrimitiveType::UInt32 => {
+            let value = u32::try_from(group_block_length)
+                .expect("group blockLength exceeds uint32 dimension field");
+            let bytes = match byte_order {
+                ByteOrder::LittleEndian => value.to_le_bytes(),
+                ByteOrder::BigEndian => value.to_be_bytes(),
+            };
+            dim_tpl[block_offset..block_offset + 4].copy_from_slice(&bytes);
+        }
+        _ => panic!("group dimension blockLength must use an unsigned integer type"),
     }
 
     let span = proc_macro2::Span::call_site();
@@ -6883,6 +7144,41 @@ fn generate_group_encoder(
                     self.pos += block_len;
                     self.written += 1;
                     #struct_write
+                    Ok(())
+                }
+
+                /// Bulk-encode a slice of entries. Bounds checks are hoisted
+                /// outside the loop so LLVM can auto-vectorise the field writes.
+                /// Prefer this over repeated [`Self::add_struct`] calls when
+                /// you already have a `&[#entry_struct_ident]`.
+                pub fn bulk_add(&mut self, entries: &[#entry_struct_ident]) -> Result<(), sbe_rt::EncodeError> {
+                    let count: usize = entries.len();
+                    if count == 0 {
+                        return Ok(());
+                    }
+                    // Pre-flight capacity check (once, not per-entry)
+                    if (self.written as usize).saturating_add(count) > self.count as usize {
+                        return Err(sbe_rt::EncodeError::GroupFull {
+                            declared: self.count as u32,
+                            attempted: (self.written as u32).saturating_add(count as u32),
+                        });
+                    }
+                    let block_len = Self::ENTRY_BLOCK_LENGTH;
+                    let needed = count.checked_mul(block_len).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    if self.pos + needed > self.buf.len() {
+                        return Err(sbe_rt::EncodeError::BufferTooShort {
+                            needed,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        });
+                    }
+                    // Tight inner loop — no per-entry bounds checks.
+                    // LLVM will auto-vectorise sequential copy_from_slice calls.
+                    for entry in entries {
+                        let pos = self.pos;
+                        self.pos += block_len;
+                        #struct_write
+                    }
+                    self.written = self.written.saturating_add(count as #count_ty);
                     Ok(())
                 }
             }
@@ -7247,6 +7543,7 @@ mod tests {
             name: String::new(),
             signal,
             encoding: Encoding::default(),
+            span: None,
         }
     }
 

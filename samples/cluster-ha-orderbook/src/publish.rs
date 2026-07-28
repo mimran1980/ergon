@@ -12,7 +12,7 @@ use crate::normalized_app::{AppMessageEncoder, Decimal, L2BookEncoder, Source, s
 
 const APP_NAME: &str = "cluster-ha-orderbook";
 /// Header-inclusive SessionMessageHeader length (prefer generated const).
-pub const MSG_HDR_TOTAL: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
+pub const MSG_HDR_TOTAL: usize = SessionMessageHeaderEncoder::compute_length_with_header();
 pub const SESSION_MSG_HDR_TEMPLATE_ID: u16 = SessionMessageHeaderEncoder::TEMPLATE_ID;
 
 /// Outcome of one try_claim publish attempt.

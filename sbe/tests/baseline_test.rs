@@ -15,7 +15,7 @@
 mod common;
 use common::{
     Paths, assert_source_ok, compile_and_run, compile_and_run_two_modules,
-    compile_and_run_with_feature, compile_fails, generate, run_fixture_test,
+    compile_and_run_with_feature, compile_fails_with_diagnostics, generate, run_fixture_test,
 };
 
 const MODULE: &str = "car_example";
@@ -1621,7 +1621,7 @@ fn encoder_wrap_short_buffer_returns_error() -> Result<(), Box<dyn std::error::E
 #[test]
 fn incomplete_encoder_has_no_complete_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "incomplete_bytes");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "incomplete_bytes",
         &src,
         r#"
@@ -1630,6 +1630,7 @@ fn incomplete_encoder_has_no_complete_bytes() -> Result<(), Box<dyn std::error::
         encoder.serial_number(1);
         let _ = encoder.as_bytes();
     "#,
+        &["no method named `as_bytes`"],
     );
     Ok(())
 }
@@ -2273,7 +2274,7 @@ fn nested_message_as_message_requires_ordered_consumption() -> Result<(), Box<dy
         "/tests/fixtures/schemas/nested-message-payload.xml"
     ));
     let (_schema, src) = generate(&path, "nested_msg_cf");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "nested_msg_cf",
         &src,
         r#"
@@ -2284,6 +2285,7 @@ fn nested_message_as_message_requires_ordered_consumption() -> Result<(), Box<dy
         let dec = OuterDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let _ = dec.into_payload_as_message();
     "#,
+        &["no method named `into_payload_as_message`"],
     );
     Ok(())
 }
@@ -2941,7 +2943,7 @@ fn callback_escape_try_data_is_compile_fail() -> Result<(), Box<dyn std::error::
         "/tests/fixtures/schemas/nested-message-payload.xml"
     ));
     let (_schema, src) = generate(&path, "cb_escape");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "cb_escape",
         &src,
         r#"
@@ -2957,6 +2959,7 @@ fn callback_escape_try_data_is_compile_fail() -> Result<(), Box<dyn std::error::
             Ok(())
         });
     "#,
+        &["borrowed data escapes outside of closure"],
     );
     Ok(())
 }
@@ -2969,7 +2972,7 @@ fn consumed_encoder_stage_cannot_be_reused() -> Result<(), Box<dyn std::error::E
         "/tests/fixtures/schemas/nested-message-payload.xml"
     ));
     let (_schema, src) = generate(&path, "consume_reuse");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "consume_reuse",
         &src,
         r#"
@@ -2979,6 +2982,7 @@ fn consumed_encoder_stage_cannot_be_reused() -> Result<(), Box<dyn std::error::E
         let after_name = outer.app_name(b"t").unwrap();
         outer.trace_id(8); // outer consumed by app_name(), cannot reuse
     "#,
+        &["borrow of moved value: `outer`"],
     );
     Ok(())
 }

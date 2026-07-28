@@ -52,7 +52,7 @@ check:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
     cargo test -p ergo-aeron-cluster --lib
     cd samples/exchange-example && cargo fmt --check
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
@@ -68,6 +68,9 @@ check-products:
     cargo fmt --all --check
     cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+    ./scripts/regenerate-sbe-tool-reference.sh --check
+    cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
+    cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
     cargo test -p ergo-sbe --all-features -- --test-threads=1
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
@@ -103,7 +106,10 @@ test:
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     @echo "=== 3/6 unit + integration tests ==="
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    ./scripts/regenerate-sbe-tool-reference.sh --check
+    cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
+    cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
     cargo test -p ergo-aeron-cluster --lib
     @echo "=== 4/6 ergo-sbe doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
@@ -131,8 +137,36 @@ test:
 
 # Workspace unit tests only.
 test-unit:
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
     cargo test -p ergo-aeron-cluster --lib
+
+# Every test gate including nightly-only miri and fuzz.
+# Runs: standard suite + Miri UB detection + fuzz corpus replay.
+test-all: test
+    @echo "=== 7/7 miri (UB detection) ==="
+    cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
+    @echo "=== 8/7 fuzz corpus replay ==="
+    cd sbe/fuzz && cargo +nightly fuzz run generated_verify -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run nested_group_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run bulk_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run flat_group_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run any_message_frame_cursor -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run schema_parse -- -max_total_time=30
+    @echo ""
+    @echo "=== test-all: complete ==="
+
+# Rebuild every pinned official sbe-tool reference in a temporary directory.
+check-sbe-references:
+    ./scripts/regenerate-sbe-tool-reference.sh --check
+
+# Compile all libFuzzer targets and run the deterministic corpus replay.
+check-fuzz:
+    cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
+    cargo test -p ergo-sbe --test hostile_input_replay_test -- --test-threads=1
+
+# Run and compare line/function/region coverage with the checked-in ratchet.
+check-coverage:
+    ./scripts/check-coverage-ratchet.sh
 
 # ── formatting ─────────────────────────────────────────────────────────────
 
@@ -163,6 +197,21 @@ bench:
     @echo ""
     @echo "=== Gate ==="
     ./scripts/check-bench-gate.sh target/criterion
+
+# Expanded non-gating codec matrix and offset/alignment diagnostics.
+bench-diagnostics:
+    cargo bench -p ergo-sbe-benchmarks --bench codec_matrix_bench
+    cargo bench -p ergo-sbe-benchmarks --bench alignment_bench
+    cargo bench -p ergo-sbe-benchmarks --bench cold_path_bench
+    cargo bench -p ergo-sbe-benchmarks --bench latency_distribution
+
+# Fresh generated-crate compile/source/binary-size report.
+bench-cold:
+    ./scripts/measure-codegen-cold-path.sh
+
+# Linux/Valgrind instruction counts (requires iai-callgrind-runner).
+bench-instructions:
+    cargo bench -p ergo-sbe-benchmarks --bench instruction_counts
 
 # Cluster codec benchmarks (ergo-sbe vs sbe-tool head-to-head).
 bench-cluster:

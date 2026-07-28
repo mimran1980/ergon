@@ -1,0 +1,46 @@
+[package]
+name = "ergo-sbe-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+ergo-sbe = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[build-dependencies]
+ergo-sbe = { path = ".." }
+
+[[bin]]
+name = "schema_parse"
+path = "fuzz_targets/schema_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "generated_verify"
+path = "fuzz_targets/generated_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "any_message_frame_cursor"
+path = "fuzz_targets/any_message_frame_cursor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nested_group_decode"
+path = "fuzz_targets/nested_group_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

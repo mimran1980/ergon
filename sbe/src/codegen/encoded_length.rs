@@ -737,6 +737,12 @@ fn generate_direct(
         ) -> usize {
             #header_size + Self::compute_encoded_length(#(#compat_param_names),*)
         }
+
+        /// Short alias for [`Self::compute_encoded_length_with_message_header`].
+        #[inline]
+        pub const fn compute_length_with_header(#(#compat_param_decls),*) -> usize {
+            Self::compute_encoded_length_with_message_header(#(#compat_param_names),*)
+        }
     };
 
     let mut checked_param_decls = Vec::new();
@@ -834,6 +840,14 @@ fn generate_direct(
             let body = Self::try_compute_encoded_length(#(#checked_param_names),*)?;
             body.checked_add(#header_size)
                 .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)
+        }
+
+        /// Short alias for [`Self::try_compute_encoded_length_with_header`].
+        #[inline]
+        pub fn try_compute_length_with_header(
+            #(#checked_param_decls),*
+        ) -> Result<usize, sbe_rt::EncodeError> {
+            Self::try_compute_encoded_length_with_header(#(#checked_param_names),*)
         }
     };
 

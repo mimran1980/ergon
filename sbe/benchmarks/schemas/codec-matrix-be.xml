@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<messageSchema package="bench.matrix.be" id="711" version="0" byteOrder="bigEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="Bytes56" primitiveType="uint8" length="56"/>
+  </types>
+  <message name="Probe" id="1" blockLength="64">
+    <field name="value" id="1" type="uint64" offset="0"/>
+    <field name="payload" id="2" type="Bytes56" offset="8"/>
+  </message>
+</messageSchema>
