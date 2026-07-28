@@ -517,6 +517,11 @@ assert!(HeartbeatDecoder::verify(&buf[..4]).is_err());
 
 ### Owned domain objects
 
+> **Latency-sensitive paths: never use DTOs.** Domain objects allocate (`Vec`,
+> `String`) and copy every field out of the wire buffer. If latency matters,
+> use the zero-copy flyweight decoder instead. DTOs are for tooling, logging,
+> and offline processing — not the hot path.
+
 Enable domain objects during generation when an owned application value is
 more convenient than a zero-copy flyweight. This fixture uses
 `DomainVarData::Bytes`, so re-encoding preserves arbitrary bytes:
@@ -687,7 +692,7 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 |-------|-----------|------|------------------|
 | **Flyweight (per-field)** | You only **read** one or a few fields; hot path | Zero-copy; no heap | New fields are optional at call sites (you simply don’t read them) |
 | **`*FixedFields` + `.fixed(...)`** | You always write the **entire fixed block** | One struct write, still flyweight buffer | Adding a **required fixed field** to the schema → **compile error** until you set it in the struct |
-| **`*Domain` DTO** (`.enable_domain_objects(DomainVarData::…)`) | Whole message as owned data; enum picks `String` vs `Vec<u8>` var-data | Allocates; easier app code | Same idea: regenerating after a schema change forces you to fill new struct fields |
+| **`*Domain` DTO** (`.enable_domain_objects(DomainVarData::…)`) | Whole message as owned data; enum picks `String` vs `Vec<u8>` var-data | **Allocates — never use on the hot path.** Easier app code for tooling, logging, offline processing | Same idea: regenerating after a schema change forces you to fill new struct fields |
 
 #### Decode — individual fields (flyweight)
 
@@ -748,6 +753,9 @@ let year = car.model_year();
 ```
 
 #### Decode — whole message as a DTO
+
+> **Do not use on the latency-sensitive path.** DTO decode allocates `Vec`/`String`
+> and copies every field. For the hot path, use the flyweight decoder instead.
 
 When you always need (almost) everything, or want to pass a value across threads
 / into non-SBE code:
