@@ -237,18 +237,20 @@ let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
 **C-style fixed-width strings:** `vehicle_code_str("ABC")` auto-pads short strings
 with NUL bytes. On decode, `copy_vehicle_code` copies the field into your buffer:
 
-```rust,no_run
-// Encode — "ABC" auto-padded to 6 bytes
-let len = enc.vehicle_code_str("ABC")?.encoded_length_with_header();
-
-// Decode — copy into a mutable buffer
+```rust
+let mut buf = [0u8; 256];
+let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .put_some_numbers(0, 0, 0, 0)
+    .qty(1)
+    .vehicle_code_str("ABC")?
+    .legs(0, |_| Ok(()))?
+    .note(b"")?
+    .encoded_length_with_header();
+let dec = QuoteDecoder::try_from(&buf[..len])?;
 let mut code = [0u8; 6];
 dec.copy_vehicle_code(&mut code);
 assert_eq!(&code, b"ABC\0\0\0");
 ```
-
-(The runtime test for this is `fixed_array_put_and_str_helpers` in
-[java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs).)
 
 **Start here for a full runnable map of features:**
 [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
