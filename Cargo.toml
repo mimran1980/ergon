@@ -1,5 +1,19 @@
 [workspace]
 members = ["sbe", "sbe/benchmarks", "cluster"]
+# Excluded because they require nightly toolchain:
+#   sbe/fuzz         — cargo-fuzz (libfuzzer), needs `cargo +nightly fuzz run`
+#   sbe/miri-fixtures — cargo-miri, needs `cargo +nightly miri test`
+#   samples           — standalone crates, not workspace members
+#
+# Value:
+#   fuzz — 6 targets hammering verify(), nested decode, AnyMessage dispatch,
+#          bulk_decode, schema_parse, and flat group iteration with random
+#          bytes. Catches panics in the trust boundary before they ship.
+#   miri — 3 tests (LE fixed, BE fixed, nested group) under the Miri
+#          interpreter. Catches UB in unsafe read_unaligned/write_unaligned
+#          pointer casts that unit tests can't detect.
+#
+# Run with: just test-all
 exclude = ["samples", "sbe/fuzz", "sbe/miri-fixtures"]
 resolver = "3"
 
