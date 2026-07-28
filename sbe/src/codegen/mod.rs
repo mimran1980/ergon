@@ -74,7 +74,7 @@ pub struct GeneratedModule {
 ///
 /// ```
 /// # use std::path::Path;
-/// # fn example(generator: &ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// # fn example(generator: &mut ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
 /// let set = generator.generate(schema)?;
 /// for m in set.modules() {
 ///     std::fs::write(out_dir.join(&m.path), &m.source)?;
@@ -3426,7 +3426,10 @@ fn generate_decoder_display(
                         }
                     });
                 } else {
-                    let f_value = syn::Ident::new(&format!("{}_value", &snake), proc_macro2::Span::call_site());
+                    let f_value = syn::Ident::new(
+                        &format!("{}_value", &snake),
+                        proc_macro2::Span::call_site(),
+                    );
                     debug_body.extend(quote::quote! {
                         if #in_bounds {
                             let v = self.#f_value();

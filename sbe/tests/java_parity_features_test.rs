@@ -96,7 +96,10 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
     assert!(out.contains("FixedArrayTooLong"), "{out}");
     assert!(out.contains("fn copy_vehicle_code"), "{out}");
     // ── Runtime: verify _str pads and copy_* round-trips ──────────────────
-    compile_and_run("arr_str", &out, r#"
+    compile_and_run(
+        "arr_str",
+        &out,
+        r#"
         let mut buf = [0u8; MEncoder::compute_length_with_header()];
         let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MFixedFields {
@@ -123,7 +126,8 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
         let mut code2 = [0u8; 6];
         dec2.copy_vehicle_code(&mut code2);
         assert_eq!(&code2, b"XYZ\0\0\0", "short string should be zero-padded");
-    "#);
+    "#,
+    );
     Ok(())
 }
 
@@ -326,8 +330,7 @@ fn bitset_display_and_fromstr_emitted() -> Result<(), Box<dyn std::error::Error>
 /// both levels — versioned accessors return `Option<T>` (not `Display`), so
 /// the generated Debug/Display code must branch, not blindly forward.
 #[test]
-fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn std::error::Error>>
-{
+fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
         <messageSchema package="setdbg" id="1" version="1" byteOrder="littleEndian">
           <types>
@@ -505,7 +508,7 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
 // These encode real messages and inspect the rendered Debug/Display strings
 // to catch regressions like the set-field-silently-dropped bug.
 
-fn all_field_types_schema() -> &'static str {
+const fn all_field_types_schema() -> &'static str {
     r#"<?xml version="1.0"?>
 <messageSchema package="dbg" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -536,9 +539,17 @@ fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error
     let ir = parse(all_field_types_schema())?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("dbg"))
-        .generate(&schema)?.modules().next().unwrap().source.clone();
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
 
-    compile_and_run("dec_dbg_all", &out, r#"
+    compile_and_run(
+        "dec_dbg_all",
+        &out,
+        r#"
         let mut inst = ExecInst::default(); inst.set_aon(true);
         let price = Price::new(12345, -2);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(1, 3)];
@@ -560,7 +571,8 @@ fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error
         assert!(dbg.contains("\"abc\""),         "var-data value: {dbg}");
         assert!(dbg.contains("MsgDecoder"),      "struct name: {dbg}");
         assert_eq!(dbg, format!("{dec}"), "Display == Debug");
-    "#);
+    "#,
+    );
     Ok(())
 }
 
@@ -569,9 +581,17 @@ fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::E
     let ir = parse(all_field_types_schema())?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("dbg_trunc"))
-        .generate(&schema)?.modules().next().unwrap().source.clone();
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
 
-    compile_and_run("dec_trunc", &out, r#"
+    compile_and_run(
+        "dec_trunc",
+        &out,
+        r#"
         let mut inst = ExecInst::default(); inst.set_ioc(true);
         let price = Price::new(1, 0);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 0)];
@@ -585,7 +605,8 @@ fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::E
         assert!(MsgDecoder::try_from(&buf[..12]).is_err());
         // Below header — error, not panic.
         assert!(MsgDecoder::try_from(&buf[..3]).is_err());
-    "#);
+    "#,
+    );
     Ok(())
 }
 
@@ -594,10 +615,19 @@ fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(all_field_types_schema())?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(
-        GenerationConfig::new("dbg_dto").enable_domain_objects(DomainVarData::LossyStrings))
-        .generate(&schema)?.modules().next().unwrap().source.clone();
+        GenerationConfig::new("dbg_dto").enable_domain_objects(DomainVarData::LossyStrings),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .unwrap()
+    .source
+    .clone();
 
-    compile_and_run("dto_dbg", &out, r#"
+    compile_and_run(
+        "dto_dbg",
+        &out,
+        r#"
         let mut inst = ExecInst::default(); inst.set_aon(true);
         let price = Price::new(999, -1);
         let dto = MsgDomain {
@@ -618,7 +648,8 @@ fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         assert!(dbg.contains("ratio: 10"),   "DTO entry: {dbg}");
         assert!(dbg.contains("note:"),       "DTO var-data: {dbg}");
         assert!(dbg.contains("\"hi\""),      "DTO var-data value: {dbg}");
-    "#);
+    "#,
+    );
     Ok(())
 }
 
@@ -627,9 +658,17 @@ fn encoder_display_delegates_to_decoder() -> Result<(), Box<dyn std::error::Erro
     let ir = parse(all_field_types_schema())?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("dbg_enc"))
-        .generate(&schema)?.modules().next().unwrap().source.clone();
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
 
-    compile_and_run("enc_display", &out, r#"
+    compile_and_run(
+        "enc_display",
+        &out,
+        r#"
         let mut inst = ExecInst::default(); inst.set_aon(true);
         let price = Price::new(99, -1);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 3)];
@@ -640,7 +679,8 @@ fn encoder_display_delegates_to_decoder() -> Result<(), Box<dyn std::error::Erro
         let display = format!("{enc}");
         assert!(display.contains("qty"), "encoder Display: {display}");
         assert!(display.contains("side"), "encoder Display: {display}");
-    "#);
+    "#,
+    );
     Ok(())
 }
 
@@ -666,9 +706,17 @@ fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std:
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("entry_dbg"))
-        .generate(&schema)?.modules().next().unwrap().source.clone();
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
 
-    compile_and_run("entry_dbg", &out, r#"
+    compile_and_run(
+        "entry_dbg",
+        &out,
+        r#"
         let mut flags = Flags::default(); flags.set_b(true);
         let price = Price::new(777, -1);
         let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
@@ -682,7 +730,8 @@ fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std:
         assert!(dbg.contains("side: Side"),  "entry enum: {dbg}");
         assert!(dbg.contains("flags: B"),   "entry set: {dbg}");
         assert!(dbg.contains("price:"),     "entry composite: {dbg}");
-    "#);
+    "#,
+    );
     Ok(())
 }
 
@@ -704,9 +753,17 @@ fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("bdarr"))
-        .generate(&schema)?.modules().next().unwrap().source.clone();
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
 
-    compile_and_run("bdarr", &out, r#"
+    compile_and_run(
+        "bdarr",
+        &out,
+        r#"
         let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
         let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .rows(1, |g| { g.add(|e| { e.pair([100u16, 200]); Ok(()) })?; Ok(()) })?
@@ -717,12 +774,14 @@ fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::
         assert_eq!(entries.len(), 1);
         let pair: [u16; 2] = entries[0].pair;
         assert_eq!(pair, [100, 200]);
-    "#);
+    "#,
+    );
     Ok(())
 }
 
 #[test]
-fn xiinclude_warnings_dedup_per_message_not_per_consumer() -> Result<(), Box<dyn std::error::Error>> {
+fn xiinclude_warnings_dedup_per_message_not_per_consumer() -> Result<(), Box<dyn std::error::Error>>
+{
     // Use a composite with nullValue on a non-optional field — this triggers
     // the warn_once path. Composites are shared between schemas via
     // parse_with_shared, unlike bare <type> typedefs.

@@ -344,24 +344,18 @@ impl GenerationConfig {
         self
     }
 
-    /// Emit `#[deprecated]` on schema-deprecated fields/types/messages.
-    ///
-    /// Opt-in: deprecating a generated type cascades to its impls, so the
-    /// generated module also gets `#![allow(deprecated)]` for internal use.
-    #[must_use]
-    /// Auto-register `bool` ↔ BooleanType converters for every boolean
-    /// enum in the schema. Equivalent to calling
-    /// `with_domain_type(named_type("BooleanType"), "bool")` for each.
-    ///
-    /// Boolean enums are detected by name (`BooleanType`) or schema
-    /// annotation (`semanticType="Boolean"`). Generated accessors return
-    /// `bool` directly via `_bool()` / `_bool(val)` methods.
+    /// Auto-register `bool` converters for every boolean enum in the
+    /// schema. Syntax sugar for calling
+    /// `with_domain_type(named_type("BooleanType"), "bool")` for each —
+    /// detects by name, `semanticType="Boolean"`, or True/False value pairs.
     #[must_use]
     pub fn enable_bool_domain_type(mut self) -> Self {
         self.auto_bool_domain = true;
         self
     }
 
+    /// Emit `#[deprecated]` on schema-deprecated fields/types/messages.
+    #[must_use]
     pub fn with_deprecated_attrs(mut self) -> Self {
         self.deprecated_attrs = true;
         self

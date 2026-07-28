@@ -39,19 +39,24 @@ use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token}
 /// Tracks the source name so warnings can reference the real file
 /// instead of a hardcoded `"schema.xml"`.
 fn set_source_name(name: String) {
-    use std::sync::OnceLock;
     use std::sync::Mutex;
+    use std::sync::OnceLock;
     static SOURCE: OnceLock<Mutex<String>> = OnceLock::new();
-    *SOURCE.get_or_init(|| Mutex::new(String::new()))
-        .lock().unwrap() = name;
+    *SOURCE
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap() = name;
 }
 
 fn source_name() -> String {
-    use std::sync::OnceLock;
     use std::sync::Mutex;
+    use std::sync::OnceLock;
     static SOURCE: OnceLock<Mutex<String>> = OnceLock::new();
-    SOURCE.get_or_init(|| Mutex::new(String::from("<xml>")))
-        .lock().unwrap().clone()
+    SOURCE
+        .get_or_init(|| Mutex::new(String::from("<xml>")))
+        .lock()
+        .unwrap()
+        .clone()
 }
 
 /// De-duplicates parser warnings within a process. `xi:include` inlines a
@@ -79,7 +84,10 @@ fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>) {
             let line = text[..pos].matches('\n').count() + 1;
             let last_nl = text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
             let col = pos - last_nl + 1;
-            let line_end = text[pos..].find('\n').map(|i| pos + i).unwrap_or(text.len());
+            let line_end = text[pos..]
+                .find('\n')
+                .map(|i| pos + i)
+                .unwrap_or(text.len());
             let snippet = text[last_nl..line_end].trim();
             eprintln!(
                 "{}:{}:{}: {message}\n  |\n  | {snippet}\n  |",
