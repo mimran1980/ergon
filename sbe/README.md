@@ -109,8 +109,8 @@ generated API is purpose-built for Rust rather than ported from Java.
 7. [Samples](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#samples)
 8. [Rust version](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#rust-version-and-edition) · [Verify](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#verify-the-crate) · [Package scope](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#package-scope)
 
-Names in snippets use a fictional `Car` / `Quote` schema — **your** types and
-methods follow **your** schema names.
+Names in snippets use `Heartbeat`, `Quote`, or `FixedString` from the
+docs_codec fixture — **your** types follow **your** schema names.
 
 Every bare `rust` fence in this README is extracted and compiled by
 `docs_validation_test`. Schematic fragments (build scripts, config, generated
