@@ -12,6 +12,9 @@ use ergo_sbe::{
     validate_against_sbe_xsd,
 };
 
+mod common;
+use common::compile_and_run;
+
 #[test]
 fn field_metadata_constants_and_meta_attribute() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
@@ -284,6 +287,98 @@ fn bitset_display_and_fromstr_emitted() -> Result<(), Box<dyn std::error::Error>
         0,
         "no description in this schema; just checking no spurious doc"
     );
+    Ok(())
+}
+
+/// Regression: message-level and group-entry-level Debug/Display used to
+/// silently drop bitset fields entirely (`FieldType::Set { .. } => {}`).
+/// A message or entry with only a set field printed as if the field didn't
+/// exist. Covers both non-versioned and `sinceVersion`-gated set fields at
+/// both levels — versioned accessors return `Option<T>` (not `Display`), so
+/// the generated Debug/Display code must branch, not blindly forward.
+#[test]
+fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn std::error::Error>>
+{
+    let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="setdbg" id="1" version="1" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint16"/>
+            </composite>
+            <set name="Flags" encodingType="uint8">
+              <choice name="A">0</choice>
+              <choice name="B">1</choice>
+            </set>
+          </types>
+          <message name="M" id="1">
+            <field name="topFlags" id="1" type="Flags" offset="0"/>
+            <field name="verFlags" id="2" type="Flags" offset="1" sinceVersion="1"/>
+            <group name="entries" id="3" dimensionType="groupSizeEncoding">
+              <field name="entryFlags" id="4" type="Flags" offset="0"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+    let ir = parse(xml)?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("m"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
+
+    compile_and_run(
+        "setdbg",
+        &out,
+        r#"
+        // Current-version encode: both message-level set fields present,
+        // one entry with its own set field.
+        let mut top_flags = Flags::default();
+        top_flags.set_a(true);
+        let mut ver_flags = Flags::default();
+        ver_flags.set_b(true);
+        let mut entry_flags = Flags::default();
+        entry_flags.set_a(true);
+        entry_flags.set_b(true);
+
+        let mut buf = [0u8; 256];
+        let complete = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MFixedFields {
+                top_flags,
+                ver_flags,
+            })
+            .entries(1, |g| {
+                g.add(|e| {
+                    e.entry_flags(entry_flags);
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+        let len = complete.encoded_length_with_header();
+
+        let dec = MDecoder::try_from(&buf[..len])?;
+        let text = format!("{dec:?}");
+        assert!(text.contains("topFlags: A"), "{text}");
+        assert!(text.contains("verFlags: B"), "{text}");
+        assert!(text.contains("entryFlags: A|B") || text.contains("entryFlags: A | B") || text.contains("A|B"), "{text}");
+
+        // Older-version decode (acting_version 0): the sinceVersion=1 field
+        // must be cleanly omitted, not panic, not print garbage.
+        let old_dec = MDecoder::wrap(&buf[..len], 8, 2, 0);
+        let old_text = format!("{old_dec:?}");
+        assert!(old_text.contains("topFlags"), "{old_text}");
+        assert!(!old_text.contains("verFlags"), "{old_text}");
+        "#,
+    );
+
     Ok(())
 }
 

@@ -3370,7 +3370,32 @@ fn generate_decoder_display(
                 });
                 out_idx += 1;
             }
-            FieldType::Set { .. } => {}
+            FieldType::Set { .. } => {
+                // Bitset's own Display is pipe-separated flag names (A|B|C) —
+                // reuse it via format_args! (Arguments: Debug delegates to
+                // Display) so the message-level Debug shows readable flags
+                // instead of raw bits, or silently omitting the field.
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                if f.since_version > 0 {
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            if let Some(v) = self.#f_ident() {
+                                d.field(#name_lit, &format_args!("{}", v));
+                            }
+                        }
+                    });
+                } else {
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            let v = self.#f_ident();
+                            d.field(#name_lit, &format_args!("{}", v));
+                        }
+                    });
+                }
+            }
             FieldType::Composite { .. } => {
                 if f.presence == Presence::Constant {
                     continue;
@@ -4615,7 +4640,27 @@ fn generate_group_decoder(
                 });
                 entry_display_out_idx += 1;
             }
-            FieldType::Set { .. } => {}
+            FieldType::Set { .. } => {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                // Bitset's own Display is already pipe-separated flag names
+                // (A|B|C) — {} just forwards it. Versioned accessors return
+                // Option<T>, which isn't Display, so branch instead of
+                // relying on {:?} (that would show the raw derived Debug,
+                // not the pipe-separated names).
+                let fmt_str = format!("{sep}{}: {{}}", f.name);
+                if f.since_version > 0 {
+                    entry_display_body.extend(quote::quote! {
+                        if let Some(v) = self.#f_ident() { write!(f, #fmt_str, v)?; }
+                    });
+                } else {
+                    entry_display_body.extend(quote::quote! {
+                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                    });
+                }
+                entry_display_out_idx += 1;
+            }
             FieldType::Composite { .. } => {
                 if f.presence == Presence::Constant {
                     continue;
