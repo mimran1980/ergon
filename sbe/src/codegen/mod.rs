@@ -720,12 +720,26 @@ impl Generator {
             generate_message_field_meta(&mut src, msg);
         }
 
-        // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions
-        if self.config.has_conversions() {
+        // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions.
+        // When enable_bool_domain_type() is set, auto-register every boolean enum
+        // that isn't already covered by an explicit with_domain_type() call.
+        let mut domain_types = self.config.domain_types.clone();
+        if self.config.auto_bool_domain {
+            for e in &elements.enums {
+                let name = &e[0].name;
+                if crate::structured_ir::is_bool_value_enum(&elements, name) {
+                    let sel = crate::ConversionSelector::named_type(name);
+                    if !domain_types.iter().any(|(s, _)| s == &sel) {
+                        domain_types.push((sel, "bool".into()));
+                    }
+                }
+            }
+        }
+        if !domain_types.is_empty() || self.config.has_conversions() {
             let impl_blocks = generate_conversion_impl_blocks(
                 &elements,
                 &self.config.conversions,
-                &self.config.domain_types,
+                &domain_types,
             );
             src.push_str(&impl_blocks);
         }

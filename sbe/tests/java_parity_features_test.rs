@@ -8,8 +8,8 @@
 #![allow(unused)]
 
 use ergo_sbe::{
-    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_xsd_validation,
-    validate_against_sbe_xsd,
+    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_shared,
+    parse_with_xsd_validation, validate_against_sbe_xsd,
 };
 
 mod common;
@@ -654,5 +654,61 @@ fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std:
         assert!(dbg.contains("flags: B"),   "entry set: {dbg}");
         assert!(dbg.contains("price:"),     "entry composite: {dbg}");
     "#);
+    Ok(())
+}
+
+#[test]
+fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema package="bdarr" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+    <type name="Pair" primitiveType="uint16" length="2"/>
+  </types>
+  <message name="M" id="1" blockLength="0">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="pair" id="1" type="Pair" offset="0"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    let ir = parse(xml)?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("bdarr"))
+        .generate(&schema)?.modules().next().unwrap().source.clone();
+
+    compile_and_run("bdarr", &out, r#"
+        let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .rows(1, |g| { g.add(|e| { e.pair([100u16, 200]); Ok(()) })?; Ok(()) })?
+            .encoded_length_with_header();
+        let dec = MDecoder::try_from(&buf[..len])?;
+        let mut rows = dec.into_rows()?;
+        let entries: Vec<RowsEntry> = rows.bulk_decode()?;
+        assert_eq!(entries.len(), 1);
+        let pair: [u16; 2] = entries[0].pair;
+        assert_eq!(pair, [100, 200]);
+    "#);
+    Ok(())
+}
+
+#[test]
+fn xiinclude_warnings_dedup_per_message_not_per_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    // Use a composite with nullValue on a non-optional field — this triggers
+    // the warn_once path. Composites are shared between schemas via
+    // parse_with_shared, unlike bare <type> typedefs.
+    let common = r#"<?xml version="1.0"?>
+<messageSchema package="common" id="0" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="BadComposite"><type name="x" primitiveType="uint32" nullValue="999"/></composite>
+  </types>
+</messageSchema>"#;
+    let shared = parse(common)?;
+    let a = r#"<?xml version="1.0"?><messageSchema package="a" id="1" version="0" byteOrder="littleEndian" headerType="messageHeader"><message name="M" id="1"><field name="f" id="1" type="BadComposite"/></message></messageSchema>"#;
+    let b = r#"<?xml version="1.0"?><messageSchema package="b" id="2" version="0" byteOrder="littleEndian" headerType="messageHeader"><message name="N" id="1"><field name="g" id="1" type="BadComposite"/></message></messageSchema>"#;
+    // Each consumer references BadComposite — warn_once must not fire twice per consumer
+    let _ = parse_with_shared(a, &shared)?;
+    let _ = parse_with_shared(b, &shared)?;
     Ok(())
 }
