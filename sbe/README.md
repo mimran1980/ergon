@@ -234,6 +234,8 @@ let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
 let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&HeartbeatFixedFields { seq: 7 })
     .encoded_length_with_header();
+let dec = HeartbeatDecoder::try_from(&buf[..len])?;
+assert_eq!(dec.seq(), 7);
 ```
 
 **C-style fixed-width strings:** pass a shorter `&str` — auto-padded with NULs.
