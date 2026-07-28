@@ -484,7 +484,21 @@ impl Generator {
     /// # Errors
     ///
     /// [`GenerateError`] if conversion selectors match nothing or collide.
-    pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
+    pub fn generate(&mut self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
+        // When enable_bool_domain_type() is set, auto-register bool converters
+        // for all detected boolean enums before any codegen runs.
+        if self.config.auto_bool_domain {
+            let elements = partition_tokens(&schema.ir.tokens);
+            for e in &elements.enums {
+                let name = &e[0].name;
+                if crate::structured_ir::is_bool_value_enum(&elements, name) {
+                    let sel = crate::ConversionSelector::named_type(name);
+                    if !self.config.domain_types.iter().any(|(s, _)| s == &sel) {
+                        self.config.domain_types.push((sel, "bool".into()));
+                    }
+                }
+            }
+        }
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.validate_header_values(schema)?;
@@ -721,25 +735,11 @@ impl Generator {
         }
 
         // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions.
-        // When enable_bool_domain_type() is set, auto-register every boolean enum
-        // that isn't already covered by an explicit with_domain_type() call.
-        let mut domain_types = self.config.domain_types.clone();
-        if self.config.auto_bool_domain {
-            for e in &elements.enums {
-                let name = &e[0].name;
-                if crate::structured_ir::is_bool_value_enum(&elements, name) {
-                    let sel = crate::ConversionSelector::named_type(name);
-                    if !domain_types.iter().any(|(s, _)| s == &sel) {
-                        domain_types.push((sel, "bool".into()));
-                    }
-                }
-            }
-        }
-        if !domain_types.is_empty() || self.config.has_conversions() {
+        if self.config.has_conversions() {
             let impl_blocks = generate_conversion_impl_blocks(
                 &elements,
                 &self.config.conversions,
-                &domain_types,
+                &self.config.domain_types,
             );
             src.push_str(&impl_blocks);
         }

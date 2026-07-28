@@ -15,7 +15,7 @@ ergo_sbe::generate_to_out_dir(
     GenerationConfig::new("feature_tour")
         .enable_domain_objects(DomainVarData::LossyStrings) // String var-data (invalid UTF-8 → "")
         // Concrete methods: available() -> bool, timestamp() -> DateTime<Utc>
-        .with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
+        .enable_bool_domain_type()
         .with_domain_type(
             ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
@@ -28,7 +28,7 @@ ergo_sbe::generate_to_out_dir(
 
 | Selector | Config | Decode API | Encode API |
 |----------|--------|------------|------------|
-| `BooleanType` | `with_domain_type` → `bool` | `dec.available()` | `enc.available(true)` |
+| `BooleanType` | `enable_bool_domain_type()` → `bool` | `dec.available()` | `enc.available(true)` |
 | `UTCTimestamp` | `with_domain_type` → chrono | `dec.timestamp()` | `enc.timestamp(t)` |
 | `Decimal` (Quote) | **`with_conversion` only** | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
 

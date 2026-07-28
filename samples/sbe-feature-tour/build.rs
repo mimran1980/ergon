@@ -6,10 +6,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
     let config = ergo_sbe::GenerationConfig::new("feature_tour")
         .enable_domain_objects(ergo_sbe::DomainVarData::LossyStrings)
-        .with_domain_type(
-            ergo_sbe::ConversionSelector::named_type("BooleanType"),
-            "bool",
-        )
+        .enable_bool_domain_type()
         .with_domain_type(
             ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
