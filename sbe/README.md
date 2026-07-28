@@ -32,7 +32,7 @@ thread of the code.
 ergo-sbe leans on **scoped closures** and **chaining** so nested schemas stay
 readable and you rarely pass encoder ownership field-to-field by hand:
 
-```rust,no_run
+```text
 // Nested shape mirrors the schema — no .parent() hopscotch.
 enc.fixed(&fields)
     .bids(n, |bids| {
@@ -285,7 +285,7 @@ let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
 
 **Over (interrupted chain, rebinding):**
 
-```rust,no_run
+```text
 // Each `let` breaks the chain and splays the pipeline across the screen.
 // The `.unwrap()` calls are a code smell — the fallible chain should use `?`.
 let enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?.fixed(&fields);
@@ -636,7 +636,7 @@ the next legal method” behaviour, without the generic tax on the hot path.
 Generated code emits **separate types** for each stage, same fields, different
 methods:
 
-```rust,no_run
+```text
 // Approximate generated shape — not Encoder<AfterBids>:
 pub struct BookEncoder<'a> { /* buf, pos, … */ }
 pub struct BookAfterBids<'a> { /* same layout */ }
@@ -681,7 +681,7 @@ block + Σ(groups) + Σ(var-data).
 | Fixed only | `{Msg}Encoder::compute_length_with_header()` (**const**) | stack / claim of that length |
 | Groups / nested / ragged | `{Msg}EncodedLength` staged builder | `len` then encode into a claim/slot of `len` |
 
-```rust,no_run
+```text
 // Exact size first (Car example), then encode into a slot of that length —
 // e.g. Aeron try_claim, or any &mut [u8] with len == claim.
 let len = CarEncodedLength::new()
@@ -724,7 +724,7 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 
 #### Decode — individual fields (flyweight)
 
-```rust,no_run
+```text
 // Only read what you need; no owned DTO or whole-message materialisation.
 let car = CarDecoder::try_from(buf)?;
 let serial_number = car.serial_number();
@@ -736,7 +736,7 @@ let model_year = car.model_year();
 When you always populate every fixed field, a struct is clearer **and** schema
 additions break at **compile time**:
 
-```rust,no_run
+```text
 // Generated (simplified):
 // pub struct CarFixedFields {
 //     pub serial_number: u64,
@@ -774,7 +774,7 @@ let frame = &buf[..len];
 
 #### Decode — flyweight (prefer for single-field reads)
 
-```rust,no_run
+```text
 let car = CarDecoder::try_from(buf)?;
 // Only touch what you need — no allocation, no materialising the rest of the car.
 let year = car.model_year();
@@ -788,7 +788,7 @@ let year = car.model_year();
 When you always need (almost) everything, or want to pass a value across threads
 / into non-SBE code:
 
-```rust,no_run
+```text
 // build.rs: .enable_domain_objects(DomainVarData::LossyStrings)
 let dto = CarDomain::try_from_decoder(CarDecoder::try_from(buf)?)?;
 // dto is a plain Rust struct: Vecs for groups/strings, owned fields.
@@ -822,7 +822,7 @@ On little-endian hosts, `from_le_bytes` lowers to a plain load (aligned or
 unaligned as needed) — so member access is “super fast” **without** casting the
 buffer to a padded Rust struct. The generator also emits
 
-```rust,no_run
+```text
 const _: () = assert!(core::mem::size_of::<Engine>() == 10);
 ```
 
@@ -954,7 +954,7 @@ See its `src/lib.rs` for the full API map.
 
 **Known vs unknown group count:**
 
-```rust,no_run
+```text
 // Known count (must add() exactly `count` times):
 let known_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&fields)
@@ -996,7 +996,7 @@ Use when you want **owned** values (`Vec` groups, owned tails) and simple
 structs — **not** the zero-copy hot path. Flyweights stay faster for
 low-latency applications.
 
-```rust,no_run
+```text
 // build.rs — DomainVarData is a big deal (DTO var-data type):
 .enable_domain_objects(DomainVarData::LossyStrings) // manufacturer: String (invalid UTF-8 → "")
 // .enable_domain_objects(DomainVarData::Bytes)      // manufacturer: Vec<u8> (byte-exact)
@@ -1182,7 +1182,7 @@ single-field composite per representation, each with its own `TryFromSbe` /
 | **`Decimal`** (schema composite) | **Wire** — generated type / `price_value()` — what is in the buffer |
 | **`Cents`**, **`rust_decimal::Decimal`**, … | **App** — what your code wants to use |
 
-```rust,no_run
+```text
   app  ──price_from / price()──►  wire Decimal on the buffer
   buf  ──price_as / price()──►   app value
 ```
