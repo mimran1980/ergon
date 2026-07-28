@@ -95,6 +95,37 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
     assert!(out.contains("fn vehicle_code_str"), "{out}");
     assert!(out.contains("FixedArrayTooLong"), "{out}");
     assert!(out.contains("fn copy_vehicle_code"), "{out}");
+    // ── Runtime: verify _str pads and copy_* round-trips ──────────────────
+    compile_and_run("arr_str", &out, r#"
+        let mut buf = [0u8; MEncoder::compute_length_with_header()];
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MFixedFields {
+                some_numbers: [1, 2, 3, 4],
+                vehicle_code: *b"ABCDEF",
+            })
+            .encoded_length_with_header();
+        let dec = MDecoder::try_from(&buf[..len])?;
+        assert_eq!(dec.some_numbers(), [1, 2, 3, 4]);
+
+        // copy_vehicle_code: copy into a mutable buffer
+        let mut code = [0u8; 6];
+        assert_eq!(dec.copy_vehicle_code(&mut code), 6);
+        assert_eq!(&code, b"ABCDEF");
+
+        // vehicle_code_str: encode a short string, auto-padded with zeros
+        let mut buf2 = [0u8; MEncoder::compute_length_with_header()];
+        let len2 = MEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
+            .fixed(&MFixedFields {
+                some_numbers: [0, 0, 0, 0],
+                vehicle_code: *b"XYZ\0\0\0",
+            })
+            .vehicle_code_str("XYZ")?
+            .encoded_length_with_header();
+        let dec2 = MDecoder::try_from(&buf2[..len2])?;
+        let mut code2 = [0u8; 6];
+        dec2.copy_vehicle_code(&mut code2);
+        assert_eq!(&code2, b"XYZ\0\0\0", "short string should be zero-padded");
+    "#);
     Ok(())
 }
 

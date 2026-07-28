@@ -1251,7 +1251,7 @@ Both styles on different fields:
 | `enable_error_from_impls` | `From<EncodeError/DecodeError>` for your error type |
 | `with_unchecked_companions` | Bench-only fast accessors |
 | `with_keyword_append_token` | Schema `type` → Rust `type_` (default `"_"`) |
-| `enable_bool_domain_type` | Auto-register `bool` converters for all boolean enums (name `BooleanType`, `semanticType="Boolean"`, or True/False value pairs). Convenience for `with_domain_type(named_type("BooleanType"), "bool")` across every boolean enum |
+| `enable_bool_domain_type` | Syntax sugar: auto-registers `bool` converters for every boolean enum. Equivalent to calling `.with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")` for each — detects by name, `semanticType="Boolean"`, or True/False value pairs |
 | `with_deprecated_attrs` | `#[deprecated]` on schema-deprecated items |
 
 Text fields stay bytes unless the schema declares a supported character
