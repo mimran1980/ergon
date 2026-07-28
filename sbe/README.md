@@ -212,20 +212,34 @@ for which crates use which pattern.
 
 ### 4. Encode and decode (fixed message)
 
-**Preferred encode style:** keep the entire staged encode in one expression,
-from `try_wrap_and_apply_header` through `.fixed(...)` and every dynamic tail,
-ending in `.encoded_length_with_header()`. Bind only the resulting `len`, then
-pass `&buf[..len]` to decoders or transports. Do not retain an `enc`,
-`complete`, or `done` stage solely to ask it for its length or bytes.
+Two styles — pick whichever fits:
+
+**Individual setters** (chainable, set only what you need):
 
 ```rust
-// Const length → stack array (no heap). Prefer this over vec![0u8; N].
 let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
 let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .fixed(&HeartbeatFixedFields { seq: 7 })
+    .seq(7)
     .encoded_length_with_header();
 let dec = HeartbeatDecoder::try_from(&buf[..len])?;
 assert_eq!(dec.seq(), 7);
+```
+
+**`fixed()` struct** (fill every field at once — compile error if a field is missing):
+
+```rust
+let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&HeartbeatFixedFields { seq: 7 })
+    .encoded_length_with_header();
+```
+
+**C-style fixed-width strings:** pass a shorter `&str` — auto-padded with NULs:
+
+```rust
+let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
+let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .vehicle_code_str("ABC")?   // pads to field width (e.g. 6) with \0
+    .encoded_length_with_header();
 ```
 
 **Start here for a full runnable map of features:**
