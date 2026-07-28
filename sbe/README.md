@@ -181,15 +181,13 @@ API (same steps the helper runs). For shared types across schemas, see
 **Prefer build-dep only for product crates** (no runtime `ergo-sbe` link).
 Generated codecs embed `sbe_rt`; plain `include!` is enough:
 
-```rust
+```rust,no_run
 // Module name must match GenerationConfig::new("messages") → messages.rs
-# mod messages { pub struct Dummy; }
-// In real code:
-// #[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all)]
-// mod messages {
-//     include!(concat!(env!("OUT_DIR"), "/messages.rs"));
-// }
-// use messages::*;
+#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all)]
+mod messages {
+    include!(concat!(env!("OUT_DIR"), "/messages.rs"));
+}
+use messages::*;
 ```
 
 **Optional convenience** — `sbe_mod!` needs `ergo-sbe` as a normal dependency
@@ -964,7 +962,7 @@ println!("{car}");
 println!("{car:?}"); // same text as Display today
 ```
 
-```rust,no_run
+```text
 CarDecoder { serialNumber: 1234, modelYear: 2013, available: true, code: A, fuelFigures: ["{ speed: 30, mpg: 35.9, usageDescription: Urban }", "{ speed: 60, mpg: 25.0, usageDescription: Highway }"], performanceFigures: ["{ octaneRating: 95, acceleration: [{ mph: 30, seconds: 4.0 }, { mph: 60, seconds: 7.5 }] }"], manufacturer: "Honda", model: "Civic VTi", activationCode: "abcdef" }
 ```
 
