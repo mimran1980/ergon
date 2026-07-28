@@ -515,7 +515,7 @@ fn issue435_codegen_pipeline() -> Result<(), Box<dyn std::error::Error>> {
         header_type: "messageHeader".into(),
         tokens: vec![],
     });
-    let generator = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("issue435"));
+    let mut generator = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("issue435"));
     let modules = generator.generate(&schema).unwrap();
     let module = modules.modules().next().unwrap();
     assert_eq!(module.path, "issue435.rs");
@@ -614,8 +614,7 @@ fn all_issue_schemas_codegen() -> Result<(), Box<dyn std::error::Error>> {
             header_type: "messageHeader".into(),
             tokens: vec![],
         });
-        let generator =
-            ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(format!("issue{num}")));
+        let mut generator = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(format!("issue{num}")));
         let modules = generator.generate(&schema).unwrap();
         let module = modules
             .modules()

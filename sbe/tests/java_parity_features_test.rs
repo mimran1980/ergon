@@ -112,12 +112,13 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(dec.copy_vehicle_code(&mut code), 6);
         assert_eq!(&code, b"ABCDEF");
 
-        // vehicle_code_str: encode a short string, auto-padded with zeros
+        // vehicle_code_str: pass a short string, auto-padded with zeros.
+        // The .fixed() value for vehicle_code is overwritten — no need to pad.
         let mut buf2 = [0u8; MEncoder::compute_length_with_header()];
         let len2 = MEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
             .fixed(&MFixedFields {
                 some_numbers: [0, 0, 0, 0],
-                vehicle_code: *b"XYZ\0\0\0",
+                vehicle_code: *b"......",
             })
             .vehicle_code_str("XYZ")?
             .encoded_length_with_header();

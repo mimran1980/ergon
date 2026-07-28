@@ -2358,7 +2358,7 @@ fn decimal_converter_emits_conversion_traits() -> Result<(), Box<dyn std::error:
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_test")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     // try_generate validates the composite
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
@@ -2385,7 +2385,7 @@ fn conversion_rejects_nonexistent_type() -> Result<(), Box<dyn std::error::Error
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("bad")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let err = g.generate(&schema).unwrap_err();
     assert!(matches!(
         err,
@@ -2408,7 +2408,7 @@ fn decimal_converter_rejects_missing_composite() -> Result<(), Box<dyn std::erro
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("missing_dec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let err = g.generate(&schema).unwrap_err();
     assert!(matches!(
         err,
@@ -2445,7 +2445,7 @@ fn conversion_rejects_nonexistent_named_type() -> Result<(), Box<dyn std::error:
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("missing")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("DoesNotExist"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let err = g.generate(&schema).unwrap_err();
     assert!(
         err.to_string().contains("invalid conversion"),
@@ -2468,7 +2468,7 @@ fn generate_returns_error_on_invalid_decimal_composite() -> Result<(), Box<dyn s
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("panics")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let err = g.generate(&schema).unwrap_err();
     assert!(err.to_string().contains("NonExistent"));
     Ok(())
@@ -2499,7 +2499,7 @@ fn decimal_converter_skips_non_decimal_fields_and_messages()
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("mixed_dec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
     // The decimal field has raw _wire accessor and generic _as/_from methods.
@@ -2693,7 +2693,7 @@ fn decimal_converter_emits_wire_and_generic_methods() -> Result<(), Box<dyn std:
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_wire")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -2738,7 +2738,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
     let config = ergo_sbe::GenerationConfig::new("conv_domain")
         .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -2791,7 +2791,7 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_id")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -3106,7 +3106,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("entdec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -3189,7 +3189,7 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("exact_matrix")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 

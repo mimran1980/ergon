@@ -7527,7 +7527,7 @@ mod tests {
 
     #[test]
     fn generator_emits_deterministic_module_name() -> Result<(), Box<dyn std::error::Error>> {
-        let generator = Generator::new(GenerationConfig::new("market_data"));
+        let mut generator = Generator::new(GenerationConfig::new("market_data"));
         let schema = Schema::new("fix.sbe", 1, 0);
 
         let modules = generator.generate(&schema)?;
@@ -7545,7 +7545,7 @@ mod tests {
         let mut config = GenerationConfig::new("common");
         config.shared_module = Some("common_types".to_string());
 
-        let generator = Generator::new(config);
+        let mut generator = Generator::new(config);
 
         let schema_a = Schema::new("common.sbe", 1, 0);
         let schema_b = Schema::new("market_data.sbe", 2, 0);
@@ -7579,7 +7579,7 @@ mod tests {
     fn generate_multi_without_shared_module_emits_sbe_rt_everywhere()
     -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("common");
-        let generator = Generator::new(config);
+        let mut generator = Generator::new(config);
 
         let schema_a = Schema::new("common.sbe", 1, 0);
         let schema_b = Schema::new("market_data.sbe", 2, 0);
@@ -7821,7 +7821,7 @@ mod tests {
             crate::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
         );
-        let generator = crate::Generator::new(config);
+        let mut generator = crate::Generator::new(config);
         let modules = generator.generate(&schema)?;
         let src = modules.modules().next().unwrap().source.clone();
         assert!(
