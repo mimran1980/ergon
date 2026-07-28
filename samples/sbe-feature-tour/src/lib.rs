@@ -8,7 +8,7 @@
 //!
 //! | Demo | Feature |
 //! |------|---------|
-//! | [`demo_fixed_heartbeat`] | Fixed message + `ENCODED_LENGTH` |
+//! | [`demo_fixed_heartbeat`] | Fixed message + `compute_length_with_header()` |
 //! | [`demo_car_size_and_encode`] | Staged `CarEncodedLength` + exact buffer encode |
 //! | [`demo_car_decode_stages`] | Consuming decoder stages (groups → var-data) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
@@ -48,14 +48,14 @@ use rust_decimal::Decimal as Rd;
 
 // ─── 1. Fixed-only message ─────────────────────────────────────────────────
 
-/// Heartbeat is fixed-block only: size with `HeartbeatEncoder::ENCODED_LENGTH`,
+/// Heartbeat is fixed-block only: size with `HeartbeatEncoder::compute_length_with_header()`,
 /// no staged length builder.
 ///
 /// Note: wire setters take `u64` nanos; decoder domain conversion exposes
 /// `timestamp() -> DateTime<Utc>` when `UTCTimestamp` is configured in build.rs.
 pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Const length → stack array (no heap).
-    let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
+    let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let nanos: i64 = 1_720_000_000_000_000_000;
     let enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?.fixed(
         &HeartbeatFixedFields {
@@ -64,7 +64,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         },
     );
     // Fixed encoder stays on the same type; length is the constant.
-    let written = HeartbeatEncoder::ENCODED_LENGTH;
+    let written = HeartbeatEncoder::compute_length_with_header();
     let _ = enc; // fields already written
 
     let dec = HeartbeatDecoder::try_from(&buf[..written])?;
@@ -253,7 +253,7 @@ pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>
 
 /// Encode Heartbeat + Note into one buffer and dispatch by template id.
 pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
-    let mut hb = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
+    let mut hb = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let nanos: u64 = 1_700_000_000_000_000_000;
     let _ = HeartbeatEncoder::try_wrap_and_apply_header(&mut hb, 0)?.fixed(
         &HeartbeatFixedFields {
@@ -261,7 +261,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
             timestamp: nanos,
         },
     );
-    let hb_len = HeartbeatEncoder::ENCODED_LENGTH;
+    let hb_len = HeartbeatEncoder::compute_length_with_header();
 
     let note_body = b"hello AnyMessage";
     let note_len = NoteEncoder::compute_encoded_length_with_message_header(note_body.len());
@@ -426,8 +426,8 @@ impl TryToSbe<Decimal> for FixedPrice {
 /// | `price() -> rust_decimal::Decimal` | **no** (that needs `with_domain_type`) |
 /// | `price_value()` wire composite | yes |
 pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut buf = [0u8; QuoteEncoder::ENCODED_LENGTH];
-    let len = QuoteEncoder::ENCODED_LENGTH;
+    let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
+    let len = QuoteEncoder::compute_length_with_header();
 
     let price = Rd::new(12345, 2); // 123.45
     let size = Rd::new(10, 0);
@@ -457,7 +457,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let dto = QuoteDomain::from(dec);
     assert_eq!(dto.price.mantissa(), 12345);
-    let mut re = [0u8; QuoteEncoder::ENCODED_LENGTH];
+    let mut re = [0u8; QuoteEncoder::compute_length_with_header()];
     let n = dto.encode(&mut re)?;
     assert_eq!(&re[..n], &buf[..len]);
     Ok(buf[..len].to_vec())
@@ -467,7 +467,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
 /// Run every feature demo. Returns Ok when all assertions pass.
 pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
-    println!("1) Fixed Heartbeat + ENCODED_LENGTH");
+    println!("1) Fixed Heartbeat + compute_length_with_header()");
     let _hb = demo_fixed_heartbeat()?;
     println!("   ok\n");
 
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn heartbeat_encoded_length_is_constant() {
-        assert!(HeartbeatEncoder::ENCODED_LENGTH >= 8 + 16);
+        assert!(HeartbeatEncoder::compute_length_with_header() >= 8 + 16);
     }
 
     #[test]
@@ -527,7 +527,7 @@ mod tests {
         assert_eq!(fixed.mantissa, 12345);
         assert_eq!(fixed.exponent, -2);
         // Wire setter path still works without any adapter:
-        let mut buf = [0u8; QuoteEncoder::ENCODED_LENGTH];
+        let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
         QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .price_wire(Decimal::new(1, -2))
             .size_wire(Decimal::new(2, 0));

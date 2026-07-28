@@ -80,6 +80,24 @@ and a maintained benchmark gate versus sbe-tool-generated codecs (see
 > 4. Nested/ragged books or similar twin groups (bids/asks order safety)
 > 5. Schema evolution (`sinceVersion`) under mixed acting versions
 
+## Why ergo-sbe
+
+ergo-sbe is a ground-up Rust SBE codec generator designed for trading systems.
+It produces the same wire format as the reference implementation, but the
+generated API is purpose-built for Rust rather than ported from Java.
+
+| | ergo-sbe |
+|---|----------|
+| **Wire-order safety** | Compile-time type-state stages — calling `asks` before `bids` is a type error, not a runtime bug |
+| **Exact buffer sizing** | `compute_length_with_header(…)` gives the exact byte count before you encode — no oversize scratch buffers, works directly with Aeron `try_claim` |
+| **Closure-based groups** | `bids(n, \|g\| g.add(\|e\| { … }))` — nests like the schema, no `.parent()` hopscotch |
+| **Trust boundary** | `try_from` / `try_wrap` for untrusted input; `wrap` for trusted — explicit in the type system |
+| **Composite wire images** | `#[repr(transparent)] Engine([u8; N])` — the value IS the on-wire bytes, zero-copy with portable LE/BE accessors |
+| **Version-aware decode** | `sinceVersion` fields return `Option` or skip based on acting version — handle mixed-version fleets |
+| **Domain types** | Map wire `Decimal` to `rust_decimal::Decimal` at the codec boundary — one line of config, no hand-rolled converters |
+| **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — 15-17% faster than per-entry loops for flat groups |
+| **Zero dependencies at runtime** | Generated codecs embed their own `sbe_rt` — no `ergo-sbe` on your critical path |
+
 ## Contents
 
 1. [Quick start](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#quick-start) — `generate_to_out_dir` + `sbe_mod!` → first encode/decode
@@ -194,7 +212,7 @@ pass `&buf[..len]` to decoders or transports. Do not retain an `enc`,
 
 ```rust
 // Const length → stack array (no heap). Prefer this over vec![0u8; N].
-let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
+let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
 let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&HeartbeatFixedFields { seq: 7 })
     .encoded_length_with_header();
@@ -218,10 +236,8 @@ intermediate encoder variables.
 **Prefer (one chain, one `let`):**
 
 ```rust
-let expected = QuoteEncoder::try_compute_encoded_length_with_header(1, 5)?;
-let mut buf = [0u8; 256];
-let buf = &mut buf[..expected];
-let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+let mut buf = [0u8; QuoteEncoder::compute_length_with_header(1, 2)];
+let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&QuoteFixedFields {
         seq: 1,
         some_numbers: [10, 20, 30, 40],
@@ -400,10 +416,8 @@ Allocate or claim exactly that many bytes, then write groups and var-data in
 wire order:
 
 ```rust
-let expected = QuoteEncoder::try_compute_encoded_length_with_header(1, 2)?;
-let mut buf = [0u8; 256];
-let buf = &mut buf[..expected];
-let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+let mut buf = [0u8; QuoteEncoder::compute_length_with_header(1, 2)];
+let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&QuoteFixedFields {
         seq: 1,
         some_numbers: [10, 20, 30, 40],
@@ -419,7 +433,7 @@ let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
     })?
     .note(b"ok")?
     .encoded_length_with_header();
-assert_eq!(len, expected);
+assert_eq!(len, buf.len());
 ```
 
 ### Bulk arrays and metadata
@@ -428,10 +442,8 @@ Generated bulk helpers avoid per-element boilerplate, while constants and
 `MetaAttribute` expose schema metadata:
 
 ```rust
-let expected = QuoteEncoder::try_compute_encoded_length_with_header(0, 0)?;
-let mut buf = [0u8; 256];
-let buf = &mut buf[..expected];
-let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+let mut buf = [0u8; QuoteEncoder::compute_length_with_header(0, 0)];
+let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&QuoteFixedFields {
         seq: 7,
         some_numbers: [1, 2, 3, 4],
@@ -460,10 +472,8 @@ Groups and var-data are consumed in schema order. `finish()` hands the next
 named stage back to you:
 
 ```rust
-let expected = QuoteEncoder::try_compute_encoded_length_with_header(1, 5)?;
-let mut buf = [0u8; 256];
-let buf = &mut buf[..expected];
-let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+let mut buf = [0u8; QuoteEncoder::compute_length_with_header(1, 5)];
+let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&QuoteFixedFields {
         seq: 1,
         some_numbers: [1, 2, 3, 4],
@@ -494,7 +504,7 @@ Checked entry points validate the message header and fixed block. `verify`
 walks the complete dynamic tail before trusted access:
 
 ```rust
-let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
+let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
 let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&HeartbeatFixedFields { seq: 42 })
     .encoded_length_with_header();
@@ -512,10 +522,8 @@ more convenient than a zero-copy flyweight. This fixture uses
 `DomainVarData::Bytes`, so re-encoding preserves arbitrary bytes:
 
 ```rust
-let expected = QuoteEncoder::try_compute_encoded_length_with_header(0, 2)?;
-let mut buf = [0u8; 256];
-let buf = &mut buf[..expected];
-let len = QuoteEncoder::try_wrap_and_apply_header(buf, 0)?
+let mut buf = [0u8; QuoteEncoder::compute_length_with_header(0, 2)];
+let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&QuoteFixedFields {
         seq: 3,
         some_numbers: [1, 2, 3, 4],
@@ -540,7 +548,7 @@ assert_eq!(&output[..written], &buf[..len]);
 ID:
 
 ```rust
-let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
+let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
 let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&HeartbeatFixedFields { seq: 11 })
     .encoded_length_with_header();
@@ -637,7 +645,7 @@ block + Σ(groups) + Σ(var-data).
 
 | Message shape | Generated sizing | Prefer |
 |---------------|------------------|--------|
-| Fixed only | `{Msg}Encoder::ENCODED_LENGTH` (**const**) | stack / claim of that length |
+| Fixed only | `{Msg}Encoder::compute_length_with_header()` (**const**) | stack / claim of that length |
 | Groups / nested / ragged | `{Msg}EncodedLength` staged builder | `len` then encode into a claim/slot of `len` |
 
 ```rust,ignore
@@ -863,7 +871,7 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **Stage-struct encode + closures** | Wire order as **named** monomorphic stages; groups via nested closures | `bids(n, \|g\| g.add(\|e\| …))?` · wrong order = missing method · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#wire-order-via-named-stage-structs) · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#encode-known-count-or-unknown-size) · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) |
 | **Consuming decode stages** | Distinct after-stage decoder types | `into_bids()?` → next named stage · [ordered_decoder_stages_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/ordered_decoder_stages_test.rs) · [l3_consuming_stages_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_consuming_stages_test.rs) |
 | **Checked vs trusted** | Explicit trust boundary | `try_*` untrusted · `wrap` trusted · `verify` full tail · [demo_try_vs_trusted](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| **Exact buffer sizing** | Schema-aware length for nested/ragged msgs — no hand-calculated sizes | `ENCODED_LENGTH` · `compute_encoded_length_*` · `*EncodedLength` · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#buffer-sizing) · [l3-book](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) · [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs) |
+| **Exact buffer sizing** | Schema-aware length for nested/ragged msgs — no hand-calculated sizes | `compute_length_with_header()` (fixed) · `compute_length_with_header(…)` (flat) · `*EncodedLength` (nested) · [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#buffer-sizing) · [l3-book](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs) · [encoded_length_api_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs) |
 | **Schema docs → rustdoc** | XML descriptions become item docs | `description="…"` / `<description>` / `<comment>` / `<!-- -->` · [schema_docs_provenance_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/schema_docs_provenance_test.rs) |
 | **`Display` / `Debug`** | Diagnostic print (not wire format) | `println!("{car}");` · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#display--debug) · [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **NULL / MIN / MAX** | Schema sentinels as consts | `MODEL_YEAR_NULL` · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
@@ -1004,7 +1012,7 @@ dto.manufacturer = "Toyota".into();
 // Prefer stack when the message is fixed-size; otherwise size then write into
 // a claim / slot of that exact length (avoid oversize scratch Vecs).
 let len = dto.encoded_length_with_header()?;
-// e.g. let mut out = [0u8; CarEncoder::ENCODED_LENGTH];  // fixed
+// e.g. let mut out = [0u8; CarEncoder::compute_length_with_header()];  // fixed
 // or encode into a transport claim of `len` bytes
 let n = dto.encode(&mut out[..len])?;
 println!("re-encoded {n} bytes");

@@ -100,8 +100,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Step 1: Create RFQ ──
     {
         println!("\n--- Create RFQ ---");
-        const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
-        const BODY: usize = CreateRfqCommandEncoder::ENCODED_LENGTH;
+        const HDR: usize = SessionMessageHeaderEncoder::compute_length_with_header();
+        const BODY: usize = CreateRfqCommandEncoder::compute_length_with_header();
         let mut msg = [0u8; HDR + BODY];
         let hdr = HDR;
         let body = BODY;
@@ -139,8 +139,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Step 2: Quote RFQ ──
     {
         println!("\n--- Quote RFQ ---");
-        const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
-        const BODY: usize = QuoteRfqCommandEncoder::ENCODED_LENGTH;
+        const HDR: usize = SessionMessageHeaderEncoder::compute_length_with_header();
+        const BODY: usize = QuoteRfqCommandEncoder::compute_length_with_header();
         let mut msg = [0u8; HDR + BODY];
         let hdr = HDR;
         let body = BODY;
@@ -174,8 +174,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Step 3: Accept RFQ ──
     {
         println!("\n--- Accept RFQ ---");
-        const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
-        const BODY: usize = AcceptRfqCommandEncoder::ENCODED_LENGTH;
+        const HDR: usize = SessionMessageHeaderEncoder::compute_length_with_header();
+        const BODY: usize = AcceptRfqCommandEncoder::compute_length_with_header();
         let mut msg = [0u8; HDR + BODY];
         let hdr = HDR;
         let body = BODY;

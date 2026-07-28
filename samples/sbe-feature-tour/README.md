@@ -53,7 +53,7 @@ Other samples:
 
 | Feature | Demo |
 |---------|------|
-| Fixed message + `ENCODED_LENGTH` | `demo_fixed_heartbeat` |
+| Fixed message + `compute_length_with_header()` | `demo_fixed_heartbeat` |
 | Staged `CarEncodedLength` | `demo_car_size_and_encode` |
 | Consuming decoder stages | `demo_car_decode_stages` |
 | Owned DTO | `demo_car_domain_dto` |

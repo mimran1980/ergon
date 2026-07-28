@@ -5994,9 +5994,9 @@ fn generate_message_encoder(
             const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
             /// Header-inclusive encoded length. Same as [`Self::ENCODED_LENGTH`];
             /// provided for API consistency with flat and complex message
-            /// shapes so every encoder has a `compute_length` method.
+            /// shapes so every encoder has a `compute_length_with_header` method.
             #[inline]
-            pub const fn compute_length() -> usize {
+            pub const fn compute_length_with_header() -> usize {
                 Self::ENCODED_LENGTH
             }
             /// Slice after one full header-inclusive message of this type.
