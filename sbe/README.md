@@ -913,7 +913,26 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 
 ## Recipes
 
-### Encode: known count or unknown size
+Runnable, tested code for every pattern lives in
+[sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour).
+See its `src/lib.rs` for the full API map.
+
+| Pattern | Demo function |
+|---------|---------------|
+| Fixed message encode/decode | [`demo_fixed_heartbeat`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| Sized encode with `EncodedLength` builder | [`demo_car_size_and_encode`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| Known vs unknown group counts | [`demo_car_size_and_encode`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| `Display` / `Debug` diagnostic output | [`demo_display_debug`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| Domain objects (DTOs) | [`demo_domain_dto`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| Multi-template `AnyMessage` dispatch | [`demo_any_message`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| `with_conversion` generic adapters | [`demo_conversion_only`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| Trust boundary (`try_` vs `wrap`) | [`demo_try_vs_trusted`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| Bulk group encode (`bulk_add`) | [`group_encode_bench`](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/group_encode_bench.rs) |
+| Timestamp multi-precision converters | [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#multiple-timestamp-precisions--one-rust-type) below |
+
+### Quick reference
+
+**Known vs unknown group count:**
 
 ```rust,no_run
 // Known count (must add() exactly `count` times):
@@ -950,46 +969,6 @@ let unknown_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
 
 println!("known={known_len} unknown={unknown_len}");
 ```
-
-### Display / Debug
-
-Diagnostic only — **not** a stable wire or log schema. Do **not** treat either
-format as a protocol or long-term log contract.
-
-**`Display` currently equals `Debug`** for generated decoders (`{car}` and
-`{car:?}` print the same text). Prefer `Debug` in logs if you want that intent
-to stay obvious when/if the two diverge later.
-
-Real output from the feature-tour Car (`demo_car_size_and_encode` →
-`CarDecoder`):
-
-```rust,no_run
-let car = CarDecoder::try_from(buf.as_slice())?;
-println!("{car}");
-println!("{car:?}"); // same text as Display today
-```
-
-```text
-CarDecoder { serialNumber: 1234, modelYear: 2013, available: true, code: A, extras: sportsPack|cruiseControl, fuelFigures: ["{ speed: 30, mpg: 35.9, usageDescription: Urban }", "{ speed: 60, mpg: 25.0, usageDescription: Highway }"], performanceFigures: ["{ octaneRating: 95, acceleration: [{ mph: 30, seconds: 4.0 }, { mph: 60, seconds: 7.5 }] }"], manufacturer: "Honda", model: "Civic VTi", activationCode: "abcdef" }
-```
-
-Truncated / incomplete buffers omit missing tails rather than panicking.
-See [demo_display_debug](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs).
-
-### Schema description → rustdoc
-
-```xml
-<field name="serialNumber" id="1" type="uint64" description="VIN-style serial"/>
-```
-
-```rust,no_run
-// Generated (approx):
-/// VIN-style serial
-pub fn serial_number(&self) -> u64 { … }
-```
-
-Provenance of all four XML doc sources:
-[schema_docs_provenance_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/schema_docs_provenance_test.rs).
 
 ### Domain DTO (ease of use)
 

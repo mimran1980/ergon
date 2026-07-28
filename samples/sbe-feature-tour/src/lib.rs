@@ -264,7 +264,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let hb_len = HeartbeatEncoder::compute_length_with_header();
 
     let note_body = b"hello AnyMessage";
-    let note_len = NoteEncoder::compute_encoded_length_with_message_header(note_body.len());
+    let note_len = NoteEncoder::compute_length_with_header(note_body.len());
     const NOTE_PAD: usize = 64;
     assert!(note_len <= NOTE_PAD);
     let mut note_storage = [0u8; NOTE_PAD];

@@ -142,6 +142,11 @@ pub struct GenerationConfig {
     pub(crate) external_sbe_rt_path: Option<String>,
     /// Emit `From<EncodeError/DecodeError>` for this error type path.
     pub(crate) error_from_path: Option<String>,
+    /// Emit `bool` ↔ BooleanType converters automatically for every enum
+    /// detected as boolean (name `BooleanType` or `semanticType="Boolean"`).
+    /// Equivalent to calling `with_domain_type(named_type(name), "bool")` for
+    /// each — saves boilerplate on schemas with many boolean flags.
+    pub(crate) auto_bool_domain: bool,
     /// Emit `_unchecked` companions for benchmarking.
     pub(crate) unchecked_companions: bool,
     /// Appended when a name is a Rust keyword (default `"_"`).
@@ -171,6 +176,7 @@ impl GenerationConfig {
             unchecked_companions: false,
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
+            auto_bool_domain: false,
         }
     }
 
@@ -343,6 +349,19 @@ impl GenerationConfig {
     /// Opt-in: deprecating a generated type cascades to its impls, so the
     /// generated module also gets `#![allow(deprecated)]` for internal use.
     #[must_use]
+    /// Auto-register `bool` ↔ BooleanType converters for every boolean
+    /// enum in the schema. Equivalent to calling
+    /// `with_domain_type(named_type("BooleanType"), "bool")` for each.
+    ///
+    /// Boolean enums are detected by name (`BooleanType`) or schema
+    /// annotation (`semanticType="Boolean"`). Generated accessors return
+    /// `bool` directly via `_bool()` / `_bool(val)` methods.
+    #[must_use]
+    pub fn enable_bool_domain_type(mut self) -> Self {
+        self.auto_bool_domain = true;
+        self
+    }
+
     pub fn with_deprecated_attrs(mut self) -> Self {
         self.deprecated_attrs = true;
         self

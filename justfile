@@ -144,14 +144,19 @@ test-unit:
 # Runs: standard suite + Miri UB detection + fuzz corpus replay.
 test-all: test
     @echo "=== 7/7 miri (UB detection) ==="
-    cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
+    @if rustup run nightly cargo miri --version >/dev/null 2>&1; then \
+        cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml; \
+    else \
+        echo "SKIP: miri not installed — run: rustup component add --toolchain nightly miri"; \
+    fi
     @echo "=== 8/7 fuzz corpus replay ==="
-    cd sbe/fuzz && cargo +nightly fuzz run generated_verify -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run nested_group_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run bulk_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run flat_group_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run any_message_frame_cursor -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run schema_parse -- -max_total_time=30
+    @if command -v cargo-fuzz >/dev/null 2>&1; then \
+        for target in generated_verify nested_group_decode bulk_decode flat_group_decode any_message_frame_cursor schema_parse; do \
+            cd sbe/fuzz && cargo +nightly fuzz run $$target -- -max_total_time=30; \
+        done; \
+    else \
+        echo "SKIP: cargo-fuzz not installed — run: cargo +nightly install cargo-fuzz"; \
+    fi
     @echo ""
     @echo "=== test-all: complete ==="
 
