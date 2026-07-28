@@ -206,7 +206,7 @@ fn generate_multi_schema_entry_point() -> Result<(), Box<dyn std::error::Error>>
     let s1 = Schema::from_ir(ir1);
     let ir2 = parse_file(&Paths::l3_orderbook_schema()).unwrap();
     let s2 = Schema::from_ir(ir2);
-    let g = Generator::new(GenerationConfig::new("multi_test"));
+    let mut g = Generator::new(GenerationConfig::new("multi_test"));
     let ms = g.generate_multi(&[(&s1, "mod1"), (&s2, "mod2")])?;
     let count = ms.modules().count();
     assert!(count >= 2, "expected >=2 modules, got {count}");

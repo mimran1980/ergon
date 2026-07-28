@@ -150,7 +150,7 @@ impl Paths {
 pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
-    let g = Generator::new(GenerationConfig::new(module_name));
+    let mut g = Generator::new(GenerationConfig::new(module_name));
     let ms = g.generate(&schema).unwrap();
     let module = ms.modules().next().unwrap();
     (schema, module.source.clone())
@@ -538,7 +538,7 @@ pub fn generate_domain_with(
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let config = configure(GenerationConfig::new(module_name));
-    let g = Generator::new(config);
+    let mut g = Generator::new(config);
     let ms = g.generate(&schema).unwrap();
     let module = ms.modules().next().unwrap();
     (schema, module.source.clone())

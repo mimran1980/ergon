@@ -19,7 +19,7 @@ fn generate_with_domain(xml_path: &std::path::Path, module_name: &str) -> String
     let schema = Schema::from_ir(ir);
     let mut config = GenerationConfig::new(module_name);
     let config = config.enable_domain_objects(DomainVarData::Bytes);
-    let g = Generator::new(config);
+    let mut g = Generator::new(config);
     g.generate(&schema)
         .unwrap()
         .modules()
