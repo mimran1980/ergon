@@ -100,17 +100,17 @@ generated API is purpose-built for Rust rather than ported from Java.
 ## Contents
 
 1. [Quick start](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#quick-start) — `generate_to_out_dir` + `sbe_mod!` → first encode/decode
-2. [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#recipes) — common patterns with compilable samples
-3. [Feature tour](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#compile-checked-feature-tour) — every feature with runnable examples
-4. [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#core-ideas) — trust boundary, wire order, buffer sizing, composites
-5. [Feature matrix](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#feature-matrix) — full capability scan
-6. [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) — converters, domain types, bool helpers
-7. [Samples](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#samples) — monorepo crates
-8. [Why ergo-sbe](#why-ergo-sbe) — vs sbe-tool
+2. [Compile-checked feature tour](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#compile-checked-feature-tour) — fixed/dynamic messages, arrays, stages, DTOs, dispatch
+3. [Core ideas](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#core-ideas) — trust boundary, wire order, **buffer sizing**, flyweight vs whole struct, **composite LE layout**
+4. [Feature matrix](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#feature-matrix) — full capability scan
 
-Names in snippets use `Heartbeat`, `Quote`, or `FixedString` from the
-docs_codec fixture — **your** types follow **your** schema names.
-Every bare `rust` fence compiles via `docs_validation_test`.
+5. [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#recipes) — encode known/unknown groups, Display, DTO, conversion
+6. [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) — wire vs app types, `with_conversion` / `with_domain_type`
+7. [Samples](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#samples)
+8. [Rust version](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#rust-version-and-edition) · [Verify](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#verify-the-crate) · [Package scope](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#package-scope)
+
+Names in snippets use a fictional `Car` / `Quote` schema — **your** types and
+methods follow **your** schema names.
 
 Every bare `rust` fence in this README is extracted and compiled by
 `docs_validation_test`. Schematic fragments (build scripts, config, generated
