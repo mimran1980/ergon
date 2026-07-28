@@ -3400,15 +3400,23 @@ fn generate_decoder_display(
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                // Domain-converted composites (e.g. Decimal→rust_decimal) have
-                // Display on the domain type. Raw composites return a sub-decoder
-                // that may not implement Display — skip in debug_struct to avoid
-                // trait errors. The value is visible via group entry Display.
+                let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                // Domain-converted composites use the domain-typed
+                // accessor which returns the app type (Display).
+                // Wire-only composites use the *_value() accessor
+                // which returns the owned value type (Debug derived).
                 if find_domain_type(f, domain_types).is_some() {
-                    let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
                     debug_body.extend(quote::quote! {
                         if #in_bounds {
                             d.field(#name_lit, &format_args!("{}", self.#f_ident()));
+                        }
+                    });
+                } else {
+                    let f_value = syn::Ident::new(&format!("{}_value", &snake), proc_macro2::Span::call_site());
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            let v = self.#f_value();
+                            d.field(#name_lit, &v);
                         }
                     });
                 }

@@ -1857,6 +1857,12 @@ impl<'a> core::fmt::Debug for CarDecoder<'a> {
             let v = self.extras();
             d.field("extras", &format_args!("{}", v));
         }
+        if self.pos.saturating_add(45) <= self.buf.len()
+            && 45 <= self.acting_block_length
+        {
+            let v = self.engine_value();
+            d.field("engine", &v);
+        }
         if let Ok(_g) = self.fuel_figures() {
             let entries: Vec<String> = _g
                 .filter_map(|r| r.ok())

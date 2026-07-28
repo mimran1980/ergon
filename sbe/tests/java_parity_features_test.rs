@@ -471,3 +471,188 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+// ── Debug / Display inspection tests ───────────────────────────────────
+// These encode real messages and inspect the rendered Debug/Display strings
+// to catch regressions like the set-field-silently-dropped bug.
+
+fn all_field_types_schema() -> &'static str {
+    r#"<?xml version="1.0"?>
+<messageSchema package="dbg" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+    <composite name="varStringEncoding"><type name="length" primitiveType="uint32"/><type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/></composite>
+    <enum name="Side" encodingType="uint8"><validValue name="Buy">0</validValue><validValue name="Sell">1</validValue></enum>
+    <enum name="BoolFlag" encodingType="uint8"><validValue name="False">0</validValue><validValue name="True">1</validValue></enum>
+    <set name="ExecInst" encodingType="uint8"><choice name="AON">0</choice><choice name="IOC">1</choice></set>
+    <composite name="Price"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+  </types>
+  <message name="Msg" id="1" blockLength="16">
+    <field name="qty"    id="1" type="uint32"  offset="0"/>
+    <field name="side"   id="2" type="Side"    offset="4"/>
+    <field name="inst"   id="3" type="ExecInst" offset="5"/>
+    <field name="algo"   id="4" type="BoolFlag" offset="6"/>
+    <field name="price"  id="5" type="Price"   offset="7"/>
+    <group name="legs" id="10" dimensionType="groupSizeEncoding">
+      <field name="ratio" id="11" type="uint32" offset="0"/>
+    </group>
+    <data name="note" id="20" type="varStringEncoding"/>
+  </message>
+</messageSchema>"#
+}
+
+#[test]
+fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(all_field_types_schema())?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("dbg"))
+        .generate(&schema)?.modules().next().unwrap().source.clone();
+
+    compile_and_run("dec_dbg_all", &out, r#"
+        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let price = Price::new(12345, -2);
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header(1, 3)];
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MsgFixedFields { qty: 100, side: Side::Sell, inst, algo: BoolFlag::True, price })
+            .legs(1, |g| { g.add(|e| { e.ratio(50); Ok(()) })?; Ok(()) })?
+            .note(b"abc")?
+            .encoded_length_with_header();
+        let dec = MsgDecoder::try_from(&buf[..len])?;
+        let dbg = format!("{dec:?}");
+        assert!(dbg.contains("qty: 100"),        "primitive: {dbg}");
+        assert!(dbg.contains("side: Sell"),      "enum: {dbg}");
+        assert!(dbg.contains("inst: AON"),       "set: {dbg}");
+        assert!(dbg.contains("algo: True"),      "bool-enum: {dbg}");
+        assert!(dbg.contains("price:"),          "composite: {dbg}");
+        assert!(dbg.contains("legs:"),           "group: {dbg}");
+        assert!(dbg.contains("ratio:"),          "entry field: {dbg}");
+        assert!(dbg.contains("note:"),           "var-data: {dbg}");
+        assert!(dbg.contains("\"abc\""),         "var-data value: {dbg}");
+        assert!(dbg.contains("MsgDecoder"),      "struct name: {dbg}");
+        assert_eq!(dbg, format!("{dec}"), "Display == Debug");
+    "#);
+    Ok(())
+}
+
+#[test]
+fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(all_field_types_schema())?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("dbg_trunc"))
+        .generate(&schema)?.modules().next().unwrap().source.clone();
+
+    compile_and_run("dec_trunc", &out, r#"
+        let mut inst = ExecInst::default(); inst.set_ioc(true);
+        let price = Price::new(1, 0);
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 0)];
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MsgFixedFields { qty: 1, side: Side::Buy, inst, algo: BoolFlag::False, price })
+            .legs(0, |_| Ok(()))?.note(b"")?
+            .encoded_length_with_header();
+        let _ = MsgDecoder::try_from(&buf[..len])?;
+        // Truncated: 12 bytes is past header (8) but shorter than full
+        // fixed block (16). try_from returns an error — must not panic.
+        assert!(MsgDecoder::try_from(&buf[..12]).is_err());
+        // Below header — error, not panic.
+        assert!(MsgDecoder::try_from(&buf[..3]).is_err());
+    "#);
+    Ok(())
+}
+
+#[test]
+fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(all_field_types_schema())?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(
+        GenerationConfig::new("dbg_dto").enable_domain_objects(DomainVarData::LossyStrings))
+        .generate(&schema)?.modules().next().unwrap().source.clone();
+
+    compile_and_run("dto_dbg", &out, r#"
+        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let price = Price::new(999, -1);
+        let dto = MsgDomain {
+            qty: 42, side: Side::Buy, inst, algo: BoolFlag::True, price,
+            legs: vec![MsgLegsEntryDomain { ratio: 10 }], note: "hi".into(),
+        };
+        let len = dto.encoded_length_with_header()?;
+        let mut buf = [0u8; 256];
+        let written = dto.encode(&mut buf[..len])?;
+        assert_eq!(written, len);
+        let dbg = format!("{dto:?}");
+        assert!(dbg.contains("qty: 42"),     "DTO primitive: {dbg}");
+        assert!(dbg.contains("side: Buy"),   "DTO enum: {dbg}");
+        assert!(dbg.contains("inst: ExecInst"), "DTO set: {dbg}");
+        assert!(dbg.contains("algo: True"),  "DTO bool: {dbg}");
+        assert!(dbg.contains("price:"),      "DTO composite: {dbg}");
+        assert!(dbg.contains("legs:"),       "DTO group: {dbg}");
+        assert!(dbg.contains("ratio: 10"),   "DTO entry: {dbg}");
+        assert!(dbg.contains("note:"),       "DTO var-data: {dbg}");
+        assert!(dbg.contains("\"hi\""),      "DTO var-data value: {dbg}");
+    "#);
+    Ok(())
+}
+
+#[test]
+fn encoder_display_delegates_to_decoder() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(all_field_types_schema())?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("dbg_enc"))
+        .generate(&schema)?.modules().next().unwrap().source.clone();
+
+    compile_and_run("enc_display", &out, r#"
+        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let price = Price::new(99, -1);
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 3)];
+        let enc = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MsgFixedFields { qty: 1, side: Side::Buy, inst, algo: BoolFlag::True, price })
+            .legs(0, |_| Ok(()))?.note(b"xyz")?;
+        // Encoder Display delegates to the decoder — shows the message.
+        let display = format!("{enc}");
+        assert!(display.contains("qty"), "encoder Display: {display}");
+        assert!(display.contains("side"), "encoder Display: {display}");
+    "#);
+    Ok(())
+}
+
+#[test]
+fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema package="e" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+    <enum name="Side" encodingType="uint8"><validValue name="Buy">0</validValue><validValue name="Sell">1</validValue></enum>
+    <set name="Flags" encodingType="uint8"><choice name="A">0</choice><choice name="B">1</choice></set>
+    <composite name="Price"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+  </types>
+  <message name="M" id="1" blockLength="0">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="side"  id="1" type="Side"  offset="0"/>
+      <field name="flags" id="2" type="Flags" offset="1"/>
+      <field name="price" id="3" type="Price" offset="2"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    let ir = parse(xml)?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("entry_dbg"))
+        .generate(&schema)?.modules().next().unwrap().source.clone();
+
+    compile_and_run("entry_dbg", &out, r#"
+        let mut flags = Flags::default(); flags.set_b(true);
+        let price = Price::new(777, -1);
+        let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .rows(1, |g| { g.add(|e| { e.side(Side::Buy).flags(flags).price(price); Ok(()) })?; Ok(()) })?
+            .encoded_length_with_header();
+        let dec = MDecoder::try_from(&buf[..len])?;
+        let mut rows = dec.into_rows()?;
+        let entry = rows.next().expect("one row");
+        let dbg = format!("{entry}");
+        assert!(dbg.contains("side: Side"),  "entry enum: {dbg}");
+        assert!(dbg.contains("flags: B"),   "entry set: {dbg}");
+        assert!(dbg.contains("price:"),     "entry composite: {dbg}");
+    "#);
+    Ok(())
+}
