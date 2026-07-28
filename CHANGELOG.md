@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.3] — 2026-07-28
 
 ### Added
 - `bulk_add(&[Entry])` and `bulk_decode() -> Vec<Entry>` for flat groups — 15-17% faster than per-entry loops
