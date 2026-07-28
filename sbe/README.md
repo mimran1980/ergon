@@ -1077,33 +1077,10 @@ let config = GenerationConfig::new("msgs")
     .with_conversion(ConversionSelector::field_path("Event.received_at")); // millis, custom
 ```
 
-The built-in nano converter works for `created_at`. Write micro/milli converters by hand:
-
-```rust,ignore
-use ergo_sbe::{TryFromSbe, TryToSbe};
-
-// Wire u64 is microseconds → DateTime<Utc>
-impl TryFromSbe<u64> for chrono::DateTime<chrono::Utc> {
-    type Error = &'static str;
-    fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> {
-        let secs = (wire / 1_000_000) as i64;
-        let nsec = ((wire % 1_000_000) * 1_000) as u32;
-        chrono::DateTime::from_timestamp(secs, nsec)
-            .ok_or("timestamp out of range for DateTime<Utc>")
-    }
-}
-impl TryToSbe<u64> for chrono::DateTime<chrono::Utc> {
-    type Error = &'static str;
-    fn try_to_sbe(&self) -> Result<u64, Self::Error> {
-        Ok(self.timestamp_micros() as u64)
-    }
-}
-```
-
-But that blanket impl clashes with the nano one the generator already emits
-(`TryFromSbe<u64>` can only exist once). Resolve this by naming the wire
-fields unique types — the idiomatic pattern when three `uint64` columns mean
-three different things:
+Writing `TryFromSbe<u64>` for micros would clash with the built-in nano
+converter — `TryFromSbe<u64>` can only exist once. Resolve this by naming
+the wire fields unique types — the idiomatic pattern when three `uint64`
+columns mean three different things:
 
 ```xml
 <!-- Distinguish wire types by name — all are uint64 under the hood -->
