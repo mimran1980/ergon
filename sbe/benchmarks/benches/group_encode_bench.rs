@@ -1,7 +1,5 @@
-//! Group encode benchmark: ergon add_closure vs add_struct vs bulk_add.
-//!
-//! Same flat group ({price: i64, qty: i64, numOrders: u32}) at 10/100/1000 entries.
-//! bulk_add hoists bounds checks outside the loop; add_struct checks per-entry.
+//! Group encode: add_closure vs add_struct vs bulk_add.
+//! 50 samples, 1s warm-up, 3s measurement.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 #![allow(missing_docs, unused)]
@@ -17,13 +15,14 @@ fn make_entries(n: usize) -> Vec<LevelsEntry> {
 
 fn bench_group_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("group_encode");
+    group.sample_size(50);
+    group.warm_up_time(std::time::Duration::from_secs(1));
+    group.measurement_time(std::time::Duration::from_secs(3));
+
     for &n in &[10usize, 100, 1000] {
         let entries = make_entries(n);
         let msg_len = BookSnapshotEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
         group.throughput(Throughput::Elements(n as u64));
-        group.sample_size(20);
-        group.warm_up_time(std::time::Duration::from_millis(250));
-        group.measurement_time(std::time::Duration::from_millis(500));
 
         group.bench_with_input(BenchmarkId::new("add_closure", n), &entries, |b, entries| {
             let mut buf = vec![0u8; msg_len];
