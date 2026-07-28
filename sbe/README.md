@@ -228,19 +228,27 @@ assert_eq!(dec.seq(), 7);
 **`fixed()` struct** (fill every field at once — compile error if a field is missing):
 
 ```rust
+let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
 let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&HeartbeatFixedFields { seq: 7 })
     .encoded_length_with_header();
 ```
 
-**C-style fixed-width strings:** pass a shorter `&str` — auto-padded with NULs:
+**C-style fixed-width strings:** `vehicle_code_str("ABC")` auto-pads short strings
+with NUL bytes. On decode, `copy_vehicle_code` copies the field into your buffer:
 
-```rust
-let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .vehicle_code_str("ABC")?   // pads to field width (e.g. 6) with \0
-    .encoded_length_with_header();
+```rust,no_run
+// Encode — "ABC" auto-padded to 6 bytes
+let len = enc.vehicle_code_str("ABC")?.encoded_length_with_header();
+
+// Decode — copy into a mutable buffer
+let mut code = [0u8; 6];
+dec.copy_vehicle_code(&mut code);
+assert_eq!(&code, b"ABC\0\0\0");
 ```
+
+(The runtime test for this is `fixed_array_put_and_str_helpers` in
+[java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs).)
 
 **Start here for a full runnable map of features:**
 [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
