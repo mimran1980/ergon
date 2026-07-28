@@ -22,7 +22,7 @@ mod tests {
 
     #[test]
     fn little_endian_fixed_codec() -> Result<(), Box<dyn std::error::Error>> {
-        let mut buffer = [0u8; little_endian::ProbeEncoder::ENCODED_LENGTH];
+        let mut buffer = [0u8; little_endian::ProbeEncoder::compute_length_with_header()];
         let len = little_endian::ProbeEncoder::try_wrap_and_apply_header(&mut buffer, 0)?
             .fixed(&little_endian::ProbeFixedFields { value: 0x0102_0304 })
             .encoded_length_with_header();
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn big_endian_fixed_codec() -> Result<(), Box<dyn std::error::Error>> {
-        let mut buffer = [0u8; big_endian::ProbeEncoder::ENCODED_LENGTH];
+        let mut buffer = [0u8; big_endian::ProbeEncoder::compute_length_with_header()];
         let len = big_endian::ProbeEncoder::try_wrap_and_apply_header(&mut buffer, 0)?
             .fixed(&big_endian::ProbeFixedFields { value: 0x0102_0304 })
             .encoded_length_with_header();

@@ -7,3 +7,7 @@
 pub mod l3_codec {
     include!(concat!(env!("OUT_DIR"), "/l3_codec.rs"));
 }
+
+pub mod orderbook_codec {
+    include!(concat!(env!("OUT_DIR"), "/orderbook_codec.rs"));
+}
