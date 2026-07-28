@@ -93,7 +93,6 @@ generated API is purpose-built for Rust rather than ported from Java.
 | **Closure-based groups** | `bids(n, \|g\| g.add(\|e\| { … }))` — nests like the schema, no `.parent()` hopscotch |
 | **Trust boundary** | `try_from` / `try_wrap` for untrusted input; `wrap` for trusted — explicit in the type system |
 | **Composite wire images** | `#[repr(transparent)] Engine([u8; N])` — the value IS the on-wire bytes, zero-copy with portable LE/BE accessors |
-| **Version-aware decode** | `sinceVersion` fields return `Option` or skip based on acting version — handle mixed-version fleets |
 | **Domain types** | Map wire `Decimal` to `rust_decimal::Decimal` at the codec boundary — one line of config, no hand-rolled converters |
 | **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — 15-17% faster than per-entry loops for flat groups |
 | **Zero dependencies at runtime** | Generated codecs embed their own `sbe_rt` — no `ergo-sbe` on your critical path |
