@@ -146,12 +146,12 @@ test-all: test
     @echo "=== 7/7 miri (UB detection) ==="
     cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
     @echo "=== 8/7 fuzz corpus replay ==="
-    cargo +nightly fuzz run generated_verify --manifest-path sbe/fuzz/Cargo.toml -- -max_total_time=30
-    cargo +nightly fuzz run nested_group_decode --manifest-path sbe/fuzz/Cargo.toml -- -max_total_time=30
-    cargo +nightly fuzz run bulk_decode --manifest-path sbe/fuzz/Cargo.toml -- -max_total_time=30
-    cargo +nightly fuzz run flat_group_decode --manifest-path sbe/fuzz/Cargo.toml -- -max_total_time=30
-    cargo +nightly fuzz run any_message_frame_cursor --manifest-path sbe/fuzz/Cargo.toml -- -max_total_time=30
-    cargo +nightly fuzz run schema_parse --manifest-path sbe/fuzz/Cargo.toml -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run generated_verify -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run nested_group_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run bulk_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run flat_group_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run any_message_frame_cursor -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run schema_parse -- -max_total_time=30
     @echo ""
     @echo "=== test-all: complete ==="
 
