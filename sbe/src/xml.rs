@@ -36,18 +36,60 @@ use roxmltree::{Document, Node, NodeType};
 
 use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 
+/// Tracks the source name so warnings can reference the real file
+/// instead of a hardcoded `"schema.xml"`.
+fn set_source_name(name: String) {
+    use std::sync::OnceLock;
+    use std::sync::Mutex;
+    static SOURCE: OnceLock<Mutex<String>> = OnceLock::new();
+    *SOURCE.get_or_init(|| Mutex::new(String::new()))
+        .lock().unwrap() = name;
+}
+
+fn source_name() -> String {
+    use std::sync::OnceLock;
+    use std::sync::Mutex;
+    static SOURCE: OnceLock<Mutex<String>> = OnceLock::new();
+    SOURCE.get_or_init(|| Mutex::new(String::from("<xml>")))
+        .lock().unwrap().clone()
+}
+
 /// De-duplicates parser warnings within a process. `xi:include` inlines a
 /// shared schema (e.g. `common-types.xml`) into every consuming file, so a
 /// naive `eprintln!` fires once per consumer parsed in the same `cargo build`
 /// — N sibling schema files sharing one included type multiply the same
-/// warning N times. Keyed on the exact message text, so distinct warnings are
-/// never suppressed by this.
-fn warn_once(message: &str) {
+/// warning N times. Keyed on byte offset + message, so distinct warnings are
+/// never suppressed.
+///
+/// When `node` is provided the warning includes the source file, line,
+/// column, and the relevant XML line.
+fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>) {
     use std::sync::{Mutex, OnceLock};
     static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
-    if seen.lock().unwrap().insert(message.to_string()) {
-        eprintln!("{message}");
+    let dedup_key = if let Some(n) = node {
+        format!("{}:{}", n.range().start, message)
+    } else {
+        message.to_string()
+    };
+    if seen.lock().unwrap().insert(dedup_key) {
+        if let Some(n) = node {
+            let pos = n.range().start;
+            let text = n.document().input_text();
+            let line = text[..pos].matches('\n').count() + 1;
+            let last_nl = text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let col = pos - last_nl + 1;
+            let line_end = text[pos..].find('\n').map(|i| pos + i).unwrap_or(text.len());
+            let snippet = text[last_nl..line_end].trim();
+            eprintln!(
+                "{}:{}:{}: {message}\n  |\n  | {snippet}\n  |",
+                source_name(),
+                line,
+                col,
+            );
+        } else {
+            eprintln!("warning: {message}");
+        }
     }
 }
 
@@ -413,6 +455,7 @@ fn resolve_type_to_tokens(
 /// attributes/types fail validation.
 #[allow(clippy::result_large_err)]
 pub fn parse(xml: &str) -> Result<Ir, ParseError> {
+    set_source_name("<xml>".into());
     parse_with_context(xml, None, &mut HashSet::new(), TypeRegistry::new())
 }
 
@@ -465,6 +508,7 @@ pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
 #[allow(clippy::result_large_err)]
 pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
     let path = path.as_ref();
+    set_source_name(path.display().to_string());
     let xml = std::fs::read_to_string(path).map_err(|e| {
         ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
     })?;
@@ -867,10 +911,13 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
         .and_then(|s| parse_u64_val(s, primitive_type));
     if null_value.is_some() && presence != Presence::Optional {
         let type_name = node.attribute("name").unwrap_or("<unnamed>");
-        warn_once(&format!(
-            "warning: nullValue specified on non-optional type '{type_name}' \
-             \u{2014} nullValue is only meaningful for optional types"
-        ));
+        warn_once(
+            &format!(
+                "warning: nullValue specified on non-optional type '{type_name}' \
+                 \u{2014} nullValue is only meaningful for optional types"
+            ),
+            Some(node),
+        );
     }
     let min_value = node
         .attribute("minValue")
@@ -1699,10 +1746,13 @@ fn parse_message_child(
                     .unwrap_or(Presence::Required)
             };
             if node.attribute("nullValue").is_some() && presence != Presence::Optional {
-                warn_once(&format!(
-                    "warning: nullValue specified on non-optional field '{field_name}' \
-                     \u{2014} nullValue is only meaningful for optional fields"
-                ));
+                warn_once(
+                    &format!(
+                        "warning: nullValue specified on non-optional field '{field_name}' \
+                         \u{2014} nullValue is only meaningful for optional fields"
+                    ),
+                    Some(node),
+                );
             }
             let constant_value = if presence == Presence::Constant {
                 if node.attribute("constantValue").is_none() && node.attribute("valueRef").is_none()
@@ -1730,9 +1780,12 @@ fn parse_message_child(
                         // before the codec is used.
                         if !registry.registry.contains_key(enum_name) {
                             // non-fatal warning: old behaviour was silent strip
-                            warn_once(&format!(
-                                "warning: valueRef '{s}' references unknown enum '{enum_name}'"
-                            ));
+                            warn_once(
+                                &format!(
+                                    "warning: valueRef '{s}' references unknown enum '{enum_name}'"
+                                ),
+                                Some(node),
+                            );
                         }
                         s.to_string()
                     } else {
