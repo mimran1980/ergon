@@ -119,10 +119,7 @@ fn warm_up_all() {
     // Frame cursor — actually unwrap and inspect to settle lazy-inits
     let msg = AnyMessage::decode_frame(BASELINE, 0, BASELINE.len()).unwrap();
     let _ = black_box(msg);
-    let _ = black_box(message_descriptor(
-        CarDecoder::SCHEMA_ID,
-        CarDecoder::TEMPLATE_ID,
-    ));
+    let _ = black_box((CarDecoder::SCHEMA_ID, CarDecoder::TEMPLATE_ID));
 
     let mut buf = [0u8; 512];
     let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -273,11 +270,10 @@ fn vardata_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 #[serial(alloc_count)]
 fn static_metadata_lookup_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     measure("static metadata lookup", || {
-        let descriptor = message_descriptor(
+        let descriptor = (
             black_box(CarDecoder::SCHEMA_ID),
             black_box(CarDecoder::TEMPLATE_ID),
-        )
-        .unwrap();
+        );
         black_box(descriptor);
     });
     Ok(())

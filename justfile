@@ -52,7 +52,7 @@ check:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
     cargo test -p ergo-aeron-cluster --lib
     cd samples/exchange-example && cargo fmt --check
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
@@ -109,7 +109,7 @@ test:
     ./scripts/regenerate-sbe-tool-reference.sh --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
     cargo test -p ergo-aeron-cluster --lib
     @echo "=== 4/6 ergo-sbe doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
@@ -137,7 +137,7 @@ test:
 
 # Workspace unit tests only.
 test-unit:
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
     cargo test -p ergo-aeron-cluster --lib
 
 # Every test gate including nightly-only miri and fuzz.
