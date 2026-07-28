@@ -180,12 +180,7 @@ pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
 
 /// Like [`compile_and_run`] but appends `deps` to `[dependencies]` in the
 /// temp crate's `Cargo.toml` (e.g. `"chrono = \"0.4\"\n"`).
-pub fn compile_and_run_with_deps(
-    module_name: &str,
-    source: &str,
-    code: &str,
-    deps: &str,
-) {
+pub fn compile_and_run_with_deps(module_name: &str, source: &str, code: &str, deps: &str) {
     _compile_and_run(module_name, source, code, &[], deps);
 }
 

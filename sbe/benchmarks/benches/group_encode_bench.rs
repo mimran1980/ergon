@@ -25,10 +25,8 @@ fn bench_group_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("group_encode");
     for &n in &[10usize, 100, 1000] {
         let entries = make_entries(n);
-        let msg_len = BookSnapshotEncoder::try_compute_encoded_length_with_header(
-            n as u16,
-        )
-        .unwrap();
+        let msg_len =
+            BookSnapshotEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
 
         group.throughput(Throughput::Elements(n as u64));
         group.sample_size(20);
@@ -43,39 +41,30 @@ fn bench_group_encode(c: &mut Criterion) {
                 let mut buf = vec![0u8; msg_len];
                 b.iter(|| {
                     black_box(
-                        BookSnapshotEncoder::try_wrap_and_apply_header(
-                            black_box(&mut buf),
-                            0,
-                        )
-                        .unwrap()
-                        .levels(n as u16, |g| {
-                            for e in entries {
-                                g.add(|entry| {
-                                    entry.price(e.price).qty(e.qty).num_orders(e.num_orders);
-                                    Ok(())
-                                })?;
-                            }
-                            Ok(())
-                        })
-                        .unwrap()
-                        .encoded_length_with_header(),
+                        BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                            .unwrap()
+                            .levels(n as u16, |g| {
+                                for e in entries {
+                                    g.add(|entry| {
+                                        entry.price(e.price).qty(e.qty).num_orders(e.num_orders);
+                                        Ok(())
+                                    })?;
+                                }
+                                Ok(())
+                            })
+                            .unwrap()
+                            .encoded_length_with_header(),
                     )
                 });
             },
         );
 
         // 2. Per-entry struct — add_struct()
-        group.bench_with_input(
-            BenchmarkId::new("add_struct", n),
-            &entries,
-            |b, entries| {
-                let mut buf = vec![0u8; msg_len];
-                b.iter(|| {
-                    black_box(
-                        BookSnapshotEncoder::try_wrap_and_apply_header(
-                            black_box(&mut buf),
-                            0,
-                        )
+        group.bench_with_input(BenchmarkId::new("add_struct", n), &entries, |b, entries| {
+            let mut buf = vec![0u8; msg_len];
+            b.iter(|| {
+                black_box(
+                    BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
                         .unwrap()
                         .levels(n as u16, |g| {
                             for e in entries {
@@ -85,28 +74,19 @@ fn bench_group_encode(c: &mut Criterion) {
                         })
                         .unwrap()
                         .encoded_length_with_header(),
-                    )
-                });
-            },
-        );
+                )
+            });
+        });
 
         // 3. Bulk slice — bulk_add()
-        group.bench_with_input(
-            BenchmarkId::new("bulk_add", n),
-            &n,
-            |b, &n| {
-                let entries = make_entries(n);
-                let msg_len = BookSnapshotEncoder::try_compute_encoded_length_with_header(
-                    n as u16,
-                )
-                .unwrap();
-                let mut buf = vec![0u8; msg_len];
-                b.iter(|| {
-                    black_box(
-                        BookSnapshotEncoder::try_wrap_and_apply_header(
-                            black_box(&mut buf),
-                            0,
-                        )
+        group.bench_with_input(BenchmarkId::new("bulk_add", n), &n, |b, &n| {
+            let entries = make_entries(n);
+            let msg_len =
+                BookSnapshotEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
+            let mut buf = vec![0u8; msg_len];
+            b.iter(|| {
+                black_box(
+                    BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
                         .unwrap()
                         .levels(n as u16, |g| {
                             g.bulk_add(black_box(&entries))?;
@@ -114,10 +94,9 @@ fn bench_group_encode(c: &mut Criterion) {
                         })
                         .unwrap()
                         .encoded_length_with_header(),
-                    )
-                });
-            },
-        );
+                )
+            });
+        });
     }
     group.finish();
 }

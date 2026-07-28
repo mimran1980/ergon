@@ -415,7 +415,12 @@ pub fn parse(xml: &str) -> Result<Ir, ParseError> {
 /// Same as [`parse`].
 #[allow(clippy::result_large_err)]
 pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
-    parse_with_context(xml, None, &mut HashSet::new(), TypeRegistry::from_parsed_schema(shared))
+    parse_with_context(
+        xml,
+        None,
+        &mut HashSet::new(),
+        TypeRegistry::from_parsed_schema(shared),
+    )
 }
 
 /// [`parse`] after [`crate::validate_against_sbe_xsd`].
@@ -475,7 +480,12 @@ pub fn parse_file_with_shared(path: impl AsRef<Path>, shared: &Ir) -> Result<Ir,
     if let Ok(canon) = path.canonicalize() {
         seen.insert(canon);
     }
-    parse_with_context(&xml, base_dir, &mut seen, TypeRegistry::from_parsed_schema(shared))
+    parse_with_context(
+        &xml,
+        base_dir,
+        &mut seen,
+        TypeRegistry::from_parsed_schema(shared),
+    )
 }
 
 /// Internal: parse with optional base directory for include resolution and
@@ -952,9 +962,14 @@ fn parse_composite(
                 parse_enum(child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            if let Some(resolved) =
-                resolve_type_to_tokens(&enum_name, &enum_name, None, registry, since_val, Some(child.range()))
-            {
+            if let Some(resolved) = resolve_type_to_tokens(
+                &enum_name,
+                &enum_name,
+                None,
+                registry,
+                since_val,
+                Some(child.range()),
+            ) {
                 composite_tokens.extend(resolved);
             }
             continue;
@@ -965,9 +980,14 @@ fn parse_composite(
                 parse_set(child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            if let Some(resolved) =
-                resolve_type_to_tokens(&set_name, &set_name, None, registry, since_val, Some(child.range()))
-            {
+            if let Some(resolved) = resolve_type_to_tokens(
+                &set_name,
+                &set_name,
+                None,
+                registry,
+                since_val,
+                Some(child.range()),
+            ) {
                 composite_tokens.extend(resolved);
             }
             continue;
@@ -1001,9 +1021,14 @@ fn parse_composite(
                 }
                 occupied_offsets.push((off, end));
             }
-            if let Some(resolved) =
-                resolve_type_to_tokens(&nested_name, &nested_name, None, registry, since_val, Some(child.range()))
-            {
+            if let Some(resolved) = resolve_type_to_tokens(
+                &nested_name,
+                &nested_name,
+                None,
+                registry,
+                since_val,
+                Some(child.range()),
+            ) {
                 // Apply explicit member offset onto the BeginField wrapper.
                 if let Some(off) = opt_usize_attr(child, "offset", "offset")? {
                     let mut resolved = resolved;
@@ -1051,9 +1076,14 @@ fn parse_composite(
                 }
                 occupied_offsets.push((off, end));
             }
-            if let Some(resolved) =
-                resolve_type_to_tokens(&member_name, ref_name, None, registry, since_val, Some(child.range()))
-            {
+            if let Some(resolved) = resolve_type_to_tokens(
+                &member_name,
+                ref_name,
+                None,
+                registry,
+                since_val,
+                Some(child.range()),
+            ) {
                 composite_tokens.extend(resolved);
             }
             // Forward-ref `<ref type="LaterEnum"/>`: leave expansion to field
@@ -1143,9 +1173,14 @@ fn parse_composite(
                         encoding: Encoding::default(),
                         span: None,
                     });
-                } else if let Some(resolved) =
-                    resolve_type_to_tokens(&member_name, t_name, None, registry, since_val, Some(child.range()))
-                {
+                } else if let Some(resolved) = resolve_type_to_tokens(
+                    &member_name,
+                    t_name,
+                    None,
+                    registry,
+                    since_val,
+                    Some(child.range()),
+                ) {
                     composite_tokens.extend(resolved);
                 } else {
                     let mut encoding = parse_type_element(child, registry)?;
@@ -1694,9 +1729,14 @@ fn parse_message_child(
                 None
             };
 
-            if let Some(resolved) =
-                resolve_type_to_tokens(&field_name, &type_name, Some(id), registry, since_version, Some(node.range()))
-            {
+            if let Some(resolved) = resolve_type_to_tokens(
+                &field_name,
+                &type_name,
+                Some(id),
+                registry,
+                since_version,
+                Some(node.range()),
+            ) {
                 let mut inlined = resolved;
                 if let Some(first) = inlined.first_mut() {
                     if let Some(offset_str) = node.attribute("offset")
@@ -1772,7 +1812,11 @@ fn parse_message_child(
                 parse_message_child(child, registry, tokens)?;
             }
 
-            tokens.push(structural(&group_name, Signal::EndGroup, Some(node.range())));
+            tokens.push(structural(
+                &group_name,
+                Signal::EndGroup,
+                Some(node.range()),
+            ));
         }
         "data" => {
             let data_name = string_attr(node, "name", "data @name")?;
@@ -1895,7 +1939,11 @@ fn parse_message_child(
                 return Err(Fault::invalid(node, "data type", type_name));
             }
 
-            tokens.push(structural(&data_name, Signal::EndVarData, Some(node.range())));
+            tokens.push(structural(
+                &data_name,
+                Signal::EndVarData,
+                Some(node.range()),
+            ));
         }
         other => {
             return Err(Fault::invalid(

@@ -169,10 +169,9 @@ pub fn resolve_schema(ir: &mut Ir, source: Option<&str>) -> Result<(), ResolveEr
         for token in &ir.tokens {
             if token.signal == Signal::BeginMessage {
                 if let Some(id) = token.id {
-                    if let Some((_prev_name, prev_span)) = seen_ids.insert(
-                        id,
-                        (&token.name, token.span.clone()),
-                    ) {
+                    if let Some((_prev_name, prev_span)) =
+                        seen_ids.insert(id, (&token.name, token.span.clone()))
+                    {
                         return Err(ResolveError::DuplicateTemplateId {
                             id,
                             name: token.name.clone(),

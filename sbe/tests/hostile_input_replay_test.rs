@@ -15,7 +15,11 @@ use common::{Paths, compile_and_run, generate};
 
 /// Format a byte slice as a Rust `vec!` literal (e.g. `vec![0u8, 1u8, 255u8]`).
 fn bytes_to_vec_literal(bytes: &[u8]) -> String {
-    let inner = bytes.iter().map(u8::to_string).collect::<Vec<_>>().join(",");
+    let inner = bytes
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     format!("vec![{inner}]")
 }
 

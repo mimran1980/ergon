@@ -1033,10 +1033,9 @@ fn deterministic_generation_produces_identical_output() -> Result<(), Box<dyn st
     Ok(())
 }
 
-    #[test]
-    fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+#[test]
+fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
         <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
             package="test.timestamps" id="1" version="0" byteOrder="littleEndian">
           <types>
@@ -1056,17 +1055,17 @@ fn deterministic_generation_produces_identical_output() -> Result<(), Box<dyn st
             <field name="received_at" id="3" type="TimestampMillis"/>
           </sbe:message>
         </sbe:messageSchema>"#;
-        let ir = ergo_sbe::parse(xml)?;
-        let schema = ergo_sbe::Schema::from_ir(ir);
-        let config = ergo_sbe::GenerationConfig::new("ts_test")
-            .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampNanos"))
-            .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampMicros"))
-            .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampMillis"));
-        let generator = ergo_sbe::Generator::new(config);
-        let modules = generator.generate(&schema)?;
-        let source = modules.modules().next().unwrap().source.clone();
+    let ir = ergo_sbe::parse(xml)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("ts_test")
+        .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampNanos"))
+        .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampMicros"))
+        .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampMillis"));
+    let generator = ergo_sbe::Generator::new(config);
+    let modules = generator.generate(&schema)?;
+    let source = modules.modules().next().unwrap().source.clone();
 
-        let code = r#"
+    let code = r#"
     // Wire precision converters — each composite is a transparent u64 wrapper.
     // TimestampNanos  → built-in u64 converter (nsec) works, but we write our own
     //                   per-composite impl to keep all three consistent.
@@ -1195,17 +1194,17 @@ fn deterministic_generation_produces_identical_output() -> Result<(), Box<dyn st
     assert_eq!(&buf[8..], &buf2[8..],
         "converter encode and raw-wire encode must produce identical bytes");
     "#;
-        let sbe_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let deps = format!(
-            "chrono = \"0.4\"\nergo-sbe = {{ path = \"{}\" }}\n",
-            sbe_path.display(),
-        );
-        common::compile_and_run_with_deps("ts_precision_roundtrip", &source, code, &deps);
+    let sbe_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let deps = format!(
+        "chrono = \"0.4\"\nergo-sbe = {{ path = \"{}\" }}\n",
+        sbe_path.display(),
+    );
+    common::compile_and_run_with_deps("ts_precision_roundtrip", &source, code, &deps);
 
-        Ok(())
-    }
+    Ok(())
+}
 
-    /// Strip `/// ...` doc-comment lines from a source snippet so substring
+/// Strip `/// ...` doc-comment lines from a source snippet so substring
 /// checks for `Hash`, `Eq`, `Ord` etc. don't false-positive on prose.
 fn strip_doc_lines(snippet: &str) -> String {
     snippet

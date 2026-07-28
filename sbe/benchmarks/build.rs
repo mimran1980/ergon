@@ -70,11 +70,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let l2book_schema = manifest.join("schemas/l2-book.xml");
     ergo_sbe::generate_to_out_dir(
         &l2book_schema,
-        ergo_sbe::GenerationConfig::new("l2book_bench")
-            .with_domain_type(
-                ergo_sbe::ConversionSelector::named_type("Decimal"),
-                "rust_decimal::Decimal",
-            ),
+        ergo_sbe::GenerationConfig::new("l2book_bench").with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal"),
+            "rust_decimal::Decimal",
+        ),
     )?;
 
     println!("cargo:rerun-if-changed=schemas/codec-matrix-custom-header.xml");

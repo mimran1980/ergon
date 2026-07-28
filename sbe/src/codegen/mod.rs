@@ -2970,10 +2970,7 @@ fn generate_domain_recursive(
                     && find_domain_type(f, domain_types).is_none()
             });
         if can_bulk {
-            let wire_entry_ident = syn::Ident::new(
-                &format!("{g_scoped}Entry"),
-                span,
-            );
+            let wire_entry_ident = syn::Ident::new(&format!("{g_scoped}Entry"), span);
             group_encode_stmts.push(quote::quote! {
                 let wire_entries: Vec<#wire_entry_ident> = self
                     .#g_field_ident
@@ -4870,10 +4867,7 @@ fn generate_conversion_impl_blocks(
     }
 
     if has_decimal_conv {
-        let dec_composite = elements
-            .composites
-            .iter()
-            .find(|c| c[0].name == "Decimal");
+        let dec_composite = elements.composites.iter().find(|c| c[0].name == "Decimal");
         let dec_name = dec_composite
             .map(|c| to_pascal_case(&c[0].name))
             .unwrap_or_else(|| "Decimal".to_string());
