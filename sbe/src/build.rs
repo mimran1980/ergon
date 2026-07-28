@@ -3,9 +3,8 @@
 //! Prefer these over hand-rolling parse → generate → write → `rerun-if-changed`.
 //!
 //! ```rust,ignore
-//! // build.rs — with `ergo-sbe` build-dependency feature `fancy` enabled,
-//! // ergo_sbe::miette::Result renders schema errors with a source snippet;
-//! // Box<dyn std::error::Error> prints a raw Debug dump instead.
+//! // build.rs — ergo_sbe::miette::Result renders schema errors with a source
+//! // snippet by default; Box<dyn std::error::Error> prints a raw Debug dump.
 //! fn main() -> ergo_sbe::miette::Result<()> {
 //!     ergo_sbe::generate_to_out_dir(
 //!         "schemas/messages.xml",
