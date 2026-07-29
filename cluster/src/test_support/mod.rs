@@ -34,13 +34,3 @@ pub mod jar;
 pub use archive::EmbeddedArchiveDriver;
 pub use cluster::TestCluster;
 pub use jar::{find_jar, sha256, try_find_jar, try_sha256};
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn scaffold_compiles() -> Result<(), Box<dyn std::error::Error>> {
-        assert!(true);
-
-        Ok(())
-    }
-}

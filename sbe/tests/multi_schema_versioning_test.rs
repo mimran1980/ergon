@@ -36,7 +36,7 @@ fn each_schema_bakes_its_own_schema_id() -> Result<(), Box<dyn std::error::Error
     let (schema_a, schema_b) = generate_pair();
     let mut config = GenerationConfig::new("multi");
     config = config.with_shared_module("common_types");
-    let g = Generator::new(config);
+    let mut g = Generator::new(config);
 
     let modules = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;
     let mods: Vec<_> = modules.modules().collect();
@@ -65,7 +65,7 @@ fn each_schema_bakes_its_own_version() -> Result<(), Box<dyn std::error::Error>>
     let (schema_a, schema_b) = generate_pair();
     let mut config = GenerationConfig::new("multi");
     config = config.with_shared_module("common_types");
-    let g = Generator::new(config);
+    let mut g = Generator::new(config);
 
     let modules = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;
     let mods: Vec<_> = modules.modules().collect();
@@ -91,7 +91,7 @@ fn shared_types_defined_once_imported_by_second_module() -> Result<(), Box<dyn s
     let (schema_a, schema_b) = generate_pair();
     let mut config = GenerationConfig::new("multi");
     config = config.with_shared_module("common_types");
-    let g = Generator::new(config);
+    let mut g = Generator::new(config);
 
     let modules = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;
     let mods: Vec<_> = modules.modules().collect();
@@ -136,7 +136,7 @@ fn cross_schema_messages_decode_with_correct_schema_id() -> Result<(), Box<dyn s
     let (schema_a, schema_b) = generate_pair();
     let mut config = GenerationConfig::new("multi");
     config = config.with_shared_module("common_types");
-    let g = Generator::new(config);
+    let mut g = Generator::new(config);
 
     let modules = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;
     let mods: Vec<_> = modules.modules().collect();
@@ -233,7 +233,7 @@ fn shared_type_with_version_gated_field_emits_warning() -> Result<(), Box<dyn st
     config = config.with_shared_module("common_types");
 
     // Capture warnings from generate_multi
-    let g = Generator::new(config);
+    let mut g = Generator::new(config);
     let result = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "importer")]);
 
     let modules = result.expect("generation should succeed with warnings, not error");
@@ -259,7 +259,7 @@ fn shared_type_with_version_gated_field_emits_warning() -> Result<(), Box<dyn st
 #[test]
 fn without_shared_module_each_schema_is_standalone() -> Result<(), Box<dyn std::error::Error>> {
     let (schema_a, schema_b) = generate_pair();
-    let g = Generator::new(GenerationConfig::new("multi"));
+    let mut g = Generator::new(GenerationConfig::new("multi"));
 
     let modules = g.generate_multi(&[(&schema_a, "a"), (&schema_b, "b")])?;
     let mods: Vec<_> = modules.modules().collect();

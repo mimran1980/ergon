@@ -11,7 +11,7 @@ ergo_sbe::generate_to_out_dir(
     GenerationConfig::new("l3_codec")
         .enable_domain_objects(DomainVarData::Bytes) // or LossyStrings for String var-data
         .with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
-        .with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
+        .enable_bool_domain_type()
         .with_domain_type(
             ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",

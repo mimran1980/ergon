@@ -142,6 +142,11 @@ pub struct GenerationConfig {
     pub(crate) external_sbe_rt_path: Option<String>,
     /// Emit `From<EncodeError/DecodeError>` for this error type path.
     pub(crate) error_from_path: Option<String>,
+    /// Emit `bool` ↔ BooleanType converters automatically for every enum
+    /// detected as boolean (name `BooleanType` or `semanticType="Boolean"`).
+    /// Equivalent to calling `with_domain_type(named_type(name), "bool")` for
+    /// each — saves boilerplate on schemas with many boolean flags.
+    pub(crate) auto_bool_domain: bool,
     /// Emit `_unchecked` companions for benchmarking.
     pub(crate) unchecked_companions: bool,
     /// Appended when a name is a Rust keyword (default `"_"`).
@@ -171,6 +176,7 @@ impl GenerationConfig {
             unchecked_companions: false,
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
+            auto_bool_domain: false,
         }
     }
 
@@ -338,10 +344,17 @@ impl GenerationConfig {
         self
     }
 
+    /// Auto-register `bool` converters for every boolean enum in the
+    /// schema. Syntax sugar for calling
+    /// `with_domain_type(named_type("BooleanType"), "bool")` for each —
+    /// detects by name, `semanticType="Boolean"`, or True/False value pairs.
+    #[must_use]
+    pub fn enable_bool_domain_type(mut self) -> Self {
+        self.auto_bool_domain = true;
+        self
+    }
+
     /// Emit `#[deprecated]` on schema-deprecated fields/types/messages.
-    ///
-    /// Opt-in: deprecating a generated type cascades to its impls, so the
-    /// generated module also gets `#![allow(deprecated)]` for internal use.
     #[must_use]
     pub fn with_deprecated_attrs(mut self) -> Self {
         self.deprecated_attrs = true;
@@ -439,6 +452,32 @@ mod tests {
         let bytes = GenerationConfig::new("m").enable_domain_objects(DomainVarData::Bytes);
         assert!(bytes.domain_objects_enabled());
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn opt_in_codegen_flags_and_field_selector_are_recorded()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let selector = ConversionSelector::field_path("Order.price");
+        assert_eq!(
+            selector,
+            ConversionSelector::FieldPath("Order.price".to_string())
+        );
+
+        let config = GenerationConfig::new("m")
+            .enable_error_from_impls("crate::AppError")
+            .with_shared_module("shared")
+            .with_unchecked_companions()
+            .with_keyword_append_token("x")
+            .enable_bool_domain_type()
+            .with_deprecated_attrs();
+
+        assert_eq!(config.error_from_path.as_deref(), Some("crate::AppError"));
+        assert_eq!(config.shared_module.as_deref(), Some("shared"));
+        assert!(config.unchecked_companions);
+        assert_eq!(config.keyword_append_token, "x");
+        assert!(config.auto_bool_domain);
+        assert!(config.deprecated_attrs);
         Ok(())
     }
 }

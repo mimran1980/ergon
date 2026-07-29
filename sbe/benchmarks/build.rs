@@ -64,7 +64,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let orderbook_schema = manifest.join("schemas/orderbook.xml");
     ergo_sbe::generate_to_out_dir(
         &orderbook_schema,
-        ergo_sbe::GenerationConfig::new("orderbook_bench"),
+        ergo_sbe::GenerationConfig::new("orderbook_bench")
+            .enable_domain_objects(ergo_sbe::DomainVarData::Bytes),
+    )?;
+
+    let ob_decimal_schema = manifest.join("schemas/orderbook-decimal.xml");
+    ergo_sbe::generate_to_out_dir(
+        &ob_decimal_schema,
+        ergo_sbe::GenerationConfig::new("orderbook_decimal_bench"),
     )?;
 
     let l2book_schema = manifest.join("schemas/l2-book.xml");
@@ -78,6 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rerun-if-changed=schemas/codec-matrix-custom-header.xml");
     println!("cargo:rerun-if-changed=schemas/orderbook.xml");
+    println!("cargo:rerun-if-changed=schemas/orderbook-decimal.xml");
     println!("cargo:rerun-if-changed=schemas/l2-book.xml");
     Ok(())
 }

@@ -8,9 +8,12 @@
 #![allow(unused)]
 
 use ergo_sbe::{
-    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_xsd_validation,
-    validate_against_sbe_xsd,
+    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_shared,
+    parse_with_xsd_validation, validate_against_sbe_xsd,
 };
+
+mod common;
+use common::compile_and_run;
 
 #[test]
 fn field_metadata_constants_and_meta_attribute() -> Result<(), Box<dyn std::error::Error>> {
@@ -92,6 +95,39 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
     assert!(out.contains("fn vehicle_code_str"), "{out}");
     assert!(out.contains("FixedArrayTooLong"), "{out}");
     assert!(out.contains("fn copy_vehicle_code"), "{out}");
+    // ── Runtime: verify _str pads and copy_* round-trips ──────────────────
+    compile_and_run(
+        "arr_str",
+        &out,
+        r#"
+        let mut buf = [0u8; MEncoder::compute_length_with_header()];
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MFixedFields {
+                some_numbers: [1, 2, 3, 4],
+                vehicle_code: *b"ABCDEF",
+            })
+            .encoded_length_with_header();
+        let dec = MDecoder::try_from(&buf[..len])?;
+        assert_eq!(dec.some_numbers(), [1, 2, 3, 4]);
+
+        // copy_vehicle_code: copy into a mutable buffer
+        let mut code = [0u8; 6];
+        assert_eq!(dec.copy_vehicle_code(&mut code), 6);
+        assert_eq!(&code, b"ABCDEF");
+
+        // vehicle_code_str: pass a short string, auto-padded with zeros.
+        // Use individual setters — no fixed() struct needed.
+        let mut buf2 = [0u8; MEncoder::compute_length_with_header()];
+        let len2 = MEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
+            .put_some_numbers(0, 0, 0, 0)
+            .vehicle_code_str("XYZ")?
+            .encoded_length_with_header();
+        let dec2 = MDecoder::try_from(&buf2[..len2])?;
+        let mut code2 = [0u8; 6];
+        dec2.copy_vehicle_code(&mut code2);
+        assert_eq!(&code2, b"XYZ\0\0\0", "short string should be zero-padded");
+    "#,
+    );
     Ok(())
 }
 
@@ -287,6 +323,97 @@ fn bitset_display_and_fromstr_emitted() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// Regression: message-level and group-entry-level Debug/Display used to
+/// silently drop bitset fields entirely (`FieldType::Set { .. } => {}`).
+/// A message or entry with only a set field printed as if the field didn't
+/// exist. Covers both non-versioned and `sinceVersion`-gated set fields at
+/// both levels — versioned accessors return `Option<T>` (not `Display`), so
+/// the generated Debug/Display code must branch, not blindly forward.
+#[test]
+fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="setdbg" id="1" version="1" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint16"/>
+            </composite>
+            <set name="Flags" encodingType="uint8">
+              <choice name="A">0</choice>
+              <choice name="B">1</choice>
+            </set>
+          </types>
+          <message name="M" id="1">
+            <field name="topFlags" id="1" type="Flags" offset="0"/>
+            <field name="verFlags" id="2" type="Flags" offset="1" sinceVersion="1"/>
+            <group name="entries" id="3" dimensionType="groupSizeEncoding">
+              <field name="entryFlags" id="4" type="Flags" offset="0"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+    let ir = parse(xml)?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("m"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
+
+    compile_and_run(
+        "setdbg",
+        &out,
+        r#"
+        // Current-version encode: both message-level set fields present,
+        // one entry with its own set field.
+        let mut top_flags = Flags::default();
+        top_flags.set_a(true);
+        let mut ver_flags = Flags::default();
+        ver_flags.set_b(true);
+        let mut entry_flags = Flags::default();
+        entry_flags.set_a(true);
+        entry_flags.set_b(true);
+
+        let mut buf = [0u8; 256];
+        let complete = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MFixedFields {
+                top_flags,
+                ver_flags,
+            })
+            .entries(1, |g| {
+                g.add(|e| {
+                    e.entry_flags(entry_flags);
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+        let len = complete.encoded_length_with_header();
+
+        let dec = MDecoder::try_from(&buf[..len])?;
+        let text = format!("{dec:?}");
+        assert!(text.contains("topFlags: A"), "{text}");
+        assert!(text.contains("verFlags: B"), "{text}");
+        assert!(text.contains("entryFlags: A|B") || text.contains("entryFlags: A | B") || text.contains("A|B"), "{text}");
+
+        // Older-version decode (acting_version 0): the sinceVersion=1 field
+        // must be cleanly omitted, not panic, not print garbage.
+        let old_dec = MDecoder::wrap(&buf[..len], 8, 2, 0);
+        let old_text = format!("{old_dec:?}");
+        assert!(old_text.contains("topFlags"), "{old_text}");
+        assert!(!old_text.contains("verFlags"), "{old_text}");
+        "#,
+    );
+
+    Ok(())
+}
+
 #[test]
 fn set_description_doc_not_duplicated() -> Result<(), Box<dyn std::error::Error>> {
     // Regression: generate_set previously emitted the description doc twice.
@@ -374,5 +501,302 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
         !cur_between.contains("pub fn current"),
         "current getter should not carry #[deprecated]"
     );
+    Ok(())
+}
+
+// ── Debug / Display inspection tests ───────────────────────────────────
+// These encode real messages and inspect the rendered Debug/Display strings
+// to catch regressions like the set-field-silently-dropped bug.
+
+const fn all_field_types_schema() -> &'static str {
+    r#"<?xml version="1.0"?>
+<messageSchema package="dbg" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+    <composite name="varStringEncoding"><type name="length" primitiveType="uint32"/><type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/></composite>
+    <enum name="Side" encodingType="uint8"><validValue name="Buy">0</validValue><validValue name="Sell">1</validValue></enum>
+    <enum name="BoolFlag" encodingType="uint8"><validValue name="False">0</validValue><validValue name="True">1</validValue></enum>
+    <set name="ExecInst" encodingType="uint8"><choice name="AON">0</choice><choice name="IOC">1</choice></set>
+    <composite name="Price"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+  </types>
+  <message name="Msg" id="1" blockLength="16">
+    <field name="qty"    id="1" type="uint32"  offset="0"/>
+    <field name="side"   id="2" type="Side"    offset="4"/>
+    <field name="inst"   id="3" type="ExecInst" offset="5"/>
+    <field name="algo"   id="4" type="BoolFlag" offset="6"/>
+    <field name="price"  id="5" type="Price"   offset="7"/>
+    <group name="legs" id="10" dimensionType="groupSizeEncoding">
+      <field name="ratio" id="11" type="uint32" offset="0"/>
+    </group>
+    <data name="note" id="20" type="varStringEncoding"/>
+  </message>
+</messageSchema>"#
+}
+
+#[test]
+fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(all_field_types_schema())?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("dbg"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
+
+    compile_and_run(
+        "dec_dbg_all",
+        &out,
+        r#"
+        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let price = Price::new(12345, -2);
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header(1, 3)];
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MsgFixedFields { qty: 100, side: Side::Sell, inst, algo: BoolFlag::True, price })
+            .legs(1, |g| { g.add(|e| { e.ratio(50); Ok(()) })?; Ok(()) })?
+            .note(b"abc")?
+            .encoded_length_with_header();
+        let dec = MsgDecoder::try_from(&buf[..len])?;
+        let dbg = format!("{dec:?}");
+        assert!(dbg.contains("qty: 100"),        "primitive: {dbg}");
+        assert!(dbg.contains("side: Sell"),      "enum: {dbg}");
+        assert!(dbg.contains("inst: AON"),       "set: {dbg}");
+        assert!(dbg.contains("algo: True"),      "bool-enum: {dbg}");
+        assert!(dbg.contains("price:"),          "composite: {dbg}");
+        assert!(dbg.contains("legs:"),           "group: {dbg}");
+        assert!(dbg.contains("ratio:"),          "entry field: {dbg}");
+        assert!(dbg.contains("note:"),           "var-data: {dbg}");
+        assert!(dbg.contains("\"abc\""),         "var-data value: {dbg}");
+        assert!(dbg.contains("MsgDecoder"),      "struct name: {dbg}");
+        assert_eq!(dbg, format!("{dec}"), "Display == Debug");
+    "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(all_field_types_schema())?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("dbg_trunc"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
+
+    compile_and_run(
+        "dec_trunc",
+        &out,
+        r#"
+        let mut inst = ExecInst::default(); inst.set_ioc(true);
+        let price = Price::new(1, 0);
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 0)];
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MsgFixedFields { qty: 1, side: Side::Buy, inst, algo: BoolFlag::False, price })
+            .legs(0, |_| Ok(()))?.note(b"")?
+            .encoded_length_with_header();
+        let _ = MsgDecoder::try_from(&buf[..len])?;
+        // Truncated: 12 bytes is past header (8) but shorter than full
+        // fixed block (16). try_from returns an error — must not panic.
+        assert!(MsgDecoder::try_from(&buf[..12]).is_err());
+        // Below header — error, not panic.
+        assert!(MsgDecoder::try_from(&buf[..3]).is_err());
+    "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(all_field_types_schema())?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(
+        GenerationConfig::new("dbg_dto").enable_domain_objects(DomainVarData::LossyStrings),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .unwrap()
+    .source
+    .clone();
+
+    compile_and_run(
+        "dto_dbg",
+        &out,
+        r#"
+        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let price = Price::new(999, -1);
+        let dto = MsgDomain {
+            qty: 42, side: Side::Buy, inst, algo: BoolFlag::True, price,
+            legs: vec![MsgLegsEntryDomain { ratio: 10 }], note: "hi".into(),
+        };
+        let len = dto.encoded_length_with_header()?;
+        let mut buf = [0u8; 256];
+        let written = dto.encode(&mut buf[..len])?;
+        assert_eq!(written, len);
+        let dbg = format!("{dto:?}");
+        assert!(dbg.contains("qty: 42"),     "DTO primitive: {dbg}");
+        assert!(dbg.contains("side: Buy"),   "DTO enum: {dbg}");
+        assert!(dbg.contains("inst: ExecInst"), "DTO set: {dbg}");
+        assert!(dbg.contains("algo: True"),  "DTO bool: {dbg}");
+        assert!(dbg.contains("price:"),      "DTO composite: {dbg}");
+        assert!(dbg.contains("legs:"),       "DTO group: {dbg}");
+        assert!(dbg.contains("ratio: 10"),   "DTO entry: {dbg}");
+        assert!(dbg.contains("note:"),       "DTO var-data: {dbg}");
+        assert!(dbg.contains("\"hi\""),      "DTO var-data value: {dbg}");
+    "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn encoder_display_delegates_to_decoder() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(all_field_types_schema())?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("dbg_enc"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
+
+    compile_and_run(
+        "enc_display",
+        &out,
+        r#"
+        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let price = Price::new(99, -1);
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 3)];
+        let enc = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MsgFixedFields { qty: 1, side: Side::Buy, inst, algo: BoolFlag::True, price })
+            .legs(0, |_| Ok(()))?.note(b"xyz")?;
+        // Encoder Display delegates to the decoder — shows the message.
+        let display = format!("{enc}");
+        assert!(display.contains("qty"), "encoder Display: {display}");
+        assert!(display.contains("side"), "encoder Display: {display}");
+    "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema package="e" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+    <enum name="Side" encodingType="uint8"><validValue name="Buy">0</validValue><validValue name="Sell">1</validValue></enum>
+    <set name="Flags" encodingType="uint8"><choice name="A">0</choice><choice name="B">1</choice></set>
+    <composite name="Price"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+  </types>
+  <message name="M" id="1" blockLength="0">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="side"  id="1" type="Side"  offset="0"/>
+      <field name="flags" id="2" type="Flags" offset="1"/>
+      <field name="price" id="3" type="Price" offset="2"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    let ir = parse(xml)?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("entry_dbg"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
+
+    compile_and_run(
+        "entry_dbg",
+        &out,
+        r#"
+        let mut flags = Flags::default(); flags.set_b(true);
+        let price = Price::new(777, -1);
+        let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .rows(1, |g| { g.add(|e| { e.side(Side::Buy).flags(flags).price(price); Ok(()) })?; Ok(()) })?
+            .encoded_length_with_header();
+        let dec = MDecoder::try_from(&buf[..len])?;
+        let mut rows = dec.into_rows()?;
+        let entry = rows.next().expect("one row");
+        let dbg = format!("{entry}");
+        assert!(dbg.contains("side: Side"),  "entry enum: {dbg}");
+        assert!(dbg.contains("flags: B"),   "entry set: {dbg}");
+        assert!(dbg.contains("price:"),     "entry composite: {dbg}");
+    "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema package="bdarr" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+    <type name="Pair" primitiveType="uint16" length="2"/>
+  </types>
+  <message name="M" id="1" blockLength="0">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="pair" id="1" type="Pair" offset="0"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    let ir = parse(xml)?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("bdarr"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
+
+    compile_and_run(
+        "bdarr",
+        &out,
+        r#"
+        let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .rows(1, |g| { g.add(|e| { e.pair([100u16, 200]); Ok(()) })?; Ok(()) })?
+            .encoded_length_with_header();
+        let dec = MDecoder::try_from(&buf[..len])?;
+        let mut rows = dec.into_rows()?;
+        let entries: Vec<RowsEntry> = rows.bulk_decode()?;
+        assert_eq!(entries.len(), 1);
+        let pair: [u16; 2] = entries[0].pair;
+        assert_eq!(pair, [100, 200]);
+    "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn xiinclude_warnings_dedup_per_message_not_per_consumer() -> Result<(), Box<dyn std::error::Error>>
+{
+    // Use a composite with nullValue on a non-optional field — this triggers
+    // the warn_once path. Composites are shared between schemas via
+    // parse_with_shared, unlike bare <type> typedefs.
+    let common = r#"<?xml version="1.0"?>
+<messageSchema package="common" id="0" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="BadComposite"><type name="x" primitiveType="uint32" nullValue="999"/></composite>
+  </types>
+</messageSchema>"#;
+    let shared = parse(common)?;
+    let a = r#"<?xml version="1.0"?><messageSchema package="a" id="1" version="0" byteOrder="littleEndian" headerType="messageHeader"><message name="M" id="1"><field name="f" id="1" type="BadComposite"/></message></messageSchema>"#;
+    let b = r#"<?xml version="1.0"?><messageSchema package="b" id="2" version="0" byteOrder="littleEndian" headerType="messageHeader"><message name="N" id="1"><field name="g" id="1" type="BadComposite"/></message></messageSchema>"#;
+    // Each consumer references BadComposite — warn_once must not fire twice per consumer
+    let _ = parse_with_shared(a, &shared)?;
+    let _ = parse_with_shared(b, &shared)?;
     Ok(())
 }

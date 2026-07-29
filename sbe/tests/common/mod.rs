@@ -118,6 +118,12 @@ impl Paths {
         Self::fixtures_dir().join("versioned-domain-schema.xml")
     }
 
+    /// A group with 2+ nested groups and 2+ var-data fields — exercises the
+    /// ng_idx and nvd_idx counters in `generate_group_decoder`.
+    pub fn multi_nested_group_schema() -> PathBuf {
+        Self::fixtures_dir().join("multi-nested-group-schema.xml")
+    }
+
     pub fn baseline_binary() -> PathBuf {
         Self::sbe_dir()
             .join("tests")
@@ -150,7 +156,7 @@ impl Paths {
 pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
-    let g = Generator::new(GenerationConfig::new(module_name));
+    let mut g = Generator::new(GenerationConfig::new(module_name));
     let ms = g.generate(&schema).unwrap();
     let module = ms.modules().next().unwrap();
     (schema, module.source.clone())
@@ -355,6 +361,7 @@ mod ergo;
 use ergo::*;
 
 fn assert_frames_eq(label: &str, ergo: &[u8], tool: &[u8]) {{
+    assert_eq!(ergo.len(), tool.len(), "{{label}}: encoded length mismatch — ergon={{}}, sbe_tool={{}}", ergo.len(), tool.len());
     if ergo != tool {{
         let n = ergo.len().min(tool.len());
         let mut first = None;
@@ -538,7 +545,7 @@ pub fn generate_domain_with(
     let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let config = configure(GenerationConfig::new(module_name));
-    let g = Generator::new(config);
+    let mut g = Generator::new(config);
     let ms = g.generate(&schema).unwrap();
     let module = ms.modules().next().unwrap();
     (schema, module.source.clone())

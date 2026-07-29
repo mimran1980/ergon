@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="ergo.multi_nested"
+                   id="200"
+                   version="1"
+                   semanticVersion="5.2"
+                   description="Schema exercising 2+ nested groups and 2+ var-data fields in one group"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Standard message header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="varStringEncoding">
+            <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+    </types>
+
+    <types>
+        <enum name="EntryKind" encodingType="uint8">
+            <validValue name="A">1</validValue>
+            <validValue name="B">2</validValue>
+        </enum>
+    </types>
+
+    <sbe:message name="MultiNested" id="1">
+        <field name="header" id="1" type="uint32"/>
+        <group name="parent" id="2" dimensionType="groupSizeEncoding">
+            <field name="parentField" id="3" type="uint16"/>
+            <field name="kind" id="10" type="EntryKind"/>
+            <field name="padding" id="11" type="uint16" presence="constant" constantValue="42"/>
+            <field name="delim" id="12" type="char" presence="constant" constantValue=","/>
+            <group name="childA" id="4" dimensionType="groupSizeEncoding">
+                <field name="valueA" id="5" type="uint32"/>
+            </group>
+            <group name="childB" id="6" dimensionType="groupSizeEncoding">
+                <field name="valueB" id="7" type="uint64"/>
+            </group>
+            <data name="note1" id="8" type="varStringEncoding"/>
+            <data name="note2" id="9" type="varStringEncoding"/>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>

@@ -82,7 +82,7 @@ fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::
 
     for _ in 0..50 {
         client.poll_egress(&mut adapter, 10)?;
-        if adapter.listener().messages.lock().unwrap().len() >= 1 {
+        if !adapter.listener().messages.lock().unwrap().is_empty() {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -121,7 +121,7 @@ fn test_fragmented_egress_controlled_poll_reassembles_and_commits() -> Result<()
 
     for _ in 0..50 {
         client.poll_egress_controlled(&mut adapter, 10)?;
-        if adapter.listener().messages.lock().unwrap().len() >= 1 {
+        if !adapter.listener().messages.lock().unwrap().is_empty() {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));

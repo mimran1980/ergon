@@ -1,5 +1,9 @@
 # ergon
 
+[![Crates.io](https://img.shields.io/crates/v/ergo-sbe)](https://crates.io/crates/ergo-sbe)
+[![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
+[![API Docs](https://docs.rs/ergo-sbe/badge.svg)](https://docs.rs/ergo-sbe/)
+
 > **AI assistance.** This monorepo was developed **with heavy AI assistance**.
 > Humans directed the problems, approved designs, and verified results. Process
 > notes: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
@@ -38,10 +42,21 @@ git submodule update --init --recursive
 Common local checks:
 
 ```sh
+just policy
 just check-products
+just test
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-sbe --all-features --no-deps
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps
 ```
+
+`just test` is intentionally not a partial/offline green path: it builds and
+runs the Java Cluster lifecycle/recovery lane and the HA sample. Use
+`just test-all` to add Miri and deterministic fuzz replay.
+
+Pull-request CI also enforces the non-decreasing coverage baseline and executes
+32-bit x86 plus big-endian s390x codec tests. Scheduled lanes run every fuzz
+target for ten minutes, Miri fixtures nightly, and critical-path mutation
+testing weekly. Missing or empty results fail closed.
 
 See [`samples/README.md`](samples/README.md) for standalone sample commands and
 Java harness requirements. Run `just --list` for the repository's available
@@ -51,6 +66,12 @@ build, test, interoperability, and benchmark recipes.
 
 - Official SBE wire compatibility takes priority over API convenience.
 - Maintained hot paths are compared with the official SBE generator output.
+- Benchmark claims are parity-checked and profile-specific. The corrected suite
+  treats a repeatable sbe-tool win as a blocking benchmark/codegen defect and
+  publishes results with LTO both enabled and disabled.
+- Codec microbenchmarking is notoriously easy to get wrong. Benchmark results
+  are explicitly reviewable evidence, not product claims; surprising ratios
+  should be reported and treated as suspected benchmark defects first.
 - Checked entry points must report malformed input rather than manufacture
   default, empty, or lossy values.
 - The Cluster crate implements a client, not a consensus module, service

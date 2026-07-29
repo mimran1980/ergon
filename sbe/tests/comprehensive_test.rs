@@ -1061,7 +1061,7 @@ fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn s
         .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampNanos"))
         .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampMicros"))
         .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampMillis"));
-    let generator = ergo_sbe::Generator::new(config);
+    let mut generator = ergo_sbe::Generator::new(config);
     let modules = generator.generate(&schema)?;
     let source = modules.modules().next().unwrap().source.clone();
 

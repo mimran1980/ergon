@@ -46,14 +46,22 @@ build:
 
 # ── check ─────────────────────────────────────────────────────────────────
 
+# Enforce test ownership and prove the policy checker catches every bypass.
+policy:
+    bash scripts/tests/test-test-policy.sh
+    bash scripts/tests/test-quality-ratchets.sh
+    ./scripts/check-test-policy.sh
+    ./scripts/check-mutation-config.sh
+
 # Full local check: hygiene, format, clippy, tests (no external services / no Java).
-check:
+check: policy
     ./scripts/check-repository-hygiene.sh
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
+    cargo test -p ergo-aeron-cluster --doc
     cd samples/exchange-example && cargo fmt --check
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/exchange-example && cargo test -- --test-threads=1
@@ -64,7 +72,8 @@ check:
     cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
 
 # Product-only gate: fmt, clippy, and tests for the two publishable prototype crates only.
-check-products:
+check-products: policy
+    ./scripts/regenerate-golden.sh --check
     cargo fmt --all --check
     cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
@@ -76,9 +85,11 @@ check-products:
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     cargo test -p ergo-aeron-cluster --lib
+    cargo test -p ergo-aeron-cluster --doc
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
 
 # Sample crates gate (unpublished).
-check-samples:
+check-samples: policy
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/exchange-example && cargo test -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
@@ -86,66 +97,77 @@ check-samples:
     cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
 
 # Pre-release check: product crates + bench compile + package + strict rustdoc.
-release-check: check-products
+release-check: test check-products check-coverage
     cargo bench -p ergo-sbe-benchmarks --no-run
     cargo bench -p ergo-aeron-cluster --no-run
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     cargo publish -p ergo-aeron-cluster --dry-run --allow-dirty
     @echo "release-check: product crates pass, benches compile, dry-run publish OK"
 
 # ── test ──────────────────────────────────────────────────────────────────
 
-# Comprehensive test suite: runs everything possible (unit, integration,
-# doctests/rustdoc for ergo-sbe, cluster lib, sample offline tests, benches).
-# Gated tests (Java harness) run only when their services are available.
-test:
-    @echo "=== 1/6 fmt ==="
+# Comprehensive test suite: unit, integration, doctests/rustdoc, Java cluster
+# lifecycle tests, sample tests, and benchmark compilation. Missing Java,
+# Gradle, jars, or another required dependency is a failure.
+test: policy
+    @echo "=== 1/7 fmt ==="
     cargo fmt --all --check
-    @echo "=== 2/6 clippy (workspace + samples) ==="
+    @echo "=== 2/7 clippy (workspace + samples) ==="
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    @echo "=== 3/6 unit + integration tests ==="
+    @echo "=== 3/7 unit + integration tests ==="
+    ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
-    @echo "=== 4/6 ergo-sbe doctests + rustdoc (-D warnings) + docs_validation ==="
+    @echo "=== 4/7 product doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
-    @echo "=== 5/6 sample offline tests ==="
+    cargo test -p ergo-aeron-cluster --doc
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
+    @echo "=== 5/7 sample tests ==="
     cd samples/l3-book && cargo test -- --test-threads=1
     cd samples/sbe-feature-tour && cargo test -- --test-threads=1
     cd samples/sbe-codegen-examples && cargo run --example flyweight >/dev/null && cargo run --example domain_objects >/dev/null
-    cd samples/exchange-example && cargo test --lib -- --test-threads=1
-    cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
+    cd samples/exchange-example && cargo test -- --test-threads=1
     cd samples/cluster-rfq && cargo build --examples
-    @echo "=== 6/6 bench compilation ==="
+    @echo "=== 6/7 Aeron Cluster Java lifecycle + HA sample ==="
+    just build-aeron-jars
+    cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
+    cd samples/cluster-ha-orderbook && cargo test --features test-harness -- --test-threads=1
+    @echo "=== 7/7 benchmark compilation ==="
     cargo bench -p ergo-sbe-benchmarks --no-run
-    @echo ""
-    @echo "=== Gated: Aeron Cluster Java harness ==="
-    @if cargo test -p ergo-aeron-cluster --features test-harness --no-run 2>/dev/null; then \
-        echo "test-harness compiles — running cluster integration tests"; \
-        cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1; \
-    else \
-        echo "Java harness not available — skipping (build jars with: just build-aeron-jars)"; \
-    fi
+    cargo bench -p ergo-aeron-cluster --no-run
+    cd samples/l3-book && cargo bench --no-run
     @echo ""
     @echo "=== test: complete ==="
 
 # Workspace unit tests only.
-test-unit:
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
+test-unit: policy
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
 
 # Every test gate including nightly-only miri and fuzz.
 # Runs: standard suite + Miri UB detection + fuzz corpus replay.
-test-all: test
-    @echo "=== 7/7 miri (UB detection) ==="
+#
+# ── AI ASSISTANTS: READ THIS BEFORE TOUCHING ANYTHING ─────────────────────────
+# DO NOT add test-selection filters, ignored attributes, or another silencing mechanism.
+# DO NOT comment out failing tests or benches.
+# DO NOT add conditions that silently skip tests ("if java then … else …").
+# If a test fails, the test is correct and the code is wrong — FIX THE CODE.
+# If the environment doesn't support a test, ask the user — NEVER skip.
+# This file is the single source of truth for "did everything pass?"
+# A green `just test-all` means EVERY test ran and EVERY test passed.
+# ───────────────────────────────────────────────────────────────────────────────
+test-all: policy test
+    @echo "=== 8/9 miri (UB detection) ==="
     cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
-    @echo "=== 8/7 fuzz corpus replay ==="
+    @echo "=== 9/9 fuzz corpus replay ==="
     cd sbe/fuzz && cargo +nightly fuzz run generated_verify -- -max_total_time=30
     cd sbe/fuzz && cargo +nightly fuzz run nested_group_decode -- -max_total_time=30
     cd sbe/fuzz && cargo +nightly fuzz run bulk_decode -- -max_total_time=30
@@ -159,6 +181,14 @@ test-all: test
 check-sbe-references:
     ./scripts/regenerate-sbe-tool-reference.sh --check
 
+# Regenerate the checked-in generated-code golden through a non-test command.
+update-golden:
+    ./scripts/regenerate-golden.sh
+
+# Rebuild the generated-code golden in a temporary file and compare bytes.
+check-golden:
+    ./scripts/regenerate-golden.sh --check
+
 # Compile all libFuzzer targets and run the deterministic corpus replay.
 check-fuzz:
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
@@ -167,6 +197,15 @@ check-fuzz:
 # Run and compare line/function/region coverage with the checked-in ratchet.
 check-coverage:
     ./scripts/check-coverage-ratchet.sh
+
+# Mutate parser/resolver/codegen critical paths and reject missed or timed-out
+# mutants. This is a MANUAL gate — too slow for CI (~16 h with --jobs 1).
+# Run locally before landing codegen changes; use --jobs 1 to avoid
+# exhausting disk space with parallel build trees.
+check-mutation:
+    ./scripts/check-mutation-config.sh
+    cargo mutants --jobs 1
+    ./scripts/check-mutation-ratchet.sh
 
 # ── formatting ─────────────────────────────────────────────────────────────
 
@@ -189,14 +228,29 @@ fix:
 # ── benchmarks ─────────────────────────────────────────────────────────────
 
 # Benchmark parity — ergo-sbe vs sbe-tool head-to-head.
-# Gate: ALL maintained ergo-sbe/sbe-tool ratios ≤ 1.00.
-# Uses wrap_unchecked for fair comparison (sbe-tool's wrap does not validate).
+# Gate: every maintained ergon/sbe-tool ratio must stay at or below 1.00.
+# Uses trusted direct wraps for fair comparison (sbe-tool's wrap does not validate).
 bench:
-    @echo "=== SBE perf parity ==="
+    @echo "=== SBE perf parity — LTO ==="
     cd sbe/benchmarks && cargo bench --bench perf_parity_bench
     @echo ""
-    @echo "=== Gate ==="
-    ./scripts/check-bench-gate.sh target/criterion
+    @echo "=== Gate — LTO ==="
+    ./scripts/check-bench-gate.sh target/criterion 0.005 sbe
+    @echo ""
+    @echo "=== SBE perf parity — no LTO ==="
+    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
+    @echo ""
+    @echo "=== Gate — no LTO ==="
+    ./scripts/check-bench-gate.sh sbe/benchmarks/target/bench-no-lto/criterion 0.005 sbe
+
+# Group-codegen comparison under both optimization profiles. sbe-tool is
+# intentionally measured in both: the audit found it stable without LTO while
+# pre-fix ergon regressed because generated entry setters did not inline.
+bench-groups:
+    cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
+    cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
+    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
+    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
 
 # Expanded non-gating codec matrix and offset/alignment diagnostics.
 bench-diagnostics:
@@ -218,4 +272,4 @@ bench-cluster:
     cargo bench -p ergo-aeron-cluster
     @echo ""
     @echo "=== Gate ==="
-    ./scripts/check-bench-gate.sh target/criterion
+    ./scripts/check-bench-gate.sh target/criterion 0.005 cluster

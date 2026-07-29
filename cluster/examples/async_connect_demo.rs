@@ -7,7 +7,7 @@
 
 use ergo_aeron_cluster::{
     AeronCluster, SessionBuilder,
-    codecs::EventCode,
+    cluster_codec_types::EventCode,
     egress::{EgressAdapter, EgressListener},
 };
 use std::time::Duration;
@@ -39,14 +39,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== async_connect + try_claim demo ===\n");
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
 
-    let builder = SessionBuilder::builder()
+    let builder = SessionBuilder::default()
         .ingress_channel(cluster.ingress_channel.clone())
         .egress_channel(cluster.egress_channel.clone())
         .message_timeout(Duration::from_secs(5));
 
     // 1. Poll-driven async connect
     println!("Step: async_connect (poll-driven)...");
-    let mut ac = AeronCluster::connect_async(builder, cluster.aeron_dir().to_str().unwrap());
+    let aeron_dir = cluster
+        .aeron_dir()
+        .to_str()
+        .ok_or("Aeron directory is not valid UTF-8")?;
+    let mut ac = AeronCluster::connect_async(builder, aeron_dir);
     let mut steps = 0;
     loop {
         steps += 1;
@@ -64,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     }
-    let mut client = ac.finish().expect("finish");
+    let mut client = ac.finish()?;
     println!(
         "  Connected after {steps} polls: session={} term={}",
         client.cluster_session_id(),
@@ -74,9 +78,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Zero-copy try_claim publish
     println!("Step: try_claim (zero-copy)...");
     let payload = b"zero-copy hello";
-    let mut claim = client.try_claim(payload.len()).expect("try_claim");
+    let mut claim = client.try_claim(payload.len())?;
     claim.payload_mut().copy_from_slice(payload);
-    let pos = claim.commit().expect("commit");
+    let pos = claim.commit()?;
     println!("  Claimed + committed at position {pos}");
 
     // 3. Poll egress for the echo

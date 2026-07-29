@@ -60,12 +60,59 @@ pub(crate) fn partition_tokens(tokens: &[Token]) -> SchemaElements {
 }
 
 /// Shared bool detection: name convention OR semanticType="Boolean".
-/// Must match the predicate in generate_enum.
+/// Used by codegen to emit `_bool()` accessors. Must match the predicate
+/// in generate_enum. Does NOT use value-based heuristics — those are
+/// reserved for [`is_bool_value_enum`] which powers `enable_bool_domain_type`.
 pub(crate) fn is_bool_enum(elements: &SchemaElements, enum_name: &str) -> bool {
     enum_name == "BooleanType"
         || elements.enums.iter().any(|e| {
             e[0].name == enum_name && e[0].encoding.semantic_type.as_deref() == Some("Boolean")
         })
+}
+
+/// Extended detection: name, semanticType, OR exactly two valid values
+/// forming a recognisable true/false pair. Used by
+/// `enable_bool_domain_type()` to auto-register `bool` converters for
+/// schemas that don't use the canonical `BooleanType` naming.
+pub(crate) fn is_bool_value_enum(elements: &SchemaElements, enum_name: &str) -> bool {
+    if is_bool_enum(elements, enum_name) {
+        return true;
+    }
+    elements.enums.iter().any(|e| {
+        if e[0].name != enum_name {
+            return false;
+        }
+        let vals: Vec<&str> = e
+            .iter()
+            .filter(|t| t.signal == crate::ir::Signal::Encoding)
+            .map(|t| t.name.as_str())
+            .collect();
+        vals.len() == 2 && is_boolean_value_pair(vals[0], vals[1])
+    })
+}
+
+/// Heuristic: do the two enum value names form a true/false pair?
+fn is_boolean_value_pair(a: &str, b: &str) -> bool {
+    let (lower, upper) = if a.eq_ignore_ascii_case("true")
+        || a.eq_ignore_ascii_case("yes")
+        || a.eq_ignore_ascii_case("y")
+        || a.eq_ignore_ascii_case("t")
+    {
+        (a, b)
+    } else if b.eq_ignore_ascii_case("true")
+        || b.eq_ignore_ascii_case("yes")
+        || b.eq_ignore_ascii_case("y")
+        || b.eq_ignore_ascii_case("t")
+    {
+        (b, a)
+    } else {
+        return false;
+    };
+    // Now `lower` is the truthy name; `upper` must be the falsy counterpart.
+    upper.eq_ignore_ascii_case("false")
+        || upper.eq_ignore_ascii_case("no")
+        || upper.eq_ignore_ascii_case("n")
+        || upper.eq_ignore_ascii_case("f")
 }
 
 pub(crate) struct MessageStructure {
@@ -783,5 +830,48 @@ mod tests {
             members[0].member_type,
             MemberType::Composite { size: 4, .. }
         ));
+    }
+
+    fn enum_elements(name: &str, semantic_type: Option<&str>, values: &[&str]) -> SchemaElements {
+        let mut enum_tokens = vec![token(
+            name,
+            Signal::BeginEnum,
+            Encoding {
+                semantic_type: semantic_type.map(str::to_string),
+                ..Encoding::default()
+            },
+        )];
+        enum_tokens.extend(
+            values
+                .iter()
+                .map(|value| token(value, Signal::Encoding, Encoding::default())),
+        );
+        enum_tokens.push(token(name, Signal::EndEnum, Encoding::default()));
+        SchemaElements {
+            composites: Vec::new(),
+            enums: vec![enum_tokens],
+            sets: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bool_enum_detection_covers_names_semantics_and_value_pairs() {
+        let ordinary = enum_elements("Enabled", None, &["Yes", "No"]);
+        assert!(is_bool_value_enum(&ordinary, "Enabled"));
+        assert!(!is_bool_value_enum(&ordinary, "Other"));
+
+        let reversed = enum_elements("Active", None, &["false", "TRUE"]);
+        assert!(is_bool_value_enum(&reversed, "Active"));
+
+        let non_boolean = enum_elements("Side", None, &["Buy", "Sell"]);
+        assert!(!is_bool_value_enum(&non_boolean, "Side"));
+
+        let semantic = enum_elements("Flag", Some("Boolean"), &["Off", "On"]);
+        assert!(is_bool_enum(&semantic, "Flag"));
+        assert!(is_bool_value_enum(&semantic, "Flag"));
+
+        let canonical = enum_elements("BooleanType", None, &["Zero", "One"]);
+        assert!(is_bool_enum(&canonical, "BooleanType"));
     }
 }

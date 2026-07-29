@@ -57,15 +57,12 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Const length → stack array (no heap).
     let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let nanos: i64 = 1_720_000_000_000_000_000;
-    let enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?.fixed(
-        &HeartbeatFixedFields {
+    let written = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&HeartbeatFixedFields {
             sequence: 7,
             timestamp: nanos as u64,
-        },
-    );
-    // Fixed encoder stays on the same type; length is the constant.
-    let written = HeartbeatEncoder::compute_length_with_header();
-    let _ = enc; // fields already written
+        })
+        .encoded_length_with_header();
 
     let dec = HeartbeatDecoder::try_from(&buf[..written])?;
     assert_eq!(dec.sequence(), 7);
@@ -121,7 +118,7 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
     extras.set_cruise_control(true);
     extras.set_sports_pack(true);
 
-    let complete = CarEncoder::try_wrap_and_apply_header(buf, 0)?
+    let len = CarEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&CarFixedFields {
             serial_number: 1234,
             model_year: 2013,
@@ -141,40 +138,39 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         })
         .fuel_figures(2, |g| {
             g.add(|e| {
-                e.speed(30).mpg(35.9);
-                e.usage_description(b"Urban")?;
+                e.speed(30).mpg(35.9).usage_description(b"Urban")?;
                 Ok(())
             })?;
             g.add(|e| {
-                e.speed(60).mpg(25.0);
-                e.usage_description(b"Highway")?;
+                e.speed(60).mpg(25.0).usage_description(b"Highway")?;
                 Ok(())
             })?;
             Ok(())
         })?
         .performance_figures(1, |g| {
             g.add(|e| {
-                e.octane_rating(95);
-                e.acceleration(2, |a| {
-                    a.add(|x| {
-                        x.mph(30).seconds(4.0);
+                e.octane_rating(95)
+                    .acceleration(2, |a| {
+                        a.add(|x| {
+                            x.mph(30).seconds(4.0);
+                            Ok(())
+                        })?;
+                        a.add(|x| {
+                            x.mph(60).seconds(7.5);
+                            Ok(())
+                        })?;
                         Ok(())
                     })?;
-                    a.add(|x| {
-                        x.mph(60).seconds(7.5);
-                        Ok(())
-                    })?;
-                    Ok(())
-                })?;
                 Ok(())
             })?;
             Ok(())
         })?
         .manufacturer(b"Honda")?
         .model(b"Civic VTi")?
-        .activation_code(b"abcdef")?;
+        .activation_code(b"abcdef")?
+        .encoded_length_with_header();
 
-    Ok(complete.encoded_length_with_header())
+    Ok(len)
 }
 
 // ─── 3. Decoder consuming stages ───────────────────────────────────────────
@@ -264,7 +260,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let hb_len = HeartbeatEncoder::compute_length_with_header();
 
     let note_body = b"hello AnyMessage";
-    let note_len = NoteEncoder::compute_encoded_length_with_message_header(note_body.len());
+    let note_len = NoteEncoder::compute_length_with_header(note_body.len());
     const NOTE_PAD: usize = 64;
     assert!(note_len <= NOTE_PAD);
     let mut note_storage = [0u8; NOTE_PAD];
@@ -427,15 +423,15 @@ impl TryToSbe<Decimal> for FixedPrice {
 /// | `price_value()` wire composite | yes |
 pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
-    let len = QuoteEncoder::compute_length_with_header();
 
     let price = Rd::new(12345, 2); // 123.45
     let size = Rd::new(10, 0);
-    let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-    enc.price_from(&price)?;
-    enc.size_from(&size)?;
+    let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .price_from(&price)?
+        .size_from(&size)?
+        .encoded_length_with_header();
 
-    let dec = QuoteDecoder::try_from(buf.as_slice())?;
+    let dec = QuoteDecoder::try_from(&buf[..len])?;
     let wire = dec.price_value();
     assert_eq!(wire.mantissa(), 12345);
     assert_eq!(wire.exponent(), -2);

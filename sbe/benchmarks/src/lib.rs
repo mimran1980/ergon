@@ -36,9 +36,36 @@ ergo_sbe::sbe_mod!(pub codec_matrix_be = "codec_matrix_be_bench");
 ergo_sbe::sbe_mod!(pub codec_matrix_custom_header = "codec_matrix_custom_header_bench");
 // Orderbook-like group schema for bulk_add benchmarks.
 ergo_sbe::sbe_mod!(pub orderbook = "orderbook_bench");
+// Orderbook with Decimal composite (price: mantissa+exponent, qty: mantissa+exponent).
+ergo_sbe::sbe_mod!(pub orderbook_decimal = "orderbook_decimal_bench");
 // L2 orderbook with Decimal (rust_decimal conversion) for converter benchmarks.
 ergo_sbe::sbe_mod!(pub l2book = "l2book_bench");
 /// sbe-tool-generated Car codec (checked in, stable reference).
 pub mod sbe_tool_car {
     include!("sbe_tool_car_patched.rs");
+}
+/// sbe-tool-generated Orderbook codec for group encode benchmark comparison.
+pub mod sbe_tool_ob {
+    include!("sbe_tool_ob_patched.rs");
+}
+
+/// Wrap the sbe-tool Car decoder at a framed message's body.
+///
+/// `message_offset` points to the first byte of the standard eight-byte SBE
+/// header. The generated sbe-tool `wrap` API expects the body offset instead.
+#[inline]
+pub fn sbe_tool_car_body_decoder(
+    buf: &[u8],
+    message_offset: usize,
+    acting_block_length: u16,
+    acting_version: u16,
+) -> sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder<'_> {
+    use sbe_tool_car::sbe_tool::{ReadBuf, car_codec::decoder::CarDecoder, message_header_codec};
+
+    CarDecoder::default().wrap(
+        ReadBuf::new(buf),
+        message_offset + message_header_codec::ENCODED_LENGTH,
+        acting_block_length,
+        acting_version,
+    )
 }

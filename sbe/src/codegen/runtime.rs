@@ -1307,7 +1307,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                                 while idx < #len_lit {
                                     let offset = self.pos + #offset_lit + idx * #prim_size_lit;
                                     res[idx] = #r_type_ty::#from_method(
-                                        read_bytes::<#prim_size_lit>(self.buf, offset)
+                                        read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
                                     );
                                     idx += 1;
                                 }
@@ -1329,7 +1329,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
                             let offset = self.pos + #offset_lit;
-                            #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset))
+                            #r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))
                         }
                     });
                 }
@@ -1347,7 +1347,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(read_bytes::<#comp_size_lit>(self.buf, offset))
+                        #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
                     }
                 });
             }
@@ -1367,7 +1367,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident::from_raw(#r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
             }
@@ -1387,7 +1387,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident(#r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
             }

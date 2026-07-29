@@ -223,6 +223,26 @@ fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 #[serial(alloc_count)]
+fn domain_encode_flat_nested_group_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    let dto = CarDomain::try_from_decoder(CarDecoder::try_from(BASELINE)?)?;
+    let len = dto.encoded_length_with_header()?;
+    let mut storage = [0u8; 512];
+    assert!(len <= storage.len());
+    dto.encode(&mut storage[..len])?;
+
+    let mut outcome = Ok(0);
+    measure("domain encode with flat nested group", || {
+        outcome = dto.encode(black_box(&mut storage[..len]));
+        if let Ok(written) = &outcome {
+            black_box(&storage[..*written]);
+        }
+    });
+    outcome?;
+    Ok(())
+}
+
+#[test]
+#[serial(alloc_count)]
 fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     measure("uniform length builder", || {
         let len = CarEncodedLength::new()

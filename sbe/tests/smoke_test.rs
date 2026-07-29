@@ -33,7 +33,7 @@ const INCLUDE_FRAGMENTS: &[&str] = &[
     "bad-include.xml",
 ];
 
-/// Error-handler / intentionally invalid schemas (parse fails; covered elsewhere).
+/// Error-handler / intentionally invalid schemas.
 const ERROR_SCHEMAS: &[&str] = &[
     "cyclic-refs-schema.xml",
     "error-handler-dup-message-schema.xml",
@@ -47,7 +47,6 @@ const ERROR_SCHEMAS: &[&str] = &[
     "error-handler-types-dup-schema.xml",
     "error-handler-types-schema.xml",
     "schema-with-bad-include.xml",
-    "value-ref-schema.xml",
 ];
 
 fn schema_dir() -> &'static Path {
@@ -55,32 +54,41 @@ fn schema_dir() -> &'static Path {
 }
 
 #[test]
-fn all_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
+fn all_schema_fixtures_have_the_expected_parse_outcome() -> Result<(), Box<dyn std::error::Error>> {
     let dir = schema_dir();
-    let mut entries: Vec<_> = fs::read_dir(dir)
-        .expect("fixtures/schemas/ dir")
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |x| x == "xml"))
-        .map(|e| e.path())
-        .collect();
+    let mut entries = fs::read_dir(dir)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.retain(|path| path.extension().is_some_and(|extension| extension == "xml"));
     entries.sort();
 
+    for name in EXPECTED_PARSE_ERRORS
+        .iter()
+        .chain(INCLUDE_FRAGMENTS)
+        .chain(ERROR_SCHEMAS)
+    {
+        assert!(
+            dir.join(name).is_file(),
+            "classified schema fixture is missing: {name}"
+        );
+    }
+
     let mut passed = 0u32;
-    let mut failed = 0u32;
-    let mut skipped = 0u32;
+    let mut rejected = 0u32;
     let mut failures = Vec::new();
 
     for path in &entries {
         let name = path.file_name().unwrap().to_str().unwrap().to_string();
-
-        if EXPECTED_PARSE_ERRORS.contains(&name.as_str()) {
-            println!("  SKIP  {name:<40}  (expected parse error — tested elsewhere)");
-            skipped += 1;
-            continue;
-        }
+        let expected_rejection = EXPECTED_PARSE_ERRORS.contains(&name.as_str())
+            || INCLUDE_FRAGMENTS.contains(&name.as_str())
+            || ERROR_SCHEMAS.contains(&name.as_str());
 
         match parse_file(path) {
             Ok(ir) => {
+                if expected_rejection {
+                    failures.push(format!("{name}: unexpectedly parsed"));
+                    continue;
+                }
                 let msg_count = ir
                     .tokens
                     .iter()
@@ -127,18 +135,21 @@ fn all_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
                 passed += 1;
             }
             Err(e) => {
-                if INCLUDE_FRAGMENTS.contains(&name.as_str()) {
-                    println!("  SKIP  {name:<40}  (include fragment — needs parent schema)");
-                    skipped += 1;
-                } else if ERROR_SCHEMAS.contains(&name.as_str()) {
-                    println!("  SKIP  {name:<40}  (intentionally invalid error schema)");
-                    skipped += 1;
+                if expected_rejection {
+                    let message = e.to_string();
+                    assert!(
+                        !message.trim().is_empty(),
+                        "{name}: expected rejection must have a diagnostic"
+                    );
+                    println!(
+                        "  REJECT {name:<40}  {}",
+                        message.lines().next().unwrap_or(&message)
+                    );
+                    rejected += 1;
                 } else {
                     let err_str = format!("{e}");
                     let first_line = err_str.lines().next().unwrap_or(&err_str);
-                    println!("  FAIL  {name:<40}  {first_line}");
-                    failed += 1;
-                    failures.push(name);
+                    failures.push(format!("{name}: {first_line}"));
                 }
             }
         }
@@ -146,15 +157,20 @@ fn all_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
 
     println!();
     println!("  ───────────────────────────────────────────────────────");
-    println!("  Passed: {passed}  |  Failed: {failed}  |  Skipped: {skipped}");
+    println!("  Parsed: {passed}  |  Rejected as expected: {rejected}");
 
     if !failures.is_empty() {
         panic!(
-            "{} schema(s) failed to parse:\n  {}",
-            failed,
+            "{} schema fixture(s) had the wrong parse outcome:\n  {}",
+            failures.len(),
             failures.join("\n  ")
         );
     }
+    assert_eq!(
+        passed + rejected,
+        entries.len() as u32,
+        "every discovered schema must have an asserted outcome"
+    );
 
     Ok(())
 }

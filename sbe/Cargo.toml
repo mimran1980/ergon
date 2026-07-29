@@ -22,7 +22,10 @@ include = [
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["fancy"]
+# Renders schema parse errors with a source snippet + span. Opt out with
+# `default-features = false` to skip terminal/backtrace deps (plain fallback).
+fancy = ["miette/fancy"]
 # Removed: bound-check-disabled provided negligible ~1% gain.
 # LLVM elides bounds checks for constant-sized accesses on visible
 # stack buffers. unchecked companions are always generated.
@@ -81,6 +84,10 @@ name = "sbe_tool_multi_schema_wire_parity_test"
 criterion = { version = "0.5", features = ["html_reports"] }
 serial_test = "3"
 toml = "0.8"
+# fancy-no-backtrace (not "fancy"): GraphicalReportHandler for tests proving
+# the miette rendering pipeline actually snippets — skips the heavier
+# backtrace/backtrace-ext deps that "fancy" pulls in.
+miette = { version = "7", features = ["fancy-no-backtrace"] }
 
 [package.metadata.docs.rs]
 all-features = true

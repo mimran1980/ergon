@@ -1,8 +1,7 @@
 #![cfg(feature = "test-harness")]
-//! Privileged lifecycle tests (run with `--ignored`): quorum loss and full
-//! cluster restart. These exercise destructive cluster control and are slow,
-//! but each asserts real behaviour — unlike the previous placeholders which
-//! killed nodes and then asserted nothing.
+//! Privileged lifecycle tests: quorum loss and full cluster restart. These
+//! exercise destructive cluster control and are slow, but each asserts real
+//! behaviour.
 
 mod common;
 
@@ -14,13 +13,14 @@ use serial_test::serial;
 
 use common::{Capture, await_echo, connect_own_driver, launch_own_driver};
 
+const AERON_MARK_FILE_LIVENESS_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Kill the two non-leader nodes of a 3-node cluster so the surviving
 /// leader loses quorum (1 of 3). The cluster must then STOP serving — a
 /// round trip that still succeeded would mean a lone minority node is
 /// accepting writes (split-brain / data-loss risk).
 #[test]
 #[serial]
-#[ignore = "privileged: quorum loss, ~30s"]
 fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
     let mut cluster = ergo_aeron_cluster::TestCluster::three_node();
     let driver = launch_own_driver("quorum")?;
@@ -69,7 +69,6 @@ fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
 /// path is out of scope for the client test harness.)
 #[test]
 #[serial]
-#[ignore = "privileged: full restart cycle, ~90s"]
 fn test_cluster_restart_and_reconnect() -> Result<(), Box<dyn Error>> {
     // --- Lifecycle 1: cluster A ---
     {
@@ -101,7 +100,6 @@ fn test_cluster_restart_and_reconnect() -> Result<(), Box<dyn Error>> {
 /// recovered cluster is operational.
 #[test]
 #[serial]
-#[ignore = "log-recovery restart, ~90s (needs Java 17 + just build-aeron-jars)"]
 fn test_log_recovery_restart() -> Result<(), Box<dyn Error>> {
     // --- Lifecycle 1: fresh cluster A, write data ---
     let mut cluster_a = ergo_aeron_cluster::TestCluster::three_node();
@@ -111,12 +109,17 @@ fn test_log_recovery_restart() -> Result<(), Box<dyn Error>> {
     let mut adapter_a = EgressAdapter::new(Capture::new());
     await_echo(&mut client_a, &mut adapter_a, b"PRE-RECOVERY", Duration::from_secs(15))?;
     let _ = client_a.close();
+    drop(client_a);
     // Kill every node of A. The aeron dirs persist (not cleaned on kill).
     for i in 0..cluster_a.node_count() {
         cluster_a.kill_node(i);
     }
     drop(cluster_a);
     drop(driver_a);
+    // A hard kill deliberately bypasses Aeron's shutdown hooks. Its durable
+    // archive mark therefore remains live until the fixed 10-second lease
+    // expires; restarting earlier must fail with "active mark file detected".
+    std::thread::sleep(AERON_MARK_FILE_LIVENESS_TIMEOUT + Duration::from_secs(1));
 
     // --- Lifecycle 2: restart with keep_dirs at the same base port ---
     let restart = ergo_aeron_cluster::TestCluster {

@@ -1,0 +1,15 @@
+# Scheduled critical-path mutation scope. Keep this small enough for the
+# weekly job while covering parser, resolver, length arithmetic, and generated
+# dynamic-tail validation.
+examine_re = [
+    "parse_with_context",
+    "get_token_block_size",
+    "get_dimension_info",
+    "generate_direct",
+    "generate_group_decoder",
+]
+test_package = ["ergo-sbe"]
+additional_cargo_test_args = ["--", "--test-threads=1"]
+timeout_multiplier = 4.0
+minimum_test_timeout = 120.0
+cap_lints = true

@@ -71,6 +71,9 @@ harness = false
 [[bench]]
 name = "l2_book_bench"
 harness = false
+[[bench]]
+name = "group_encode_decimal_bench"
+harness = false
 
 [features]
 default = []

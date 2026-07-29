@@ -61,7 +61,8 @@ fn parity_manifest_covers_every_reference_crate_and_supported_feature()
     let symbols = test_symbols(&tests_dir)?;
     let reference_root = tests_dir.join("sbe_tool_reference");
     let checked_in: BTreeSet<String> = fs::read_dir(&reference_root)?
-        .filter_map(Result::ok)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|entry| entry.path().join("Cargo.toml").is_file())
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .collect();
