@@ -118,6 +118,12 @@ impl Paths {
         Self::fixtures_dir().join("versioned-domain-schema.xml")
     }
 
+    /// A group with 2+ nested groups and 2+ var-data fields — exercises the
+    /// ng_idx and nvd_idx counters in `generate_group_decoder`.
+    pub fn multi_nested_group_schema() -> PathBuf {
+        Self::fixtures_dir().join("multi-nested-group-schema.xml")
+    }
+
     pub fn baseline_binary() -> PathBuf {
         Self::sbe_dir()
             .join("tests")

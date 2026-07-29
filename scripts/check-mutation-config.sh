@@ -21,6 +21,7 @@ fi
 for required_scope in \
     parse_with_context \
     get_token_block_size \
+    get_dimension_info \
     generate_direct \
     generate_group_decoder
 do

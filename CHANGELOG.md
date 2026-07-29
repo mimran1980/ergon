@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-07-30
+
 ### Added
 - Executable `test-lanes.tsv` ownership for every tracked Rust test, doctest,
   benchmark, fuzz target, and Miri fixture. `just policy` self-tests the
@@ -12,7 +14,8 @@
   `continue-on-error`, and custom skip-CI conditions.
 - Fail-closed coverage and mutation ratchets with adversarial shell self-tests.
   The mutation checker rejects a missing, incomplete, or empty tool run instead
-  of treating it as zero missed mutants.
+  of treating it as zero missed mutants. Mutation scope expanded from 180 to
+  196 critical-path candidates.
 - Pull-request coverage enforcement and 32-bit x86/big-endian s390x execution
   through `cross`/QEMU, plus nightly Miri and ten-minute-per-target fuzz jobs
   and a weekly critical-path mutation job.
@@ -33,6 +36,10 @@
   short buffers, and empty groups.
 - `bulk_add_domain(&[EntryDomain])` for eligible flat DTO groups, sharing the
   wire bulk writer's single-region validation without a temporary allocation.
+- `just check-mutation` — manual-only mutation gate (removed from CI: too slow).
+- README badges (Crates.io, CI, docs.rs) for root, sbe, and cluster crates.
+- AI-ASSISTANCE.md: documented LLM test-suppression pattern with specific
+  project incidents.
 
 ### Fixed
 - Restored all three allocation-count tests to the ordinary sample lane; they
@@ -59,8 +66,8 @@
 - Removed the unused `encoded_length_api.txt` file, which advertised a
   regeneration test that did not exist and was not checked by any test.
 - **Composite explicit-offset bug**: `get_token_block_size` summed child sizes
-  ignoring `offset="N"` attributes on composite members. A composite with a
-  field at `offset="8"` reported size 9 instead of 16, cascading into wrong
+  ignoring `offset=”N”` attributes on composite members. A composite with a
+  field at `offset=”8”` reported size 9 instead of 16, cascading into wrong
   `BLOCK_LENGTH` and `ENCODED_LENGTH` constants. Present since 0.1.0.
 - **`bulk_add` code generation**: validate one exact output region, iterate it
   with `chunks_exact_mut`, use slot-relative field writes, and commit position
@@ -115,6 +122,14 @@
   lengths; decode cases assert all fixed, group, nested-group, and var-data
   values before timing.
 - Removed `--skip explicit_implicit` from `justfile` — the test now passes.
+- **XML parser**: constant fields with `constantValue` attribute were validated
+  but their value was never read — only `valueRef` was read. Constant field
+  accessors were silently not generated for group entry fields.
+- **Mutation coverage gaps**: added hostile-frame tests for group array
+  boundaries, versioned enum/set/boolean/optional-primitive extents, nested
+  group and var-data counter mutations, and Display output on group entries.
+- **Dead locals** in the code generator removed (unused `ng_idx`-adjacent
+  variables).
 
 ### Changed
 - `just test` now requires and runs the Aeron Java lifecycle/recovery suite and
@@ -131,6 +146,8 @@
 - Every maintained ergon/sbe-tool benchmark now has a strict `1.00` ceiling
   under both LTO and no LTO. A repeatable sbe-tool win blocks the change until
   the benchmark or generated hot path is fixed.
+- Weekly mutation CI replaced with manual `just check-mutation` task
+  (too slow for CI; ~6-10 hours with `--jobs 1`).
 
 ## [0.1.3] — 2026-07-28
 

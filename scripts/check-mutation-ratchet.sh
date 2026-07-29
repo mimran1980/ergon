@@ -31,7 +31,12 @@ done
 
 # shellcheck disable=SC1090
 source "$baseline"
-for variable in MIN_MUTANT_OUTCOMES MAX_MISSED_MUTANTS MAX_TIMEOUT_MUTANTS; do
+for variable in \
+    MIN_MUTANT_OUTCOMES \
+    MAX_MISSED_MUTANTS \
+    MAX_TIMEOUT_MUTANTS \
+    MAX_UNVIABLE_MUTANTS
+do
     value=${!variable:-}
     if [[ ! "$value" =~ ^[0-9]+$ ]]; then
         echo "mutation ratchet: $variable is missing or not an integer in $baseline" >&2
@@ -65,8 +70,13 @@ if ((timed_out > MAX_TIMEOUT_MUTANTS)); then
     echo "mutation ratchet: $timed_out timeouts exceeds baseline $MAX_TIMEOUT_MUTANTS" >&2
     exit 1
 fi
+if ((unviable > MAX_UNVIABLE_MUTANTS)); then
+    echo "mutation ratchet: $unviable unviable exceeds baseline $MAX_UNVIABLE_MUTANTS" >&2
+    exit 1
+fi
 
 echo "mutation ratchet: $total outcomes ($caught caught, $unviable unviable)"
 echo "mutation ratchet: outcomes $total >= $MIN_MUTANT_OUTCOMES"
 echo "mutation ratchet: missed $missed <= $MAX_MISSED_MUTANTS"
 echo "mutation ratchet: timeouts $timed_out <= $MAX_TIMEOUT_MUTANTS"
+echo "mutation ratchet: unviable $unviable <= $MAX_UNVIABLE_MUTANTS"

@@ -1,5 +1,9 @@
 # ergo-sbe
 
+[![Crates.io](https://img.shields.io/crates/v/ergo-sbe)](https://crates.io/crates/ergo-sbe)
+[![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
+[![API Docs](https://docs.rs/ergo-sbe/badge.svg)](https://docs.rs/ergo-sbe/)
+
 > **AI assistance.** Large parts of this project were written **with heavy AI
 > assistance**. Humans directed the work, approved designs, and ran verification.
 > Details of process and ownership: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).

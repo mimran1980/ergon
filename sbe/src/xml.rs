@@ -1763,8 +1763,9 @@ fn parse_message_child(
                 );
             }
             let constant_value = if presence == Presence::Constant {
-                if node.attribute("constantValue").is_none() && node.attribute("valueRef").is_none()
-                {
+                let from_value_ref = node.attribute("valueRef");
+                let from_constant_value = node.attribute("constantValue");
+                if from_value_ref.is_none() && from_constant_value.is_none() {
                     // The field may inherit constant value from the referenced type.
                     let type_is_constant = registry
                         .encodings
@@ -1778,29 +1779,26 @@ fn parse_message_child(
                         ));
                     }
                 }
-                node.attribute("valueRef").map(|s| {
-                    // valueRef format: "EnumName.ValidValue" — validate the enum and
-                    // variant exist at parse time (sbe-tool rejects invalid valueRef).
-                    if let Some((enum_name, variant_name)) = s.split_once('.') {
-                        // enum existence checked, variant existence deferred to resolve; add variant validation here if resolve becomes lenient
-                        // validated at parse time. An invalid variant name produces
-                        // a Rust compile error in the generated code, which is caught
-                        // before the codec is used.
-                        if !registry.registry.contains_key(enum_name) {
-                            // non-fatal warning: old behaviour was silent strip
-                            warn_once(
-                                &format!(
-                                    "warning: valueRef '{s}' references unknown enum '{enum_name}'"
-                                ),
-                                Some(node),
-                            );
+                from_value_ref
+                    .or(from_constant_value)
+                    .map(|s| {
+                        if from_value_ref.is_some() {
+                            // valueRef format: "EnumName.ValidValue" — validate
+                            // the enum and variant exist at parse time (sbe-tool
+                            // rejects invalid valueRef).
+                            if let Some((enum_name, _variant_name)) = s.split_once('.') {
+                                if !registry.registry.contains_key(enum_name) {
+                                    warn_once(
+                                        &format!(
+                                            "warning: valueRef '{s}' references unknown enum '{enum_name}'"
+                                        ),
+                                        Some(node),
+                                    );
+                                }
+                            }
                         }
                         s.to_string()
-                    } else {
-                        // No dot — valueRef with no TypeName prefix, keep as-is
-                        s.to_string()
-                    }
-                })
+                    })
             } else {
                 None
             };

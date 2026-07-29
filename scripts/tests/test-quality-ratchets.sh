@@ -47,6 +47,7 @@ cat >"$fixture/mutation-baseline.env" <<'EOF'
 MIN_MUTANT_OUTCOMES=1
 MAX_MISSED_MUTANTS=0
 MAX_TIMEOUT_MUTANTS=0
+MAX_UNVIABLE_MUTANTS=0
 EOF
 mkdir "$fixture/mutants-pass"
 touch \
@@ -75,10 +76,17 @@ expect_failure "missed exceeds baseline" \
     env MUTATION_BASELINE_FILE="$fixture/mutation-baseline.env" \
     "$mutation_checker" "$fixture/mutants-missed"
 
+cp -R "$fixture/mutants-pass" "$fixture/mutants-unviable"
+printf '%s\n' "src/lib.rs:3: unviable" >"$fixture/mutants-unviable/unviable.txt"
+expect_failure "unviable exceeds baseline" \
+    env MUTATION_BASELINE_FILE="$fixture/mutation-baseline.env" \
+    "$mutation_checker" "$fixture/mutants-unviable"
+
 cat >"$fixture/mutation-minimum-two.env" <<'EOF'
 MIN_MUTANT_OUTCOMES=2
 MAX_MISSED_MUTANTS=0
 MAX_TIMEOUT_MUTANTS=0
+MAX_UNVIABLE_MUTANTS=0
 EOF
 expect_failure "below baseline" \
     env MUTATION_BASELINE_FILE="$fixture/mutation-minimum-two.env" \
@@ -88,6 +96,7 @@ cat >"$fixture/mutants-good.toml" <<'EOF'
 examine_re = [
     "parse_with_context",
     "get_token_block_size",
+    "get_dimension_info",
     "generate_direct",
     "generate_group_decoder",
 ]

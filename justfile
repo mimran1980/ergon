@@ -198,10 +198,13 @@ check-fuzz:
 check-coverage:
     ./scripts/check-coverage-ratchet.sh
 
-# Mutate parser/resolver/codegen critical paths and reject missed or timed-out mutants.
+# Mutate parser/resolver/codegen critical paths and reject missed or timed-out
+# mutants. This is a MANUAL gate — too slow for CI (~16 h with --jobs 1).
+# Run locally before landing codegen changes; use --jobs 1 to avoid
+# exhausting disk space with parallel build trees.
 check-mutation:
     ./scripts/check-mutation-config.sh
-    cargo mutants --jobs 2
+    cargo mutants --jobs 1
     ./scripts/check-mutation-ratchet.sh
 
 # ── formatting ─────────────────────────────────────────────────────────────

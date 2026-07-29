@@ -4517,8 +4517,6 @@ fn generate_group_decoder(
         let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
         let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
         let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let k_lit = syn::LitInt::new(&k.to_string(), proc_macro2::Span::call_site());
-        let k_plus_lit = syn::LitInt::new(&(k + 1).to_string(), proc_macro2::Span::call_site());
         let ng_name_lit = syn::LitStr::new(&ng.name, proc_macro2::Span::call_site());
 
         let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
@@ -7907,7 +7905,7 @@ mod tests {
     fn group_array_codegen_uses_the_complete_field_extent_and_element_range()
     -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<?xml version="1.0"?>
-        <messageSchema package="array.guard" id="305" version="0" byteOrder="littleEndian">
+        <messageSchema package="array.guard" id="305" version="1" byteOrder="littleEndian">
           <types>
             <composite name="messageHeader">
               <type name="blockLength" primitiveType="uint16"/>
@@ -7920,11 +7918,24 @@ mod tests {
               <type name="numInGroup" primitiveType="uint16"/>
             </composite>
             <type name="Values" primitiveType="uint32" length="2"/>
+            <enum name="State" encodingType="uint8">
+              <validValue name="Ready">1</validValue>
+            </enum>
+            <set name="Flags" encodingType="uint8">
+              <choice name="Active">0</choice>
+            </set>
+            <enum name="BooleanType" encodingType="uint8">
+              <validValue name="F">0</validValue>
+              <validValue name="T">1</validValue>
+            </enum>
           </types>
           <message name="ArrayBoundaryMessage" id="1">
             <group name="entries" id="1">
               <field name="base" id="2" type="uint8"/>
               <field name="values" id="3" type="Values"/>
+              <field name="state" id="4" type="State" sinceVersion="1"/>
+              <field name="flags" id="5" type="Flags" sinceVersion="1"/>
+              <field name="enabled" id="6" type="BooleanType" sinceVersion="1"/>
             </group>
           </message>
         </messageSchema>"#;
@@ -7948,6 +7959,18 @@ mod tests {
         assert!(
             source.contains("all[0usize]") && source.contains("all[7usize]"),
             "the unrolled array decode must use the complete byte range"
+        );
+        assert!(
+            source.contains("|| 10 > self.acting_block_length"),
+            "the versioned enum at offset nine must require its complete tenth byte"
+        );
+        assert!(
+            source.contains("|| 11 > self.acting_block_length"),
+            "the versioned set at offset ten must require its complete eleventh byte"
+        );
+        assert!(
+            source.contains("pub fn enabled_bool(&self) -> Option<bool>"),
+            "a versioned BooleanType group field must preserve absence in its bool accessor"
         );
         Ok(())
     }

@@ -614,28 +614,146 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             assert_eq!(row.raw_later_enum(), None);
             assert_eq!(row.later_set(), None);
             assert_eq!(row.raw_later_set(), None);
+            assert_eq!(row.later_bool(), None);
+            assert_eq!(row.raw_later_bool(), None);
+            assert_eq!(row.later_bool_bool(), None);
         }
+
+        // Acting version 1 with a seven-byte entry: the array and composite
+        // fit, but the enum at offset 7 does not. Keep a second entry so an
+        // off-by-one extent check would read its base byte as the first
+        // entry's enum instead of running off the supplied slice.
+        let enum_short = [
+            0, 0,       // root blockLength
+            1, 0,       // templateId
+            48, 1,      // schemaId 304
+            1, 0,       // acting version
+            7, 0,       // entry blockLength
+            2, 0,       // count
+            7,          // first base
+            0x22, 0x11, 0x44, 0x33,
+            0x66, 0x55,
+            1,          // second base: valid LaterEnum::A if read incorrectly
+            0, 0, 0, 0,
+            0, 0,
+        ];
+        let decoded = VersionedGroupMessageDecoder::try_from(enum_short.as_slice())?;
+        let first = decoded.into_entries()?.next().unwrap();
+        assert_eq!(first.later_array(), [0x1122, 0x3344]);
+        assert_eq!(first.later_composite_value(), Some(LaterComposite::new(0x5566)));
+        assert_eq!(first.later_enum(), None);
+        assert_eq!(first.raw_later_enum(), None);
+
+        // One more byte makes the enum available, but not the set at offset
+        // 8. Again, the next entry begins with a byte that would look like a
+        // valid set if the complete-field extent check regressed.
+        let set_short = [
+            0, 0,       // root blockLength
+            1, 0,       // templateId
+            48, 1,      // schemaId 304
+            1, 0,       // acting version
+            8, 0,       // entry blockLength
+            2, 0,       // count
+            7,          // first base
+            0x22, 0x11, 0x44, 0x33,
+            0x66, 0x55,
+            1,          // first enum
+            1,          // second base: LaterSet bit 0 if read incorrectly
+            0, 0, 0, 0,
+            0, 0,
+            1,
+        ];
+        let decoded = VersionedGroupMessageDecoder::try_from(set_short.as_slice())?;
+        let first = decoded.into_entries()?.next().unwrap();
+        assert_eq!(first.later_enum(), Some(LaterEnum::A));
+        assert_eq!(first.later_set(), None);
+        assert_eq!(first.raw_later_set(), None);
+
+        // Nine bytes include the set but not the versioned BooleanType at
+        // offset 9. Its convenience `_bool` accessor must preserve absence
+        // instead of reading the next entry or collapsing `None` to false.
+        let bool_short = [
+            0, 0,       // root blockLength
+            1, 0,       // templateId
+            48, 1,      // schemaId 304
+            1, 0,       // acting version
+            9, 0,       // entry blockLength
+            2, 0,       // count
+            7,          // first base
+            0x22, 0x11, 0x44, 0x33,
+            0x66, 0x55,
+            1,          // first enum
+            1,          // first set
+            1,          // second base: true if read incorrectly as laterBool
+            0, 0, 0, 0,
+            0, 0,
+            1,
+            1,
+        ];
+        let decoded = VersionedGroupMessageDecoder::try_from(bool_short.as_slice())?;
+        let first = decoded.into_entries()?.next().unwrap();
+        assert_eq!(first.later_set(), Some(LaterSet(1)));
+        assert_eq!(first.later_bool(), None);
+        assert_eq!(first.raw_later_bool(), None);
+        assert_eq!(first.later_bool_bool(), None);
+
+        // Ten bytes include the versioned bool but not the optional uint32 at
+        // offset 10. Its extent check uses `offset + prim_size` — a `+` → `-`
+        // mutation would compute `10 - 4 = 6 > 10` (false) and return a garbage
+        // value read from the second entry.
+        let opt_short = [
+            0, 0,       // root blockLength
+            1, 0,       // templateId
+            48, 1,      // schemaId 304
+            1, 0,       // acting version
+            10, 0,      // entry blockLength
+            2, 0,       // count
+            7,          // first base
+            0x22, 0x11, 0x44, 0x33,
+            0x66, 0x55,
+            1,          // first enum
+            1,          // first set
+            1,          // first bool (BooleanType::T)
+            0xDD, 0xCC, 0xBB, 0xAA, // second entry data: would be read if check regresses
+            9,          // second base
+            0, 0, 0, 0,
+            0, 0,
+            0,
+            0,
+            0,
+        ];
+        let decoded = VersionedGroupMessageDecoder::try_from(opt_short.as_slice())?;
+        let first = decoded.into_entries()?.next().unwrap();
+        assert_eq!(first.later_bool(), Some(BooleanType::T));
+        assert_eq!(first.later_bool_bool(), Some(true));
+        assert!(first.later_value().is_none(), "laterValue at offset 10 does not fit in blockLength 10");
 
         // Latest-version add_struct covers multi-byte primitive arrays plus
         // composite/enum/set fields in a flat group entry.
         let mut latest = [0u8; 64];
-        let enc = VersionedGroupMessageEncoder::wrap_and_apply_header(&mut latest, 0);
-        let enc = enc.entries(1, |group| {
-            group.add_struct(&EntriesEntry {
-                base: 5,
-                later_array: [0x1122, 0x3344],
-                later_composite: LaterComposite::new(0x5566),
-                later_enum: LaterEnum::A,
-                later_set: LaterSet(1),
-            })
-        })?;
-        let decoded = VersionedGroupMessageDecoder::try_from(enc.as_bytes())?;
+        let len = VersionedGroupMessageEncoder::wrap_and_apply_header(&mut latest, 0)
+            .entries(1, |group| {
+                group.add_struct(&EntriesEntry {
+                    base: 5,
+                    later_array: [0x1122, 0x3344],
+                    later_composite: LaterComposite::new(0x5566),
+                    later_enum: LaterEnum::A,
+                    later_set: LaterSet(1),
+                    later_bool: BooleanType::T,
+                    later_value: 42u32,
+                })
+            })?
+            .encoded_length_with_header();
+        let decoded = VersionedGroupMessageDecoder::try_from(&latest[..len])?;
         let row = decoded.into_entries()?.next().unwrap();
         assert_eq!(row.base(), 5);
         assert_eq!(row.later_array(), [0x1122, 0x3344]);
         assert_eq!(row.later_composite_value(), Some(LaterComposite::new(0x5566)));
         assert_eq!(row.later_enum(), Some(LaterEnum::A));
         assert_eq!(row.later_set(), Some(LaterSet(1)));
+        assert_eq!(row.later_bool(), Some(BooleanType::T));
+        assert_eq!(row.later_bool_bool(), Some(true));
+        assert_eq!(row.later_value(), Some(42u32));
         "#,
     );
 
@@ -709,6 +827,136 @@ fn constant_enum_fields_types_exist() -> Result<(), Box<dyn std::error::Error>> 
             "Model",
             "GroupSizeEncoding",
         ],
+    );
+
+    Ok(())
+}
+
+/// A group with 2+ nested groups and 2+ var-data fields exercises the
+/// `ng_idx` and `nvd_idx` counters in `generate_group_decoder`. Mutations
+/// that break the counter (e.g. `+=` → `*=`) produce duplicate tail-offset
+/// function names → compile error in the generated code.
+#[test]
+fn multi_nested_group_compiles_and_roundtrips() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::multi_nested_group_schema(), "multi_nested");
+    compile_and_run(
+        "multi_nested",
+        &src,
+        r#"
+        let mut buf = [0u8; 256];
+        // Non-zero nested entries so tail_offset indices diverge: if the
+        // `ng_idx` counter regresses (e.g. `*=` stays at 0), both children
+        // call `tail_offset_0` and the second group reads the wrong dimension.
+        let mut enc = MultiNestedEncoder::wrap_and_apply_header(&mut buf, 0);
+        enc.header(0u32);
+        let enc = enc.parent(1, |parent| {
+            parent.add(|entry| {
+                entry.parent_field(42u16);
+                entry.kind(EntryKind::A);
+                entry.child_a(1, |a| { a.add(|e| { e.value_a(0xA000_0001u32); Ok(()) })?; Ok(()) })?;
+                entry.child_b(2, |b| {
+                    b.add(|e| { e.value_b(0xB000_0000_0000_0001u64); Ok(()) })?;
+                    b.add(|e| { e.value_b(0xB000_0000_0000_0002u64); Ok(()) })?;
+                    Ok(())
+                })?;
+                entry.note1(b"hello")?;
+                entry.note2(b"world")?;
+                Ok(())
+            })?;
+            Ok(())
+        }).unwrap();
+        let len = enc.encoded_length_with_header();
+
+        let dec = MultiNestedDecoder::try_from(&buf[..len])?;
+        assert_eq!(dec.header(), 0u32);
+
+        let mut entries = dec.into_parent()?;
+        let mut count = 0usize;
+        while let Some(Ok(entry)) = entries.next() {
+            assert_eq!(entry.parent_field(), 42u16);
+            assert_eq!(entry.kind(), EntryKind::A);
+
+            let child_a: Vec<_> = entry.child_a()?.collect();
+            assert_eq!(child_a.len(), 1);
+            assert_eq!(child_a[0].value_a(), 0xA000_0001u32);
+
+            let child_b: Vec<_> = entry.child_b()?.collect();
+            assert_eq!(child_b.len(), 2);
+            assert_eq!(child_b[0].value_b(), 0xB000_0000_0000_0001u64);
+            assert_eq!(child_b[1].value_b(), 0xB000_0000_0000_0002u64);
+
+            assert_eq!(entry.note1()?, b"hello");
+            assert_eq!(entry.note2()?, b"world");
+
+            // Display exercises the entry_display_out_idx counters and the
+            // primitive-field skip logic (constant / array).
+            let s = entry.to_string();
+            assert!(s.contains("parentField"), "Display missing parentField: {s}");
+            assert!(s.contains("kind"), "Display missing kind: {s}");
+            // The separator ", " confirms entry_display_out_idx advanced
+            // beyond the first field (mutations like `*=` leave it at zero).
+            assert!(s.contains(", "), "Display missing field separator: {s}");
+            // A constant field (padding) is excluded from Display;
+            // the `||` → `&&` mutation would include it.
+            assert!(!s.contains("padding"), "Display should exclude constant field: {s}");
+
+            // Call the constant accessor — a `||` mutation changes the return
+            // type from u16 to &str and would not compile against this assert.
+            assert_eq!(entry.padding(), 42u16);
+            assert_eq!(entry.delim(), b',');
+
+            count += 1;
+        }
+        assert_eq!(count, 1);
+        "#,
+    );
+
+    Ok(())
+}
+
+/// Group entry decoders implement `Display`. Mutations that change the
+/// field-skipping logic (e.g. `||` → `&&`) or the separator counter
+/// (e.g. `+=` → `*=`) survive only because no test formats a group entry.
+#[test]
+fn group_entry_display_includes_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "group_display");
+    compile_and_run(
+        "group_display",
+        &src,
+        r#"
+        let mut buf = [0u8; 512];
+        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        car.serial_number(1); car.model_year(2020);
+        car.available(BooleanType::T); car.code(Model::A);
+        car.some_numbers([0u32; 4]); car.vehicle_code([0u8; 6]);
+        car.extras(OptionalExtras::default());
+        car.engine(Engine::new(2000, 4, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = car.fuel_figures(2, |ff| {
+            ff.add(|e| { e.speed(100).mpg(35.5f32).usage_description(b"city")?; Ok(()) })?;
+            ff.add(|e| { e.speed(200).mpg(25.0f32).usage_description(b"hwy")?; Ok(()) })?;
+            Ok(())
+        }).unwrap();
+        let car = car.performance_figures(0, |_| Ok(())).unwrap();
+        let car = car.manufacturer(b"Ford").unwrap();
+        let car = car.model(b"Mustang").unwrap();
+        let car = car.activation_code(b"ABC").unwrap();
+        let len = car.encoded_length_with_header();
+
+        let dec = CarDecoder::try_from(&buf[..len])?;
+        let mut fuel = dec.into_fuel_figures()?;
+        let mut i = 0usize;
+        while let Some(Ok(entry)) = fuel.next() {
+            let s = entry.to_string();
+            assert!(s.contains("speed"), "entry {} Display missing 'speed': {s}", i);
+            assert!(s.contains("mpg"), "entry {} Display missing 'mpg': {s}", i);
+            // The separator between fields is ", " when the output-index
+            // counter advances correctly; mutations like `*=` keep the
+            // counter at 0 which makes every separator the empty string.
+            assert!(s.contains(", "), "entry {} Display missing field separator ', ': {s}", i);
+            i += 1;
+        }
+        assert_eq!(i, 2);
+        "#,
     );
 
     Ok(())

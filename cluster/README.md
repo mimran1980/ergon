@@ -1,5 +1,9 @@
 # ergo-aeron-cluster
 
+[![Crates.io](https://img.shields.io/crates/v/ergo-aeron-cluster)](https://crates.io/crates/ergo-aeron-cluster)
+[![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
+[![API Docs](https://docs.rs/ergo-aeron-cluster/badge.svg)](https://docs.rs/ergo-aeron-cluster/)
+
 `ergo-aeron-cluster` is an experimental Rust client for Aeron Cluster. It uses
 rusteron for transport and ergo-sbe-generated codecs for Aeron's Cluster
 protocol.
