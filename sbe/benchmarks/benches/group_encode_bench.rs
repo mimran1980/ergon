@@ -1,4 +1,4 @@
-//! Group encode: add_closure vs add_struct vs bulk_add.
+//! Group encode: add_closure vs add_struct vs bulk_add vs sbe-tool.
 //! 50 samples, 1s warm-up, 3s measurement.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
@@ -6,6 +6,10 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::orderbook::*;
+use ergo_sbe_benchmarks::sbe_tool_ob::sbe_tool::{
+    WriteBuf,
+    book_snapshot_codec::encoder::{BookSnapshotEncoder as ToolBookEnc, LevelsEncoder as ToolLevels},
+};
 
 fn make_entries(n: usize) -> Vec<LevelsEntry> {
     (0..n).map(|i| LevelsEntry {
@@ -24,10 +28,38 @@ fn bench_group_encode(c: &mut Criterion) {
         let msg_len = BookSnapshotEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
         group.throughput(Throughput::Elements(n as u64));
 
+        // ── wire parity: ergon and sbe-tool must produce byte-identical output ──
+        {
+            let mut ebuf = vec![0u8; msg_len];
+            let elen = BookSnapshotEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .levels(n as u16, |g| {
+                    for e in &entries { g.add(|entry| { entry.price(e.price).qty(e.qty).num_orders(e.num_orders); Ok(()) })?; }
+                    Ok(())
+                }).unwrap().encoded_length_with_header();
+
+            let mut tbuf = vec![0u8; msg_len + 8];
+            let tenc = ToolBookEnc::default().wrap(WriteBuf::new(&mut tbuf), 8);
+            let mut thdr = tenc.header(0);
+            let mut tenc = thdr.parent().unwrap();
+            let mut tlevels = ToolLevels::default();
+            tlevels = tenc.levels_encoder(n as u16, tlevels);
+            for e in &entries {
+                tlevels.advance().unwrap();
+                tlevels.price(e.price).qty(e.qty).num_orders(e.num_orders);
+            }
+            tenc = tlevels.parent().unwrap();
+            let tlen = tenc.encoded_length() + 8; // sbe-tool encoded_length() is body-only
+
+            assert_eq!(elen, tlen, "ergon/sbe-tool length mismatch at n={n}: ergon={elen}, sbe-tool={tlen}");
+            assert_eq!(elen, msg_len, "ergon actual length {elen} != computed {msg_len} at n={n}");
+            assert_eq!(&ebuf[..elen], &tbuf[..tlen],
+                "ergon/sbe-tool BYTE mismatch at n={n} — encodings differ!");
+        }
+
         group.bench_with_input(BenchmarkId::new("add_closure", n), &entries, |b, entries| {
             let mut buf = vec![0u8; msg_len];
             b.iter(|| black_box(
-                BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap()
+                BookSnapshotEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                     .levels(n as u16, |g| {
                         for e in entries { g.add(|entry| { entry.price(e.price).qty(e.qty).num_orders(e.num_orders); Ok(()) })?; }
                         Ok(())
@@ -38,7 +70,7 @@ fn bench_group_encode(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("add_struct", n), &entries, |b, entries| {
             let mut buf = vec![0u8; msg_len];
             b.iter(|| black_box(
-                BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap()
+                BookSnapshotEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                     .levels(n as u16, |g| { for e in entries { g.add_struct(e)?; } Ok(()) }).unwrap()
                     .encoded_length_with_header()
             ));
@@ -49,10 +81,34 @@ fn bench_group_encode(c: &mut Criterion) {
             let msg_len = BookSnapshotEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
             let mut buf = vec![0u8; msg_len];
             b.iter(|| black_box(
-                BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap()
-                    .levels(n as u16, |g| { g.bulk_add(black_box(&entries))?; Ok(()) }).unwrap()
+                BookSnapshotEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
+                    .levels(n as u16, |g| { g.bulk_add(&entries)?; Ok(()) }).unwrap()
                     .encoded_length_with_header()
             ));
+        });
+
+        // sbe-tool comparison: advance-based group encode (equivalent to ergon add_closure).
+        // sbe-tool wrap(buf, 8) + header(0) writes header at 0-7 then body at 8+.
+        // ergon wrap_and_apply_header(buf, 0) writes header at 0-7 then body at 8+.
+        // Both do identical work: header + n entries with per-entry field writes.
+        group.bench_with_input(BenchmarkId::new("sbe-tool", n), &entries, |b, entries| {
+            let tool_buf_len = 12 + n * 20; // 8 header + 4 group header + n * 20 entry
+            let mut buf = vec![0u8; tool_buf_len];
+            b.iter(|| {
+                let enc = ToolBookEnc::default().wrap(
+                    WriteBuf::new(black_box(&mut buf)), 8,
+                );
+                let mut hdr = enc.header(0);
+                let mut enc = hdr.parent().unwrap();
+                let mut levels = ToolLevels::default();
+                levels = enc.levels_encoder(n as u16, levels);
+                for e in entries {
+                    levels.advance().unwrap();
+                    levels.price(e.price).qty(e.qty).num_orders(e.num_orders);
+                }
+                enc = levels.parent().unwrap();
+                black_box(enc.encoded_length())
+            });
         });
     }
     group.finish();

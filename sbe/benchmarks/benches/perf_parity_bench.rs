@@ -271,9 +271,62 @@ fn bench_encode_scalar(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/scalar");
     group.throughput(Throughput::Elements(1));
 
+    // ── length parity: both codecs must produce identical encoded lengths ──
+    {
+        use ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::{
+            WriteBuf,
+            boolean_type::BooleanType as ToolBool,
+            boost_type::BoostType as ToolBoost,
+            car_codec::encoder::{
+                CarEncoder as ToolCarEnc, FuelFiguresEncoder as ToolFuel,
+                PerformanceFiguresEncoder as ToolPerf,
+            },
+            model::Model as ToolModel,
+            optional_extras::OptionalExtras as ToolExtras,
+        };
+        // Encode a complete Car message with both codecs, verify lengths match.
+        let mut ebuf = [0u8; 512];
+        let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
+        e.serial_number(42).model_year(2020).available(BooleanType::T).code(Model::A);
+        e.some_numbers([0; 4]).vehicle_code(*b"ABCDEF").extras(OptionalExtras::default());
+        e.engine(Engine::new(0, 0, *b"ABC", 0, BooleanType::F,
+            Booster::new(BoostType::TURBO, 0)));
+        let e = e.fuel_figures(0, |_| Ok(())).unwrap();
+        let e = e.performance_figures(0, |_| Ok(())).unwrap();
+        let e = e.manufacturer(b"X").unwrap();
+        let e = e.model(b"Y").unwrap();
+        let complete = e.activation_code(b"Z").unwrap();
+        let ergo_len = complete.encoded_length_with_header();
+
+        let mut tbuf = [0u8; 512];
+        let t = ToolCarEnc::default().wrap(WriteBuf::new(&mut tbuf), 8);
+        let mut h = t.header(0);
+        let mut t = h.parent().unwrap();
+        t.serial_number(42).model_year(2020).available(ToolBool::T).code(ToolModel::A)
+            .some_numbers(&[0; 4]).vehicle_code(b"ABCDEF").extras(ToolExtras::default());
+        let mut eng = t.engine_encoder();
+        eng.capacity(0).num_cylinders(0).manufacturer_code(b"ABC").efficiency(0).booster_enabled(ToolBool::F);
+        let mut boost = eng.booster_encoder();
+        boost.boost_type(ToolBoost::TURBO).horse_power(0);
+        eng = boost.parent().unwrap();
+        t = eng.parent().unwrap();
+        let mut fuel = ToolFuel::default();
+        fuel = t.fuel_figures_encoder(0, fuel);
+        t = fuel.parent().unwrap();
+        let mut perf = ToolPerf::default();
+        perf = t.performance_figures_encoder(0, perf);
+        t = perf.parent().unwrap();
+        t.manufacturer("X").model("Y").activation_code(b"Z");
+        let tool_len = t.encoded_length() + 8; // sbe-tool encoded_length() is body-only
+        assert_eq!(ergo_len, tool_len,
+            "encode/scalar length mismatch: ergon={ergo_len}, sbe-tool={tool_len}");
+    }
+
     // Equal work: both arms write the 8-byte header + 2 scalar fields.
-    // ergo-sbe uses wrap_and_apply_header (writes header template),
-    // sbe-tool uses wrap() + header(0) (writes 4 header fields individually).
+    // ergo-sbe uses wrap_and_apply_header (writes header template at 0),
+    // sbe-tool uses wrap(buf, 8) + header(0) — sbe-tool convention:
+    // wrap offset = message_header_codec::ENCODED_LENGTH, then header(0)
+    // writes at absolute position 0. Body fields follow at offset 8+.
     // Fixed stack buffer, reused — timed path must not allocate.
     group.bench_function("ergo-sbe", |b| {
         let mut buf = [0u8; 512];
@@ -292,7 +345,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
                 ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::encoder::CarEncoder::default()
                     .wrap(
                         ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::WriteBuf::new(black_box(&mut buf)),
-                        0,
+                        8,
                     );
             let mut hdr = car.header(0);
             let mut car = hdr.parent().unwrap();
@@ -309,7 +362,9 @@ fn bench_encode_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/encode/throughput_10k");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
-    // Equal work: both arms write header + 2 scalars per message.
+    // Equal work: both arms encode header + 2 scalars per message.
+    // ergon wrap_and_apply_header() writes header at 0 and body at 8.
+    // sbe-tool wrap(buf,8) + header(0) writes header at 0 and body at 8.
     // Buffer allocated once and reused — no alloc on the timed path.
     group.bench_function("ergo-sbe", |b| {
         let mut buf = vec![0u8; BATCH_SIZE * 64];
@@ -330,10 +385,6 @@ fn bench_encode_throughput(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..BATCH_SIZE {
                 let off = i * 64;
-                // Body at offset 8 (after the 8-byte message header), header at 0.
-                // Wrapping the body at 0 would overlap the header (serial_number
-                // overwrites it), making sbe-tool write ~10 bytes while ergon writes
-                // the full 18-byte header+serial+model_year — an unfair comparison.
                 let car = ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::encoder::CarEncoder::default().wrap(
                     ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::WriteBuf::new(&mut buf[off..off + 64]),
                     8,

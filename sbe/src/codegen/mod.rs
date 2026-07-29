@@ -3719,7 +3719,7 @@ fn generate_group_decoder(
                     field_reads.extend(quote::quote! {
                         #f_name: {
                             let mut bytes = [0u8; #f_size];
-                            bytes.copy_from_slice(&self.buf[pos + #f_offset..][..#f_size]);
+                            bytes.copy_from_slice(&self.buf[pos + #f_offset..pos + #f_offset + #f_size]);
                             #f_ty(bytes)
                         },
                     });
@@ -3729,7 +3729,7 @@ fn generate_group_decoder(
                     field_reads.extend(quote::quote! {
                         #f_name: {
                             let raw = #r_ty::#order_fn(
-                                self.buf[pos + #f_offset..][..#f_size].try_into().unwrap()
+                                self.buf[pos + #f_offset..pos + #f_offset + #f_size].try_into().unwrap()
                             );
                             raw.into()
                         },
@@ -3757,7 +3757,7 @@ fn generate_group_decoder(
                     let r_ty = syn::Ident::new(&rust_type(*pt), span);
                     field_reads.extend(quote::quote! {
                         #f_name: #r_ty::#order_fn(
-                            self.buf[pos + #f_offset..][..#f_size].try_into().unwrap()
+                            self.buf[pos + #f_offset..pos + #f_offset + #f_size].try_into().unwrap()
                         ),
                     });
                 }
@@ -7154,13 +7154,13 @@ fn generate_group_encoder(
             match &f.field_type {
                 FieldType::Composite { .. } => {
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name.0);
+                        self.buf[pos + #f_offset..pos + #f_offset + #f_size].copy_from_slice(&entry.#f_name.0);
                     });
                 }
                 FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
                     let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..][..#f_size]
+                        self.buf[pos + #f_offset..pos + #f_offset + #f_size]
                             .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
                     });
                 }
@@ -7171,7 +7171,7 @@ fn generate_group_encoder(
                         let mut idx = 0usize;
                         while idx < #len_lit {
                             let offset = pos + #f_offset + idx * #prim_size_lit;
-                            self.buf[offset..][..#prim_size_lit]
+                            self.buf[offset..offset + #prim_size_lit]
                                 .copy_from_slice(&entry.#f_name[idx].#to_endian());
                             idx += 1;
                         }
@@ -7179,7 +7179,7 @@ fn generate_group_encoder(
                 }
                 FieldType::Primitive(_, None) => {
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..][..#f_size]
+                        self.buf[pos + #f_offset..pos + #f_offset + #f_size]
                             .copy_from_slice(&entry.#f_name.#to_endian());
                     });
                 }

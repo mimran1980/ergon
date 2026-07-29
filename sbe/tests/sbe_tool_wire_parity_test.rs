@@ -407,6 +407,13 @@ impl CarPayload {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 fn assert_frames_eq(label: &str, ergo: &[u8], tool: &[u8]) {
+    assert_eq!(
+        ergo.len(),
+        tool.len(),
+        "{label}: encoded length mismatch — ergon={}, sbe_tool={}",
+        ergo.len(),
+        tool.len()
+    );
     if ergo != tool {
         let n = ergo.len().min(tool.len());
         let mut first = None;
@@ -456,6 +463,7 @@ fn dual_encode(label: &str, p: &CarPayload) -> Vec<u8> {
     let tl = p.encode_tool(&mut tool_buf);
     let ergo = &ergo_buf[..el];
     let tool = &tool_buf[..tl];
+    assert_eq!(el, tl, "{label}: encoded length mismatch — ergon={el}, sbe_tool={tl}");
     assert_header_constants(ergo);
     assert_header_constants(tool);
     assert_frames_eq(label, ergo, tool);

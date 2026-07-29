@@ -355,6 +355,7 @@ mod ergo;
 use ergo::*;
 
 fn assert_frames_eq(label: &str, ergo: &[u8], tool: &[u8]) {{
+    assert_eq!(ergo.len(), tool.len(), "{{label}}: encoded length mismatch — ergon={{}}, sbe_tool={{}}", ergo.len(), tool.len());
     if ergo != tool {{
         let n = ergo.len().min(tool.len());
         let mut first = None;

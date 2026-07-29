@@ -44,3 +44,7 @@ ergo_sbe::sbe_mod!(pub l2book = "l2book_bench");
 pub mod sbe_tool_car {
     include!("sbe_tool_car_patched.rs");
 }
+/// sbe-tool-generated Orderbook codec for group encode benchmark comparison.
+pub mod sbe_tool_ob {
+    include!("sbe_tool_ob_patched.rs");
+}

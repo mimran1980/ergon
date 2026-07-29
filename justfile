@@ -52,8 +52,7 @@ check:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
-    cargo test -p ergo-aeron-cluster --lib
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1     cargo test -p ergo-aeron-cluster --lib
     cd samples/exchange-example && cargo fmt --check
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/exchange-example && cargo test -- --test-threads=1
@@ -109,8 +108,7 @@ test:
     ./scripts/regenerate-sbe-tool-reference.sh --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
-    cargo test -p ergo-aeron-cluster --lib
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1     cargo test -p ergo-aeron-cluster --lib
     @echo "=== 4/6 ergo-sbe doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
@@ -137,12 +135,24 @@ test:
 
 # Workspace unit tests only.
 test-unit:
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1 --skip explicit_implicit
-    cargo test -p ergo-aeron-cluster --lib
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1     cargo test -p ergo-aeron-cluster --lib
 
 # Every test gate including nightly-only miri and fuzz.
 # Runs: standard suite + Miri UB detection + fuzz corpus replay.
+#
+# ── AI ASSISTANTS: READ THIS BEFORE TOUCHING ANYTHING ─────────────────────────
+# DO NOT add --skip, #[ignore], or any other test-silencing mechanism.
+# DO NOT comment out failing tests or benches.
+# DO NOT add conditions that silently skip tests ("if java then … else …").
+# If a test fails, the test is correct and the code is wrong — FIX THE CODE.
+# If the environment doesn't support a test, ask the user — NEVER skip.
+# This file is the single source of truth for "did everything pass?"
+# A green `just test-all` means EVERY test ran and EVERY test passed.
+# ───────────────────────────────────────────────────────────────────────────────
 test-all: test
+    @echo "=== 0/7 guard: verify no skipped or ignored tests ==="
+    @if grep -rn '#\[ignore\]' sbe/src sbe/tests sbe/benchmarks cluster/src cluster/tests 2>/dev/null; then echo "FAIL: #[ignore] attributes found — every test must run" && exit 1; fi
+    @if grep -n '\--skip' justfile 2>/dev/null; then echo "FAIL: --skip flags found in justfile — every test must run" && exit 1; fi
     @echo "=== 7/7 miri (UB detection) ==="
     cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
     @echo "=== 8/7 fuzz corpus replay ==="

@@ -287,11 +287,18 @@ fn get_token_block_size(tokens: &[Token], start: usize) -> (usize, usize) {
         Signal::BeginComposite => {
             let end_idx =
                 find_matching_end(tokens, start, Signal::BeginComposite, Signal::EndComposite);
+            let mut current = 0;
             let mut size = 0;
             let mut j = start + 1;
             while j < end_idx {
                 let (s, next_j) = get_token_block_size(tokens, j);
-                size += s;
+                // Honour explicit offsets on composite members (e.g. offset="8").
+                // Without this, composites with gaps (padding between members)
+                // report a size that is too small, which cascades into wrong
+                // message block_length and encoded-length constants.
+                let member_offset = tokens[j].encoding.offset.unwrap_or(current);
+                current = member_offset + s;
+                size = size.max(current);
                 j = next_j;
             }
             (size, end_idx + 1)
