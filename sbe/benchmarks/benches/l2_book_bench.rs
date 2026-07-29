@@ -8,9 +8,10 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 #![allow(missing_docs, unused)]
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::l2book::*;
 use rust_decimal::Decimal as RustDecimal;
+use std::hint::black_box;
 
 fn make_decimal(mantissa: i64) -> RustDecimal {
     RustDecimal::from_i128_with_scale(mantissa as i128, 2)
@@ -30,6 +31,16 @@ fn bench_l2_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("l2_book/encode");
     for &n in &[10usize, 100, 1000] {
         let entries = make_entries(n);
+        let domain_entries = entries
+            .iter()
+            .map(|entry| {
+                (
+                    make_decimal(entry.price.mantissa()),
+                    make_decimal(entry.qty.mantissa()),
+                    entry.side,
+                )
+            })
+            .collect::<Vec<_>>();
         let msg_len = L2BookEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
 
         group.throughput(Throughput::Elements(n as u64));
@@ -40,32 +51,45 @@ fn bench_l2_encode(c: &mut Criterion) {
         // Closure add with rust_decimal domain_type setters (converter per entry)
         group.bench_with_input(
             BenchmarkId::new("add_closure_decimal", n),
-            &entries,
+            &domain_entries,
             |b, entries| {
                 let mut buf = vec![0u8; msg_len];
                 b.iter(|| {
-                    black_box(
-                        L2BookEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
-                            .unwrap()
-                            .levels(n as u16, |g| {
-                                for e in entries {
-                                    g.add(|entry| {
-                                        entry
-                                            .price(black_box(make_decimal(e.price.mantissa())))
-                                            .qty(black_box(make_decimal(e.qty.mantissa())))
-                                            .side(black_box(e.side));
-                                        Ok(())
-                                    })?;
-                                }
-                                Ok(())
-                            })
-                            .unwrap()
-                            .encoded_length_with_header(),
-                    )
+                    let entries = black_box(entries);
+                    let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
+                        .levels(n as u16, |g| {
+                            for (price, qty, side) in entries {
+                                g.add(|entry| {
+                                    entry.price(*price).qty(*qty).side(*side);
+                                    Ok(())
+                                })?;
+                            }
+                            Ok(())
+                        })
+                        .unwrap()
+                        .encoded_length_with_header();
+                    black_box(&buf[..len]);
+                    black_box(len)
                 });
             },
         );
 
+        group.bench_with_input(
+            BenchmarkId::new("bulk_add_wire", n),
+            &entries,
+            |b, entries| {
+                let mut buf = vec![0u8; msg_len];
+                b.iter(|| {
+                    let entries = black_box(entries);
+                    let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
+                        .levels(n as u16, |group| group.bulk_add(entries))
+                        .unwrap()
+                        .encoded_length_with_header();
+                    black_box(&buf[..len]);
+                    black_box(len)
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -78,9 +102,12 @@ fn bench_l2_decode(c: &mut Criterion) {
         let mut buf = vec![0u8; msg_len];
         let written = L2BookEncoder::wrap_and_apply_header(&mut buf, 0)
             .levels(n as u16, |g| {
-                for e in &entries { g.add_struct(e)?; }
+                for e in &entries {
+                    g.add_struct(e)?;
+                }
                 Ok(())
-            }).unwrap()
+            })
+            .unwrap()
             .encoded_length_with_header();
         assert_eq!(written, msg_len);
 

@@ -94,7 +94,7 @@ generated API is purpose-built for Rust rather than ported from Java.
 | **Trust boundary** | `try_from` / `try_wrap` for untrusted input; `wrap` for trusted — explicit in the type system |
 | **Composite wire images** | `#[repr(transparent)] Engine([u8; N])` — the value IS the on-wire bytes, zero-copy with portable LE/BE accessors |
 | **Domain types** | Map wire `Decimal` to `rust_decimal::Decimal` at the codec boundary — one line of config, no hand-rolled converters |
-| **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — 15-17% faster than per-entry loops for flat groups |
+| **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — measured about 23-25% lower encode latency than `add()` for 1,000-entry flat groups on the audited Apple M4 profiles |
 | **Zero dependencies at runtime** | Generated codecs embed their own `sbe_rt` — no `ergo-sbe` on your critical path |
 
 ## Contents
@@ -287,7 +287,7 @@ let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .encoded_length_with_header();
 ```
 
-**Over (interrupted chain, rebinding):**
+**Avoid (interrupted chain, rebinding):**
 
 ```text
 // Each `let` breaks the chain and splays the pipeline across the screen.
@@ -920,7 +920,7 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **NULL / MIN / MAX** | Schema sentinels as consts | `MODEL_YEAR_NULL` · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
 | **Version-aware fields** | `sinceVersion` / acting version | `Option` or skip on older wire · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
 | **Groups / nested groups** | Repeating dimensions | `bids(n, \|g\| g.add(…))?` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [l3_orderbook_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_orderbook_test.rs) |
-| **Bulk group encode / decode** | `bulk_add(&[Entry])` / `bulk_decode() -> Vec<Entry>` for flat groups | 15-17% faster than per-entry `add()` · [group_encode_bench](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/group_encode_bench.rs) |
+| **Bulk group encode / decode** | `bulk_add(&[Entry])` / `bulk_decode() -> Vec<Entry>` for flat groups | About 23-25% lower encode latency than per-entry `add()` for the audited 1,000-entry cases; remeasure for your schema · [group_encode_bench](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/group_encode_bench.rs) |
 | **Var-data / text** | Length-prefix; optional UTF-8/ASCII | `manufacturer(b"Honda")?` · `*_as_str` when encoding set · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **Fixed arrays + bulk helpers** | Arrays, put, pad string, copy-out | `put_some_numbers(…)` · `vehicle_code_str` · `copy_vehicle_code` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
 | **Enums / sets / bool** | Wire enums, bitsets, `_bool` | `available()` / `available_bool(true)` · [comprehensive_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs) |

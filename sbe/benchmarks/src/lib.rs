@@ -48,3 +48,24 @@ pub mod sbe_tool_car {
 pub mod sbe_tool_ob {
     include!("sbe_tool_ob_patched.rs");
 }
+
+/// Wrap the sbe-tool Car decoder at a framed message's body.
+///
+/// `message_offset` points to the first byte of the standard eight-byte SBE
+/// header. The generated sbe-tool `wrap` API expects the body offset instead.
+#[inline]
+pub fn sbe_tool_car_body_decoder(
+    buf: &[u8],
+    message_offset: usize,
+    acting_block_length: u16,
+    acting_version: u16,
+) -> sbe_tool_car::sbe_tool::car_codec::decoder::CarDecoder<'_> {
+    use sbe_tool_car::sbe_tool::{ReadBuf, car_codec::decoder::CarDecoder, message_header_codec};
+
+    CarDecoder::default().wrap(
+        ReadBuf::new(buf),
+        message_offset + message_header_codec::ENCODED_LENGTH,
+        acting_block_length,
+        acting_version,
+    )
+}

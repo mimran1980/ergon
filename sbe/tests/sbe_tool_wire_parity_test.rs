@@ -53,6 +53,9 @@
 
 // ── ergo-sbe Car (golden codegen snapshot) ────────────────────────────────
 
+// Keep the generated snapshot in generator formatting; stability_test compares
+// its canonical syntax rather than rustfmt layout.
+#[rustfmt::skip]
 #[path = "golden/car_example.rs"]
 mod ergo;
 
@@ -463,7 +466,10 @@ fn dual_encode(label: &str, p: &CarPayload) -> Vec<u8> {
     let tl = p.encode_tool(&mut tool_buf);
     let ergo = &ergo_buf[..el];
     let tool = &tool_buf[..tl];
-    assert_eq!(el, tl, "{label}: encoded length mismatch — ergon={el}, sbe_tool={tl}");
+    assert_eq!(
+        el, tl,
+        "{label}: encoded length mismatch — ergon={el}, sbe_tool={tl}"
+    );
     assert_header_constants(ergo);
     assert_header_constants(tool);
     assert_frames_eq(label, ergo, tool);

@@ -1,5 +1,12 @@
 # Benchmarks
 
+> **Benchmark review requested.** Generated-codec benchmarking is notoriously
+> difficult and easy to get wrong. Surprising results should be presumed to be
+> benchmark defects until wire parity, equal work, optimizer opacity,
+> sufficiently amplified timing, both LTO profiles, and optimized
+> assembly/instruction counts agree. Please review the methodology and report
+> mistakes; these tables are evidence under review, not unquestionable facts.
+
 ergon's maintained benchmarks compare generated codecs with official
 **sbe-tool** output performing equivalent work. Results are machine- and
 toolchain-specific, so this repository documents the method and gate rather
@@ -9,43 +16,94 @@ than retaining dated point estimates as release guarantees.
 
 | | |
 |---|---|
-| **Date** | 2026-07-27 |
-| **Release tree** | 0.1.2 working tree |
+| **Date** | 2026-07-29 |
+| **Release tree** | `feat-0.1.4` fairness-correction working tree |
 | **Host** | Apple M4 (macOS Darwin, arm64) |
 | **Toolchain** | rustc 1.95.0 |
-| **SBE gate** | **9/9 PASS** |
-| **Cluster gate** | **5/5 PASS** |
+| **Benchmark profiles** | LTO on and LTO off; codegen-units=1 |
+| **SBE gate** | **10/10 at or below 1.00 in both profiles** |
+| **Cluster gate** | Last run 2026-07-27: **5/5 PASS** |
 
 ### SBE codec gate — `just bench`
 
-All 9 maintained scenarios pass (ratio = ergo-sbe / sbe-tool; target ≤ 1.00
-with the gate's 0.5% noise tolerance):
+Ratios are ergon / sbe-tool. Every maintained comparison has a strict `1.00`
+ceiling plus the gate's 0.5% noise tolerance. The table uses Criterion's
+regression point estimate—the estimator printed as `time` by Criterion and
+used by the gate. Tiny operations and full wire encode repeat 1,024 operations
+per Criterion iteration; their displayed values below are derived per
+operation. Do not treat those absolute sub-nanosecond values as portable
+latencies.
 
-| Scenario | Ratio | Status |
-|----------|-------|--------|
-| decode_scalar | 1.0000 | PASS |
-| decode_array | 0.9990 | PASS |
-| decode_composite | 1.0037 | PASS |
-| decode_full_message | 0.9190 | PASS |
-| decode_entry_point | 0.8517 | PASS |
-| encode/scalar | 0.7527 | PASS |
-| encode/throughput_10k | 0.9701 | PASS |
-| throughput/batch_10k | 0.9679 | PASS |
-| wire_parity/encode_full | 0.7041 | PASS |
+| Scenario | LTO ergon / sbe-tool | LTO ratio | No-LTO ergon / sbe-tool | No-LTO ratio |
+|---|---:|---:|---:|---:|
+| decode scalar | 0.708 / 0.773 ns | 0.9159 | 0.553 / 0.625 ns | 0.8850 |
+| decode array | 0.512 / 0.842 ns | 0.6080 | 0.500 / 0.843 ns | 0.5938 |
+| decode composite | 0.540 / 0.587 ns | 0.9211 | 0.526 / 0.570 ns | 0.9229 |
+| decode full message | 10.794 / 13.347 ns | 0.8087 | 10.887 / 13.350 ns | 0.8156 |
+| decode entry point | 0.684 / 1.186 ns | 0.5767 | 0.678 / 0.950 ns | 0.7138 |
+| encode scalar, header + body | 1.481 / 2.049 ns | 0.7226 | 1.454 / 2.037 ns | 0.7140 |
+| encode scalar, body only | 1.192 / 1.208 ns | 0.9867 | 1.186 / 1.210 ns | 0.9801 |
+| encode throughput, 10k | 12.349 / 14.251 µs | 0.8665 | 12.260 / 13.986 µs | 0.8766 |
+| decode throughput, 10k | 8.687 / 9.357 µs | 0.9284 | 8.481 / 9.359 µs | 0.9062 |
+| full wire encode | 3.780 / 5.697 ns | 0.6634 | 4.489 / 5.693 ns | 0.7885 |
 
 Notes from this cycle:
 
-- The maintained parity gate and the expanded matrix, alignment, cold-path,
-  and warmed-HDR diagnostic suites completed.
-- `wire_parity/encode_full` is now a ninth maintained gate and compares
-  byte-identical full-message encodes.
-- Encode benches **reuse pre-sized buffers** outside `b.iter` (no alloc on the
-  timed path). Batch encode previously used `iter_batched(|| vec![…])`, which
-  still allocated between iterations.
-- `throughput/batch_10k` strides **absolute offsets** into one prebuilt buffer
-  (no per-message re-slice) for equal-work with sbe-tool.
-- Criterion function names for the reference arm are **`sbe-tool`** (not
-  `aeron`).
+- Previous decode results were invalid: sbe-tool direct decoders were wrapped
+  at the header offset and read header bytes as body fields.
+- Static fixture access was constant-foldable because only decoded results
+  were black-boxed. The corrected suite uses `std::hint::black_box` on decoder
+  references or input slices before access.
+- Every encode case asserts byte equality; every decode case asserts fixed,
+  group, nested-group, and var-data value equality before timing.
+- Composite and full traversal now perform symmetric wrapper/header work.
+- Public generated fixed/composite/set/enum setters, stage transitions,
+  group iterators, var-data methods, and length builders now carry explicit
+  inline intent. Before this fix, full no-LTO encode and decode lost to
+  sbe-tool even though the LTO profile passed.
+- sbe-tool performs well in both profiles. Its stable no-LTO performance is
+  the reason LTO-off remains a required gate rather than a diagnostic.
+- “Full message” now reads every encoded fixed/composite member before
+  traversing every dynamic member. The prior dynamic-tail-only result was
+  equal work between codecs but mislabeled.
+- Header-only, body-only, and header-plus-body scalar encode are separate. The
+  body-only setters are effectively tied on this run; the header-inclusive
+  ratio is not presented as field-setter performance.
+- Buffers and inputs are allocated once outside `b.iter`; timed paths observe
+  the encoded byte range.
+- The gate uses Criterion's regression estimate consistently. A previous gate
+  revision mixed the displayed regression result with the raw sample median;
+  on a noisy run those estimators disagreed enough to reverse a tiny ratio.
+
+### Group encode: LTO on and off
+
+sbe-tool performs consistently with and without LTO because its generated hot
+methods carry explicit inline intent. Before this correction, ergon's closure
+path was about 445 ns with LTO but **2.093 µs without LTO**, while sbe-tool
+remained about 956 ns. The missing inline annotations were an ergon codegen
+defect, not an sbe-tool `Option<parent>` penalty.
+
+After adding inline intent and fixing `bulk_add`:
+
+| 1,000 primitive entries | LTO on | LTO off |
+|---|---:|---:|
+| ergon `add_closure` | 415.0 ns | 428.4 ns |
+| ergon `add_struct` | 508.7 ns | 428.6 ns |
+| ergon `bulk_add` | **319.5 ns** | **322.6 ns** |
+| sbe-tool | 949.1 ns | 958.3 ns |
+
+For 1,000 Decimal-composite entries:
+
+| Path | LTO on | LTO off |
+|---|---:|---:|
+| wire closure | 505.5 ns | 511.3 ns |
+| prebuilt `rust_decimal` domain conversion | 1.264 µs | 1.525 µs |
+| `add_struct` | 501.0 ns | 501.8 ns |
+| `bulk_add` | **389.7 ns** | **389.6 ns** |
+
+`bulk_add` now validates one exact output region and iterates
+`chunks_exact_mut`, eliminating the three inner field bounds checks retained by
+the removed implementation.
 
 ### Cluster codec gate — `just bench-cluster`
 
@@ -140,7 +198,12 @@ comparison must:
 - avoid measuring setup in only one arm;
 - identify templates and schemas from codec contracts rather than stale
   literals;
-- produce an ergo-sbe/sbe-tool ratio no greater than `1.00`.
+- stay within the strict `1.00` per-scenario ceiling in
+  `scripts/check-bench-gate.sh`.
+
+A ceiling above `1.00` records a repeatable, fair sbe-tool win; it is not
+permission to add overhead. Changing a ceiling requires a fresh fairness audit
+and recorded measurements, not merely a failing gate.
 
 ## Expanded codec matrix
 
@@ -210,9 +273,11 @@ no mandatory aligned-buffer or pooling API.
 ### Stable instruction counts
 
 `instruction_counts` uses Iai-Callgrind for checked entry, trusted scalar
-access, full verification, and metadata lookup. The weekly Linux job publishes
-the `target/iai` result as an artifact. This avoids treating sub-nanosecond
-wall-clock noise as an instruction regression.
+access, full verification, metadata lookup, and amplified ergon/sbe-tool scalar
+and composite parity. This avoids treating sub-nanosecond wall-clock noise as
+an instruction regression. The suite is runnable on Linux with Valgrind; there
+is not yet a checked-in scheduled Iai workflow or instruction baseline, so no
+automated instruction-regression claim is made here.
 
 ```sh
 # Linux with Valgrind and iai-callgrind-runner 0.16.1 installed
@@ -224,7 +289,7 @@ just bench-instructions
 HDR Histogram is reserved for warmed batches where timer resolution is
 meaningful. `latency_distribution` reports p50, p99, and p99.9 for batches of
 1,000 decoded messages after warm-up. Per-field microbenchmarks continue to use
-Criterion medians and confidence intervals.
+Criterion regression estimates and confidence intervals.
 
 Apple M4 results on 2026-07-27: p50 250 ns, p99 292 ns, p99.9 375 ns per
 warmed 1,000-message batch.
@@ -253,21 +318,24 @@ Latest fresh probe on the Apple M4 host (2026-07-27, rustc 1.95.0):
 
 ## Regression policy
 
-- Every machine keeps the existing sbe-tool equal-work ratio gate.
-- Shared GitHub runners compile every benchmark and publish Criterion
-  diagnostics; raw nanosecond deltas do not block merges.
-- A dedicated stable runner, when configured, must reject a hot-path median
-  regression above 3%, an Iai instruction-count regression above 2%, any new
-  allocation, or a warmed batch/cluster p99 regression above 5%.
-- Criterion medians and confidence intervals are the authority for
-  microbenchmarks. HDR p50/p99/p99.9 applies only to warmed batch and
+- Every machine keeps the sbe-tool equal-work gate with a `1.00` ceiling for
+  every maintained comparison under LTO and no LTO.
+- GitHub CI runs both profiles, applies the ratio gate, and publishes Criterion
+  diagnostics. Borderline failures require a rerun and fairness review because
+  shared-runner timing is noisy; the ceiling is not raised to make them pass.
+- A dedicated stable runner, when configured, must reject a hot-path Criterion
+  regression-estimate increase above 3%, an Iai instruction-count regression
+  above 2%, any new allocation, or a warmed batch/cluster p99 regression above
+  5%.
+- Criterion's regression estimate and confidence interval are the maintained
+  microbenchmark estimator. HDR p50/p99/p99.9 applies only to warmed batch and
   Aeron/cluster end-to-end measurements.
 
 The expanded Criterion matrix, alignment, cold-path, and HDR suites were
-executed on 2026-07-27 with rustc 1.95.0; Iai-Callgrind was compile-validated
-and is executed by the Linux/Valgrind job. Machine-specific observations
-belong in CI artifacts or a release record; they are not portable API
-promises.
+executed on 2026-07-27 with rustc 1.95.0. Iai-Callgrind is compile-validated
+but was not executed on this macOS host because Valgrind is unavailable.
+Machine-specific observations belong in CI artifacts or a release record;
+they are not portable API promises.
 
 ## Cluster codec gate
 
@@ -282,14 +350,16 @@ release gates.
 
 ## Interpreting results
 
-Criterion reports live under `target/criterion/`. Review medians and confidence
-intervals, not a single noisy iteration. For a material generator change:
+Criterion reports live under `target/criterion/`. Review the regression
+estimate and confidence interval, not a single noisy iteration or a different
+estimator selected after seeing the result. For a material generator change:
 
 1. run on an otherwise idle machine;
 2. record the commit, Rust toolchain, target, profile, and host;
 3. confirm both arms execute the intended body;
 4. repeat suspicious or borderline comparisons;
-5. keep the change only if every maintained ratio passes.
+5. keep the change only if every maintained ratio stays within its reviewed
+   ceiling.
 
 Capture immutable numbers in a release artifact when a particular release needs
 a benchmark record; refresh the **Latest run** table after material hot-path

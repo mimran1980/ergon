@@ -3883,6 +3883,7 @@ fn generate_group_decoder(
             impl<'a> Iterator for #decoder_ident<'a> {
                 type Item = #entry_decoder_ident<'a>;
 
+                #[inline]
                 fn next(&mut self) -> Option<Self::Item> {
                     if self.count == 0 {
                         return None;
@@ -3895,6 +3896,7 @@ fn generate_group_decoder(
             }
 
             impl<'a> ExactSizeIterator for #decoder_ident<'a> {
+                #[inline]
                 fn len(&self) -> usize {
                     self.count
                 }
@@ -3905,6 +3907,7 @@ fn generate_group_decoder(
             impl<'a> Iterator for #decoder_ident<'a> {
                 type Item = Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError>;
 
+                #[inline]
                 fn next(&mut self) -> Option<Self::Item> {
                     if self.count == 0 {
                         return None;
@@ -3924,6 +3927,7 @@ fn generate_group_decoder(
             }
 
             impl<'a> ExactSizeIterator for #decoder_ident<'a> {
+                #[inline]
                 fn len(&self) -> usize {
                     self.count
                 }
@@ -4898,12 +4902,14 @@ fn generate_conversion_impl_blocks(
         let ts = quote::quote! {
             impl TryFromSbe<#bt_ident> for bool {
                 type Error = &'static str;
+                #[inline]
                 fn try_from_sbe(wire: #bt_ident) -> Result<Self, Self::Error> {
                     Ok(bool::from(wire))
                 }
             }
             impl TryToSbe<#bt_ident> for bool {
                 type Error = &'static str;
+                #[inline]
                 fn try_to_sbe(&self) -> Result<#bt_ident, Self::Error> {
                     Ok(#bt_ident::from(*self))
                 }
@@ -4931,6 +4937,7 @@ fn generate_conversion_impl_blocks(
         let ts = quote::quote! {
             impl TryFromSbe<#dec_ident> for rust_decimal::Decimal {
                 type Error = &'static str;
+                #[inline]
                 fn try_from_sbe(wire: #dec_ident) -> Result<Self, Self::Error> {
                     let mantissa = wire.mantissa() as i128;
                     let exponent = wire.exponent();
@@ -4949,6 +4956,7 @@ fn generate_conversion_impl_blocks(
             }
             impl TryToSbe<#dec_ident> for rust_decimal::Decimal {
                 type Error = &'static str;
+                #[inline]
                 fn try_to_sbe(&self) -> Result<#dec_ident, Self::Error> {
                     let mantissa: i64 = self.mantissa()
                         .try_into()
@@ -4964,6 +4972,7 @@ fn generate_conversion_impl_blocks(
         let ts = quote::quote! {
             impl TryFromSbe<u64> for chrono::DateTime<chrono::Utc> {
                 type Error = &'static str;
+                #[inline]
                 fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> {
                     let secs = (wire / 1_000_000_000) as i64;
                     let nsec = (wire % 1_000_000_000) as u32;
@@ -4973,6 +4982,7 @@ fn generate_conversion_impl_blocks(
             }
             impl TryToSbe<u64> for chrono::DateTime<chrono::Utc> {
                 type Error = &'static str;
+                #[inline]
                 fn try_to_sbe(&self) -> Result<u64, Self::Error> {
                     let total_nanos = self.timestamp_nanos_opt()
                         .ok_or("timestamp_nanos overflow")?;
@@ -5373,11 +5383,13 @@ fn generate_encoded_length_builder(
             impl #prefix_ident {
                 pub const ENTRY_BLOCK_LENGTH: usize = #block_length_lit;
 
+                #[inline]
                 pub fn new() -> Self {
                     Self { len: 0, written: 0 }
                 }
 
                 /// Register one entry.
+                #[inline]
                 pub fn add(&mut self) -> sbe_rt::GroupResult {
                     self.len = self.len.checked_add(Self::ENTRY_BLOCK_LENGTH)
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
@@ -5387,6 +5399,7 @@ fn generate_encoded_length_builder(
 
                 /// Register `n` entries at once — equivalent to calling
                 /// [`add`](Self::add) `n` times.
+                #[inline]
                 pub fn add_n(&mut self, n: usize) -> sbe_rt::GroupResult {
                     self.len = self.len
                         .checked_add(Self::ENTRY_BLOCK_LENGTH.checked_mul(n)
@@ -5413,6 +5426,7 @@ fn generate_encoded_length_builder(
             ts.extend(quote::quote! {
                 impl #prefix_ident {
                     /// Track a nested repeating group inside one entry.
+                    #[inline]
                     pub fn #ng_snake<F>(
                         &mut self, count: #ng_count_ty, f: F,
                     ) -> sbe_rt::GroupResult
@@ -5439,6 +5453,7 @@ fn generate_encoded_length_builder(
 
                     /// Unknown-size variant — validates the count fits in
                     /// the wire type rather than requiring an exact match.
+                    #[inline]
                     pub fn #ng_snake_unknown<F>(
                         &mut self, f: F,
                     ) -> sbe_rt::GroupResult
@@ -5492,6 +5507,7 @@ fn generate_encoded_length_builder(
             ts.extend(quote::quote! {
                 impl #prefix_ident {
                     /// Track one variable-length data field inside an entry.
+                    #[inline]
                     pub fn #vd_snake(
                         &mut self, byte_len: usize,
                     ) -> sbe_rt::GroupResult {
@@ -5549,6 +5565,7 @@ fn generate_encoded_length_builder(
 
                 /// Start computing the encoded length of this message.
                 /// Initial value is the fixed-field block length.
+                #[inline]
                 pub fn new() -> Self {
                     Self { len: Self::BLOCK_LENGTH }
                 }
@@ -5582,6 +5599,7 @@ fn generate_encoded_length_builder(
                         /// Register this flat group with a known entry count.
                         /// No closure needed — entries have no nested groups
                         /// or var-data.
+                        #[inline]
                         #[must_use]
                         pub fn #g_snake(
                             self, count: #count_ty,
@@ -5602,6 +5620,7 @@ fn generate_encoded_length_builder(
             } else {
                 ts.extend(quote::quote! {
                 impl #current_stage {
+                    #[inline]
                     #[must_use]
                     pub fn #g_snake<F>(
                         self, count: #count_ty, f: F,
@@ -5635,6 +5654,7 @@ fn generate_encoded_length_builder(
 
             ts.extend(quote::quote! {
                 impl #current_stage {
+                    #[inline]
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
                         self, f: F,
@@ -5695,6 +5715,7 @@ fn generate_encoded_length_builder(
             ts.extend(quote::quote! {
                 impl #current_stage {
                     /// Track one variable-length data field.
+                    #[inline]
                     #[must_use]
                     pub fn #vd_snake(
                         self, byte_len: usize,
@@ -5719,10 +5740,12 @@ fn generate_encoded_length_builder(
         ts.extend(quote::quote! {
             impl #complete_ident {
                 /// SBE message body length (excluding the message header).
+                #[inline]
                 pub fn encoded_length(&self) -> usize { self.len }
 
                 /// Total SBE message length including the schema-declared
                 /// message header (`HEADER_LENGTH`).
+                #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.len + #prefix_ident::HEADER_LENGTH
                 }
@@ -6322,6 +6345,7 @@ fn generate_message_encoder(
                 let target_type: syn::Type = syn::parse_str(&to_pascal_case(comp_name)).unwrap();
                 let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #comp_size_lit]
@@ -6342,6 +6366,7 @@ fn generate_message_encoder(
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
@@ -6352,6 +6377,7 @@ fn generate_message_encoder(
                 if is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
                     impl_contents.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             self.buf[#body_offset_lit] = val as u8;
                             self
@@ -6367,6 +6393,7 @@ fn generate_message_encoder(
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
@@ -6541,6 +6568,7 @@ fn generate_message_encoder(
                     /// return `()` or `Result<(), E>` (via
                     /// Closures return `GroupResult`; `?` just works. a
                     /// separate `try_*` method name.
+                    #[inline]
                     #[must_use]
                     pub fn #g_snake<F>(
                         mut self,
@@ -6587,6 +6615,7 @@ fn generate_message_encoder(
                     ///
                     /// Prefer [`Self::#g_snake`] when the count is known at
                     /// compile time or from a small input.
+                    #[inline]
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
                         mut self,
@@ -6699,6 +6728,7 @@ fn generate_message_encoder(
 
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
+                    #[inline]
                     #[must_use]
                     pub fn #vd_snake(
                         mut self,
@@ -6708,6 +6738,7 @@ fn generate_message_encoder(
                         #shared_body
                     }
 
+                    #[inline]
                     #[must_use]
                     pub fn #vd_snake_unchecked(
                         mut self,
@@ -6732,6 +6763,7 @@ fn generate_message_encoder(
                     /// Returns the next stage on success; on failure the
                     /// caller error propagates unchanged and no partial
                     /// data is published.
+                    #[inline]
                     #[must_use]
                     pub fn #vd_snake_with<E, F>(
                         mut self,
@@ -7068,6 +7100,7 @@ fn generate_group_encoder(
 
             /// Write one group entry. Closure may return `()` or `Result<(), E>`
             /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
+            #[inline]
             #[must_use]
             pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
             where
@@ -7082,6 +7115,7 @@ fn generate_group_encoder(
             /// The group position is pre-advanced, so fields are written
             /// to the correct offset.
             #[must_use]
+            #[inline]
             pub fn start_entry(&mut self) -> Result<#entry_enc_ident<'_>, sbe_rt::EncodeError> {
                 if self.written as u32 >= self.count as u32 {
                     return Err(sbe_rt::EncodeError::GroupFull {
@@ -7114,6 +7148,7 @@ fn generate_group_encoder(
         let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
         let mut struct_fields = proc_macro2::TokenStream::new();
         let mut struct_write = proc_macro2::TokenStream::new();
+        let mut bulk_struct_write = proc_macro2::TokenStream::new();
         for f in &g.fields {
             if f.presence == Presence::Constant {
                 continue;
@@ -7128,11 +7163,18 @@ fn generate_group_encoder(
                     struct_write.extend(quote::quote! {
                         self.buf[pos + #f_offset..pos + #f_offset + #f_size].copy_from_slice(&entry.#f_name.0);
                     });
+                    bulk_struct_write.extend(quote::quote! {
+                        slot[#f_offset..#f_offset + #f_size].copy_from_slice(&entry.#f_name.0);
+                    });
                 }
                 FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
                     let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
                     struct_write.extend(quote::quote! {
                         self.buf[pos + #f_offset..pos + #f_offset + #f_size]
+                            .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
+                    });
+                    bulk_struct_write.extend(quote::quote! {
+                        slot[#f_offset..#f_offset + #f_size]
                             .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
                     });
                 }
@@ -7148,10 +7190,23 @@ fn generate_group_encoder(
                             idx += 1;
                         }
                     });
+                    bulk_struct_write.extend(quote::quote! {
+                        let mut idx = 0usize;
+                        while idx < #len_lit {
+                            let offset = #f_offset + idx * #prim_size_lit;
+                            slot[offset..offset + #prim_size_lit]
+                                .copy_from_slice(&entry.#f_name[idx].#to_endian());
+                            idx += 1;
+                        }
+                    });
                 }
                 FieldType::Primitive(_, None) => {
                     struct_write.extend(quote::quote! {
                         self.buf[pos + #f_offset..pos + #f_offset + #f_size]
+                            .copy_from_slice(&entry.#f_name.#to_endian());
+                    });
+                    bulk_struct_write.extend(quote::quote! {
+                        slot[#f_offset..#f_offset + #f_size]
                             .copy_from_slice(&entry.#f_name.#to_endian());
                     });
                 }
@@ -7168,6 +7223,7 @@ fn generate_group_encoder(
             impl<'a> #group_enc_ident<'a> {
                 /// Write one entry from a struct. Faster than [`Self::add`] when
                 /// the entry has no nested groups or var-data.
+                #[inline]
                 pub fn add_struct(&mut self, entry: &#entry_struct_ident) -> Result<(), sbe_rt::EncodeError> {
                     if self.written as u32 >= self.count as u32 {
                         return Err(sbe_rt::EncodeError::GroupFull {
@@ -7186,6 +7242,55 @@ fn generate_group_encoder(
                     self.pos += block_len;
                     self.written += 1;
                     #struct_write
+                    Ok(())
+                }
+
+                /// Encode a slice of fixed-size entries after validating the
+                /// complete destination region once.
+                #[inline]
+                pub fn bulk_add(&mut self, entries: &[#entry_struct_ident]) -> Result<(), sbe_rt::EncodeError> {
+                    let count = entries.len();
+                    if count == 0 {
+                        return Ok(());
+                    }
+                    let attempted = (self.written as usize)
+                        .checked_add(count)
+                        .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    if attempted > self.count as usize {
+                        return Err(sbe_rt::EncodeError::GroupFull {
+                            declared: self.count as u32,
+                            attempted: attempted.min(u32::MAX as usize) as u32,
+                        });
+                    }
+                    let block_len = Self::ENTRY_BLOCK_LENGTH;
+                    if block_len == 0 {
+                        self.written = attempted as #count_ty;
+                        return Ok(());
+                    }
+                    let needed = count
+                        .checked_mul(block_len)
+                        .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    let end = self
+                        .pos
+                        .checked_add(needed)
+                        .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    if end > self.buf.len() {
+                        return Err(sbe_rt::EncodeError::BufferTooShort {
+                            needed,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        });
+                    }
+                    {
+                        let region = &mut self.buf[self.pos..end];
+                        for (entry, slot) in entries
+                            .iter()
+                            .zip(region.chunks_exact_mut(block_len))
+                        {
+                            #bulk_struct_write
+                        }
+                    }
+                    self.pos = end;
+                    self.written = attempted as #count_ty;
                     Ok(())
                 }
             }
@@ -7227,6 +7332,7 @@ fn generate_group_encoder(
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
                     let sz = syn::LitInt::new(&prim_size.to_string(), span);
                     entry_methods.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_ident(&mut self, val: [#r_ty; #len_lit]) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
                             let mut idx = 0;
@@ -7239,6 +7345,7 @@ fn generate_group_encoder(
                     });
                 } else if prim_size == 1 {
                     entry_methods.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
                             self.buf[self.entry_start + #f_offset] = val as u8;
                             self
@@ -7247,6 +7354,7 @@ fn generate_group_encoder(
                 } else {
                     let sz = syn::LitInt::new(&prim_size.to_string(), span);
                     entry_methods.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
                             self.buf[offset..offset + #sz].copy_from_slice(&val.#to_endian());
@@ -7262,6 +7370,7 @@ fn generate_group_encoder(
                 let target = syn::Ident::new(&to_pascal_case(comp_name), span);
                 let sz = syn::LitInt::new(&comp_size.to_string(), span);
                 entry_methods.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&val.0);
@@ -7277,6 +7386,7 @@ fn generate_group_encoder(
                 let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
                 let sz = syn::LitInt::new(&encoding_type.size().to_string(), span);
                 entry_methods.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&(val as #r_ty).#to_endian());
@@ -7286,6 +7396,7 @@ fn generate_group_encoder(
                 if is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_snake), span);
                     entry_methods.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             self.buf[self.entry_start + #f_offset] = val as u8;
                             self
@@ -7300,6 +7411,7 @@ fn generate_group_encoder(
                 let target = syn::Ident::new(&to_pascal_case(set_name), span);
                 let sz = syn::LitInt::new(&encoding_type.size().to_string(), span);
                 entry_methods.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&val.0.#to_endian());
@@ -7325,6 +7437,7 @@ fn generate_group_encoder(
         let ng_count_ty: syn::Type = syn::parse_str(rust_type(ng_num_prim)).unwrap();
 
         entry_methods.extend(quote::quote! {
+            #[inline]
             #[must_use]
             pub fn #ng_snake<F>(&mut self, count: #ng_count_ty, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
             where
@@ -7365,6 +7478,7 @@ fn generate_group_encoder(
             }
 
             /// Nested-group `_unknown_size` variant — back-patches count.
+            #[inline]
             pub fn #ng_snake_unknown<F>(&mut self, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
             where
                 F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
@@ -7403,6 +7517,7 @@ fn generate_group_encoder(
         let vd_name_lit = syn::LitStr::new(&vd.name, span);
 
         entry_methods.extend(quote::quote! {
+            #[inline]
             #[must_use]
             pub fn #vd_snake(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {
                 let needed = #pfx + data.len();

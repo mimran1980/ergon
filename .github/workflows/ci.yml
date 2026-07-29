@@ -155,8 +155,7 @@ jobs:
   bench:
     if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    continue-on-error: true
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -168,13 +167,23 @@ jobs:
 
       - run: cargo bench -p ergo-sbe-benchmarks --no-run
       - run: cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
+      - run: ./scripts/check-bench-gate.sh target/criterion 0.005 sbe
+      - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
+      - run: ./scripts/check-bench-gate.sh sbe/benchmarks/target/bench-no-lto/criterion 0.005 sbe
+      - run: cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
+      - run: cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
+      - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
+      - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
       - run: cargo bench -p ergo-aeron-cluster --no-run
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: shared-runner-criterion-diagnostics
-          path: target/criterion
+          path: |
+            target/criterion
+            target/bench-no-lto/criterion
+            sbe/benchmarks/target/bench-no-lto/criterion
           if-no-files-found: ignore
 
   package:

@@ -181,6 +181,119 @@ fn basic_group_types_exist() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Flat group slices use one checked destination region and preserve entry order.
+#[test]
+fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &Paths::sbe_tool_test_resource("basic-group-schema.xml"),
+        "basic_group_bulk",
+    );
+    compile_and_run(
+        "basic_group_bulk",
+        &src,
+        r#"
+        let first = EntriesEntry {
+            tag_group1: {
+                let mut symbol = [0u8; 20];
+                symbol[..3].copy_from_slice(b"ABC");
+                symbol
+            },
+            tag_group2: 101,
+        };
+        let second = EntriesEntry {
+            tag_group1: {
+                let mut symbol = [0u8; 20];
+                symbol[..3].copy_from_slice(b"XYZ");
+                symbol
+            },
+            tag_group2: -202,
+        };
+        let entries = [first.clone(), second.clone()];
+
+        let mut buf = [0u8; 128];
+        let len = TestMessage1Encoder::wrap_and_apply_header(&mut buf, 0)
+            .entries(2, |group| group.bulk_add(&entries))?
+            .encoded_length_with_header();
+        let mut decoded = TestMessage1Decoder::try_from(&buf[..len])?.into_entries()?;
+        let row = decoded.next().unwrap();
+        assert_eq!(row.tag_group1(), first.tag_group1);
+        assert_eq!(row.tag_group2(), first.tag_group2);
+        let row = decoded.next().unwrap();
+        assert_eq!(row.tag_group1(), second.tag_group1);
+        assert_eq!(row.tag_group2(), second.tag_group2);
+        assert!(decoded.next().is_none());
+
+        let mut full_buf = [0u8; 128];
+        let len = TestMessage1Encoder::wrap_and_apply_header(&mut full_buf, 0)
+            .entries(1, |group| {
+                let err = group.bulk_add(&entries).unwrap_err();
+                assert!(matches!(
+                    err,
+                    sbe_rt::EncodeError::GroupFull {
+                        declared: 1,
+                        attempted: 2,
+                    }
+                ));
+                group.bulk_add(&entries[..1])
+            })?
+            .encoded_length_with_header();
+        assert_eq!(
+            TestMessage1Decoder::try_from(&full_buf[..len])?
+                .into_entries()?
+                .count(),
+            1
+        );
+
+        let mut short_buf = [0u8; 54];
+        let err = TestMessage1Encoder::wrap_and_apply_header(&mut short_buf, 0)
+            .entries(1, |group| group.bulk_add(&entries[..1]))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            sbe_rt::EncodeError::BufferTooShort {
+                needed: 28,
+                available: 27,
+            }
+        ));
+
+        let mut empty_buf = [0u8; 32];
+        let len = TestMessage1Encoder::wrap_and_apply_header(&mut empty_buf, 0)
+            .entries(0, |group| group.bulk_add(&[]))?
+            .encoded_length_with_header();
+        assert_eq!(len, 27);
+        "#,
+    );
+
+    Ok(())
+}
+
+/// Zero-width fixed entries carry count but no entry bytes; bulk encode must not panic.
+#[test]
+fn zero_block_group_bulk_add_records_count_without_chunks_panic()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &Paths::sbe_tool_test_resource("zero-block-group-schema.xml"),
+        "zero_block_group_bulk",
+    );
+    compile_and_run(
+        "zero_block_group_bulk",
+        &src,
+        r#"
+        let entries = [EntriesEntry {}, EntriesEntry {}, EntriesEntry {}];
+        let mut buf = [0u8; 12];
+        let len = ZeroBlockMessageEncoder::wrap_and_apply_header(&mut buf, 0)
+            .entries(3, |group| group.bulk_add(&entries))?
+            .encoded_length_with_header();
+        assert_eq!(len, 12);
+
+        let decoded = ZeroBlockMessageDecoder::try_from(&buf[..len])?.into_entries()?;
+        assert_eq!(decoded.count(), 3);
+        "#,
+    );
+
+    Ok(())
+}
+
 /// Triply-nested repeating groups.
 #[test]
 fn nested_group_types_exist() -> Result<(), Box<dyn std::error::Error>> {

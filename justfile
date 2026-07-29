@@ -52,7 +52,8 @@ check:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1     cargo test -p ergo-aeron-cluster --lib
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test -p ergo-aeron-cluster --lib
     cd samples/exchange-example && cargo fmt --check
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/exchange-example && cargo test -- --test-threads=1
@@ -108,7 +109,8 @@ test:
     ./scripts/regenerate-sbe-tool-reference.sh --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1     cargo test -p ergo-aeron-cluster --lib
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test -p ergo-aeron-cluster --lib
     @echo "=== 4/6 ergo-sbe doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
@@ -135,7 +137,8 @@ test:
 
 # Workspace unit tests only.
 test-unit:
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1     cargo test -p ergo-aeron-cluster --lib
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test -p ergo-aeron-cluster --lib
 
 # Every test gate including nightly-only miri and fuzz.
 # Runs: standard suite + Miri UB detection + fuzz corpus replay.
@@ -199,14 +202,29 @@ fix:
 # ── benchmarks ─────────────────────────────────────────────────────────────
 
 # Benchmark parity — ergo-sbe vs sbe-tool head-to-head.
-# Gate: ALL maintained ergo-sbe/sbe-tool ratios ≤ 1.00.
-# Uses wrap_unchecked for fair comparison (sbe-tool's wrap does not validate).
+# Gate: every maintained ergon/sbe-tool ratio must stay at or below 1.00.
+# Uses trusted direct wraps for fair comparison (sbe-tool's wrap does not validate).
 bench:
-    @echo "=== SBE perf parity ==="
+    @echo "=== SBE perf parity — LTO ==="
     cd sbe/benchmarks && cargo bench --bench perf_parity_bench
     @echo ""
-    @echo "=== Gate ==="
-    ./scripts/check-bench-gate.sh target/criterion
+    @echo "=== Gate — LTO ==="
+    ./scripts/check-bench-gate.sh target/criterion 0.005 sbe
+    @echo ""
+    @echo "=== SBE perf parity — no LTO ==="
+    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
+    @echo ""
+    @echo "=== Gate — no LTO ==="
+    ./scripts/check-bench-gate.sh sbe/benchmarks/target/bench-no-lto/criterion 0.005 sbe
+
+# Group-codegen comparison under both optimization profiles. sbe-tool is
+# intentionally measured in both: the audit found it stable without LTO while
+# pre-fix ergon regressed because generated entry setters did not inline.
+bench-groups:
+    cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
+    cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
+    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
+    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
 
 # Expanded non-gating codec matrix and offset/alignment diagnostics.
 bench-diagnostics:
@@ -228,4 +246,4 @@ bench-cluster:
     cargo bench -p ergo-aeron-cluster
     @echo ""
     @echo "=== Gate ==="
-    ./scripts/check-bench-gate.sh target/criterion
+    ./scripts/check-bench-gate.sh target/criterion 0.005 cluster

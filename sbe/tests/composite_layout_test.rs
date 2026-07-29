@@ -57,6 +57,31 @@ fn composite_is_transparent_wire_image_not_repr_c_fields() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Composite flyweights are private products of a checked/trusted message
+/// decoder, so their fixed-width member loads must not re-check slice bounds.
+#[test]
+fn composite_flyweight_accessors_use_trusted_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "comp_layout_trusted_reads");
+    let start = src
+        .find("impl<'a> EngineDecoder<'a>")
+        .ok_or_else(|| std::io::Error::other("missing EngineDecoder impl"))?;
+    let decoder_and_rest = &src[start..];
+    let end = decoder_and_rest
+        .find("pub struct CarDecoder")
+        .ok_or_else(|| std::io::Error::other("missing CarDecoder after EngineDecoder"))?;
+    let engine_decoder = &decoder_and_rest[..end];
+
+    assert!(
+        engine_decoder.contains("read_bytes_unchecked::<"),
+        "fixed-width EngineDecoder accessors must use trusted reads"
+    );
+    assert!(
+        !engine_decoder.contains("read_bytes::<"),
+        "EngineDecoder must not repeat bounds checks after its trust boundary"
+    );
+    Ok(())
+}
+
 /// Runtime: `.0` is the exact LE wire image; accessors match hand-decoded LE.
 #[test]
 fn composite_value_bytes_are_exact_le_wire_image() -> Result<(), Box<dyn std::error::Error>> {

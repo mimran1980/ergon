@@ -1423,6 +1423,32 @@ fn generated_code_has_inline_annotations() -> Result<(), Box<dyn std::error::Err
         "group decoder accessor `fuel_figures` missing #[inline]"
     );
     assert!(
+        src.contains("#[inline]\n    fn next(&mut self) -> Option<Self::Item>"),
+        "generated group Iterator::next missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    #[must_use]\n    pub fn fuel_figures<F>"),
+        "message group encoder `fuel_figures` missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    #[must_use]\n    pub fn manufacturer(\n        mut self,"),
+        "message var-data encoder `manufacturer` missing #[inline]"
+    );
+    assert!(
+        src.contains(
+            "#[inline]\n    #[must_use]\n    pub fn usage_description(\n        &mut self,"
+        ),
+        "entry var-data encoder `usage_description` missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    pub fn extras(&mut self, val: OptionalExtras)"),
+        "message set encoder `extras` missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    pub fn engine(&mut self, val: Engine)"),
+        "message composite encoder `engine` missing #[inline]"
+    );
+    assert!(
         inline_followed_by
             .iter()
             .any(|s| s.contains("fn is_empty(")),

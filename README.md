@@ -51,6 +51,12 @@ build, test, interoperability, and benchmark recipes.
 
 - Official SBE wire compatibility takes priority over API convenience.
 - Maintained hot paths are compared with the official SBE generator output.
+- Benchmark claims are parity-checked and profile-specific. The corrected suite
+  treats a repeatable sbe-tool win as a blocking benchmark/codegen defect and
+  publishes results with LTO both enabled and disabled.
+- Codec microbenchmarking is notoriously easy to get wrong. Benchmark results
+  are explicitly reviewable evidence, not product claims; surprising ratios
+  should be reported and treated as suspected benchmark defects first.
 - Checked entry points must report malformed input rather than manufacture
   default, empty, or lossy values.
 - The Cluster crate implements a client, not a consensus module, service

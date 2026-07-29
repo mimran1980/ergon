@@ -2,47 +2,74 @@
 
 ## [Unreleased]
 
-### Removed
-- **`bulk_add` removed from group encoders.** Despite hoisting bounds checks
-  outside the loop, benchmarks showed it is consistently 1.5-2× *slower* than
-  `add_closure` and `add_struct` across primitive and Decimal types. The entry
-  writer pattern (`add` with `&mut self` chainable methods) compiles to tighter
-  code that LLVM optimises better. DTO encode now always uses the closure path.
-
 ### Added
 - Benchmark fairness documentation (`sbe/benchmarks/README.md`) — mandatory
   checklist for every parity benchmark.
+- LTO-on and LTO-off group benchmark matrix. This exposed an ergon inlining
+  defect that the previous LTO-only results hid.
 - `just test-all` guard against `#[ignore]` and `--skip` — prevents tests
   from being silently skipped.
 - `group_encode_decimal_bench` — encode comparison with `rust_decimal::Decimal`
   converters.
 - sbe-tool comparison arm in `group_encode_bench`.
+- `bulk_add(&[Entry])` regression coverage for exact bytes, count overflow,
+  short buffers, and empty groups.
 
 ### Fixed
 - **Composite explicit-offset bug**: `get_token_block_size` summed child sizes
   ignoring `offset="N"` attributes on composite members. A composite with a
   field at `offset="8"` reported size 9 instead of 16, cascading into wrong
   `BLOCK_LENGTH` and `ENCODED_LENGTH` constants. Present since 0.1.0.
-- **Double bounds checks in `add_struct`/`bulk_add`**: `self.buf[pos..][..N]`
-  triggers two slice bounds checks; changed to `self.buf[pos..pos+N]` (one check).
-- **Unfair `parity/encode/throughput_10k`**: ergon used body-only `wrap(buf,8)`
-  while sbe-tool wrote headers via `header(0)` — fixed to header-inclusive comparison.
-- **Wrong sbe-tool wrap offset in `parity/encode/scalar`**: `wrap(buf,0)` instead
-  of `wrap(buf,8)` (`message_header_codec::ENCODED_LENGTH`), causing header overwrite.
-- All parity benchmarks now assert byte-identical output and matching encoded lengths.
+- **`bulk_add` code generation**: validate one exact output region, iterate it
+  with `chunks_exact_mut`, use slot-relative field writes, and commit position
+  once. On the audited 1,000-entry cases it is now about 23-25% lower latency than
+  `add_closure` instead of 1.5-2× slower.
+- **Zero-width group bulk encode**: count-only groups no longer call
+  `chunks_exact_mut(0)` and panic.
+- **Cross-crate generated-code inlining**: fixed/composite/set/enum setters,
+  stage transitions, group iterators, entry writers, var-data methods,
+  encoded-length builders, `add`, `add_struct`, `bulk_add`, and built-in
+  conversion methods now carry inline intent. Before the fix, ergon's closure
+  path changed from about 445 ns with LTO to 2.093 µs without LTO, and complete
+  no-LTO encode/decode also lost to sbe-tool. sbe-tool remained healthy in both
+  profiles.
+- **Composite flyweight accessors**: generated composite decoders use trusted
+  fixed-region reads after their enclosing message bounds have been
+  established, removing redundant slice checks.
+- **Wrong sbe-tool direct-decode offset**: parity decoders were wrapped at the
+  message-header offset and read header bytes as body fields. Direct decoders
+  now start at `message_offset + message_header_codec::ENCODED_LENGTH`.
+- **Constant-foldable decode fixtures**: inputs or decoder references are now
+  black-boxed before access with `std::hint::black_box`, and encoded output
+  ranges are observed after writes.
+- **Sub-nanosecond benchmark instability**: scalar, array, composite, entry,
+  scalar-encode, and complete wire-encode cases repeat 1,024 equivalent
+  operations per Criterion iteration.
+- **Benchmark estimator mismatch**: the ratio gate now uses Criterion's
+  displayed regression estimate. The previous gate read the raw sample median,
+  which could disagree enough under noise to reverse a tiny ratio.
+- **Asymmetric full-decode setup**: both arms now use precomputed header fields
+  and construct direct body wrappers inside the timed path.
+- **Incomplete “full message” decode**: the case now reads every encoded
+  fixed/composite member before traversing all groups and var-data. The prior
+  arms did equal work, but measured only the dynamic tail.
+- **Scalar header accounting**: header-only, body-only, and header-plus-body
+  encode are separate cases. Ergon body-only uses `wrap(buf, 0)` while
+  sbe-tool body-only uses `wrap(buf, 8)`.
+- **Timed Decimal construction**: Decimal benchmark inputs are prebuilt outside
+  the timed path.
+- All parity encode cases assert byte-identical output and matching encoded
+  lengths; decode cases assert all fixed, group, nested-group, and var-data
+  values before timing.
 - Removed `--skip explicit_implicit` from `justfile` — the test now passes.
 
 ### Changed
 - Benchmarks use `wrap_and_apply_header` (infallible) instead of
   `try_wrap_and_apply_header` — sbe-tool's `header()` does no validation,
   so ergon's validation was extra work.
-
-### Notes
-- **sbe-tool comparison ratios are unusually good (~0.4-0.5×).** The gap is
-  attributed to sbe-tool's `Option<parent>` indirection on every field write
-  and `advance()` overhead. Both arms produce byte-identical output with
-  correct `black_box` usage. Review requested — if you spot a fairness issue,
-  please report it.
+- Every maintained ergon/sbe-tool benchmark now has a strict `1.00` ceiling
+  under both LTO and no LTO. A repeatable sbe-tool win blocks the change until
+  the benchmark or generated hot path is fixed.
 
 ## [0.1.3] — 2026-07-28
 

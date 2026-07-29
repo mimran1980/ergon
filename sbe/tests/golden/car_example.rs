@@ -692,22 +692,22 @@ impl<'a> MessageHeaderDecoder<'a> {
     #[inline]
     pub fn block_length(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
     #[inline]
     pub fn template_id(&self) -> u16 {
         let offset = self.pos + 2;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
     #[inline]
     pub fn schema_id(&self) -> u16 {
         let offset = self.pos + 4;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
     #[inline]
     pub fn version(&self) -> u16 {
         let offset = self.pos + 6;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
 }
 ///Repeating group dimensions.
@@ -742,12 +742,12 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
     #[inline]
     pub fn block_length(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
     #[inline]
     pub fn num_in_group(&self) -> u16 {
         let offset = self.pos + 2;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
 }
 ///Variable length UTF-8 String.
@@ -780,7 +780,7 @@ impl<'a> VarStringEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
         let offset = self.pos + 0;
-        u32::from_le_bytes(read_bytes::<4>(self.buf, offset))
+        u32::from_le_bytes(read_bytes_unchecked::<4>(self.buf, offset))
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -817,7 +817,7 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
         let offset = self.pos + 0;
-        u32::from_le_bytes(read_bytes::<4>(self.buf, offset))
+        u32::from_le_bytes(read_bytes_unchecked::<4>(self.buf, offset))
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -854,7 +854,7 @@ impl<'a> VarDataEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
         let offset = self.pos + 0;
-        u32::from_le_bytes(read_bytes::<4>(self.buf, offset))
+        u32::from_le_bytes(read_bytes_unchecked::<4>(self.buf, offset))
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -892,12 +892,14 @@ impl<'a> BoosterDecoder<'a> {
     #[inline]
     pub fn boost_type(&self) -> BoostType {
         let offset = self.pos + 0;
-        BoostType::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
+        BoostType::from_raw(
+            u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset)),
+        )
     }
     #[inline]
     pub fn horse_power(&self) -> u8 {
         let offset = self.pos + 1;
-        u8::from_le_bytes(read_bytes::<1>(self.buf, offset))
+        u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset))
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -980,12 +982,12 @@ impl<'a> EngineDecoder<'a> {
     #[inline]
     pub fn capacity(&self) -> u16 {
         let offset = self.pos + 0;
-        u16::from_le_bytes(read_bytes::<2>(self.buf, offset))
+        u16::from_le_bytes(read_bytes_unchecked::<2>(self.buf, offset))
     }
     #[inline]
     pub fn num_cylinders(&self) -> u8 {
         let offset = self.pos + 2;
-        u8::from_le_bytes(read_bytes::<1>(self.buf, offset))
+        u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset))
     }
     #[inline]
     pub const fn max_rpm(&self) -> u16 {
@@ -997,7 +999,7 @@ impl<'a> EngineDecoder<'a> {
         let mut idx = 0;
         while idx < 3 {
             let offset = self.pos + 3 + idx * 1;
-            res[idx] = u8::from_le_bytes(read_bytes::<1>(self.buf, offset));
+            res[idx] = u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset));
             idx += 1;
         }
         res
@@ -1009,17 +1011,19 @@ impl<'a> EngineDecoder<'a> {
     #[inline]
     pub fn efficiency(&self) -> i8 {
         let offset = self.pos + 6;
-        i8::from_le_bytes(read_bytes::<1>(self.buf, offset))
+        i8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset))
     }
     #[inline]
     pub fn booster_enabled(&self) -> BooleanType {
         let offset = self.pos + 7;
-        BooleanType::from_raw(u8::from_le_bytes(read_bytes::<1>(self.buf, offset)))
+        BooleanType::from_raw(
+            u8::from_le_bytes(read_bytes_unchecked::<1>(self.buf, offset)),
+        )
     }
     #[inline]
     pub fn booster(&self) -> Booster {
         let offset = self.pos + 8;
-        Booster(read_bytes::<2>(self.buf, offset))
+        Booster(read_bytes_unchecked::<2>(self.buf, offset))
     }
 }
 ///Description of a basic Car
@@ -2053,6 +2057,7 @@ impl<'a> FuelFiguresDecoder<'a> {
 }
 impl<'a> Iterator for FuelFiguresDecoder<'a> {
     type Item = Result<FuelFiguresEntryDecoder<'a>, sbe_rt::DecodeError>;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.count == 0 {
             return None;
@@ -2076,6 +2081,7 @@ impl<'a> Iterator for FuelFiguresDecoder<'a> {
     }
 }
 impl<'a> ExactSizeIterator for FuelFiguresDecoder<'a> {
+    #[inline]
     fn len(&self) -> usize {
         self.count
     }
@@ -2605,6 +2611,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
 }
 impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
     type Item = Result<PerformanceFiguresEntryDecoder<'a>, sbe_rt::DecodeError>;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.count == 0 {
             return None;
@@ -2628,6 +2635,7 @@ impl<'a> Iterator for PerformanceFiguresDecoder<'a> {
     }
 }
 impl<'a> ExactSizeIterator for PerformanceFiguresDecoder<'a> {
+    #[inline]
     fn len(&self) -> usize {
         self.count
     }
@@ -3006,6 +3014,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
 }
 impl<'a> Iterator for PerformanceFiguresAccelerationDecoder<'a> {
     type Item = PerformanceFiguresAccelerationEntryDecoder<'a>;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.count == 0 {
             return None;
@@ -3022,6 +3031,7 @@ impl<'a> Iterator for PerformanceFiguresAccelerationDecoder<'a> {
     }
 }
 impl<'a> ExactSizeIterator for PerformanceFiguresAccelerationDecoder<'a> {
+    #[inline]
     fn len(&self) -> usize {
         self.count
     }
@@ -4598,11 +4608,13 @@ impl<'a> CarEncoder<'a> {
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
+    #[inline]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = 18;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
+    #[inline]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
         self.buf[18] = val as u8;
         self
@@ -4623,6 +4635,7 @@ impl<'a> CarEncoder<'a> {
         }
     }
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
+    #[inline]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = 19;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
@@ -4740,6 +4753,7 @@ impl<'a> CarEncoder<'a> {
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
+    #[inline]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = 42;
         self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
@@ -4760,6 +4774,7 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    #[inline]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = 43;
         self.buf[offset..offset + 10].copy_from_slice(&val.0);
@@ -4814,6 +4829,7 @@ impl<'a> CarEncoder<'a> {
     /// return `()` or `Result<(), E>` (via
     /// Closures return `GroupResult`; `?` just works. a
     /// separate `try_*` method name.
+    #[inline]
     #[must_use]
     pub fn fuel_figures<F>(
         mut self,
@@ -4858,6 +4874,7 @@ impl<'a> CarEncoder<'a> {
     ///
     /// Prefer [`Self::#g_snake`] when the count is known at
     /// compile time or from a small input.
+    #[inline]
     #[must_use]
     pub fn fuel_figures_unknown_size<F>(
         mut self,
@@ -4898,6 +4915,7 @@ impl<'a> CarAfterFuelFigures<'a> {
     /// return `()` or `Result<(), E>` (via
     /// Closures return `GroupResult`; `?` just works. a
     /// separate `try_*` method name.
+    #[inline]
     #[must_use]
     pub fn performance_figures<F>(
         mut self,
@@ -4942,6 +4960,7 @@ impl<'a> CarAfterFuelFigures<'a> {
     ///
     /// Prefer [`Self::#g_snake`] when the count is known at
     /// compile time or from a small input.
+    #[inline]
     #[must_use]
     pub fn performance_figures_unknown_size<F>(
         mut self,
@@ -4982,6 +5001,7 @@ impl<'a> CarAfterFuelFigures<'a> {
     }
 }
 impl<'a> CarAfterPerformanceFigures<'a> {
+    #[inline]
     #[must_use]
     pub fn manufacturer(
         mut self,
@@ -5019,6 +5039,7 @@ impl<'a> CarAfterPerformanceFigures<'a> {
             pos: start + data.len(),
         })
     }
+    #[inline]
     #[must_use]
     pub fn manufacturer_unchecked(
         mut self,
@@ -5065,6 +5086,7 @@ impl<'a> CarAfterPerformanceFigures<'a> {
     /// Returns the next stage on success; on failure the
     /// caller error propagates unchanged and no partial
     /// data is published.
+    #[inline]
     #[must_use]
     pub fn manufacturer_with<E, F>(
         mut self,
@@ -5115,6 +5137,7 @@ impl<'a> CarAfterPerformanceFigures<'a> {
     }
 }
 impl<'a> CarAfterManufacturer<'a> {
+    #[inline]
     #[must_use]
     pub fn model(
         mut self,
@@ -5152,6 +5175,7 @@ impl<'a> CarAfterManufacturer<'a> {
             pos: start + data.len(),
         })
     }
+    #[inline]
     #[must_use]
     pub fn model_unchecked(
         mut self,
@@ -5198,6 +5222,7 @@ impl<'a> CarAfterManufacturer<'a> {
     /// Returns the next stage on success; on failure the
     /// caller error propagates unchanged and no partial
     /// data is published.
+    #[inline]
     #[must_use]
     pub fn model_with<E, F>(
         mut self,
@@ -5248,6 +5273,7 @@ impl<'a> CarAfterManufacturer<'a> {
     }
 }
 impl<'a> CarAfterModel<'a> {
+    #[inline]
     #[must_use]
     pub fn activation_code(
         mut self,
@@ -5285,6 +5311,7 @@ impl<'a> CarAfterModel<'a> {
             pos: start + data.len(),
         })
     }
+    #[inline]
     #[must_use]
     pub fn activation_code_unchecked(
         mut self,
@@ -5331,6 +5358,7 @@ impl<'a> CarAfterModel<'a> {
     /// Returns the next stage on success; on failure the
     /// caller error propagates unchanged and no partial
     /// data is published.
+    #[inline]
     #[must_use]
     pub fn activation_code_with<E, F>(
         mut self,
@@ -5436,6 +5464,7 @@ impl<'a> FuelFiguresEncoder<'a> {
     }
     /// Write one group entry. Closure may return `()` or `Result<(), E>`
     /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
+    #[inline]
     #[must_use]
     pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
@@ -5475,6 +5504,7 @@ impl<'a> FuelFiguresEncoder<'a> {
     /// The group position is pre-advanced, so fields are written
     /// to the correct offset.
     #[must_use]
+    #[inline]
     pub fn start_entry(
         &mut self,
     ) -> Result<FuelFiguresEntryEncoder<'_>, sbe_rt::EncodeError> {
@@ -5513,16 +5543,19 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
+    #[inline]
     pub fn speed(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
+    #[inline]
     pub fn mpg(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         self.buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
         self
     }
+    #[inline]
     #[must_use]
     pub fn usage_description(
         &mut self,
@@ -5573,6 +5606,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     }
     /// Write one group entry. Closure may return `()` or `Result<(), E>`
     /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
+    #[inline]
     #[must_use]
     pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
@@ -5612,6 +5646,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     /// The group position is pre-advanced, so fields are written
     /// to the correct offset.
     #[must_use]
+    #[inline]
     pub fn start_entry(
         &mut self,
     ) -> Result<PerformanceFiguresEntryEncoder<'_>, sbe_rt::EncodeError> {
@@ -5650,10 +5685,12 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
+    #[inline]
     pub fn octane_rating(&mut self, val: u8) -> &mut Self {
         self.buf[self.entry_start + 0] = val as u8;
         self
     }
+    #[inline]
     #[must_use]
     pub fn acceleration<F>(
         &mut self,
@@ -5697,6 +5734,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         Ok(self)
     }
     /// Nested-group `_unknown_size` variant — back-patches count.
+    #[inline]
     pub fn acceleration_unknown_size<F>(
         &mut self,
         f: F,
@@ -5758,6 +5796,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     }
     /// Write one group entry. Closure may return `()` or `Result<(), E>`
     /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
+    #[inline]
     #[must_use]
     pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
@@ -5802,6 +5841,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     /// The group position is pre-advanced, so fields are written
     /// to the correct offset.
     #[must_use]
+    #[inline]
     pub fn start_entry(
         &mut self,
     ) -> Result<PerformanceFiguresAccelerationEntryEncoder<'_>, sbe_rt::EncodeError> {
@@ -5838,6 +5878,7 @@ pub struct PerformanceFiguresAccelerationEntry {
 impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     /// Write one entry from a struct. Faster than [`Self::add`] when
     /// the entry has no nested groups or var-data.
+    #[inline]
     pub fn add_struct(
         &mut self,
         entry: &PerformanceFiguresAccelerationEntry,
@@ -5862,6 +5903,55 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         self.buf[pos + 2..pos + 2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
         Ok(())
     }
+    /// Encode a slice of fixed-size entries after validating the
+    /// complete destination region once.
+    #[inline]
+    pub fn bulk_add(
+        &mut self,
+        entries: &[PerformanceFiguresAccelerationEntry],
+    ) -> Result<(), sbe_rt::EncodeError> {
+        let count = entries.len();
+        if count == 0 {
+            return Ok(());
+        }
+        let attempted = (self.written as usize)
+            .checked_add(count)
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        if attempted > self.count as usize {
+            return Err(sbe_rt::EncodeError::GroupFull {
+                declared: self.count as u32,
+                attempted: attempted.min(u32::MAX as usize) as u32,
+            });
+        }
+        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        if block_len == 0 {
+            self.written = attempted as u16;
+            return Ok(());
+        }
+        let needed = count
+            .checked_mul(block_len)
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        let end = self
+            .pos
+            .checked_add(needed)
+            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+        if end > self.buf.len() {
+            return Err(sbe_rt::EncodeError::BufferTooShort {
+                needed,
+                available: self.buf.len().saturating_sub(self.pos),
+            });
+        }
+        {
+            let region = &mut self.buf[self.pos..end];
+            for (entry, slot) in entries.iter().zip(region.chunks_exact_mut(block_len)) {
+                slot[0..0 + 2].copy_from_slice(&entry.mph.to_le_bytes());
+                slot[2..2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
+            }
+        }
+        self.pos = end;
+        self.written = attempted as u16;
+        Ok(())
+    }
 }
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
@@ -5879,11 +5969,13 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
             pos: pos + Self::ENTRY_BLOCK_LENGTH,
         }
     }
+    #[inline]
     pub fn mph(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
+    #[inline]
     pub fn seconds(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         self.buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
