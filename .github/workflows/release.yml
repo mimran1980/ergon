@@ -48,7 +48,7 @@ jobs:
         run: just release-check
 
       - name: Cache cargo-release binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-release
           key: cargo-release-${{ runner.os }}
