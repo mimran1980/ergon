@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="orderbook" id="2" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId"   primitiveType="uint16"/>
+      <type name="schemaId"     primitiveType="uint16"/>
+      <type name="version"      primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup"  primitiveType="uint16"/>
+    </composite>
+    <!-- Standard SBE decimal: mantissa (int64) + exponent (int8) -->
+    <composite name="Decimal">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8" presence="constant" nullValue="-128">-2</type>
+    </composite>
+  </types>
+
+  <!-- L2 orderbook: flat group with Decimal price and qty -->
+  <message name="L2Book" id="1" blockLength="0">
+    <group name="levels" id="1" dimensionType="groupSizeEncoding">
+      <field name="price" id="1" type="Decimal" offset="0"/>
+      <field name="qty"   id="2" type="Decimal" offset="9"/>
+    </group>
+  </message>
+</messageSchema>
