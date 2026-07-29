@@ -54,12 +54,19 @@
 //! builder.validate().expect("valid config");
 //! ```
 //!
-//! ```rust,ignore
-//! use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
-//! // SessionBuilder::default().ingress_channel(...).egress_channel(...)
-//! // AeronCluster::connect(&builder, aeron_dir)
-//! // client.try_claim(payload_len)?; fill payload; commit
-//! // client.poll_egress(&mut adapter, limit)?;
+//! ```rust,no_run
+//! use ergo_aeron_cluster::{AeronCluster, ClusterError, SessionBuilder};
+//!
+//! fn publish(aeron_dir: &str, app_bytes: &[u8]) -> Result<(), ClusterError> {
+//!     let builder = SessionBuilder::default()
+//!         .ingress_channel("aeron:udp?endpoint=localhost:9010")
+//!         .egress_channel("aeron:udp?endpoint=localhost:9020");
+//!     let mut client = AeronCluster::connect(&builder, aeron_dir)?;
+//!     let mut claim = client.try_claim(app_bytes.len())?;
+//!     claim.payload_mut().copy_from_slice(app_bytes);
+//!     claim.commit()?;
+//!     Ok(())
+//! }
 //! ```
 //!
 //! See the crate [README](https://github.com/mimran1980/ergon/blob/first_cut/cluster/README.md)
@@ -86,9 +93,10 @@ pub(crate) mod codecs;
 pub mod cluster_codec_types {
     pub use crate::codecs::session::{
         AdminRequestType, AdminResponseCode, AdminResponseEncoder, AnyMessage, ChallengeDecoder, ChallengeEncoder,
-        ChallengeResponseEncoder, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder, SessionCloseRequestEncoder,
-        SessionConnectRequestEncoder, SessionConnectRequestFixedFields, SessionEventDecoder, SessionEventEncoder,
-        SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+        ChallengeResponseEncoder, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder, NewLeaderEventFixedFields,
+        SessionCloseRequestEncoder, SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
+        SessionEventDecoder, SessionEventEncoder, SessionKeepAliveEncoder, SessionMessageHeaderDecoder,
+        SessionMessageHeaderEncoder,
     };
 }
 /// [`SessionBuilder`] configuration for connect.

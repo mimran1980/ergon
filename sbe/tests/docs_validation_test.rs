@@ -1,6 +1,7 @@
 //! Validates README + rustdoc claims against real codegen and compilable snippets.
 //!
-//! - Extracts ```rust fences from `sbe/README.md` (skips ```rust,ignore)
+//! - Rejects every ignored Rust fence in `sbe/README.md`
+//! - Extracts and compiles every runnable `rust` code fence
 //! - Compiles each fence as a tiny crate depending on path `ergo-sbe`
 //! - Generates a representative schema and asserts documented API surfaces
 //! - Smoke-runs encode/decode patterns described in crate docs
@@ -167,6 +168,13 @@ ergo-sbe = {{ path = "{ergo}" }}
 fn readme_rust_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     let readme_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md");
     let md = fs::read_to_string(&readme_path)?;
+    assert!(
+        !md.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with("```") && trimmed.contains("ignore")
+        }),
+        "README.md must not contain ignored Rust fences"
+    );
     let fences = extract_rust_fences(&md);
     assert!(
         fences.len() >= 8,
@@ -177,10 +185,6 @@ fn readme_rust_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     let docs_codec = docs_codec_source()?;
     let tmp = tempfile::tempdir()?;
     for (i, (line, body)) in fences.iter().enumerate() {
-        // Skip pure include! shape that needs OUT_DIR — those should be rust,ignore.
-        if body.contains("include!(concat!(env!(\"OUT_DIR\")") {
-            continue;
-        }
         let name = format!("readme_snip_{i}");
         compile_snippet(tmp.path(), &name, body, &docs_codec).map_err(|e| {
             format!(
@@ -278,11 +282,10 @@ use gen::*;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fixed length + try wrap (docs: safe decode/encode)
     let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
-    {
-        let mut enc = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-        enc.seq(7);
-    }
-    let dec = HeartbeatDecoder::try_from(buf.as_slice())?;
+    let heartbeat_len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .seq(7)
+        .encoded_length_with_header();
+    let dec = HeartbeatDecoder::try_from(&buf[..heartbeat_len])?;
     assert_eq!(dec.seq(), 7);
     assert_eq!(HeartbeatDecoder::SEQ_ID, 1);
     assert_eq!(
@@ -292,22 +295,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Bulk array helpers + group/var-data tail (docs)
     let mut qbuf = [0u8; 512];
-    let written = {
-        let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut qbuf, 0)?;
-        enc.seq(1);
-        enc.put_some_numbers(1, 2, 3, 4);
-        enc.vehicle_code_str("ABCDEF")?;
-        enc.qty(10);
-        let enc = enc.legs(1, |g| {
+    let written = QuoteEncoder::try_wrap_and_apply_header(&mut qbuf, 0)?
+        .fixed(&QuoteFixedFields {
+            seq: 1,
+            some_numbers: [1, 2, 3, 4],
+            vehicle_code: *b"ABCDEF",
+            qty: 10,
+        })
+        .legs(1, |g| {
             g.add(|e| {
                 e.value(99);
                 Ok(())
             })?;
             Ok(())
-        })?;
-        let done = enc.note(b"hi")?;
-        done.encoded_length_with_header()
-    };
+        })?
+        .note(b"hi")?
+        .encoded_length_with_header();
     let q = QuoteDecoder::try_from(&qbuf[..written])?;
     assert_eq!(q.seq(), 1);
     assert_eq!(q.some_numbers(), [1, 2, 3, 4]);

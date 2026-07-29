@@ -1,0 +1,73 @@
+name: Nightly hostile-input verification
+
+on:
+  schedule:
+    - cron: "23 17 * * *"
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Prove test policy and reject suppressions
+        run: |
+          bash scripts/tests/test-test-policy.sh
+          bash scripts/tests/test-quality-ratchets.sh
+          ./scripts/check-test-policy.sh
+          ./scripts/check-mutation-config.sh
+
+  miri:
+    needs: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: miri
+
+      - name: Execute LE, BE, and nested codec fixtures under Miri
+        run: cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
+
+  fuzz:
+    needs: policy
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - schema_parse
+          - generated_verify
+          - any_message_frame_cursor
+          - nested_group_decode
+          - bulk_decode
+          - flat_group_decode
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz checked-in corpus and new inputs for ten minutes
+        run: cd sbe/fuzz && cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=600 -timeout=10

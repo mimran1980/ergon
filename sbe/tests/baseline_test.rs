@@ -2102,67 +2102,47 @@ fn var_data_after_version_mismatched_group_at_correct_offset()
     Ok(())
 }
 
-/// Every upstream issue-*.xml schema must either parse cleanly or produce
-/// a structured error (never panic). Phase 2 regression gate.
+/// Every supported upstream issue fixture must continue to parse cleanly.
 #[test]
-fn upstream_issue_schemas_parse_or_error_gracefully() -> Result<(), Box<dyn std::error::Error>> {
-    let schemas: &[(&str, bool)] = &[
-        ("issue435.xml", true),
-        ("issue472.xml", true),
-        ("issue483.xml", true),
-        ("issue488.xml", true),
-        ("issue496.xml", true),
-        ("issue505.xml", true),
-        ("issue560.xml", true),
-        ("issue567-valid.xml", true),
-        ("issue567-invalid.xml", true), // ergon parser handles this; "invalid" refers to upstream tool behaviour
-        ("issue661.xml", true),
-        ("issue827.xml", true),
-        ("issue835.xml", true),
-        ("issue847.xml", true),
-        ("issue848.xml", true),
-        ("issue849.xml", true),
-        ("issue889.xml", true),
-        ("issue895.xml", true),
-        ("issue910.xml", true),
-        ("issue967.xml", true),
-        ("issue972.xml", true),
-        ("issue984.xml", true),
-        ("issue987.xml", true),
-        ("issue1007.xml", true),
-        ("issue1028.xml", true),
-        ("issue1057.xml", true),
-        ("issue1066.xml", true),
+fn upstream_issue_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
+    let schemas = [
+        "issue435.xml",
+        "issue472.xml",
+        "issue483.xml",
+        "issue488.xml",
+        "issue496.xml",
+        "issue505.xml",
+        "issue560.xml",
+        "issue567-valid.xml",
+        // The pinned sbe-tool rejects this implementation-specific count range;
+        // FIX SBE itself does not make the schema invalid.
+        "issue567-invalid.xml",
+        "issue661.xml",
+        "issue827.xml",
+        "issue835.xml",
+        "issue847.xml",
+        "issue848.xml",
+        "issue849.xml",
+        "issue889.xml",
+        "issue895.xml",
+        "issue910.xml",
+        "issue967.xml",
+        "issue972.xml",
+        "issue984.xml",
+        "issue987.xml",
+        "issue1007.xml",
+        "issue1028.xml",
+        "issue1057.xml",
+        "issue1066.xml",
     ];
 
-    let mut parsed = 0usize;
-    let mut errored = 0usize;
-
-    for (name, expect_valid) in schemas {
+    for name in schemas {
         let path = Paths::sbe_tool_test_resource(name);
-        match ergo_sbe::parse_file(&path) {
-            Ok(_ir) => {
-                parsed += 1;
-                if !expect_valid {
-                    eprintln!("UNEXPECTED PASS: {name} (expected parse error)");
-                }
-            }
-            Err(e) => {
-                errored += 1;
-                let msg = format!("{e}");
-                assert!(!msg.is_empty(), "error for {name} must have a message");
-                if *expect_valid {
-                    eprintln!("PARSE FAIL: {name}: {msg}");
-                }
-            }
-        }
+        assert!(path.is_file(), "upstream issue fixture is missing: {name}");
+        ergo_sbe::parse_file(&path)
+            .unwrap_or_else(|error| panic!("{name}: supported schema failed to parse: {error}"));
     }
 
-    assert!(parsed + errored > 0, "no schemas processed");
-    println!(
-        "issue schemas: {parsed} parsed, {errored} errored ({} total)",
-        parsed + errored
-    );
     Ok(())
 }
 

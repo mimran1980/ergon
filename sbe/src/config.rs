@@ -454,4 +454,30 @@ mod tests {
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);
         Ok(())
     }
+
+    #[test]
+    fn opt_in_codegen_flags_and_field_selector_are_recorded()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let selector = ConversionSelector::field_path("Order.price");
+        assert_eq!(
+            selector,
+            ConversionSelector::FieldPath("Order.price".to_string())
+        );
+
+        let config = GenerationConfig::new("m")
+            .enable_error_from_impls("crate::AppError")
+            .with_shared_module("shared")
+            .with_unchecked_companions()
+            .with_keyword_append_token("x")
+            .enable_bool_domain_type()
+            .with_deprecated_attrs();
+
+        assert_eq!(config.error_from_path.as_deref(), Some("crate::AppError"));
+        assert_eq!(config.shared_module.as_deref(), Some("shared"));
+        assert!(config.unchecked_companions);
+        assert_eq!(config.keyword_append_token, "x");
+        assert!(config.auto_bool_domain);
+        assert!(config.deprecated_attrs);
+        Ok(())
+    }
 }

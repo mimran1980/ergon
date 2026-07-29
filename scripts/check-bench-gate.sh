@@ -72,8 +72,12 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
         IFS='|' read -r label group ergo_fn ref_fn ceiling <<< "$pair"
         # Criterion converts '/' to '_' in directory names
         dir_group="${group//\//_}"
-        ergo_estimate=$(get_estimate "parity_${dir_group}/${ergo_fn}" 2>/dev/null) || true
-        ref_estimate=$(get_estimate "parity_${dir_group}/${ref_fn}" 2>/dev/null) || true
+        if ! ergo_estimate=$(get_estimate "parity_${dir_group}/${ergo_fn}" 2>/dev/null); then
+            ergo_estimate=
+        fi
+        if ! ref_estimate=$(get_estimate "parity_${dir_group}/${ref_fn}" 2>/dev/null); then
+            ref_estimate=
+        fi
 
         if [ -z "$ergo_estimate" ] || [ -z "$ref_estimate" ]; then
             echo "  FAIL $label (missing estimates — run bench first)"
@@ -101,8 +105,12 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
 
     for pair in "${cluster_pairs[@]}"; do
         IFS='|' read -r group ergo_fn sbe_fn <<< "$pair"
-        ergo_estimate=$(get_estimate "${group}/${ergo_fn}" 2>/dev/null) || true
-        sbe_estimate=$(get_estimate "${group}/${sbe_fn}" 2>/dev/null) || true
+        if ! ergo_estimate=$(get_estimate "${group}/${ergo_fn}" 2>/dev/null); then
+            ergo_estimate=
+        fi
+        if ! sbe_estimate=$(get_estimate "${group}/${sbe_fn}" 2>/dev/null); then
+            sbe_estimate=
+        fi
 
         if [ -z "$ergo_estimate" ] || [ -z "$sbe_estimate" ]; then
             echo "  FAIL $group (missing estimates — run bench-cluster first)"

@@ -38,10 +38,21 @@ git submodule update --init --recursive
 Common local checks:
 
 ```sh
+just policy
 just check-products
+just test
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-sbe --all-features --no-deps
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps
 ```
+
+`just test` is intentionally not a partial/offline green path: it builds and
+runs the Java Cluster lifecycle/recovery lane and the HA sample. Use
+`just test-all` to add Miri and deterministic fuzz replay.
+
+Pull-request CI also enforces the non-decreasing coverage baseline and executes
+32-bit x86 plus big-endian s390x codec tests. Scheduled lanes run every fuzz
+target for ten minutes, Miri fixtures nightly, and critical-path mutation
+testing weekly. Missing or empty results fail closed.
 
 See [`samples/README.md`](samples/README.md) for standalone sample commands and
 Java harness requirements. Run `just --list` for the repository's available

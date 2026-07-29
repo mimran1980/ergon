@@ -642,6 +642,61 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
     Ok(())
 }
 
+#[test]
+fn group_primitive_array_respects_the_wire_entry_block_boundary()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &Paths::sbe_tool_test_resource("group-array-boundary-schema.xml"),
+        "group_array_boundary",
+    );
+    compile_and_run(
+        "group_array_boundary",
+        &src,
+        r#"
+        // The generated array starts at offset 1 and needs eight bytes. A
+        // wire blockLength of 8 is therefore one byte short. Keep a second
+        // entry present so an incorrect check could read across the boundary
+        // without reaching the end of the supplied slice.
+        let short = [
+            0, 0,       // root blockLength
+            1, 0,       // templateId
+            49, 1,      // schemaId 305
+            0, 0,       // acting version
+            8, 0,       // entry blockLength (correct minimum is 9)
+            2, 0,       // count
+            7, 1, 2, 3, 4, 5, 6, 7,
+            9, 8, 7, 6, 5, 4, 3, 2,
+        ];
+        let decoded = ArrayBoundaryMessageDecoder::try_from(short.as_slice())?;
+        let first = decoded.into_entries()?.next().unwrap();
+        assert_eq!(first.base(), 7);
+        assert_eq!(
+            first.values(),
+            [0, 0],
+            "an array that exceeds the acting entry block must be absent"
+        );
+
+        let complete = [
+            0, 0,       // root blockLength
+            1, 0,       // templateId
+            49, 1,      // schemaId 305
+            0, 0,       // acting version
+            9, 0,       // complete entry blockLength
+            1, 0,       // count
+            7,
+            0x44, 0x33, 0x22, 0x11,
+            0x88, 0x77, 0x66, 0x55,
+        ];
+        let decoded = ArrayBoundaryMessageDecoder::try_from(complete.as_slice())?;
+        let row = decoded.into_entries()?.next().unwrap();
+        assert_eq!(row.base(), 7);
+        assert_eq!(row.values(), [0x1122_3344, 0x5566_7788]);
+        "#,
+    );
+
+    Ok(())
+}
+
 /// Constant enum valueRef fields: top-level and group entry constants.
 #[test]
 fn constant_enum_fields_types_exist() -> Result<(), Box<dyn std::error::Error>> {

@@ -2,7 +2,7 @@
 //!
 //! Prefer these over hand-rolling parse → generate → write → `rerun-if-changed`.
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! // build.rs — ergo_sbe::miette::Result renders schema errors with a source
 //! // snippet by default; Box<dyn std::error::Error> prints a raw Debug dump.
 //! fn main() -> ergo_sbe::miette::Result<()> {
@@ -12,10 +12,12 @@
 //!     )?;
 //!     Ok(())
 //! }
+//! ```
 //!
-//! // lib.rs / main.rs
+//! Then include the generated module from `lib.rs` or `main.rs`:
+//!
+//! ```text
 //! ergo_sbe::sbe_mod!(messages);
-//! use messages::*;
 //! ```
 
 use std::env;
@@ -67,7 +69,7 @@ pub enum BuildError {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     ergo_sbe::generate_to_out_dir(
 ///         "schemas/messages.xml",
@@ -100,7 +102,7 @@ pub fn generate_to_out_dir(
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// // build.rs
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
@@ -112,7 +114,11 @@ pub fn generate_to_out_dir(
 ///     Ok(())
 /// }
 ///
-/// // src/lib.rs — real path so the IDE can jump into the implementation
+/// ```
+///
+/// In `src/lib.rs`, use the real path so the IDE can jump into the implementation:
+///
+/// ```text
 /// #[path = "generated/feature_tour.rs"]
 /// mod feature_tour;
 /// ```
@@ -356,6 +362,21 @@ mod tests {
         assert!(src.contains("PingEncoder"), "{src}");
         assert!(src.contains("PingDecoder"), "{src}");
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn generate_to_dir_reads_schema_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        let schema_path = dir.join("messages.xml");
+        fs::write(&schema_path, minimal_schema())?;
+
+        let explicit = dir.join("explicit");
+        let set = generate_to_dir(&schema_path, GenerationConfig::new("from_file"), &explicit)?;
+        assert_eq!(set.modules().len(), 1);
+        assert!(explicit.join("from_file.rs").is_file());
+
+        fs::remove_dir_all(&dir)?;
         Ok(())
     }
 

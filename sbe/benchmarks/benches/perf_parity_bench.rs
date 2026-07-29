@@ -797,6 +797,93 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
     group.finish();
 }
 
+fn assert_full_message_encode_wire_parity() {
+    use ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::{
+        Encoder, WriteBuf,
+        boolean_type::BooleanType as ToolBool,
+        boost_type::BoostType as ToolBoost,
+        car_codec::encoder::{
+            CarEncoder as ToolCarEnc, FuelFiguresEncoder as ToolFuel,
+            PerformanceFiguresEncoder as ToolPerf,
+        },
+        model::Model as ToolModel,
+        optional_extras::OptionalExtras as ToolExtras,
+    };
+
+    let mut ebuf = [0u8; 512];
+    let ergo_len = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+        .fixed(&CarFixedFields {
+            serial_number: 99,
+            model_year: 2020,
+            available: BooleanType::T,
+            code: Model::C,
+            some_numbers: [9, 8, 7, 6],
+            vehicle_code: *b"XYZXYZ",
+            extras: OptionalExtras::default(),
+            engine: Engine::new(
+                1600,
+                4,
+                *b"ABC",
+                10,
+                BooleanType::F,
+                Booster::new(BoostType::SUPERCHARGER, 50),
+            ),
+        })
+        .fuel_figures(1, |g| {
+            g.add(|ent| {
+                ent.speed(40).mpg(33.3).usage_description(b"city")?;
+                Ok(())
+            })?;
+            Ok(())
+        })
+        .unwrap()
+        .performance_figures(0, |_| Ok(()))
+        .unwrap()
+        .manufacturer(b"Toyota")
+        .unwrap()
+        .model(b"Yaris")
+        .unwrap()
+        .activation_code(b"zz")
+        .unwrap()
+        .encoded_length_with_header();
+
+    let mut tbuf = [0u8; 512];
+    let t = ToolCarEnc::default().wrap(WriteBuf::new(&mut tbuf), 8);
+    let mut h = t.header(0);
+    let mut t = h.parent().unwrap();
+    t.serial_number(99)
+        .model_year(2020)
+        .available(ToolBool::T)
+        .code(ToolModel::C)
+        .some_numbers(&[9, 8, 7, 6])
+        .vehicle_code(b"XYZXYZ")
+        .extras(ToolExtras::default());
+    let mut eng = t.engine_encoder();
+    eng.capacity(1600)
+        .num_cylinders(4)
+        .manufacturer_code(b"ABC")
+        .efficiency(10)
+        .booster_enabled(ToolBool::F);
+    let mut boost = eng.booster_encoder();
+    boost.boost_type(ToolBoost::SUPERCHARGER).horse_power(50);
+    eng = boost.parent().unwrap();
+    t = eng.parent().unwrap();
+    let mut fuel = ToolFuel::default();
+    fuel = t.fuel_figures_encoder(1, fuel);
+    fuel.advance().unwrap();
+    fuel.speed(40).mpg(33.3).usage_description(b"city");
+    t = fuel.parent().unwrap();
+    let mut perf = ToolPerf::default();
+    perf = t.performance_figures_encoder(0, perf);
+    t = perf.parent().unwrap();
+    t.manufacturer("Toyota")
+        .model("Yaris")
+        .activation_code(b"zz");
+    let tool_len = t.get_limit();
+    assert_eq!(ergo_len, tool_len, "wire parity length");
+    assert_eq!(&ebuf[..ergo_len], &tbuf[..tool_len], "wire parity bytes");
+}
+
 fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
     use ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::{
         Encoder, WriteBuf,
@@ -810,6 +897,7 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
         optional_extras::OptionalExtras as ToolExtras,
     };
 
+    assert_full_message_encode_wire_parity();
     let mut group = c.benchmark_group("parity/wire_parity/encode_full");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
@@ -837,8 +925,7 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
                     })
                     .fuel_figures(1, |g| {
                         g.add(|ent| {
-                            ent.speed(40).mpg(33.3);
-                            ent.usage_description(b"city")?;
+                            ent.speed(40).mpg(33.3).usage_description(b"city")?;
                             Ok(())
                         })?;
                         Ok(())
@@ -902,83 +989,6 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
         });
     });
     group.finish();
-
-    // Verify byte-identical once — panics on mismatch, failing the gate.
-    {
-        let mut ebuf = [0u8; 512];
-        let ergo_len = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
-            .fixed(&CarFixedFields {
-                serial_number: 99,
-                model_year: 2020,
-                available: BooleanType::T,
-                code: Model::C,
-                some_numbers: [9, 8, 7, 6],
-                vehicle_code: *b"XYZXYZ",
-                extras: OptionalExtras::default(),
-                engine: Engine::new(
-                    1600,
-                    4,
-                    *b"ABC",
-                    10,
-                    BooleanType::F,
-                    Booster::new(BoostType::SUPERCHARGER, 50),
-                ),
-            })
-            .fuel_figures(1, |g| {
-                g.add(|ent| {
-                    ent.speed(40).mpg(33.3);
-                    ent.usage_description(b"city")?;
-                    Ok(())
-                })?;
-                Ok(())
-            })
-            .unwrap()
-            .performance_figures(0, |_| Ok(()))
-            .unwrap()
-            .manufacturer(b"Toyota")
-            .unwrap()
-            .model(b"Yaris")
-            .unwrap()
-            .activation_code(b"zz")
-            .unwrap()
-            .encoded_length_with_header();
-
-        let mut tbuf = [0u8; 512];
-        let t = ToolCarEnc::default().wrap(WriteBuf::new(&mut tbuf), 8);
-        let mut h = t.header(0);
-        let mut t = h.parent().unwrap();
-        t.serial_number(99)
-            .model_year(2020)
-            .available(ToolBool::T)
-            .code(ToolModel::C)
-            .some_numbers(&[9, 8, 7, 6])
-            .vehicle_code(b"XYZXYZ")
-            .extras(ToolExtras::default());
-        let mut eng = t.engine_encoder();
-        eng.capacity(1600)
-            .num_cylinders(4)
-            .manufacturer_code(b"ABC")
-            .efficiency(10)
-            .booster_enabled(ToolBool::F);
-        let mut boost = eng.booster_encoder();
-        boost.boost_type(ToolBoost::SUPERCHARGER).horse_power(50);
-        eng = boost.parent().unwrap();
-        t = eng.parent().unwrap();
-        let mut fuel = ToolFuel::default();
-        fuel = t.fuel_figures_encoder(1, fuel);
-        fuel.advance().unwrap();
-        fuel.speed(40).mpg(33.3).usage_description(b"city");
-        t = fuel.parent().unwrap();
-        let mut perf = ToolPerf::default();
-        perf = t.performance_figures_encoder(0, perf);
-        t = perf.parent().unwrap();
-        t.manufacturer("Toyota")
-            .model("Yaris")
-            .activation_code(b"zz");
-        let tool_len = t.get_limit();
-        assert_eq!(ergo_len, tool_len, "wire parity length");
-        assert_eq!(&ebuf[..ergo_len], &tbuf[..tool_len], "wire parity bytes");
-    }
 }
 
 criterion_group!(

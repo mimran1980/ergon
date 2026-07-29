@@ -1,6 +1,6 @@
 #![warn(missing_docs)]
-#![allow(unused)] // pre-existing in 5600-line codegen.rs
-#![allow(clippy::pedantic)] // pre-existing in codegen (3000+ line file)
+#![allow(unused)] // legacy codegen module still contains unused helpers
+#![allow(clippy::pedantic)] // legacy codegen is being tightened incrementally
 #![allow(clippy::nursery)] // experimental lints on stable code
 #![allow(clippy::panic)] // codegen uses panic/expect for irrecoverable states
 #![allow(clippy::too_many_arguments)] // codegen functions need many params
@@ -10,8 +10,8 @@
 #![allow(clippy::useless_format)] // codegen generates format strings
 #![allow(clippy::items_after_statements)] // codegen structure
 #![allow(clippy::explicit_counter_loop)] // codegen uses counter loops
-#![allow(clippy::uninlined_format_args)] // pre-existing in old string template code
-#![allow(clippy::unwrap_used)] // pre-existing in test helpers and config
+#![allow(clippy::uninlined_format_args)] // legacy string-template code
+#![allow(clippy::unwrap_used)] // legacy test helpers and config
 #![allow(clippy::collapsible_if)] // intentional readability in codegen
 #![allow(clippy::unreadable_literal)] // schema constants with specific bit patterns
 #![allow(clippy::match_same_arms)] // SBE signal dispatch with matching bodies
@@ -22,8 +22,8 @@
 #![allow(clippy::similar_names)] // codegen variable naming
 #![allow(clippy::redundant_clone)] // intentional clarity in codegen
 #![allow(clippy::doc_markdown)] // SBE terms like blockLength are schema identifiers
-#![allow(clippy::ref_option)] // pre-existing in IR model
-#![allow(clippy::map_unwrap_or)] // pre-existing pattern
+#![allow(clippy::ref_option)] // legacy IR model API
+#![allow(clippy::map_unwrap_or)] // legacy resolver pattern
 #![allow(clippy::expect_used)] // expect() is intentional in codegen
 #![allow(clippy::redundant_closure_for_method_calls)] // generated code
 #![allow(clippy::unnecessary_unwrap)] // codegen uses unwrap_or pattern
@@ -35,7 +35,7 @@
 #![allow(clippy::should_panic_without_expect)] // test patterns
 #![allow(clippy::too_many_lines)] // codegen.rs is inherently large
 #![allow(clippy::module_name_repetitions)] // codegen uses descriptive names
-#![allow(clippy::option_if_let_else)] // pre-existing patterns
+#![allow(clippy::option_if_let_else)] // legacy control-flow patterns
 #![allow(clippy::match_wildcard_for_single_variants)] // exhaustive match
 #![allow(clippy::single_match_else)] // semantic intent
 #![allow(clippy::fn_params_excessive_bools)] // codegen parameter style

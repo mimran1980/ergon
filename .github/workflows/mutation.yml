@@ -1,0 +1,58 @@
+name: Weekly mutation ratchet
+
+on:
+  schedule:
+    - cron: "41 18 * * 6"
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Prove test policy and reject suppressions
+        run: |
+          bash scripts/tests/test-test-policy.sh
+          bash scripts/tests/test-quality-ratchets.sh
+          ./scripts/check-test-policy.sh
+          ./scripts/check-mutation-config.sh
+
+  mutation:
+    needs: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+
+      - name: Mutate parser, resolver, sizing, and dynamic-tail paths
+        run: |
+          ./scripts/check-mutation-config.sh
+          cargo mutants --jobs 2
+
+      - name: Reject missed, timed-out, missing, or empty results
+        run: ./scripts/check-mutation-ratchet.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-results
+          path: mutants.out
+          if-no-files-found: error

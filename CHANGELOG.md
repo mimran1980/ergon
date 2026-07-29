@@ -3,12 +3,29 @@
 ## [Unreleased]
 
 ### Added
+- Executable `test-lanes.tsv` ownership for every tracked Rust test, doctest,
+  benchmark, fuzz target, and Miri fixture. `just policy` self-tests the
+  checker before applying it to the repository.
+- Policy enforcement that rejects ignored tests, ignored Rust fences,
+  runtime `SKIP` reporting, command-level test-selection bypasses, multiline
+  conditional test execution, failure-to-success wrappers, workflow
+  `continue-on-error`, and custom skip-CI conditions.
+- Fail-closed coverage and mutation ratchets with adversarial shell self-tests.
+  The mutation checker rejects a missing, incomplete, or empty tool run instead
+  of treating it as zero missed mutants.
+- Pull-request coverage enforcement and 32-bit x86/big-endian s390x execution
+  through `cross`/QEMU, plus nightly Miri and ten-minute-per-target fuzz jobs
+  and a weekly critical-path mutation job.
+- A dedicated `just update-golden` command plus non-mutating
+  `just check-golden`; golden regeneration is no longer hidden inside an
+  ignored test.
+- `fairness_policy_test` for maintained SBE and Cluster parity sources:
+  `std::hint::black_box`, pre-timing correctness assertions, and the
+  sceptical/LTO disclosures are machine-checked.
 - Benchmark fairness documentation (`sbe/benchmarks/README.md`) — mandatory
   checklist for every parity benchmark.
 - LTO-on and LTO-off group benchmark matrix. This exposed an ergon inlining
   defect that the previous LTO-only results hid.
-- `just test-all` guard against `#[ignore]` and `--skip` — prevents tests
-  from being silently skipped.
 - `group_encode_decimal_bench` — encode comparison with `rust_decimal::Decimal`
   converters.
 - sbe-tool comparison arm in `group_encode_bench`.
@@ -18,6 +35,29 @@
   wire bulk writer's single-region validation without a temporary allocation.
 
 ### Fixed
+- Restored all three allocation-count tests to the ordinary sample lane; they
+  already passed when the stale ignored attributes were removed.
+- Restored all Cluster restart/quorum tests to the required Java lane. The
+  log-recovery test exposed and fixed four harness defects: a client outlived
+  its embedded media driver, restart returned before Java readiness, the custom
+  launcher class was shadowed by a stale copy inside `aeron-all.jar`, and crash
+  recovery restarted before Aeron's 10-second archive-mark lease expired.
+- Cluster parity benchmarks now assert local encode bytes and decode values
+  before timing, use exact-sized frames, make both mutable buffer inputs opaque,
+  and use `std::hint::black_box` symmetrically. The connect-request case now
+  uses the same three fixed-field setters and observes encoded length in both
+  arms.
+- Moved full-message wire parity ahead of Criterion timing; the old check ran
+  after measurements. Added source guards for this ordering and the Cluster
+  connect-request equal-work contract.
+- Replaced schema-loop `SKIP`/`continue` paths with asserted parse outcomes.
+  Missing production fixtures and unreadable directory entries now fail rather
+  than disappearing from the test count.
+- Replaced ignored Rustdoc examples with compile-checked `rust,no_run` examples
+  or explicitly schematic `text` fences. Generated goldens were regenerated
+  through the dedicated command.
+- Removed the unused `encoded_length_api.txt` file, which advertised a
+  regeneration test that did not exist and was not checked by any test.
 - **Composite explicit-offset bug**: `get_token_block_size` summed child sizes
   ignoring `offset="N"` attributes on composite members. A composite with a
   field at `offset="8"` reported size 9 instead of 16, cascading into wrong
@@ -77,6 +117,14 @@
 - Removed `--skip explicit_implicit` from `justfile` — the test now passes.
 
 ### Changed
+- `just test` now requires and runs the Aeron Java lifecycle/recovery suite and
+  Cluster HA sample. Missing Java, Gradle, jars, or another lane dependency is
+  a failure rather than a partial green run.
+- CI jobs depend on the policy gate, and the release workflow runs
+  `just release-check` (including the coverage ratchet) before publishing.
+- Shared GitHub runners publish LTO and no-LTO Criterion diagnostics without
+  using noisy nanosecond ratios as merge gates. Strict ratio gates remain local
+  and dedicated-stable-runner checks.
 - Benchmarks use `wrap_and_apply_header` (infallible) instead of
   `try_wrap_and_apply_header` — sbe-tool's `header()` does no validation,
   so ergon's validation was extra work.
@@ -121,6 +169,19 @@
 - SBE header always little-endian regardless of schema `byteOrder`
 
 ## [0.1.0] — 2026-07-26
+
+### Yank audit
+
+crates.io records 0.1.0 as yanked. The repository contains no contemporaneous
+commit, issue, or release note naming one authoritative yank reason, so later
+defects must not be presented as a proven private motivation.
+
+The history does prove that 0.1.0 predated the little-endian SBE header fix and
+the 0.1.1 official sbe-tool parity expansion. It also contained the composite
+explicit-offset defect later found in 0.1.4. The explicit/implicit regression
+itself therefore existed from 0.1.0, but the command-line filter that hid it
+was introduced much later during 0.1.3 work. These are verified release
+confidence failures; only the exact decision to yank remains undocumented.
 
 ### Added
 - Initial release

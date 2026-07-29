@@ -14,7 +14,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Prove test policy and reject suppressions
+        run: |
+          bash scripts/tests/test-test-policy.sh
+          bash scripts/tests/test-quality-ratchets.sh
+          ./scripts/check-test-policy.sh
+          ./scripts/check-mutation-config.sh
+
   lint:
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -35,7 +51,7 @@ jobs:
       - run: cargo doc --no-deps --workspace
 
   test:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -53,12 +69,32 @@ jobs:
           java-version: "17"
 
       - run: ./scripts/regenerate-sbe-tool-reference.sh --check
+      - run: ./scripts/regenerate-golden.sh --check
       - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=2
       - run: cargo test -p ergo-aeron-cluster --lib
       - run: cargo test --doc
 
+  coverage:
+    needs: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Enforce non-decreasing coverage
+        run: ./scripts/check-coverage-ratchet.sh
+
   msrv:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -76,7 +112,7 @@ jobs:
       - run: cargo +1.88.0 test -p ergo-sbe --lib --all-features
 
   aeron-cluster-integration:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -99,8 +135,11 @@ jobs:
       - name: Cluster integration tests
         run: cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
 
+      - name: Cluster HA sample
+        run: cd samples/cluster-ha-orderbook && cargo test --features test-harness -- --test-threads=1
+
   samples:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -118,7 +157,7 @@ jobs:
           cd samples/exchange-example
           cargo fmt --check
           cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --lib -- --test-threads=1
+          cargo test -- --test-threads=1
 
       - name: cluster-ha-orderbook (fmt, clippy, test)
         run: |
@@ -133,11 +172,17 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
 
+      - name: l3-book
+        run: cd samples/l3-book && cargo test -- --test-threads=1
+
+      - name: sbe-feature-tour
+        run: cd samples/sbe-feature-tour && cargo test -- --test-threads=1
+
   # clickhouse-live: disabled — ergo-clickhouse-persist not yet published
   # Re-enable when the persist crate is ready.
 
   build:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -153,7 +198,7 @@ jobs:
       - run: cargo build --release -p ergo-aeron-cluster
 
   bench:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -167,14 +212,13 @@ jobs:
 
       - run: cargo bench -p ergo-sbe-benchmarks --no-run
       - run: cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-      - run: ./scripts/check-bench-gate.sh target/criterion 0.005 sbe
       - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-      - run: ./scripts/check-bench-gate.sh sbe/benchmarks/target/bench-no-lto/criterion 0.005 sbe
       - run: cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
       - run: cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
       - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
       - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
       - run: cargo bench -p ergo-aeron-cluster --no-run
+      - run: cd samples/l3-book && cargo bench --no-run
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -187,7 +231,7 @@ jobs:
           if-no-files-found: ignore
 
   package:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -203,7 +247,7 @@ jobs:
       - run: cargo publish -p ergo-sbe --dry-run
 
   portability-smoke:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
+    needs: policy
     strategy:
       fail-fast: false
       matrix:
@@ -221,7 +265,34 @@ jobs:
 
       - run: cargo test -p ergo-sbe --lib
 
+  portability-cross:
+    needs: policy
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - s390x-unknown-linux-gnu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Execute codec library tests under cross/QEMU
+        run: cross test -p ergo-sbe --lib --all-features --target ${{ matrix.target }}
+
   semver:
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

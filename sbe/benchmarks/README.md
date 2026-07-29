@@ -114,8 +114,8 @@ The 2026-07-29 audit found:
 
 - sbe-tool performed well with and without LTO because its hot generated
   setters and `advance()` are explicitly `#[inline]`;
-- pre-fix ergon performed well with LTO but became slower than sbe-tool without
-  LTO because entry setters remained cross-crate calls;
+- pre-fix ergon performed well with LTO but became slower than sbe-tool
+  without LTO because entry setters remained cross-crate calls;
 - sbe-tool's `Option<parent>` checks were eliminated in optimized assembly and
   did not explain the reported ratio.
 
@@ -165,6 +165,16 @@ maintained benchmark cannot silently pass as “skipped.” It uses Criterion's
 regression point estimate, which is the estimator Criterion prints as `time`,
 and the matching confidence interval. It does not compare that displayed
 estimate with a different raw-sample estimator selected after the run.
+
+Run that strict gate locally or on a dedicated stable runner. Shared GitHub
+runners execute the LTO and no-LTO suites and publish diagnostics, but do not
+turn noisy wall-clock ratios into merge decisions.
+
+`cargo test -p ergo-sbe-benchmarks --test fairness_policy_test` is the
+mechanical source guard. It covers the maintained SBE and Cluster parity
+suites, requires `std::hint::black_box`, requires correctness assertions before
+timing, and pins the sceptical/LTO disclosures in this document. It supplements
+the runtime byte/value assertions; it does not prove equal work by itself.
 
 ## Review red flags
 

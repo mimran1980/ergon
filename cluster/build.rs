@@ -40,13 +40,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Java ClusterLauncher only when building with `--features test-harness`.
     if std::env::var_os("CARGO_FEATURE_TEST_HARNESS").is_some() {
         let aeron = manifest_dir.join("..").join("aeron");
-        compile_test_harness_java(&manifest_dir, &aeron);
+        let java_out = PathBuf::from(std::env::var("OUT_DIR")?).join("test-harness-java");
+        compile_test_harness_java(&manifest_dir, &aeron, &java_out);
     }
     Ok(())
 }
 
-/// Build Aeron jars if missing and compile `ClusterLauncher` onto the samples classpath.
-fn compile_test_harness_java(manifest_dir: &Path, aeron_dir: &Path) {
+/// Build Aeron jars if missing and compile `ClusterLauncher` into isolated Cargo output.
+fn compile_test_harness_java(manifest_dir: &Path, aeron_dir: &Path, java_out: &Path) {
     let libs_dir = aeron_dir.join("aeron-all").join("build").join("libs");
     if !libs_dir.exists() {
         let gradle = if cfg!(target_os = "windows") {
@@ -77,21 +78,17 @@ fn compile_test_harness_java(manifest_dir: &Path, aeron_dir: &Path) {
         .join("ClusterLauncher.java");
     let jar_dir = aeron_dir.join("aeron-all").join("build").join("libs");
     let cluster_jar = aeron_dir.join("aeron-cluster").join("build").join("libs");
-    let samples_classes = aeron_dir
-        .join("aeron-samples")
-        .join("build")
-        .join("classes")
-        .join("java")
-        .join("main");
-
-    let cp = format!("{}/*:{}/*", jar_dir.display(), cluster_jar.display());
-    eprintln!("Compiling ClusterLauncher into {}", samples_classes.display());
-    let _ = fs::create_dir_all(&samples_classes);
+    let cp = std::env::join_paths([jar_dir.join("*"), cluster_jar.join("*")])
+        .expect("Java classpath entries must be valid paths");
+    eprintln!("Compiling ClusterLauncher into {}", java_out.display());
+    let _ = fs::create_dir_all(java_out);
     // Force UTF-8 so source comments with non-ASCII bytes never trip US-ASCII
     // defaults on some macOS/JDK installs.
     let status = std::process::Command::new("javac")
-        .args(["-encoding", "UTF-8", "-cp", &cp, "-d"])
-        .arg(&samples_classes)
+        .args(["-encoding", "UTF-8", "-cp"])
+        .arg(&cp)
+        .arg("-d")
+        .arg(java_out)
         .arg(&java_src)
         .status()
         .expect("failed to run javac — is Java 17+ installed?");

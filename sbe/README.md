@@ -301,9 +301,10 @@ let enc = enc.note(b"ok").unwrap();
 let len = enc.encoded_length_with_header();
 ```
 
-**Every setter is chainable** — `price()`, `qty()`, `orders()`, `venue()` all
-return `Result<&mut Self, _>` and compose with `?` in a single expression.
-Intermediary `let` rebinding and manual `.unwrap()` defeat this design.
+**Every encoder stage is chainable** — fixed setters such as `price()` and
+`qty()` return `&mut Self`; fallible group/var-data transitions return
+`Result<NextStage, _>` and compose with `?` in the same expression.
+Intermediate encoder rebinding and manual `.unwrap()` defeat this design.
 
 ### Multi-schema patterns
 

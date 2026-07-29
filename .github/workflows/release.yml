@@ -23,7 +23,7 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,18 +33,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95.0"
+          components: rustfmt, clippy, llvm-tools
 
-      - name: Run tests
-        run: cargo test --workspace --all-targets
+      - uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Install cargo-release
-        run: cargo install cargo-release || true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: extractions/setup-just@v2
+
+      - name: Mandatory pre-release verification
+        run: just release-check
 
       - name: Cache cargo-release binary
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-release
           key: cargo-release-${{ runner.os }}
+
+      - name: Install cargo-release
+        run: cargo install cargo-release --locked
 
       - name: Configure git
         run: |

@@ -6882,11 +6882,14 @@ fn generate_message_encoder(
                     /// the closure writes directly into the outer buffer.
                     ///
                     /// Canonical nested-SBE pattern (AppMessage → L2Book):
-                    /// ```ignore
-                    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
-                    /// after.payload_with(inner, |p| {
-                    ///     let mut enc = InnerEncoder::try_wrap_and_apply_header(p, 0)?;
-                    ///     // set fields / groups / var-data …
+                    /// ```text
+                    /// let inner_len = InnerEncoder::compute_length_with_header(...);
+                    /// after.payload_with(inner_len, |payload| {
+                    ///     let len = InnerEncoder::try_wrap_and_apply_header(payload, 0)?
+                    ///         .field(value)
+                    ///         // continue the single encoder chain through all tail stages
+                    ///         .encoded_length_with_header();
+                    ///     debug_assert_eq!(len, inner_len);
                     ///     Ok(())
                     /// })?;
                     /// ```
@@ -7897,6 +7900,55 @@ mod tests {
             &elem,
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn group_array_codegen_uses_the_complete_field_extent_and_element_range()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="array.guard" id="305" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint16"/>
+            </composite>
+            <type name="Values" primitiveType="uint32" length="2"/>
+          </types>
+          <message name="ArrayBoundaryMessage" id="1">
+            <group name="entries" id="1">
+              <field name="base" id="2" type="uint8"/>
+              <field name="values" id="3" type="Values"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+        let schema = crate::Schema::from_ir(crate::parse(xml)?);
+        let mut generator = crate::Generator::new(crate::GenerationConfig::new("array_guard"));
+        let modules = generator.generate(&schema)?;
+        let source = &modules
+            .modules()
+            .next()
+            .ok_or("missing generated module")?
+            .source;
+
+        assert!(
+            source.contains("|| 9 > self.acting_block_length"),
+            "u32[2] at offset 1 must require all nine entry bytes"
+        );
+        assert!(
+            source.contains("let all: [u8; 8]"),
+            "u32[2] must bulk-read exactly eight bytes"
+        );
+        assert!(
+            source.contains("all[0usize]") && source.contains("all[7usize]"),
+            "the unrolled array decode must use the complete byte range"
+        );
         Ok(())
     }
 

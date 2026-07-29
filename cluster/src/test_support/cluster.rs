@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -15,25 +15,13 @@ pub struct TestCluster {
     pub base_port: u16,
 }
 
-fn classpath() -> String {
+fn classpath() -> std::ffi::OsString {
     let aeron_all = jar::find_jar("aeron-all-");
     let aeron_cluster = jar::find_jar("aeron-cluster-");
     let aeron_samples = jar::find_jar("aeron-samples-");
-    let samples_classes = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("aeron")
-        .join("aeron-samples")
-        .join("build")
-        .join("classes")
-        .join("java")
-        .join("main");
-    format!(
-        "{}:{}:{}:{}",
-        aeron_all.display(),
-        aeron_cluster.display(),
-        aeron_samples.display(),
-        samples_classes.display()
-    )
+    let project_classes = PathBuf::from(env!("OUT_DIR")).join("test-harness-java");
+    std::env::join_paths([project_classes, aeron_all, aeron_cluster, aeron_samples])
+        .expect("Java classpath entries must be valid paths")
 }
 
 fn launch_node(base_port: u16, member_id: u16, node_count: u16) -> Child {
@@ -46,16 +34,14 @@ fn launch_node_keep_dirs(base_port: u16, member_id: u16, node_count: u16) -> Chi
 
 fn launch_node_impl(base_port: u16, member_id: u16, node_count: u16, keep: bool) -> Child {
     let mut cmd = Command::new("java");
-    cmd.args([
-        "--add-opens",
-        "java.base/jdk.internal.misc=ALL-UNNAMED",
-        "-cp",
-        &classpath(),
-        "ClusterLauncher",
-        &base_port.to_string(),
-        &member_id.to_string(),
-        &node_count.to_string(),
-    ]);
+    cmd.args(["--add-opens", "java.base/jdk.internal.misc=ALL-UNNAMED", "-cp"])
+        .arg(classpath())
+        .args([
+            "ClusterLauncher",
+            &base_port.to_string(),
+            &member_id.to_string(),
+            &node_count.to_string(),
+        ]);
     if keep {
         cmd.arg("keep");
     }
@@ -88,7 +74,12 @@ fn read_ready(child: &mut Child) -> (String, String, String) {
         }
     }
     if !ready {
-        panic!("ClusterLauncher did not emit CLUSTER_READY");
+        let mut stderr = String::new();
+        if let Some(mut child_stderr) = child.stderr.take() {
+            let _ = child_stderr.read_to_string(&mut stderr);
+        }
+        let status = child.try_wait().ok().flatten();
+        panic!("ClusterLauncher did not emit CLUSTER_READY (status: {status:?})\nstderr:\n{stderr}");
     }
     (ingress, egress, aeron_dir)
 }
@@ -139,7 +130,9 @@ impl TestCluster {
     pub fn restart_keep_dirs(&self) -> Self {
         let mut processes = Vec::new();
         for member_id in 0..3u16 {
-            processes.push(launch_node_keep_dirs(self.base_port, member_id, 3));
+            let mut child = launch_node_keep_dirs(self.base_port, member_id, 3);
+            let _ = read_ready(&mut child);
+            processes.push(child);
         }
         let ingress = format!("aeron:udp?endpoint=localhost:{}", self.base_port + 2);
         let egress = format!("aeron:udp?endpoint=localhost:{}", self.base_port + 2);

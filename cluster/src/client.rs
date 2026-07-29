@@ -803,10 +803,15 @@ impl AeronCluster {
     /// the application payload — fill [`ClusterClaim::payload_mut`] then
     /// [`ClusterClaim::commit`]. Abort with [`ClusterClaim::abort`] (or drop).
     ///
-    /// ```rust,ignore
-    /// let mut claim = client.try_claim(app_len)?;
-    /// claim.payload_mut().copy_from_slice(&app_bytes);
-    /// claim.commit()?;
+    /// ```rust,no_run
+    /// use ergo_aeron_cluster::{AeronCluster, ClusterError};
+    ///
+    /// fn publish(client: &mut AeronCluster, app_bytes: &[u8]) -> Result<(), ClusterError> {
+    ///     let mut claim = client.try_claim(app_bytes.len())?;
+    ///     claim.payload_mut().copy_from_slice(app_bytes);
+    ///     claim.commit()?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn try_claim(&mut self, payload_len: usize) -> Result<ClusterClaim, ClusterError> {
         if self.state != SessionState::Connected {

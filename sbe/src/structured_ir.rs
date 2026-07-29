@@ -831,4 +831,47 @@ mod tests {
             MemberType::Composite { size: 4, .. }
         ));
     }
+
+    fn enum_elements(name: &str, semantic_type: Option<&str>, values: &[&str]) -> SchemaElements {
+        let mut enum_tokens = vec![token(
+            name,
+            Signal::BeginEnum,
+            Encoding {
+                semantic_type: semantic_type.map(str::to_string),
+                ..Encoding::default()
+            },
+        )];
+        enum_tokens.extend(
+            values
+                .iter()
+                .map(|value| token(value, Signal::Encoding, Encoding::default())),
+        );
+        enum_tokens.push(token(name, Signal::EndEnum, Encoding::default()));
+        SchemaElements {
+            composites: Vec::new(),
+            enums: vec![enum_tokens],
+            sets: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bool_enum_detection_covers_names_semantics_and_value_pairs() {
+        let ordinary = enum_elements("Enabled", None, &["Yes", "No"]);
+        assert!(is_bool_value_enum(&ordinary, "Enabled"));
+        assert!(!is_bool_value_enum(&ordinary, "Other"));
+
+        let reversed = enum_elements("Active", None, &["false", "TRUE"]);
+        assert!(is_bool_value_enum(&reversed, "Active"));
+
+        let non_boolean = enum_elements("Side", None, &["Buy", "Sell"]);
+        assert!(!is_bool_value_enum(&non_boolean, "Side"));
+
+        let semantic = enum_elements("Flag", Some("Boolean"), &["Off", "On"]);
+        assert!(is_bool_enum(&semantic, "Flag"));
+        assert!(is_bool_value_enum(&semantic, "Flag"));
+
+        let canonical = enum_elements("BooleanType", None, &["Zero", "One"]);
+        assert!(is_bool_enum(&canonical, "BooleanType"));
+    }
 }

@@ -71,6 +71,10 @@ Notes from this cycle:
   ratio is not presented as field-setter performance.
 - Buffers and inputs are allocated once outside `b.iter`; timed paths observe
   the encoded byte range.
+- The maintained SBE and Cluster sources are also checked by
+  `fairness_policy_test`: they must use `std::hint::black_box`, establish a
+  pre-timing correctness contract, and retain the sceptical/LTO disclosure.
+  This is a regression alarm, not a substitute for manual equal-work review.
 - The gate uses Criterion's regression estimate consistently. A previous gate
   revision mixed the displayed regression result with the raw sample median;
   on a noisy run those estimators disagreed enough to reverse a tiny ratio.
@@ -134,8 +138,11 @@ All 5 maintained scenarios pass:
 | decode/session_event | 0.8209 | PASS |
 | encode/claim_shaped_header_plus_app | 0.8288 | PASS |
 
-Cluster encode arms also reuse one pre-sized buffer per function (no
-`iter_batched` alloc).
+Cluster encode arms locally assert exact sbe-tool byte parity before timing,
+use identical exact message lengths, make both mutable buffer inputs opaque,
+and reuse one pre-sized buffer per function (no `iter_batched` allocation).
+Decode arms locally assert the same scalar, enum, and var-data values before
+timing.
 
 ### Layout access (diagnostic) — `layout_access_bench`
 
@@ -335,11 +342,11 @@ Latest fresh probe on the Apple M4 host (2026-07-27, rustc 1.95.0):
 
 ## Regression policy
 
-- Every machine keeps the sbe-tool equal-work gate with a `1.00` ceiling for
-  every maintained comparison under LTO and no LTO.
-- GitHub CI runs both profiles, applies the ratio gate, and publishes Criterion
-  diagnostics. Borderline failures require a rerun and fairness review because
-  shared-runner timing is noisy; the ceiling is not raised to make them pass.
+- Local audits and dedicated stable runners keep the sbe-tool equal-work gate
+  with a `1.00` ceiling for every maintained comparison under LTO and no LTO.
+- Shared GitHub CI runs both profiles and publishes Criterion diagnostics, but
+  does not use noisy wall-clock ratios as a merge gate. A suspicious shared-runner
+  result triggers a stable-runner rerun and fairness review.
 - A dedicated stable runner, when configured, must reject a hot-path Criterion
   regression-estimate increase above 3%, an Iai instruction-count regression
   above 2%, any new allocation, or a warmed batch/cluster p99 regression above

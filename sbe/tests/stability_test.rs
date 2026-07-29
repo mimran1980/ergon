@@ -99,7 +99,7 @@ fn generated_output_matches_golden() -> Result<(), Box<dyn std::error::Error>> {
     let golden = fs::read_to_string(golden_path).unwrap_or_else(|e| {
         panic!(
             "Golden file not found at {golden_path}: {e}\n\
-             Run `cargo test update_golden -- --ignored` to generate it."
+             Run `just update-golden` to generate it."
         )
     });
 
@@ -112,22 +112,9 @@ fn generated_output_matches_golden() -> Result<(), Box<dyn std::error::Error>> {
              (first canonical byte mismatch at {mismatch}).\n\
              generated: {output_context:?}\n\
              golden:    {golden_context:?}\n\
-             Run `cargo test update_golden -- --ignored` to regenerate."
+             Run `just update-golden` to regenerate."
         );
     }
-
-    Ok(())
-}
-
-#[test]
-#[ignore = "run this manually to regenerate the golden file"]
-fn update_golden() -> Result<(), Box<dyn std::error::Error>> {
-    let output = generate_with_domain(&Paths::example_schema(), "car_example");
-    let golden_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/car_example.rs");
-    let _ = fs::create_dir_all(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden"));
-    fs::write(golden_path, &output)
-        .unwrap_or_else(|e| panic!("Failed to write golden file at {golden_path}: {e}"));
-    eprintln!("Updated golden file at {golden_path}");
 
     Ok(())
 }

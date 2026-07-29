@@ -5098,11 +5098,14 @@ impl<'a> CarAfterPerformanceFigures<'a> {
     /// the closure writes directly into the outer buffer.
     ///
     /// Canonical nested-SBE pattern (AppMessage → L2Book):
-    /// ```ignore
-    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
-    /// after.payload_with(inner, |p| {
-    ///     let mut enc = InnerEncoder::try_wrap_and_apply_header(p, 0)?;
-    ///     // set fields / groups / var-data …
+    /// ```text
+    /// let inner_len = InnerEncoder::compute_length_with_header(...);
+    /// after.payload_with(inner_len, |payload| {
+    ///     let len = InnerEncoder::try_wrap_and_apply_header(payload, 0)?
+    ///         .field(value)
+    ///         // continue the single encoder chain through all tail stages
+    ///         .encoded_length_with_header();
+    ///     debug_assert_eq!(len, inner_len);
     ///     Ok(())
     /// })?;
     /// ```
@@ -5234,11 +5237,14 @@ impl<'a> CarAfterManufacturer<'a> {
     /// the closure writes directly into the outer buffer.
     ///
     /// Canonical nested-SBE pattern (AppMessage → L2Book):
-    /// ```ignore
-    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
-    /// after.payload_with(inner, |p| {
-    ///     let mut enc = InnerEncoder::try_wrap_and_apply_header(p, 0)?;
-    ///     // set fields / groups / var-data …
+    /// ```text
+    /// let inner_len = InnerEncoder::compute_length_with_header(...);
+    /// after.payload_with(inner_len, |payload| {
+    ///     let len = InnerEncoder::try_wrap_and_apply_header(payload, 0)?
+    ///         .field(value)
+    ///         // continue the single encoder chain through all tail stages
+    ///         .encoded_length_with_header();
+    ///     debug_assert_eq!(len, inner_len);
     ///     Ok(())
     /// })?;
     /// ```
@@ -5370,11 +5376,14 @@ impl<'a> CarAfterModel<'a> {
     /// the closure writes directly into the outer buffer.
     ///
     /// Canonical nested-SBE pattern (AppMessage → L2Book):
-    /// ```ignore
-    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
-    /// after.payload_with(inner, |p| {
-    ///     let mut enc = InnerEncoder::try_wrap_and_apply_header(p, 0)?;
-    ///     // set fields / groups / var-data …
+    /// ```text
+    /// let inner_len = InnerEncoder::compute_length_with_header(...);
+    /// after.payload_with(inner_len, |payload| {
+    ///     let len = InnerEncoder::try_wrap_and_apply_header(payload, 0)?
+    ///         .field(value)
+    ///         // continue the single encoder chain through all tail stages
+    ///         .encoded_length_with_header();
+    ///     debug_assert_eq!(len, inner_len);
     ///     Ok(())
     /// })?;
     /// ```
