@@ -4087,16 +4087,15 @@ impl CarPerformanceFiguresEntryDomain {
             }
         }
         enc.octane_rating(self.octane_rating);
-        let wire_entries: Vec<PerformanceFiguresAccelerationEntry> = self
-            .acceleration
-            .iter()
-            .map(|e| e.to_wire_entry())
-            .collect();
         let enc = enc
             .acceleration(
                 self.acceleration.len() as u16,
                 |g| -> Result<(), sbe_rt::EncodeError> {
-                    g.bulk_add(&wire_entries)?;
+                    for e in &self.acceleration {
+                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                            e.encode_into(entry)
+                        })?;
+                    }
                     Ok(())
                 },
             )?;
@@ -5861,43 +5860,6 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         self.written += 1;
         self.buf[pos + 0..pos + 0 + 2].copy_from_slice(&entry.mph.to_le_bytes());
         self.buf[pos + 2..pos + 2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
-        Ok(())
-    }
-    /// Bulk-encode a slice of entries. Bounds checks are hoisted
-    /// outside the loop so LLVM can auto-vectorise the field writes.
-    /// Prefer this over repeated [`Self::add_struct`] calls when
-    /// you already have a `&[#entry_struct_ident]`.
-    pub fn bulk_add(
-        &mut self,
-        entries: &[PerformanceFiguresAccelerationEntry],
-    ) -> Result<(), sbe_rt::EncodeError> {
-        let count: usize = entries.len();
-        if count == 0 {
-            return Ok(());
-        }
-        if (self.written as usize).saturating_add(count) > self.count as usize {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: (self.written as u32).saturating_add(count as u32),
-            });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        let needed = count
-            .checked_mul(block_len)
-            .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        if self.pos + needed > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed,
-                available: self.buf.len().saturating_sub(self.pos),
-            });
-        }
-        for entry in entries {
-            let pos = self.pos;
-            self.pos += block_len;
-            self.buf[pos + 0..pos + 0 + 2].copy_from_slice(&entry.mph.to_le_bytes());
-            self.buf[pos + 2..pos + 2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
-        }
-        self.written = self.written.saturating_add(count as u16);
         Ok(())
     }
 }

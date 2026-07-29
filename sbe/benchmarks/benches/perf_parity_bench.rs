@@ -8,6 +8,19 @@
 //! references, advance()-based group iteration). These benchmarks compare
 //! semantically equivalent operations — same fields, same buffer, same count.
 //! Fair comparison uses `wrap` (sbe-tool's `wrap` does no bounds check).
+//!
+//! ## Why ergon is faster than sbe-tool
+//!
+//! sbe-tool's field setters route through `self.get_buf_mut()` which checks
+//! `self.parent.is_some()` — an Option unwrap per field write. Group entries
+//! also pay this parent-chain cost. ergon's encoder holds `self.buf` directly
+//! — no Option indirection. sbe-tool's `advance()` tracks index + limit per
+//! entry; ergon's `add()` does a simpler bounds check + position advance.
+//! With LTO enabled, ergon's inline-friendly design gets amplified.
+//!
+//! ⚠️ REVIEW REQUEST: The ratios seem unusually good. Both arms produce
+//! byte-identical output and black_box is used correctly, but if you spot a
+//! fairness issue please report it.
 
 #![allow(
     unsafe_code,

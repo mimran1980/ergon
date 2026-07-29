@@ -1,8 +1,8 @@
 //! L2 orderbook benchmark with rust_decimal converters.
 //!
 //! Measures encode/decode throughput for an L2 book with Decimal price/qty
-//! fields (SBE Decimal with constant exponent -2). Compares closure add vs
-//! bulk_add for group encoding, and measures converter overhead on decode
+//! fields (SBE Decimal with constant exponent -2). Compares closure add
+//! with domain type converters, and measures converter overhead on decode
 //! (rust_decimal::Decimal vs raw wire access).
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
@@ -66,24 +66,6 @@ fn bench_l2_encode(c: &mut Criterion) {
             },
         );
 
-        // bulk_add with wire Decimal values (no per-entry converter)
-        group.bench_with_input(BenchmarkId::new("bulk_add_wire", n), &n, |b, &n| {
-            let entries = make_entries(n);
-            let msg_len = L2BookEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
-            let mut buf = vec![0u8; msg_len];
-            b.iter(|| {
-                black_box(
-                    L2BookEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
-                        .unwrap()
-                        .levels(n as u16, |g| {
-                            g.bulk_add(black_box(&entries))?;
-                            Ok(())
-                        })
-                        .unwrap()
-                        .encoded_length_with_header(),
-                )
-            });
-        });
     }
     group.finish();
 }
@@ -94,13 +76,11 @@ fn bench_l2_decode(c: &mut Criterion) {
         let entries = make_entries(n);
         let msg_len = L2BookEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
         let mut buf = vec![0u8; msg_len];
-        let written = L2BookEncoder::try_wrap_and_apply_header(&mut buf, 0)
-            .unwrap()
+        let written = L2BookEncoder::wrap_and_apply_header(&mut buf, 0)
             .levels(n as u16, |g| {
-                g.bulk_add(&entries)?;
+                for e in &entries { g.add_struct(e)?; }
                 Ok(())
-            })
-            .unwrap()
+            }).unwrap()
             .encoded_length_with_header();
         assert_eq!(written, msg_len);
 

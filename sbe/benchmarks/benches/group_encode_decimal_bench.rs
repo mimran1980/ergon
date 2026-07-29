@@ -97,17 +97,6 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
             ));
         });
 
-        // 4. bulk_add with wire entry structs (hoisted bounds checks)
-        group.bench_with_input(BenchmarkId::new("bulk_add", n), &n, |b, &n| {
-            let entries = make_entries(n);
-            let msg_len = L2BookEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
-            let mut buf = vec![0u8; msg_len];
-            b.iter(|| black_box(
-                L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                    .levels(n as u16, |g| { g.bulk_add(&entries)?; Ok(()) }).unwrap()
-                    .encoded_length_with_header()
-            ));
-        });
     }
     group.finish();
 }

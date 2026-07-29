@@ -2973,47 +2973,19 @@ fn generate_domain_recursive(
 
         let (_, _, count_prim) = get_dim_num_layout(elements, &g.dimension_type);
         let count_ty: syn::Type = syn::parse_str(rust_type(count_prim)).unwrap();
-        // Use bulk_add for flat groups whose entry fields have no
-        // domain conversions — the domain entry struct mirrors the wire
-        // entry struct.
-        let can_bulk = !has_tail
-            && g.fields.iter().all(|f| {
-                f.presence != Presence::Optional
-                    && f.since_version == 0
-                    && !field_has_conversion_free(f, conversions)
-                    && find_domain_type(f, domain_types).is_none()
-            });
-        if can_bulk {
-            let wire_entry_ident = syn::Ident::new(&format!("{g_scoped}Entry"), span);
-            group_encode_stmts.push(quote::quote! {
-                let wire_entries: Vec<#wire_entry_ident> = self
-                    .#g_field_ident
-                    .iter()
-                    .map(|e| e.to_wire_entry())
-                    .collect();
-                let enc = enc.#g_field_ident(
-                    self.#g_field_ident.len() as #count_ty,
-                    |g| -> Result<(), sbe_rt::EncodeError> {
-                        g.bulk_add(&wire_entries)?;
-                        Ok(())
+        group_encode_stmts.push(quote::quote! {
+            let enc = enc.#g_field_ident(
+                self.#g_field_ident.len() as #count_ty,
+                |g| -> Result<(), sbe_rt::EncodeError> {
+                    for e in &self.#g_field_ident {
+                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                            e.encode_into(entry)
+                        })?;
                     }
-                )?;
-            });
-        } else {
-            group_encode_stmts.push(quote::quote! {
-                let enc = enc.#g_field_ident(
-                    self.#g_field_ident.len() as #count_ty,
-                    |g| -> Result<(), sbe_rt::EncodeError> {
-                        for e in &self.#g_field_ident {
-                            g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                                e.encode_into(entry)
-                            })?;
-                        }
-                        Ok(())
-                    }
-                )?;
-            });
-        }
+                    Ok(())
+                }
+            )?;
+        });
 
         let entry_prefix = format!("{struct_prefix}{g_pascal}Entry");
         let entry_decoder_name = format!("{g_scoped}Entry");
@@ -3174,7 +3146,7 @@ fn generate_domain_recursive(
         });
 
         // For flat entries with no domain conversions or optional fields,
-        // generate to_wire_entry() so DTO encode can use bulk_add.
+        // generate to_wire_entry() so DTO encode can go field-by-field.
         // Optional fields are excluded because the domain type wraps them
         // in Option<T> while the wire type is bare T — to_wire_entry
         // can't automatically resolve the null case.
@@ -7214,41 +7186,6 @@ fn generate_group_encoder(
                     self.pos += block_len;
                     self.written += 1;
                     #struct_write
-                    Ok(())
-                }
-
-                /// Bulk-encode a slice of entries. Bounds checks are hoisted
-                /// outside the loop so LLVM can auto-vectorise the field writes.
-                /// Prefer this over repeated [`Self::add_struct`] calls when
-                /// you already have a `&[#entry_struct_ident]`.
-                pub fn bulk_add(&mut self, entries: &[#entry_struct_ident]) -> Result<(), sbe_rt::EncodeError> {
-                    let count: usize = entries.len();
-                    if count == 0 {
-                        return Ok(());
-                    }
-                    // Pre-flight capacity check (once, not per-entry)
-                    if (self.written as usize).saturating_add(count) > self.count as usize {
-                        return Err(sbe_rt::EncodeError::GroupFull {
-                            declared: self.count as u32,
-                            attempted: (self.written as u32).saturating_add(count as u32),
-                        });
-                    }
-                    let block_len = Self::ENTRY_BLOCK_LENGTH;
-                    let needed = count.checked_mul(block_len).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-                    if self.pos + needed > self.buf.len() {
-                        return Err(sbe_rt::EncodeError::BufferTooShort {
-                            needed,
-                            available: self.buf.len().saturating_sub(self.pos),
-                        });
-                    }
-                    // Tight inner loop — no per-entry bounds checks.
-                    // LLVM will auto-vectorise sequential copy_from_slice calls.
-                    for entry in entries {
-                        let pos = self.pos;
-                        self.pos += block_len;
-                        #struct_write
-                    }
-                    self.written = self.written.saturating_add(count as #count_ty);
                     Ok(())
                 }
             }
