@@ -6,7 +6,7 @@
 
 use ergo_aeron_cluster::{
     AeronCluster, NullCredentialsSupplier, SessionBuilder,
-    codecs::EventCode,
+    cluster_codec_types::EventCode,
     egress::{EgressAdapter, EgressListener},
 };
 use std::time::Duration;
@@ -46,12 +46,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
 
-    let builder = SessionBuilder::builder()
+    let builder = SessionBuilder::default()
         .ingress_channel(cluster.ingress_channel.clone())
         .egress_channel(cluster.egress_channel.clone())
         .message_timeout(Duration::from_secs(5));
 
-    let mut client = AeronCluster::connect(&builder, cluster.aeron_dir().to_str().unwrap()).expect("connect failed");
+    let aeron_dir = cluster
+        .aeron_dir()
+        .to_str()
+        .ok_or("Aeron directory is not valid UTF-8")?;
+    let mut client = AeronCluster::connect(&builder, aeron_dir)?;
     println!(
         "Connected: session={} term={}",
         client.cluster_session_id(),

@@ -94,7 +94,7 @@ generated API is purpose-built for Rust rather than ported from Java.
 | **Trust boundary** | `try_from` / `try_wrap` for untrusted input; `wrap` for trusted — explicit in the type system |
 | **Composite wire images** | `#[repr(transparent)] Engine([u8; N])` — the value IS the on-wire bytes, zero-copy with portable LE/BE accessors |
 | **Domain types** | Map wire `Decimal` to `rust_decimal::Decimal` at the codec boundary — one line of config, no hand-rolled converters |
-| **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — measured about 23-25% lower encode latency than `add()` for 1,000-entry flat groups on the audited Apple M4 profiles |
+| **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — measured about 22-23% lower encode latency than `add()` for 1,000-entry flat groups on the audited Apple M4 profiles; eligible DTO groups use an allocation-free domain bulk writer automatically |
 | **Zero dependencies at runtime** | Generated codecs embed their own `sbe_rt` — no `ergo-sbe` on your critical path |
 
 ## Contents
@@ -554,6 +554,13 @@ assert!(HeartbeatDecoder::verify(&buf[..4]).is_err());
 > use the zero-copy flyweight decoder instead. DTOs are for tooling, logging,
 > and offline processing — not the hot path.
 
+DTO construction still owns and allocates its `Vec`/`String` fields. Re-encode
+does not add another allocation: wire-compatible flat groups automatically use
+the generated `bulk_add_domain(&[EntryDomain])` path, which validates one
+complete output region and writes directly from the DTO slice. Groups with
+nested tails, var-data, optional/versioned fields, domain conversions, or bool
+domain remapping retain the general per-entry path.
+
 Enable domain objects during generation when an owned application value is
 more convenient than a zero-copy flyweight. This fixture uses
 `DomainVarData::Bytes`, so re-encoding preserves arbitrary bytes:
@@ -920,13 +927,13 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **NULL / MIN / MAX** | Schema sentinels as consts | `MODEL_YEAR_NULL` · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
 | **Version-aware fields** | `sinceVersion` / acting version | `Option` or skip on older wire · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
 | **Groups / nested groups** | Repeating dimensions | `bids(n, \|g\| g.add(…))?` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [l3_orderbook_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/l3_orderbook_test.rs) |
-| **Bulk group encode / decode** | `bulk_add(&[Entry])` / `bulk_decode() -> Vec<Entry>` for flat groups | About 23-25% lower encode latency than per-entry `add()` for the audited 1,000-entry cases; remeasure for your schema · [group_encode_bench](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/group_encode_bench.rs) |
+| **Bulk group encode / decode** | `bulk_add(&[Entry])` / `bulk_add_domain(&[EntryDomain])` / `bulk_decode() -> Vec<Entry>` for eligible flat groups | Wire `bulk_add`: about 22-23% lower encode latency than per-entry `add()` for the audited 1,000-entry cases. DTO re-encode selects the domain bulk path automatically when wire and domain fields match; remeasure for your schema · [group_encode_bench](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/group_encode_bench.rs) |
 | **Var-data / text** | Length-prefix; optional UTF-8/ASCII | `manufacturer(b"Honda")?` · `*_as_str` when encoding set · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **Fixed arrays + bulk helpers** | Arrays, put, pad string, copy-out | `put_some_numbers(…)` · `vehicle_code_str` · `copy_vehicle_code` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
 | **Enums / sets / bool** | Wire enums, bitsets, `_bool` | `available()` / `available_bool(true)` · [comprehensive_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs) |
 | **`with_conversion`** | Wire type → **any** app type you impl | `price_from(&Cents)?` / `price_as::<Cents>()?` · [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) |
 | **`with_domain_type`** | Wire type → **one** fixed Rust path | `enc.price(d); let d = dec.price()` · [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) · [Configuration](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#configuration) |
-| **Domain DTOs** | Owned structs + re-encode; var-data via [`DomainVarData`] | `.enable_domain_objects(DomainVarData::LossyStrings)` · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
+| **Domain DTOs** | Owned structs + re-encode; allocation-free automatic bulk write for eligible flat groups; var-data via [`DomainVarData`] | `.enable_domain_objects(DomainVarData::LossyStrings)` · [Recipes](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#domain-dto-ease-of-use) · [domain_objects_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs) |
 | **`AnyMessage` + frames** | Multi-template + framed streams | `AnyMessage::decode` · `FrameCursor` · [demo_any_message](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **`verify`** | Full tail bounds check | `car.verify()?` · feature-tour try/trusted demos |
 | **Schema identity** | Id / version / hashes | `SCHEMA_ID`, `SCHEMA_HASH`, `SCHEMA_SHA256_HEX` · generated module header |
@@ -1002,6 +1009,18 @@ println!("known={known_len} unknown={unknown_len}");
 Use when you want **owned** values (`Vec` groups, owned tails) and simple
 structs — **not** the zero-copy hot path. Flyweights stay faster for
 low-latency applications.
+
+For re-encode, eligible flat groups are bulk-written directly from
+`&[EntryDomain]`: no temporary `Vec<Entry>` and no encode-time allocation.
+Eligibility requires fixed-size entries whose domain fields have the same wire
+representation; nested groups, var-data, optional/versioned fields, configured
+domain conversions, and bool remapping use the general `add` path. Integer
+min/max checks are preserved in both paths.
+
+On the audited Apple M4 1,000-entry fixture, automatic DTO bulk encode measured
+509 ns versus 1.336 µs for the exact previous per-entry path with LTO, and
+509 ns versus 1.998 µs without LTO. This is a DTO-to-DTO diagnostic, not an
+ergon/sbe-tool fairness ratio.
 
 ```text
 // build.rs — DomainVarData is a big deal (DTO var-data type):

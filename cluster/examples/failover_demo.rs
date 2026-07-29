@@ -9,7 +9,7 @@
 //! cargo run --example failover_demo --features test-harness
 //! ```
 
-use ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder;
+use ergo_aeron_cluster::cluster_codec_types::{SessionConnectRequestEncoder, SessionConnectRequestFixedFields};
 use ergo_aeron_cluster::poller;
 use rusteron_client::cformat;
 use std::time::{Duration, Instant};
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let egress_port: u16 = 19199;
     // Already CString — do not cformat! again (would re-allocate).
-    let egress_uri = cformat!("localhost:{egress_port}")?;
+    let egress_uri = cformat!("localhost:{egress_port}");
     let egress = a.add_subscription(
         &egress_uri,
         102,
@@ -46,19 +46,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
-        let uri = Some(cformat!("localhost:{port}"))?;
+        let uri = cformat!("localhost:{port}");
         let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
-        let mut buf = [0u8; 512];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).ok()?;
-        enc.correlation_id(1).response_stream_id(102).version(0);
-        let complete = enc
+        let expected_len = SessionConnectRequestEncoder::compute_length_with_header(resp.len(), 0, 0);
+        let mut storage = [0u8; 512];
+        let len = SessionConnectRequestEncoder::wrap_and_apply_header(&mut storage[..expected_len], 0)
+            .fixed(&SessionConnectRequestFixedFields {
+                correlation_id: 1,
+                response_stream_id: 102,
+                version: Some(0),
+            })
             .response_channel(resp.as_bytes())
             .ok()?
             .encoded_credentials(b"")
             .ok()?
             .client_info(b"")
-            .ok()?;
-        let bytes = complete.as_bytes_with_header();
+            .ok()?
+            .encoded_length_with_header();
+        debug_assert_eq!(len, expected_len);
+        let bytes = &storage[..len];
         for _ in 0..50 {
             if pub_.offer_raw(bytes, rusteron_client::Handlers::NONE) > 0 {
                 return Some(pub_);
@@ -69,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let resp = format!("aeron:udp?endpoint=localhost:{egress_port}");
-    let _ingress = connect_to_leader(node0_port, &resp).expect("connect to node 0");
+    let _ingress = connect_to_leader(node0_port, &resp).ok_or("connect to node 0 failed")?;
 
     // Wait for SessionEvent(OK).
     let mut connected = false;
@@ -109,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         egress
             .poll_fn(
                 |data, _h| {
-                    if let Some(ev) = poller::parse_event(data) {
+                    if let Ok(Some(ev)) = poller::parse_event(data) {
                         match ev {
                             poller::EgressEvent::NewLeader {
                                 leader_member_id,
@@ -146,7 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match poller::parse_leader_endpoint(&eps, leader_member_id) {
                 Some(ep) => {
                     let _reconn = connect_to_leader(parse_port(&format!("aeron:udp?endpoint={ep}")), &resp)
-                        .expect("reconnect to new leader");
+                        .ok_or("reconnect to new leader failed")?;
                     println!("  Reconnected ingress to new leader (member {leader_member_id}): {ep}");
                     println!("\n=== Result: failover handled — client survived leader death ===");
                 }

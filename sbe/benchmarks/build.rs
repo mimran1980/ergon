@@ -64,7 +64,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let orderbook_schema = manifest.join("schemas/orderbook.xml");
     ergo_sbe::generate_to_out_dir(
         &orderbook_schema,
-        ergo_sbe::GenerationConfig::new("orderbook_bench"),
+        ergo_sbe::GenerationConfig::new("orderbook_bench")
+            .enable_domain_objects(ergo_sbe::DomainVarData::Bytes),
     )?;
 
     let ob_decimal_schema = manifest.join("schemas/orderbook-decimal.xml");

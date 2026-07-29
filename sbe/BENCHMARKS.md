@@ -87,10 +87,27 @@ After adding inline intent and fixing `bulk_add`:
 
 | 1,000 primitive entries | LTO on | LTO off |
 |---|---:|---:|
-| ergon `add_closure` | 415.0 ns | 428.4 ns |
-| ergon `add_struct` | 508.7 ns | 428.6 ns |
-| ergon `bulk_add` | **319.5 ns** | **322.6 ns** |
-| sbe-tool | 949.1 ns | 958.3 ns |
+| ergon `add_closure` | 414.1 ns | 418.1 ns |
+| ergon `add_struct` | 429.9 ns | 428.6 ns |
+| ergon `bulk_add` | **321.4 ns** | **325.0 ns** |
+| sbe-tool | 953.8 ns | 958.5 ns |
+
+Owned DTO encode is a separate diagnostic because it performs checked buffer
+entry and schema min/max validation for each domain field; presenting it as a
+direct sbe-tool ratio would be unequal work. The benchmark constructs the DTO
+and its `Vec` outside `b.iter`, then compares automatic domain bulk against the
+exact previous generated DTO path:
+
+| 1,000 primitive DTO entries | LTO on | LTO off |
+|---|---:|---:|
+| previous per-entry `add` path | 1.336 µs | 1.998 µs |
+| automatic `bulk_add_domain` | **509.1 ns** | **508.6 ns** |
+| latency reduction | **61.9%** | **74.5%** |
+
+Both DTO arms perform the same range checks and checked entry, produce exact
+sbe-tool bytes before timing, reuse one exact-size buffer, and allocate nothing
+inside the timed encode. The allocation-count suite independently guards DTO
+encode.
 
 For 1,000 Decimal-composite entries:
 

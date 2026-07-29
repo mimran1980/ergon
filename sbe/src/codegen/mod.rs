@@ -2626,7 +2626,7 @@ fn generate_domain_objects(
     msg_name: &str,
     _parent_scope: &str,
     multi_message: bool,
-    _byte_order: ByteOrder,
+    byte_order: ByteOrder,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     domain_var_data: crate::config::DomainVarData,
@@ -2641,6 +2641,7 @@ fn generate_domain_objects(
         &msg.groups,
         &msg.var_data,
         elements,
+        byte_order,
         multi_message,
         msg_name,
         conversions,
@@ -2651,6 +2652,84 @@ fn generate_domain_objects(
         span,
     );
     ts
+}
+
+fn domain_entry_can_bulk_encode(
+    fields: &[MessageField],
+    groups: &[MessageGroup],
+    var_data: &[MessageVarData],
+    elements: &SchemaElements,
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+) -> bool {
+    groups.is_empty()
+        && var_data.is_empty()
+        && fields.iter().all(|f| {
+            f.presence == Presence::Constant
+                || (f.presence != Presence::Optional
+                    && f.since_version == 0
+                    && !field_has_conversion_free(f, conversions)
+                    && find_domain_type(f, domain_types).is_none()
+                    && !matches!(
+                        &f.field_type,
+                        FieldType::Enum { name, .. } if is_bool_enum(elements, name)
+                    ))
+        })
+}
+
+fn domain_bulk_slot_write_tokens(
+    fields: &[MessageField],
+    byte_order: ByteOrder,
+    span: proc_macro2::Span,
+) -> proc_macro2::TokenStream {
+    let to_endian = match byte_order {
+        ByteOrder::LittleEndian => syn::Ident::new("to_le_bytes", span),
+        ByteOrder::BigEndian => syn::Ident::new("to_be_bytes", span),
+    };
+    let mut writes = proc_macro2::TokenStream::new();
+    for f in fields {
+        if f.presence == Presence::Constant {
+            continue;
+        }
+        let f_name = syn::Ident::new(&to_snake_case(&f.name), span);
+        let f_offset = syn::Index::from(f.offset);
+        let f_size = syn::LitInt::new(&f.field_type.size().to_string(), span);
+        match &f.field_type {
+            FieldType::Composite { .. } => {
+                writes.extend(quote::quote! {
+                    slot[#f_offset..#f_offset + #f_size]
+                        .copy_from_slice(&entry.#f_name.0);
+                });
+            }
+            FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
+                let r_ty = syn::Ident::new(rust_type(*encoding_type), span);
+                writes.extend(quote::quote! {
+                    slot[#f_offset..#f_offset + #f_size]
+                        .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
+                });
+            }
+            FieldType::Primitive(pt, Some(len)) => {
+                let len_lit = syn::LitInt::new(&len.to_string(), span);
+                let prim_size_lit = syn::LitInt::new(&pt.size().to_string(), span);
+                writes.extend(quote::quote! {
+                    let mut idx = 0usize;
+                    while idx < #len_lit {
+                        let offset = #f_offset + idx * #prim_size_lit;
+                        slot[offset..offset + #prim_size_lit]
+                            .copy_from_slice(&entry.#f_name[idx].#to_endian());
+                        idx += 1;
+                    }
+                });
+            }
+            FieldType::Primitive(_, None) => {
+                writes.extend(quote::quote! {
+                    slot[#f_offset..#f_offset + #f_size]
+                        .copy_from_slice(&entry.#f_name.#to_endian());
+                });
+            }
+        }
+    }
+    writes
 }
 
 /// Check whether any field, group entry, or nested group under these
@@ -2740,6 +2819,7 @@ fn generate_domain_recursive(
     groups: &[MessageGroup],
     var_data: &[MessageVarData],
     elements: &SchemaElements,
+    byte_order: ByteOrder,
     multi_message: bool,
     msg_name: &str,
     conversions: &[crate::ConversionSelector],
@@ -2973,19 +3053,36 @@ fn generate_domain_recursive(
 
         let (_, _, count_prim) = get_dim_num_layout(elements, &g.dimension_type);
         let count_ty: syn::Type = syn::parse_str(rust_type(count_prim)).unwrap();
-        group_encode_stmts.push(quote::quote! {
-            let enc = enc.#g_field_ident(
-                self.#g_field_ident.len() as #count_ty,
-                |g| -> Result<(), sbe_rt::EncodeError> {
-                    for e in &self.#g_field_ident {
-                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                            e.encode_into(entry)
-                        })?;
+        let can_bulk_encode = domain_entry_can_bulk_encode(
+            &g.fields,
+            &g.groups,
+            &g.var_data,
+            elements,
+            conversions,
+            domain_types,
+        );
+        if can_bulk_encode {
+            group_encode_stmts.push(quote::quote! {
+                let enc = enc.#g_field_ident(
+                    self.#g_field_ident.len() as #count_ty,
+                    |g| g.bulk_add_domain(&self.#g_field_ident),
+                )?;
+            });
+        } else {
+            group_encode_stmts.push(quote::quote! {
+                let enc = enc.#g_field_ident(
+                    self.#g_field_ident.len() as #count_ty,
+                    |g| -> Result<(), sbe_rt::EncodeError> {
+                        for e in &self.#g_field_ident {
+                            g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                                e.encode_into(entry)
+                            })?;
+                        }
+                        Ok(())
                     }
-                    Ok(())
-                }
-            )?;
-        });
+                )?;
+            });
+        }
 
         let entry_prefix = format!("{struct_prefix}{g_pascal}Entry");
         let entry_decoder_name = format!("{g_scoped}Entry");
@@ -2996,6 +3093,7 @@ fn generate_domain_recursive(
             &g.groups,
             &g.var_data,
             elements,
+            byte_order,
             multi_message,
             msg_name,
             &conversions,
@@ -3005,6 +3103,41 @@ fn generate_domain_recursive(
             ts,
             span,
         );
+        if can_bulk_encode {
+            let g_encoder_ident = syn::Ident::new(&format!("{g_scoped}Encoder"), span);
+            let mut range_checks = proc_macro2::TokenStream::new();
+            for f in &g.fields {
+                if let FieldType::Primitive(prim, None) = f.field_type {
+                    if f.presence != Presence::Constant {
+                        let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
+                        range_checks.extend(dto_range_check_tokens(
+                            f,
+                            prim,
+                            quote::quote! { entry.#f_ident },
+                            span,
+                        ));
+                    }
+                }
+            }
+            let slot_writes = domain_bulk_slot_write_tokens(&g.fields, byte_order, span);
+            ts.extend(quote::quote! {
+                impl<'a> #g_encoder_ident<'a> {
+                    /// Encode flat domain entries with one complete-region bounds check
+                    /// and no temporary wire-entry allocation.
+                    #[inline]
+                    pub fn bulk_add_domain(
+                        &mut self,
+                        entries: &[#entry_domain_ident],
+                    ) -> Result<(), sbe_rt::EncodeError> {
+                        self.bulk_add_with(entries, |entry, slot| {
+                            #range_checks
+                            #slot_writes
+                            Ok(())
+                        })
+                    }
+                }
+            });
+        }
     }
 
     // Var-data shape from DomainVarData (enable_domain_objects argument).
@@ -3145,20 +3278,16 @@ fn generate_domain_recursive(
             }
         });
 
-        // For flat entries with no domain conversions or optional fields,
-        // generate to_wire_entry() so DTO encode can go field-by-field.
-        // Optional fields are excluded because the domain type wraps them
-        // in Option<T> while the wire type is bare T — to_wire_entry
-        // can't automatically resolve the null case.
-        let entry_is_flat = groups.is_empty() && var_data.is_empty();
-        let entry_has_no_conversions = fields.iter().all(|f| {
-            f.presence != Presence::Constant
-                && f.presence != Presence::Optional
-                && f.since_version == 0
-                && !field_has_conversion_free(f, conversions)
-                && find_domain_type(f, domain_types).is_none()
-        });
-        if entry_is_flat && entry_has_no_conversions {
+        // Preserve the explicit domain-to-wire conversion helper for callers
+        // that build their own wire-entry slices.
+        if domain_entry_can_bulk_encode(
+            fields,
+            groups,
+            var_data,
+            elements,
+            conversions,
+            domain_types,
+        ) {
             let wire_entry_ident = syn::Ident::new(decoder_name, span);
             let mut wire_fields = proc_macro2::TokenStream::new();
             for f in fields {
@@ -3173,6 +3302,7 @@ fn generate_domain_recursive(
             ts.extend(quote::quote! {
                 impl #domain_ident {
                     /// Convert to the wire entry struct for bulk encoding.
+                    #[inline]
                     pub fn to_wire_entry(&self) -> #wire_entry_ident {
                         #wire_entry_ident {
                             #wire_fields
@@ -7245,10 +7375,15 @@ fn generate_group_encoder(
                     Ok(())
                 }
 
-                /// Encode a slice of fixed-size entries after validating the
-                /// complete destination region once.
                 #[inline]
-                pub fn bulk_add(&mut self, entries: &[#entry_struct_ident]) -> Result<(), sbe_rt::EncodeError> {
+                fn bulk_add_with<T, F>(
+                    &mut self,
+                    entries: &[T],
+                    mut write_entry: F,
+                ) -> Result<(), sbe_rt::EncodeError>
+                where
+                    F: FnMut(&T, &mut [u8]) -> Result<(), sbe_rt::EncodeError>,
+                {
                     let count = entries.len();
                     if count == 0 {
                         return Ok(());
@@ -7286,12 +7421,22 @@ fn generate_group_encoder(
                             .iter()
                             .zip(region.chunks_exact_mut(block_len))
                         {
-                            #bulk_struct_write
+                            write_entry(entry, slot)?;
                         }
                     }
                     self.pos = end;
                     self.written = attempted as #count_ty;
                     Ok(())
+                }
+
+                /// Encode a slice of fixed-size entries after validating the
+                /// complete destination region once.
+                #[inline]
+                pub fn bulk_add(&mut self, entries: &[#entry_struct_ident]) -> Result<(), sbe_rt::EncodeError> {
+                    self.bulk_add_with(entries, |entry, slot| {
+                        #bulk_struct_write
+                        Ok(())
+                    })
                 }
             }
         });

@@ -65,6 +65,14 @@ Audited operation counts in the maintained suite:
 | full decode | every fixed field used by the case, every group/nested-group entry, and all three message var-data fields |
 | full encode | identical fixed, composite, group, and var-data values; exact bytes checked |
 
+The `dto_add_reference` and `dto_auto_bulk` arms are a separate DTO-to-DTO
+diagnostic. Both perform checked buffer entry, the same schema range checks,
+and the same three writes per entry. DTO construction and its owned `Vec` stay
+outside timing. The automatic arm differs only by validating the complete
+output region once and using `bulk_add_domain`; it is not reported as a direct
+sbe-tool ratio because sbe-tool has no equivalent owned DTO/range-validation
+API.
+
 ### Optimizer opacity
 
 Use `std::hint::black_box`, not Criterion 0.5's fallback implementation.
@@ -134,7 +142,10 @@ cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
 ```
 
 `just bench-groups` runs the primitive and Decimal group suites under both
-profiles.
+profiles. `group_encode_bench` also reports automatic DTO bulk encode against
+the exact previous per-entry DTO path. On the audited 1,000-entry Apple M4 run,
+automatic DTO bulk measured 509.1 ns versus 1.336 µs with LTO and 508.6 ns
+versus 1.998 µs without LTO.
 
 ## Maintained suites
 

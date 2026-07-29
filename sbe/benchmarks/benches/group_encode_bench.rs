@@ -1,4 +1,5 @@
-//! Group encode: add_closure vs add_struct vs bulk_add vs sbe-tool.
+//! Group encode: add_closure vs add_struct vs bulk_add vs sbe-tool, plus the
+//! separate automatic-DTO-bulk diagnostic.
 //! 50 samples, 1s warm-up, 3s measurement.
 //!
 //! ## LTO is part of the result
@@ -34,6 +35,19 @@ fn make_entries(n: usize) -> Vec<LevelsEntry> {
         .collect()
 }
 
+fn make_domain(entries: &[LevelsEntry]) -> BookSnapshotDomain {
+    BookSnapshotDomain {
+        levels: entries
+            .iter()
+            .map(|entry| BookSnapshotLevelsEntryDomain {
+                price: entry.price,
+                qty: entry.qty,
+                num_orders: entry.num_orders,
+            })
+            .collect(),
+    }
+}
+
 fn bench_group_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("group_encode");
     group.sample_size(50);
@@ -42,6 +56,7 @@ fn bench_group_encode(c: &mut Criterion) {
 
     for &n in &[10usize, 100, 1000] {
         let entries = make_entries(n);
+        let domain = make_domain(&entries);
         let msg_len =
             BookSnapshotEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
         group.throughput(Throughput::Elements(n as u64));
@@ -100,6 +115,36 @@ fn bench_group_encode(c: &mut Criterion) {
                 &tbuf[..tlen],
                 "bulk/sbe-tool BYTE mismatch at n={n}"
             );
+
+            let mut dto_buf = vec![0u8; msg_len];
+            let dto_len = domain.encode(&mut dto_buf).unwrap();
+            assert_eq!(dto_len, elen, "DTO length mismatch at n={n}");
+            assert_eq!(
+                &dto_buf[..dto_len],
+                &tbuf[..tlen],
+                "DTO/sbe-tool BYTE mismatch at n={n}"
+            );
+
+            let mut dto_add_buf = vec![0u8; msg_len];
+            let dto_add_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut dto_add_buf, 0)
+                .unwrap()
+                .levels(n as u16, |group| {
+                    for entry in &domain.levels {
+                        group.add(|encoder| entry.encode_into(encoder))?;
+                    }
+                    Ok(())
+                })
+                .unwrap()
+                .encoded_length_with_header();
+            assert_eq!(
+                dto_add_len, elen,
+                "DTO add-reference length mismatch at n={n}"
+            );
+            assert_eq!(
+                &dto_add_buf[..dto_add_len],
+                &tbuf[..tlen],
+                "DTO add-reference/sbe-tool BYTE mismatch at n={n}"
+            );
         }
 
         group.bench_with_input(
@@ -153,6 +198,46 @@ fn bench_group_encode(c: &mut Criterion) {
                     .levels(n as u16, |group| group.bulk_add(entries))
                     .unwrap()
                     .encoded_length_with_header();
+                black_box(&buf[..len]);
+                black_box(len)
+            });
+        });
+
+        // The exact pre-fix DTO path: checked entry, per-entry add closure, and
+        // the same generated range checks. This is a DTO-to-DTO comparison,
+        // not an ergon/sbe-tool parity ratio.
+        group.bench_with_input(
+            BenchmarkId::new("dto_add_reference", n),
+            &domain,
+            |b, dto| {
+                let mut buf = vec![0u8; msg_len];
+                b.iter(|| {
+                    let dto = black_box(dto);
+                    let len =
+                        BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                            .unwrap()
+                            .levels(dto.levels.len() as u16, |group| {
+                                for entry in &dto.levels {
+                                    group.add(|encoder| entry.encode_into(encoder))?;
+                                }
+                                Ok(())
+                            })
+                            .unwrap()
+                            .encoded_length_with_header();
+                    black_box(&buf[..len]);
+                    black_box(len)
+                });
+            },
+        );
+
+        // DTO construction remains outside the timed path. The encode itself
+        // performs the same range checks and checked buffer entry as the
+        // reference above, then uses the allocation-free domain bulk writer.
+        group.bench_with_input(BenchmarkId::new("dto_auto_bulk", n), &domain, |b, dto| {
+            let mut buf = vec![0u8; msg_len];
+            b.iter(|| {
+                let dto = black_box(dto);
+                let len = dto.encode(black_box(&mut buf)).unwrap();
                 black_box(&buf[..len]);
                 black_box(len)
             });

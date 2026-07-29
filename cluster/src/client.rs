@@ -148,6 +148,14 @@ fn offer_result(context: &'static str, r: i64) -> Result<i64, ClusterError> {
     }
 }
 
+#[inline]
+fn tolerate_retryable_keep_alive(result: Result<(), ClusterError>) -> Result<(), ClusterError> {
+    match result {
+        Err(error) if error.is_retryable() => Ok(()),
+        result => result,
+    }
+}
+
 /// A connected Aeron cluster client. Owns the Aeron client, ingress
 /// exclusive publication, and egress subscription.
 pub struct AeronCluster {
@@ -620,7 +628,7 @@ impl AeronCluster {
         limit: usize,
     ) -> Result<i32, ClusterError> {
         adapter.set_expected_session_id(self.cluster_session_id);
-        self.keep_alive_if_due()?;
+        tolerate_retryable_keep_alive(self.keep_alive_if_due())?;
         let mut new_leader: Option<(i64, i32, String)> = None;
         let mut decode_err: Option<ClusterError> = None;
         let mut session_closed = false;
@@ -658,7 +666,7 @@ impl AeronCluster {
         fragment_limit: usize,
     ) -> Result<i32, ClusterError> {
         adapter.set_expected_session_id(self.cluster_session_id);
-        self.keep_alive_if_due()?;
+        tolerate_retryable_keep_alive(self.keep_alive_if_due())?;
         let mut new_leader: Option<(i64, i32, String)> = None;
         let mut decode_err: Option<ClusterError> = None;
         let mut session_closed = false;
@@ -1223,6 +1231,17 @@ mod tests {
         assert_eq!(SessionKeepAliveEncoder::TEMPLATE_ID, 5);
         assert_eq!(SessionCloseRequestEncoder::TEMPLATE_ID, 4);
 
+        Ok(())
+    }
+
+    #[test]
+    fn retryable_keep_alive_failure_does_not_block_egress_poll() -> Result<(), Box<dyn std::error::Error>> {
+        for code in [-1, -2, -3] {
+            tolerate_retryable_keep_alive(Err(ClusterError::from_offer_raw("track_ingress", code)))?;
+        }
+        for code in [-4, -5] {
+            assert!(tolerate_retryable_keep_alive(Err(ClusterError::from_offer_raw("track_ingress", code))).is_err());
+        }
         Ok(())
     }
 

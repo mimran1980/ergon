@@ -4039,11 +4039,41 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
 }
 impl CarPerformanceFiguresEntryAccelerationEntryDomain {
     /// Convert to the wire entry struct for bulk encoding.
+    #[inline]
     pub fn to_wire_entry(&self) -> PerformanceFiguresAccelerationEntry {
         PerformanceFiguresAccelerationEntry {
             mph: self.mph,
             seconds: self.seconds,
         }
+    }
+}
+impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
+    /// Encode flat domain entries with one complete-region bounds check
+    /// and no temporary wire-entry allocation.
+    #[inline]
+    pub fn bulk_add_domain(
+        &mut self,
+        entries: &[CarPerformanceFiguresEntryAccelerationEntryDomain],
+    ) -> Result<(), sbe_rt::EncodeError> {
+        self.bulk_add_with(
+            entries,
+            |entry, slot| {
+                {
+                    let __v = entry.mph as i128;
+                    if __v < 0 || __v > 65534 {
+                        return Err(sbe_rt::EncodeError::ValueOutOfRange {
+                            field: "mph",
+                            min: 0,
+                            max: 65534,
+                            actual: __v,
+                        });
+                    }
+                }
+                slot[0..0 + 2].copy_from_slice(&entry.mph.to_le_bytes());
+                slot[2..2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
+                Ok(())
+            },
+        )
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
@@ -4100,14 +4130,7 @@ impl CarPerformanceFiguresEntryDomain {
         let enc = enc
             .acceleration(
                 self.acceleration.len() as u16,
-                |g| -> Result<(), sbe_rt::EncodeError> {
-                    for e in &self.acceleration {
-                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                            e.encode_into(entry)
-                        })?;
-                    }
-                    Ok(())
-                },
+                |g| g.bulk_add_domain(&self.acceleration),
             )?;
         Ok(())
     }
@@ -5903,13 +5926,15 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         self.buf[pos + 2..pos + 2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
         Ok(())
     }
-    /// Encode a slice of fixed-size entries after validating the
-    /// complete destination region once.
     #[inline]
-    pub fn bulk_add(
+    fn bulk_add_with<T, F>(
         &mut self,
-        entries: &[PerformanceFiguresAccelerationEntry],
-    ) -> Result<(), sbe_rt::EncodeError> {
+        entries: &[T],
+        mut write_entry: F,
+    ) -> Result<(), sbe_rt::EncodeError>
+    where
+        F: FnMut(&T, &mut [u8]) -> Result<(), sbe_rt::EncodeError>,
+    {
         let count = entries.len();
         if count == 0 {
             return Ok(());
@@ -5944,13 +5969,28 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         {
             let region = &mut self.buf[self.pos..end];
             for (entry, slot) in entries.iter().zip(region.chunks_exact_mut(block_len)) {
-                slot[0..0 + 2].copy_from_slice(&entry.mph.to_le_bytes());
-                slot[2..2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
+                write_entry(entry, slot)?;
             }
         }
         self.pos = end;
         self.written = attempted as u16;
         Ok(())
+    }
+    /// Encode a slice of fixed-size entries after validating the
+    /// complete destination region once.
+    #[inline]
+    pub fn bulk_add(
+        &mut self,
+        entries: &[PerformanceFiguresAccelerationEntry],
+    ) -> Result<(), sbe_rt::EncodeError> {
+        self.bulk_add_with(
+            entries,
+            |entry, slot| {
+                slot[0..0 + 2].copy_from_slice(&entry.mph.to_le_bytes());
+                slot[2..2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
+                Ok(())
+            },
+        )
     }
 }
 #[must_use = "entry encoder fields must be set before the next entry"]

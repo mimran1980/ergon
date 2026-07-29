@@ -14,6 +14,8 @@
 - sbe-tool comparison arm in `group_encode_bench`.
 - `bulk_add(&[Entry])` regression coverage for exact bytes, count overflow,
   short buffers, and empty groups.
+- `bulk_add_domain(&[EntryDomain])` for eligible flat DTO groups, sharing the
+  wire bulk writer's single-region validation without a temporary allocation.
 
 ### Fixed
 - **Composite explicit-offset bug**: `get_token_block_size` summed child sizes
@@ -22,8 +24,14 @@
   `BLOCK_LENGTH` and `ENCODED_LENGTH` constants. Present since 0.1.0.
 - **`bulk_add` code generation**: validate one exact output region, iterate it
   with `chunks_exact_mut`, use slot-relative field writes, and commit position
-  once. On the audited 1,000-entry cases it is now about 23-25% lower latency than
-  `add_closure` instead of 1.5-2× slower.
+  once. On the audited 1,000-entry cases it is now about 22-23% lower latency
+  than `add_closure` instead of 1.5-2× slower.
+- **DTO flat-group encoding**: automatic DTO re-encode now actually selects
+  the allocation-free domain bulk writer for wire-compatible flat entries.
+  The previous generator emitted `to_wire_entry()` but still encoded every DTO
+  entry through `add`. At 1,000 primitive entries, the corrected path measured
+  509 ns versus 1.336 µs for the old path with LTO, and 509 ns versus 1.998 µs
+  without LTO. DTO range validation remains enabled.
 - **Zero-width group bulk encode**: count-only groups no longer call
   `chunks_exact_mut(0)` and panic.
 - **Cross-crate generated-code inlining**: fixed/composite/set/enum setters,
@@ -58,6 +66,11 @@
   sbe-tool body-only uses `wrap(buf, 8)`.
 - **Timed Decimal construction**: Decimal benchmark inputs are prebuilt outside
   the timed path.
+- Cluster examples and `SessionBuilder` rustdoc now compile against the current
+  public API under the all-features/all-targets verification lane.
+- Egress polling no longer aborts before receiving `NewLeaderEvent` when an
+  automatic keep-alive encounters retryable Aeron backpressure or a temporarily
+  disconnected ingress publication during failover.
 - All parity encode cases assert byte-identical output and matching encoded
   lengths; decode cases assert all fixed, group, nested-group, and var-data
   values before timing.
@@ -74,10 +87,10 @@
 ## [0.1.3] — 2026-07-28
 
 ### Added
-- `bulk_add(&[Entry])` and `bulk_decode() -> Vec<Entry>` for flat groups — 15-17% faster than per-entry loops
+- `bulk_add(&[Entry])` and `bulk_decode() -> Vec<Entry>` for flat groups
 - `compute_length_with_header()` — single method name across fixed, flat, and complex messages
 - `compute_length_with_header(params)` and `try_compute_length_with_header(params)` — short aliases
-- DTO encode uses `bulk_add` automatically for flat groups without conversions
+- `to_wire_entry()` helper for wire-compatible flat DTO group entries
 - `just test-all` — runs full suite + miri UB detection + fuzz corpus replay
 - Fuzz targets: `bulk_decode`, `flat_group_decode`
 - README: "Why ergo-sbe" standout features section

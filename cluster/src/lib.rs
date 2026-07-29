@@ -87,8 +87,8 @@ pub mod cluster_codec_types {
     pub use crate::codecs::session::{
         AdminRequestType, AdminResponseCode, AdminResponseEncoder, AnyMessage, ChallengeDecoder, ChallengeEncoder,
         ChallengeResponseEncoder, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder, SessionCloseRequestEncoder,
-        SessionConnectRequestEncoder, SessionEventDecoder, SessionEventEncoder, SessionKeepAliveEncoder,
-        SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+        SessionConnectRequestEncoder, SessionConnectRequestFixedFields, SessionEventDecoder, SessionEventEncoder,
+        SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
     };
 }
 /// [`SessionBuilder`] configuration for connect.

@@ -25,6 +25,219 @@ fn binance_schema() -> PathBuf {
     ))
 }
 
+fn orderbook_schema() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benchmarks/schemas/orderbook.xml"
+    ))
+}
+
+fn big_endian_car_schema() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/example-bigendian-test-schema.xml"
+    ))
+}
+
+#[test]
+fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&orderbook_schema(), "dto_bulk_orderbook");
+    compile_and_run(
+        "dto_bulk_orderbook",
+        &src,
+        r#"
+        let levels = vec![
+            BookSnapshotLevelsEntryDomain {
+                price: 10_001,
+                qty: 501,
+                num_orders: 3,
+            },
+            BookSnapshotLevelsEntryDomain {
+                price: 10_002,
+                qty: 702,
+                num_orders: 4,
+            },
+        ];
+        let dto = BookSnapshotDomain {
+            levels: levels.clone(),
+        };
+        let expected_len = BookSnapshotEncoder::compute_length_with_header(levels.len());
+        assert_eq!(dto.encoded_length_with_header()?, expected_len);
+
+        let mut dto_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(2)];
+        let dto_len = dto.encode(&mut dto_buf)?;
+        assert_eq!(dto_len, expected_len);
+
+        let mut domain_bulk_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(2)];
+        let domain_bulk_len = BookSnapshotEncoder::wrap_and_apply_header(&mut domain_bulk_buf, 0)
+            .levels(levels.len() as u16, |group| group.bulk_add_domain(&levels))?
+            .encoded_length_with_header();
+        assert_eq!(domain_bulk_len, expected_len);
+
+        let wire_levels = [
+            LevelsEntry {
+                price: 10_001,
+                qty: 501,
+                num_orders: 3,
+            },
+            LevelsEntry {
+                price: 10_002,
+                qty: 702,
+                num_orders: 4,
+            },
+        ];
+        let mut wire_bulk_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(2)];
+        let wire_bulk_len = BookSnapshotEncoder::wrap_and_apply_header(&mut wire_bulk_buf, 0)
+            .levels(wire_levels.len() as u16, |group| group.bulk_add(&wire_levels))?
+            .encoded_length_with_header();
+        assert_eq!(wire_bulk_len, expected_len);
+
+        assert_eq!(&dto_buf[..dto_len], &domain_bulk_buf[..domain_bulk_len]);
+        assert_eq!(&dto_buf[..dto_len], &wire_bulk_buf[..wire_bulk_len]);
+
+        let mut decoded = BookSnapshotDecoder::try_from(&dto_buf[..dto_len])?.into_levels()?;
+        for expected in &levels {
+            let actual = decoded.next().expect("missing level");
+            assert_eq!(actual.price(), expected.price);
+            assert_eq!(actual.qty(), expected.qty);
+            assert_eq!(actual.num_orders(), expected.num_orders);
+        }
+        assert!(decoded.next().is_none());
+
+        let invalid_levels = [BookSnapshotLevelsEntryDomain {
+            price: 10_003,
+            qty: 1,
+            num_orders: u32::MAX,
+        }];
+        let mut invalid_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
+        let err = BookSnapshotEncoder::wrap_and_apply_header(&mut invalid_buf, 0)
+            .levels(1, |group| group.bulk_add_domain(&invalid_levels))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            sbe_rt::EncodeError::ValueOutOfRange {
+                field: "numOrders",
+                ..
+            }
+        ));
+
+        let invalid_dto = BookSnapshotDomain {
+            levels: invalid_levels.to_vec(),
+        };
+        let err = invalid_dto.encode(&mut invalid_buf).unwrap_err();
+        assert!(matches!(
+            err,
+            sbe_rt::EncodeError::ValueOutOfRange {
+                field: "numOrders",
+                ..
+            }
+        ));
+        "#,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn big_endian_nested_domain_bulk_matches_wire_bulk_and_automatic_dto_encode()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&big_endian_car_schema(), "dto_bulk_big_endian");
+    compile_and_run(
+        "dto_bulk_big_endian",
+        &src,
+        r#"
+        let domain_acceleration = [
+            CarPerformanceFiguresEntryAccelerationEntryDomain {
+                mph: 30,
+                seconds: 4.25,
+            },
+            CarPerformanceFiguresEntryAccelerationEntryDomain {
+                mph: 60,
+                seconds: 7.5,
+            },
+        ];
+        let wire_acceleration = [
+            PerformanceFiguresAccelerationEntry {
+                mph: 30,
+                seconds: 4.25,
+            },
+            PerformanceFiguresAccelerationEntry {
+                mph: 60,
+                seconds: 7.5,
+            },
+        ];
+        let expected_len = CarEncodedLength::new()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(1)
+            .acceleration(2)?
+            .manufacturer(0)?
+            .model(0)?
+            .activation_code(0)?
+            .encoded_length_with_header();
+
+        let mut domain_storage = [0u8; 512];
+        let domain_len = CarEncoder::wrap_and_apply_header(
+            &mut domain_storage[..expected_len],
+            0,
+        )
+        .fuel_figures(0, |_| Ok(()))?
+        .performance_figures(1, |performance| {
+            performance.add(|entry| {
+                entry
+                    .octane_rating(95)
+                    .acceleration(2, |acceleration| {
+                        acceleration.bulk_add_domain(&domain_acceleration)
+                    })?;
+                Ok(())
+            })
+        })?
+        .manufacturer(b"")?
+        .model(b"")?
+        .activation_code(b"")?
+        .encoded_length_with_header();
+        assert_eq!(domain_len, expected_len);
+
+        let mut wire_storage = [0u8; 512];
+        let wire_len = CarEncoder::wrap_and_apply_header(
+            &mut wire_storage[..expected_len],
+            0,
+        )
+        .fuel_figures(0, |_| Ok(()))?
+        .performance_figures(1, |performance| {
+            performance.add(|entry| {
+                entry
+                    .octane_rating(95)
+                    .acceleration(2, |acceleration| {
+                        acceleration.bulk_add(&wire_acceleration)
+                    })?;
+                Ok(())
+            })
+        })?
+        .manufacturer(b"")?
+        .model(b"")?
+        .activation_code(b"")?
+        .encoded_length_with_header();
+        assert_eq!(wire_len, expected_len);
+        assert_eq!(
+            &domain_storage[..domain_len],
+            &wire_storage[..wire_len],
+        );
+
+        let dto = CarDomain::try_from_decoder(
+            CarDecoder::try_from(&domain_storage[..domain_len])?,
+        )?;
+        let mut dto_storage = [0u8; 512];
+        let dto_len = dto.encode(&mut dto_storage[..expected_len])?;
+        assert_eq!(dto_len, expected_len);
+        assert_eq!(&dto_storage[..dto_len], &wire_storage[..wire_len]);
+        "#,
+    );
+
+    Ok(())
+}
+
 #[test]
 fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_dom_all");

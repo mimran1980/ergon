@@ -25,7 +25,7 @@ use crate::{ClusterError, CredentialsSupplier};
 ///
 /// ```rust,ignore
 /// use ergo_aeron_cluster::SessionBuilder;
-/// let client = SessionBuilder::builder()
+/// let client = SessionBuilder::default()
 ///     .ingress_channel("aeron:udp?endpoint=localhost:9002")
 ///     .egress_channel("aeron:udp?endpoint=localhost:19002")
 ///     .connect(aeron_dir)?;
