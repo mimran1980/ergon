@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose a codegen, API, or Cluster client capability.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the desired public call site or generated API shape, not
+        just the goal — see CONTRIBUTING.md's "work from behavior" section.
+        Vague goals ("make it more ergonomic") are hard to act on; a concrete
+        calling example isn't.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What SBE/Cluster behavior or use case does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: Desired API shape
+      description: The calling code you want to be able to write, even if it doesn't compile yet.
+      render: rust
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
