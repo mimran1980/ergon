@@ -4,11 +4,61 @@
 [![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
 [![API Docs](https://docs.rs/ergo-sbe/badge.svg)](https://docs.rs/ergo-sbe/)
 
+`ergo-sbe` generates **binary-compatible** Rust SBE codecs with compile-time
+wire-order enforcement, closure-based groups, exact buffer sizing, and zero
+heap allocation on hot paths.
+
+| | ergo-sbe |
+|---|----------|
+| **Wire-order safety** | Compile-time type-state stages — calling `asks` before `bids` is a type error, not a runtime bug |
+| **Exact buffer sizing** | `compute_length_with_header(…)` gives the exact byte count before you encode — no oversize scratch buffers, works directly with Aeron `try_claim` |
+| **Closure-based groups** | `bids(n, \|g\| g.add(\|e\| { … }))` — nests like the schema, no `.parent()` hopscotch |
+| **Trust boundary** | `try_from` / `try_wrap` for untrusted input; `wrap` for trusted — explicit in the type system |
+| **Composite wire images** | `#[repr(transparent)] Engine([u8; N])` — the value IS the on-wire bytes, zero-copy with portable LE/BE accessors |
+| **Domain types** | Map wire `Decimal` to `rust_decimal::Decimal` at the codec boundary — one line of config, no hand-rolled converters |
+| **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — measured about 22-23% lower encode latency than `add()` for 1,000-entry flat groups on the audited Apple M4 profiles; eligible DTO groups use an allocation-free domain bulk writer automatically |
+| **Zero dependencies at runtime** | Generated codecs embed their own `sbe_rt` — no `ergo-sbe` on your critical path |
+
+```rust,no_run
+// build.rs — one call, no template files
+ergo_sbe::generate_to_out_dir("schemas/market-data.xml", "market_data")?;
+```
+
+```rust
+let expected_len = QuoteEncoder::compute_length_with_header(1, 13);
+let mut buf = vec![0u8; expected_len];
+let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
+    .fixed(&QuoteFixedFields {
+        seq: 1,
+        some_numbers: [10, 20, 30, 40],
+        vehicle_code: *b"ABC012",
+        qty: 500,
+    })
+    .legs(1, |legs| {
+        legs.add(|leg| { leg.value(42u32); Ok(()) })?;
+        Ok(())
+    })?
+    .note(b"optional note")?
+    .encoded_length_with_header();
+assert_eq!(len, expected_len);
+let encoded = &buf[..len];
+
+let dec = QuoteDecoder::try_wrap_and_apply_header(encoded, 0)?;
+assert_eq!(dec.seq(), 1);
+assert_eq!(dec.some_numbers(), [10, 20, 30, 40]);
+let mut legs = dec.into_legs()?;
+while let Some(entry) = legs.next() {
+    assert_eq!(entry.value(), 42u32);
+}
+let (note, _) = legs.finish()?.into_note()?;
+assert_eq!(note, b"optional note");
+```
+
 > **AI assistance.** Large parts of this project were written **with heavy AI
 > assistance**. Humans directed the work, approved designs, and ran verification.
-> Details of process and ownership: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
+> Details: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
 
-`ergo-sbe` parses [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/)
+ergo-sbe parses [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/)
 (SBE) schemas and generates **Rust codecs that are binary-compatible with the
 official SBE wire format** (header, field layout, groups, var-data, byte order).
 
@@ -83,23 +133,6 @@ and a maintained benchmark gate versus sbe-tool-generated codecs (see
 > 3. Exact buffer sizing + Aeron/IPC **try_claim** (no oversize scratch buffers)
 > 4. Nested/ragged books or similar twin groups (bids/asks order safety)
 > 5. Schema evolution (`sinceVersion`) under mixed acting versions
-
-## Why ergo-sbe
-
-ergo-sbe is a ground-up Rust SBE codec generator designed for trading systems.
-It produces the same wire format as the reference implementation, but the
-generated API is purpose-built for Rust rather than ported from Java.
-
-| | ergo-sbe |
-|---|----------|
-| **Wire-order safety** | Compile-time type-state stages — calling `asks` before `bids` is a type error, not a runtime bug |
-| **Exact buffer sizing** | `compute_length_with_header(…)` gives the exact byte count before you encode — no oversize scratch buffers, works directly with Aeron `try_claim` |
-| **Closure-based groups** | `bids(n, \|g\| g.add(\|e\| { … }))` — nests like the schema, no `.parent()` hopscotch |
-| **Trust boundary** | `try_from` / `try_wrap` for untrusted input; `wrap` for trusted — explicit in the type system |
-| **Composite wire images** | `#[repr(transparent)] Engine([u8; N])` — the value IS the on-wire bytes, zero-copy with portable LE/BE accessors |
-| **Domain types** | Map wire `Decimal` to `rust_decimal::Decimal` at the codec boundary — one line of config, no hand-rolled converters |
-| **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — measured about 22-23% lower encode latency than `add()` for 1,000-entry flat groups on the audited Apple M4 profiles; eligible DTO groups use an allocation-free domain bulk writer automatically |
-| **Zero dependencies at runtime** | Generated codecs embed their own `sbe_rt` — no `ergo-sbe` on your critical path |
 
 ## Contents
 
