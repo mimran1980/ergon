@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-07-30
+
+### Added
+- `just release` — single-command publish gate (test + bench → crates.io → tag → GitHub release)
+- Header-mode fairness policy tests — every encode gate pair is audited for mixed work
+- `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR templates, `dependabot.yml`
+- GitHub Discussions enabled
+
+### Fixed
+- **Cluster benchmark fairness** — encode gates were unfair: ergon wrote headers while sbe-tool did not. Both arms are now body-only. Fixed 1.65× and 1.12× regressions.
+- **XML parser** — `constantValue` attribute on constant fields was validated but never read; accessors were silently not generated
+- **Group/perf length math** — replaced `encoded_length() + 8` with `get_limit()` for sbe-tool full-wire length
+
+### Changed
+- README restructured — features and example first; crates.io/docs.rs visitors see the pitch immediately
+- `just check-mutation` uses `--jobs 1`; weekly mutation CI replaced with manual task
+
 ## [0.1.4] — 2026-07-30
 
 ### Added

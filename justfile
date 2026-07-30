@@ -106,6 +106,27 @@ release-check: test check-products check-coverage
     cargo publish -p ergo-aeron-cluster --dry-run --allow-dirty
     @echo "release-check: product crates pass, benches compile, dry-run publish OK"
 
+# Full release gate: test + bench → publish → tag → GitHub release → bump.
+# The LLM must bump the version + write changelog + write release notes before
+# calling this. The version is read from workspace Cargo.toml.
+release:
+    @echo "=== Gate: test suite ==="
+    just test
+    @echo "=== Gate: cluster benchmarks ==="
+    just bench-cluster
+    @echo "=== Gate: SBE benchmarks ==="
+    just bench
+    @echo "=== publish ergo-sbe ==="
+    cargo publish -p ergo-sbe
+    @echo "=== publish ergo-aeron-cluster ==="
+    cargo publish -p ergo-aeron-cluster
+    @echo "=== tag ==="
+    git tag v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    git push origin v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    @echo "=== GitHub release ==="
+    gh release create v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') --title "ergon v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')" --notes-file /tmp/ergon-release-notes.md
+    @echo "=== release v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') complete ==="
+
 # ── test ──────────────────────────────────────────────────────────────────
 
 # Comprehensive test suite: unit, integration, doctests/rustdoc, Java cluster
