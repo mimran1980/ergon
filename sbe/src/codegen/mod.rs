@@ -635,9 +635,15 @@ impl Generator {
     }
 
     /// Build an [`ItemContext::Enum`] from IR tokens.
-    fn build_enum_ctx<'s>(tokens: &[crate::ir::Token], schema: &'s crate::Schema) -> crate::ItemContext<'s> {
+    fn build_enum_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&tokens[0].name);
-        let encoding_type = tokens[0].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
+        let encoding_type = tokens[0]
+            .encoding
+            .primitive_type
+            .unwrap_or(PrimitiveType::UInt8);
         let et_str = rust_type(encoding_type).to_string();
         let variants: Vec<_> = tokens
             .iter()
@@ -658,7 +664,12 @@ impl Generator {
                 })
             })
             .collect();
-        crate::ItemContext::Enum { schema, name, encoding_type: et_str, variants }
+        crate::ItemContext::Enum {
+            schema,
+            name,
+            encoding_type: et_str,
+            variants,
+        }
     }
 
     /// Build a message decoder/encoder context from a [`MessageStructure`].
@@ -695,31 +706,56 @@ impl Generator {
     }
 
     /// Build an [`ItemContext::Composite`] from IR tokens.
-    fn build_composite_ctx<'s>(tokens: &[crate::ir::Token], schema: &'s crate::Schema) -> crate::ItemContext<'s> {
+    fn build_composite_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&tokens[0].name);
         let fields: Vec<_> = tokens
             .iter()
-            .filter(|t| t.signal == crate::ir::Signal::Encoding || t.signal == crate::ir::Signal::BeginComposite)
+            .filter(|t| {
+                t.signal == crate::ir::Signal::Encoding
+                    || t.signal == crate::ir::Signal::BeginComposite
+            })
             .filter(|t| !t.name.is_empty())
             .map(|t| crate::FieldInfo {
                 name: to_snake_case(&t.name),
-                rust_type: crate::structured_ir::rust_type(t.encoding.primitive_type.unwrap_or(crate::PrimitiveType::UInt8)).to_string(),
+                rust_type: crate::structured_ir::rust_type(
+                    t.encoding
+                        .primitive_type
+                        .unwrap_or(crate::PrimitiveType::UInt8),
+                )
+                .to_string(),
                 offset: t.encoding.offset.unwrap_or(0),
                 since_version: t.encoding.since_version,
                 semantic_type: t.encoding.semantic_type.clone(),
-                presence: if t.encoding.null_value.is_some() { "optional" } else { "required" },
+                presence: if t.encoding.null_value.is_some() {
+                    "optional"
+                } else {
+                    "required"
+                },
                 null_value: t.encoding.null_value,
                 deprecated: t.encoding.deprecated,
                 description: t.encoding.description.clone(),
             })
             .collect();
-        crate::ItemContext::Composite { schema, name, fields }
+        crate::ItemContext::Composite {
+            schema,
+            name,
+            fields,
+        }
     }
 
     /// Build an [`ItemContext::Set`] from IR tokens.
-    fn build_set_ctx<'s>(tokens: &[crate::ir::Token], schema: &'s crate::Schema) -> crate::ItemContext<'s> {
+    fn build_set_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&tokens[0].name);
-        let encoding_type = tokens[0].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
+        let encoding_type = tokens[0]
+            .encoding
+            .primitive_type
+            .unwrap_or(PrimitiveType::UInt8);
         let et_str = rust_type(encoding_type).to_string();
         let choices: Vec<_> = tokens
             .iter()
@@ -728,13 +764,21 @@ impl Generator {
                 name: to_pascal_case(&t.name),
                 snake_name: to_snake_case(&t.name),
                 label: t.name.clone(),
-                bit_position: t.encoding.constant_value.as_ref()
+                bit_position: t
+                    .encoding
+                    .constant_value
+                    .as_ref()
                     .and_then(|v| v.parse::<u8>().ok())
                     .unwrap_or(0),
                 description: t.encoding.description.clone(),
             })
             .collect();
-        crate::ItemContext::Set { schema, name, encoding_type: et_str, choices }
+        crate::ItemContext::Set {
+            schema,
+            name,
+            encoding_type: et_str,
+            choices,
+        }
     }
 
     /// Run registered hooks and append returned tokens to `src`.
@@ -1856,10 +1900,20 @@ fn generate_message_decoder(
             field_has_conversion_free(f, conversions).then(|| format!("{fname_snake}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
         const DECODER_RESERVED: &[&str] = &[
-            "remaining", "whole_buffer", "message_offset", "after_this_message",
-            "wrap", "try_wrap_and_apply_header", "header", "encoded_length",
-            "encoded_length_with_header", "as_bytes", "as_ref_opt", "verify",
-            "acting_version", "acting_block_length",
+            "remaining",
+            "whole_buffer",
+            "message_offset",
+            "after_this_message",
+            "wrap",
+            "try_wrap_and_apply_header",
+            "header",
+            "encoded_length",
+            "encoded_length_with_header",
+            "as_bytes",
+            "as_ref_opt",
+            "verify",
+            "acting_version",
+            "acting_block_length",
         ];
         let fname_ident = resolve_field_ident(&fname_snake, &wire_name, DECODER_RESERVED);
 
@@ -2833,7 +2887,11 @@ fn generate_message_decoder(
         if !hooks.is_empty() {
             let domain_name = format!("{name}Domain");
             let fields = message_field_infos(&msg.fields);
-            let ctx = crate::ItemContext::DomainStruct { schema: &schema, name: domain_name, fields };
+            let ctx = crate::ItemContext::DomainStruct {
+                schema: &schema,
+                name: domain_name,
+                fields,
+            };
             for hook in hooks.iter() {
                 for token_stream in hook(&ctx) {
                     ts.extend(token_stream);
@@ -3650,10 +3708,20 @@ fn generate_decoder_display(
     let mut out_idx = 0usize;
     for f in &msg.fields {
         const DECODER_RESERVED: &[&str] = &[
-            "remaining", "whole_buffer", "message_offset", "after_this_message",
-            "wrap", "try_wrap_and_apply_header", "header", "encoded_length",
-            "encoded_length_with_header", "as_bytes", "as_ref_opt", "verify",
-            "acting_version", "acting_block_length",
+            "remaining",
+            "whole_buffer",
+            "message_offset",
+            "after_this_message",
+            "wrap",
+            "try_wrap_and_apply_header",
+            "header",
+            "encoded_length",
+            "encoded_length_with_header",
+            "as_bytes",
+            "as_ref_opt",
+            "verify",
+            "acting_version",
+            "acting_block_length",
         ];
         let snake = to_snake_case(&f.name);
         let f_ident = resolve_field_ident(&snake, &None, DECODER_RESERVED);
@@ -6605,9 +6673,17 @@ fn generate_message_encoder(
     }
 
     const ENCODER_RESERVED: &[&str] = &[
-        "remaining", "remaining_mut", "whole_buffer", "message_offset",
-        "after_this_message", "wrap", "try_wrap", "try_wrap_and_apply_header",
-        "wrap_into_claim", "compute_length_with_header", "as_ref",
+        "remaining",
+        "remaining_mut",
+        "whole_buffer",
+        "message_offset",
+        "after_this_message",
+        "wrap",
+        "try_wrap",
+        "try_wrap_and_apply_header",
+        "wrap_into_claim",
+        "compute_length_with_header",
+        "as_ref",
     ];
 
     for f in &msg.fields {
@@ -8420,7 +8496,8 @@ mod tests {
     /// renamed to `{name}_field` so it doesn't collide with
     /// `pub fn remaining(&self) -> &[u8]`.
     #[test]
-    fn field_named_remaining_is_renamed_to_remaining_field() -> Result<(), Box<dyn std::error::Error>> {
+    fn field_named_remaining_is_renamed_to_remaining_field()
+    -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<messageSchema package="test" id="1" version="1" byteOrder="littleEndian">
           <types>
             <composite name="messageHeader">
@@ -8437,14 +8514,9 @@ mod tests {
 
         let ir = crate::parse(xml).expect("schema should parse");
         let schema = crate::Schema::from_ir(ir);
-        let modules = crate::Generator::new(crate::GenerationConfig::new("test"))
-            .generate(&schema)?;
-        let src = modules
-            .modules()
-            .next()
-            .expect("one module")
-            .source
-            .clone();
+        let modules =
+            crate::Generator::new(crate::GenerationConfig::new("test")).generate(&schema)?;
+        let src = modules.modules().next().expect("one module").source.clone();
 
         let remaining_count = src.matches("fn remaining(&self)").count();
         // The decoder and encoder each have a generated `remaining()` method
@@ -8560,16 +8632,31 @@ mod tests {
         let src = modules.modules().next().expect("one module").source.clone();
 
         // Enum: Serialize impl must exist with variant labels.
-        assert!(src.contains("impl serde::Serialize for EventCode"), "missing Serialize for enum");
+        assert!(
+            src.contains("impl serde::Serialize for EventCode"),
+            "missing Serialize for enum"
+        );
         assert!(src.contains("\"Ok\""), "missing Ok label");
         assert!(src.contains("\"Error\""), "missing Error label");
-        assert!(src.contains("impl<'de> serde::Deserialize<'de> for EventCode"), "missing Deserialize for enum");
-        assert!(src.contains("unknown_variant"), "missing error handling in Deserialize");
+        assert!(
+            src.contains("impl<'de> serde::Deserialize<'de> for EventCode"),
+            "missing Deserialize for enum"
+        );
+        assert!(
+            src.contains("unknown_variant"),
+            "missing error handling in Deserialize"
+        );
 
         // Set: Serialize impl must exist.
-        assert!(src.contains("impl serde::Serialize for OptionalFields"), "missing Serialize for set");
+        assert!(
+            src.contains("impl serde::Serialize for OptionalFields"),
+            "missing Serialize for set"
+        );
         assert!(src.contains("\"hasPrice\""), "missing hasPrice label");
-        assert!(src.contains("impl<'de> serde::Deserialize<'de> for OptionalFields"), "missing Deserialize for set");
+        assert!(
+            src.contains("impl<'de> serde::Deserialize<'de> for OptionalFields"),
+            "missing Deserialize for set"
+        );
 
         Ok(())
     }

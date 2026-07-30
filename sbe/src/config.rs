@@ -240,7 +240,10 @@ impl std::fmt::Debug for ItemContext<'_> {
             Self::MessageEncoder { name, .. } => ("MessageEncoder", name.as_str()),
             Self::DomainStruct { name, .. } => ("DomainStruct", name.as_str()),
         };
-        f.debug_struct("ItemContext").field("kind", &kind).field("name", &name).finish()
+        f.debug_struct("ItemContext")
+            .field("kind", &kind)
+            .field("name", &name)
+            .finish()
     }
 }
 
@@ -258,9 +261,15 @@ impl std::fmt::Debug for Hooks {
     }
 }
 impl Hooks {
-    pub(crate) fn push(&mut self, hook: Box<HookFn>) { self.0.push(hook); }
-    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Box<HookFn>> { self.0.iter() }
-    pub(crate) fn is_empty(&self) -> bool { self.0.is_empty() }
+    pub(crate) fn push(&mut self, hook: Box<HookFn>) {
+        self.0.push(hook);
+    }
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Box<HookFn>> {
+        self.0.iter()
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 // ── GenerationConfig ──────────────────────────────────────────────────────

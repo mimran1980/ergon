@@ -90,7 +90,10 @@ fn test_remaining_empty_without_payload() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(dec.cluster_session_id(), 42);
     assert_eq!(dec.timestamp(), 100);
     // No payload — remaining must be empty
-    assert!(dec.remaining().is_empty(), "remaining must be empty when there is no payload");
+    assert!(
+        dec.remaining().is_empty(),
+        "remaining must be empty when there is no payload"
+    );
     Ok(())
 }
 
@@ -139,15 +142,12 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
     use super::session::{AnyMessage, SessionKeepAliveEncoder};
 
     // Build a buffer: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes)
-    let total = SessionMessageHeaderEncoder::ENCODED_LENGTH
-        + SessionKeepAliveEncoder::ENCODED_LENGTH;
+    let total = SessionMessageHeaderEncoder::ENCODED_LENGTH + SessionKeepAliveEncoder::ENCODED_LENGTH;
     let mut buf = vec![0u8; total];
 
     // First: SessionMessageHeader
     let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
-    enc.leadership_term_id(7)
-        .cluster_session_id(99)
-        .timestamp(42);
+    enc.leadership_term_id(7).cluster_session_id(99).timestamp(42);
 
     // remaining_mut() gives the unwritten region — chain the next encoder
     SessionKeepAliveEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)
@@ -163,8 +163,7 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
     assert_eq!(tail.len(), SessionKeepAliveEncoder::ENCODED_LENGTH);
 
     // Decode the second message via AnyMessage
-    let msg = AnyMessage::decode(tail, 0)
-        .map_err(|e| format!("AnyMessage decode: {e}"))?;
+    let msg = AnyMessage::decode(tail, 0).map_err(|e| format!("AnyMessage decode: {e}"))?;
     match msg {
         AnyMessage::SessionKeepAlive(dec) => {
             assert_eq!(dec.leadership_term_id(), 7);

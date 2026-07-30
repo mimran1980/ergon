@@ -131,7 +131,10 @@ fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
     match ctx {
         ItemContext::Enum { name, variants, .. } => {
             let ident = format_ident!("{name}");
-            let var_names: Vec<_> = variants.iter().map(|v| format_ident!("{}", v.name)).collect();
+            let var_names: Vec<_> = variants
+                .iter()
+                .map(|v| format_ident!("{}", v.name))
+                .collect();
             let var_labels: Vec<_> = variants.iter().map(|v| v.label.clone()).collect();
             vec![quote::quote! {
                 impl serde::Serialize for #ident {
@@ -159,7 +162,10 @@ fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
         }
         ItemContext::Set { name, choices, .. } => {
             let ident = format_ident!("{name}");
-            let c_is_idents: Vec<_> = choices.iter().map(|c| format_ident!("is_{}", c.snake_name)).collect();
+            let c_is_idents: Vec<_> = choices
+                .iter()
+                .map(|c| format_ident!("is_{}", c.snake_name))
+                .collect();
             let c_labels: Vec<_> = choices.iter().map(|c| c.label.clone()).collect();
             let c_bits: Vec<_> = choices.iter().map(|c| c.bit_position).collect();
             vec![quote::quote! {
