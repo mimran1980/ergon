@@ -983,6 +983,64 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 
 ---
 
+## Design notes
+
+### Why enums have a `NullVal` variant instead of `Option<EventCode>`
+
+Every SBE enum must declare a `nullValue` in the schema — an explicit wire sentinel
+that means "not present" / "not set". When the schema doesn't specify one, SBE
+defaults to the encoding type's maximum value (e.g. `255` for `uint8`, `-1` for
+`int8`).
+
+An early design tried wrapping every enum field in `Option<EventCode>` at the
+field site:
+
+```rust,no_run
+// Option approach — REJECTED
+pub fn event_code(&self) -> Option<EventCode> { … }
+pub fn set_event_code(&mut self, val: Option<EventCode>) { … }
+```
+
+This was rejected for three reasons:
+
+1. **Wire incompatibility.** `Option` adds a Rust discriminant outside the SBE
+   encoding. There is no extra byte on the wire for `Some` vs `None` — the null
+   sentinel lives *inside* the enum's own value range. Encoding `None` as the
+   null sentinel and `Some(v)` as `v` is possible, but it breaks symmetry with
+   sbe-tool (which uses the raw value directly) and complicates the generated
+   code with value↔Option mapping on every access.
+
+2. **Size bloat at scale.** A message with 8 enum fields would carry 8 `Option`
+   discriminants in the generated Rust struct (16 bytes on the stack for the
+   tags, plus padding). The wire has none of that — the null sentinel is just
+   another integer in the same 1/2/4-byte field.
+
+3. **API friction.** `Option<EventCode>` forces every consumer to `.unwrap()` or
+   match, even when the field is known to be populated. The `NullVal` approach
+   gives you a plain `EventCode` type — if you care about null, check
+   `code == EventCode::NullVal`; if you don't, just use it.
+
+The chosen design adds a `NullVal` variant to every generated enum. It is the
+same size as any other variant, wire-compatible with sbe-tool, and bears no
+runtime cost:
+
+```rust,no_run
+// ergo-sbe generated (conceptual)
+#[non_exhaustive]
+pub enum EventCode {
+    NullVal = 255,  // or schema-declared nullValue
+    Ok = 200,
+    Error = 400,
+    Timeout = 408,
+}
+```
+
+For an `Optional` field (schema `presence="optional"`), the generated accessor
+returns `Option<EventCode>` — but the null check compares against the `NullVal`
+discriminant on the wire, never allocates, and is transparent to the caller.
+
+---
+
 ## Recipes
 
 Runnable, tested code for every pattern lives in
