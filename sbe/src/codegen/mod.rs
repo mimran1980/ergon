@@ -289,7 +289,7 @@ fn resolve_field_ident(
     let method_name = wire_name.as_deref().unwrap_or(snake_name);
     let resolved: &str = match () {
         _ if wire_name.is_some() => method_name,
-        _ if reserved.iter().any(|r| *r == snake_name) => {
+        _ if reserved.contains(&snake_name) => {
             // ponytail: allocate only on collision (rare, build-time only).
             Box::leak(format!("{snake_name}_field").into_boxed_str())
         }
