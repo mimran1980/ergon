@@ -178,8 +178,8 @@
 //!     );
 //! ```
 //!
-//! See [`sbe/converter`](https://github.com/mimran1980/ergon/blob/main/sbe/src/converter.rs)
-//! and [`sbe/tests/conversion_selector_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/conversion_selector_test.rs)
+//! See [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
+//! (conversion and domain-object coverage).
 //!
 //! ## Domain objects
 //!
@@ -191,11 +191,11 @@
 //!
 //! ## Multi-message dispatch
 //!
-//! See [`sbe/tests/frame_cursor_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/frame_cursor_test.rs)
+//! See [`sbe/fuzz/fuzz_targets/any_message_frame_cursor.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/fuzz/fuzz_targets/any_message_frame_cursor.rs)
 //!
 //! ## Fixed arrays / char fields
 //!
-//! See [`sbe/tests/fixed_array_helpers_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/fixed_array_helpers_test.rs)
+//! See [`sbe/tests/java_parity_features_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs)
 //!
 //! ## Keywords in schema names
 //!
