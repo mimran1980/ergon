@@ -225,7 +225,7 @@ impl GenerationConfig {
     /// In build.rs: `.with_conversion(ConversionSelector::named_type("Decimal"))`.
     /// Application code: `enc.price_from(&my_price)?;` / `dec.price_as::<MyPrice>()?`.
     ///
-    /// → [`sbe/tests/conversion_selector_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/conversion_selector_test.rs)
+    /// → [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
     ///
     /// Prefer [`Self::with_domain_type`] when one concrete Rust type is enough.
     /// Duplicate selectors are ignored; selectors matching nothing error at

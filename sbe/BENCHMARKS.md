@@ -16,13 +16,36 @@ than retaining dated point estimates as release guarantees.
 
 | | |
 |---|---|
-| **Date** | 2026-07-29 |
-| **Release tree** | `feat-0.1.4` fairness-correction working tree |
+| **Date** | 2026-07-30 |
+| **Release tree** | `feat/0.1.5` cluster fairness correction |
 | **Host** | Apple M4 (macOS Darwin, arm64) |
 | **Toolchain** | rustc 1.95.0 |
 | **Benchmark profiles** | LTO on and LTO off; codegen-units=1 |
 | **SBE gate** | **10/10 at or below 1.00 in both profiles** |
-| **Cluster gate** | Last run 2026-07-27: **5/5 PASS** |
+| **Cluster gate** | **5/5 PASS** (body-only fairness fix validated) |
+
+## What the numbers actually measure
+
+Most of the measured difference between ergo-sbe and sbe-tool comes down to
+**bounds checking**, not fundamental codegen quality. Minor variations in how
+headers are written or how bulk operations are laid out account for the rest.
+If you had to call `try_wrap_and_apply_header` (which validates `template_id`
+and `schema_id`) every time, ergo-sbe would be slower than sbe-tool —
+sbe-tool's `wrap` + `header()` does no such validation in release builds. The
+benchmarks therefore use infallible `wrap` / `wrap_and_apply_header` on both
+arms: equal work, equal trust assumptions.
+
+The benchmark gate exists to prove that ergo-sbe is **not slower than**
+sbe-tool — not to claim it is faster. sbe-tool is the reference; the goal is
+parity. When ergo-sbe occasionally shows a lower ratio, that is a data point to
+investigate for unequal work, not a product claim.
+
+The real win is elsewhere: ergo-sbe pushes wire-order safety and buffer sizing
+into the **type system at compile time**. Swapping `bids` and `asks` is a type
+error. Using a partially-written encoder as a complete message is a type error.
+Allocating a scratch buffer with a guessed size instead of using the exact
+`EncodedLength` is a compile-time lint. These are enforced before the binary
+exists, not at runtime.
 
 ### SBE codec gate — `just bench`
 

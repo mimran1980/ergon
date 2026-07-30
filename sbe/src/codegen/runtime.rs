@@ -827,23 +827,26 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         };
         let bit_index: u8 = val.parse().unwrap_or(0);
         let snake = to_snake_case(&t.name);
-        let bit_name = syn::Ident::new(&snake, proc_macro2::Span::call_site());
-        let set_bit_name = quote::format_ident!("set_{}", snake);
+        let is_bit_name = quote::format_ident!("is_{}", snake);
+        let set_bit_name = syn::Ident::new(&snake, proc_macro2::Span::call_site());
         let bit_lit = syn::LitInt::new(&bit_index.to_string(), proc_macro2::Span::call_site());
-        choice_getters.push(bit_name.clone());
+        choice_getters.push(is_bit_name.clone());
         choice_setters.push(set_bit_name.clone());
         choice_name_strs.push(syn::LitStr::new(&t.name, proc_macro2::Span::call_site()));
         bits.push(quote::quote! {
-            pub const fn #bit_name(self) -> bool {
+            #[inline]
+            pub const fn #is_bit_name(self) -> bool {
                 (self.0 & (1 << #bit_lit)) != 0
             }
 
-            pub fn #set_bit_name(&mut self, val: bool) {
+            #[inline]
+            pub fn #set_bit_name(&mut self, val: bool) -> &mut Self {
                 if val {
                     self.0 |= 1 << #bit_lit;
                 } else {
                     self.0 &= !(1 << #bit_lit);
                 }
+                self
             }
         });
     }
@@ -859,10 +862,12 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         pub struct #name_ident(pub #r_type_ty);
 
         impl #name_ident {
+            #[inline]
             pub const fn raw(self) -> #r_type_ty {
                 self.0
             }
 
+            #[inline]
             pub const fn default() -> Self {
                 Self(0)
             }
@@ -1398,8 +1403,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     let decoder_ts = quote::quote! {
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
-            buf: &'a [u8],
-            pos: usize,
+            pub(crate) buf: &'a [u8],
+            pub(crate) pos: usize,
         }
 
         impl<'a> #decoder_name<'a> {

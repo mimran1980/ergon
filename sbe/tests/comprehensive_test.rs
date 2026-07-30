@@ -63,9 +63,9 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
-        extras.set_sun_roof(false);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
+        extras.sun_roof(false);
         car.extras(extras);
         car.engine(Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
@@ -77,9 +77,9 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let extras = car2.extras();
-        assert!(extras.cruise_control());
-        assert!(extras.sports_pack());
-        assert!(!extras.sun_roof());
+        assert!(extras.is_cruise_control());
+        assert!(extras.is_sports_pack());
+        assert!(!extras.is_sun_roof());
         assert_eq!(extras.raw(), 6u8);
     "#,
     );
@@ -625,8 +625,8 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
         car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
@@ -639,9 +639,9 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         // raw() returns the underlying bitfield
         let raw = car2.extras().raw();
         // cruise_control = bit 2, sports_pack = bit 1, sun_roof = bit 0
-        assert!(car2.extras().cruise_control());
-        assert!(car2.extras().sports_pack());
-        assert!(!car2.extras().sun_roof());
+        assert!(car2.extras().is_cruise_control());
+        assert!(car2.extras().is_sports_pack());
+        assert!(!car2.extras().is_sun_roof());
         assert_eq!(raw, 6u8); // 0b110 = bits 1 and 2 set
     "#,
     );
@@ -713,9 +713,9 @@ fn all_types_little_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>>
         assert_eq!(f.x(), 1.5);
         assert_eq!(f.y(), 2.5);
         let mut set = TestSet::default();
-        set.set_bit1(true);
-        assert!(set.bit1());
-        assert!(!set.bit0());
+        set.bit1(true);
+        assert!(set.is_bit1());
+        assert!(!set.is_bit0());
         let a = TestEnum::from_raw(0);
         assert_eq!(a.raw(), 0u8);
         let b = TestEnum::from_raw(1);
@@ -744,8 +744,8 @@ fn all_types_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(s.f32_val(), 1.0f32);
         assert_eq!(TestEnum::from_raw(2), TestEnum::C);
         let mut set = TestSet::default();
-        set.set_bit2(true);
-        assert!(set.bit2());
+        set.bit2(true);
+        assert!(set.is_bit2());
     "#,
     );
 

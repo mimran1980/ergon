@@ -37,8 +37,8 @@ fn encode_checked(buf: &mut [u8]) -> usize {
     car.vehicle_code([97, 98, 99, 100, 101, 102]);
     {
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
     }
     car.engine(Engine::new(
@@ -114,8 +114,8 @@ fn encode_full(buf: &mut [u8]) -> usize {
     car.vehicle_code([97, 98, 99, 100, 101, 102]);
     {
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
     }
     car.engine(Engine::new(
@@ -217,8 +217,8 @@ fn bench_encode_scalar_only(c: &mut Criterion) {
             car.vehicle_code([97, 98, 99, 100, 101, 102]);
             {
                 let mut extras = OptionalExtras::default();
-                extras.set_cruise_control(true);
-                extras.set_sports_pack(true);
+                extras.cruise_control(true);
+                extras.sports_pack(true);
                 car.extras(extras);
             }
             car.engine(Engine::new(
