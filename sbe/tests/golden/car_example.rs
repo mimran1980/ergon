@@ -498,41 +498,52 @@ impl core::str::FromStr for BoostType {
 #[repr(transparent)]
 pub struct OptionalExtras(pub u8);
 impl OptionalExtras {
+    #[inline]
     pub const fn raw(self) -> u8 {
         self.0
     }
+    #[inline]
     pub const fn default() -> Self {
         Self(0)
     }
-    pub const fn sun_roof(self) -> bool {
+    #[inline]
+    pub const fn is_sun_roof(self) -> bool {
         (self.0 & (1 << 0)) != 0
     }
-    pub fn set_sun_roof(&mut self, val: bool) {
+    #[inline]
+    pub fn sun_roof(&mut self, val: bool) -> &mut Self {
         if val {
             self.0 |= 1 << 0;
         } else {
             self.0 &= !(1 << 0);
         }
+        self
     }
-    pub const fn sports_pack(self) -> bool {
+    #[inline]
+    pub const fn is_sports_pack(self) -> bool {
         (self.0 & (1 << 1)) != 0
     }
-    pub fn set_sports_pack(&mut self, val: bool) {
+    #[inline]
+    pub fn sports_pack(&mut self, val: bool) -> &mut Self {
         if val {
             self.0 |= 1 << 1;
         } else {
             self.0 &= !(1 << 1);
         }
+        self
     }
-    pub const fn cruise_control(self) -> bool {
+    #[inline]
+    pub const fn is_cruise_control(self) -> bool {
         (self.0 & (1 << 2)) != 0
     }
-    pub fn set_cruise_control(&mut self, val: bool) {
+    #[inline]
+    pub fn cruise_control(&mut self, val: bool) -> &mut Self {
         if val {
             self.0 |= 1 << 2;
         } else {
             self.0 &= !(1 << 2);
         }
+        self
     }
 }
 impl From<u8> for OptionalExtras {
@@ -550,21 +561,21 @@ impl From<OptionalExtras> for u8 {
 impl core::fmt::Display for OptionalExtras {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut first = true;
-        if self.sun_roof() {
+        if self.is_sun_roof() {
             if !first {
                 f.write_str("|")?;
             }
             f.write_str("sunRoof")?;
             first = false;
         }
-        if self.sports_pack() {
+        if self.is_sports_pack() {
             if !first {
                 f.write_str("|")?;
             }
             f.write_str("sportsPack")?;
             first = false;
         }
-        if self.cruise_control() {
+        if self.is_cruise_control() {
             if !first {
                 f.write_str("|")?;
             }
@@ -585,15 +596,15 @@ impl core::str::FromStr for OptionalExtras {
             let part = part.trim();
             let mut matched = false;
             if part == "sunRoof" {
-                v.set_sun_roof(true);
+                v.sun_roof(true);
                 matched = true;
             }
             if part == "sportsPack" {
-                v.set_sports_pack(true);
+                v.sports_pack(true);
                 matched = true;
             }
             if part == "cruiseControl" {
-                v.set_cruise_control(true);
+                v.cruise_control(true);
                 matched = true;
             }
             if !matched {

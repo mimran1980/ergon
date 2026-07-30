@@ -374,12 +374,12 @@ fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn s
         // Current-version encode: both message-level set fields present,
         // one entry with its own set field.
         let mut top_flags = Flags::default();
-        top_flags.set_a(true);
+        top_flags.a(true);
         let mut ver_flags = Flags::default();
-        ver_flags.set_b(true);
+        ver_flags.b(true);
         let mut entry_flags = Flags::default();
-        entry_flags.set_a(true);
-        entry_flags.set_b(true);
+        entry_flags.a(true);
+        entry_flags.b(true);
 
         let mut buf = [0u8; 256];
         let complete = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
@@ -550,7 +550,7 @@ fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error
         "dec_dbg_all",
         &out,
         r#"
-        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let mut inst = ExecInst::default(); inst.aon(true);
         let price = Price::new(12345, -2);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(1, 3)];
         let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
@@ -592,7 +592,7 @@ fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::E
         "dec_trunc",
         &out,
         r#"
-        let mut inst = ExecInst::default(); inst.set_ioc(true);
+        let mut inst = ExecInst::default(); inst.ioc(true);
         let price = Price::new(1, 0);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 0)];
         let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
@@ -628,7 +628,7 @@ fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         "dto_dbg",
         &out,
         r#"
-        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let mut inst = ExecInst::default(); inst.aon(true);
         let price = Price::new(999, -1);
         let dto = MsgDomain {
             qty: 42, side: Side::Buy, inst, algo: BoolFlag::True, price,
@@ -669,7 +669,7 @@ fn encoder_display_delegates_to_decoder() -> Result<(), Box<dyn std::error::Erro
         "enc_display",
         &out,
         r#"
-        let mut inst = ExecInst::default(); inst.set_aon(true);
+        let mut inst = ExecInst::default(); inst.aon(true);
         let price = Price::new(99, -1);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 3)];
         let enc = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
@@ -717,7 +717,7 @@ fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std:
         "entry_dbg",
         &out,
         r#"
-        let mut flags = Flags::default(); flags.set_b(true);
+        let mut flags = Flags::default(); flags.b(true);
         let price = Price::new(777, -1);
         let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
         let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?

@@ -2427,12 +2427,12 @@ pub mod sbe_tool {
             }
 
             #[inline]
-            pub fn get_sun_roof(&self) -> bool {
+            pub const fn is_sun_roof(self) -> bool {
                 0 != self.0 & (1 << 0)
             }
 
             #[inline]
-            pub fn set_sun_roof(&mut self, value: bool) -> &mut Self {
+            pub fn sun_roof(&mut self, value: bool) -> &mut Self {
                 self.0 = if value {
                     self.0 | (1 << 0)
                 } else {
@@ -2442,12 +2442,12 @@ pub mod sbe_tool {
             }
 
             #[inline]
-            pub fn get_sports_pack(&self) -> bool {
+            pub const fn is_sports_pack(self) -> bool {
                 0 != self.0 & (1 << 1)
             }
 
             #[inline]
-            pub fn set_sports_pack(&mut self, value: bool) -> &mut Self {
+            pub fn sports_pack(&mut self, value: bool) -> &mut Self {
                 self.0 = if value {
                     self.0 | (1 << 1)
                 } else {
@@ -2457,12 +2457,12 @@ pub mod sbe_tool {
             }
 
             #[inline]
-            pub fn get_cruise_control(&self) -> bool {
+            pub const fn is_cruise_control(self) -> bool {
                 0 != self.0 & (1 << 2)
             }
 
             #[inline]
-            pub fn set_cruise_control(&mut self, value: bool) -> &mut Self {
+            pub fn cruise_control(&mut self, value: bool) -> &mut Self {
                 self.0 = if value {
                     self.0 | (1 << 2)
                 } else {
@@ -2477,9 +2477,9 @@ pub mod sbe_tool {
                 write!(
                     fmt,
                     "OptionalExtras[sun_roof(0)={},sports_pack(1)={},cruise_control(2)={}]",
-                    self.get_sun_roof(),
-                    self.get_sports_pack(),
-                    self.get_cruise_control(),
+                    self.is_sun_roof(),
+                    self.is_sports_pack(),
+                    self.is_cruise_control(),
                 )
             }
         }

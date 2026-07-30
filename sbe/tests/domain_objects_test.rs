@@ -251,8 +251,8 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         car.some_numbers([10u32, 20, 30, 40]);
         car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
         car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
@@ -287,8 +287,8 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(d.code, Model::A);
         assert_eq!(d.some_numbers, [10, 20, 30, 40]);
         assert_eq!(d.vehicle_code, [b'A', b'B', b'C', b'D', b'E', b'F']);
-        assert!(d.extras.cruise_control());
-        assert!(d.extras.sports_pack());
+        assert!(d.extras.is_cruise_control());
+        assert!(d.extras.is_sports_pack());
         assert_eq!(d.engine.capacity(), 2000);
         assert_eq!(d.engine.num_cylinders(), 4);
         assert_eq!(d.fuel_figures.len(), 2);
@@ -618,8 +618,8 @@ fn car_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         car.some_numbers([10u32, 20, 30, 40]);
         car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
         car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {

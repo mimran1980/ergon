@@ -110,8 +110,13 @@ release-check: test check-products check-coverage
 # The LLM must bump the version + write changelog + write release notes before
 # calling this. The version is read from workspace Cargo.toml.
 release:
+    just clean
     @echo "=== Gate: test suite ==="
     just test
+    @echo "=== Clippy ==="
+    just fix
+    @echo "=== Release check ==="
+    just release-check
     @echo "=== Gate: cluster benchmarks ==="
     just bench-cluster
     @echo "=== Gate: SBE benchmarks ==="

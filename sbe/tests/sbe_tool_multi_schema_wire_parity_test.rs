@@ -726,9 +726,9 @@ fn composite_elements_structure_variants() {
                 _ => EnumOne::Value1,
             };
             let mut set = SetOne::default();
-            set.set_bit0(bit0);
-            set.set_bit16(bit16);
-            set.set_bit26(bit26);
+            set.bit0(bit0);
+            set.bit16(bit16);
+            set.bit26(bit26);
             let structure = Outer::new(enum_one, zeroth, set, Inner::new(first, second));
             e.structure(structure);
             let el = MsgEncoder::ENCODED_LENGTH;
@@ -2211,22 +2211,22 @@ fn encoding_types_message1() {
             e.ec(*ec);
             e.e8(*e8);
             let mut s8 = SUInt8::default();
-            s8.set_bit0(*b0);
-            s8.set_bit6(*b6);
+            s8.bit0(*b0);
+            s8.bit6(*b6);
             e.s8(s8);
             let mut s16 = SUInt16::default();
-            s16.set_bit0(*b0);
-            s16.set_bit15(*b15);
+            s16.bit0(*b0);
+            s16.bit15(*b15);
             e.s16(s16);
             let mut s32 = SUInt32::default();
-            s32.set_bit0(*b0);
-            s32.set_bit16(*b16);
-            s32.set_bit26(*b26);
+            s32.bit0(*b0);
+            s32.bit16(*b16);
+            s32.bit26(*b26);
             e.s32(s32);
             let mut s64 = SUInt64::default();
-            s64.set_bit0(*b0);
-            s64.set_bit16(*b16);
-            s64.set_bit26(*b26);
+            s64.bit0(*b0);
+            s64.bit16(*b16);
+            s64.bit26(*b26);
             e.s64(s64);
             let el = Message1Encoder::BLOCK_LENGTH + Message1Encoder::HEADER_LENGTH;
 

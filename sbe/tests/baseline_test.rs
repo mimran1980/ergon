@@ -322,9 +322,9 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
 
         let extras = car.extras();
         assert_eq!(6, extras.raw(), "extras raw");
-        assert!(extras.cruise_control(), "cruiseControl");
-        assert!(extras.sports_pack(), "sportsPack");
-        assert!(!extras.sun_roof(), "sunRoof");
+        assert!(extras.is_cruise_control(), "cruiseControl");
+        assert!(extras.is_sports_pack(), "sportsPack");
+        assert!(!extras.is_sun_roof(), "sunRoof");
 
         // discountedModel is presence="constant" valueRef="Model.C"
         assert_eq!(Model::C, car.discounted_model(), "discountedModel");
@@ -435,8 +435,8 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
 
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
 
         car.engine(Engine::new(
@@ -494,9 +494,9 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code(), "rt.vehicleCode");
 
         let extras2 = car2.extras();
-        assert!(extras2.cruise_control(), "rt.cruiseControl");
-        assert!(extras2.sports_pack(), "rt.sportsPack");
-        assert!(!extras2.sun_roof(), "rt.sunRoof");
+        assert!(extras2.is_cruise_control(), "rt.cruiseControl");
+        assert!(extras2.is_sports_pack(), "rt.sportsPack");
+        assert!(!extras2.is_sun_roof(), "rt.sunRoof");
 
         let e2 = car2.engine();
         assert_eq!(2000, e2.capacity(), "rt.engine.capacity");
@@ -556,8 +556,8 @@ fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
 
         // Engine (composite) — same values as the sbe-tool/Java fixture
