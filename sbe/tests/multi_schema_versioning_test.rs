@@ -174,6 +174,52 @@ fn cross_schema_messages_decode_with_correct_schema_id() -> Result<(), Box<dyn s
     Ok(())
 }
 
+// ── Shared composite: fields accessible from importing module ───────────
+
+/// When schema B imports shared types via `pub use super::common_types::*`,
+/// the composite value struct's inner byte array must be `pub` so downstream
+/// code can construct composites from the importing module.
+#[test]
+fn shared_composite_fields_are_public() -> Result<(), Box<dyn std::error::Error>> {
+    let (schema_a, schema_b) = generate_pair();
+    let mut config = GenerationConfig::new("multi");
+    config = config.with_shared_module("common_types");
+    let mut g = Generator::new(config);
+
+    let modules = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;
+    let mods: Vec<_> = modules.modules().collect();
+
+    compile_and_run_two_modules(
+        "multi_shared_fields",
+        "common_types",
+        &mods[0].source,
+        "market_data",
+        &mods[1].source,
+        r#"
+            // Access the Decimal composite via the importing module.
+            // The inner field must be pub so this compiles.
+            let d = market_data::Decimal::new(100, -2);
+            assert_eq!(d.mantissa(), 100);
+            assert_eq!(d.exponent(), -2);
+
+            // Same for enums — Side should be accessible
+            let s = market_data::Side::Buy;
+            assert_eq!(s, market_data::Side::Buy);
+
+            // The message encoder in the importing module should work
+            let mut buf = [0u8; 64];
+            let mut enc = market_data::QuoteEncoder::wrap_and_apply_header(&mut buf, 0);
+            enc.bid_mantissa(100).ask_mantissa(200).bid_side(market_data::Side::Buy);
+            let dec = market_data::QuoteDecoder::try_wrap_and_apply_header(&buf, 0)?;
+            assert_eq!(dec.bid_mantissa(), 100);
+            assert_eq!(dec.ask_mantissa(), 200);
+            assert_eq!(dec.bid_side(), market_data::Side::Buy);
+        "#,
+    );
+
+    Ok(())
+}
+
 // ── Shared types with sinceVersion > 0 ─────────────────────────────────
 //
 // Version numbers are per-schema. A shared type with version-gated members
