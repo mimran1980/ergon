@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-07-30
+
+### Added
+- Hook system for custom code generation — inject serde derives, custom impls, or extra tokens into generated types
+- `remaining()`, `whole_buffer()`, and `message_offset()` on flat decoders and encoders
+- Field name clash renaming — `_field` suffix when a schema field collides with a reserved method
+
+### Fixed
+- Decoder Display and encoder `fixed()` now use clash-resolved field names
+- Missing `#[allow(missing_docs)]` on `ItemContext`
+
 ## [0.1.6] — 2026-07-30
 
 ### Changed
