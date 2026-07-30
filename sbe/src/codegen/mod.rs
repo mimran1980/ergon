@@ -3649,8 +3649,14 @@ fn generate_decoder_display(
     });
     let mut out_idx = 0usize;
     for f in &msg.fields {
+        const DECODER_RESERVED: &[&str] = &[
+            "remaining", "whole_buffer", "message_offset", "after_this_message",
+            "wrap", "try_wrap_and_apply_header", "header", "encoded_length",
+            "encoded_length_with_header", "as_bytes", "as_ref_opt", "verify",
+            "acting_version", "acting_block_length",
+        ];
         let snake = to_snake_case(&f.name);
-        let f_ident = syn::Ident::new(&snake, proc_macro2::Span::call_site());
+        let f_ident = resolve_field_ident(&snake, &None, DECODER_RESERVED);
         let sep = if out_idx == 0 { "" } else { ", " };
         let end_off = f.offset + f.field_type.size();
         let end_off_lit = syn::LitInt::new(&end_off.to_string(), proc_macro2::Span::call_site());
@@ -6598,6 +6604,12 @@ fn generate_message_encoder(
         }
     }
 
+    const ENCODER_RESERVED: &[&str] = &[
+        "remaining", "remaining_mut", "whole_buffer", "message_offset",
+        "after_this_message", "wrap", "try_wrap", "try_wrap_and_apply_header",
+        "wrap_into_claim", "compute_length_with_header", "as_ref",
+    ];
+
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
         let body_offset = header_size + f.offset;
@@ -6607,11 +6619,6 @@ fn generate_message_encoder(
         // converted setter takes the original name.
         let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{f_name}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&f_name);
-        const ENCODER_RESERVED: &[&str] = &[
-            "remaining", "remaining_mut", "whole_buffer", "message_offset",
-            "after_this_message", "wrap", "try_wrap", "try_wrap_and_apply_header",
-            "wrap_into_claim", "compute_length_with_header", "as_ref",
-        ];
         let f_ident = resolve_field_ident(&f_name, &wire_name, ENCODER_RESERVED);
 
         match &f.field_type {
@@ -6842,10 +6849,13 @@ fn generate_message_encoder(
             }
             let fname_snake = to_snake_case(&f.name);
             let is_converted = field_has_conversion_free(f, conversions);
-            let setter_ident = if is_converted {
-                syn::Ident::new(&format!("{fname_snake}_wire"), span)
-            } else {
-                syn::Ident::new(&fname_snake, span)
+            let setter_ident = {
+                let base = resolve_field_ident(&fname_snake, &None, ENCODER_RESERVED);
+                if is_converted {
+                    syn::Ident::new(&format!("{}_wire", base), span)
+                } else {
+                    base
+                }
             };
             let field_ident = syn::Ident::new(&fname_snake, span);
             if f.presence == crate::Presence::Optional {
