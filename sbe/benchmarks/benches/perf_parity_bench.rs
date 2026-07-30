@@ -22,6 +22,11 @@
 //! profiles remain mandatory to catch a recurrence.
 //! Header-inclusive, header-only, and body-only encode cases are reported
 //! separately so fused header stores do not masquerade as scalar-field speed.
+//! Within each case both arms must match sbe-tool:
+//! - header+body / header-only: ergon `wrap_and_apply_header` ↔ sbe-tool
+//!   `wrap(8)` then `header(0).parent()` (official order, before body setters)
+//! - body-only: ergon `wrap(0)` ↔ sbe-tool `wrap(8)` with **no** `.header(0)`
+//! Never invent length as `8 + encoded_length()` without a real header write.
 
 #![allow(
     unsafe_code,
@@ -375,7 +380,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
     // ── length parity: both codecs must produce identical encoded lengths ──
     {
         use ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::{
-            WriteBuf,
+            Encoder, WriteBuf,
             boolean_type::BooleanType as ToolBool,
             boost_type::BoostType as ToolBoost,
             car_codec::encoder::{
@@ -418,6 +423,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
             .encoded_length_with_header();
 
         let mut tbuf = [0u8; 512];
+        // Official order: wrap body @ 8, header @ 0, then body fields.
         let t = ToolCarEnc::default().wrap(WriteBuf::new(&mut tbuf), 8);
         let mut h = t.header(0);
         let mut t = h.parent().unwrap();
@@ -445,7 +451,8 @@ fn bench_encode_scalar(c: &mut Criterion) {
         perf = t.performance_figures_encoder(0, perf);
         t = perf.parent().unwrap();
         t.manufacturer("X").model("Y").activation_code(b"Z");
-        let tool_len = t.encoded_length() + 8; // sbe-tool encoded_length() is body-only
+        // Absolute frame end after wrap@8 + header write (not invented `8 + body`).
+        let tool_len = t.get_limit();
         assert_eq!(
             ergo_len, tool_len,
             "encode/scalar length mismatch: ergon={ergo_len}, sbe-tool={tool_len}"

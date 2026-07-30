@@ -1,12 +1,36 @@
 //! Head-to-head cluster codec benchmarks: ergon vs sbe-tool 1.39.0.
 //!
-//! Both codecs encode byte-identical output (proved by 18/18 golden parity
-//! tests); this measures speed on **equal work**. The sbe-tool codecs remain
-//! only for these benches under `reference_sbe/`.
+//! Both codecs encode byte-identical **body** output; this measures speed on
+//! **equal work**. The sbe-tool codecs remain only for these benches under
+//! `reference_sbe/`.
+//!
+//! ## Header equal-work (mandatory)
+//!
+//! Match sbe-tool. Do **not** always call ergon `wrap_and_apply_header`.
+//!
+//! Official sbe-tool Rust encode (see `simple-binary-encoding/rust/benches/car_benchmark.rs`):
+//! ```text
+//! enc = enc.wrap(WriteBuf::new(buf), message_header_codec::ENCODED_LENGTH); // body @ 8
+//! enc = enc.header(0).parent()?; // optional: write MessageHeader at 0, then body setters
+//! // … body field setters …
+//! let body_len = enc.encoded_length(); // body only — does NOT include the 8-byte header
+//! ```
+//!
+//! These cluster **encode** gates time **body-only** work on both arms:
+//! - sbe-tool: `wrap(buf, 8)` + field setters — **no** `.header(0)`
+//! - ergon: `wrap(buf, 0)` + field setters — **no** `wrap_and_apply_header`
+//!
+//! Body bytes live at absolute offsets `[8 .. 8+BLOCK)`. Header region `[0..8)`
+//! stays zero. Length asserts use body length only (`encoded_length()`), never
+//! a synthetic `8 + body` that pretends a header was written.
+//!
+//! If a future case needs full wire (header + body), both arms must apply the
+//! header: ergon `wrap_and_apply_header` ↔ sbe-tool `wrap(8)` then
+//! `header(0).parent()` **before** body setters (official order).
 //!
 //! Acceptance: 5-run median ergon/sbe-tool ratio ≤ 1.00 on every **maintained**
 //! case:
-//! - encode: session message header, keep-alive, **claim_shaped** (header + app)
+//! - encode: session message header, keep-alive, **claim_shaped** (body + app)
 //! - decode: session message header, session event (equal-work audit)
 //!
 //! Diagnostic-only (not a ≤1.00 gate): NewLeaderEvent decode, connect request.
@@ -20,51 +44,75 @@ use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 mod reference_sbe;
 
 const BATCH_SIZE: usize = 10_000;
+/// Standard SBE message-header size (same as `message_header_codec::ENCODED_LENGTH`).
+const HDR: usize = 8;
 
-fn assert_wire_parity(case: &str, ergo: &[u8], sbe_tool: &[u8]) {
-    assert_eq!(ergo.len(), sbe_tool.len(), "{case}: encoded lengths differ");
-    assert_eq!(ergo, sbe_tool, "{case}: encoded bytes differ");
+fn assert_body_parity(case: &str, ergo: &[u8], sbe_tool: &[u8], body_len: usize) {
+    assert_eq!(
+        &ergo[..HDR],
+        &[0u8; HDR],
+        "{case}: ergon header region must stay zero in body-only mode"
+    );
+    assert_eq!(
+        &sbe_tool[..HDR],
+        &[0u8; HDR],
+        "{case}: sbe-tool header region must stay zero without .header(0)"
+    );
+    assert_eq!(
+        &ergo[HDR..HDR + body_len],
+        &sbe_tool[HDR..HDR + body_len],
+        "{case}: body bytes differ"
+    );
 }
 
 fn assert_session_message_header_encode_parity() {
     use ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder as ErgoEncoder;
     use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder as ToolEncoder};
 
-    let mut ergo = [0u8; ErgoEncoder::compute_length_with_header()];
-    let ergo_len = ErgoEncoder::wrap_and_apply_header(&mut ergo, 0)
+    let body = ErgoEncoder::BLOCK_LENGTH;
+    let slot = HDR + body;
+
+    let mut ergo = vec![0u8; slot];
+    let ergo_body = ErgoEncoder::wrap(&mut ergo, 0)
         .leadership_term_id(5)
         .cluster_session_id(42)
         .timestamp(0)
-        .encoded_length_with_header();
+        .encoded_length();
 
-    let mut sbe_tool = [0u8; ErgoEncoder::compute_length_with_header()];
-    let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool), 8);
+    let mut sbe_tool = vec![0u8; slot];
+    let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool), HDR);
     tool.leadership_term_id(5).cluster_session_id(42).timestamp(0);
-    let tool_len = 8 + tool.encoded_length();
-    let _ = tool.header(0);
+    let tool_body = tool.encoded_length();
+    // Intentionally no tool.header(0) — body-only equal work with ergon wrap.
 
-    assert_eq!(ergo_len, tool_len, "session message header length");
-    assert_wire_parity("session message header", &ergo[..ergo_len], &sbe_tool[..tool_len]);
+    assert_eq!(ergo_body, body, "session message header ergon body length");
+    assert_eq!(tool_body, body, "session message header sbe-tool body length");
+    assert_eq!(ergo_body, tool_body, "session message header body lengths");
+    assert_body_parity("session message header", &ergo, &sbe_tool, body);
 }
 
 fn assert_session_keep_alive_encode_parity() {
     use ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder as ErgoEncoder;
     use reference_sbe::{WriteBuf, session_keep_alive_codec::SessionKeepAliveEncoder as ToolEncoder};
 
-    let mut ergo = [0u8; ErgoEncoder::compute_length_with_header()];
-    let ergo_len = ErgoEncoder::wrap_and_apply_header(&mut ergo, 0)
+    let body = ErgoEncoder::BLOCK_LENGTH;
+    let slot = HDR + body;
+
+    let mut ergo = vec![0u8; slot];
+    let ergo_body = ErgoEncoder::wrap(&mut ergo, 0)
         .leadership_term_id(5)
         .cluster_session_id(42)
-        .encoded_length_with_header();
+        .encoded_length();
 
-    let mut sbe_tool = [0u8; ErgoEncoder::compute_length_with_header()];
-    let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool), 8);
+    let mut sbe_tool = vec![0u8; slot];
+    let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool), HDR);
     tool.leadership_term_id(5).cluster_session_id(42);
-    let tool_len = 8 + tool.encoded_length();
-    let _ = tool.header(0);
+    let tool_body = tool.encoded_length();
 
-    assert_eq!(ergo_len, tool_len, "session keep-alive length");
-    assert_wire_parity("session keep-alive", &ergo[..ergo_len], &sbe_tool[..tool_len]);
+    assert_eq!(ergo_body, body, "keep-alive ergon body length");
+    assert_eq!(tool_body, body, "keep-alive sbe-tool body length");
+    assert_eq!(ergo_body, tool_body, "keep-alive body lengths");
+    assert_body_parity("session keep-alive", &ergo, &sbe_tool, body);
 }
 
 fn assert_session_connect_request_encode_parity(channel: &[u8], credentials: &[u8]) {
@@ -73,14 +121,16 @@ fn assert_session_connect_request_encode_parity(channel: &[u8], credentials: &[u
     };
     use reference_sbe::{WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder as ToolEncoder};
 
-    let expected_len = ErgoEncoder::compute_length_with_header(channel.len(), credentials.len(), 0);
+    // Full frame capacity (header reserved + body) — header bytes left zero.
+    let frame_len = ErgoEncoder::compute_length_with_header(channel.len(), credentials.len(), 0);
     let fixed = SessionConnectRequestFixedFields {
         correlation_id: 0,
         response_stream_id: 102,
         version: Some(0),
     };
-    let mut ergo = vec![0u8; expected_len];
-    let ergo_len = ErgoEncoder::wrap_and_apply_header(&mut ergo, 0)
+
+    let mut ergo = vec![0u8; frame_len];
+    let ergo_body = ErgoEncoder::wrap(&mut ergo, 0)
         .fixed(&fixed)
         .response_channel(channel)
         .unwrap()
@@ -88,37 +138,40 @@ fn assert_session_connect_request_encode_parity(channel: &[u8], credentials: &[u
         .unwrap()
         .client_info(b"")
         .unwrap()
-        .encoded_length_with_header();
+        .encoded_length();
 
-    let mut sbe_tool = vec![0u8; expected_len];
-    let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool), 8);
+    let mut sbe_tool = vec![0u8; frame_len];
+    let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool), HDR);
     tool.correlation_id(0)
         .response_stream_id(102)
         .version(0)
         .response_channel(channel)
         .encoded_credentials(credentials)
         .client_info(b"");
-    let tool_len = 8 + tool.encoded_length();
-    let _ = tool.header(0);
+    let tool_body = tool.encoded_length();
 
-    assert_eq!(ergo_len, expected_len, "session connect Ergo length");
-    assert_eq!(tool_len, expected_len, "session connect sbe-tool length");
-    assert_wire_parity("session connect request", &ergo, &sbe_tool);
+    assert_eq!(ergo_body, tool_body, "session connect body lengths");
+    assert_eq!(
+        ergo_body + HDR,
+        frame_len,
+        "body + reserved header region == compute_length_with_header capacity"
+    );
+    assert_body_parity("session connect request", &ergo, &sbe_tool, ergo_body);
 }
 
-/// Encode 10k SessionMessageHeaders via ergon.
+/// Encode 10k SessionMessageHeader **bodies** (no MessageHeader write).
 fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     assert_session_message_header_encode_parity();
     let mut g = c.benchmark_group("cluster/encode/session_message_header");
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
-    // Pre-size once; timed path only writes into the reused buffer.
+    let slot = HDR + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::BLOCK_LENGTH;
     g.bench_function("ergo-sbe", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * 32];
+        let mut buf = vec![0u8; BATCH_SIZE * slot];
         b.iter(|| {
             for i in 0..BATCH_SIZE {
-                let off = i * 32;
-                let _ = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_and_apply_header(
-                    black_box(&mut buf[off..off + 32]),
+                let off = i * slot;
+                let _ = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap(
+                    black_box(&mut buf[off..off + slot]),
                     0,
                 )
                 .leadership_term_id((i % 1000) as i64)
@@ -129,17 +182,16 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
         });
     });
     g.bench_function("sbe-tool", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * 32];
+        let mut buf = vec![0u8; BATCH_SIZE * slot];
         b.iter(|| {
             use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
             for i in 0..BATCH_SIZE {
-                let off = i * 32;
-                let wb = WriteBuf::new(black_box(&mut buf[off..off + 32]));
-                let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
+                let off = i * slot;
+                let wb = WriteBuf::new(black_box(&mut buf[off..off + slot]));
+                let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, HDR);
                 enc.leadership_term_id((i % 1000) as i64);
                 enc.cluster_session_id(42);
                 enc.timestamp(0);
-                let _ = enc.header(0);
             }
             black_box(&buf);
         });
@@ -147,19 +199,19 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     g.finish();
 }
 
-/// Encode 10k SessionKeepAlives via ergon.
+/// Encode 10k SessionKeepAlive **bodies** (no MessageHeader write).
 fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
     assert_session_keep_alive_encode_parity();
     let mut g = c.benchmark_group("cluster/encode/session_keep_alive");
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
-    let sz = 8 + ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::BLOCK_LENGTH;
+    let slot = HDR + ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::BLOCK_LENGTH;
     g.bench_function("ergo-sbe", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * sz];
+        let mut buf = vec![0u8; BATCH_SIZE * slot];
         b.iter(|| {
             for i in 0..BATCH_SIZE {
-                let off = i * sz;
-                let _ = ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::wrap_and_apply_header(
-                    black_box(&mut buf[off..off + sz]),
+                let off = i * slot;
+                let _ = ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::wrap(
+                    black_box(&mut buf[off..off + slot]),
                     0,
                 )
                 .leadership_term_id(5)
@@ -169,16 +221,15 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
         });
     });
     g.bench_function("sbe-tool", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * sz];
+        let mut buf = vec![0u8; BATCH_SIZE * slot];
         b.iter(|| {
             use reference_sbe::{WriteBuf, session_keep_alive_codec::SessionKeepAliveEncoder};
             for i in 0..BATCH_SIZE {
-                let off = i * sz;
-                let wb = WriteBuf::new(black_box(&mut buf[off..off + sz]));
-                let mut enc = SessionKeepAliveEncoder::default().wrap(wb, 8);
+                let off = i * slot;
+                let wb = WriteBuf::new(black_box(&mut buf[off..off + slot]));
+                let mut enc = SessionKeepAliveEncoder::default().wrap(wb, HDR);
                 enc.leadership_term_id(5);
                 enc.cluster_session_id((i % 100) as i64);
-                let _ = enc.header(0);
             }
             black_box(&buf);
         });
@@ -186,8 +237,7 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
     g.finish();
 }
 
-/// Encode 10k SessionConnectRequests (with 33-byte channel, 9-byte creds,
-/// empty client_info — the complete 78-byte message both codecs produce).
+/// Encode 10k SessionConnectRequest **bodies** (no MessageHeader write).
 fn bench_encode_connect_request_ergo(c: &mut Criterion) {
     use ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestFixedFields;
 
@@ -200,21 +250,21 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
         version: Some(0),
     };
     assert_session_connect_request_encode_parity(channel.as_bytes(), creds);
-    let msg_len = ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder::compute_length_with_header(
+    let frame_len = ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder::compute_length_with_header(
         channel.len(),
         creds.len(),
         0,
     );
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * msg_len];
+        let mut buf = vec![0u8; BATCH_SIZE * frame_len];
         b.iter(|| {
             let channel = black_box(channel.as_bytes());
             let creds = black_box(creds.as_slice());
             for i in 0..BATCH_SIZE {
-                let off = i * msg_len;
-                let len = ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder::wrap_and_apply_header(
-                    black_box(&mut buf[off..off + msg_len]),
+                let off = i * frame_len;
+                let len = ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder::wrap(
+                    black_box(&mut buf[off..off + frame_len]),
                     0,
                 )
                 .fixed(black_box(&fixed))
@@ -224,30 +274,29 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
                 .unwrap()
                 .client_info(b"")
                 .unwrap()
-                .encoded_length_with_header();
+                .encoded_length();
                 black_box(len);
             }
             black_box(&buf);
         });
     });
     g.bench_function("sbe-tool", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * msg_len];
+        let mut buf = vec![0u8; BATCH_SIZE * frame_len];
         b.iter(|| {
             use reference_sbe::{WriteBuf, session_connect_request_codec::SessionConnectRequestEncoder};
             let channel = black_box(channel.as_bytes());
             let creds = black_box(creds.as_slice());
             for i in 0..BATCH_SIZE {
-                let off = i * msg_len;
-                let wb = WriteBuf::new(black_box(&mut buf[off..off + msg_len]));
-                let mut enc = SessionConnectRequestEncoder::default().wrap(wb, 8);
+                let off = i * frame_len;
+                let wb = WriteBuf::new(black_box(&mut buf[off..off + frame_len]));
+                let mut enc = SessionConnectRequestEncoder::default().wrap(wb, HDR);
                 enc.correlation_id(0);
                 enc.response_stream_id(102);
                 enc.version(0);
                 enc.response_channel(channel);
                 enc.encoded_credentials(creds);
                 enc.client_info(b"");
-                let len = 8 + enc.encoded_length();
-                let _ = enc.header(0);
+                let len = enc.encoded_length(); // body only
                 black_box(len);
             }
             black_box(&buf);
@@ -318,7 +367,6 @@ fn bench_decode_msg_header(c: &mut Criterion) {
             };
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(&MSG_HDR_FIXTURE[..]);
-                // Equal bounds gate (Ergo checks pos+8 <= len before reading).
                 if buf.len() < 8 {
                     continue;
                 }
@@ -340,7 +388,7 @@ fn bench_decode_msg_header(c: &mut Criterion) {
     g.finish();
 }
 
-// ── Decode: SessionEvent (var-data "some-detail", 67 bytes) ─────────────
+// ── Decode: SessionEvent (fixed + var-data detail) ───────────────────────
 
 const SESSION_EVENT_FIXTURE: [u8; 67] = [
     0x2c, 0x00, 0x02, 0x00, 0x6f, 0x00, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00,
@@ -376,8 +424,8 @@ fn bench_decode_session_event(c: &mut Criterion) {
         assert_eq!(ergo_leadership_term_id, tool.leadership_term_id());
         assert_eq!(ergo_leader_member_id, tool.leader_member_id());
         assert_eq!(ergo_code, tool.code() as u8);
-        let coordinates = tool.detail_decoder();
-        assert_eq!(ergo_detail, tool.detail_slice(coordinates));
+        let coords = tool.detail_decoder();
+        assert_eq!(ergo_detail, tool.detail_slice(coords));
     }
     let mut g = c.benchmark_group("cluster/decode/session_event");
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
@@ -536,34 +584,44 @@ fn bench_decode_new_leader(c: &mut Criterion) {
     g.finish();
 }
 
-// ── Claim-shaped write: SessionMessageHeader + fixed 32-byte app payload ─
+// ── Claim-shaped write: SessionMessageHeader body + fixed 32-byte app ────
+//
+// Body-only session frame (header region zero) + app payload after the 32-byte
+// slot. Equal work on both arms — no MessageHeader write.
 
 const CLAIM_APP_PAYLOAD: [u8; 32] = [0xABu8; 32];
 
 fn bench_claim_shaped_write(c: &mut Criterion) {
     let mut g = c.benchmark_group("cluster/encode/claim_shaped_header_plus_app");
-    let total = 32 + CLAIM_APP_PAYLOAD.len(); // MSG_HDR_TOTAL + app
+    let hdr_slot = HDR + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::BLOCK_LENGTH; // 32
+    let total = hdr_slot + CLAIM_APP_PAYLOAD.len();
     {
         use ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder as ErgoEncoder;
         use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder as ToolEncoder};
 
-        let mut ergo = [0u8; 32 + CLAIM_APP_PAYLOAD.len()];
-        let ergo_len = ErgoEncoder::wrap_and_apply_header(&mut ergo[..32], 0)
+        let mut ergo = vec![0u8; total];
+        let ergo_body = ErgoEncoder::wrap(&mut ergo[..hdr_slot], 0)
             .leadership_term_id(5)
             .cluster_session_id(42)
             .timestamp(0)
-            .encoded_length_with_header();
-        ergo[ergo_len..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+            .encoded_length();
+        ergo[hdr_slot..].copy_from_slice(&CLAIM_APP_PAYLOAD);
 
-        let mut sbe_tool = [0u8; 32 + CLAIM_APP_PAYLOAD.len()];
-        let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool[..32]), 8);
+        let mut sbe_tool = vec![0u8; total];
+        let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool[..hdr_slot]), HDR);
         tool.leadership_term_id(5).cluster_session_id(42).timestamp(0);
-        let tool_len = 8 + tool.encoded_length();
-        let _ = tool.header(0);
-        sbe_tool[tool_len..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+        let tool_body = tool.encoded_length();
+        sbe_tool[hdr_slot..].copy_from_slice(&CLAIM_APP_PAYLOAD);
 
-        assert_eq!(ergo_len, tool_len, "claim header length");
-        assert_wire_parity("claim-shaped write", &ergo, &sbe_tool);
+        assert_eq!(ergo_body, tool_body, "claim body length");
+        assert_eq!(ergo_body, ErgoEncoder::BLOCK_LENGTH);
+        assert_body_parity(
+            "claim-shaped write",
+            &ergo[..hdr_slot],
+            &sbe_tool[..hdr_slot],
+            ergo_body,
+        );
+        assert_eq!(&ergo[hdr_slot..], &sbe_tool[hdr_slot..], "claim app payload");
     }
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
@@ -572,14 +630,14 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
             for i in 0..BATCH_SIZE {
                 let off = i * total;
                 let slot = &mut buf[off..off + total];
-                let _ = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_and_apply_header(
-                    black_box(&mut slot[..32]),
+                let _ = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap(
+                    black_box(&mut slot[..hdr_slot]),
                     0,
                 )
                 .leadership_term_id(5)
                 .cluster_session_id(42)
                 .timestamp(0);
-                slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+                slot[hdr_slot..].copy_from_slice(&CLAIM_APP_PAYLOAD);
             }
             black_box(&buf);
         });
@@ -591,13 +649,12 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
             for i in 0..BATCH_SIZE {
                 let off = i * total;
                 let slot = &mut buf[off..off + total];
-                let wb = WriteBuf::new(black_box(&mut slot[..32]));
-                let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, 8);
+                let wb = WriteBuf::new(black_box(&mut slot[..hdr_slot]));
+                let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, HDR);
                 enc.leadership_term_id(5);
                 enc.cluster_session_id(42);
                 enc.timestamp(0);
-                let _ = enc.header(0);
-                slot[32..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+                slot[hdr_slot..].copy_from_slice(&CLAIM_APP_PAYLOAD);
             }
             black_box(&buf);
         });

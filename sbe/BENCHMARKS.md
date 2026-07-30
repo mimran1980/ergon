@@ -69,12 +69,16 @@ Notes from this cycle:
 - Header-only, body-only, and header-plus-body scalar encode are separate. The
   body-only setters are effectively tied on this run; the header-inclusive
   ratio is not presented as field-setter performance.
+- **Header work matches sbe-tool on both arms.** Never pair ergon
+  `wrap_and_apply_header` with sbe-tool body-only `wrap`. Cluster encode gates
+  are **body-only** on both arms (`wrap` / `wrap(…, 8)`, no MessageHeader
+  write). Length asserts use body `encoded_length()` only — never a synthetic
+  `8 + body` that pretends a header was written.
 - Buffers and inputs are allocated once outside `b.iter`; timed paths observe
   the encoded byte range.
 - The maintained SBE and Cluster sources are also checked by
-  `fairness_policy_test`: they must use `std::hint::black_box`, establish a
-  pre-timing correctness contract, and retain the sceptical/LTO disclosure.
-  This is a regression alarm, not a substitute for manual equal-work review.
+  `fairness_policy_test`: black_box, pre-timing body/wire parity, header-mode
+  symmetry, sceptical/LTO disclosure.
 - The gate uses Criterion's regression estimate consistently. A previous gate
   revision mixed the displayed regression result with the raw sample median;
   on a noisy run those estimators disagreed enough to reverse a tiny ratio.
@@ -125,6 +129,25 @@ For 1,000 Decimal-composite entries:
 `bulk_add` now validates one exact output region and iterates
 `chunks_exact_mut`, eliminating the three inner field bounds checks retained by
 the removed implementation.
+
+### Maintained pair modes (fairness inventory)
+
+Every gated ergon/sbe-tool pair uses the same header mode on both arms:
+
+| Gate | Mode | ergon | sbe-tool |
+|------|------|-------|----------|
+| encode/scalar header+body | full wire | `wrap_and_apply_header` + 2 fields | `wrap(8)` + `header(0).parent()` + 2 fields |
+| encode/scalar body only | body only | `wrap(0)` + 2 fields | `wrap(8)` + 2 fields, no header |
+| encode/throughput 10k | full wire | apply-header + 2 fields | wrap+header+parent + 2 fields |
+| wire_parity encode full | full wire | apply-header + full Car | wrap+header+parent + full Car |
+| decode scalar/array/composite | accessors only | prebuilt decoder | prebuilt decoder |
+| decode entry wrap | body wrap | `wrap(…, 8, …)` | body decoder at `msg+8` |
+| decode full / batch 10k | body wrap + same fields | same | same |
+| cluster encode (all 3+claim) | **body only** | `wrap(0)` + fields | `wrap(8)` + fields, no header |
+| cluster decode | header+body parse | `try_wrap_and_apply_header` | MessageHeaderDecoder + body + equal checks |
+
+Diagnostics (encode_style, encode_bench, l2_book, group_decimal DTO arms,
+throughput/checked) are ergon-only or DTO-vs-DTO — not ergon/sbe-tool ratios.
 
 ### Cluster codec gate — `just bench-cluster`
 
@@ -367,8 +390,9 @@ they are not portable API promises.
 just bench-cluster
 ```
 
-The Cluster suite applies the same equal-work rules to the Aeron Cluster
-protocol codecs. Connection, authentication, and leader-change operations are
+The Cluster suite applies the same equal-work rules. Encode gates time
+**body-only** field writes on both arms (ergon `wrap`, sbe-tool `wrap(…, 8)`,
+no MessageHeader). Connection, authentication, and leader-change operations are
 cold-path diagnostics unless a recipe explicitly marks them as maintained
 release gates.
 
