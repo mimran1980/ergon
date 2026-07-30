@@ -170,60 +170,81 @@ pub struct FieldInfo {
     pub since_version: u16,
     /// SBE `semanticType` attribute, if set.
     pub semantic_type: Option<String>,
+    /// SBE presence: `"required"`, `"optional"`, or `"constant"`.
+    pub presence: &'static str,
+    /// Null sentinel value (optional fields only).
+    pub null_value: Option<u64>,
+    /// Whether the field is schema-deprecated.
+    pub deprecated: bool,
+    /// Schema description on the field, if present.
+    pub description: Option<String>,
 }
 
 /// Per-item context passed to hooks.
 ///
+/// Every variant carries a `schema` reference for full IR access
+/// when the structured fields aren't enough.
+///
 /// Pattern-match on the variant to access item-specific data
 /// (variants, choices, fields). Use [`quote::quote!`] in your
 /// hook body to return tokens appended after the generated item.
-#[derive(Clone, Debug)]
-pub enum ItemContext {
+// manual Debug/Clone because &Schema in every variant makes derive unhappy
+#[derive(Clone)]
+pub enum ItemContext<'a> {
     Enum {
+        schema: &'a crate::Schema,
         name: String,
         encoding_type: String,
         variants: Vec<EnumVariantInfo>,
     },
     Set {
+        schema: &'a crate::Schema,
         name: String,
         encoding_type: String,
         choices: Vec<SetChoiceInfo>,
     },
     Composite {
+        schema: &'a crate::Schema,
         name: String,
         fields: Vec<FieldInfo>,
     },
-    /// A message decoder (flyweight over `&[u8]`).
     MessageDecoder {
-        /// Decoder struct name (e.g. "SessionEventDecoder").
+        schema: &'a crate::Schema,
         name: String,
-        /// SBE template ID.
         template_id: u16,
-        /// Declared block length in bytes.
         block_length: usize,
-        /// Fixed fields (var-data and groups excluded).
         fields: Vec<FieldInfo>,
     },
-    /// A message encoder (writes into `&mut [u8]`).
     MessageEncoder {
-        /// Encoder struct name (e.g. "SessionEventEncoder").
+        schema: &'a crate::Schema,
         name: String,
-        /// SBE template ID.
         template_id: u16,
-        /// Declared block length in bytes.
         block_length: usize,
-        /// Fixed fields (var-data and groups excluded).
         fields: Vec<FieldInfo>,
     },
-    /// A domain DTO struct (only when [`GenerationConfig::enable_domain_objects`] is active).
     DomainStruct {
+        schema: &'a crate::Schema,
         name: String,
         fields: Vec<FieldInfo>,
     },
 }
 
+impl std::fmt::Debug for ItemContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, name) = match self {
+            Self::Enum { name, .. } => ("Enum", name.as_str()),
+            Self::Set { name, .. } => ("Set", name.as_str()),
+            Self::Composite { name, .. } => ("Composite", name.as_str()),
+            Self::MessageDecoder { name, .. } => ("MessageDecoder", name.as_str()),
+            Self::MessageEncoder { name, .. } => ("MessageEncoder", name.as_str()),
+            Self::DomainStruct { name, .. } => ("DomainStruct", name.as_str()),
+        };
+        f.debug_struct("ItemContext").field("kind", &kind).field("name", &name).finish()
+    }
+}
+
 /// Token streams returned by hooks — appended after the generated item.
-pub type HookFn = dyn Fn(&ItemContext) -> Vec<proc_macro2::TokenStream>;
+pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream>;
 
 /// Wrapper so hooks can live in [`GenerationConfig`]. Not [`Clone`] or
 /// [`PartialEq`] — hook closures can't be cloned or compared.

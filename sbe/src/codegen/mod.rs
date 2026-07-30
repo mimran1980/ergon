@@ -263,8 +263,20 @@ fn message_field_infos(fields: &[MessageField]) -> Vec<crate::FieldInfo> {
             offset: f.offset,
             since_version: f.since_version,
             semantic_type: f.semantic_type.clone(),
+            presence: presence_str(f.presence),
+            null_value: f.null_value,
+            deprecated: f.deprecated,
+            description: f.description.clone(),
         })
         .collect()
+}
+
+fn presence_str(p: Presence) -> &'static str {
+    match p {
+        Presence::Required => "required",
+        Presence::Optional => "optional",
+        Presence::Constant => "constant",
+    }
 }
 
 /// Resolve a field accessor name, appending `_field` when it clashes
@@ -623,7 +635,7 @@ impl Generator {
     }
 
     /// Build an [`ItemContext::Enum`] from IR tokens.
-    fn build_enum_ctx(tokens: &[crate::ir::Token]) -> crate::ItemContext {
+    fn build_enum_ctx<'s>(tokens: &[crate::ir::Token], schema: &'s crate::Schema) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&tokens[0].name);
         let encoding_type = tokens[0].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
         let et_str = rust_type(encoding_type).to_string();
@@ -646,14 +658,15 @@ impl Generator {
                 })
             })
             .collect();
-        crate::ItemContext::Enum { name, encoding_type: et_str, variants }
+        crate::ItemContext::Enum { schema, name, encoding_type: et_str, variants }
     }
 
     /// Build a message decoder/encoder context from a [`MessageStructure`].
-    fn build_message_ctx(
+    fn build_message_ctx<'s>(
         msg: &MessageStructure,
         kind: crate::ItemKind,
-    ) -> crate::ItemContext {
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&msg.name);
         let name_with = |suffix: &str| format!("{name}{suffix}");
         let fields = message_field_infos(&msg.fields);
@@ -664,12 +677,14 @@ impl Generator {
         };
         match kind {
             crate::ItemKind::MessageDecoder => crate::ItemContext::MessageDecoder {
+                schema,
                 name,
                 template_id: msg.id,
                 block_length: msg.block_length,
                 fields,
             },
             crate::ItemKind::MessageEncoder => crate::ItemContext::MessageEncoder {
+                schema,
                 name,
                 template_id: msg.id,
                 block_length: msg.block_length,
@@ -680,7 +695,7 @@ impl Generator {
     }
 
     /// Build an [`ItemContext::Composite`] from IR tokens.
-    fn build_composite_ctx(tokens: &[crate::ir::Token]) -> crate::ItemContext {
+    fn build_composite_ctx<'s>(tokens: &[crate::ir::Token], schema: &'s crate::Schema) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&tokens[0].name);
         let fields: Vec<_> = tokens
             .iter()
@@ -692,13 +707,17 @@ impl Generator {
                 offset: t.encoding.offset.unwrap_or(0),
                 since_version: t.encoding.since_version,
                 semantic_type: t.encoding.semantic_type.clone(),
+                presence: if t.encoding.null_value.is_some() { "optional" } else { "required" },
+                null_value: t.encoding.null_value,
+                deprecated: t.encoding.deprecated,
+                description: t.encoding.description.clone(),
             })
             .collect();
-        crate::ItemContext::Composite { name, fields }
+        crate::ItemContext::Composite { schema, name, fields }
     }
 
     /// Build an [`ItemContext::Set`] from IR tokens.
-    fn build_set_ctx(tokens: &[crate::ir::Token]) -> crate::ItemContext {
+    fn build_set_ctx<'s>(tokens: &[crate::ir::Token], schema: &'s crate::Schema) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&tokens[0].name);
         let encoding_type = tokens[0].encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
         let et_str = rust_type(encoding_type).to_string();
@@ -715,7 +734,7 @@ impl Generator {
                 description: t.encoding.description.clone(),
             })
             .collect();
-        crate::ItemContext::Set { name, encoding_type: et_str, choices }
+        crate::ItemContext::Set { schema, name, encoding_type: et_str, choices }
     }
 
     /// Run registered hooks and append returned tokens to `src`.
@@ -793,7 +812,7 @@ impl Generator {
             }
             generate_enum(&mut src, enum_tokens);
             if self.config.has_hooks() {
-                let ctx = Self::build_enum_ctx(enum_tokens);
+                let ctx = Self::build_enum_ctx(enum_tokens, schema);
                 self.run_hooks(&ctx, &mut src);
             }
         }
@@ -805,7 +824,7 @@ impl Generator {
             }
             generate_set(&mut src, set_tokens);
             if self.config.has_hooks() {
-                let ctx = Self::build_set_ctx(set_tokens);
+                let ctx = Self::build_set_ctx(set_tokens, schema);
                 self.run_hooks(&ctx, &mut src);
             }
         }
@@ -818,7 +837,7 @@ impl Generator {
             let comp_byte_order = ir.byte_order;
             generate_composite(&mut src, composite_tokens, comp_byte_order);
             if self.config.has_hooks() {
-                let ctx = Self::build_composite_ctx(composite_tokens);
+                let ctx = Self::build_composite_ctx(composite_tokens, schema);
                 self.run_hooks(&ctx, &mut src);
             }
         }
@@ -851,12 +870,13 @@ impl Generator {
                 &self.config.domain_types,
                 self.config.unchecked_companions,
                 &self.config.hooks,
+                schema,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
             // Hooks for the message decoder
             if self.config.has_hooks() {
-                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder);
+                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder, schema);
                 self.run_hooks(&ctx, &mut src);
             }
             let encoder_ts = generate_message_encoder(
@@ -874,7 +894,7 @@ impl Generator {
             src.push_str(&encoder_ts.to_string());
             // Hooks for the message encoder
             if self.config.has_hooks() {
-                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageEncoder);
+                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageEncoder, schema);
                 self.run_hooks(&ctx, &mut src);
             }
 
@@ -1523,6 +1543,7 @@ fn generate_message_decoder(
     domain_types: &[(crate::ConversionSelector, String)],
     _unchecked_companions: bool,
     hooks: &crate::config::Hooks,
+    schema: &crate::Schema,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -2812,7 +2833,7 @@ fn generate_message_decoder(
         if !hooks.is_empty() {
             let domain_name = format!("{name}Domain");
             let fields = message_field_infos(&msg.fields);
-            let ctx = crate::ItemContext::DomainStruct { name: domain_name, fields };
+            let ctx = crate::ItemContext::DomainStruct { schema: &schema, name: domain_name, fields };
             for hook in hooks.iter() {
                 for token_stream in hook(&ctx) {
                     ts.extend(token_stream);

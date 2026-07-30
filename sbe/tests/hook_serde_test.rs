@@ -187,7 +187,7 @@ fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
                 }
             }]
         }
-        ItemContext::DomainStruct { name, fields } => {
+        ItemContext::DomainStruct { name, fields, .. } => {
             let ident = format_ident!("{name}");
             let f_names: Vec<_> = fields.iter().map(|f| format_ident!("{}", f.name)).collect();
             let f_strs: Vec<_> = fields.iter().map(|f| f.name.clone()).collect();
