@@ -68,12 +68,17 @@ impl<'a> Fragment<'a> {
 
         Ok(Some(match msg {
             AnyMessage::SessionMessageHeader(decoder) => {
-                if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
+                // remaining() returns bytes after header+body. On valid data
+                // this is the application payload; on truncated data it's empty.
+                // We still validate the buffer is at least large enough for the
+                // fixed header+body, because AnyMessage::decode only validates
+                // the 8-byte frame header.
+                let payload = decoder.remaining();
+                if payload.is_empty() && decoder.whole_buffer().len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return Err(ClusterError::ProtocolError {
                         reason: "session message too short".into(),
                     });
                 }
-                let payload = &data[SessionMessageHeaderEncoder::ENCODED_LENGTH..];
                 Self::Message {
                     cluster_session_id: decoder.cluster_session_id(),
                     timestamp: decoder.timestamp(),

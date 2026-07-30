@@ -1510,6 +1510,34 @@ fn generate_message_decoder(
                 }
                 Some(&frame[Self::ENCODED_LENGTH..])
             }
+
+            /// Offset of the message header within [`Self::whole_buffer`].
+            /// `whole_buffer()[message_offset()..]` is the full SBE frame
+            /// (header + body) for this message.
+            #[inline]
+            pub const fn message_offset(&self) -> usize {
+                self.pos - Self::HEADER_LENGTH
+            }
+
+            /// The complete original buffer that this decoder wraps
+            /// (may include data before this message if `try_wrap_and_apply_header`
+            /// was called with a non-zero `pos`).
+            /// Use [`Self::message_offset`] to locate where this message starts.
+            #[inline]
+            pub fn whole_buffer(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            /// Bytes after this message in the original buffer
+            /// (e.g. the application payload following a SessionMessageHeader).
+            /// Returns the slice starting after header + block body.
+            /// Clamps to `buf.len()` so truncated/invalid data returns
+            /// an empty slice rather than panicking.
+            #[inline]
+            pub fn remaining(&self) -> &'a [u8] {
+                let end = (self.pos + self.acting_block_length).min(self.buf.len());
+                &self.buf[end..]
+            }
         });
     } else {
         const STACK_LIMIT: usize = 65536;
@@ -1645,7 +1673,38 @@ fn generate_message_decoder(
         let wire_name =
             field_has_conversion_free(f, conversions).then(|| format!("{fname_snake}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
-        let fname_ident = syn::Ident::new(method_name, proc_macro2::Span::call_site());
+        let fname_ident = {
+            // Resolve field name clashes with generated decoder methods.
+            // Append `_field` when a schema field collides with a reserved name.
+            const RESERVED: &[&str] = &[
+                "remaining",
+                "whole_buffer",
+                "message_offset",
+                "after_this_message",
+                "wrap",
+                "try_wrap_and_apply_header",
+                "header",
+                "encoded_length",
+                "encoded_length_with_header",
+                "as_bytes",
+                "as_ref_opt",
+                "verify",
+                "acting_version",
+                "acting_block_length",
+            ];
+            let resolved: &str = match () {
+                _ if wire_name.is_some() => {
+                    // Wire-suffixed names don't clash — the user explicitly opted in.
+                    method_name
+                }
+                _ if RESERVED.iter().any(|r| *r == fname_snake) => {
+                    // ponytail: allocate only on collision (rare, build-time only).
+                    Box::leak(format!("{fname_snake}_field").into_boxed_str())
+                }
+                _ => &fname_snake,
+            };
+            syn::Ident::new(resolved, proc_macro2::Span::call_site())
+        };
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -6198,6 +6257,26 @@ fn generate_message_encoder(
                 }
                 Some(&frame[Self::ENCODED_LENGTH..])
             }
+
+            /// Offset of this message within the sub-slice this encoder
+            /// was wrapped on. For `wrap_and_apply_header` this is always 0.
+            #[inline]
+            pub const fn message_offset(&self) -> usize {
+                self.message_start
+            }
+
+            /// Unwritten region after this message. Chain the next encoder:
+            /// `NextEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)`.
+            #[inline]
+            pub fn remaining(&self) -> &[u8] {
+                &self.buf[self.pos..]
+            }
+
+            /// Mutable unwritten region after this message.
+            #[inline]
+            pub fn remaining_mut(&mut self) -> &mut [u8] {
+                &mut self.buf[self.pos..]
+            }
         });
     } else {
         let max_doc_attr = if is_capped {
@@ -6359,7 +6438,30 @@ fn generate_message_encoder(
         // converted setter takes the original name.
         let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{f_name}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&f_name);
-        let f_ident = syn::Ident::new(method_name, span);
+        let f_ident = {
+            // Resolve field name clashes with generated encoder methods.
+            const RESERVED: &[&str] = &[
+                "remaining",
+                "remaining_mut",
+                "whole_buffer",
+                "message_offset",
+                "after_this_message",
+                "wrap",
+                "try_wrap",
+                "try_wrap_and_apply_header",
+                "wrap_into_claim",
+                "compute_length_with_header",
+                "as_ref",
+            ];
+            let resolved: &str = match () {
+                _ if wire_name.is_some() => method_name,
+                _ if RESERVED.iter().any(|r| *r == f_name) => {
+                    Box::leak(format!("{f_name}_field").into_boxed_str())
+                }
+                _ => &f_name,
+            };
+            syn::Ident::new(resolved, span)
+        };
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -8150,5 +8252,53 @@ mod tests {
                 "expected {field} error, got: {error}"
             );
         }
+    }
+
+    /// When a flat message has a field whose name clashes with a reserved
+    /// decoder method (e.g. "remaining"), the generated accessor must be
+    /// renamed to `{name}_field` so it doesn't collide with
+    /// `pub fn remaining(&self) -> &[u8]`.
+    #[test]
+    fn field_named_remaining_is_renamed_to_remaining_field() -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<messageSchema package="test" id="1" version="1" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+          </types>
+          <message name="Msg" id="1" blockLength="8">
+            <field name="remaining" id="1" type="int64"/>
+          </message>
+        </messageSchema>"#;
+
+        let ir = crate::parse(xml).expect("schema should parse");
+        let schema = crate::Schema::from_ir(ir);
+        let modules = crate::Generator::new(crate::GenerationConfig::new("test"))
+            .generate(&schema)?;
+        let src = modules
+            .modules()
+            .next()
+            .expect("one module")
+            .source
+            .clone();
+
+        let remaining_count = src.matches("fn remaining(&self)").count();
+        // The decoder and encoder each have a generated `remaining()` method
+        // (in separate impl blocks). The field accessor is renamed to
+        // `remaining_field` and must not appear as `fn remaining(&self)`.
+        assert_eq!(
+            remaining_count, 2,
+            "expected exactly 2 'remaining' methods (one decoder + one encoder), found {remaining_count}"
+        );
+        // The field accessor must be renamed.
+        assert!(
+            src.contains("fn remaining_field"),
+            "field accessor 'remaining' must be renamed to 'remaining_field'. src:\n{src}"
+        );
+
+        Ok(())
     }
 }
