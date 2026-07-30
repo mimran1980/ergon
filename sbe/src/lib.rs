@@ -49,6 +49,20 @@
 //! parses those schemas and emits safe, version-aware Rust codecs for
 //! low-latency trading.
 //!
+//! ## In a few words
+//!
+//! - **Compile-time wire order** — calling `asks` before `bids` is a type error
+//! - **Closure-based groups** — nested shape mirrors the schema, no `.parent()` hopscotch
+//! - **Exact buffer sizing** — no oversize scratch buffers; works directly with
+//!   Aeron `try_claim`
+//! - **Checked entry points** — `try_from` / `try_wrap` for untrusted input;
+//!   `wrap` for trusted — explicit in the type system
+//! - **Zero heap allocation** on generated hot paths; zero runtime dependencies
+//! - **Domain types** — map wire `Decimal` to `rust_decimal::Decimal` with one
+//!   line of config
+//!
+//! Full feature walkthrough: [crate README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md).
+//!
 //! # Architecture
 //!
 //! | Layer | Module | Responsibility |

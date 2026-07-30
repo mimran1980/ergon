@@ -16,24 +16,35 @@ handwritten offsets.
 
 Every parity benchmark must compare identical logical work.
 
-### Header and body offsets
+### Header work: match sbe-tool — both write it, or both skip it — never mix
 
-Encode conventions differ:
+#1 fairness rule. Ergon must **not** always call `wrap_and_apply_header`.
+Mirror the sbe-tool arm.
 
-| Operation | ergon | sbe-tool |
+Official sbe-tool Rust full-wire order
+(`simple-binary-encoding/rust/benches/car_benchmark.rs`):
+
+```text
+enc = enc.wrap(buf, ENCODED_LENGTH);     // body starts at 8
+enc = enc.header(0).parent()?;           // write MessageHeader at 0, then body
+// body setters…
+let body_len = enc.encoded_length();     // body only — NOT header-inclusive
+```
+
+| Mode | ergon | sbe-tool |
 |---|---|---|
-| Header + body | `wrap_and_apply_header(buf, 0)` | `wrap(buf, 8)` then `header(0)` |
-| Body only | `wrap(buf, 0)` | `wrap(buf, 8)` |
+| **Body only** (cluster encode gates) | `wrap(buf, 0)` + setters | `wrap(buf, 8)` + setters, **no** `.header(0)` |
+| **Header + body** | `wrap_and_apply_header` + setters | `wrap(8)` then `header(0).parent()` **before** setters |
+| **Header only** | `wrap_and_apply_header` alone | `wrap(8).header(0)` alone |
 
-Ergon's encoder `wrap` argument is the message start. It reserves the header
-layout internally but does not write the header. sbe-tool's encoder `wrap`
-argument is the absolute body offset. Contrary to the old documentation,
-sbe-tool does not require `header(0)` before body setters can be used.
+**Length traps:** sbe-tool `encoded_length()` is body-only. Do **not** assert
+`8 + encoded_length()` as if that proved a header write when `.header(0)` was
+never called. Body-only pairs leave `[0..8)` zero on both arms and compare body
+bytes only.
 
-Direct decoders from both generators take an absolute body offset. For a
-standard framed message beginning at `message_offset`, pass
-`message_offset + 8`. Passing `message_offset` makes sbe-tool decode the header
-as body fields.
+Invalid: ergon `wrap_and_apply_header` vs sbe-tool body-only `wrap(…, 8)`.
+
+Decode: both direct decoders take absolute body offset (`message_offset + 8`).
 
 ### Correctness before timing
 

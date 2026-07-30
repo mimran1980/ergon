@@ -2,6 +2,19 @@
 //! separate automatic-DTO-bulk diagnostic.
 //! 50 samples, 1s warm-up, 3s measurement.
 //!
+//! ## Equal work (header mode)
+//!
+//! The sbe-tool head-to-head arm and the ergon `add_closure` / `add_struct` /
+//! `bulk_add` arms all write **full wire** messages (MessageHeader + body):
+//! - ergon: `wrap_and_apply_header`
+//! - sbe-tool: official order `wrap(…, 8)` then `header(0).parent()` then body
+//!
+//! Length for sbe-tool is `get_limit()` (absolute end after wrap-at-8), not a
+//! synthetic `8 + encoded_length()` invented without a header write.
+//! Preflight asserts byte-identical full frames before timing.
+//!
+//! DTO arms are **not** an ergon/sbe-tool ratio (checked entry + range checks).
+//!
 //! ## LTO is part of the result
 //!
 //! The fairness audit found that sbe-tool performs well with and without LTO:
@@ -18,7 +31,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::orderbook::*;
 use ergo_sbe_benchmarks::sbe_tool_ob::sbe_tool::{
-    WriteBuf,
+    Encoder, WriteBuf,
     book_snapshot_codec::encoder::{
         BookSnapshotEncoder as ToolBookEnc, LevelsEncoder as ToolLevels,
     },
@@ -78,6 +91,7 @@ fn bench_group_encode(c: &mut Criterion) {
                 .encoded_length_with_header();
 
             let mut tbuf = vec![0u8; msg_len];
+            // Official sbe-tool order: wrap body @ 8, apply header @ 0, then body.
             let tenc = ToolBookEnc::default().wrap(WriteBuf::new(&mut tbuf), 8);
             let mut thdr = tenc.header(0);
             let mut tenc = thdr.parent().unwrap();
@@ -88,7 +102,8 @@ fn bench_group_encode(c: &mut Criterion) {
                 tlevels.price(e.price).qty(e.qty).num_orders(e.num_orders);
             }
             tenc = tlevels.parent().unwrap();
-            let tlen = tenc.encoded_length() + 8; // sbe-tool encoded_length() is body-only
+            // Absolute end of the frame (header was written; do not invent `8 + body`).
+            let tlen = tenc.get_limit();
 
             assert_eq!(
                 elen, tlen,
@@ -243,10 +258,7 @@ fn bench_group_encode(c: &mut Criterion) {
             });
         });
 
-        // sbe-tool comparison: advance-based group encode (equivalent to ergon add_closure).
-        // sbe-tool wrap(buf, 8) + header(0) writes header at 0-7 then body at 8+.
-        // ergon wrap_and_apply_header(buf, 0) writes header at 0-7 then body at 8+.
-        // Both do identical work: header + n entries with per-entry field writes.
+        // sbe-tool full-wire: wrap@8 + header(0).parent() + body (matches ergon apply-header).
         group.bench_with_input(BenchmarkId::new("sbe-tool", n), &entries, |b, entries| {
             let mut buf = vec![0u8; msg_len];
             b.iter(|| {
@@ -261,7 +273,7 @@ fn bench_group_encode(c: &mut Criterion) {
                     levels.price(e.price).qty(e.qty).num_orders(e.num_orders);
                 }
                 enc = levels.parent().unwrap();
-                let len = enc.encoded_length() + 8;
+                let len = enc.get_limit();
                 black_box(&buf[..len]);
                 black_box(len)
             });
