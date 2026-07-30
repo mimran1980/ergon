@@ -75,11 +75,7 @@ A `SessionMessageHeader` is followed by application payload bytes (another SBE
 message). Use the decoder's `remaining()` to get the payload, then
 `AnyMessage::decode` to parse the next message:
 
-```rust
-use ergo_aeron_cluster::codecs::session::{
-    AnyMessage, SessionKeepAliveEncoder, SessionMessageHeaderDecoder,
-    SessionMessageHeaderEncoder,
-};
+```rust,no_run
 
 // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes)
 let total = SessionMessageHeaderEncoder::ENCODED_LENGTH

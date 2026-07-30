@@ -225,24 +225,16 @@ pub enum ItemContext {
 /// Token streams returned by hooks — appended after the generated item.
 pub type HookFn = dyn Fn(&ItemContext) -> Vec<proc_macro2::TokenStream>;
 
-/// Wrapper so `Vec<Box<dyn Fn>>` satisfies `Clone`/`Debug`/`PartialEq`/`Eq`.
-/// Hooks are never compared or cloned — the wrapper provides stub impls for
-/// the derive macros on [`GenerationConfig`].
+/// Wrapper so hooks can live in [`GenerationConfig`]. Not [`Clone`] or
+/// [`PartialEq`] — hook closures can't be cloned or compared.
 #[derive(Default)]
 pub(crate) struct Hooks(Vec<Box<HookFn>>);
 
-impl Clone for Hooks {
-    fn clone(&self) -> Self { Self(Vec::new()) }
-}
 impl std::fmt::Debug for Hooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Hooks").field(&self.0.len()).finish()
     }
 }
-impl PartialEq for Hooks {
-    fn eq(&self, _: &Self) -> bool { true }
-}
-impl Eq for Hooks {}
 impl Hooks {
     pub(crate) fn push(&mut self, hook: Box<HookFn>) { self.0.push(hook); }
     pub(crate) fn iter(&self) -> std::slice::Iter<'_, Box<HookFn>> { self.0.iter() }
@@ -266,7 +258,6 @@ impl Hooks {
 ///         "rust_decimal::Decimal",
 ///     );
 /// ```
-#[derive(Clone)]
 pub struct GenerationConfig {
     /// Rust module name for the generated output file (`{module_name}.rs`).
     pub(crate) module_name: String,

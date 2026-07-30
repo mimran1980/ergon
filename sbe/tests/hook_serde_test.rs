@@ -104,8 +104,8 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
         // ── DTO → encode → decoder → verify no panic ──
         let dto = OrderDomain { price: 999, qty: 50, code: EventCode::Error };
-        let len = OrderEncoder::compute_length_with_header();
-        let mut buf = vec![0u8; len];
+        const LEN: usize = OrderEncoder::compute_length_with_header();
+        let mut buf = [0u8; LEN];
         dto.encode(&mut buf)?;
         let dec = OrderDecoder::try_wrap_and_apply_header(&buf, 0)?;
         assert_eq!(dec.price(), 999);
@@ -123,7 +123,7 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// The hook that adds serde Serialize + Deserialize for enums and sets.
+/// The hook that adds serde Serialize + Deserialize for enums, sets, and domain structs.
 fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
     use ergo_sbe::ItemContext;
     use quote::format_ident;
@@ -187,22 +187,6 @@ fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
                 }
             }]
         }
-        ItemContext::MessageDecoder { name, fields, .. } => {
-            let ident = format_ident!("{name}");
-            let f_names: Vec<_> = fields.iter().map(|f| format_ident!("{}", f.name)).collect();
-            let f_strs: Vec<_> = fields.iter().map(|f| f.name.clone()).collect();
-            let n = fields.len();
-            vec![quote::quote! {
-                impl serde::Serialize for #ident<'_> {
-                    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-                        use serde::ser::SerializeStruct;
-                        let mut st = s.serialize_struct(stringify!(#ident), #n)?;
-                        #(st.serialize_field(#f_strs, &self.#f_names())?;)*
-                        st.end()
-                    }
-                }
-            }]
-        }
         ItemContext::DomainStruct { name, fields } => {
             let ident = format_ident!("{name}");
             let f_names: Vec<_> = fields.iter().map(|f| format_ident!("{}", f.name)).collect();
@@ -220,13 +204,29 @@ fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
 
                 impl<'de> serde::Deserialize<'de> for #ident {
                     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                        let m: std::collections::HashMap<String, serde_json::Value> =
-                            std::collections::HashMap::deserialize(d)?;
-                        Ok(Self {
-                            #(#f_names: serde_json::from_value(
-                                m.get(#f_strs).cloned().unwrap_or(serde_json::Value::Null)
-                            ).map_err(|e| serde::de::Error::custom(e))?,)*
-                        })
+                        // Format-agnostic: uses MapAccess, errors on missing keys.
+                        struct V;
+                        impl<'de2> serde::de::Visitor<'de2> for V {
+                            type Value = #ident;
+                            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                                f.write_str(stringify!(#ident))
+                            }
+                            fn visit_map<A: serde::de::MapAccess<'de2>>(
+                                self, mut map: A,
+                            ) -> Result<Self::Value, A::Error> {
+                                #(let mut #f_names = None;)*
+                                while let Some(key) = map.next_key::<String>()? {
+                                    match key.as_str() {
+                                        #(#f_strs => { #f_names = Some(map.next_value()?); },)*
+                                        _ => { let _: serde::de::IgnoredAny = map.next_value()?; }
+                                    }
+                                }
+                                Ok(#ident {
+                                    #(#f_names: #f_names.ok_or_else(|| serde::de::Error::missing_field(#f_strs))?,)*
+                                })
+                            }
+                        }
+                        d.deserialize_struct(stringify!(#ident), &[#(#f_strs),*], V)
                     }
                 }
             }]

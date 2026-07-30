@@ -246,9 +246,44 @@ impl GenerationContext {
 ///     .unwrap();
 /// assert_eq!(modules.modules().len(), 1);
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Generator {
     config: GenerationConfig,
+}
+
+/// Extract [`crate::FieldInfo`] entries from message fields (constant fields
+/// excluded). Used by context builders and hook dispatch.
+fn message_field_infos(fields: &[MessageField]) -> Vec<crate::FieldInfo> {
+    fields
+        .iter()
+        .filter(|f| f.presence != Presence::Constant)
+        .map(|f| crate::FieldInfo {
+            name: to_snake_case(&f.name),
+            rust_type: f.field_type.rust_type_name(),
+            offset: f.offset,
+            since_version: f.since_version,
+            semantic_type: f.semantic_type.clone(),
+        })
+        .collect()
+}
+
+/// Resolve a field accessor name, appending `_field` when it clashes
+/// with a reserved method name on the decoder/encoder.
+fn resolve_field_ident(
+    snake_name: &str,
+    wire_name: &Option<String>,
+    reserved: &[&str],
+) -> syn::Ident {
+    let method_name = wire_name.as_deref().unwrap_or(snake_name);
+    let resolved: &str = match () {
+        _ if wire_name.is_some() => method_name,
+        _ if reserved.iter().any(|r| *r == snake_name) => {
+            // ponytail: allocate only on collision (rare, build-time only).
+            Box::leak(format!("{snake_name}_field").into_boxed_str())
+        }
+        _ => snake_name,
+    };
+    syn::Ident::new(resolved, proc_macro2::Span::call_site())
 }
 
 /// Warn if a shared type has version-gated members (`sinceVersion > 0`).
@@ -621,18 +656,7 @@ impl Generator {
     ) -> crate::ItemContext {
         let name = to_pascal_case(&msg.name);
         let name_with = |suffix: &str| format!("{name}{suffix}");
-        let fields: Vec<_> = msg
-            .fields
-            .iter()
-            .filter(|f| f.presence != Presence::Constant)
-            .map(|f| crate::FieldInfo {
-                name: to_snake_case(&f.name),
-                rust_type: f.field_type.rust_type_name(),
-                offset: f.offset,
-                since_version: f.since_version,
-                semantic_type: f.semantic_type.clone(),
-            })
-            .collect();
+        let fields = message_field_infos(&msg.fields);
         let name = match kind {
             crate::ItemKind::MessageDecoder => name_with("Decoder"),
             crate::ItemKind::MessageEncoder => name_with("Encoder"),
@@ -653,6 +677,24 @@ impl Generator {
             },
             _ => unreachable!("build_message_ctx only for MessageDecoder/MessageEncoder"),
         }
+    }
+
+    /// Build an [`ItemContext::Composite`] from IR tokens.
+    fn build_composite_ctx(tokens: &[crate::ir::Token]) -> crate::ItemContext {
+        let name = to_pascal_case(&tokens[0].name);
+        let fields: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.signal == crate::ir::Signal::Encoding || t.signal == crate::ir::Signal::BeginComposite)
+            .filter(|t| !t.name.is_empty())
+            .map(|t| crate::FieldInfo {
+                name: to_snake_case(&t.name),
+                rust_type: crate::structured_ir::rust_type(t.encoding.primitive_type.unwrap_or(crate::PrimitiveType::UInt8)).to_string(),
+                offset: t.encoding.offset.unwrap_or(0),
+                since_version: t.encoding.since_version,
+                semantic_type: t.encoding.semantic_type.clone(),
+            })
+            .collect();
+        crate::ItemContext::Composite { name, fields }
     }
 
     /// Build an [`ItemContext::Set`] from IR tokens.
@@ -775,6 +817,10 @@ impl Generator {
             }
             let comp_byte_order = ir.byte_order;
             generate_composite(&mut src, composite_tokens, comp_byte_order);
+            if self.config.has_hooks() {
+                let ctx = Self::build_composite_ctx(composite_tokens);
+                self.run_hooks(&ctx, &mut src);
+            }
         }
 
         let header_pascal = to_pascal_case(&ir.header_type);
@@ -1788,38 +1834,13 @@ fn generate_message_decoder(
         let wire_name =
             field_has_conversion_free(f, conversions).then(|| format!("{fname_snake}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
-        let fname_ident = {
-            // Resolve field name clashes with generated decoder methods.
-            // Append `_field` when a schema field collides with a reserved name.
-            const RESERVED: &[&str] = &[
-                "remaining",
-                "whole_buffer",
-                "message_offset",
-                "after_this_message",
-                "wrap",
-                "try_wrap_and_apply_header",
-                "header",
-                "encoded_length",
-                "encoded_length_with_header",
-                "as_bytes",
-                "as_ref_opt",
-                "verify",
-                "acting_version",
-                "acting_block_length",
-            ];
-            let resolved: &str = match () {
-                _ if wire_name.is_some() => {
-                    // Wire-suffixed names don't clash — the user explicitly opted in.
-                    method_name
-                }
-                _ if RESERVED.iter().any(|r| *r == fname_snake) => {
-                    // ponytail: allocate only on collision (rare, build-time only).
-                    Box::leak(format!("{fname_snake}_field").into_boxed_str())
-                }
-                _ => &fname_snake,
-            };
-            syn::Ident::new(resolved, proc_macro2::Span::call_site())
-        };
+        const DECODER_RESERVED: &[&str] = &[
+            "remaining", "whole_buffer", "message_offset", "after_this_message",
+            "wrap", "try_wrap_and_apply_header", "header", "encoded_length",
+            "encoded_length_with_header", "as_bytes", "as_ref_opt", "verify",
+            "acting_version", "acting_block_length",
+        ];
+        let fname_ident = resolve_field_ident(&fname_snake, &wire_name, DECODER_RESERVED);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -2790,16 +2811,7 @@ fn generate_message_decoder(
         // Run hooks for domain structs
         if !hooks.is_empty() {
             let domain_name = format!("{name}Domain");
-            let fields: Vec<_> = msg.fields.iter()
-                .filter(|f| f.presence != Presence::Constant)
-                .map(|f| crate::FieldInfo {
-                    name: to_snake_case(&f.name),
-                    rust_type: f.field_type.rust_type_name(),
-                    offset: f.offset,
-                    since_version: f.since_version,
-                    semantic_type: f.semantic_type.clone(),
-                })
-                .collect();
+            let fields = message_field_infos(&msg.fields);
             let ctx = crate::ItemContext::DomainStruct { name: domain_name, fields };
             for hook in hooks.iter() {
                 for token_stream in hook(&ctx) {
@@ -6574,30 +6586,12 @@ fn generate_message_encoder(
         // converted setter takes the original name.
         let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{f_name}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&f_name);
-        let f_ident = {
-            // Resolve field name clashes with generated encoder methods.
-            const RESERVED: &[&str] = &[
-                "remaining",
-                "remaining_mut",
-                "whole_buffer",
-                "message_offset",
-                "after_this_message",
-                "wrap",
-                "try_wrap",
-                "try_wrap_and_apply_header",
-                "wrap_into_claim",
-                "compute_length_with_header",
-                "as_ref",
-            ];
-            let resolved: &str = match () {
-                _ if wire_name.is_some() => method_name,
-                _ if RESERVED.iter().any(|r| *r == f_name) => {
-                    Box::leak(format!("{f_name}_field").into_boxed_str())
-                }
-                _ => &f_name,
-            };
-            syn::Ident::new(resolved, span)
-        };
+        const ENCODER_RESERVED: &[&str] = &[
+            "remaining", "remaining_mut", "whole_buffer", "message_offset",
+            "after_this_message", "wrap", "try_wrap", "try_wrap_and_apply_header",
+            "wrap_into_claim", "compute_length_with_header", "as_ref",
+        ];
+        let f_ident = resolve_field_ident(&f_name, &wire_name, ENCODER_RESERVED);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
