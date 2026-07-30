@@ -604,6 +604,8 @@ impl Generator {
                 };
                 Some(crate::EnumVariantInfo {
                     name: to_pascal_case(&t.name),
+                    snake_name: to_snake_case(&t.name),
+                    label: t.name.clone(),
                     value,
                     description: t.encoding.description.clone(),
                 })
@@ -663,7 +665,11 @@ impl Generator {
             .filter(|t| t.signal == crate::ir::Signal::Encoding)
             .map(|t| crate::SetChoiceInfo {
                 name: to_pascal_case(&t.name),
-                bit_position: t.encoding.offset.unwrap_or(0) as u8,
+                snake_name: to_snake_case(&t.name),
+                label: t.name.clone(),
+                bit_position: t.encoding.constant_value.as_ref()
+                    .and_then(|v| v.parse::<u8>().ok())
+                    .unwrap_or(0),
                 description: t.encoding.description.clone(),
             })
             .collect();

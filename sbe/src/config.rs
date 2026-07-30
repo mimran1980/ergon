@@ -132,6 +132,10 @@ pub enum ItemKind {
 pub struct EnumVariantInfo {
     /// Variant name in PascalCase (e.g. "Ok", "Error").
     pub name: String,
+    /// Variant name in snake_case (e.g. "ok", "error").
+    pub snake_name: String,
+    /// Raw name from the schema (e.g. "Ok", "hasPrice"). Use for serde labels.
+    pub label: String,
     /// Wire discriminant value.
     pub value: i64,
     /// Schema description, if present.
@@ -141,8 +145,12 @@ pub struct EnumVariantInfo {
 /// One bitset choice for hook introspection.
 #[derive(Clone, Debug)]
 pub struct SetChoiceInfo {
-    /// Choice name in PascalCase.
+    /// Choice name in PascalCase (e.g. "HasPrice").
     pub name: String,
+    /// Choice name in snake_case (e.g. "has_price"). Use for accessor calls.
+    pub snake_name: String,
+    /// Raw name from the schema (e.g. "hasPrice"). Use for serde labels.
+    pub label: String,
     /// Zero-based bit position in the bitset.
     pub bit_position: u8,
     /// Schema description, if present.
