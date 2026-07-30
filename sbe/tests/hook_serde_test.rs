@@ -1,12 +1,12 @@
 //! End-to-end test: generate an enum + bitset with serde hooks, compile,
 //! and verify serialize/deserialize round-trips.
 
-#![allow(clippy::all)]
+#![allow(clippy::all, clippy::expect_used, clippy::needless_raw_string_hashes)]
 
 mod common;
 use common::compile_and_run_with_deps;
 
-/// Schema with one enum (EventCode) and one bitset (OptionalFields).
+/// Schema with one enum (`EventCode`) and one bitset (`OptionalFields`).
 const SCHEMA_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="serde_test" id="1" version="0" byteOrder="littleEndian">
   <types>
