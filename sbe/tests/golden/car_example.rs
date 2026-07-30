@@ -696,8 +696,8 @@ impl MessageHeader {
 }
 #[derive(Clone, Copy)]
 pub struct MessageHeaderDecoder<'a> {
-    buf: &'a [u8],
-    pos: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
 }
 impl<'a> MessageHeaderDecoder<'a> {
     #[inline]
@@ -746,8 +746,8 @@ impl GroupSizeEncoding {
 const _: () = assert!(core::mem::size_of:: < GroupSizeEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct GroupSizeEncodingDecoder<'a> {
-    buf: &'a [u8],
-    pos: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
 }
 impl<'a> GroupSizeEncodingDecoder<'a> {
     #[inline]
@@ -784,8 +784,8 @@ impl VarStringEncoding {
 const _: () = assert!(core::mem::size_of:: < VarStringEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarStringEncodingDecoder<'a> {
-    buf: &'a [u8],
-    pos: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
 }
 impl<'a> VarStringEncodingDecoder<'a> {
     #[inline]
@@ -821,8 +821,8 @@ impl VarAsciiEncoding {
 const _: () = assert!(core::mem::size_of:: < VarAsciiEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarAsciiEncodingDecoder<'a> {
-    buf: &'a [u8],
-    pos: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
 }
 impl<'a> VarAsciiEncodingDecoder<'a> {
     #[inline]
@@ -858,8 +858,8 @@ impl VarDataEncoding {
 const _: () = assert!(core::mem::size_of:: < VarDataEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarDataEncodingDecoder<'a> {
-    buf: &'a [u8],
-    pos: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
 }
 impl<'a> VarDataEncodingDecoder<'a> {
     #[inline]
@@ -896,8 +896,8 @@ impl Booster {
 const _: () = assert!(core::mem::size_of:: < Booster > () == 2);
 #[derive(Clone, Copy)]
 pub struct BoosterDecoder<'a> {
-    buf: &'a [u8],
-    pos: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
 }
 impl<'a> BoosterDecoder<'a> {
     #[inline]
@@ -986,8 +986,8 @@ impl Engine {
 const _: () = assert!(core::mem::size_of:: < Engine > () == 10);
 #[derive(Clone, Copy)]
 pub struct EngineDecoder<'a> {
-    buf: &'a [u8],
-    pos: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
 }
 impl<'a> EngineDecoder<'a> {
     #[inline]
@@ -1039,10 +1039,10 @@ impl<'a> EngineDecoder<'a> {
 }
 ///Description of a basic Car
 pub struct CarDecoder<'a> {
-    buf: &'a [u8],
-    pos: usize,
-    acting_version: u16,
-    acting_block_length: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) acting_version: u16,
+    pub(crate) acting_block_length: usize,
 }
 impl<'a> CarDecoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
@@ -1506,7 +1506,7 @@ impl<'a> CarDecoder<'a> {
         PerformanceFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
     #[inline]
-    fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+    pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
@@ -1549,7 +1549,7 @@ impl<'a> CarDecoder<'a> {
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     #[inline]
-    fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+    pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarStringEncoding(bytes);
@@ -1592,7 +1592,7 @@ impl<'a> CarDecoder<'a> {
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     #[inline]
-    fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+    pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
@@ -2272,11 +2272,11 @@ impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
     }
 }
 pub struct FuelFiguresEntryDecoderComplete<'a> {
-    buf: &'a [u8],
-    pos: usize,
-    tail_start: usize,
-    acting_version: u16,
-    acting_block_length: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) tail_start: usize,
+    pub(crate) acting_version: u16,
+    pub(crate) acting_block_length: usize,
 }
 impl<'a> FuelFiguresEntryDecoderComplete<'a> {
     #[inline]
@@ -3162,11 +3162,11 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
     }
 }
 pub struct PerformanceFiguresEntryDecoderComplete<'a> {
-    buf: &'a [u8],
-    pos: usize,
-    tail_start: usize,
-    acting_version: u16,
-    acting_block_length: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) tail_start: usize,
+    pub(crate) acting_version: u16,
+    pub(crate) acting_block_length: usize,
 }
 impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
     #[inline]
@@ -3249,39 +3249,39 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
     }
 }
 pub struct CarDecoderAfterFuelFigures<'a> {
-    buf: &'a [u8],
-    pos: usize,
-    tail_start: usize,
-    acting_version: u16,
-    acting_block_length: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) tail_start: usize,
+    pub(crate) acting_version: u16,
+    pub(crate) acting_block_length: usize,
 }
 pub struct CarDecoderAfterPerformanceFigures<'a> {
-    buf: &'a [u8],
-    pos: usize,
-    tail_start: usize,
-    acting_version: u16,
-    acting_block_length: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) tail_start: usize,
+    pub(crate) acting_version: u16,
+    pub(crate) acting_block_length: usize,
 }
 pub struct CarDecoderAfterManufacturer<'a> {
-    buf: &'a [u8],
-    pos: usize,
-    tail_start: usize,
-    acting_version: u16,
-    acting_block_length: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) tail_start: usize,
+    pub(crate) acting_version: u16,
+    pub(crate) acting_block_length: usize,
 }
 pub struct CarDecoderAfterModel<'a> {
-    buf: &'a [u8],
-    pos: usize,
-    tail_start: usize,
-    acting_version: u16,
-    acting_block_length: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) tail_start: usize,
+    pub(crate) acting_version: u16,
+    pub(crate) acting_block_length: usize,
 }
 pub struct CarDecoderComplete<'a> {
-    buf: &'a [u8],
-    pos: usize,
-    tail_start: usize,
-    acting_version: u16,
-    acting_block_length: usize,
+    pub(crate) buf: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) tail_start: usize,
+    pub(crate) acting_version: u16,
+    pub(crate) acting_block_length: usize,
 }
 impl<'a> CarDecoderAfterFuelFigures<'a> {
     #[inline]

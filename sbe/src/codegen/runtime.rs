@@ -1403,8 +1403,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     let decoder_ts = quote::quote! {
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
-            buf: &'a [u8],
-            pos: usize,
+            pub(crate) buf: &'a [u8],
+            pub(crate) pos: usize,
         }
 
         impl<'a> #decoder_name<'a> {

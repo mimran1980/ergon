@@ -196,24 +196,197 @@ fn shared_composite_fields_are_public() -> Result<(), Box<dyn std::error::Error>
         "market_data",
         &mods[1].source,
         r#"
-            // Access the Decimal composite via the importing module.
-            // The inner field must be pub so this compiles.
+            // ── Composite (shared, from common_types via market_data re-export) ──
             let d = market_data::Decimal::new(100, -2);
             assert_eq!(d.mantissa(), 100);
             assert_eq!(d.exponent(), -2);
+            // Composite value struct field must be accessible.
+            assert_eq!(d.0[0..8], 100i64.to_le_bytes());
 
-            // Same for enums — Side should be accessible
+            // ── Enum (shared) ──
             let s = market_data::Side::Buy;
             assert_eq!(s, market_data::Side::Buy);
+            assert_eq!(market_data::Side::Buy as u8, 0);
+            assert_eq!(market_data::Side::Sell.raw(), 1u8);
 
-            // The message encoder in the importing module should work
+            // ── CommonMessage (in common_types module) ──
             let mut buf = [0u8; 64];
-            let mut enc = market_data::QuoteEncoder::wrap_and_apply_header(&mut buf, 0);
-            enc.bid_mantissa(100).ask_mantissa(200).bid_side(market_data::Side::Buy);
-            let dec = market_data::QuoteDecoder::try_wrap_and_apply_header(&buf, 0)?;
-            assert_eq!(dec.bid_mantissa(), 100);
-            assert_eq!(dec.ask_mantissa(), 200);
-            assert_eq!(dec.bid_side(), market_data::Side::Buy);
+            let mut enc = common_types::CommonMessageEncoder::wrap_and_apply_header(&mut buf, 0);
+            enc.price(common_types::Decimal::new(200, -1)).side(common_types::Side::Sell);
+            let dec = common_types::CommonMessageDecoder::try_wrap_and_apply_header(&buf, 0)?;
+            assert_eq!(dec.price().mantissa(), 200);
+            assert_eq!(dec.side(), common_types::Side::Sell);
+
+            // ── Quote message (in importing market_data module) ──
+            let mut buf2 = [0u8; 64];
+            let mut enc2 = market_data::QuoteEncoder::wrap_and_apply_header(&mut buf2, 0);
+            enc2.bid_mantissa(100).ask_mantissa(200).bid_side(market_data::Side::Buy);
+            let dec2 = market_data::QuoteDecoder::try_wrap_and_apply_header(&buf2, 0)?;
+            assert_eq!(dec2.bid_mantissa(), 100);
+            assert_eq!(dec2.ask_mantissa(), 200);
+            assert_eq!(dec2.bid_side(), market_data::Side::Buy);
+
+            // ── Decoder accessors (flyweight) ──
+            // groupSizeEncoding composite (shared) must support decode
+            let dec3 = common_types::CommonMessageDecoder::try_wrap_and_apply_header(&buf, 0)?;
+            let _price_val = dec3.price();
+            assert_eq!(_price_val.mantissa(), 200);
+        "#,
+    );
+
+    Ok(())
+}
+
+// ── Shared composite with sets and groups: all fields accessible ───────
+
+/// Exercise every shared type category across modules: composite, enum,
+/// set, group entry, and var-data.
+#[test]
+fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::Error>> {
+    let schema_a_xml = r#"<?xml version="1.0"?>
+    <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+        package="shared" id="401" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="varStringEncoding">
+            <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+        <composite name="InnerValue">
+            <type name="x" primitiveType="uint16"/>
+            <type name="y" primitiveType="uint32"/>
+        </composite>
+        <enum name="OrderSide" encodingType="uint8">
+            <validValue name="Bid">0</validValue>
+            <validValue name="Ask">1</validValue>
+        </enum>
+        <set name="OrderFlags" encodingType="uint8">
+            <choice name="aggressive">0</choice>
+            <choice name="conditional">1</choice>
+        </set>
+    </types>
+    <sbe:message name="Order" id="1">
+        <field name="price" id="1" type="InnerValue"/>
+        <field name="side" id="2" type="OrderSide"/>
+        <field name="flags" id="3" type="OrderFlags"/>
+        <data name="note" id="4" type="varStringEncoding"/>
+    </sbe:message>
+    </sbe:messageSchema>"#;
+
+    let schema_b_xml = r#"<?xml version="1.0"?>
+    <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+        package="consumer" id="402" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <!-- Shared from schema A -->
+        <composite name="InnerValue">
+            <type name="x" primitiveType="uint16"/>
+            <type name="y" primitiveType="uint32"/>
+        </composite>
+        <enum name="OrderSide" encodingType="uint8">
+            <validValue name="Bid">0</validValue>
+            <validValue name="Ask">1</validValue>
+        </enum>
+        <set name="OrderFlags" encodingType="uint8">
+            <choice name="aggressive">0</choice>
+            <choice name="conditional">1</choice>
+        </set>
+        <composite name="varStringEncoding">
+            <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+    </types>
+    <sbe:message name="Trade" id="1">
+        <field name="qty" id="1" type="uint32"/>
+        <field name="side" id="2" type="OrderSide"/>
+        <field name="flags" id="3" type="OrderFlags"/>
+        <field name="value" id="4" type="InnerValue"/>
+        <data name="note" id="5" type="varStringEncoding"/>
+    </sbe:message>
+    </sbe:messageSchema>"#;
+
+    let ir_a = ergo_sbe::parse(schema_a_xml)?;
+    let ir_b = ergo_sbe::parse(schema_b_xml)?;
+    let schema_a = Schema::from_ir(ir_a);
+    let schema_b = Schema::from_ir(ir_b);
+
+    let mut config = GenerationConfig::new("multi2");
+    config = config.with_shared_module("shared_types");
+    let mut g = Generator::new(config);
+    let modules = g.generate_multi(&[(&schema_a, "shared_types"), (&schema_b, "consumer")])?;
+    let mods: Vec<_> = modules.modules().collect();
+
+    compile_and_run_two_modules(
+        "multi_shared_set_group",
+        "shared_types",
+        &mods[0].source,
+        "consumer",
+        &mods[1].source,
+        r#"
+            // ── Composite from importing module ──
+            let v = consumer::InnerValue::new(42, 9001);
+            assert_eq!(v.x(), 42);
+            assert_eq!(v.y(), 9001);
+
+            // ── Enum from importing module ──
+            let side = consumer::OrderSide::Bid;
+            assert_eq!(side, consumer::OrderSide::Bid);
+
+            // ── Set from importing module ──
+            let mut flags = consumer::OrderFlags::default();
+            flags.aggressive(true).conditional(false);
+            assert!(flags.is_aggressive());
+            assert!(!flags.is_conditional());
+
+            // ── Encode via shared module ──
+            let mut sf = shared_types::OrderFlags::default();
+            sf.aggressive(true);
+            let mut buf = [0u8; 128];
+            let mut enc = shared_types::OrderEncoder::wrap_and_apply_header(&mut buf, 0);
+            enc.price(shared_types::InnerValue::new(10, 20));
+            enc.side(shared_types::OrderSide::Ask);
+            enc.flags(sf);
+            let enc = enc.note(b"hello")?;
+            let dec = shared_types::OrderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+            assert_eq!(dec.price().x(), 10);
+            assert_eq!(dec.side(), shared_types::OrderSide::Ask);
+            assert!(dec.flags().is_aggressive());
+            assert_eq!(dec.note()?, b"hello");
+
+            // ── Encode via importing module (with shared types) ──
+            let mut cf = consumer::OrderFlags::default();
+            cf.conditional(true);
+            let mut buf2 = [0u8; 128];
+            let mut enc2 = consumer::TradeEncoder::wrap_and_apply_header(&mut buf2, 0);
+            enc2.qty(500);
+            enc2.side(consumer::OrderSide::Bid);
+            enc2.flags(cf);
+            enc2.value(consumer::InnerValue::new(7, 8));
+            let enc2 = enc2.note(b"world")?;
+            let dec2 = consumer::TradeDecoder::try_wrap_and_apply_header(&buf2, 0)?;
+            assert_eq!(dec2.qty(), 500);
+            assert_eq!(dec2.side(), consumer::OrderSide::Bid);
+            assert!(dec2.flags().is_conditional());
+            assert_eq!(dec2.value().y(), 8);
+            assert_eq!(dec2.note()?, b"world");
         "#,
     );
 

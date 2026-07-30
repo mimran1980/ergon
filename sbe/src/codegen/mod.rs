@@ -893,11 +893,11 @@ fn generate_owner_consuming_stages(
         let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
             pub struct #stage<'a> {
-                buf: &'a [u8],
-                pos: usize,
-                tail_start: usize,
-                acting_version: u16,
-                acting_block_length: usize,
+                pub(crate) buf: &'a [u8],
+                pub(crate) pos: usize,
+                pub(crate) tail_start: usize,
+                pub(crate) acting_version: u16,
+                pub(crate) acting_block_length: usize,
             }
         });
     }
@@ -1479,10 +1479,10 @@ fn generate_message_decoder(
     ts.extend(quote::quote! {
         #derive_attr
         pub struct #decoder_ident<'a> {
-            buf: &'a [u8],
-            pos: usize,
-            acting_version: u16,
-            acting_block_length: usize,
+            pub(crate) buf: &'a [u8],
+            pub(crate) pos: usize,
+            pub(crate) acting_version: u16,
+            pub(crate) acting_block_length: usize,
         }
     });
 
@@ -2264,7 +2264,7 @@ fn generate_message_decoder(
         };
         impl_body.extend(quote::quote! {
             #[inline]
-            fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+            pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 #version_check
                 let offset = self.#vd_tail_ident()?;
                 let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
