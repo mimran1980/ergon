@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-07-30
+
+### Changed
+- **Chainable set API** — set bit setters drop the `set_` prefix and return `&mut Self` for chaining; bool getters use `is_` prefix. `OptionalExtras::default().cruise_control(true).sports_pack(true)` in one expression.
+- README restructured — features table and compilable example before narrative
+
+### Fixed
+- 5 broken hyperlinks in docs.rs rustdoc replaced with correct file paths
+- Docs validation — all bare `rust` fences compile against the docs_codec schema
+
 ## [0.1.5] — 2026-07-30
 
 ### Added
