@@ -25,7 +25,11 @@ const SCHEMA_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
       <choice name="hasVenue">2</choice>
     </set>
   </types>
-  <message name="Msg" id="1" blockLength="0"/>
+  <message name="Order" id="1" blockLength="16">
+    <field name="price" id="1" type="int64"/>
+    <field name="qty" id="2" type="int32" offset="8"/>
+    <field name="code" id="3" type="EventCode" offset="12"/>
+  </message>
 </messageSchema>"#;
 
 #[test]
@@ -34,6 +38,7 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let schema = ergo_sbe::Schema::from_ir(ir);
 
     let config = ergo_sbe::GenerationConfig::new("hook_serde")
+        .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_hook(serde_hook);
 
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
@@ -84,6 +89,28 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
         // Unknown choice → error
         assert!(serde_json::from_str::<OptionalFields>("[\"Bogus\"]").is_err());
+
+        // ── Domain struct (DTO) round-trip ──
+        let dto = OrderDomain {
+            price: 12345,
+            qty: 100,
+            code: EventCode::Ok,
+        };
+        let json = serde_json::to_string(&dto)?;
+        let back: OrderDomain = serde_json::from_str(&json)?;
+        assert_eq!(back.price, 12345);
+        assert_eq!(back.qty, 100);
+        assert_eq!(back.code, EventCode::Ok);
+
+        // ── DTO → encode → decoder → verify no panic ──
+        let dto = OrderDomain { price: 999, qty: 50, code: EventCode::Error };
+        let len = OrderEncoder::compute_length_with_header();
+        let mut buf = vec![0u8; len];
+        dto.encode(&mut buf)?;
+        let dec = OrderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+        assert_eq!(dec.price(), 999);
+        assert_eq!(dec.qty(), 50);
+        assert_eq!(dec.code(), EventCode::Error);
     "##;
 
     compile_and_run_with_deps(
@@ -119,12 +146,12 @@ fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
 
                 impl<'de> serde::Deserialize<'de> for #ident {
                     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                        let s = <&str>::deserialize(d)?;
-                        match s {
+                        let s = String::deserialize(d)?;
+                        match s.as_str() {
                             #(#var_labels => Ok(Self::#var_names),)*
                             "NullVal" => Ok(Self::NullVal),
                             _ => Err(serde::de::Error::unknown_variant(
-                                s, &[#(#var_labels),*])),
+                                &s, &[#(#var_labels),*])),
                         }
                     }
                 }
@@ -156,6 +183,50 @@ fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
                             }
                         }
                         Ok(Self(value))
+                    }
+                }
+            }]
+        }
+        ItemContext::MessageDecoder { name, fields, .. } => {
+            let ident = format_ident!("{name}");
+            let f_names: Vec<_> = fields.iter().map(|f| format_ident!("{}", f.name)).collect();
+            let f_strs: Vec<_> = fields.iter().map(|f| f.name.clone()).collect();
+            let n = fields.len();
+            vec![quote::quote! {
+                impl serde::Serialize for #ident<'_> {
+                    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                        use serde::ser::SerializeStruct;
+                        let mut st = s.serialize_struct(stringify!(#ident), #n)?;
+                        #(st.serialize_field(#f_strs, &self.#f_names())?;)*
+                        st.end()
+                    }
+                }
+            }]
+        }
+        ItemContext::DomainStruct { name, fields } => {
+            let ident = format_ident!("{name}");
+            let f_names: Vec<_> = fields.iter().map(|f| format_ident!("{}", f.name)).collect();
+            let f_strs: Vec<_> = fields.iter().map(|f| f.name.clone()).collect();
+            let n = fields.len();
+            vec![quote::quote! {
+                impl serde::Serialize for #ident {
+                    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                        use serde::ser::SerializeStruct;
+                        let mut st = s.serialize_struct(stringify!(#ident), #n)?;
+                        #(st.serialize_field(#f_strs, &self.#f_names)?;)*
+                        st.end()
+                    }
+                }
+
+                impl<'de> serde::Deserialize<'de> for #ident {
+                    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                        let m: std::collections::HashMap<String, serde_json::Value> =
+                            std::collections::HashMap::deserialize(d)?;
+                        Ok(Self {
+                            #(#f_names: serde_json::from_value(
+                                m.get(#f_strs).cloned().unwrap_or(serde_json::Value::Null)
+                            ).map_err(|e| serde::de::Error::custom(e))?,)*
+                        })
                     }
                 }
             }]

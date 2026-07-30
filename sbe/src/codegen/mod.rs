@@ -804,9 +804,15 @@ impl Generator {
                 &self.config.conversions,
                 &self.config.domain_types,
                 self.config.unchecked_companions,
+                &self.config.hooks,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
+            // Hooks for the message decoder
+            if self.config.has_hooks() {
+                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder);
+                self.run_hooks(&ctx, &mut src);
+            }
             let encoder_ts = generate_message_encoder(
                 msg,
                 &elements,
@@ -820,6 +826,11 @@ impl Generator {
                 self.config.unchecked_companions,
             );
             src.push_str(&encoder_ts.to_string());
+            // Hooks for the message encoder
+            if self.config.has_hooks() {
+                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageEncoder);
+                self.run_hooks(&ctx, &mut src);
+            }
 
             // Decimal converter seam: for each field backed by a registered
             // Decimal composite, emit raw *_wire aliases and generic converted
@@ -1465,6 +1476,7 @@ fn generate_message_decoder(
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     _unchecked_companions: bool,
+    hooks: &crate::config::Hooks,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -2763,7 +2775,7 @@ fn generate_message_decoder(
     // So the impl is properly closed.
 
     if domain_objects {
-        ts.extend(generate_domain_objects(
+        let domain_ts = generate_domain_objects(
             msg,
             elements,
             &name,
@@ -2773,7 +2785,28 @@ fn generate_message_decoder(
             conversions,
             domain_types,
             domain_var_data,
-        ));
+        );
+        ts.extend(domain_ts);
+        // Run hooks for domain structs
+        if !hooks.is_empty() {
+            let domain_name = format!("{name}Domain");
+            let fields: Vec<_> = msg.fields.iter()
+                .filter(|f| f.presence != Presence::Constant)
+                .map(|f| crate::FieldInfo {
+                    name: to_snake_case(&f.name),
+                    rust_type: f.field_type.rust_type_name(),
+                    offset: f.offset,
+                    since_version: f.since_version,
+                    semantic_type: f.semantic_type.clone(),
+                })
+                .collect();
+            let ctx = crate::ItemContext::DomainStruct { name: domain_name, fields };
+            for hook in hooks.iter() {
+                for token_stream in hook(&ctx) {
+                    ts.extend(token_stream);
+                }
+            }
+        }
     }
 
     ts

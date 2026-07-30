@@ -244,9 +244,9 @@ impl PartialEq for Hooks {
 }
 impl Eq for Hooks {}
 impl Hooks {
-    fn push(&mut self, hook: Box<HookFn>) { self.0.push(hook); }
-    fn iter(&self) -> std::slice::Iter<'_, Box<HookFn>> { self.0.iter() }
-    fn is_empty(&self) -> bool { self.0.is_empty() }
+    pub(crate) fn push(&mut self, hook: Box<HookFn>) { self.0.push(hook); }
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Box<HookFn>> { self.0.iter() }
+    pub(crate) fn is_empty(&self) -> bool { self.0.is_empty() }
 }
 
 // ── GenerationConfig ──────────────────────────────────────────────────────
