@@ -1,7 +1,7 @@
 //! End-to-end test: generate an enum + bitset with serde hooks, compile,
 //! and verify serialize/deserialize round-trips.
 
-#![allow(clippy::expect_used, clippy::too_many_lines, clippy::doc_markdown)]
+#![allow(clippy::all)]
 
 mod common;
 use common::compile_and_run_with_deps;
