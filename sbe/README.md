@@ -913,6 +913,27 @@ So:
    transparent wire image is the portable form that already optimizes to the
    packed load on LE.
 
+#### What about the `zerocopy` crate?
+
+We evaluated using the [`zerocopy`](https://docs.rs/zerocopy) crate to derive
+`FromBytes`/`IntoBytes` on generated message structs for zero-copy buffer
+overlay. **It was not faster**, for two reasons:
+
+1. **Zerocopy wrapper types** (`little_endian::U32`, etc.) need a `.get()`
+   call to extract the native integer — the flyweight's `from_le_bytes` already
+   compiles to the same `mov` on little-endian, without the wrapper.
+
+2. **Per-field presence checks** — typical zerocopy decoders add `has_<field>()`
+   guards on every accessor. This is not inherent to zerocopy — skip those
+   checks and a zerocopy-based decoder converges on the same single-load
+   performance.
+
+   Ergon's decoder does one bounds check at construction and then uses
+   `#[inline]` unchecked per-field reads — no per-field branch overhead.
+
+The flyweight decoder already hits the same `mov` instructions without the
+extra dependency.
+
 | You need… | Use |
 |-----------|-----|
 | One or a few fields on the hot path | **Flyweight** — no composite copy |

@@ -190,6 +190,7 @@ pub struct FieldInfo {
 /// hook body to return tokens appended after the generated item.
 // manual Debug/Clone because &Schema in every variant makes derive unhappy
 #[derive(Clone)]
+#[allow(missing_docs)]
 pub enum ItemContext<'a> {
     Enum {
         schema: &'a crate::Schema,
