@@ -61,6 +61,50 @@ fn maintained_bench_sources_have_a_correctness_preflight() -> Result<(), Box<dyn
 }
 
 #[test]
+fn composite_decode_streams_equal_fields_from_equal_message_offsets()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = get_source(PERF_PARITY, "bench_decode_composite")?;
+    let ergo = timed_arm_body(source, "ergo-sbe_engine").ok_or("missing Ergo composite arm")?;
+    let tool = timed_arm_body(source, "sbe-tool_engine").ok_or("missing sbe-tool composite arm")?;
+
+    assert!(
+        source.contains("replicate_baseline(MICRO_BATCH_SIZE)"),
+        "composite decode must traverse a prebuilt contiguous message stream"
+    );
+    assert!(
+        ergo.contains("CarDecoder::wrap(buf, off + 8, bl_e, ver_e)"),
+        "Ergo composite decode must wrap each message at its absolute body offset"
+    );
+    assert!(
+        tool.contains("sbe_tool_car_body_decoder(buf, off, bl, ver)"),
+        "sbe-tool composite decode must wrap the same message at its equivalent body offset"
+    );
+
+    for (label, arm) in [("Ergo", ergo), ("sbe-tool", tool)] {
+        assert_eq!(
+            arm.matches(".capacity()").count(),
+            1,
+            "{label} composite arm must read capacity exactly once per message"
+        );
+        assert_eq!(
+            arm.matches(".num_cylinders()").count(),
+            1,
+            "{label} composite arm must read num_cylinders exactly once per message"
+        );
+        assert!(
+            arm.contains("off += msg_len;"),
+            "{label} composite arm must advance by the same framed-message length"
+        );
+        assert!(
+            arm.contains("black_box((total_capacity, total_cylinders))"),
+            "{label} composite arm must observe the same two-field checksum"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn full_message_wire_parity_is_checked_before_criterion_runs()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = get_source(PERF_PARITY, "bench_wire_parity_encode_full_message")?;

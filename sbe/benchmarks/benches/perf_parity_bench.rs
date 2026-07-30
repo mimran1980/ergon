@@ -284,34 +284,53 @@ fn bench_decode_array(c: &mut Criterion) {
 }
 
 fn bench_decode_composite(c: &mut Criterion) {
-    let car = CarDecoder::try_from(BASELINE).unwrap();
+    let buf = replicate_baseline(MICRO_BATCH_SIZE);
+    let msg_len = BASELINE.len();
     let bl = sbe_tool_block_length();
     let ver = sbe_tool_version();
-    let sbe_tool_car = sbe_tool_car_body_decoder(BASELINE, 0, bl, ver);
+    let (bl_e, ver_e) = ergo_sbe_header_fields();
+
+    let ergo_car = CarDecoder::wrap(&buf, 8, bl_e, ver_e);
+    let ergo_engine = ergo_car.engine();
+    let tool_engine = sbe_tool_car_body_decoder(&buf, 0, bl, ver).engine_decoder();
+    assert_eq!(ergo_engine.capacity(), tool_engine.capacity());
+    assert_eq!(ergo_engine.num_cylinders(), tool_engine.num_cylinders());
 
     let mut group = c.benchmark_group("parity/decode/composite");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
-    // Both codecs return flyweights over the same body bytes.
+    // Traverse a contiguous stream so the gate measures composite decoding,
+    // not the code address of a loop repeatedly loading the same three bytes.
     group.bench_function("ergo-sbe_engine", |b| {
         b.iter(|| {
+            let buf = black_box(buf.as_slice());
+            let mut total_capacity = 0_u64;
+            let mut total_cylinders = 0_u64;
+            let mut off = 0;
             for _ in 0..MICRO_BATCH_SIZE {
-                let engine = black_box(&car).engine();
-                let cap = engine.capacity();
-                let cyl = engine.num_cylinders();
-                black_box((cap, cyl));
+                let car = CarDecoder::wrap(buf, off + 8, bl_e, ver_e);
+                let engine = car.engine();
+                total_capacity += u64::from(engine.capacity());
+                total_cylinders += u64::from(engine.num_cylinders());
+                off += msg_len;
             }
+            black_box((total_capacity, total_cylinders));
         });
     });
 
     group.bench_function("sbe-tool_engine", |b| {
         b.iter(|| {
+            let buf = black_box(buf.as_slice());
+            let mut total_capacity = 0_u64;
+            let mut total_cylinders = 0_u64;
+            let mut off = 0;
             for _ in 0..MICRO_BATCH_SIZE {
-                let engine = black_box(&sbe_tool_car).engine_decoder();
-                let cap = engine.capacity();
-                let cyl = engine.num_cylinders();
-                black_box((cap, cyl));
+                let engine = sbe_tool_car_body_decoder(buf, off, bl, ver).engine_decoder();
+                total_capacity += u64::from(engine.capacity());
+                total_cylinders += u64::from(engine.num_cylinders());
+                off += msg_len;
             }
+            black_box((total_capacity, total_cylinders));
         });
     });
 
