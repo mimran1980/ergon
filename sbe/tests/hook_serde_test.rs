@@ -124,6 +124,7 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// The hook that adds serde Serialize + Deserialize for enums, sets, and domain structs.
+#[allow(clippy::too_many_lines, clippy::expect_used)]
 fn serde_hook(ctx: &ergo_sbe::ItemContext) -> Vec<proc_macro2::TokenStream> {
     use ergo_sbe::ItemContext;
     use quote::format_ident;
