@@ -115,8 +115,7 @@ pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>>
 /// Encode the canonical sample car into `buf` (must be pre-sized).
 pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
     let mut extras = OptionalExtras::default();
-    extras.set_cruise_control(true);
-    extras.set_sports_pack(true);
+    extras.cruise_control(true).sports_pack(true);
 
     let len = CarEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&CarFixedFields {
