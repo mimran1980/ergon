@@ -108,6 +108,141 @@ pub enum DomainVarData {
     LossyStrings,
 }
 
+// ── Hook types ────────────────────────────────────────────────────────────
+
+/// Kinds of generated items a hook can observe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ItemKind {
+    /// An SBE enum type.
+    Enum,
+    /// An SBE bitset type.
+    Set,
+    /// An SBE composite type.
+    Composite,
+    /// A message decoder (flyweight over `&[u8]`).
+    MessageDecoder,
+    /// A message encoder (writes into `&mut [u8]`).
+    MessageEncoder,
+    /// A domain DTO struct.
+    DomainStruct,
+}
+
+/// One enum variant for hook introspection.
+#[derive(Clone, Debug)]
+pub struct EnumVariantInfo {
+    /// Variant name in PascalCase (e.g. "Ok", "Error").
+    pub name: String,
+    /// Wire discriminant value.
+    pub value: i64,
+    /// Schema description, if present.
+    pub description: Option<String>,
+}
+
+/// One bitset choice for hook introspection.
+#[derive(Clone, Debug)]
+pub struct SetChoiceInfo {
+    /// Choice name in PascalCase.
+    pub name: String,
+    /// Zero-based bit position in the bitset.
+    pub bit_position: u8,
+    /// Schema description, if present.
+    pub description: Option<String>,
+}
+
+/// One field for hook introspection.
+#[derive(Clone, Debug)]
+pub struct FieldInfo {
+    /// Field name in snake_case.
+    pub name: String,
+    /// Rust type (e.g. "i64", "u8", "EventCode").
+    pub rust_type: String,
+    /// Byte offset from the message body start.
+    pub offset: usize,
+    /// Schema version this field was introduced in (0 = always present).
+    pub since_version: u16,
+    /// SBE `semanticType` attribute, if set.
+    pub semantic_type: Option<String>,
+}
+
+/// Per-item context passed to hooks.
+///
+/// Pattern-match on the variant to access item-specific data
+/// (variants, choices, fields). Use [`quote::quote!`] in your
+/// hook body to return tokens appended after the generated item.
+#[derive(Clone, Debug)]
+pub enum ItemContext {
+    Enum {
+        name: String,
+        encoding_type: String,
+        variants: Vec<EnumVariantInfo>,
+    },
+    Set {
+        name: String,
+        encoding_type: String,
+        choices: Vec<SetChoiceInfo>,
+    },
+    Composite {
+        name: String,
+        fields: Vec<FieldInfo>,
+    },
+    /// A message decoder (flyweight over `&[u8]`).
+    MessageDecoder {
+        /// Decoder struct name (e.g. "SessionEventDecoder").
+        name: String,
+        /// SBE template ID.
+        template_id: u16,
+        /// Declared block length in bytes.
+        block_length: usize,
+        /// Fixed fields (var-data and groups excluded).
+        fields: Vec<FieldInfo>,
+    },
+    /// A message encoder (writes into `&mut [u8]`).
+    MessageEncoder {
+        /// Encoder struct name (e.g. "SessionEventEncoder").
+        name: String,
+        /// SBE template ID.
+        template_id: u16,
+        /// Declared block length in bytes.
+        block_length: usize,
+        /// Fixed fields (var-data and groups excluded).
+        fields: Vec<FieldInfo>,
+    },
+    /// A domain DTO struct (only when [`GenerationConfig::enable_domain_objects`] is active).
+    DomainStruct {
+        name: String,
+        fields: Vec<FieldInfo>,
+    },
+}
+
+/// Token streams returned by hooks — appended after the generated item.
+pub type HookFn = dyn Fn(&ItemContext) -> Vec<proc_macro2::TokenStream>;
+
+/// Wrapper so `Vec<Box<dyn Fn>>` satisfies `Clone`/`Debug`/`PartialEq`/`Eq`.
+/// Hooks are never compared or cloned — the wrapper provides stub impls for
+/// the derive macros on [`GenerationConfig`].
+#[derive(Default)]
+pub(crate) struct Hooks(Vec<Box<HookFn>>);
+
+impl Clone for Hooks {
+    fn clone(&self) -> Self { Self(Vec::new()) }
+}
+impl std::fmt::Debug for Hooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Hooks").field(&self.0.len()).finish()
+    }
+}
+impl PartialEq for Hooks {
+    fn eq(&self, _: &Self) -> bool { true }
+}
+impl Eq for Hooks {}
+impl Hooks {
+    fn push(&mut self, hook: Box<HookFn>) { self.0.push(hook); }
+    fn iter(&self) -> std::slice::Iter<'_, Box<HookFn>> { self.0.iter() }
+    fn is_empty(&self) -> bool { self.0.is_empty() }
+}
+
+// ── GenerationConfig ──────────────────────────────────────────────────────
+
 /// Options that shape generated Rust codecs.
 ///
 /// Start with [`GenerationConfig::new`], chain builder methods, then pass to
@@ -123,7 +258,7 @@ pub enum DomainVarData {
 ///         "rust_decimal::Decimal",
 ///     );
 /// ```
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct GenerationConfig {
     /// Rust module name for the generated output file (`{module_name}.rs`).
     pub(crate) module_name: String,
@@ -153,6 +288,29 @@ pub struct GenerationConfig {
     pub(crate) keyword_append_token: String,
     /// Emit `#[deprecated]` on schema-deprecated items (opt-in).
     pub(crate) deprecated_attrs: bool,
+    /// Hooks fired after each generated item (enum, set, composite, message).
+    /// Returned tokens are appended after the item's definition.
+    pub(crate) hooks: Hooks,
+}
+
+impl std::fmt::Debug for GenerationConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GenerationConfig")
+            .field("module_name", &self.module_name)
+            .field("shared_module", &self.shared_module)
+            .field("domain_objects", &self.domain_objects)
+            .field("domain_var_data", &self.domain_var_data)
+            .field("conversions", &self.conversions)
+            .field("domain_types", &self.domain_types)
+            .field("external_sbe_rt_path", &self.external_sbe_rt_path)
+            .field("error_from_path", &self.error_from_path)
+            .field("auto_bool_domain", &self.auto_bool_domain)
+            .field("unchecked_companions", &self.unchecked_companions)
+            .field("keyword_append_token", &self.keyword_append_token)
+            .field("deprecated_attrs", &self.deprecated_attrs)
+            .field("hooks", &self.hooks)
+            .finish()
+    }
 }
 
 impl GenerationConfig {
@@ -177,6 +335,7 @@ impl GenerationConfig {
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
             auto_bool_domain: false,
+            hooks: Hooks::default(),
         }
     }
 
@@ -359,6 +518,57 @@ impl GenerationConfig {
     pub fn with_deprecated_attrs(mut self) -> Self {
         self.deprecated_attrs = true;
         self
+    }
+
+    /// Register a code-generation hook. The closure receives an
+    /// [`ItemContext`] for each generated item (enum, set, composite,
+    /// message decoder/encoder, domain struct) and returns token streams
+    /// appended after the item's definition.
+    ///
+    /// Hooks fire in registration order. Use [`quote::quote!`] in your
+    /// closure body to build the returned tokens.
+    ///
+    /// # Example — serde `Serialize` for enums
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, ItemContext};
+    /// use quote::quote;
+    ///
+    /// let config = GenerationConfig::new("msgs")
+    ///     .with_hook(|ctx: &ItemContext| -> Vec<proc_macro2::TokenStream> {
+    ///         match ctx {
+    ///             ItemContext::Enum { name, variants, .. } => {
+    ///                 // Manual Serialize impl appends after the enum definition
+    ///                 vec![quote! { /* impl Serialize for ... */ }]
+    ///             }
+    ///             _ => vec![],
+    ///         }
+    ///     });
+    /// ```
+    #[must_use]
+    pub fn with_hook<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + 'static,
+    {
+        self.hooks.push(Box::new(hook));
+        self
+    }
+
+    /// True when at least one hook is registered.
+    pub(crate) fn has_hooks(&self) -> bool {
+        !self.hooks.is_empty()
+    }
+
+    /// Iterate all registered hooks.
+    pub(crate) fn run_hooks(&self, ctx: &ItemContext, out: &mut String) {
+        for hook in self.hooks.iter() {
+            for ts in hook(ctx) {
+                // Use TokenStream Display impl for formatting.
+                // For simple impl blocks this produces valid Rust.
+                use std::fmt::Write;
+                let _ = writeln!(out, "{}", ts);
+            }
+        }
     }
 }
 

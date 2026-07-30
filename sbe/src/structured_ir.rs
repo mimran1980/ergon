@@ -180,6 +180,22 @@ impl FieldType {
             }
         }
     }
+
+    pub(crate) fn rust_type_name(&self) -> String {
+        match self {
+            Self::Primitive(p, length) => {
+                let base = rust_type(*p);
+                if let Some(len) = length {
+                    format!("[{}; {}]", base, len)
+                } else {
+                    base.to_string()
+                }
+            }
+            Self::Composite { name, .. } | Self::Enum { name, .. } | Self::Set { name, .. } => {
+                to_pascal_case(name)
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
