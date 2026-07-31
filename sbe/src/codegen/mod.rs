@@ -2756,13 +2756,9 @@ fn generate_message_decoder(
         }
 
         #[inline]
-        pub fn as_bytes_with_header(&self) -> Result<Option<&'a [u8]>, sbe_rt::DecodeError> {
-            if self.header_present {
-                let end = self.#total_tail_ident()?;
-                Ok(Some(&self.buf[self.msg_offset..end]))
-            } else {
-                Ok(None)
-            }
+        pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+            let end = self.#total_tail_ident()?;
+            Ok(&self.buf[self.msg_offset..end])
         }
     });
 
@@ -7529,15 +7525,11 @@ fn generate_message_encoder(
                 pub fn encoded_length(&self) -> usize {
                     self.pos - self.msg_offset - #header_size_lit
                 }
-                /// Total SBE message length including the header. Returns `Some`
-                /// when the encoder was constructed with header awareness.
+                /// Total SBE message length including the header.
+                /// Always available — the header length is a compile-time constant.
                 #[inline]
-                pub fn encoded_length_with_header(&self) -> Option<usize> {
-                    if self.header_present {
-                        Some(self.pos - self.msg_offset)
-                    } else {
-                        None
-                    }
+                pub fn encoded_length_with_header(&self) -> usize {
+                    self.pos - self.msg_offset
                 }
                 /// Unwritten region after this message.
                 #[inline]
@@ -7570,15 +7562,11 @@ fn generate_message_encoder(
                 pub fn encoded_length(&self) -> usize {
                     self.pos - self.msg_offset - #header_size_lit
                 }
-                /// Total SBE message length including the header. Returns `Some`
-                /// when the encoder was constructed with header awareness.
+                /// Total SBE message length including the header.
+                /// Always available — the header length is a compile-time constant.
                 #[inline]
-                pub fn encoded_length_with_header(&self) -> Option<usize> {
-                    if self.header_present {
-                        Some(self.pos - self.msg_offset)
-                    } else {
-                        None
-                    }
+                pub fn encoded_length_with_header(&self) -> usize {
+                    self.pos - self.msg_offset
                 }
                 /// Unwritten region after this message.
                 #[inline]
