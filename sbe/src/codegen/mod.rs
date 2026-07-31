@@ -3499,11 +3499,17 @@ fn generate_domain_recursive(
         match domain_var_data {
             crate::config::DomainVarData::LossyStrings => {
                 struct_fields.push(quote::quote! { pub #vd_ident: String });
-                // Valid UTF-8 → String; invalid → silent empty (not U+FFFD, not an error).
+                // Valid UTF-8 → String; invalid UTF-8 → silent empty
+                // (LossyStrings is doc'd as lossy, not as corrupt-data
+                // rejection). Truncated/missing var-data IS an error:
+                // `unwrap_or(&[])` previously swallowed that silently.
                 from_exprs.push(quote::quote! {
-                    #vd_ident: core::str::from_utf8(dec.#vd_ident().unwrap_or(&[]))
-                        .map(|s| s.to_owned())
-                        .unwrap_or_default()
+                    #vd_ident: match dec.#vd_ident() {
+                        Ok(data) => core::str::from_utf8(data)
+                            .map(|s| s.to_owned())
+                            .unwrap_or_default(),
+                        Err(e) => return Err(e),
+                    }
                 });
                 vardata_encode_stmts.push(quote::quote! {
                     let enc = enc.#vd_ident(self.#vd_ident.as_bytes())?;
@@ -3512,7 +3518,10 @@ fn generate_domain_recursive(
             crate::config::DomainVarData::Bytes => {
                 struct_fields.push(quote::quote! { pub #vd_ident: Vec<u8> });
                 from_exprs.push(quote::quote! {
-                    #vd_ident: dec.#vd_ident().unwrap_or(&[]).to_vec()
+                    #vd_ident: match dec.#vd_ident() {
+                        Ok(data) => data.to_vec(),
+                        Err(e) => return Err(e),
+                    }
                 });
                 vardata_encode_stmts.push(quote::quote! {
                     let enc = enc.#vd_ident(&self.#vd_ident)?;
@@ -3605,7 +3614,7 @@ fn generate_domain_recursive(
                 rust_type: vd_ty.to_string(),
                 offset: 0,
                 since_version: vd.since_version,
-                semantic_type: vd.character_encoding.clone(),
+                semantic_type: None,
                 presence: "required",
                 null_value: None,
                 deprecated: false,

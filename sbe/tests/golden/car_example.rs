@@ -3942,7 +3942,10 @@ impl CarFuelFiguresEntryDomain {
         Ok(Self {
             speed: dec.speed(),
             mpg: dec.mpg(),
-            usage_description: dec.usage_description().unwrap_or(&[]).to_vec(),
+            usage_description: match dec.usage_description() {
+                Ok(data) => data.to_vec(),
+                Err(e) => return Err(e),
+            },
         })
     }
 }
@@ -4203,9 +4206,18 @@ impl CarDomain {
                         .collect::<Result<Vec<_>, _>>()
                 })
                 .unwrap_or_else(|e| Err(e))?,
-            manufacturer: dec.manufacturer().unwrap_or(&[]).to_vec(),
-            model: dec.model().unwrap_or(&[]).to_vec(),
-            activation_code: dec.activation_code().unwrap_or(&[]).to_vec(),
+            manufacturer: match dec.manufacturer() {
+                Ok(data) => data.to_vec(),
+                Err(e) => return Err(e),
+            },
+            model: match dec.model() {
+                Ok(data) => data.to_vec(),
+                Err(e) => return Err(e),
+            },
+            activation_code: match dec.activation_code() {
+                Ok(data) => data.to_vec(),
+                Err(e) => return Err(e),
+            },
         })
     }
     /// Decode directly from a byte slice — validates the header

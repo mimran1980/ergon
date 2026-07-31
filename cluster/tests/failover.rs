@@ -26,8 +26,8 @@ fn test_connect_to_three_node_cluster() -> Result<(), Box<dyn std::error::Error>
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
-    let egr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
+    let ing = ergo_aeron_cluster::uri::channel_cstr(&cluster.ingress_channel)?;
+    let egr = ergo_aeron_cluster::uri::channel_cstr(&cluster.egress_channel)?;
 
     let egress = a.add_subscription(
         &egr,

@@ -79,12 +79,14 @@ pub(crate) fn reset_warn_once() {
     }
 }
 
-/// De-duplicates parser warnings within a process. `xi:include` inlines a
-/// shared schema (e.g. `common-types.xml`) into every consuming file, so a
-/// naive `eprintln!` fires once per consumer parsed in the same `cargo build`
-/// — N sibling schema files sharing one included type multiply the same
-/// warning N times. Keyed on byte offset + message, so distinct warnings are
-/// never suppressed.
+/// De-duplicates parser warnings within a single parse call. `xi:include`
+/// inlines a shared schema (e.g. `common-types.xml`) into every consuming
+/// file, so a naive `eprintln!` fires once per consumer — N sibling schema
+/// files sharing one included type multiply the same warning N times. The
+/// dedup set is cleared at the start of every public `parse_*` entry point
+/// via [`reset_warn_once`], so separate parse calls do not suppress each
+/// other. Keyed on byte offset + message, so distinct warnings are never
+/// suppressed within a parse.
 ///
 /// When `node` is provided the warning includes the source file, line,
 /// column, and the relevant XML line.

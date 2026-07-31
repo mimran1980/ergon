@@ -40,7 +40,7 @@ pub fn launch_own_driver(tag: &str) -> Result<OwnDriver, Box<dyn Error>> {
 /// egress port is the client's own UDP endpoint (the cluster sends
 /// SessionEvent / echoes / NewLeaderEvent here).
 ///
-/// Egress URI is built via [`ergo_aeron_cluster::udp_endpoint_cstr`] so it
+/// Egress URI is built via [`ergo_aeron_cluster::uri::udp_endpoint_cstr`] so it
 /// matches the typed `AeronUriStringBuilder` path used in production.
 pub fn connect_own_driver(
     cluster_ingress: &str,
@@ -48,7 +48,7 @@ pub fn connect_own_driver(
     aeron_dir: &str,
 ) -> Result<AeronCluster, ergo_aeron_cluster::ClusterError> {
     // CString path once; SessionBuilder re-validates/stores as CString for rusteron.
-    let egress = ergo_aeron_cluster::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
+    let egress = ergo_aeron_cluster::uri::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
     let egress_uri = egress
         .to_str()
         .map_err(|e| ergo_aeron_cluster::ClusterError::ConnectFailed {

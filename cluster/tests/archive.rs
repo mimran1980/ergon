@@ -29,8 +29,8 @@ fn test_archive_and_cluster_can_coexist() -> Result<(), Box<dyn std::error::Erro
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
-    let egr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
+    let ing = ergo_aeron_cluster::uri::channel_cstr(&cluster.ingress_channel)?;
+    let egr = ergo_aeron_cluster::uri::channel_cstr(&cluster.egress_channel)?;
 
     let egress = a.add_subscription(
         &egr,

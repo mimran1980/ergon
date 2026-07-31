@@ -1546,7 +1546,8 @@ full IR access.
 
 ```rust,no_run
 // build.rs
-use ergo_sbe::{ItemContext, quote};
+use ergo_sbe::{GenerationConfig, ItemContext};
+use quote::quote;
 
 fn serde_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
     match ctx {
