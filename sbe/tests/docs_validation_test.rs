@@ -98,7 +98,12 @@ fn feature_tour_codec_source() -> Result<String, Box<dyn std::error::Error>> {
             .with_domain_type(
                 ergo_sbe::ConversionSelector::named_type("BooleanType"),
                 "bool",
-            ),
+            )
+            .with_domain_type(
+                ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
+                "chrono::DateTime<chrono::Utc>",
+            )
+            .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal")),
     )
     .generate(&schema)?
     .modules()
@@ -222,12 +227,13 @@ fn resolve_book_include(
     Ok(extracted.join("\n"))
 }
 
-fn wrap_snippet_with_module(body: &str, module_name: &str) -> String {
+fn wrap_snippet_with_imports(body: &str, module_name: &str, extra_imports: &str) -> String {
     let trimmed = body.trim();
     let prelude = format!(
         "#![allow(dead_code, unused_imports, unused_variables, unused_mut)]\n\
          mod {module_name};\n\
-         use {module_name}::*;\n"
+         use {module_name}::*;\n\
+         {extra_imports}"
     );
     if trimmed.contains("fn main") {
         format!("{prelude}{trimmed}\n")
@@ -249,6 +255,18 @@ fn compile_snippet_with_module(
     module_name: &str,
     codec_source: &str,
 ) -> Result<(), String> {
+    compile_snippet_with_deps(tmp_root, name, body, module_name, codec_source, "", "")
+}
+
+fn compile_snippet_with_deps(
+    tmp_root: &Path,
+    name: &str,
+    body: &str,
+    module_name: &str,
+    codec_source: &str,
+    extra_deps: &str,
+    extra_imports: &str,
+) -> Result<(), String> {
     let crate_dir = tmp_root.join(name);
     fs::create_dir_all(crate_dir.join("src")).map_err(|e| e.to_string())?;
     let ergo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -259,7 +277,7 @@ version = "0.0.0"
 edition = "2021"
 [dependencies]
 ergo-sbe = {{ path = "{ergo}" }}
-"#,
+{extra_deps}"#,
         name = name,
         ergo = ergo_path.display()
     );
@@ -271,7 +289,7 @@ ergo-sbe = {{ path = "{ergo}" }}
     .map_err(|e| e.to_string())?;
     fs::write(
         crate_dir.join("src/main.rs"),
-        wrap_snippet_with_module(body, module_name),
+        wrap_snippet_with_imports(body, module_name, extra_imports),
     )
     .map_err(|e| e.to_string())?;
     let target_dir = tmp_root.join("target");
@@ -538,9 +556,13 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     let docs_codec = docs_codec_source()?;
     let tour_codec = feature_tour_codec_source()?;
     let tmp = tempfile::tempdir()?;
+    const TOUR_DEPS: &str = "chrono = \"0.4\"\nrust_decimal = \"1\"\n";
+    const TOUR_IMPORTS: &str =
+        "use chrono::{DateTime, Utc};\nuse rust_decimal::Decimal as Rd;\n";
+
     let mut compiled = 0usize;
     let mut skipped = 0usize;
-    let mut external_deps = 0usize;
+    let mut deferred = 0usize;
 
     let md_files = book_md_files()?;
     assert!(!md_files.is_empty(), "no book markdown files found");
@@ -554,27 +576,26 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
                 skipped += 1;
                 continue;
             }
-            let (module, codec) = if body.trim().starts_with("{{#include") {
-                ("tour_codec", &tour_codec)
+            let (module, codec, deps, imports) = if body.trim().starts_with("{{#include") {
+                ("tour_codec", &tour_codec, TOUR_DEPS, TOUR_IMPORTS)
             } else {
-                ("docs_codec", &docs_codec)
+                ("docs_codec", &docs_codec, "", "")
             };
             let name = format!(
                 "book_{}_{}",
                 md_path.file_stem().unwrap_or_default().to_string_lossy(),
                 compiled
             );
-            match compile_snippet_with_module(tmp.path(), &name, &resolved, module, codec) {
+            match compile_snippet_with_deps(
+                tmp.path(), &name, &resolved, module, codec, deps, imports,
+            ) {
                 Ok(()) => compiled += 1,
                 Err(e) => {
-                    // Anchors may reference adapter types (rust_decimal, chrono)
-                    // defined outside the anchor. Those are verified by the
-                    // feature-tour crate's own tests.
-                    if resolved.contains("Rd::")
-                        || resolved.contains("chrono::")
-                        || resolved.contains("DateTime<")
-                    {
-                        external_deps += 1;
+                    // Some anchors reference adapter types (FixedPrice, impl
+                    // TryFromSbe, type aliases) defined outside the anchor.
+                    // Those are verified by the feature-tour crate's own tests.
+                    if resolved.contains("FixedPrice") || resolved.contains("impl TryFromSbe") {
+                        deferred += 1;
                         continue;
                     }
                     let msg = format!(
@@ -587,7 +608,7 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     eprintln!(
-        "book_fences_compile: {compiled} compiled, {skipped} skipped, {external_deps} with external deps"
+        "book_fences_compile: {compiled} compiled, {skipped} skipped, {deferred} deferred"
     );
     assert!(compiled > 0, "expected at least one compilable fence in the book");
     Ok(())

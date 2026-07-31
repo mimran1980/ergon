@@ -24,6 +24,38 @@ guide for ergo-sbe, covering:
 - [Recipes](https://mimran1980.github.io/ergon/sbe/recipes.html) — Display/Debug, schema→rustdoc, domain DTOs, timestamps
 - [Benchmarks](https://mimran1980.github.io/ergon/sbe/benchmarks.html) — parity methodology and gates
 
+## Quick Example
+
+```rust
+use ergo_sbe::{parse, Schema, Generator, GenerationConfig};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+    <messageSchema package="demo" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Ping" id="1" blockLength="4">
+        <field name="seq" id="1" type="uint32" offset="0"/>
+      </message>
+    </messageSchema>"#;
+
+    let ir = parse(xml)?;
+    let schema = Schema::from_ir(ir);
+    let modules = Generator::new(GenerationConfig::new("demo_msgs"))
+        .generate(&schema)?;
+    // In a real project you'd use a build script.
+    // Full guide: https://mimran1980.github.io/ergon/sbe/getting-started.html
+    let _ = modules;
+    Ok(())
+}
+```
+
 ## API Reference
 
 [docs.rs/ergo-sbe](https://docs.rs/ergo-sbe/) — generated Rustdoc for the published crate.
