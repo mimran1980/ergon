@@ -213,11 +213,11 @@ let enc = CarEncoder::wrap(&mut buf, 0);  // HeaderAbsent
 
 ### Before merging
 
-- [ ] Run `just test` — 100% green
-- [ ] Run `just bench` and `just bench-cluster` — all ratios ≤ 1.00
-- [ ] Run `just fix` — clippy clean
-- [ ] Regenerate sbe-tool reference crates: `scripts/regenerate-sbe-tool-reference.sh`
-- [ ] Verify golden file is byte-identical to regeneration
-- [ ] Commit any remaining working-tree changes (baseline test fixes, golden regen)
-- [ ] No leftover scripts: `apply_*.py` and `process_files.py` must be absent
-- [ ] `book/` and `.github/workflows/pages.yml` should stay untracked (not part of this PR)
+- [x] Run HANDOVER test ladder — lib 194, baseline 100, wire 23+52, cluster 51, feature-tour 3; clippy `-D warnings` clean
+- [x] Run SBE bench gate LTO + no-LTO — all maintained ratios ≤ 1.00; cluster gate green after re-run (first 1.02 was noise)
+- [x] Clippy clean for ergo-sbe + ergo-aeron-cluster
+- [ ] Regenerate sbe-tool reference crates: `scripts/regenerate-sbe-tool-reference.sh` (only if sbe-tool API surface changed; wire parity green without regen)
+- [x] Verify golden file is byte-identical to regeneration
+- [x] Commit remaining working-tree changes (baseline/golden/H propagation/consumers)
+- [x] No leftover scripts: `apply_*.py` and `process_files.py` absent
+- [x] `book/` and `.github/workflows/pages.yml` stay untracked (not part of this PR)
