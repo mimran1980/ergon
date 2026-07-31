@@ -141,9 +141,9 @@ fn test_whole_buffer_returns_entire_frame() -> Result<(), Box<dyn std::error::Er
 fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::error::Error>> {
     use super::session::{AnyMessage, SessionKeepAliveEncoder};
 
-    // Build a buffer: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes)
-    let total = SessionMessageHeaderEncoder::ENCODED_LENGTH + SessionKeepAliveEncoder::ENCODED_LENGTH;
-    let mut buf = vec![0u8; total];
+    // Build a buffer: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes).
+    // Both lengths are const — use a stack array.
+    let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH + SessionKeepAliveEncoder::ENCODED_LENGTH];
 
     // First: SessionMessageHeader
     let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);

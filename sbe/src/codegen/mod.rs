@@ -573,9 +573,24 @@ impl Generator {
     ///
     /// Same conversion validation as [`Self::generate`].
     pub fn generate_multi(
-        &self,
+        &mut self,
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
+        // Auto-register bool converters for every schema, matching generate().
+        if self.config.auto_bool_domain {
+            for (schema, _) in schemas {
+                let elements = partition_tokens(&schema.ir.tokens);
+                for e in &elements.enums {
+                    let name = &e[0].name;
+                    if crate::structured_ir::is_bool_value_enum(&elements, name) {
+                        let sel = crate::ConversionSelector::named_type(name);
+                        if !self.config.domain_types.iter().any(|(s, _)| s == &sel) {
+                            self.config.domain_types.push((sel, "bool".into()));
+                        }
+                    }
+                }
+            }
+        }
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.generate_multi_inner(schemas)

@@ -111,10 +111,8 @@ release-check: test check-products check-coverage
 # calling this. The version is read from workspace Cargo.toml.
 release:
     just clean
-    @echo "=== Gate: test suite ==="
+    @echo "=== Gate: test suite (inc. clippy) ==="
     just test
-    @echo "=== Clippy ==="
-    just fix
     @echo "=== Gate: cluster benchmarks ==="
     just bench-cluster
     @echo "=== Gate: SBE benchmarks ==="

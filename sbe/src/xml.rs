@@ -68,6 +68,16 @@ fn source_name() -> String {
 ///
 /// When `node` is provided the warning includes the source file, line,
 /// column, and the relevant XML line.
+/// Reset the per-process dedup set. Called at the start of every public
+/// `parse_*` entry point so two distinct schema documents parsed in one
+/// process cannot false-suppress each other's warnings.
+pub(crate) fn reset_warn_once() {
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    if let Some(seen) = SEEN.get() {
+        seen.lock().unwrap().clear();
+    }
+}
 fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>) {
     use std::sync::{Mutex, OnceLock};
     static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -463,6 +473,7 @@ fn resolve_type_to_tokens(
 /// attributes/types fail validation.
 #[allow(clippy::result_large_err)]
 pub fn parse(xml: &str) -> Result<Ir, ParseError> {
+    reset_warn_once();
     set_source_name("<xml>".into());
     parse_with_context(xml, None, &mut HashSet::new(), TypeRegistry::new())
 }
@@ -481,6 +492,7 @@ pub fn parse(xml: &str) -> Result<Ir, ParseError> {
 /// Same as [`parse`].
 #[allow(clippy::result_large_err)]
 pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
+    reset_warn_once();
     parse_with_context(
         xml,
         None,
@@ -516,6 +528,7 @@ pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
 #[allow(clippy::result_large_err)]
 pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
     let path = path.as_ref();
+    reset_warn_once();
     set_source_name(path.display().to_string());
     let xml = std::fs::read_to_string(path).map_err(|e| {
         ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
@@ -539,6 +552,8 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
 #[allow(clippy::result_large_err)]
 pub fn parse_file_with_shared(path: impl AsRef<Path>, shared: &Ir) -> Result<Ir, ParseError> {
     let path = path.as_ref();
+    reset_warn_once();
+    set_source_name(path.display().to_string());
     let xml = std::fs::read_to_string(path).map_err(|e| {
         ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
     })?;

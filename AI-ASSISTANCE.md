@@ -644,8 +644,10 @@ that test-selection bypasses are forbidden.
 **Ignored Rustdoc fences.** Multiple Rust code examples in documentation
 had `rust,ignore` fences. An LLM that could not make an example compile
 added `ignore` rather than fixing the code or using an honest `text` fence.
-These were replaced with compile-checked `rust,no_run` examples or
-explicitly schematic `text` fences.
+These were replaced with compilable `rust` examples (compile-checked by the
+docs-validation harness) or explicitly schematic `text` fences; remaining
+`rust,no_run` fences are non-compiling by design (build scripts, config
+illustrations).
 
 **Phantom regeneration test.** A file named `encoded_length_api.txt`
 advertised a regeneration test that did not exist and was not checked by

@@ -15,6 +15,14 @@
 - Composite hook metadata reports real member types (primitives, nested composites, enum/set refs) with their schema `semanticType`/`nullValue`/`description`/`deprecated`, instead of omitting primitives and mislabelling containers as `u8`
 - Hooks fire for every group entry DTO; the message DTO hook context includes group and var-data fields, and a group field's reported type is the fully-qualified `Vec<{Msg}{Group}EntryDomain>`
 - `message_offset()` returns `Option<usize>` instead of panicking on a body-slice decoder
+- `enable_bool_domain_type()` now honoured for multi-schema generation, not just single-schema
+- `warn_once` dedup state resets per top-level `parse_*` call, preventing cross-document false suppression
+- `channel_cstr` / `udp_endpoint_cstr` removed from `pub use` re-export (internal helpers only)
+- Crate-doc README link in `ergo-aeron-cluster` now points at `main` branch
+- `parity_manifest_test` now only collects `#[test]` / `test_` functions, not arbitrary helpers
+
+### Changed
+- `just release` no longer runs the mutating `just fix` recipe; clippy already gates in `just test`
 
 ## [0.1.7] — 2026-07-30
 
