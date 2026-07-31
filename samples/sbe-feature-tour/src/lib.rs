@@ -289,7 +289,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
                 assert_eq!(d.note_id(), 99);
                 let (body, complete) = d.into_body()?;
                 assert_eq!(body, note_body);
-                offset += complete.encoded_length_with_header();
+                offset += complete.encoded_length() + NoteDecoder::HEADER_LENGTH;
                 saw_note = true;
             }
             AnyMessage::Car(_) => return Err("unexpected Car in this demo stream".into()),

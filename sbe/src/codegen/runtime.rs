@@ -1934,7 +1934,7 @@ pub(crate) fn generate_any_message(
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             encoded_arms.extend(quote::quote! {
-                Self::#name(d) => d.encoded_length_with_header()?.expect("header present"),
+                Self::#name(d) => d.encoded_length_with_header()?,
             });
         }
 

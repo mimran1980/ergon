@@ -2740,13 +2740,9 @@ fn generate_message_decoder(
         }
 
         #[inline]
-        pub fn encoded_length_with_header(&self) -> Result<Option<usize>, sbe_rt::DecodeError> {
-            if self.header_present {
-                let len = self.encoded_length()?;
-                Ok(Some(len + #hdr_size_lit))
-            } else {
-                Ok(None)
-            }
+        pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
+            let len = self.encoded_length()?;
+            Ok(len + #hdr_size_lit)
         }
 
         #[inline]
