@@ -70,4 +70,8 @@ let p: rust_decimal::Decimal = dec.price();
 ```
 
 Both styles on different fields:
-[sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour).
+
+```rust,no_run
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_conversion_only}}
+```
+*(This code comes from the `sbe-feature-tour` sample crate.)*
