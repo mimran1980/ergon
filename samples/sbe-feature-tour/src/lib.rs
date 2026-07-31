@@ -75,6 +75,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
 /// Compute exact wire length for a Car with known group shapes, allocate once,
 /// encode with `try_wrap_and_apply_header` + fixed phase + consuming tails.
+// ANCHOR: demo_car_size_and_encode
 pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Fuel: 2 entries with usage ASCII lengths 5 and 7.
     // Performance: 1 entry with 2 nested acceleration rows (fixed-only entries).
@@ -111,7 +112,6 @@ pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>>
     );
     Ok(storage[..written].to_vec())
 }
-
 /// Encode the canonical sample car into `buf` (must be pre-sized).
 pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
     let mut extras = OptionalExtras::default();
@@ -171,10 +171,12 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
 
     Ok(len)
 }
+// ANCHOR_END: demo_car_size_and_encode
 
 // ─── 3. Decoder consuming stages ───────────────────────────────────────────
 
 /// Walk Car in wire order: fixed random-access fields, then groups, then var-data.
+// ANCHOR: demo_car_decode_stages
 pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(wire)?;
     assert_eq!(car.serial_number(), 1234);
@@ -221,10 +223,12 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(code, "abcdef");
     Ok(())
 }
+// ANCHOR_END: demo_car_decode_stages
 
 // ─── 4. Domain DTO ─────────────────────────────────────────────────────────
 
 /// Materialise owned `CarDomain`, re-encode, compare bytes.
+// ANCHOR: demo_car_domain_dto
 pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let dec = CarDecoder::try_from(wire)?;
     // Prefer try_from_decoder when you need fallible conversion; From panics on
@@ -243,10 +247,12 @@ pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>
     assert_eq!(&storage[..n], wire, "DTO re-encode must be byte-identical");
     Ok(())
 }
+// ANCHOR_END: demo_car_domain_dto
 
 // ─── 5. AnyMessage ─────────────────────────────────────────────────────────
 
 /// Encode Heartbeat + Note into one buffer and dispatch by template id.
+// ANCHOR: demo_any_message
 pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let mut hb = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let nanos: u64 = 1_700_000_000_000_000_000;
@@ -302,10 +308,12 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     assert!(saw_heartbeat && saw_note);
     Ok(())
 }
+// ANCHOR_END: demo_any_message
 
 // ─── 6. try_* vs trusted wrap ──────────────────────────────────────────────
 
 /// Trust-boundary constructors reject short / wrong-schema buffers.
+// ANCHOR: demo_try_vs_trusted
 pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     // Safe entry: validates header + block.
     let _ = CarDecoder::try_from(valid_car)?;
@@ -337,6 +345,7 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
     assert_eq!(trusted.serial_number(), 1234);
     Ok(())
 }
+// ANCHOR_END: demo_try_vs_trusted
 
 // ─── 7. Display / Debug ────────────────────────────────────────────────────
 

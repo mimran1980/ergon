@@ -4,7 +4,7 @@
 parses the schema file, generates codecs, writes `$OUT_DIR/{module}.rs`, and
 emits `cargo::rerun-if-changed` for you:
 
-```text
+```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/build.rs:build_rs_example}}
 ```
 

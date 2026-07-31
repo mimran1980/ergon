@@ -16,7 +16,7 @@ Enable domain objects during generation when an owned application value is
 more convenient than a zero-copy flyweight. This fixture uses
 `DomainVarData::Bytes`, so re-encoding preserves arbitrary bytes:
 
-```text
+```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_domain_dto}}
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
