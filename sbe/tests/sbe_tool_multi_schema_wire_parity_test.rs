@@ -2644,7 +2644,7 @@ fn value_ref_constant_messages() {
             let mut e = MsgOneEncoder::wrap_and_apply_header(&mut ebuf, 0);
             e.timestamp_composite(UTCTimestampNanos::new(12345u64));
             let el = MsgOneEncoder::ENCODED_LENGTH;
-            let ergo_bytes = e.as_ref();
+            let ergo_bytes = e.as_bytes_with_header();
 
             let mut tbuf = [0u8; 256];
             let mut t = T1::default()
@@ -2754,7 +2754,7 @@ fn issue435_set_ref_in_header() {
                 t = ex.parent().unwrap();
             }
             let tl = t.get_limit();
-            let ergo_bytes = e.as_ref();
+            let ergo_bytes = e.as_bytes_with_header();
             assert_frames_eq(
                 &format!("issue435 e={e_val:?}"),
                 ergo_bytes,

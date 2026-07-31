@@ -135,7 +135,7 @@ fn warm_up_all() {
     let enc = enc.manufacturer(b"Honda").unwrap();
     let enc = enc.model(b"Civic").unwrap();
     let encoded = enc.activation_code(b"abc").unwrap();
-    let _ = black_box(encoded.as_bytes());
+    let _ = black_box(encoded.as_bytes_with_header());
 
     // Settle EncodedLength builder (uniform_length_builder test)
     let _len = CarEncodedLength::new()
@@ -216,7 +216,7 @@ fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Erro
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic").unwrap();
         let encoded = car.activation_code(b"abc").unwrap();
-        black_box(encoded.as_bytes());
+        black_box(encoded.as_bytes_with_header());
     });
     Ok(())
 }

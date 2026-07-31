@@ -56,7 +56,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         let car = car.model(b"Civic VTi")?;
         let complete = car.activation_code(b"abcdef")?;
         assert!(complete.encoded_length_with_header() > 0);
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let total_len = encoded.len();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
@@ -97,7 +97,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
 
         // Terminal stage extent helpers.
         assert_eq!(done.encoded_length_with_header(), total_len);
-        assert_eq!(done.as_bytes(), encoded);
+        assert_eq!(done.as_bytes_with_header(), encoded);
     "#,
     );
 
@@ -128,7 +128,7 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.model(b"N")?;
         let complete = car.activation_code(b"P")?;
         assert!(complete.encoded_length_with_header() > 0);
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let mut fuel = dec.into_fuel_figures().unwrap();
@@ -170,7 +170,7 @@ fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Err
         let car = car.model(b"")?;
         let complete = car.activation_code(b"")?;
         assert!(complete.encoded_length_with_header() > 0);
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let fuel = dec.into_fuel_figures().unwrap();

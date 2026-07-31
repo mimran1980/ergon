@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         enc.leadership_term_id(leadership_term_id)
             .cluster_session_id(cluster_session_id)
             .timestamp(0);
-        let hdr_len = enc.as_ref().len();
+        let hdr_len = enc.as_bytes_with_header().len();
         // Write bid payload after header
         msg[hdr_len + CORRELATION_ID_OFFSET..hdr_len + CORRELATION_ID_OFFSET + 8]
             .copy_from_slice(&cid.to_le_bytes());

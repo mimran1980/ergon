@@ -1,12 +1,12 @@
 //! Regression test for reserved-method / field-name collisions.
 //!
 //! A flat message may legally declare fields whose names collide with reserved
-//! decoder/encoder methods (`remaining`, `whole_buffer`). Both the **array**
+//! decoder/encoder methods (`remaining`, `buffer`). Both the **array**
 //! accessor path and the **optional primitive** accessor path must route the
 //! field name through `resolve_field_ident` so it becomes `{name}_field`,
 //! leaving the reserved method intact. The earlier substring-only test used a
 //! single scalar field and did not exercise either path — a schema with an
-//! optional `remaining` and an array `wholeBuffer` produced duplicate methods
+//! optional `remaining` and an array `buffer` produced duplicate methods
 //! and a `Display` impl referencing a non-existent `remaining_field`, so the
 //! generated crate failed to compile. This test compiles and runs it.
 
@@ -29,7 +29,7 @@ const SCHEMA_XML: &str = r#"<messageSchema package="clash" id="1" version="0" by
   </types>
   <message name="Msg" id="1" blockLength="21">
     <field name="remaining" id="1" type="uint32" presence="optional" offset="0"/>
-    <field name="wholeBuffer" id="2" type="Quad" offset="4"/>
+    <field name="buffer" id="2" type="Quad" offset="4"/>
     <field name="normal" id="3" type="uint8" offset="20"/>
   </message>
 </messageSchema>"#;
@@ -52,8 +52,8 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
         "optional field 'remaining' must be renamed to remaining_field"
     );
     assert!(
-        src.contains("fn whole_buffer_field(&self) -> [u32; 4]"),
-        "array field 'wholeBuffer' must be renamed to whole_buffer_field"
+        src.contains("fn buffer_field(&self) -> [u32; 4]"),
+        "array field 'buffer' must be renamed to buffer_field"
     );
     // The reserved decoder methods still exist and are not shadowed.
     assert!(
@@ -61,8 +61,8 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
         "reserved decoder method remaining() must remain"
     );
     assert!(
-        src.contains("fn whole_buffer(&self)"),
-        "reserved decoder method whole_buffer() must remain"
+        src.contains("fn buffer(&self)"),
+        "reserved decoder method buffer() must remain"
     );
 
     // The real proof: the generated crate compiles and every path works,
@@ -75,7 +75,7 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
         let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
             .fixed(&MsgFixedFields {
                 remaining: Some(7),
-                whole_buffer: [10, 20, 30, 40],
+                buffer: [10, 20, 30, 40],
                 normal: 9,
             })
             .encoded_length_with_header();
@@ -83,11 +83,11 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
         let dec = MsgDecoder::try_from(&buf[..len]).expect("decode");
         // Renamed field accessors.
         assert_eq!(dec.remaining_field(), Some(7));
-        assert_eq!(dec.whole_buffer_field(), [10, 20, 30, 40]);
+        assert_eq!(dec.buffer_field(), [10, 20, 30, 40]);
         assert_eq!(dec.normal(), 9);
         // Reserved methods still available and distinct from the fields.
         let _tail: &[u8] = dec.remaining();
-        let _all: &[u8] = dec.whole_buffer();
+        let _all: &[u8] = dec.buffer();
         // Display/Debug impl references the renamed accessors — must format.
         let shown = format!("{dec:?}");
         assert!(shown.contains("remaining"));
@@ -114,7 +114,7 @@ const ENCODER_CLASH_SCHEMA: &str = r#"<messageSchema package="eclash" id="1" ver
   <message name="Msg" id="1" blockLength="18">
     <field name="encodedLength" id="1" type="uint32" offset="0"/>
     <field name="encodedLengthWithHeader" id="2" type="uint16" offset="4"/>
-    <field name="asBytes" id="3" type="uint16" offset="6"/>
+    <field name="asBodyBytes" id="3" type="uint16" offset="6"/>
     <field name="asBytesWithHeader" id="4" type="uint16" offset="8"/>
     <field name="wrapAndApplyHeader" id="5" type="uint16" offset="10"/>
     <field name="fixed" id="6" type="uint16" offset="12"/>
@@ -145,7 +145,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
     for renamed in [
         "encoded_length_field",
         "encoded_length_with_header_field",
-        "as_bytes_field",
+        "as_body_bytes_field",
         "as_bytes_with_header_field",
         "wrap_and_apply_header_field",
         "fixed_field",
@@ -162,7 +162,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
     for inherent in [
         "fn encoded_length(",
         "fn encoded_length_with_header(",
-        "fn as_bytes(",
+        "fn as_body_bytes(",
         "fn as_bytes_with_header(",
         "fn wrap_and_apply_header(",
         "fn fixed(",
@@ -184,7 +184,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
             .fixed(&MsgFixedFields {
                 encoded_length: 11,
                 encoded_length_with_header: 22,
-                as_bytes: 33,
+                as_body_bytes: 33,
                 as_bytes_with_header: 44,
                 wrap_and_apply_header: 55,
                 fixed: 66,
@@ -195,11 +195,11 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
         assert_eq!(dec.encoded_length_field(), 11);
         assert_eq!(dec.encoded_length_with_header_field(), 22);
-        assert_eq!(dec.as_bytes_field(), 33);
-        // as_bytes_with_header, wrap_and_apply_header, buffer_too_short,
-        // fixed, and raw_fixed are encoder-only reserved names; on the
-        // decoder side they keep the raw snake_case.
-        assert_eq!(dec.as_bytes_with_header(), 44);
+        // as_body_bytes / as_bytes_with_header are on DECODER_RESERVED too.
+        assert_eq!(dec.as_body_bytes_field(), 33);
+        assert_eq!(dec.as_bytes_with_header_field(), 44);
+        // wrap_and_apply_header, fixed, raw_fixed, buffer_too_short are
+        // encoder-only reserved; decoder keeps raw snake_case.
         assert_eq!(dec.wrap_and_apply_header(), 55);
         assert_eq!(dec.fixed(), 66);
         assert_eq!(dec.raw_fixed(), 77);

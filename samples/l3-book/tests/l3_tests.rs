@@ -46,7 +46,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
         .symbol(b"X")?;
     let _len = complete.encoded_length_with_header();
 
-    let dec = L3BookDecoder::try_from(complete.as_bytes())?;
+    let dec = L3BookDecoder::try_from(complete.as_bytes_with_header())?;
     let _ts = dec.exchange_timestamp();
     assert!(dec.is_active());
     let e = dec.into_bids()?.next().transpose()?.unwrap();
@@ -300,7 +300,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
     assert!(len > 0);
 
     // Decode and verify var-data round-trip.
-    let dec = L3BookVarDataDecoder::try_from(complete.as_bytes())?;
+    let dec = L3BookVarDataDecoder::try_from(complete.as_bytes_with_header())?;
     let mut bids = dec.into_bids()?;
     let e = bids.next().transpose()?.unwrap();
     let mut orders = e.into_orders()?;
@@ -379,7 +379,7 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
     let _actual = complete.encoded_length_with_header();
 
     // Verify ragged structure.
-    let dec = L3BookVarDataDecoder::try_from(complete.as_bytes())?;
+    let dec = L3BookVarDataDecoder::try_from(complete.as_bytes_with_header())?;
     let mut bids = dec.into_bids()?;
     let e1 = bids.next().transpose()?.unwrap();
     let mut o1 = e1.into_orders()?;
@@ -755,7 +755,7 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(len, actual, "depth-3 staged length must match actual");
 
     // Decode and verify the ragged structure.
-    let dec = Depth3TestDecoder::try_from(complete.as_bytes())?;
+    let dec = Depth3TestDecoder::try_from(complete.as_bytes_with_header())?;
     let mut lvl = dec.into_levels()?;
     let l1 = lvl.next().transpose()?.unwrap();
     let mut it1 = l1.into_items()?;

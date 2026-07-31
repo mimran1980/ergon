@@ -135,7 +135,7 @@ proptest! {
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
 
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
         prop_assert_eq!(serial_number, decoded.serial_number());
@@ -195,7 +195,7 @@ proptest! {
         let car = car.model(&model).unwrap();
         let car = car.activation_code(&activation).unwrap();
 
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let after_perf = decoded
             .into_fuel_figures()
@@ -270,7 +270,7 @@ proptest! {
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
 
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
         let mut fuel_iter = decoded.into_fuel_figures().unwrap();
@@ -321,7 +321,7 @@ fn zero_length_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let car = car.model(b"").unwrap();
     let car = car.activation_code(b"").unwrap();
 
-    let encoded = car.as_bytes();
+    let encoded = car.as_bytes_with_header();
     let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
     assert_eq!(0, decoded.serial_number());
@@ -380,7 +380,7 @@ fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     let car = car.model(b"MAX").unwrap();
     let car = car.activation_code(b"MAX").unwrap();
 
-    let encoded = car.as_bytes();
+    let encoded = car.as_bytes_with_header();
     let decoded = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
     assert_eq!(u64::MAX, decoded.serial_number());

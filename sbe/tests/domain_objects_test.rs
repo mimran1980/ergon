@@ -276,7 +276,7 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.model(b"Civic VTi")?;
         let complete = car.activation_code(b"abcdef")?;
         assert!(complete.encoded_length_with_header() > 0);
-        let encoded = complete.as_bytes().to_vec();
+        let encoded = complete.as_bytes_with_header().to_vec();
 
         let dec = CarDecoder::try_from(&encoded[..]).unwrap();
         let d: CarDomain = dec.into();
@@ -332,7 +332,7 @@ fn car_domain_clone_eq_debug() -> Result<(), Box<dyn std::error::Error>> {
             .model(b"Y")?
             .activation_code(b"Z")?;
         assert!(c.encoded_length_with_header() > 0);
-        let encoded = c.as_bytes();
+        let encoded = c.as_bytes_with_header();
         let d1: CarDomain = CarDecoder::try_from(&encoded[..]).unwrap().into();
         let d2 = d1.clone();
         assert_eq!(d1, d2);
@@ -365,7 +365,7 @@ fn car_domain_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
             .model(b"")?
             .activation_code(b"")?;
         assert!(c.encoded_length_with_header() > 0);
-        let encoded = c.as_bytes();
+        let encoded = c.as_bytes_with_header();
         let d: CarDomain = CarDecoder::try_from(&encoded[..]).unwrap().into();
         assert!(d.fuel_figures.is_empty());
         assert!(d.performance_figures.is_empty());
@@ -420,7 +420,7 @@ fn l3_domain_nested_groups_vardata() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             Ok(())
         }).unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let d: L3BookDomain = L3BookDecoder::try_from(&encoded[..]).unwrap().into();
 
         assert_eq!(d.timestamp, 111);
@@ -470,7 +470,7 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
                 level.orders(12, |orders| -> Result<(), sbe_rt::EncodeError> {
                     for i in 0..12u64 {
                         let id = format!("ORD-{:03}", i);
-                        orders.add(|o| { o.order_qty((i+1) as i64); o.order_id(id.as_bytes())?; Ok(()) })?;
+                        orders.add(|o| { o.order_qty((i+1) as i64); o.order_id(id.as_bytes_with_header())?; Ok(()) })?;
                     }
                     Ok(())
                 })?;
@@ -478,7 +478,7 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             Ok(())
         }).unwrap().asks(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let d: L3BookDomain = L3BookDecoder::try_from(&encoded[..]).unwrap().into();
 
         assert_eq!(d.bids.len(), 1);
@@ -486,7 +486,7 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
         for i in 0..12usize {
             assert_eq!(d.bids[0].orders[i].order_qty, (i as i64) + 1);
             let expected = format!("ORD-{:03}", i);
-            assert_eq!(d.bids[0].orders[i].order_id, expected.as_bytes());
+            assert_eq!(d.bids[0].orders[i].order_id, expected.as_bytes_with_header());
         }
         assert!(d.asks.is_empty());
         println!("l3_domain_12_orders: PASSED");
@@ -540,7 +540,7 @@ fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
             asks.add(|l| { l.price(50100).qty(300); Ok(()) })?;
             Ok(())
         }).unwrap();
-        let encoded = complete.as_bytes().to_vec();
+        let encoded = complete.as_bytes_with_header().to_vec();
 
         let dom: DepthResponseDomain = DepthResponseDecoder::try_from(&encoded[..]).unwrap().into();
 
@@ -643,7 +643,7 @@ fn car_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.model(b"Civic VTi")?;
         let complete = car.activation_code(b"abcdef")?;
         assert!(complete.encoded_length_with_header() > 0);
-        let flyweight_bytes = complete.as_bytes().to_vec();
+        let flyweight_bytes = complete.as_bytes_with_header().to_vec();
 
         let dec = CarDecoder::try_from(&flyweight_bytes[..]).unwrap();
         let d: CarDomain = dec.into();
@@ -702,7 +702,7 @@ fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.model(b"Test")?;
         let complete = car.activation_code(b"abc")?;
         assert!(complete.encoded_length_with_header() > 0);
-        let fb = complete.as_bytes().to_vec();
+        let fb = complete.as_bytes_with_header().to_vec();
 
         let dec = CarDecoder::try_from(&fb[..]).unwrap();
         let d: CarDomain = dec.into();
@@ -747,7 +747,7 @@ fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std
             .manufacturer(b"Honda")?
             .model(b"Civic")?
             .activation_code(b"abc")?;
-        let encoded = complete.as_bytes().to_vec();
+        let encoded = complete.as_bytes_with_header().to_vec();
         let d = CarDomain::try_from_decoder(CarDecoder::try_from(&encoded[..])?)?;
         assert_eq!(d.manufacturer, "Honda");
         assert_eq!(d.model, "Civic");

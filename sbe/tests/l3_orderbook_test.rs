@@ -129,7 +129,7 @@ fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             Ok(())
         }).unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let decoder = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(decoder.timestamp(), 12345, "timestamp");
         assert_eq!(decoder.sequence(), 1, "sequence");
@@ -207,7 +207,7 @@ fn l3_roundtrip_3_orders_per_level() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             Ok(())
         }).unwrap().asks(0, |_| Ok(())).unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let dec = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(dec.timestamp(), 999);
         let levels: Vec<_> = dec.into_bids().unwrap().collect();
@@ -276,7 +276,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
             })?;
             Ok(())
         }).unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let dec = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(dec.timestamp(), 555);
         assert_eq!(dec.sequence(), 42);
@@ -293,7 +293,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
             let e = entry.as_ref().unwrap();
             assert_eq!(e.order_qty(), 10, "bid order {} qty", i);
             let expected = format!("ORDER-{:02}", i);
-            assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "bid order {} id", i);
+            assert_eq!(e.order_id().unwrap(), expected.as_bytes_with_header(), "bid order {} id", i);
         }
         let asks = bids.finish().unwrap().into_asks().unwrap();
         let ask_levels: Vec<_> = asks.collect();
@@ -307,7 +307,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
             let e = entry.as_ref().unwrap();
             assert_eq!(e.order_qty(), 10, "ask order {} qty", i);
             let expected = format!("ASK-{:-3}", i);
-            assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "ask order {} id", i);
+            assert_eq!(e.order_id().unwrap(), expected.as_bytes_with_header(), "ask order {} id", i);
         }
         println!("12 orders per level (bids + asks): PASSED");
         "#,

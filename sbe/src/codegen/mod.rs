@@ -1556,6 +1556,12 @@ fn generate_owner_consuming_stages(
             pub fn encoded_length(&self) -> usize {
                 self.tail_start - self.pos
             }
+            /// Total message length including the schema-declared header.
+            /// Pure arithmetic: body length + `HEADER_LENGTH`.
+            #[inline]
+            pub fn encoded_length_with_header(&self) -> usize {
+                self.tail_start - self.pos + #header_size_lit
+            }
             /// Bytes after this message/entry.
             #[inline]
             pub fn remaining(&self) -> &'a [u8] {
@@ -6685,10 +6691,14 @@ fn generate_message_encoder(
         });
     }
 
+    // Associated constants live on the *defaulted* concrete impl so
+    // `CarEncoder::TEMPLATE_ID` needs no turbofish. Instance methods go on
+    // the generic `H` impl so HeaderAbsent and HeaderPresent share setters.
+    let mut impl_consts = proc_macro2::TokenStream::new();
     let mut impl_contents = proc_macro2::TokenStream::new();
 
     if is_fixed {
-        impl_contents.extend(quote::quote! {
+        impl_consts.extend(quote::quote! {
             pub const SCHEMA_ID: u16 = #schema_id_lit;
             pub const SCHEMA_VERSION: u16 = #schema_version_lit;
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
@@ -6708,6 +6718,11 @@ fn generate_message_encoder(
             pub const fn compute_length_with_header() -> usize {
                 Self::ENCODED_LENGTH
             }
+            pub const HEADER_TEMPLATE: [u8; #header_size_lit] = [#(#hdr_lits),*];
+            const _HEADER_TEMPLATE_LEN: () =
+                assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
+        });
+        impl_contents.extend(quote::quote! {
             /// Absolute offset of this message within the original buffer
             /// (the `msg_offset` argument passed to `wrap`).
             #[inline]
@@ -6737,7 +6752,7 @@ fn generate_message_encoder(
                 #[doc = "Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`"]
             }
         };
-        impl_contents.extend(quote::quote! {
+        impl_consts.extend(quote::quote! {
             pub const SCHEMA_ID: u16 = #schema_id_lit;
             pub const SCHEMA_VERSION: u16 = #schema_version_lit;
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
@@ -6748,25 +6763,42 @@ fn generate_message_encoder(
             #max_doc_attr
             pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
             const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            pub const HEADER_TEMPLATE: [u8; #header_size_lit] = [#(#hdr_lits),*];
+            const _HEADER_TEMPLATE_LEN: () =
+                assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
         });
 
         // compute_length() — convenience factory for the staged length builder
         if !encoded_len_gen.standalone.is_empty() {
             let el_ident = syn::Ident::new(&format!("{name}EncodedLength"), span);
-            impl_contents.extend(quote::quote! {
+            impl_consts.extend(quote::quote! {
                 #[inline]
                 pub const fn compute_length() -> #el_ident {
                     #el_ident::new()
                 }
             });
         }
-    }
+        impl_contents.extend(quote::quote! {
+            /// Absolute offset of this message within the original buffer
+            /// (the `msg_offset` argument passed to `wrap`).
+            #[inline]
+            pub const fn message_offset(&self) -> usize {
+                self.msg_offset
+            }
 
-    // HEADER_TEMPLATE
-    impl_contents.extend(quote::quote! {
-        pub const HEADER_TEMPLATE: [u8; #header_size_lit] = [#(#hdr_lits),*];
-        const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
-    });
+            /// Absolute current write cursor within the original buffer.
+            #[inline]
+            pub const fn limit(&self) -> usize {
+                self.pos
+            }
+
+            /// The complete original buffer this encoder wraps.
+            #[inline]
+            pub fn buffer(&self) -> &[u8] {
+                self.buf
+            }
+        });
+    }
 
     // ── Hot-path bounds check: one cmp, cold error construction ──
     // The error path is `#[cold] #[inline(never)]` so the hot path is a single
@@ -6785,19 +6817,26 @@ fn generate_message_encoder(
             }
         }
     };
-    impl_contents.extend(cold_check);
+    // Constructors + cold helper on the concrete (default-H) impl so
+    // `CarEncoder::try_wrap_and_apply_header` needs no turbofish.
+    impl_consts.extend(cold_check);
 
+    // Body-only wrap: HeaderAbsent so as_bytes_with_header is not available.
     let wrap_fn = quote::quote! {
         /// Wrap a mutable buffer for encoding with bounds validation.
-        /// Returns an error if the buffer is too short.
+        /// Does **not** write the message header (`HeaderAbsent`).
         /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
+        /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
         #[inline]
-        pub fn try_wrap(buf: &'a mut [u8], msg_offset: usize) -> Result<Self, sbe_rt::EncodeError> {
+        pub fn try_wrap(
+            buf: &'a mut [u8],
+            msg_offset: usize,
+        ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
             if #needed_lit > buf.len().saturating_sub(msg_offset) {
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
             let body_pos = msg_offset + #header_size_lit;
-            Ok(Self {
+            Ok(#name_encoder_ident {
                 buf,
                 msg_offset,
                 pos: body_pos + #block_length_lit,
@@ -6805,7 +6844,7 @@ fn generate_message_encoder(
             })
         }
     };
-    impl_contents.extend(wrap_fn);
+    impl_consts.extend(wrap_fn);
 
     let wrap_apply_body = quote::quote! {
         // Optional-field nullification is NOT applied by default — call
@@ -6813,30 +6852,41 @@ fn generate_message_encoder(
         if #needed_lit > buf.len().saturating_sub(pos) {
             return Err(Self::buffer_too_short(buf, pos, #needed_lit));
         }
-        buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
+        buf[pos..pos + #header_size_lit]
+            .copy_from_slice(&Self::HEADER_TEMPLATE);
         let body_pos = pos + #header_size_lit;
-        Ok(Self { buf, msg_offset: pos, pos: body_pos + #block_length_lit, _header: core::marker::PhantomData })
+        Ok(#name_encoder_ident {
+            buf,
+            msg_offset: pos,
+            pos: body_pos + #block_length_lit,
+            _header: core::marker::PhantomData,
+        })
     };
     let wrap_apply_fn = quote::quote! {
         /// Wrap a mutable buffer, write the header, with bounds validation.
         /// Returns an error if the buffer is too short.
         /// Prefer [`Self::wrap_and_apply_header`] for the fast path.
         #[inline]
-        pub fn try_wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
+        pub fn try_wrap_and_apply_header(
+            buf: &'a mut [u8],
+            pos: usize,
+        ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
             #wrap_apply_body
         }
     };
-    impl_contents.extend(wrap_apply_fn);
+    impl_consts.extend(wrap_apply_fn);
 
     // Claim-compatible wrap: validates buffer is exactly ENCODED_LENGTH bytes.
     // For use with try_claim / pre-sized claim buffers where the buffer is pre-sized to the message.
     if is_fixed {
-        impl_contents.extend(quote::quote! {
+        impl_consts.extend(quote::quote! {
             /// Wrap a mutable buffer sized exactly to `ENCODED_LENGTH` bytes.
             /// For use with claim buffers (`try_claim`) where the caller has
             /// already allocated exactly the right size.
             #[inline]
-            pub fn wrap_into_claim(buf: &'a mut [u8]) -> Result<Self, sbe_rt::EncodeError> {
+            pub fn wrap_into_claim(
+                buf: &'a mut [u8],
+            ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
                 if buf.len() < Self::ENCODED_LENGTH {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         needed: Self::ENCODED_LENGTH,
@@ -7093,7 +7143,8 @@ fn generate_message_encoder(
             }
         }
         // Field id / offset / length / MetaAttribute (also on encoder, Java parity).
-        impl_contents.extend(emit_field_consts(f));
+        // Field NULL/MIN/MAX consts on concrete impl — turbofish-free access.
+        impl_consts.extend(emit_field_consts(f));
     }
 
     // No partial as_bytes on incomplete stages — complete-message byte/length
@@ -7102,7 +7153,9 @@ fn generate_message_encoder(
     // name such as `written_prefix()`."
 
     // Encoded-length support: strategy-classified (computed above).
-    impl_contents.extend(encoded_len_gen.encoder_impl.clone());
+    // Length helpers are associated functions — keep on concrete impl for
+    // turbofish-free `CarEncoder::compute_encoded_length_with_message_header(...)`.
+    impl_consts.extend(encoded_len_gen.encoder_impl.clone());
 
     // A complete, owned, latest-version snapshot of every required fixed
     // field. Optional fields are `Option<T>`; constants are excluded.
@@ -7217,19 +7270,20 @@ fn generate_message_encoder(
         });
     }
 
-    if total_tail > 0 {
-        ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a> {
-                #impl_contents
-            }
-        });
-    } else {
-        ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a> {
-                #impl_contents
-            }
-        });
-    }
+    // Concrete (default H) for associated constants + constructors — no turbofish.
+    ts.extend(quote::quote! {
+        impl<'a> #name_encoder_ident<'a> {
+            #impl_consts
+        }
+    });
+    // Generic over H so body-only wrap (HeaderAbsent) can set fields and run
+    // the same stage chain. Default `H = HeaderPresent` keeps the happy path
+    // inference-friendly.
+    ts.extend(quote::quote! {
+        impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
+            #impl_contents
+        }
+    });
 
     if total_tail > 0 {
         let mut tail_idx = 0;
@@ -7257,7 +7311,7 @@ fn generate_message_encoder(
                 syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&g.name)), span);
 
             ts.extend(quote::quote! {
-                impl<'a> #current_stage<'a> {
+                impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
                     /// Encode this group with a known count up front. Closure may
                     /// return `()` or `Result<(), E>` (via
                     /// Closures return `GroupResult`; `?` just works. a
@@ -7268,7 +7322,7 @@ fn generate_message_encoder(
                         mut self,
                         count: #count_ty,
                         f: F,
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
+                    ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError>
                     where
                                                 F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
@@ -7315,7 +7369,7 @@ fn generate_message_encoder(
                     pub fn #g_snake_unknown<F>(
                         mut self,
                         f: F,
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
+                    ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError>
                     where
                                                 F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
@@ -7424,13 +7478,13 @@ fn generate_message_encoder(
             };
 
             ts.extend(quote::quote! {
-                impl<'a> #current_stage<'a> {
+                impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
                     #[inline]
                     #[must_use]
                     pub fn #vd_snake(
                         mut self,
                         data: &[u8],
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError> {
+                    ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError> {
                         #checked_body
                         #shared_body
                     }
@@ -7440,7 +7494,7 @@ fn generate_message_encoder(
                     pub fn #vd_snake_unchecked(
                         mut self,
                         data: &[u8],
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError> {
+                    ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError> {
                         #shared_body
                     }
 
@@ -7469,7 +7523,7 @@ fn generate_message_encoder(
                         mut self,
                         exact_len: usize,
                         f: F,
-                    ) -> Result<#next_stage<'a>, E>
+                    ) -> Result<#next_stage<'a, H>, E>
                     where
                         E: From<sbe_rt::EncodeError>,
                         F: FnOnce(&mut [u8]) -> Result<(), E>,
@@ -7506,10 +7560,10 @@ fn generate_message_encoder(
             tail_idx += 1;
         }
 
-        // Complete state: body/header byte views, encoded lengths on the final stage struct
+        // Complete state: body methods on any H; header bytes only on HeaderPresent.
         let complete_ident = &stage_idents[total_tail];
         ts.extend(quote::quote! {
-            impl<'a> #complete_ident<'a> {
+            impl<'a, H: sbe_rt::HeaderState> #complete_ident<'a, H> {
                 /// SBE message body bytes (excluding the message header).
                 #[inline]
                 pub fn as_body_bytes(&self) -> &[u8] {
@@ -7521,7 +7575,8 @@ fn generate_message_encoder(
                 pub fn encoded_length(&self) -> usize {
                     self.pos - self.msg_offset - #header_size_lit
                 }
-                /// Total SBE message length including the header.
+                /// Total SBE message length including the header region.
+                /// Pure arithmetic — available for body-only wraps too.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.pos - self.msg_offset
@@ -7544,7 +7599,7 @@ fn generate_message_encoder(
         });
     } else {
         ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a> {
+            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
                 /// SBE message body bytes (excluding the message header).
                 #[inline]
                 pub fn as_body_bytes(&self) -> &[u8] {
@@ -7556,7 +7611,8 @@ fn generate_message_encoder(
                 pub fn encoded_length(&self) -> usize {
                     self.pos - self.msg_offset - #header_size_lit
                 }
-                /// Total SBE message length including the header.
+                /// Total SBE message length including the header region.
+                /// Pure arithmetic — available for body-only wraps too.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.pos - self.msg_offset
@@ -7642,20 +7698,37 @@ fn generate_message_encoder(
         ts.extend(quote::quote! {
             impl<'a> #name_encoder_ident<'a> {
                 /// Wrap a mutable buffer for encoding — no bounds check.
+                /// Does **not** write the message header (`HeaderAbsent`).
                 /// Caller guarantees the buffer is large enough.
-                /// This is the default fast path (matching sbe-tool's `wrap`).
                 #[inline]
-                pub fn wrap(buf: &'a mut [u8], msg_offset: usize) -> Self {
-                    #name_encoder_ident { buf, msg_offset, pos: msg_offset + #needed_lit, _header: core::marker::PhantomData }
+                pub fn wrap(
+                    buf: &'a mut [u8],
+                    msg_offset: usize,
+                ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
+                    #name_encoder_ident {
+                        buf,
+                        msg_offset,
+                        pos: msg_offset + #needed_lit,
+                        _header: core::marker::PhantomData,
+                    }
                 }
 
                 /// Wrap a mutable buffer, write the header, and return the encoder.
                 /// No bounds check — caller guarantees the buffer is large enough.
                 /// This is the default fast path (matching sbe-tool's `wrap`).
                 #[inline]
-                pub fn wrap_and_apply_header(buf: &'a mut [u8], msg_offset: usize) -> Self {
-                    buf[msg_offset..msg_offset + #hs_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
-                    #name_encoder_ident { buf, msg_offset, pos: msg_offset + #needed_lit, _header: core::marker::PhantomData }
+                pub fn wrap_and_apply_header(
+                    buf: &'a mut [u8],
+                    msg_offset: usize,
+                ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
+                    buf[msg_offset..msg_offset + #hs_lit]
+                        .copy_from_slice(&#name_encoder_ident::HEADER_TEMPLATE);
+                    #name_encoder_ident {
+                        buf,
+                        msg_offset,
+                        pos: msg_offset + #needed_lit,
+                        _header: core::marker::PhantomData,
+                    }
                 }
             }
         });
