@@ -591,7 +591,7 @@ impl AeronCluster {
             .correlation_id(correlation_id)
             .request_type(request_type);
         let complete = enc.payload(payload)?;
-        let bytes = complete.as_bytes();
+        let bytes = complete.as_bytes_with_header();
         let r = self.ingress.offer_raw(bytes, Handlers::NONE);
         offer_result("admin_request", r)
     }

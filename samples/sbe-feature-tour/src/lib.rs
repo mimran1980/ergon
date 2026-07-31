@@ -330,7 +330,7 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
     let hdr = MessageHeader(hdr_bytes);
     let trusted = CarDecoder::wrap(
         valid_car,
-        8,
+        0,
         hdr.block_length() as usize,
         hdr.version(),
     );

@@ -11,7 +11,7 @@ fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Err
     let mut data = [0u8; 256];
     let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0);
     enc.leadership_term_id(42).cluster_session_id(99).timestamp(1234567890);
-    let bytes = enc.as_ref().to_vec();
+    let bytes = enc.as_bytes_with_header().to_vec();
     let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&bytes, 0)?;
     assert_eq!(dec.leadership_term_id(), 42);
     assert_eq!(dec.cluster_session_id(), 99);
@@ -130,8 +130,8 @@ fn test_whole_buffer_returns_entire_frame() -> Result<(), Box<dyn std::error::Er
     buf[SessionMessageHeaderEncoder::ENCODED_LENGTH..].copy_from_slice(payload);
 
     let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
-    assert_eq!(dec.whole_buffer().len(), total);
-    assert_eq!(dec.whole_buffer(), buf.as_slice());
+    assert_eq!(dec.buffer().len(), total);
+    assert_eq!(dec.buffer(), buf.as_slice());
     Ok(())
 }
 
@@ -150,7 +150,7 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
     enc.leadership_term_id(7).cluster_session_id(99).timestamp(42);
 
     // remaining_mut() gives the unwritten region — chain the next encoder
-    SessionKeepAliveEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)
+    SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
         .leadership_term_id(7)
         .cluster_session_id(99);
 

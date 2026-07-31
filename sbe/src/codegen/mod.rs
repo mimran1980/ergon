@@ -6793,10 +6793,10 @@ fn generate_message_encoder(
         /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
         #[inline]
         pub fn try_wrap(buf: &'a mut [u8], msg_offset: usize) -> Result<Self, sbe_rt::EncodeError> {
-            let body_pos = msg_offset + #header_size_lit;
-            if #needed_lit > buf.len().saturating_sub(body_pos) {
+            if #needed_lit > buf.len().saturating_sub(msg_offset) {
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
+            let body_pos = msg_offset + #header_size_lit;
             Ok(Self {
                 buf,
                 msg_offset,
@@ -6810,11 +6810,11 @@ fn generate_message_encoder(
     let wrap_apply_body = quote::quote! {
         // Optional-field nullification is NOT applied by default — call
         // `apply_nulls()` if you want null sentinels.
-        let body_pos = pos + #header_size_lit;
-        if #needed_lit > buf.len().saturating_sub(body_pos) {
+        if #needed_lit > buf.len().saturating_sub(pos) {
             return Err(Self::buffer_too_short(buf, pos, #needed_lit));
         }
         buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
+        let body_pos = pos + #header_size_lit;
         Ok(Self { buf, msg_offset: pos, pos: body_pos + #block_length_lit, _header: core::marker::PhantomData })
     };
     let wrap_apply_fn = quote::quote! {
