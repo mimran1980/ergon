@@ -114,7 +114,9 @@ code. The types are zero-sized and identical across modules.
 | `10e5284e` | Typestate (second attempt — encoder only) |
 | `02d416c5` | Decoder stays non-generic |
 | `a234114d` | Bounds check fix, cluster API migration, feature tour fix |
-| _(uncommitted)_ | Baseline test fixes (99/99), golden regeneration, migration script cleanup |
+| `e9e5aee1` | H propagation, consumer migration, golden regen, ergonomics tests |
+| `c1f4c152` | HANDOVER verification checklist |
+| `9953a9b0` | Absolute field writes + diagnostic bench wrap migration |
 
 ## Release readiness verification
 
@@ -224,7 +226,7 @@ An early incomplete migration left message-relative field writes, which only wor
 - [x] Clippy clean for ergo-sbe + ergo-aeron-cluster
 - [x] Diagnostic benches green: alignment / layout_access / codec_matrix (`--test`); align_offset_probe
 - [x] Absolute coords: field writers use `msg_offset + header + field` (non-zero offset encode)
-- [ ] Regenerate sbe-tool reference crates: `scripts/regenerate-sbe-tool-reference.sh` (only if sbe-tool API surface changed; wire parity green without regen)
+- [x] sbe-tool reference regen: **N/A** — no sbe-tool API/surface change; wire parity green (23 + 52) without regenerating references
 - [x] Verify golden file is byte-identical to regeneration
 - [x] Commit remaining working-tree changes (baseline/golden/H propagation/consumers + abs-offset fix)
 - [x] No leftover scripts: `apply_*.py` and `process_files.py` absent
