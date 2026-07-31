@@ -1012,22 +1012,21 @@ pub fn set_event_code(&mut self, val: Option<EventCode>) { … }
 
 This was rejected for three reasons:
 
-1. **Wire incompatibility.** `Option` adds a Rust discriminant outside the SBE
-   encoding. There is no extra byte on the wire for `Some` vs `None` — the null
-   sentinel lives *inside* the enum's own value range. Encoding `None` as the
-   null sentinel and `Some(v)` as `v` is possible, but it breaks symmetry with
-   sbe-tool (which uses the raw value directly) and complicates the generated
-   code with value↔Option mapping on every access.
+1. **API complexity.** Using `Option<EventCode>` at every access point forces
+   every consumer to `.unwrap()` or match, even when the field is known to be
+   populated. The `NullVal` approach gives you a plain `EventCode` type — if you
+   care about null, check `code == EventCode::NullVal`; if you don't, just use
+   it. (The wire encoding itself would be compatible either way: `None` maps to
+   the null sentinel, `Some(v)` maps to `v`. The issue is ergonomics, not wire
+   format.)
 
-2. **Size bloat at scale.** A message with 8 enum fields would carry 8 `Option`
-   discriminants in the generated Rust struct (16 bytes on the stack for the
-   tags, plus padding). The wire has none of that — the null sentinel is just
-   another integer in the same 1/2/4-byte field.
+2. **Generated code complexity.** Every field site that uses `Option<EventCode>`
+   needs value↔Option mapping in both accessor directions, inflating the
+   generated code for no wire-format gain.
 
-3. **API friction.** `Option<EventCode>` forces every consumer to `.unwrap()` or
-   match, even when the field is known to be populated. The `NullVal` approach
-   gives you a plain `EventCode` type — if you care about null, check
-   `code == EventCode::NullVal`; if you don't, just use it.
+3. **Schema intent.** The schema declares a null sentinel as part of the enum's
+   own value domain, not as a separate presence flag. A `NullVal` variant
+   reflects that intent directly in the Rust type.
 
 The chosen design adds a `NullVal` variant to every generated enum. It is the
 same size as any other variant, wire-compatible with sbe-tool, and bears no
@@ -1035,7 +1034,6 @@ runtime cost:
 
 ```rust,no_run
 // ergo-sbe generated (conceptual)
-#[non_exhaustive]
 pub enum EventCode {
     NullVal = 255,  // or schema-declared nullValue
     Ok = 200,
@@ -1520,6 +1518,75 @@ cargo test --manifest-path samples/exchange-example/Cargo.toml   # conversion on
 If **edition 2021** (and an older MSRV) would unblock you, open an issue — happy
 to maintain a 2021 path if there is real demand. Say what toolchain you need
 (e.g. 1.75 / 1.80).
+
+---
+
+## Advanced
+
+### Code-generation hooks
+
+> **Niche feature.** Hooks are aimed at users who need to inject custom derives or
+> impls into generated code — serde, custom validation, company-internal traits.
+> Most workflows don't need them; skip this section unless you recognise your
+> use case.
+
+Hooks let you append arbitrary Rust tokens after each generated item (enum, set,
+composite, message decoder/encoder, domain struct). The closure receives an
+[`ItemContext`](https://docs.rs/ergo-sbe/latest/ergo_sbe/enum.ItemContext.html)
+with structured field/variant/choice metadata, plus a `schema` reference for
+full IR access.
+
+**Example — add serde Serialize + Deserialize to every enum, set, and DTO:**
+
+```rust,no_run
+// build.rs
+use ergo_sbe::{ItemContext, quote};
+
+fn serde_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
+    match ctx {
+        ItemContext::Enum { name, variants, .. } => {
+            let ident = quote::format_ident!("{name}");
+            let labels: Vec<_> = variants.iter().map(|v| v.label.clone()).collect();
+            let names: Vec<_> = variants.iter().map(|v| quote::format_ident!("{}", v.name)).collect();
+            vec![quote::quote! {
+                impl serde::Serialize for #ident {
+                    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                        s.serialize_str(match self {
+                            #(Self::#names => #labels,)*
+                            _ => "NullVal",
+                        })
+                    }
+                }
+            }]
+        }
+        ItemContext::Set { name, choices, .. } => {
+            let ident = quote::format_ident!("{name}");
+            let is: Vec<_> = choices.iter().map(|c| quote::format_ident!("is_{}", c.snake_name)).collect();
+            let labels: Vec<_> = choices.iter().map(|c| c.label.clone()).collect();
+            vec![quote::quote! {
+                impl serde::Serialize for #ident {
+                    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                        let mut names = Vec::new();
+                        #(if self.#is() { names.push(#labels); })*
+                        names.serialize(s)
+                    }
+                }
+            }]
+        }
+        _ => vec![],
+    }
+}
+
+let config = GenerationConfig::new("msgs").with_hook(serde_hook);
+```
+
+Each `ItemContext` variant carries the fields, variants, or choices defined in
+the schema — use them to build `#[derive(...)]` annotations, custom `impl`
+blocks, or trait implementations. Hooks fire in registration order; the returned
+tokens are appended after the generated item.
+
+Full runnable example with serde + serde_json round-trip:
+[`hook_serde_test`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/hook_serde_test.rs).
 
 ---
 

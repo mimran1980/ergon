@@ -66,8 +66,10 @@ credentials, challenges, and binary response data remain byte slices. Text
 fields declared by the protocol are validated before being exposed as `&str`.
 
 The high-level client, configuration, listener, state, error, offer, and claim
-types are the consumer-facing surface. Generated codec re-exports and Java
-harness support exist for repository tests and are not stable application APIs.
+types are the primary consumer-facing surface. Generated protocol codecs are
+re-exported via [`cluster_codec_types`] for applications that need direct
+encode/decode of cluster session messages; their API surface follows the same
+stability guarantees as the rest of the crate.
 
 ## Decoding chained session messages
 
@@ -76,6 +78,7 @@ message). Use the decoder's `remaining()` to get the payload, then
 `AnyMessage::decode` to parse the next message:
 
 ```rust,no_run
+use ergo_aeron_cluster::cluster_codec_types::*;
 
 // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes)
 let total = SessionMessageHeaderEncoder::ENCODED_LENGTH

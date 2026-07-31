@@ -653,7 +653,9 @@ impl Generator {
                 let value: i64 = if encoding_type == PrimitiveType::Char {
                     val.as_bytes().first().copied().unwrap_or(0) as i64
                 } else {
-                    val.parse::<i64>().ok()?
+                    // Parse as i128 first to cover uint64 discriminants
+                    // above i64::MAX (rare but schema-legal).
+                    val.parse::<i128>().ok()? as i64
                 };
                 Some(crate::EnumVariantInfo {
                     name: to_pascal_case(&t.name),
@@ -714,18 +716,16 @@ impl Generator {
         let fields: Vec<_> = tokens
             .iter()
             .filter(|t| {
-                t.signal == crate::ir::Signal::Encoding
-                    || t.signal == crate::ir::Signal::BeginComposite
+                // Only include primitive fields — skip composite containers,
+                // enum refs, and set refs (which use BeginComposite/Enum/Set signals).
+                t.signal == crate::ir::Signal::Encoding && t.encoding.primitive_type.is_some()
             })
             .filter(|t| !t.name.is_empty())
             .map(|t| crate::FieldInfo {
                 name: to_snake_case(&t.name),
-                rust_type: crate::structured_ir::rust_type(
-                    t.encoding
-                        .primitive_type
-                        .unwrap_or(crate::PrimitiveType::UInt8),
-                )
-                .to_string(),
+                // SAFETY: guarded by the primitive_type.is_some() filter above
+                rust_type: crate::structured_ir::rust_type(t.encoding.primitive_type.unwrap())
+                    .to_string(),
                 offset: t.encoding.offset.unwrap_or(0),
                 since_version: t.encoding.since_version,
                 semantic_type: t.encoding.semantic_type.clone(),
@@ -1738,11 +1738,19 @@ fn generate_message_decoder(
             }
 
             /// Offset of the message header within [`Self::whole_buffer`].
-            /// `whole_buffer()[message_offset()..]` is the full SBE frame
+            /// `whole_buffer()[offset..]` is the full SBE frame
             /// (header + body) for this message.
+            ///
+            /// Returns `None` when the decoder was constructed from a
+            /// body-slice that does not include the header region
+            /// (i.e. when the wrapped `pos` is less than `HEADER_LENGTH`).
             #[inline]
-            pub const fn message_offset(&self) -> usize {
-                self.pos - Self::HEADER_LENGTH
+            pub const fn message_offset(&self) -> Option<usize> {
+                if self.pos >= Self::HEADER_LENGTH {
+                    Some(self.pos - Self::HEADER_LENGTH)
+                } else {
+                    None
+                }
             }
 
             /// The complete original buffer that this decoder wraps
@@ -1991,8 +1999,7 @@ fn generate_message_decoder(
                         });
                     }
 
-                    let fn_snake_ident =
-                        syn::Ident::new(&fname_snake, proc_macro2::Span::call_site());
+                    let fn_snake_ident = fname_ident.clone();
                     // Fixed-length array accessors are INFALLIBLE: a fixed array that
                     // lies within the message body is guaranteed in-bounds by the
                     // version/block-length check below (and by wrap, which validates the
@@ -2091,7 +2098,7 @@ fn generate_message_decoder(
                                      Some(val)\n\
                                  }}\n\
                              }}\n",
-                            snake = fname_snake,
+                            snake = fname_ident,
                             rt = r_type,
                             version_guard = version_guard,
                             offset = offset,
@@ -2881,23 +2888,10 @@ fn generate_message_decoder(
             conversions,
             domain_types,
             domain_var_data,
+            hooks,
+            schema,
         );
         ts.extend(domain_ts);
-        // Run hooks for domain structs
-        if !hooks.is_empty() {
-            let domain_name = format!("{name}Domain");
-            let fields = message_field_infos(&msg.fields);
-            let ctx = crate::ItemContext::DomainStruct {
-                schema: &schema,
-                name: domain_name,
-                fields,
-            };
-            for hook in hooks.iter() {
-                for token_stream in hook(&ctx) {
-                    ts.extend(token_stream);
-                }
-            }
-        }
     }
 
     ts
@@ -2916,6 +2910,8 @@ fn generate_domain_objects(
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     domain_var_data: crate::config::DomainVarData,
+    hooks: &crate::config::Hooks,
+    schema: &crate::Schema,
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
@@ -2934,6 +2930,8 @@ fn generate_domain_objects(
         domain_types,
         domain_var_data,
         false, // is_entry — this is a message, not a group entry
+        hooks,
+        schema,
         &mut ts,
         span,
     );
@@ -3112,6 +3110,8 @@ fn generate_domain_recursive(
     domain_types: &[(crate::ConversionSelector, String)],
     domain_var_data: crate::config::DomainVarData,
     is_entry: bool,
+    hooks: &crate::config::Hooks,
+    schema: &crate::Schema,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
 ) {
@@ -3386,6 +3386,8 @@ fn generate_domain_recursive(
             domain_types,
             domain_var_data,
             true,
+            hooks,
+            schema,
             ts,
             span,
         );
@@ -3456,6 +3458,26 @@ fn generate_domain_recursive(
     }
 
     let encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);
+
+    // Only message-level decoders have try_wrap_and_apply_header;
+    // entry decoders use wrap() and don't get try_from_slice_with_header.
+    let try_from_slice_method: proc_macro2::TokenStream = if !is_entry {
+        quote::quote! {
+            /// Decode directly from a byte slice — validates the header
+            /// and materialises the full domain object in one call.
+            pub fn try_from_slice_with_header(
+                buf: &[u8],
+                message_offset: usize,
+            ) -> Result<Self, sbe_rt::DecodeError> {
+                Self::try_from_decoder(
+                    #decoder_ident::try_wrap_and_apply_header(buf, message_offset)?,
+                )
+            }
+        }
+    } else {
+        proc_macro2::TokenStream::new()
+    };
+
     ts.extend(quote::quote! {
         /// Owned domain object — application-layer counterpart to the flyweight decoder.
         /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
@@ -3474,6 +3496,8 @@ fn generate_domain_recursive(
                     #(#from_exprs),*
                 })
             }
+
+            #try_from_slice_method
         }
 
         impl<'a> From<#decoder_ident<'a>> for #domain_ident {
@@ -3483,6 +3507,54 @@ fn generate_domain_recursive(
             }
         }
     });
+
+    // Fire hooks for this domain struct (message DTO or entry DTO).
+    // Build context including group and var-data field info.
+    if !hooks.is_empty() {
+        let mut ctx_fields = message_field_infos(fields);
+        // Append synthetic field entries for groups (Vec<EntryDomain>)
+        for g in groups {
+            ctx_fields.push(crate::FieldInfo {
+                name: to_snake_case(&g.name),
+                rust_type: format!("Vec<{}EntryDomain>", to_pascal_case(&g.name)),
+                offset: 0,
+                since_version: g.since_version,
+                semantic_type: None,
+                presence: "required",
+                null_value: None,
+                deprecated: false,
+                description: g.description.clone(),
+            });
+        }
+        // Append synthetic field entries for var-data
+        for vd in var_data {
+            let vd_ty = match domain_var_data {
+                crate::config::DomainVarData::Bytes => "Vec<u8>",
+                crate::config::DomainVarData::LossyStrings => "String",
+            };
+            ctx_fields.push(crate::FieldInfo {
+                name: to_snake_case(&vd.name),
+                rust_type: vd_ty.to_string(),
+                offset: 0,
+                since_version: vd.since_version,
+                semantic_type: vd.character_encoding.clone(),
+                presence: "required",
+                null_value: None,
+                deprecated: false,
+                description: vd.description.clone(),
+            });
+        }
+        let ctx = crate::ItemContext::DomainStruct {
+            schema,
+            name: struct_prefix.to_string() + "Domain",
+            fields: ctx_fields,
+        };
+        for hook in hooks.iter() {
+            for token_stream in hook(&ctx) {
+                ts.extend(token_stream);
+            }
+        }
+    }
 
     if is_entry {
         // Entry domains: encode_into for use inside group closures

@@ -248,7 +248,7 @@ impl std::fmt::Debug for ItemContext<'_> {
 }
 
 /// Token streams returned by hooks — appended after the generated item.
-pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream>;
+pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream> + Send + Sync;
 
 /// Wrapper so hooks can live in [`GenerationConfig`]. Not [`Clone`] or
 /// [`PartialEq`] — hook closures can't be cloned or compared.
@@ -578,7 +578,7 @@ impl GenerationConfig {
     #[must_use]
     pub fn with_hook<F>(mut self, hook: F) -> Self
     where
-        F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + 'static,
+        F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + Send + Sync + 'static,
     {
         self.hooks.push(Box::new(hook));
         self

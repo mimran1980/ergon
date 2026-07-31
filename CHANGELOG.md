@@ -5,8 +5,8 @@
 ## [0.1.7] — 2026-07-30
 
 ### Added
-- Hook system for custom code generation — inject serde derives, custom impls, or extra tokens into generated types
-- `remaining()`, `whole_buffer()`, and `message_offset()` on flat decoders and encoders
+- Hook system for custom code generation — append custom impls (e.g. serde) or extra tokens after generated types
+- `remaining()`, `whole_buffer()`, and `message_offset()` on flat decoders; `remaining()` and `remaining_mut()` on encoders
 - Field name clash renaming — `_field` suffix when a schema field collides with a reserved method
 
 ### Fixed

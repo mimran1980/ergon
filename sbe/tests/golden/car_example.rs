@@ -4208,6 +4208,16 @@ impl CarDomain {
             activation_code: dec.activation_code().unwrap_or(&[]).to_vec(),
         })
     }
+    /// Decode directly from a byte slice — validates the header
+    /// and materialises the full domain object in one call.
+    pub fn try_from_slice_with_header(
+        buf: &[u8],
+        message_offset: usize,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        Self::try_from_decoder(
+            CarDecoder::try_wrap_and_apply_header(buf, message_offset)?,
+        )
+    }
 }
 impl<'a> From<CarDecoder<'a>> for CarDomain {
     fn from(dec: CarDecoder<'a>) -> Self {
