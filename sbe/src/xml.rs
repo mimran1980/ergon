@@ -31,6 +31,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use roxmltree::{Document, Node, NodeType};
 
@@ -59,6 +60,25 @@ fn source_name() -> String {
         .clone()
 }
 
+// Not an intrinsic-lock lint — std OnceLock<Mutex<…>> has no deadlock risk.
+// The lock is held only for the HashSet insert/clear, never across await or
+// recursive calls.
+#[allow(clippy::mutex_atomic)]
+fn warn_seen() -> &'static Mutex<HashSet<String>> {
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SEEN.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Reset the per-process dedup set. Called at the start of every public
+/// `parse_*` entry point so two distinct schema documents parsed in one
+/// process cannot false-suppress each other's warnings.
+pub(crate) fn reset_warn_once() {
+    if let Ok(mut seen) = warn_seen().lock() {
+        seen.clear();
+    }
+}
+
 /// De-duplicates parser warnings within a process. `xi:include` inlines a
 /// shared schema (e.g. `common-types.xml`) into every consuming file, so a
 /// naive `eprintln!` fires once per consumer parsed in the same `cargo build`
@@ -68,20 +88,8 @@ fn source_name() -> String {
 ///
 /// When `node` is provided the warning includes the source file, line,
 /// column, and the relevant XML line.
-/// Reset the per-process dedup set. Called at the start of every public
-/// `parse_*` entry point so two distinct schema documents parsed in one
-/// process cannot false-suppress each other's warnings.
-pub(crate) fn reset_warn_once() {
-    use std::sync::{Mutex, OnceLock};
-    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    if let Some(seen) = SEEN.get() {
-        seen.lock().unwrap().clear();
-    }
-}
 fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>) {
-    use std::sync::{Mutex, OnceLock};
-    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    let seen = warn_seen();
     let dedup_key = if let Some(n) = node {
         format!("{}:{}", n.range().start, message)
     } else {

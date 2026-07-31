@@ -93,11 +93,11 @@ const SCHEMA_XML: &str = r#"<messageSchema package="hookmeta" id="7" version="0"
       <validValue name="High">9223372036854775808</validValue>
     </enum>
     <composite name="Outer">
-      <type name="realField" primitiveType="int64"/>
-      <composite name="inner">
+      <type name="realField" primitiveType="int64" semanticType="UTCTimestamp" description="a real field"/>
+      <composite name="inner" description="the inner composite">
         <type name="x" primitiveType="uint16"/>
       </composite>
-      <enum name="flag" encodingType="uint8">
+      <enum name="flag" encodingType="uint8" description="the flag enum">
         <validValue name="Off">0</validValue>
         <validValue name="On">1</validValue>
       </enum>

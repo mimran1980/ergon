@@ -7,6 +7,7 @@
 
 ### Changed
 - `EnumVariantInfo.value` (hook metadata) widened from `i64` to `i128` so `uint64` discriminants above `i64::MAX` are represented faithfully
+- `just release` no longer runs the mutating `just fix` recipe; clippy already gates in `just test`
 
 ### Fixed
 - Hook closures now require `Send + Sync`, keeping `GenerationConfig` thread-safe
@@ -20,9 +21,6 @@
 - `channel_cstr` / `udp_endpoint_cstr` removed from `pub use` re-export (internal helpers only)
 - Crate-doc README link in `ergo-aeron-cluster` now points at `main` branch
 - `parity_manifest_test` now only collects `#[test]` / `test_` functions, not arbitrary helpers
-
-### Changed
-- `just release` no longer runs the mutating `just fix` recipe; clippy already gates in `just test`
 
 ## [0.1.7] — 2026-07-30
 

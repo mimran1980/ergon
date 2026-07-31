@@ -526,26 +526,30 @@ impl Generator {
         false
     }
 
+    #[allow(missing_docs)]
+    fn auto_register_bool_enums(&mut self, schema: &Schema) {
+        if !self.config.auto_bool_domain {
+            return;
+        }
+        let elements = partition_tokens(&schema.ir.tokens);
+        for e in &elements.enums {
+            let name = &e[0].name;
+            if crate::structured_ir::is_bool_value_enum(&elements, name) {
+                let sel = crate::ConversionSelector::named_type(name);
+                if !self.config.domain_types.iter().any(|(s, _)| s == &sel) {
+                    self.config.domain_types.push((sel, "bool".into()));
+                }
+            }
+        }
+    }
+
     /// Generate one Rust module for `schema` (file name from config module name).
     ///
     /// # Errors
     ///
     /// [`GenerateError`] if conversion selectors match nothing or collide.
     pub fn generate(&mut self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
-        // When enable_bool_domain_type() is set, auto-register bool converters
-        // for all detected boolean enums before any codegen runs.
-        if self.config.auto_bool_domain {
-            let elements = partition_tokens(&schema.ir.tokens);
-            for e in &elements.enums {
-                let name = &e[0].name;
-                if crate::structured_ir::is_bool_value_enum(&elements, name) {
-                    let sel = crate::ConversionSelector::named_type(name);
-                    if !self.config.domain_types.iter().any(|(s, _)| s == &sel) {
-                        self.config.domain_types.push((sel, "bool".into()));
-                    }
-                }
-            }
-        }
+        self.auto_register_bool_enums(schema);
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.validate_header_values(schema)?;
@@ -576,20 +580,8 @@ impl Generator {
         &mut self,
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
-        // Auto-register bool converters for every schema, matching generate().
-        if self.config.auto_bool_domain {
-            for (schema, _) in schemas {
-                let elements = partition_tokens(&schema.ir.tokens);
-                for e in &elements.enums {
-                    let name = &e[0].name;
-                    if crate::structured_ir::is_bool_value_enum(&elements, name) {
-                        let sel = crate::ConversionSelector::named_type(name);
-                        if !self.config.domain_types.iter().any(|(s, _)| s == &sel) {
-                            self.config.domain_types.push((sel, "bool".into()));
-                        }
-                    }
-                }
-            }
+        for (schema, _) in schemas {
+            self.auto_register_bool_enums(schema);
         }
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
@@ -734,19 +726,47 @@ impl Generator {
     ) -> crate::ItemContext<'s> {
         use crate::structured_ir::MemberType;
         let name = to_pascal_case(&tokens[0].name);
-        // Look up the member's own `BeginField` token to recover schema-level
-        // metadata (`semanticType`, `nullValue`, `description`, `deprecated`)
-        // that `CompositeMember` does not carry — `FieldInfo` documents these
-        // as populated from the schema.
-        let member_token = |member_name: &str| {
+        // Metadata lives on different tokens depending on the member kind:
+        // - primitive: the `BeginField` wrapper carries it (inner token is the
+        //   unnamed `<type>` encoding);
+        // - nested composite/enum/set: the `BeginField` carries only offsets;
+        //   `semanticType`/`nullValue`/`description`/`deprecated` live on the
+        //   inner `BeginComposite`/`BeginEnum`/`BeginSet` token.
+        let member_field_token = |member_name: &str| {
             tokens
                 .iter()
                 .find(|t| t.signal == crate::ir::Signal::BeginField && t.name == member_name)
         };
+        let inner_type_token = |field_name: &str| {
+            // Find the BeginField for this member, then peek at the adjacent
+            // non-field token that carries the actual type's encoding metadata.
+            let mut it = tokens.iter().skip_while(|t| {
+                !(t.signal == crate::ir::Signal::BeginField && t.name == field_name)
+            });
+            let _ = it.next(); // skip the BeginField itself
+            it.find(|t| {
+                matches!(
+                    t.signal,
+                    crate::ir::Signal::Encoding
+                        | crate::ir::Signal::BeginComposite
+                        | crate::ir::Signal::BeginEnum
+                        | crate::ir::Signal::BeginSet
+                )
+            })
+        };
         let fields: Vec<_> = crate::structured_ir::parse_composite_members(tokens)
             .into_iter()
             .map(|m| {
-                let tok = member_token(&m.name);
+                let field_tok = member_field_token(&m.name);
+                let inner_tok = inner_type_token(&m.name);
+                // For primitives the field wrapper carries metadata; for
+                // containers the inner token does.
+                let enc = match &m.member_type {
+                    MemberType::Primitive { .. } => field_tok.map(|t| &t.encoding),
+                    MemberType::Composite { .. }
+                    | MemberType::Enum { .. }
+                    | MemberType::Set { .. } => inner_tok.map(|t| &t.encoding),
+                };
                 let (rust_type, presence) = match &m.member_type {
                     MemberType::Primitive {
                         prim,
@@ -759,12 +779,12 @@ impl Generator {
                             Some(len) => format!("[{base}; {len}]"),
                             None => base.to_string(),
                         };
-                        let presence_str = match presence {
+                        let ps = match presence {
                             crate::ir::Presence::Optional => "optional",
                             crate::ir::Presence::Constant => "constant",
                             crate::ir::Presence::Required => "required",
                         };
-                        (rt, presence_str)
+                        (rt, ps)
                     }
                     MemberType::Composite { name, .. } => (to_pascal_case(name), "required"),
                     MemberType::Enum { name, .. } => (to_pascal_case(name), "required"),
@@ -775,11 +795,11 @@ impl Generator {
                     rust_type,
                     offset: m.offset,
                     since_version: m.since_version,
-                    semantic_type: tok.and_then(|t| t.encoding.semantic_type.clone()),
+                    semantic_type: enc.and_then(|e| e.semantic_type.clone()),
                     presence,
-                    null_value: tok.and_then(|t| t.encoding.null_value),
-                    deprecated: tok.is_some_and(|t| t.encoding.deprecated),
-                    description: tok.and_then(|t| t.encoding.description.clone()),
+                    null_value: enc.and_then(|e| e.null_value),
+                    deprecated: enc.is_some_and(|e| e.deprecated),
+                    description: enc.and_then(|e| e.description.clone()),
                 }
             })
             .collect();
@@ -6799,6 +6819,7 @@ fn generate_message_encoder(
         "message_offset",
         "after_this_message",
         "wrap",
+        "wrap_and_apply_header",
         "try_wrap",
         "try_wrap_and_apply_header",
         "wrap_into_claim",
@@ -6811,6 +6832,8 @@ fn generate_message_encoder(
         "as_bytes_with_header",
         "encoded_length",
         "encoded_length_with_header",
+        // Emitted when the message has optional fields (line ~6787).
+        "apply_nulls",
     ];
 
     for f in &msg.fields {
