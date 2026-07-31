@@ -20,7 +20,7 @@ fn test_generate_car_example() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(&xml_content).expect("Failed to parse SBE schema");
     let schema = Schema::from_ir(ir);
 
-    let generator = Generator::new(GenerationConfig::new("car_example"));
+    let mut generator = Generator::new(GenerationConfig::new("car_example"));
     let module_set = generator.generate(&schema).unwrap();
 
     let module = module_set.modules().next().unwrap();

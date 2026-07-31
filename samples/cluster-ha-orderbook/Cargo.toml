@@ -14,6 +14,7 @@ default = []
 # Multi-node Java kill-leader HA harness (needs built Aeron jars).
 test-harness = [
     "ergo-aeron-cluster/test-harness",
+    "dep:rusteron-client",
     "dep:rusteron-media-driver",
     "dep:serial_test",
 ]
@@ -22,6 +23,10 @@ test-harness = [
 ergo-sbe = { path = "../../sbe" }
 
 [dependencies.rusteron-media-driver]
+version = "0.2"
+optional = true
+
+[dependencies.rusteron-client]
 version = "0.2"
 optional = true
 

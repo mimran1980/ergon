@@ -11,6 +11,30 @@ SBE_UPSTREAM="$ROOT/simple-binary-encoding"
 DEST="$ROOT/sbe/tests/sbe_tool_reference"
 STAGING="$(mktemp -d "${TMPDIR:-/tmp}/ergon-sbe-tool-reference.XXXXXX")"
 INIT_SCRIPT="$STAGING/generate-rust-one.gradle"
+MODE="write"
+
+case "${1:-}" in
+  "")
+    ;;
+  --check)
+    MODE="check"
+    ;;
+  -h|--help)
+    echo "usage: $0 [--check]"
+    echo "  --check  regenerate into a temporary directory and fail on any difference"
+    exit 0
+    ;;
+  *)
+    echo "error: unknown argument: $1" >&2
+    echo "usage: $0 [--check]" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$#" -gt 1 ]]; then
+  echo "error: expected at most one argument" >&2
+  exit 2
+fi
 
 cleanup() {
   rm -rf "$STAGING"
@@ -47,6 +71,32 @@ gradle.rootProject {
                     'sbe.xinclude.aware': 'true',
                     'sbe.target.language': 'Rust')
             args = [schema]
+        }
+
+        tasks.register('generateCarDataToFile', JavaExec) {
+            mainClass.set('uk.co.real_logic.sbe.examples.ExampleUsingGeneratedStub')
+            classpath = project(':sbe-samples').sourceSets.main.runtimeClasspath
+            jvmArgs('--add-opens', 'java.base/jdk.internal.misc=ALL-UNNAMED')
+            def out = project.findProperty('baseline_out')
+            if (out == null) {
+                throw new GradleException('baseline_out property is required')
+            }
+            systemProperties('sbe.encoding.filename': out)
+            args = []
+            standardOutput = new ByteArrayOutputStream()
+        }
+
+        tasks.register('generateCarExtensionDataToFile', JavaExec) {
+            mainClass.set('uk.co.real_logic.sbe.examples.ExampleUsingGeneratedStubExtension')
+            classpath = project(':sbe-samples').sourceSets.main.runtimeClasspath
+            jvmArgs('--add-opens', 'java.base/jdk.internal.misc=ALL-UNNAMED')
+            def out = project.findProperty('extension_out')
+            if (out == null) {
+                throw new GradleException('extension_out property is required')
+            }
+            systemProperties('sbe.encoding.filename': out)
+            args = []
+            standardOutput = new ByteArrayOutputStream()
         }
     }
 }
@@ -210,17 +260,44 @@ print(f"  prepared {key} -> parity_{key}")
 PY
 done
 
-# All packages have been generated and prepared successfully. Preserve the
+fixtures="$STAGING/fixtures"
+mkdir -p "$fixtures"
+./gradlew -q -I "$INIT_SCRIPT" \
+  generateCarDataToFile generateCarExtensionDataToFile \
+  -Pbaseline_out="$fixtures/car_example_baseline_data.sbe" \
+  -Pextension_out="$fixtures/car_example_extension_data.sbe"
+
+if [[ "$MODE" == "check" ]]; then
+  status=0
+  for entry in "${schemas[@]}"; do
+    key="${entry##*|}"
+    if ! diff -ru "$DEST/$key" "$STAGING/prepared/$key"; then
+      status=1
+    fi
+  done
+  for fixture in car_example_baseline_data.sbe car_example_extension_data.sbe; do
+    if ! cmp -s "$ROOT/sbe/tests/fixtures/$fixture" "$fixtures/$fixture"; then
+      echo "difference: sbe/tests/fixtures/$fixture" >&2
+      status=1
+    fi
+  done
+  if [[ "$status" -ne 0 ]]; then
+    echo "error: checked-in sbe-tool references are stale" >&2
+    exit "$status"
+  fi
+  echo "ok: ${#schemas[@]} reference crates and 2 fixtures match sbe-tool $(git rev-parse HEAD)"
+  exit 0
+fi
+
+# All packages and fixtures have been generated successfully. Preserve the
 # checked-in README while replacing only generated package directories.
 find "$DEST" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
 for entry in "${schemas[@]}"; do
   key="${entry##*|}"
   mv "$STAGING/prepared/$key" "$DEST/$key"
 done
-
-./gradlew -q generateCarExampleDataFile generateCarExampleExtensionDataFile
-cp -f rust/car_example_baseline_data.sbe "$ROOT/sbe/tests/fixtures/"
-cp -f rust/car_example_extension_data.sbe "$ROOT/sbe/tests/fixtures/"
+cp -f "$fixtures/car_example_baseline_data.sbe" "$ROOT/sbe/tests/fixtures/"
+cp -f "$fixtures/car_example_extension_data.sbe" "$ROOT/sbe/tests/fixtures/"
 
 count="$(find "$DEST" -mindepth 2 -maxdepth 2 -name Cargo.toml | wc -l | tr -d ' ')"
 if [[ "$count" != "${#schemas[@]}" ]]; then
@@ -228,5 +305,6 @@ if [[ "$count" != "${#schemas[@]}" ]]; then
   exit 1
 fi
 
-echo "done: regenerated $count crates from sbe-tool $(git rev-parse HEAD)"
+echo "done: regenerated $count crates and 2 fixtures from sbe-tool $(git rev-parse HEAD)"
+echo "run: $0 --check"
 echo "run: cargo test -p ergo-sbe --test sbe_tool_multi_schema_wire_parity_test --test sbe_tool_wire_parity_test"

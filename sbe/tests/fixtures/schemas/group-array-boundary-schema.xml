@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="group_array_boundary"
+                   id="305"
+                   version="0"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <type name="Values" primitiveType="uint32" length="2"/>
+    </types>
+    <sbe:message name="ArrayBoundaryMessage" id="1">
+        <group name="entries" id="1">
+            <field name="base" id="2" type="uint8"/>
+            <field name="values" id="3" type="Values"/>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>

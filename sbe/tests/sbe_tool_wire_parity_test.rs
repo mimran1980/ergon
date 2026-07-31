@@ -53,6 +53,9 @@
 
 // ── ergo-sbe Car (golden codegen snapshot) ────────────────────────────────
 
+// Keep the generated snapshot in generator formatting; stability_test compares
+// its canonical syntax rather than rustfmt layout.
+#[rustfmt::skip]
 #[path = "golden/car_example.rs"]
 mod ergo;
 
@@ -280,9 +283,9 @@ impl CarPayload {
         car.some_numbers(self.some_numbers);
         car.vehicle_code(self.vehicle_code);
         let mut extras = ErgoExtras::default();
-        extras.set_sun_roof(self.extras_bits & 0b001 != 0);
-        extras.set_sports_pack(self.extras_bits & 0b010 != 0);
-        extras.set_cruise_control(self.extras_bits & 0b100 != 0);
+        extras.sun_roof(self.extras_bits & 0b001 != 0);
+        extras.sports_pack(self.extras_bits & 0b010 != 0);
+        extras.cruise_control(self.extras_bits & 0b100 != 0);
         car.extras(extras);
         car.engine(ErgoEngine::new(
             self.engine_capacity,
@@ -353,9 +356,9 @@ impl CarPayload {
 
         let mut extras = ToolExtras::default();
         extras
-            .set_sun_roof(self.extras_bits & 0b001 != 0)
-            .set_sports_pack(self.extras_bits & 0b010 != 0)
-            .set_cruise_control(self.extras_bits & 0b100 != 0);
+            .sun_roof(self.extras_bits & 0b001 != 0)
+            .sports_pack(self.extras_bits & 0b010 != 0)
+            .cruise_control(self.extras_bits & 0b100 != 0);
         car.extras(extras);
 
         let mut engine = car.engine_encoder();
@@ -407,6 +410,13 @@ impl CarPayload {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 fn assert_frames_eq(label: &str, ergo: &[u8], tool: &[u8]) {
+    assert_eq!(
+        ergo.len(),
+        tool.len(),
+        "{label}: encoded length mismatch — ergon={}, sbe_tool={}",
+        ergo.len(),
+        tool.len()
+    );
     if ergo != tool {
         let n = ergo.len().min(tool.len());
         let mut first = None;
@@ -456,6 +466,10 @@ fn dual_encode(label: &str, p: &CarPayload) -> Vec<u8> {
     let tl = p.encode_tool(&mut tool_buf);
     let ergo = &ergo_buf[..el];
     let tool = &tool_buf[..tl];
+    assert_eq!(
+        el, tl,
+        "{label}: encoded length mismatch — ergon={el}, sbe_tool={tl}"
+    );
     assert_header_constants(ergo);
     assert_header_constants(tool);
     assert_frames_eq(label, ergo, tool);
@@ -472,9 +486,9 @@ fn assert_ergo_decodes_payload(frame: &[u8], p: &CarPayload) {
     assert_eq!(car.some_numbers(), p.some_numbers);
     assert_eq!(car.vehicle_code(), p.vehicle_code);
     let extras = car.extras();
-    assert_eq!(extras.sun_roof(), p.extras_bits & 0b001 != 0);
-    assert_eq!(extras.sports_pack(), p.extras_bits & 0b010 != 0);
-    assert_eq!(extras.cruise_control(), p.extras_bits & 0b100 != 0);
+    assert_eq!(extras.is_sun_roof(), p.extras_bits & 0b001 != 0);
+    assert_eq!(extras.is_sports_pack(), p.extras_bits & 0b010 != 0);
+    assert_eq!(extras.is_cruise_control(), p.extras_bits & 0b100 != 0);
     let eng = car.engine();
     assert_eq!(eng.capacity(), p.engine_capacity);
     assert_eq!(eng.num_cylinders(), p.engine_cylinders);
@@ -534,9 +548,9 @@ fn assert_tool_decodes_payload(frame: &[u8], p: &CarPayload) {
     assert_eq!(car.some_numbers(), p.some_numbers);
     assert_eq!(car.vehicle_code(), p.vehicle_code);
     let extras = car.extras();
-    assert_eq!(extras.get_sun_roof(), p.extras_bits & 0b001 != 0);
-    assert_eq!(extras.get_sports_pack(), p.extras_bits & 0b010 != 0);
-    assert_eq!(extras.get_cruise_control(), p.extras_bits & 0b100 != 0);
+    assert_eq!(extras.is_sun_roof(), p.extras_bits & 0b001 != 0);
+    assert_eq!(extras.is_sports_pack(), p.extras_bits & 0b010 != 0);
+    assert_eq!(extras.is_cruise_control(), p.extras_bits & 0b100 != 0);
 
     let engine = car.engine_decoder();
     assert_eq!(engine.capacity(), p.engine_capacity);

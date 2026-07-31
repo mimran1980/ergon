@@ -266,20 +266,13 @@ fn invalid_schema_fixtures_have_useful_miette_errors() -> Result<(), Box<dyn std
         "cyclic-refs-schema.xml",
         "bad-include.xml",
         "schema-with-bad-include.xml",
-        "issue567-invalid.xml",
     ];
 
     for name in cases {
         let path = fixture_path(name);
-        if !path.exists() {
-            // bad-include / schema-with-bad-include paths differ by layout.
-            continue;
-        }
+        assert!(path.is_file(), "{name}: invalid-schema fixture is missing");
         let err = match ergo_sbe::parse_file(&path) {
-            Ok(_) => {
-                // Some "invalid" issue fixtures are accepted by ergon; skip those.
-                continue;
-            }
+            Ok(_) => panic!("{name}: invalid schema unexpectedly parsed"),
             Err(e) => e,
         };
 

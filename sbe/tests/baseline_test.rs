@@ -15,7 +15,7 @@
 mod common;
 use common::{
     Paths, assert_source_ok, compile_and_run, compile_and_run_two_modules,
-    compile_and_run_with_feature, compile_fails, generate, run_fixture_test,
+    compile_and_run_with_feature, compile_fails_with_diagnostics, generate, run_fixture_test,
 };
 
 const MODULE: &str = "car_example";
@@ -206,7 +206,7 @@ fn generate_multi_schema_entry_point() -> Result<(), Box<dyn std::error::Error>>
     let s1 = Schema::from_ir(ir1);
     let ir2 = parse_file(&Paths::l3_orderbook_schema()).unwrap();
     let s2 = Schema::from_ir(ir2);
-    let g = Generator::new(GenerationConfig::new("multi_test"));
+    let mut g = Generator::new(GenerationConfig::new("multi_test"));
     let ms = g.generate_multi(&[(&s1, "mod1"), (&s2, "mod2")])?;
     let count = ms.modules().count();
     assert!(count >= 2, "expected >=2 modules, got {count}");
@@ -322,9 +322,9 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
 
         let extras = car.extras();
         assert_eq!(6, extras.raw(), "extras raw");
-        assert!(extras.cruise_control(), "cruiseControl");
-        assert!(extras.sports_pack(), "sportsPack");
-        assert!(!extras.sun_roof(), "sunRoof");
+        assert!(extras.is_cruise_control(), "cruiseControl");
+        assert!(extras.is_sports_pack(), "sportsPack");
+        assert!(!extras.is_sun_roof(), "sunRoof");
 
         // discountedModel is presence="constant" valueRef="Model.C"
         assert_eq!(Model::C, car.discounted_model(), "discountedModel");
@@ -435,8 +435,8 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
 
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
 
         car.engine(Engine::new(
@@ -494,9 +494,9 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!([97, 98, 99, 100, 101, 102], car2.vehicle_code(), "rt.vehicleCode");
 
         let extras2 = car2.extras();
-        assert!(extras2.cruise_control(), "rt.cruiseControl");
-        assert!(extras2.sports_pack(), "rt.sportsPack");
-        assert!(!extras2.sun_roof(), "rt.sunRoof");
+        assert!(extras2.is_cruise_control(), "rt.cruiseControl");
+        assert!(extras2.is_sports_pack(), "rt.sportsPack");
+        assert!(!extras2.is_sun_roof(), "rt.sunRoof");
 
         let e2 = car2.engine();
         assert_eq!(2000, e2.capacity(), "rt.engine.capacity");
@@ -556,8 +556,8 @@ fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
         car.some_numbers([1u32, 2, 3, 4]);
         car.vehicle_code([97, 98, 99, 100, 101, 102]);
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
 
         // Engine (composite) — same values as the sbe-tool/Java fixture
@@ -1423,6 +1423,32 @@ fn generated_code_has_inline_annotations() -> Result<(), Box<dyn std::error::Err
         "group decoder accessor `fuel_figures` missing #[inline]"
     );
     assert!(
+        src.contains("#[inline]\n    fn next(&mut self) -> Option<Self::Item>"),
+        "generated group Iterator::next missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    #[must_use]\n    pub fn fuel_figures<F>"),
+        "message group encoder `fuel_figures` missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    #[must_use]\n    pub fn manufacturer(\n        mut self,"),
+        "message var-data encoder `manufacturer` missing #[inline]"
+    );
+    assert!(
+        src.contains(
+            "#[inline]\n    #[must_use]\n    pub fn usage_description(\n        &mut self,"
+        ),
+        "entry var-data encoder `usage_description` missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    pub fn extras(&mut self, val: OptionalExtras)"),
+        "message set encoder `extras` missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    pub fn engine(&mut self, val: Engine)"),
+        "message composite encoder `engine` missing #[inline]"
+    );
+    assert!(
         inline_followed_by
             .iter()
             .any(|s| s.contains("fn is_empty(")),
@@ -1621,7 +1647,7 @@ fn encoder_wrap_short_buffer_returns_error() -> Result<(), Box<dyn std::error::E
 #[test]
 fn incomplete_encoder_has_no_complete_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "incomplete_bytes");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "incomplete_bytes",
         &src,
         r#"
@@ -1630,6 +1656,7 @@ fn incomplete_encoder_has_no_complete_bytes() -> Result<(), Box<dyn std::error::
         encoder.serial_number(1);
         let _ = encoder.as_bytes();
     "#,
+        &["no method named `as_bytes`"],
     );
     Ok(())
 }
@@ -2075,67 +2102,47 @@ fn var_data_after_version_mismatched_group_at_correct_offset()
     Ok(())
 }
 
-/// Every upstream issue-*.xml schema must either parse cleanly or produce
-/// a structured error (never panic). Phase 2 regression gate.
+/// Every supported upstream issue fixture must continue to parse cleanly.
 #[test]
-fn upstream_issue_schemas_parse_or_error_gracefully() -> Result<(), Box<dyn std::error::Error>> {
-    let schemas: &[(&str, bool)] = &[
-        ("issue435.xml", true),
-        ("issue472.xml", true),
-        ("issue483.xml", true),
-        ("issue488.xml", true),
-        ("issue496.xml", true),
-        ("issue505.xml", true),
-        ("issue560.xml", true),
-        ("issue567-valid.xml", true),
-        ("issue567-invalid.xml", true), // ergon parser handles this; "invalid" refers to upstream tool behaviour
-        ("issue661.xml", true),
-        ("issue827.xml", true),
-        ("issue835.xml", true),
-        ("issue847.xml", true),
-        ("issue848.xml", true),
-        ("issue849.xml", true),
-        ("issue889.xml", true),
-        ("issue895.xml", true),
-        ("issue910.xml", true),
-        ("issue967.xml", true),
-        ("issue972.xml", true),
-        ("issue984.xml", true),
-        ("issue987.xml", true),
-        ("issue1007.xml", true),
-        ("issue1028.xml", true),
-        ("issue1057.xml", true),
-        ("issue1066.xml", true),
+fn upstream_issue_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
+    let schemas = [
+        "issue435.xml",
+        "issue472.xml",
+        "issue483.xml",
+        "issue488.xml",
+        "issue496.xml",
+        "issue505.xml",
+        "issue560.xml",
+        "issue567-valid.xml",
+        // The pinned sbe-tool rejects this implementation-specific count range;
+        // FIX SBE itself does not make the schema invalid.
+        "issue567-invalid.xml",
+        "issue661.xml",
+        "issue827.xml",
+        "issue835.xml",
+        "issue847.xml",
+        "issue848.xml",
+        "issue849.xml",
+        "issue889.xml",
+        "issue895.xml",
+        "issue910.xml",
+        "issue967.xml",
+        "issue972.xml",
+        "issue984.xml",
+        "issue987.xml",
+        "issue1007.xml",
+        "issue1028.xml",
+        "issue1057.xml",
+        "issue1066.xml",
     ];
 
-    let mut parsed = 0usize;
-    let mut errored = 0usize;
-
-    for (name, expect_valid) in schemas {
+    for name in schemas {
         let path = Paths::sbe_tool_test_resource(name);
-        match ergo_sbe::parse_file(&path) {
-            Ok(_ir) => {
-                parsed += 1;
-                if !expect_valid {
-                    eprintln!("UNEXPECTED PASS: {name} (expected parse error)");
-                }
-            }
-            Err(e) => {
-                errored += 1;
-                let msg = format!("{e}");
-                assert!(!msg.is_empty(), "error for {name} must have a message");
-                if *expect_valid {
-                    eprintln!("PARSE FAIL: {name}: {msg}");
-                }
-            }
-        }
+        assert!(path.is_file(), "upstream issue fixture is missing: {name}");
+        ergo_sbe::parse_file(&path)
+            .unwrap_or_else(|error| panic!("{name}: supported schema failed to parse: {error}"));
     }
 
-    assert!(parsed + errored > 0, "no schemas processed");
-    println!(
-        "issue schemas: {parsed} parsed, {errored} errored ({} total)",
-        parsed + errored
-    );
     Ok(())
 }
 
@@ -2273,7 +2280,7 @@ fn nested_message_as_message_requires_ordered_consumption() -> Result<(), Box<dy
         "/tests/fixtures/schemas/nested-message-payload.xml"
     ));
     let (_schema, src) = generate(&path, "nested_msg_cf");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "nested_msg_cf",
         &src,
         r#"
@@ -2284,6 +2291,7 @@ fn nested_message_as_message_requires_ordered_consumption() -> Result<(), Box<dy
         let dec = OuterDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let _ = dec.into_payload_as_message();
     "#,
+        &["no method named `into_payload_as_message`"],
     );
     Ok(())
 }
@@ -2356,7 +2364,7 @@ fn decimal_converter_emits_conversion_traits() -> Result<(), Box<dyn std::error:
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_test")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     // try_generate validates the composite
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
@@ -2383,7 +2391,7 @@ fn conversion_rejects_nonexistent_type() -> Result<(), Box<dyn std::error::Error
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("bad")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let err = g.generate(&schema).unwrap_err();
     assert!(matches!(
         err,
@@ -2406,7 +2414,7 @@ fn decimal_converter_rejects_missing_composite() -> Result<(), Box<dyn std::erro
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("missing_dec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let err = g.generate(&schema).unwrap_err();
     assert!(matches!(
         err,
@@ -2443,7 +2451,7 @@ fn conversion_rejects_nonexistent_named_type() -> Result<(), Box<dyn std::error:
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("missing")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("DoesNotExist"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let err = g.generate(&schema).unwrap_err();
     assert!(
         err.to_string().contains("invalid conversion"),
@@ -2466,7 +2474,7 @@ fn generate_returns_error_on_invalid_decimal_composite() -> Result<(), Box<dyn s
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("panics")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let err = g.generate(&schema).unwrap_err();
     assert!(err.to_string().contains("NonExistent"));
     Ok(())
@@ -2497,7 +2505,7 @@ fn decimal_converter_skips_non_decimal_fields_and_messages()
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("mixed_dec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
     // The decimal field has raw _wire accessor and generic _as/_from methods.
@@ -2691,7 +2699,7 @@ fn decimal_converter_emits_wire_and_generic_methods() -> Result<(), Box<dyn std:
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_wire")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -2736,7 +2744,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
     let config = ergo_sbe::GenerationConfig::new("conv_domain")
         .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -2789,7 +2797,7 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_id")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -2941,7 +2949,7 @@ fn callback_escape_try_data_is_compile_fail() -> Result<(), Box<dyn std::error::
         "/tests/fixtures/schemas/nested-message-payload.xml"
     ));
     let (_schema, src) = generate(&path, "cb_escape");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "cb_escape",
         &src,
         r#"
@@ -2957,6 +2965,7 @@ fn callback_escape_try_data_is_compile_fail() -> Result<(), Box<dyn std::error::
             Ok(())
         });
     "#,
+        &["borrowed data escapes outside of closure"],
     );
     Ok(())
 }
@@ -2969,7 +2978,7 @@ fn consumed_encoder_stage_cannot_be_reused() -> Result<(), Box<dyn std::error::E
         "/tests/fixtures/schemas/nested-message-payload.xml"
     ));
     let (_schema, src) = generate(&path, "consume_reuse");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "consume_reuse",
         &src,
         r#"
@@ -2979,6 +2988,7 @@ fn consumed_encoder_stage_cannot_be_reused() -> Result<(), Box<dyn std::error::E
         let after_name = outer.app_name(b"t").unwrap();
         outer.trace_id(8); // outer consumed by app_name(), cannot reuse
     "#,
+        &["borrow of moved value: `outer`"],
     );
     Ok(())
 }
@@ -3102,7 +3112,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("entdec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 
@@ -3185,7 +3195,7 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("exact_matrix")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
-    let g = ergo_sbe::Generator::new(config);
+    let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
     let src = &modules.modules().next().unwrap().source;
 

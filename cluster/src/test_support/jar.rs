@@ -59,7 +59,7 @@ pub fn try_sha256(path: &Path) -> Result<String, ClusterError> {
 }
 
 /// Compute SHA-256 of a file (panics on tool failure).
-pub fn sha256(path: &PathBuf) -> String {
+pub fn sha256(path: &Path) -> String {
     try_sha256(path).unwrap_or_else(|e| panic!("{e}"))
 }
 

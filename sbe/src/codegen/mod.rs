@@ -74,7 +74,7 @@ pub struct GeneratedModule {
 ///
 /// ```
 /// # use std::path::Path;
-/// # fn example(generator: &ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// # fn example(generator: &mut ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
 /// let set = generator.generate(schema)?;
 /// for m in set.modules() {
 ///     std::fs::write(out_dir.join(&m.path), &m.source)?;
@@ -246,9 +246,56 @@ impl GenerationContext {
 ///     .unwrap();
 /// assert_eq!(modules.modules().len(), 1);
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Generator {
     config: GenerationConfig,
+}
+
+/// Extract [`crate::FieldInfo`] entries from message fields (constant fields
+/// excluded). Used by context builders and hook dispatch.
+fn message_field_infos(fields: &[MessageField]) -> Vec<crate::FieldInfo> {
+    fields
+        .iter()
+        .filter(|f| f.presence != Presence::Constant)
+        .map(|f| crate::FieldInfo {
+            name: to_snake_case(&f.name),
+            rust_type: f.field_type.rust_type_name(),
+            offset: f.offset,
+            since_version: f.since_version,
+            semantic_type: f.semantic_type.clone(),
+            presence: presence_str(f.presence),
+            null_value: f.null_value,
+            deprecated: f.deprecated,
+            description: f.description.clone(),
+        })
+        .collect()
+}
+
+fn presence_str(p: Presence) -> &'static str {
+    match p {
+        Presence::Required => "required",
+        Presence::Optional => "optional",
+        Presence::Constant => "constant",
+    }
+}
+
+/// Resolve a field accessor name, appending `_field` when it clashes
+/// with a reserved method name on the decoder/encoder.
+fn resolve_field_ident(
+    snake_name: &str,
+    wire_name: &Option<String>,
+    reserved: &[&str],
+) -> syn::Ident {
+    let method_name = wire_name.as_deref().unwrap_or(snake_name);
+    let resolved: &str = match () {
+        _ if wire_name.is_some() => method_name,
+        _ if reserved.contains(&snake_name) => {
+            // ponytail: allocate only on collision (rare, build-time only).
+            Box::leak(format!("{snake_name}_field").into_boxed_str())
+        }
+        _ => snake_name,
+    };
+    syn::Ident::new(resolved, proc_macro2::Span::call_site())
 }
 
 /// Warn if a shared type has version-gated members (`sinceVersion > 0`).
@@ -484,7 +531,21 @@ impl Generator {
     /// # Errors
     ///
     /// [`GenerateError`] if conversion selectors match nothing or collide.
-    pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
+    pub fn generate(&mut self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
+        // When enable_bool_domain_type() is set, auto-register bool converters
+        // for all detected boolean enums before any codegen runs.
+        if self.config.auto_bool_domain {
+            let elements = partition_tokens(&schema.ir.tokens);
+            for e in &elements.enums {
+                let name = &e[0].name;
+                if crate::structured_ir::is_bool_value_enum(&elements, name) {
+                    let sel = crate::ConversionSelector::named_type(name);
+                    if !self.config.domain_types.iter().any(|(s, _)| s == &sel) {
+                        self.config.domain_types.push((sel, "bool".into()));
+                    }
+                }
+            }
+        }
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.validate_header_values(schema)?;
@@ -573,7 +634,160 @@ impl Generator {
         Ok(modules)
     }
 
-    /// Inner generation — single schema with dedup flags. `shared` contains
+    /// Build an [`ItemContext::Enum`] from IR tokens.
+    fn build_enum_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
+        let name = to_pascal_case(&tokens[0].name);
+        let encoding_type = tokens[0]
+            .encoding
+            .primitive_type
+            .unwrap_or(PrimitiveType::UInt8);
+        let et_str = rust_type(encoding_type).to_string();
+        let variants: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.signal == crate::ir::Signal::Encoding)
+            .filter_map(|t| {
+                let val = t.encoding.constant_value.as_ref()?;
+                let value: i64 = if encoding_type == PrimitiveType::Char {
+                    val.as_bytes().first().copied().unwrap_or(0) as i64
+                } else {
+                    val.parse::<i64>().ok()?
+                };
+                Some(crate::EnumVariantInfo {
+                    name: to_pascal_case(&t.name),
+                    snake_name: to_snake_case(&t.name),
+                    label: t.name.clone(),
+                    value,
+                    description: t.encoding.description.clone(),
+                })
+            })
+            .collect();
+        crate::ItemContext::Enum {
+            schema,
+            name,
+            encoding_type: et_str,
+            variants,
+        }
+    }
+
+    /// Build a message decoder/encoder context from a [`MessageStructure`].
+    fn build_message_ctx<'s>(
+        msg: &MessageStructure,
+        kind: crate::ItemKind,
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
+        let name = to_pascal_case(&msg.name);
+        let name_with = |suffix: &str| format!("{name}{suffix}");
+        let fields = message_field_infos(&msg.fields);
+        let name = match kind {
+            crate::ItemKind::MessageDecoder => name_with("Decoder"),
+            crate::ItemKind::MessageEncoder => name_with("Encoder"),
+            _ => name,
+        };
+        match kind {
+            crate::ItemKind::MessageDecoder => crate::ItemContext::MessageDecoder {
+                schema,
+                name,
+                template_id: msg.id,
+                block_length: msg.block_length,
+                fields,
+            },
+            crate::ItemKind::MessageEncoder => crate::ItemContext::MessageEncoder {
+                schema,
+                name,
+                template_id: msg.id,
+                block_length: msg.block_length,
+                fields,
+            },
+            _ => unreachable!("build_message_ctx only for MessageDecoder/MessageEncoder"),
+        }
+    }
+
+    /// Build an [`ItemContext::Composite`] from IR tokens.
+    fn build_composite_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
+        let name = to_pascal_case(&tokens[0].name);
+        let fields: Vec<_> = tokens
+            .iter()
+            .filter(|t| {
+                t.signal == crate::ir::Signal::Encoding
+                    || t.signal == crate::ir::Signal::BeginComposite
+            })
+            .filter(|t| !t.name.is_empty())
+            .map(|t| crate::FieldInfo {
+                name: to_snake_case(&t.name),
+                rust_type: crate::structured_ir::rust_type(
+                    t.encoding
+                        .primitive_type
+                        .unwrap_or(crate::PrimitiveType::UInt8),
+                )
+                .to_string(),
+                offset: t.encoding.offset.unwrap_or(0),
+                since_version: t.encoding.since_version,
+                semantic_type: t.encoding.semantic_type.clone(),
+                presence: if t.encoding.null_value.is_some() {
+                    "optional"
+                } else {
+                    "required"
+                },
+                null_value: t.encoding.null_value,
+                deprecated: t.encoding.deprecated,
+                description: t.encoding.description.clone(),
+            })
+            .collect();
+        crate::ItemContext::Composite {
+            schema,
+            name,
+            fields,
+        }
+    }
+
+    /// Build an [`ItemContext::Set`] from IR tokens.
+    fn build_set_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
+        let name = to_pascal_case(&tokens[0].name);
+        let encoding_type = tokens[0]
+            .encoding
+            .primitive_type
+            .unwrap_or(PrimitiveType::UInt8);
+        let et_str = rust_type(encoding_type).to_string();
+        let choices: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.signal == crate::ir::Signal::Encoding)
+            .map(|t| crate::SetChoiceInfo {
+                name: to_pascal_case(&t.name),
+                snake_name: to_snake_case(&t.name),
+                label: t.name.clone(),
+                bit_position: t
+                    .encoding
+                    .constant_value
+                    .as_ref()
+                    .and_then(|v| v.parse::<u8>().ok())
+                    .unwrap_or(0),
+                description: t.encoding.description.clone(),
+            })
+            .collect();
+        crate::ItemContext::Set {
+            schema,
+            name,
+            encoding_type: et_str,
+            choices,
+        }
+    }
+
+    /// Run registered hooks and append returned tokens to `src`.
+    fn run_hooks(&self, ctx: &crate::ItemContext, src: &mut String) {
+        if !self.config.has_hooks() {
+            return;
+        }
+        self.config.run_hooks(ctx, src);
+    }
     /// type names already generated by earlier schemas; those types are skipped
     /// in this call (the caller arranges `pub use super::*;`).
     fn gen_schema(
@@ -641,6 +855,10 @@ impl Generator {
                 continue;
             }
             generate_enum(&mut src, enum_tokens);
+            if self.config.has_hooks() {
+                let ctx = Self::build_enum_ctx(enum_tokens, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
         }
 
         for set_tokens in &elements.sets {
@@ -649,6 +867,10 @@ impl Generator {
                 continue;
             }
             generate_set(&mut src, set_tokens);
+            if self.config.has_hooks() {
+                let ctx = Self::build_set_ctx(set_tokens, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
         }
 
         for composite_tokens in &elements.composites {
@@ -658,6 +880,10 @@ impl Generator {
             }
             let comp_byte_order = ir.byte_order;
             generate_composite(&mut src, composite_tokens, comp_byte_order);
+            if self.config.has_hooks() {
+                let ctx = Self::build_composite_ctx(composite_tokens, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
         }
 
         let header_pascal = to_pascal_case(&ir.header_type);
@@ -687,9 +913,16 @@ impl Generator {
                 &self.config.conversions,
                 &self.config.domain_types,
                 self.config.unchecked_companions,
+                &self.config.hooks,
+                schema,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
+            // Hooks for the message decoder
+            if self.config.has_hooks() {
+                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
             let encoder_ts = generate_message_encoder(
                 msg,
                 &elements,
@@ -703,6 +936,11 @@ impl Generator {
                 self.config.unchecked_companions,
             );
             src.push_str(&encoder_ts.to_string());
+            // Hooks for the message encoder
+            if self.config.has_hooks() {
+                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageEncoder, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
 
             // Decimal converter seam: for each field backed by a registered
             // Decimal composite, emit raw *_wire aliases and generic converted
@@ -720,7 +958,7 @@ impl Generator {
             generate_message_field_meta(&mut src, msg);
         }
 
-        // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions
+        // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions.
         if self.config.has_conversions() {
             let impl_blocks = generate_conversion_impl_blocks(
                 &elements,
@@ -879,11 +1117,11 @@ fn generate_owner_consuming_stages(
         let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
             pub struct #stage<'a> {
-                buf: &'a [u8],
-                pos: usize,
-                tail_start: usize,
-                acting_version: u16,
-                acting_block_length: usize,
+                pub(crate) buf: &'a [u8],
+                pub(crate) pos: usize,
+                pub(crate) tail_start: usize,
+                pub(crate) acting_version: u16,
+                pub(crate) acting_block_length: usize,
             }
         });
     }
@@ -1348,6 +1586,8 @@ fn generate_message_decoder(
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     _unchecked_companions: bool,
+    hooks: &crate::config::Hooks,
+    schema: &crate::Schema,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -1465,10 +1705,10 @@ fn generate_message_decoder(
     ts.extend(quote::quote! {
         #derive_attr
         pub struct #decoder_ident<'a> {
-            buf: &'a [u8],
-            pos: usize,
-            acting_version: u16,
-            acting_block_length: usize,
+            pub(crate) buf: &'a [u8],
+            pub(crate) pos: usize,
+            pub(crate) acting_version: u16,
+            pub(crate) acting_block_length: usize,
         }
     });
 
@@ -1495,6 +1735,34 @@ fn generate_message_decoder(
                     return None;
                 }
                 Some(&frame[Self::ENCODED_LENGTH..])
+            }
+
+            /// Offset of the message header within [`Self::whole_buffer`].
+            /// `whole_buffer()[message_offset()..]` is the full SBE frame
+            /// (header + body) for this message.
+            #[inline]
+            pub const fn message_offset(&self) -> usize {
+                self.pos - Self::HEADER_LENGTH
+            }
+
+            /// The complete original buffer that this decoder wraps
+            /// (may include data before this message if `try_wrap_and_apply_header`
+            /// was called with a non-zero `pos`).
+            /// Use [`Self::message_offset`] to locate where this message starts.
+            #[inline]
+            pub fn whole_buffer(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            /// Bytes after this message in the original buffer
+            /// (e.g. the application payload following a SessionMessageHeader).
+            /// Returns the slice starting after header + block body.
+            /// Clamps to `buf.len()` so truncated/invalid data returns
+            /// an empty slice rather than panicking.
+            #[inline]
+            pub fn remaining(&self) -> &'a [u8] {
+                let end = (self.pos + self.acting_block_length).min(self.buf.len());
+                &self.buf[end..]
             }
         });
     } else {
@@ -1631,7 +1899,23 @@ fn generate_message_decoder(
         let wire_name =
             field_has_conversion_free(f, conversions).then(|| format!("{fname_snake}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
-        let fname_ident = syn::Ident::new(method_name, proc_macro2::Span::call_site());
+        const DECODER_RESERVED: &[&str] = &[
+            "remaining",
+            "whole_buffer",
+            "message_offset",
+            "after_this_message",
+            "wrap",
+            "try_wrap_and_apply_header",
+            "header",
+            "encoded_length",
+            "encoded_length_with_header",
+            "as_bytes",
+            "as_ref_opt",
+            "verify",
+            "acting_version",
+            "acting_block_length",
+        ];
+        let fname_ident = resolve_field_ident(&fname_snake, &wire_name, DECODER_RESERVED);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -2250,7 +2534,7 @@ fn generate_message_decoder(
         };
         impl_body.extend(quote::quote! {
             #[inline]
-            fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+            pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 #version_check
                 let offset = self.#vd_tail_ident()?;
                 let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
@@ -2587,7 +2871,7 @@ fn generate_message_decoder(
     // So the impl is properly closed.
 
     if domain_objects {
-        ts.extend(generate_domain_objects(
+        let domain_ts = generate_domain_objects(
             msg,
             elements,
             &name,
@@ -2597,7 +2881,23 @@ fn generate_message_decoder(
             conversions,
             domain_types,
             domain_var_data,
-        ));
+        );
+        ts.extend(domain_ts);
+        // Run hooks for domain structs
+        if !hooks.is_empty() {
+            let domain_name = format!("{name}Domain");
+            let fields = message_field_infos(&msg.fields);
+            let ctx = crate::ItemContext::DomainStruct {
+                schema: &schema,
+                name: domain_name,
+                fields,
+            };
+            for hook in hooks.iter() {
+                for token_stream in hook(&ctx) {
+                    ts.extend(token_stream);
+                }
+            }
+        }
     }
 
     ts
@@ -2612,7 +2912,7 @@ fn generate_domain_objects(
     msg_name: &str,
     _parent_scope: &str,
     multi_message: bool,
-    _byte_order: ByteOrder,
+    byte_order: ByteOrder,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     domain_var_data: crate::config::DomainVarData,
@@ -2627,6 +2927,7 @@ fn generate_domain_objects(
         &msg.groups,
         &msg.var_data,
         elements,
+        byte_order,
         multi_message,
         msg_name,
         conversions,
@@ -2637,6 +2938,84 @@ fn generate_domain_objects(
         span,
     );
     ts
+}
+
+fn domain_entry_can_bulk_encode(
+    fields: &[MessageField],
+    groups: &[MessageGroup],
+    var_data: &[MessageVarData],
+    elements: &SchemaElements,
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+) -> bool {
+    groups.is_empty()
+        && var_data.is_empty()
+        && fields.iter().all(|f| {
+            f.presence == Presence::Constant
+                || (f.presence != Presence::Optional
+                    && f.since_version == 0
+                    && !field_has_conversion_free(f, conversions)
+                    && find_domain_type(f, domain_types).is_none()
+                    && !matches!(
+                        &f.field_type,
+                        FieldType::Enum { name, .. } if is_bool_enum(elements, name)
+                    ))
+        })
+}
+
+fn domain_bulk_slot_write_tokens(
+    fields: &[MessageField],
+    byte_order: ByteOrder,
+    span: proc_macro2::Span,
+) -> proc_macro2::TokenStream {
+    let to_endian = match byte_order {
+        ByteOrder::LittleEndian => syn::Ident::new("to_le_bytes", span),
+        ByteOrder::BigEndian => syn::Ident::new("to_be_bytes", span),
+    };
+    let mut writes = proc_macro2::TokenStream::new();
+    for f in fields {
+        if f.presence == Presence::Constant {
+            continue;
+        }
+        let f_name = syn::Ident::new(&to_snake_case(&f.name), span);
+        let f_offset = syn::Index::from(f.offset);
+        let f_size = syn::LitInt::new(&f.field_type.size().to_string(), span);
+        match &f.field_type {
+            FieldType::Composite { .. } => {
+                writes.extend(quote::quote! {
+                    slot[#f_offset..#f_offset + #f_size]
+                        .copy_from_slice(&entry.#f_name.0);
+                });
+            }
+            FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
+                let r_ty = syn::Ident::new(rust_type(*encoding_type), span);
+                writes.extend(quote::quote! {
+                    slot[#f_offset..#f_offset + #f_size]
+                        .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
+                });
+            }
+            FieldType::Primitive(pt, Some(len)) => {
+                let len_lit = syn::LitInt::new(&len.to_string(), span);
+                let prim_size_lit = syn::LitInt::new(&pt.size().to_string(), span);
+                writes.extend(quote::quote! {
+                    let mut idx = 0usize;
+                    while idx < #len_lit {
+                        let offset = #f_offset + idx * #prim_size_lit;
+                        slot[offset..offset + #prim_size_lit]
+                            .copy_from_slice(&entry.#f_name[idx].#to_endian());
+                        idx += 1;
+                    }
+                });
+            }
+            FieldType::Primitive(_, None) => {
+                writes.extend(quote::quote! {
+                    slot[#f_offset..#f_offset + #f_size]
+                        .copy_from_slice(&entry.#f_name.#to_endian());
+                });
+            }
+        }
+    }
+    writes
 }
 
 /// Check whether any field, group entry, or nested group under these
@@ -2726,6 +3105,7 @@ fn generate_domain_recursive(
     groups: &[MessageGroup],
     var_data: &[MessageVarData],
     elements: &SchemaElements,
+    byte_order: ByteOrder,
     multi_message: bool,
     msg_name: &str,
     conversions: &[crate::ConversionSelector],
@@ -2959,19 +3339,36 @@ fn generate_domain_recursive(
 
         let (_, _, count_prim) = get_dim_num_layout(elements, &g.dimension_type);
         let count_ty: syn::Type = syn::parse_str(rust_type(count_prim)).unwrap();
-        group_encode_stmts.push(quote::quote! {
-            let enc = enc.#g_field_ident(
-                self.#g_field_ident.len() as #count_ty,
-                |g| -> Result<(), sbe_rt::EncodeError> {
-                    for e in &self.#g_field_ident {
-                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                            e.encode_into(entry)
-                        })?;
+        let can_bulk_encode = domain_entry_can_bulk_encode(
+            &g.fields,
+            &g.groups,
+            &g.var_data,
+            elements,
+            conversions,
+            domain_types,
+        );
+        if can_bulk_encode {
+            group_encode_stmts.push(quote::quote! {
+                let enc = enc.#g_field_ident(
+                    self.#g_field_ident.len() as #count_ty,
+                    |g| g.bulk_add_domain(&self.#g_field_ident),
+                )?;
+            });
+        } else {
+            group_encode_stmts.push(quote::quote! {
+                let enc = enc.#g_field_ident(
+                    self.#g_field_ident.len() as #count_ty,
+                    |g| -> Result<(), sbe_rt::EncodeError> {
+                        for e in &self.#g_field_ident {
+                            g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
+                                e.encode_into(entry)
+                            })?;
+                        }
+                        Ok(())
                     }
-                    Ok(())
-                }
-            )?;
-        });
+                )?;
+            });
+        }
 
         let entry_prefix = format!("{struct_prefix}{g_pascal}Entry");
         let entry_decoder_name = format!("{g_scoped}Entry");
@@ -2982,6 +3379,7 @@ fn generate_domain_recursive(
             &g.groups,
             &g.var_data,
             elements,
+            byte_order,
             multi_message,
             msg_name,
             &conversions,
@@ -2991,6 +3389,41 @@ fn generate_domain_recursive(
             ts,
             span,
         );
+        if can_bulk_encode {
+            let g_encoder_ident = syn::Ident::new(&format!("{g_scoped}Encoder"), span);
+            let mut range_checks = proc_macro2::TokenStream::new();
+            for f in &g.fields {
+                if let FieldType::Primitive(prim, None) = f.field_type {
+                    if f.presence != Presence::Constant {
+                        let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
+                        range_checks.extend(dto_range_check_tokens(
+                            f,
+                            prim,
+                            quote::quote! { entry.#f_ident },
+                            span,
+                        ));
+                    }
+                }
+            }
+            let slot_writes = domain_bulk_slot_write_tokens(&g.fields, byte_order, span);
+            ts.extend(quote::quote! {
+                impl<'a> #g_encoder_ident<'a> {
+                    /// Encode flat domain entries with one complete-region bounds check
+                    /// and no temporary wire-entry allocation.
+                    #[inline]
+                    pub fn bulk_add_domain(
+                        &mut self,
+                        entries: &[#entry_domain_ident],
+                    ) -> Result<(), sbe_rt::EncodeError> {
+                        self.bulk_add_with(entries, |entry, slot| {
+                            #range_checks
+                            #slot_writes
+                            Ok(())
+                        })
+                    }
+                }
+            });
+        }
     }
 
     // Var-data shape from DomainVarData (enable_domain_objects argument).
@@ -3130,6 +3563,40 @@ fn generate_domain_recursive(
                 }
             }
         });
+
+        // Preserve the explicit domain-to-wire conversion helper for callers
+        // that build their own wire-entry slices.
+        if domain_entry_can_bulk_encode(
+            fields,
+            groups,
+            var_data,
+            elements,
+            conversions,
+            domain_types,
+        ) {
+            let wire_entry_ident = syn::Ident::new(decoder_name, span);
+            let mut wire_fields = proc_macro2::TokenStream::new();
+            for f in fields {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
+                wire_fields.extend(quote::quote! {
+                    #f_ident: self.#f_ident,
+                });
+            }
+            ts.extend(quote::quote! {
+                impl #domain_ident {
+                    /// Convert to the wire entry struct for bulk encoding.
+                    #[inline]
+                    pub fn to_wire_entry(&self) -> #wire_entry_ident {
+                        #wire_entry_ident {
+                            #wire_fields
+                        }
+                    }
+                }
+            });
+        }
     } else {
         // Message domains: full encode via wrap_and_apply_header
         let has_optional = fields
@@ -3240,8 +3707,24 @@ fn generate_decoder_display(
     });
     let mut out_idx = 0usize;
     for f in &msg.fields {
+        const DECODER_RESERVED: &[&str] = &[
+            "remaining",
+            "whole_buffer",
+            "message_offset",
+            "after_this_message",
+            "wrap",
+            "try_wrap_and_apply_header",
+            "header",
+            "encoded_length",
+            "encoded_length_with_header",
+            "as_bytes",
+            "as_ref_opt",
+            "verify",
+            "acting_version",
+            "acting_block_length",
+        ];
         let snake = to_snake_case(&f.name);
-        let f_ident = syn::Ident::new(&snake, proc_macro2::Span::call_site());
+        let f_ident = resolve_field_ident(&snake, &None, DECODER_RESERVED);
         let sep = if out_idx == 0 { "" } else { ", " };
         let end_off = f.offset + f.field_type.size();
         let end_off_lit = syn::LitInt::new(&end_off.to_string(), proc_macro2::Span::call_site());
@@ -3305,20 +3788,56 @@ fn generate_decoder_display(
                 });
                 out_idx += 1;
             }
-            FieldType::Set { .. } => {}
+            FieldType::Set { .. } => {
+                // Bitset's own Display is pipe-separated flag names (A|B|C) —
+                // reuse it via format_args! (Arguments: Debug delegates to
+                // Display) so the message-level Debug shows readable flags
+                // instead of raw bits, or silently omitting the field.
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                if f.since_version > 0 {
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            if let Some(v) = self.#f_ident() {
+                                d.field(#name_lit, &format_args!("{}", v));
+                            }
+                        }
+                    });
+                } else {
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            let v = self.#f_ident();
+                            d.field(#name_lit, &format_args!("{}", v));
+                        }
+                    });
+                }
+            }
             FieldType::Composite { .. } => {
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                // Domain-converted composites (e.g. Decimal→rust_decimal) have
-                // Display on the domain type. Raw composites return a sub-decoder
-                // that may not implement Display — skip in debug_struct to avoid
-                // trait errors. The value is visible via group entry Display.
+                let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                // Domain-converted composites use the domain-typed
+                // accessor which returns the app type (Display).
+                // Wire-only composites use the *_value() accessor
+                // which returns the owned value type (Debug derived).
                 if find_domain_type(f, domain_types).is_some() {
-                    let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
                     debug_body.extend(quote::quote! {
                         if #in_bounds {
                             d.field(#name_lit, &format_args!("{}", self.#f_ident()));
+                        }
+                    });
+                } else {
+                    let f_value = syn::Ident::new(
+                        &format!("{}_value", &snake),
+                        proc_macro2::Span::call_site(),
+                    );
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            let v = self.#f_value();
+                            d.field(#name_lit, &v);
                         }
                     });
                 }
@@ -3435,6 +3954,7 @@ fn generate_group_decoder(
     domain_types: &[(crate::ConversionSelector, String)],
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
+    let span = proc_macro2::Span::call_site();
     let name = scoped_name.to_string();
     let decoder_ident = quote::format_ident!("{}Decoder", name);
     let entry_decoder_ident = quote::format_ident!("{}EntryDecoder", name);
@@ -3586,6 +4106,68 @@ fn generate_group_decoder(
 
     // skip_n()
     if total_tail == 0 {
+        // Build field read expressions for bulk_decode (reverse of
+        // add_struct's struct_write in generate_group_encoder).
+        let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
+        let mut field_reads = proc_macro2::TokenStream::new();
+        for f in &g.fields {
+            if f.presence == Presence::Constant {
+                continue;
+            }
+            let f_name = syn::Ident::new(&to_snake_case(&f.name), span);
+            let f_offset = syn::Index::from(f.offset);
+            let f_size = syn::LitInt::new(&f.field_type.size().to_string(), span);
+            match &f.field_type {
+                FieldType::Composite { .. } => {
+                    let f_ty = field_type_ident(&f.field_type, span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let mut bytes = [0u8; #f_size];
+                            bytes.copy_from_slice(&self.buf[pos + #f_offset..pos + #f_offset + #f_size]);
+                            #f_ty(bytes)
+                        },
+                    });
+                }
+                FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
+                    let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let raw = #r_ty::#order_fn(
+                                self.buf[pos + #f_offset..pos + #f_offset + #f_size].try_into().unwrap()
+                            );
+                            raw.into()
+                        },
+                    });
+                }
+                FieldType::Primitive(pt, Some(len)) => {
+                    let len_lit = syn::LitInt::new(&len.to_string(), span);
+                    let r_ty = syn::Ident::new(&rust_type(*pt), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: {
+                            let mut arr = [0 as #r_ty; #len_lit];
+                            let mut i = 0usize;
+                            while i < #len_lit {
+                                let elem_offset = pos + #f_offset + i * core::mem::size_of::<#r_ty>();
+                                arr[i] = #r_ty::#order_fn(
+                                    self.buf[elem_offset..][..core::mem::size_of::<#r_ty>()].try_into().unwrap()
+                                );
+                                i += 1;
+                            }
+                            arr
+                        },
+                    });
+                }
+                FieldType::Primitive(pt, None) => {
+                    let r_ty = syn::Ident::new(&rust_type(*pt), span);
+                    field_reads.extend(quote::quote! {
+                        #f_name: #r_ty::#order_fn(
+                            self.buf[pos + #f_offset..pos + #f_offset + #f_size].try_into().unwrap()
+                        ),
+                    });
+                }
+            }
+        }
+
         ts.extend(quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #[inline]
@@ -3593,13 +4175,42 @@ fn generate_group_decoder(
                     if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: n * self.acting_block_length,
-                            available: self.count * self.acting_block_length,
+                            needed: n.saturating_mul(self.acting_block_length),
+                            available: self.count.saturating_mul(self.acting_block_length),
                         });
                     }
-                    self.pos += n * self.acting_block_length;
+                    self.pos += n.saturating_mul(self.acting_block_length);
                     self.count -= n;
                     Ok(())
+                }
+
+                /// Bulk-decode all remaining entries into a `Vec`.
+                /// One bounds check for the whole batch — faster than
+                /// iterating with [`Iterator::next`] when materialising
+                /// the entire group (DTO construction, snapshots).
+                pub fn bulk_decode(&mut self) -> Result<Vec<#entry_struct_ident>, sbe_rt::DecodeError> {
+                    let needed = self.count.checked_mul(self.acting_block_length)
+                        .ok_or(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: usize::MAX,
+                            available: 0,
+                        })?;
+                    if self.pos + needed > self.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        });
+                    }
+                    let cap = self.count;
+                    let mut out = Vec::with_capacity(cap);
+                    for _ in 0..cap {
+                        let pos = self.pos;
+                        self.pos += self.acting_block_length;
+                        out.push(#entry_struct_ident { #field_reads });
+                    }
+                    self.count = 0;
+                    Ok(out)
                 }
             }
         });
@@ -3611,8 +4222,8 @@ fn generate_group_decoder(
                     if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: n * Self::ENTRY_BLOCK_LENGTH,
-                            available: self.count * Self::ENTRY_BLOCK_LENGTH,
+                            needed: n.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                            available: self.count.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
                         });
                     }
                     for _ in 0..n {
@@ -3704,6 +4315,7 @@ fn generate_group_decoder(
             impl<'a> Iterator for #decoder_ident<'a> {
                 type Item = #entry_decoder_ident<'a>;
 
+                #[inline]
                 fn next(&mut self) -> Option<Self::Item> {
                     if self.count == 0 {
                         return None;
@@ -3716,6 +4328,7 @@ fn generate_group_decoder(
             }
 
             impl<'a> ExactSizeIterator for #decoder_ident<'a> {
+                #[inline]
                 fn len(&self) -> usize {
                     self.count
                 }
@@ -3726,6 +4339,7 @@ fn generate_group_decoder(
             impl<'a> Iterator for #decoder_ident<'a> {
                 type Item = Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError>;
 
+                #[inline]
                 fn next(&mut self) -> Option<Self::Item> {
                     if self.count == 0 {
                         return None;
@@ -3745,6 +4359,7 @@ fn generate_group_decoder(
             }
 
             impl<'a> ExactSizeIterator for #decoder_ident<'a> {
+                #[inline]
                 fn len(&self) -> usize {
                     self.count
                 }
@@ -4183,6 +4798,13 @@ fn generate_group_decoder(
     entry_body.extend(quote::quote! {
         #[inline]
         fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+            if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "group entry",
+                    needed: self.acting_block_length,
+                    available: self.buf.len().saturating_sub(self.pos),
+                });
+            }
             Ok(self.pos + self.acting_block_length)
         }
     });
@@ -4197,8 +4819,6 @@ fn generate_group_decoder(
         let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
         let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
         let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let k_lit = syn::LitInt::new(&k.to_string(), proc_macro2::Span::call_site());
-        let k_plus_lit = syn::LitInt::new(&(k + 1).to_string(), proc_macro2::Span::call_site());
         let ng_name_lit = syn::LitStr::new(&ng.name, proc_macro2::Span::call_site());
 
         let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
@@ -4269,9 +4889,24 @@ fn generate_group_decoder(
         let ng_idx_lit = syn::LitInt::new(&ng_idx.to_string(), proc_macro2::Span::call_site());
 
         let tail_ng_fn = quote::format_ident!("tail_offset_{}", ng_idx);
+        let cached_first_tail = if ng_idx == 0 {
+            quote::quote! {
+                // `Iterator::next` cached the complete validated entry extent,
+                // so this first-tail offset cannot overflow or exceed `buf`.
+                if self.tail_end.get().is_some() {
+                    let offset = self.pos + self.acting_block_length;
+                    return Ok(#ng_decoder_ident::wrap_trusted(
+                        self.buf, offset, self.acting_version, 0, 0,
+                    ));
+                }
+            }
+        } else {
+            quote::quote! {}
+        };
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
+                #cached_first_tail
                 let offset = self.#tail_ng_fn()?;
                 if self.tail_end.get().is_some() {
                     return Ok(#ng_decoder_ident::wrap_trusted(
@@ -4295,12 +4930,26 @@ fn generate_group_decoder(
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
         if nvd_idx + 1 == total_tail {
+            let cached_first_tail = if nvd_idx == 0 {
+                quote::quote! {
+                    // `Iterator::next` cached the complete validated entry
+                    // extent, including this prefix and payload.
+                    if let Some(end) = self.tail_end.get() {
+                        let data_offset =
+                            self.pos + self.acting_block_length + #prefix_size_lit;
+                        return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+                    }
+                }
+            } else {
+                quote::quote! {}
+            };
             // Last tail component: a warm tail-end cache (filled by the
             // iterator's encoded_length) gives the slice end directly —
             // no second length-header read, bounds already validated.
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    #cached_first_tail
                     let offset = self.#tail_nvd_fn()?;
                     if let Some(end) = self.tail_end.get() {
                         let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
@@ -4364,6 +5013,13 @@ fn generate_group_decoder(
             }
             #[inline]
             pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+                if block_len > buf.len().saturating_sub(pos) {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "group entry",
+                        needed: block_len,
+                        available: buf.len().saturating_sub(pos),
+                    });
+                }
                 Ok(pos + block_len)
             }
         });
@@ -4415,7 +5071,27 @@ fn generate_group_decoder(
                 });
                 entry_display_out_idx += 1;
             }
-            FieldType::Set { .. } => {}
+            FieldType::Set { .. } => {
+                if f.presence == Presence::Constant {
+                    continue;
+                }
+                // Bitset's own Display is already pipe-separated flag names
+                // (A|B|C) — {} just forwards it. Versioned accessors return
+                // Option<T>, which isn't Display, so branch instead of
+                // relying on {:?} (that would show the raw derived Debug,
+                // not the pipe-separated names).
+                let fmt_str = format!("{sep}{}: {{}}", f.name);
+                if f.since_version > 0 {
+                    entry_display_body.extend(quote::quote! {
+                        if let Some(v) = self.#f_ident() { write!(f, #fmt_str, v)?; }
+                    });
+                } else {
+                    entry_display_body.extend(quote::quote! {
+                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                    });
+                }
+                entry_display_out_idx += 1;
+            }
             FieldType::Composite { .. } => {
                 if f.presence == Presence::Constant {
                     continue;
@@ -4656,12 +5332,14 @@ fn generate_conversion_impl_blocks(
         let ts = quote::quote! {
             impl TryFromSbe<#bt_ident> for bool {
                 type Error = &'static str;
+                #[inline]
                 fn try_from_sbe(wire: #bt_ident) -> Result<Self, Self::Error> {
                     Ok(bool::from(wire))
                 }
             }
             impl TryToSbe<#bt_ident> for bool {
                 type Error = &'static str;
+                #[inline]
                 fn try_to_sbe(&self) -> Result<#bt_ident, Self::Error> {
                     Ok(#bt_ident::from(*self))
                 }
@@ -4671,16 +5349,25 @@ fn generate_conversion_impl_blocks(
     }
 
     if has_decimal_conv {
-        let dec_name = elements
-            .composites
-            .iter()
-            .find(|c| c[0].name == "Decimal")
+        let dec_composite = elements.composites.iter().find(|c| c[0].name == "Decimal");
+        let dec_name = dec_composite
             .map(|c| to_pascal_case(&c[0].name))
             .unwrap_or_else(|| "Decimal".to_string());
         let dec_ident = syn::Ident::new(&dec_name, span);
+        // Check if the schema's Decimal composite has a constant exponent.
+        let exponent_is_constant = dec_composite
+            .and_then(|c| c.iter().find(|t| t.name == "exponent"))
+            .map(|t| t.encoding.presence == crate::ir::Presence::Constant)
+            .unwrap_or(false);
+        let dec_new_call: proc_macro2::TokenStream = if exponent_is_constant {
+            quote::quote! { #dec_ident::new(mantissa) }
+        } else {
+            quote::quote! { #dec_ident::new(mantissa, -(self.scale() as i8)) }
+        };
         let ts = quote::quote! {
             impl TryFromSbe<#dec_ident> for rust_decimal::Decimal {
                 type Error = &'static str;
+                #[inline]
                 fn try_from_sbe(wire: #dec_ident) -> Result<Self, Self::Error> {
                     let mantissa = wire.mantissa() as i128;
                     let exponent = wire.exponent();
@@ -4699,11 +5386,12 @@ fn generate_conversion_impl_blocks(
             }
             impl TryToSbe<#dec_ident> for rust_decimal::Decimal {
                 type Error = &'static str;
+                #[inline]
                 fn try_to_sbe(&self) -> Result<#dec_ident, Self::Error> {
                     let mantissa: i64 = self.mantissa()
                         .try_into()
                         .map_err(|_| "Decimal mantissa overflow i64")?;
-                    Ok(#dec_ident::new(mantissa, -(self.scale() as i8)))
+                    Ok(#dec_new_call)
                 }
             }
         };
@@ -4714,6 +5402,7 @@ fn generate_conversion_impl_blocks(
         let ts = quote::quote! {
             impl TryFromSbe<u64> for chrono::DateTime<chrono::Utc> {
                 type Error = &'static str;
+                #[inline]
                 fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> {
                     let secs = (wire / 1_000_000_000) as i64;
                     let nsec = (wire % 1_000_000_000) as u32;
@@ -4723,6 +5412,7 @@ fn generate_conversion_impl_blocks(
             }
             impl TryToSbe<u64> for chrono::DateTime<chrono::Utc> {
                 type Error = &'static str;
+                #[inline]
                 fn try_to_sbe(&self) -> Result<u64, Self::Error> {
                     let total_nanos = self.timestamp_nanos_opt()
                         .ok_or("timestamp_nanos overflow")?;
@@ -5123,11 +5813,13 @@ fn generate_encoded_length_builder(
             impl #prefix_ident {
                 pub const ENTRY_BLOCK_LENGTH: usize = #block_length_lit;
 
+                #[inline]
                 pub fn new() -> Self {
                     Self { len: 0, written: 0 }
                 }
 
                 /// Register one entry.
+                #[inline]
                 pub fn add(&mut self) -> sbe_rt::GroupResult {
                     self.len = self.len.checked_add(Self::ENTRY_BLOCK_LENGTH)
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
@@ -5137,6 +5829,7 @@ fn generate_encoded_length_builder(
 
                 /// Register `n` entries at once — equivalent to calling
                 /// [`add`](Self::add) `n` times.
+                #[inline]
                 pub fn add_n(&mut self, n: usize) -> sbe_rt::GroupResult {
                     self.len = self.len
                         .checked_add(Self::ENTRY_BLOCK_LENGTH.checked_mul(n)
@@ -5163,6 +5856,7 @@ fn generate_encoded_length_builder(
             ts.extend(quote::quote! {
                 impl #prefix_ident {
                     /// Track a nested repeating group inside one entry.
+                    #[inline]
                     pub fn #ng_snake<F>(
                         &mut self, count: #ng_count_ty, f: F,
                     ) -> sbe_rt::GroupResult
@@ -5189,6 +5883,7 @@ fn generate_encoded_length_builder(
 
                     /// Unknown-size variant — validates the count fits in
                     /// the wire type rather than requiring an exact match.
+                    #[inline]
                     pub fn #ng_snake_unknown<F>(
                         &mut self, f: F,
                     ) -> sbe_rt::GroupResult
@@ -5242,6 +5937,7 @@ fn generate_encoded_length_builder(
             ts.extend(quote::quote! {
                 impl #prefix_ident {
                     /// Track one variable-length data field inside an entry.
+                    #[inline]
                     pub fn #vd_snake(
                         &mut self, byte_len: usize,
                     ) -> sbe_rt::GroupResult {
@@ -5299,6 +5995,7 @@ fn generate_encoded_length_builder(
 
                 /// Start computing the encoded length of this message.
                 /// Initial value is the fixed-field block length.
+                #[inline]
                 pub fn new() -> Self {
                     Self { len: Self::BLOCK_LENGTH }
                 }
@@ -5332,6 +6029,7 @@ fn generate_encoded_length_builder(
                         /// Register this flat group with a known entry count.
                         /// No closure needed — entries have no nested groups
                         /// or var-data.
+                        #[inline]
                         #[must_use]
                         pub fn #g_snake(
                             self, count: #count_ty,
@@ -5352,6 +6050,7 @@ fn generate_encoded_length_builder(
             } else {
                 ts.extend(quote::quote! {
                 impl #current_stage {
+                    #[inline]
                     #[must_use]
                     pub fn #g_snake<F>(
                         self, count: #count_ty, f: F,
@@ -5385,6 +6084,7 @@ fn generate_encoded_length_builder(
 
             ts.extend(quote::quote! {
                 impl #current_stage {
+                    #[inline]
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
                         self, f: F,
@@ -5445,6 +6145,7 @@ fn generate_encoded_length_builder(
             ts.extend(quote::quote! {
                 impl #current_stage {
                     /// Track one variable-length data field.
+                    #[inline]
                     #[must_use]
                     pub fn #vd_snake(
                         self, byte_len: usize,
@@ -5469,10 +6170,12 @@ fn generate_encoded_length_builder(
         ts.extend(quote::quote! {
             impl #complete_ident {
                 /// SBE message body length (excluding the message header).
+                #[inline]
                 pub fn encoded_length(&self) -> usize { self.len }
 
                 /// Total SBE message length including the schema-declared
                 /// message header (`HEADER_LENGTH`).
+                #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.len + #prefix_ident::HEADER_LENGTH
                 }
@@ -5782,6 +6485,13 @@ fn generate_message_encoder(
             /// at `frame[Self::ENCODED_LENGTH..]`.
             pub const ENCODED_LENGTH: usize = #encoded_length_lit;
             const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            /// Header-inclusive encoded length. Same as [`Self::ENCODED_LENGTH`];
+            /// provided for API consistency with flat and complex message
+            /// shapes so every encoder has a `compute_length_with_header` method.
+            #[inline]
+            pub const fn compute_length_with_header() -> usize {
+                Self::ENCODED_LENGTH
+            }
             /// Slice after one full header-inclusive message of this type.
             #[inline]
             pub fn after_this_message(frame: &[u8]) -> Option<&[u8]> {
@@ -5789,6 +6499,26 @@ fn generate_message_encoder(
                     return None;
                 }
                 Some(&frame[Self::ENCODED_LENGTH..])
+            }
+
+            /// Offset of this message within the sub-slice this encoder
+            /// was wrapped on. For `wrap_and_apply_header` this is always 0.
+            #[inline]
+            pub const fn message_offset(&self) -> usize {
+                self.message_start
+            }
+
+            /// Unwritten region after this message. Chain the next encoder:
+            /// `NextEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)`.
+            #[inline]
+            pub fn remaining(&self) -> &[u8] {
+                &self.buf[self.pos..]
+            }
+
+            /// Mutable unwritten region after this message.
+            #[inline]
+            pub fn remaining_mut(&mut self) -> &mut [u8] {
+                &mut self.buf[self.pos..]
             }
         });
     } else {
@@ -5942,6 +6672,20 @@ fn generate_message_encoder(
         }
     }
 
+    const ENCODER_RESERVED: &[&str] = &[
+        "remaining",
+        "remaining_mut",
+        "whole_buffer",
+        "message_offset",
+        "after_this_message",
+        "wrap",
+        "try_wrap",
+        "try_wrap_and_apply_header",
+        "wrap_into_claim",
+        "compute_length_with_header",
+        "as_ref",
+    ];
+
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
         let body_offset = header_size + f.offset;
@@ -5951,7 +6695,7 @@ fn generate_message_encoder(
         // converted setter takes the original name.
         let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{f_name}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&f_name);
-        let f_ident = syn::Ident::new(method_name, span);
+        let f_ident = resolve_field_ident(&f_name, &wire_name, ENCODER_RESERVED);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -6065,6 +6809,7 @@ fn generate_message_encoder(
                 let target_type: syn::Type = syn::parse_str(&to_pascal_case(comp_name)).unwrap();
                 let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #comp_size_lit]
@@ -6085,6 +6830,7 @@ fn generate_message_encoder(
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
@@ -6095,6 +6841,7 @@ fn generate_message_encoder(
                 if is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
                     impl_contents.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             self.buf[#body_offset_lit] = val as u8;
                             self
@@ -6110,6 +6857,7 @@ fn generate_message_encoder(
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #body_offset_lit;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
@@ -6177,10 +6925,13 @@ fn generate_message_encoder(
             }
             let fname_snake = to_snake_case(&f.name);
             let is_converted = field_has_conversion_free(f, conversions);
-            let setter_ident = if is_converted {
-                syn::Ident::new(&format!("{fname_snake}_wire"), span)
-            } else {
-                syn::Ident::new(&fname_snake, span)
+            let setter_ident = {
+                let base = resolve_field_ident(&fname_snake, &None, ENCODER_RESERVED);
+                if is_converted {
+                    syn::Ident::new(&format!("{}_wire", base), span)
+                } else {
+                    base
+                }
             };
             let field_ident = syn::Ident::new(&fname_snake, span);
             if f.presence == crate::Presence::Optional {
@@ -6284,6 +7035,7 @@ fn generate_message_encoder(
                     /// return `()` or `Result<(), E>` (via
                     /// Closures return `GroupResult`; `?` just works. a
                     /// separate `try_*` method name.
+                    #[inline]
                     #[must_use]
                     pub fn #g_snake<F>(
                         mut self,
@@ -6330,6 +7082,7 @@ fn generate_message_encoder(
                     ///
                     /// Prefer [`Self::#g_snake`] when the count is known at
                     /// compile time or from a small input.
+                    #[inline]
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
                         mut self,
@@ -6442,6 +7195,7 @@ fn generate_message_encoder(
 
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
+                    #[inline]
                     #[must_use]
                     pub fn #vd_snake(
                         mut self,
@@ -6451,6 +7205,7 @@ fn generate_message_encoder(
                         #shared_body
                     }
 
+                    #[inline]
                     #[must_use]
                     pub fn #vd_snake_unchecked(
                         mut self,
@@ -6464,17 +7219,21 @@ fn generate_message_encoder(
                     /// the closure writes directly into the outer buffer.
                     ///
                     /// Canonical nested-SBE pattern (AppMessage → L2Book):
-                    /// ```ignore
-                    /// let inner = InnerEncoder::compute_encoded_length_with_message_header(...);
-                    /// after.payload_with(inner, |p| {
-                    ///     let mut enc = InnerEncoder::try_wrap_and_apply_header(p, 0)?;
-                    ///     // set fields / groups / var-data …
+                    /// ```text
+                    /// let inner_len = InnerEncoder::compute_length_with_header(...);
+                    /// after.payload_with(inner_len, |payload| {
+                    ///     let len = InnerEncoder::try_wrap_and_apply_header(payload, 0)?
+                    ///         .field(value)
+                    ///         // continue the single encoder chain through all tail stages
+                    ///         .encoded_length_with_header();
+                    ///     debug_assert_eq!(len, inner_len);
                     ///     Ok(())
                     /// })?;
                     /// ```
                     /// Returns the next stage on success; on failure the
                     /// caller error propagates unchanged and no partial
                     /// data is published.
+                    #[inline]
                     #[must_use]
                     pub fn #vd_snake_with<E, F>(
                         mut self,
@@ -6551,9 +7310,31 @@ fn generate_message_encoder(
         });
     } else {
         ts.extend(quote::quote! {
+            impl<'a> #name_encoder_ident<'a> {
+                /// Returns the complete fixed-length SBE message bytes
+                /// (header + body).
+                #[inline]
+                pub fn as_bytes(&self) -> &[u8] {
+                    &self.buf[self.message_start..self.pos]
+                }
+                /// Explicit header-inclusive view (alias for `as_bytes()`).
+                #[inline]
+                pub fn as_bytes_with_header(&self) -> &[u8] {
+                    self.as_bytes()
+                }
+                #[inline]
+                pub fn encoded_length(&self) -> usize {
+                    self.pos - self.message_start - #header_size_lit
+                }
+                #[inline]
+                pub fn encoded_length_with_header(&self) -> usize {
+                    self.pos - self.message_start
+                }
+            }
+
             impl<'a> AsRef<[u8]> for #name_encoder_ident<'a> {
                 fn as_ref(&self) -> &[u8] {
-                    &self.buf[self.message_start..self.pos]
+                    self.as_bytes()
                 }
             }
         });
@@ -6661,6 +7442,7 @@ fn generate_group_encoder(
         ByteOrder::BigEndian => "be",
     };
     let (_, dim_size, _, _) = get_dimension_info(elements, &g.dimension_type);
+    let (block_offset, block_size, block_prim) = get_dim_block_layout(elements, &g.dimension_type);
     let (_, _, num_prim) = get_dim_num_layout(elements, &g.dimension_type);
     let count_ty: syn::Type = syn::parse_str(rust_type(num_prim)).unwrap();
 
@@ -6672,13 +7454,36 @@ fn generate_group_encoder(
     );
     let mut dim_storage = [0u8; 32];
     let dim_tpl = &mut dim_storage[..dim_size];
-    match byte_order {
-        ByteOrder::LittleEndian => {
-            dim_tpl[0..2].copy_from_slice(&(group_block_length as u16).to_le_bytes());
+    assert!(
+        block_offset
+            .checked_add(block_size)
+            .is_some_and(|end| end <= dim_size),
+        "group dimension blockLength is outside its composite"
+    );
+    match block_prim {
+        PrimitiveType::UInt8 => {
+            dim_tpl[block_offset] = u8::try_from(group_block_length)
+                .expect("group blockLength exceeds uint8 dimension field");
         }
-        ByteOrder::BigEndian => {
-            dim_tpl[0..2].copy_from_slice(&(group_block_length as u16).to_be_bytes());
+        PrimitiveType::UInt16 => {
+            let value = u16::try_from(group_block_length)
+                .expect("group blockLength exceeds uint16 dimension field");
+            let bytes = match byte_order {
+                ByteOrder::LittleEndian => value.to_le_bytes(),
+                ByteOrder::BigEndian => value.to_be_bytes(),
+            };
+            dim_tpl[block_offset..block_offset + 2].copy_from_slice(&bytes);
         }
+        PrimitiveType::UInt32 => {
+            let value = u32::try_from(group_block_length)
+                .expect("group blockLength exceeds uint32 dimension field");
+            let bytes = match byte_order {
+                ByteOrder::LittleEndian => value.to_le_bytes(),
+                ByteOrder::BigEndian => value.to_be_bytes(),
+            };
+            dim_tpl[block_offset..block_offset + 4].copy_from_slice(&bytes);
+        }
+        _ => panic!("group dimension blockLength must use an unsigned integer type"),
     }
 
     let span = proc_macro2::Span::call_site();
@@ -6765,6 +7570,7 @@ fn generate_group_encoder(
 
             /// Write one group entry. Closure may return `()` or `Result<(), E>`
             /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
+            #[inline]
             #[must_use]
             pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
             where
@@ -6779,6 +7585,7 @@ fn generate_group_encoder(
             /// The group position is pre-advanced, so fields are written
             /// to the correct offset.
             #[must_use]
+            #[inline]
             pub fn start_entry(&mut self) -> Result<#entry_enc_ident<'_>, sbe_rt::EncodeError> {
                 if self.written as u32 >= self.count as u32 {
                     return Err(sbe_rt::EncodeError::GroupFull {
@@ -6811,6 +7618,7 @@ fn generate_group_encoder(
         let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
         let mut struct_fields = proc_macro2::TokenStream::new();
         let mut struct_write = proc_macro2::TokenStream::new();
+        let mut bulk_struct_write = proc_macro2::TokenStream::new();
         for f in &g.fields {
             if f.presence == Presence::Constant {
                 continue;
@@ -6823,13 +7631,20 @@ fn generate_group_encoder(
             match &f.field_type {
                 FieldType::Composite { .. } => {
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..][..#f_size].copy_from_slice(&entry.#f_name.0);
+                        self.buf[pos + #f_offset..pos + #f_offset + #f_size].copy_from_slice(&entry.#f_name.0);
+                    });
+                    bulk_struct_write.extend(quote::quote! {
+                        slot[#f_offset..#f_offset + #f_size].copy_from_slice(&entry.#f_name.0);
                     });
                 }
                 FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
                     let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..][..#f_size]
+                        self.buf[pos + #f_offset..pos + #f_offset + #f_size]
+                            .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
+                    });
+                    bulk_struct_write.extend(quote::quote! {
+                        slot[#f_offset..#f_offset + #f_size]
                             .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
                     });
                 }
@@ -6840,7 +7655,16 @@ fn generate_group_encoder(
                         let mut idx = 0usize;
                         while idx < #len_lit {
                             let offset = pos + #f_offset + idx * #prim_size_lit;
-                            self.buf[offset..][..#prim_size_lit]
+                            self.buf[offset..offset + #prim_size_lit]
+                                .copy_from_slice(&entry.#f_name[idx].#to_endian());
+                            idx += 1;
+                        }
+                    });
+                    bulk_struct_write.extend(quote::quote! {
+                        let mut idx = 0usize;
+                        while idx < #len_lit {
+                            let offset = #f_offset + idx * #prim_size_lit;
+                            slot[offset..offset + #prim_size_lit]
                                 .copy_from_slice(&entry.#f_name[idx].#to_endian());
                             idx += 1;
                         }
@@ -6848,7 +7672,11 @@ fn generate_group_encoder(
                 }
                 FieldType::Primitive(_, None) => {
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..][..#f_size]
+                        self.buf[pos + #f_offset..pos + #f_offset + #f_size]
+                            .copy_from_slice(&entry.#f_name.#to_endian());
+                    });
+                    bulk_struct_write.extend(quote::quote! {
+                        slot[#f_offset..#f_offset + #f_size]
                             .copy_from_slice(&entry.#f_name.#to_endian());
                     });
                 }
@@ -6865,6 +7693,7 @@ fn generate_group_encoder(
             impl<'a> #group_enc_ident<'a> {
                 /// Write one entry from a struct. Faster than [`Self::add`] when
                 /// the entry has no nested groups or var-data.
+                #[inline]
                 pub fn add_struct(&mut self, entry: &#entry_struct_ident) -> Result<(), sbe_rt::EncodeError> {
                     if self.written as u32 >= self.count as u32 {
                         return Err(sbe_rt::EncodeError::GroupFull {
@@ -6884,6 +7713,70 @@ fn generate_group_encoder(
                     self.written += 1;
                     #struct_write
                     Ok(())
+                }
+
+                #[inline]
+                fn bulk_add_with<T, F>(
+                    &mut self,
+                    entries: &[T],
+                    mut write_entry: F,
+                ) -> Result<(), sbe_rt::EncodeError>
+                where
+                    F: FnMut(&T, &mut [u8]) -> Result<(), sbe_rt::EncodeError>,
+                {
+                    let count = entries.len();
+                    if count == 0 {
+                        return Ok(());
+                    }
+                    let attempted = (self.written as usize)
+                        .checked_add(count)
+                        .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    if attempted > self.count as usize {
+                        return Err(sbe_rt::EncodeError::GroupFull {
+                            declared: self.count as u32,
+                            attempted: attempted.min(u32::MAX as usize) as u32,
+                        });
+                    }
+                    let block_len = Self::ENTRY_BLOCK_LENGTH;
+                    if block_len == 0 {
+                        self.written = attempted as #count_ty;
+                        return Ok(());
+                    }
+                    let needed = count
+                        .checked_mul(block_len)
+                        .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    let end = self
+                        .pos
+                        .checked_add(needed)
+                        .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
+                    if end > self.buf.len() {
+                        return Err(sbe_rt::EncodeError::BufferTooShort {
+                            needed,
+                            available: self.buf.len().saturating_sub(self.pos),
+                        });
+                    }
+                    {
+                        let region = &mut self.buf[self.pos..end];
+                        for (entry, slot) in entries
+                            .iter()
+                            .zip(region.chunks_exact_mut(block_len))
+                        {
+                            write_entry(entry, slot)?;
+                        }
+                    }
+                    self.pos = end;
+                    self.written = attempted as #count_ty;
+                    Ok(())
+                }
+
+                /// Encode a slice of fixed-size entries after validating the
+                /// complete destination region once.
+                #[inline]
+                pub fn bulk_add(&mut self, entries: &[#entry_struct_ident]) -> Result<(), sbe_rt::EncodeError> {
+                    self.bulk_add_with(entries, |entry, slot| {
+                        #bulk_struct_write
+                        Ok(())
+                    })
                 }
             }
         });
@@ -6924,6 +7817,7 @@ fn generate_group_encoder(
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
                     let sz = syn::LitInt::new(&prim_size.to_string(), span);
                     entry_methods.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_ident(&mut self, val: [#r_ty; #len_lit]) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
                             let mut idx = 0;
@@ -6936,6 +7830,7 @@ fn generate_group_encoder(
                     });
                 } else if prim_size == 1 {
                     entry_methods.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
                             self.buf[self.entry_start + #f_offset] = val as u8;
                             self
@@ -6944,6 +7839,7 @@ fn generate_group_encoder(
                 } else {
                     let sz = syn::LitInt::new(&prim_size.to_string(), span);
                     entry_methods.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
                             let offset = self.entry_start + #f_offset;
                             self.buf[offset..offset + #sz].copy_from_slice(&val.#to_endian());
@@ -6959,6 +7855,7 @@ fn generate_group_encoder(
                 let target = syn::Ident::new(&to_pascal_case(comp_name), span);
                 let sz = syn::LitInt::new(&comp_size.to_string(), span);
                 entry_methods.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&val.0);
@@ -6974,6 +7871,7 @@ fn generate_group_encoder(
                 let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
                 let sz = syn::LitInt::new(&encoding_type.size().to_string(), span);
                 entry_methods.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&(val as #r_ty).#to_endian());
@@ -6983,6 +7881,7 @@ fn generate_group_encoder(
                 if is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_snake), span);
                     entry_methods.extend(quote::quote! {
+                        #[inline]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             self.buf[self.entry_start + #f_offset] = val as u8;
                             self
@@ -6997,6 +7896,7 @@ fn generate_group_encoder(
                 let target = syn::Ident::new(&to_pascal_case(set_name), span);
                 let sz = syn::LitInt::new(&encoding_type.size().to_string(), span);
                 entry_methods.extend(quote::quote! {
+                    #[inline]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
                         self.buf[offset..offset + #sz].copy_from_slice(&val.0.#to_endian());
@@ -7022,6 +7922,7 @@ fn generate_group_encoder(
         let ng_count_ty: syn::Type = syn::parse_str(rust_type(ng_num_prim)).unwrap();
 
         entry_methods.extend(quote::quote! {
+            #[inline]
             #[must_use]
             pub fn #ng_snake<F>(&mut self, count: #ng_count_ty, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
             where
@@ -7062,6 +7963,7 @@ fn generate_group_encoder(
             }
 
             /// Nested-group `_unknown_size` variant — back-patches count.
+            #[inline]
             pub fn #ng_snake_unknown<F>(&mut self, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
             where
                 F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
@@ -7100,6 +8002,7 @@ fn generate_group_encoder(
         let vd_name_lit = syn::LitStr::new(&vd.name, span);
 
         entry_methods.extend(quote::quote! {
+            #[inline]
             #[must_use]
             pub fn #vd_snake(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {
                 let needed = #pfx + data.len();
@@ -7164,7 +8067,7 @@ mod tests {
 
     #[test]
     fn generator_emits_deterministic_module_name() -> Result<(), Box<dyn std::error::Error>> {
-        let generator = Generator::new(GenerationConfig::new("market_data"));
+        let mut generator = Generator::new(GenerationConfig::new("market_data"));
         let schema = Schema::new("fix.sbe", 1, 0);
 
         let modules = generator.generate(&schema)?;
@@ -7182,7 +8085,7 @@ mod tests {
         let mut config = GenerationConfig::new("common");
         config.shared_module = Some("common_types".to_string());
 
-        let generator = Generator::new(config);
+        let mut generator = Generator::new(config);
 
         let schema_a = Schema::new("common.sbe", 1, 0);
         let schema_b = Schema::new("market_data.sbe", 2, 0);
@@ -7216,7 +8119,7 @@ mod tests {
     fn generate_multi_without_shared_module_emits_sbe_rt_everywhere()
     -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("common");
-        let generator = Generator::new(config);
+        let mut generator = Generator::new(config);
 
         let schema_a = Schema::new("common.sbe", 1, 0);
         let schema_b = Schema::new("market_data.sbe", 2, 0);
@@ -7247,6 +8150,7 @@ mod tests {
             name: String::new(),
             signal,
             encoding: Encoding::default(),
+            span: None,
         }
     }
 
@@ -7333,6 +8237,80 @@ mod tests {
             &elem,
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn group_array_codegen_uses_the_complete_field_extent_and_element_range()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="array.guard" id="305" version="1" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint16"/>
+            </composite>
+            <type name="Values" primitiveType="uint32" length="2"/>
+            <enum name="State" encodingType="uint8">
+              <validValue name="Ready">1</validValue>
+            </enum>
+            <set name="Flags" encodingType="uint8">
+              <choice name="Active">0</choice>
+            </set>
+            <enum name="BooleanType" encodingType="uint8">
+              <validValue name="F">0</validValue>
+              <validValue name="T">1</validValue>
+            </enum>
+          </types>
+          <message name="ArrayBoundaryMessage" id="1">
+            <group name="entries" id="1">
+              <field name="base" id="2" type="uint8"/>
+              <field name="values" id="3" type="Values"/>
+              <field name="state" id="4" type="State" sinceVersion="1"/>
+              <field name="flags" id="5" type="Flags" sinceVersion="1"/>
+              <field name="enabled" id="6" type="BooleanType" sinceVersion="1"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+        let schema = crate::Schema::from_ir(crate::parse(xml)?);
+        let mut generator = crate::Generator::new(crate::GenerationConfig::new("array_guard"));
+        let modules = generator.generate(&schema)?;
+        let source = &modules
+            .modules()
+            .next()
+            .ok_or("missing generated module")?
+            .source;
+
+        assert!(
+            source.contains("|| 9 > self.acting_block_length"),
+            "u32[2] at offset 1 must require all nine entry bytes"
+        );
+        assert!(
+            source.contains("let all: [u8; 8]"),
+            "u32[2] must bulk-read exactly eight bytes"
+        );
+        assert!(
+            source.contains("all[0usize]") && source.contains("all[7usize]"),
+            "the unrolled array decode must use the complete byte range"
+        );
+        assert!(
+            source.contains("|| 10 > self.acting_block_length"),
+            "the versioned enum at offset nine must require its complete tenth byte"
+        );
+        assert!(
+            source.contains("|| 11 > self.acting_block_length"),
+            "the versioned set at offset ten must require its complete eleventh byte"
+        );
+        assert!(
+            source.contains("pub fn enabled_bool(&self) -> Option<bool>"),
+            "a versioned BooleanType group field must preserve absence in its bool accessor"
+        );
         Ok(())
     }
 
@@ -7457,7 +8435,7 @@ mod tests {
             crate::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
         );
-        let generator = crate::Generator::new(config);
+        let mut generator = crate::Generator::new(config);
         let modules = generator.generate(&schema)?;
         let src = modules.modules().next().unwrap().source.clone();
         assert!(
@@ -7511,5 +8489,175 @@ mod tests {
                 "expected {field} error, got: {error}"
             );
         }
+    }
+
+    /// When a flat message has a field whose name clashes with a reserved
+    /// decoder method (e.g. "remaining"), the generated accessor must be
+    /// renamed to `{name}_field` so it doesn't collide with
+    /// `pub fn remaining(&self) -> &[u8]`.
+    #[test]
+    fn field_named_remaining_is_renamed_to_remaining_field()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<messageSchema package="test" id="1" version="1" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+          </types>
+          <message name="Msg" id="1" blockLength="8">
+            <field name="remaining" id="1" type="int64"/>
+          </message>
+        </messageSchema>"#;
+
+        let ir = crate::parse(xml).expect("schema should parse");
+        let schema = crate::Schema::from_ir(ir);
+        let modules =
+            crate::Generator::new(crate::GenerationConfig::new("test")).generate(&schema)?;
+        let src = modules.modules().next().expect("one module").source.clone();
+
+        let remaining_count = src.matches("fn remaining(&self)").count();
+        // The decoder and encoder each have a generated `remaining()` method
+        // (in separate impl blocks). The field accessor is renamed to
+        // `remaining_field` and must not appear as `fn remaining(&self)`.
+        assert_eq!(
+            remaining_count, 2,
+            "expected exactly 2 'remaining' methods (one decoder + one encoder), found {remaining_count}"
+        );
+        // The field accessor must be renamed.
+        assert!(
+            src.contains("fn remaining_field"),
+            "field accessor 'remaining' must be renamed to 'remaining_field'. src:\n{src}"
+        );
+
+        Ok(())
+    }
+
+    /// A hook that adds serde `Serialize` for every SBE enum (variants as
+    /// strings) and every SBE set (variants as `Vec<String>`), plus
+    /// `Deserialize` for the enum.
+    #[test]
+    fn hook_adds_serde_impls_for_enum_and_set() -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <enum name="EventCode" encodingType="uint32">
+              <validValue name="Ok" description="Success">200</validValue>
+              <validValue name="Error" description="Failure">400</validValue>
+              <validValue name="Timeout">408</validValue>
+            </enum>
+            <set name="OptionalFields" encodingType="uint8">
+              <choice name="hasPrice">0</choice>
+              <choice name="hasQty">1</choice>
+              <choice name="hasVenue">2</choice>
+            </set>
+          </types>
+          <message name="Msg" id="1" blockLength="0"/>
+        </messageSchema>"#;
+
+        use crate::{EnumVariantInfo, ItemContext, ItemKind, SetChoiceInfo};
+        use quote::format_ident;
+
+        let config = crate::GenerationConfig::new("test")
+            .with_hook(|ctx: &ItemContext| -> Vec<proc_macro2::TokenStream> {
+                match ctx {
+                    ItemContext::Enum { name, variants, .. } => {
+                        let ident = format_ident!("{name}");
+                        let var_names: Vec<_> = variants.iter().map(|v| format_ident!("{}", v.name)).collect();
+                        let var_labels: Vec<_> = variants.iter().map(|v| v.name.clone()).collect();
+                        vec![quote::quote! {
+                            impl serde::Serialize for #ident {
+                                fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                                    let label = match self {
+                                        #(Self::#var_names => #var_labels,)*
+                                    };
+                                    s.serialize_str(label)
+                                }
+                            }
+
+                            impl<'de> serde::Deserialize<'de> for #ident {
+                                fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                                    let s = <&str>::deserialize(d)?;
+                                    match s {
+                                        #(#var_labels => Ok(Self::#var_names),)*
+                                        _ => Err(serde::de::Error::unknown_variant(s, &[#(#var_labels),*])),
+                                    }
+                                }
+                            }
+                        }]
+                    }
+                    ItemContext::Set { name, choices, .. } => {
+                        let ident = format_ident!("{name}");
+                        let c_names: Vec<_> = choices.iter().map(|c| format_ident!("{}", c.name)).collect();
+                        let c_labels: Vec<_> = choices.iter().map(|c| c.name.clone()).collect();
+                        vec![quote::quote! {
+                            impl serde::Serialize for #ident {
+                                fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                                    let mut names = Vec::new();
+                                    #(if self.#c_names() { names.push(#c_labels); })*
+                                    names.serialize(s)
+                                }
+                            }
+
+                            impl<'de> serde::Deserialize<'de> for #ident {
+                                fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                                    let names: Vec<String> = Vec::deserialize(d)?;
+                                    let mut value = 0u8;
+                                    for name in &names {
+                                        match name.as_str() {
+                                            #(#c_labels => value |= Self::#c_names.0,)*
+                                            other => return Err(serde::de::Error::unknown_variant(
+                                                other, &[#(#c_labels),*])),
+                                        }
+                                    }
+                                    Ok(Self(value))
+                                }
+                            }
+                        }]
+                    }
+                    _ => vec![],
+                }
+            });
+
+        let ir = crate::parse(xml).expect("schema should parse");
+        let schema = crate::Schema::from_ir(ir);
+        let modules = crate::Generator::new(config).generate(&schema)?;
+        let src = modules.modules().next().expect("one module").source.clone();
+
+        // Enum: Serialize impl must exist with variant labels.
+        assert!(
+            src.contains("impl serde::Serialize for EventCode"),
+            "missing Serialize for enum"
+        );
+        assert!(src.contains("\"Ok\""), "missing Ok label");
+        assert!(src.contains("\"Error\""), "missing Error label");
+        assert!(
+            src.contains("impl<'de> serde::Deserialize<'de> for EventCode"),
+            "missing Deserialize for enum"
+        );
+        assert!(
+            src.contains("unknown_variant"),
+            "missing error handling in Deserialize"
+        );
+
+        // Set: Serialize impl must exist.
+        assert!(
+            src.contains("impl serde::Serialize for OptionalFields"),
+            "missing Serialize for set"
+        );
+        assert!(src.contains("\"hasPrice\""), "missing hasPrice label");
+        assert!(
+            src.contains("impl<'de> serde::Deserialize<'de> for OptionalFields"),
+            "missing Deserialize for set"
+        );
+
+        Ok(())
     }
 }

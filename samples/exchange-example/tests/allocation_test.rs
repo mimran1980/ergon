@@ -42,7 +42,6 @@ fn warm_up() {
 }
 
 #[test]
-#[ignore = "pre-existing alloc count mismatch in playground sample"]
 fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
         AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
@@ -97,7 +96,6 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-#[ignore = "pre-existing alloc count mismatch in playground sample"]
 fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
         AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
@@ -164,7 +162,6 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 /// Task 9 gate: zero allocations around the warmed real claim path —
 /// `try_claim_owned` + direct encode + commit — not just Vec encoding.
 #[test]
-#[ignore = "pre-existing alloc count mismatch in playground sample"]
 fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::config::CHANNEL;
     use exchange_example::market::{Level, NormalizedEventRef, WireDec};

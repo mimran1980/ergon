@@ -15,7 +15,7 @@
 #![allow(unused)]
 
 mod common;
-use common::{Paths, compile_and_run, compile_fails, generate};
+use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
 
 /// Full ordered decode of bids then asks (with nested orders + var-data) through
 /// the consuming message-level stages.
@@ -116,7 +116,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn cf_decode_asks_before_bids() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_cf_asks_before_bids");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "l3_cf_asks_before_bids",
         &src,
         r#"
@@ -128,6 +128,7 @@ fn cf_decode_asks_before_bids() -> Result<(), Box<dyn std::error::Error>> {
         let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes(), 0).unwrap();
         let _ = dec.into_asks(); // ILLEGAL: no `into_asks` on the initial decoder
     "#,
+        &["no method named `into_asks`"],
     );
 
     Ok(())
@@ -138,7 +139,7 @@ fn cf_decode_asks_before_bids() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_cf_finish_consumes");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "l3_cf_finish_consumes",
         &src,
         r#"
@@ -152,6 +153,7 @@ fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> 
         let _after = bids.finish().unwrap(); // bids moved here
         let _ = bids.next();                  // ILLEGAL: use of moved value `bids`
     "#,
+        &["borrow of moved value: `bids`"],
     );
 
     Ok(())
@@ -236,7 +238,7 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
 #[test]
 fn cf_entry_consumed_by_into_orders() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_cf_entry_consumed");
-    compile_fails(
+    compile_fails_with_diagnostics(
         "l3_cf_entry_consumed",
         &src,
         r#"
@@ -254,6 +256,7 @@ fn cf_entry_consumed_by_into_orders() -> Result<(), Box<dyn std::error::Error>> 
         let _orders = lvl.into_orders().unwrap(); // lvl moved here
         let _p = lvl.price();                      // ILLEGAL: use of moved value `lvl`
     "#,
+        &["borrow of moved value: `lvl`"],
     );
 
     Ok(())

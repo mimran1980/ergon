@@ -102,8 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Send AddInstrument (RFQ schema 101) wrapped in cluster SessionMessageHeader
     {
-        const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
-        const BODY: usize = AddInstrumentEncoder::ENCODED_LENGTH;
+        const HDR: usize = SessionMessageHeaderEncoder::compute_length_with_header();
+        const BODY: usize = AddInstrumentEncoder::compute_length_with_header();
         let mut msg = [0u8; HDR + BODY];
         let hdr = HDR;
         let body = BODY;
@@ -136,8 +136,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Send CreateRfq (RFQ schema 101)
     {
-        const HDR: usize = SessionMessageHeaderEncoder::ENCODED_LENGTH;
-        const BODY: usize = CreateRfqCommandEncoder::ENCODED_LENGTH;
+        const HDR: usize = SessionMessageHeaderEncoder::compute_length_with_header();
+        const BODY: usize = CreateRfqCommandEncoder::compute_length_with_header();
         let mut msg = [0u8; HDR + BODY];
         let hdr = HDR;
         let body = BODY;

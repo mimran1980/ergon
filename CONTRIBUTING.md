@@ -21,21 +21,47 @@ behavior by themselves.
 ## Product checks
 
 ```sh
+just policy
 just check-products
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-sbe --all-features --no-deps
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps
 ```
 
-`just check` adds the repository hygiene and established sample checks. Some
-Cluster integration paths require Java 17+, built Aeron artifacts, and a local
-Aeron environment:
+`test-lanes.tsv` assigns every tracked test-bearing Rust source to exactly one
+executable lane. `just policy` self-tests that enforcement and rejects ignored
+tests, ignored Rust fences, runtime `SKIP` reporting, test-selection bypasses,
+conditional test execution, failure-to-success wrappers, and custom skip-CI
+conditions.
+
+A failure observed while changing the repository is not a pass because it
+appears pre-existing or unrelated. Reproduce and fix it, or stop the change
+with the failure recorded as a blocker. Never make the lane green by filtering,
+ignoring, conditionally bypassing, or merely logging the failed case.
+
+`just check` adds repository hygiene and established sample checks. The
+complete required suite is:
 
 ```sh
-just build-aeron-jars
-just test-aeron-cluster-harness
+just test
 ```
 
-Do not report a skipped external integration as a passing test.
+It builds the Aeron Java artifacts and runs the Java lifecycle/recovery and HA
+sample lanes. A missing dependency is a failure, not a passing partial run.
+Use `just test-all` to add Miri and deterministic fuzz replay.
+
+Quality ratchets are explicit commands, not test-count targets:
+
+```sh
+just check-coverage
+just check-mutation
+```
+
+Coverage runs on every pull request and may not fall below the checked-in
+region/function/line baseline. Mutation testing runs weekly over parser,
+resolver, sizing, and dynamic-tail code; missing or empty mutation output is a
+failure. Nightly CI runs every fuzz target for ten minutes and executes the
+LE/BE/nested fixture crate under Miri. Pull requests also execute codec library
+tests on 32-bit x86 and big-endian s390x through `cross`/QEMU.
 
 ## Performance
 
@@ -56,6 +82,16 @@ Every maintained ergo-sbe/reference ratio must be at most `1.00` under
 equal-work inputs. Record fresh measurements instead of copying old benchmark
 numbers into documentation. Documentation-only changes do not require a
 benchmark run.
+
+Shared GitHub runners execute both profiles and publish Criterion diagnostics,
+but noisy wall-clock ratios are not merge gates there. Run the strict ratio
+gate locally or on a dedicated stable benchmark runner.
+
+`fairness_policy_test` mechanically requires the maintained SBE and Cluster
+parity suites to use `std::hint::black_box`, assert correctness before timing,
+and preserve the sceptical benchmark disclosure. Exact wire/value assertions
+remain part of each benchmark setup; a large result is presumed suspect until
+the benchmark is re-audited.
 
 ## Error and example style
 
@@ -94,6 +130,10 @@ internal plans.
 
 Publishing, tagging, and announcing a release require explicit maintainer
 authorization.
+
+Before an authorised release, run `just release-check`. The release workflow
+runs the same command before `cargo release`; it cannot substitute a partial
+workspace-only test command.
 
 ## Git hygiene
 

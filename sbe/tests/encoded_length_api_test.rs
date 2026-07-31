@@ -390,10 +390,10 @@ fn production_schemas_generate_valid_rust() -> Result<(), Box<dyn std::error::Er
         ("bigendian", "example-bigendian-test-schema.xml"),
     ] {
         let path = fixture(schema_file);
-        if !path.exists() {
-            eprintln!("SKIP {schema_name}: {schema_file} not found");
-            continue;
-        }
+        assert!(
+            path.is_file(),
+            "{schema_name}: required production schema is missing: {schema_file}"
+        );
         let (_s, src) = generate(&path, &format!("prod_{schema_name}"));
         syn::parse_file(&src)
             .map_err(|e| format!("{} generated invalid Rust: {e}", schema_name))?;

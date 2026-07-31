@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and usage reports
+    url: https://github.com/mimran1980/ergon/discussions
+    about: Questions, schema-shape reports, and comparisons belong in Discussions, not Issues.
+  - name: Report a security vulnerability
+    url: https://github.com/mimran1980/ergon/security/advisories/new
+    about: Use private vulnerability reporting instead of a public issue.

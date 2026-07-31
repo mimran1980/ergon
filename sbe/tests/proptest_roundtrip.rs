@@ -365,9 +365,9 @@ fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     car.some_numbers([u32::MAX, u32::MAX, u32::MAX, u32::MAX]);
     car.vehicle_code([u8::MAX; 6]);
     let mut extras = OptionalExtras::default();
-    extras.set_sun_roof(true);
-    extras.set_sports_pack(true);
-    extras.set_cruise_control(true);
+    extras.sun_roof(true);
+    extras.sports_pack(true);
+    extras.cruise_control(true);
     car.extras(extras);
     car.engine(Engine::new(u16::MAX, u8::MAX, [u8::MAX; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
 
@@ -390,9 +390,9 @@ fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!([u32::MAX; 4], decoded.some_numbers());
     assert_eq!([u8::MAX; 6], decoded.vehicle_code());
     let extras2 = decoded.extras();
-    assert!(extras2.sun_roof());
-    assert!(extras2.sports_pack());
-    assert!(extras2.cruise_control());
+    assert!(extras2.is_sun_roof());
+    assert!(extras2.is_sports_pack());
+    assert!(extras2.is_cruise_control());
 
     let de = decoded.engine();
     assert_eq!(u16::MAX, de.capacity());

@@ -63,9 +63,9 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
-        extras.set_sun_roof(false);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
+        extras.sun_roof(false);
         car.extras(extras);
         car.engine(Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
@@ -77,9 +77,9 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let extras = car2.extras();
-        assert!(extras.cruise_control());
-        assert!(extras.sports_pack());
-        assert!(!extras.sun_roof());
+        assert!(extras.is_cruise_control());
+        assert!(extras.is_sports_pack());
+        assert!(!extras.is_sun_roof());
         assert_eq!(extras.raw(), 6u8);
     "#,
     );
@@ -625,8 +625,8 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         car.available(BooleanType::F); car.code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         let mut extras = OptionalExtras::default();
-        extras.set_cruise_control(true);
-        extras.set_sports_pack(true);
+        extras.cruise_control(true);
+        extras.sports_pack(true);
         car.extras(extras);
         car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
@@ -639,9 +639,9 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         // raw() returns the underlying bitfield
         let raw = car2.extras().raw();
         // cruise_control = bit 2, sports_pack = bit 1, sun_roof = bit 0
-        assert!(car2.extras().cruise_control());
-        assert!(car2.extras().sports_pack());
-        assert!(!car2.extras().sun_roof());
+        assert!(car2.extras().is_cruise_control());
+        assert!(car2.extras().is_sports_pack());
+        assert!(!car2.extras().is_sun_roof());
         assert_eq!(raw, 6u8); // 0b110 = bits 1 and 2 set
     "#,
     );
@@ -713,9 +713,9 @@ fn all_types_little_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>>
         assert_eq!(f.x(), 1.5);
         assert_eq!(f.y(), 2.5);
         let mut set = TestSet::default();
-        set.set_bit1(true);
-        assert!(set.bit1());
-        assert!(!set.bit0());
+        set.bit1(true);
+        assert!(set.is_bit1());
+        assert!(!set.is_bit0());
         let a = TestEnum::from_raw(0);
         assert_eq!(a.raw(), 0u8);
         let b = TestEnum::from_raw(1);
@@ -744,8 +744,8 @@ fn all_types_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(s.f32_val(), 1.0f32);
         assert_eq!(TestEnum::from_raw(2), TestEnum::C);
         let mut set = TestSet::default();
-        set.set_bit2(true);
-        assert!(set.bit2());
+        set.bit2(true);
+        assert!(set.is_bit2());
     "#,
     );
 
@@ -1029,6 +1029,177 @@ fn deterministic_generation_produces_identical_output() -> Result<(), Box<dyn st
         src_b.modules().next().unwrap().source,
         "Strict and WireCompatibleExtensions must produce identical output when no extensions exist"
     );
+
+    Ok(())
+}
+
+#[test]
+fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="test.timestamps" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId"   primitiveType="uint16"/>
+              <type name="schemaId"     primitiveType="uint16"/>
+              <type name="version"      primitiveType="uint16"/>
+            </composite>
+            <composite name="TimestampNanos"  semanticType="UTCTimestamp"><type name="ts" primitiveType="uint64"/></composite>
+            <composite name="TimestampMicros" semanticType="UTCTimestamp"><type name="ts" primitiveType="uint64"/></composite>
+            <composite name="TimestampMillis" semanticType="UTCTimestamp"><type name="ts" primitiveType="uint64"/></composite>
+          </types>
+          <sbe:message name="Event" id="1">
+            <field name="created_at"  id="1" type="TimestampNanos"/>
+            <field name="updated_at"  id="2" type="TimestampMicros"/>
+            <field name="received_at" id="3" type="TimestampMillis"/>
+          </sbe:message>
+        </sbe:messageSchema>"#;
+    let ir = ergo_sbe::parse(xml)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("ts_test")
+        .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampNanos"))
+        .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampMicros"))
+        .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampMillis"));
+    let mut generator = ergo_sbe::Generator::new(config);
+    let modules = generator.generate(&schema)?;
+    let source = modules.modules().next().unwrap().source.clone();
+
+    let code = r#"
+    // Wire precision converters — each composite is a transparent u64 wrapper.
+    // TimestampNanos  → built-in u64 converter (nsec) works, but we write our own
+    //                   per-composite impl to keep all three consistent.
+    // TimestampMicros → DateTime from/to microseconds
+    // TimestampMillis → DateTime from/to milliseconds
+
+    use chrono::{DateTime, Utc, TimeZone};
+
+    // Composite value type is `#[repr(transparent)] TimestampNanos([u8; 8])` —
+    // not a raw u64. Parse the LE bytes to get the integer value.
+    fn read_u64(wire: &[u8; 8]) -> u64 { u64::from_le_bytes(*wire) }
+    fn write_u64(n: u64) -> [u8; 8] { n.to_le_bytes() }
+
+    // ── nanos ──────────────────────────────────────────────────────
+    impl TryFromSbe<TimestampNanos> for DateTime<Utc> {
+        type Error = &'static str;
+        fn try_from_sbe(wire: TimestampNanos) -> Result<Self, Self::Error> {
+            let n = read_u64(&wire.0);
+            DateTime::from_timestamp(
+                (n / 1_000_000_000) as i64,
+                (n % 1_000_000_000) as u32,
+            ).ok_or("timestamp out of range")
+        }
+    }
+    impl TryToSbe<TimestampNanos> for DateTime<Utc> {
+        type Error = &'static str;
+        fn try_to_sbe(&self) -> Result<TimestampNanos, Self::Error> {
+            Ok(TimestampNanos(write_u64(
+                self.timestamp_nanos_opt().ok_or("timestamp_nanos overflow")? as u64,
+            )))
+        }
+    }
+
+    // ── micros ─────────────────────────────────────────────────────
+    impl TryFromSbe<TimestampMicros> for DateTime<Utc> {
+        type Error = &'static str;
+        fn try_from_sbe(wire: TimestampMicros) -> Result<Self, Self::Error> {
+            let n = read_u64(&wire.0);
+            DateTime::from_timestamp(
+                (n / 1_000_000) as i64,
+                ((n % 1_000_000) * 1_000) as u32,
+            ).ok_or("timestamp out of range")
+        }
+    }
+    impl TryToSbe<TimestampMicros> for DateTime<Utc> {
+        type Error = &'static str;
+        fn try_to_sbe(&self) -> Result<TimestampMicros, Self::Error> {
+            Ok(TimestampMicros(write_u64(self.timestamp_micros() as u64)))
+        }
+    }
+
+    // ── millis ─────────────────────────────────────────────────────
+    impl TryFromSbe<TimestampMillis> for DateTime<Utc> {
+        type Error = &'static str;
+        fn try_from_sbe(wire: TimestampMillis) -> Result<Self, Self::Error> {
+            let n = read_u64(&wire.0);
+            DateTime::from_timestamp(
+                (n / 1_000) as i64,
+                ((n % 1_000) * 1_000_000) as u32,
+            ).ok_or("timestamp out of range")
+        }
+    }
+    impl TryToSbe<TimestampMillis> for DateTime<Utc> {
+        type Error = &'static str;
+        fn try_to_sbe(&self) -> Result<TimestampMillis, Self::Error> {
+            Ok(TimestampMillis(write_u64(self.timestamp_millis() as u64)))
+        }
+    }
+
+    // ── encode ─────────────────────────────────────────────────────
+    let nanos_ts  = Utc.with_ymd_and_hms(2025, 7, 27, 14, 30, 0).unwrap()
+                       + chrono::TimeDelta::nanoseconds(123_456_789);
+    let micros_ts = Utc.with_ymd_and_hms(2025, 7, 27, 14, 30, 0).unwrap()
+                       + chrono::TimeDelta::microseconds(123_456);
+    let millis_ts = Utc.with_ymd_and_hms(2025, 7, 27, 14, 30, 0).unwrap()
+                       + chrono::TimeDelta::milliseconds(123);
+
+    // Encode known wire values — each composite is a transparent u64 wrapper.
+    let wire_nanos:  u64 = nanos_ts.timestamp_nanos_opt().unwrap() as u64;
+    let wire_micros: u64 = micros_ts.timestamp_micros() as u64;
+    let wire_millis: u64 = millis_ts.timestamp_millis() as u64;
+
+    let mut buf = vec![0u8; EventEncoder::ENCODED_LENGTH];
+    let actual = EventEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&EventFixedFields {
+            created_at:  TimestampNanos(wire_nanos.to_le_bytes()),
+            updated_at:  TimestampMicros(wire_micros.to_le_bytes()),
+            received_at: TimestampMillis(wire_millis.to_le_bytes()),
+        })
+        .encoded_length_with_header();
+    assert_eq!(actual, EventEncoder::ENCODED_LENGTH);
+
+    // ── decode: all three fields convert to DateTime<Utc> via *as() ─
+    let event = EventDecoder::try_from(&buf[..actual])?;
+
+    let created:  DateTime<Utc> = event.created_at_as::<DateTime<Utc>>()?;
+    let updated:  DateTime<Utc> = event.updated_at_as::<DateTime<Utc>>()?;
+    let received: DateTime<Utc> = event.received_at_as::<DateTime<Utc>>()?;
+
+    // Nanos: full-precision round-trip (exact)
+    assert_eq!(created.timestamp_nanos_opt().unwrap(), nanos_ts.timestamp_nanos_opt().unwrap(),
+        "nanos precision round-trip must be exact");
+
+    // Micros: wire discards sub-microsecond (our test value has exactly 123456 µs, no loss)
+    assert_eq!(updated.timestamp_micros(), micros_ts.timestamp_micros(),
+        "micros round-trip must match at microsecond resolution");
+
+    // Millis: wire discards sub-millisecond
+    assert_eq!(received.timestamp_millis(), millis_ts.timestamp_millis(),
+        "millis round-trip must match at millisecond resolution");
+
+    // ── raw wire access still works (decoder, not value) ───────────
+    assert_eq!(event.created_at_wire().ts(),  wire_nanos,  "raw wire nanos must match");
+    assert_eq!(event.updated_at_wire().ts(),  wire_micros, "raw wire micros must match");
+    assert_eq!(event.received_at_wire().ts(), wire_millis, "raw wire millis must match");
+
+    // ── encode via converter methods (*_from) ───────────────────────
+    // Verify the converter-aware encoder also produces correct wire values.
+    let mut buf2 = vec![0u8; EventEncoder::ENCODED_LENGTH];
+    EventEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
+        .created_at_from(&nanos_ts)?
+        .updated_at_from(&micros_ts)?
+        .received_at_from(&millis_ts)?
+        .encoded_length_with_header();
+    // Bytes after the header must match between raw-wire encode and converter encode.
+    assert_eq!(&buf[8..], &buf2[8..],
+        "converter encode and raw-wire encode must produce identical bytes");
+    "#;
+    let sbe_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let deps = format!(
+        "chrono = \"0.4\"\nergo-sbe = {{ path = \"{}\" }}\n",
+        sbe_path.display(),
+    );
+    common::compile_and_run_with_deps("ts_precision_roundtrip", &source, code, &deps);
 
     Ok(())
 }

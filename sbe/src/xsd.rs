@@ -431,6 +431,88 @@ mod tests {
     }
 
     #[test]
+    fn accepts_enum_set_group_and_var_data_shapes() -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="t" id="1" version="0">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint16"/>
+            </composite>
+            <composite name="varStringEncoding">
+              <type name="length" primitiveType="uint32"/>
+              <type name="varData" primitiveType="uint8" length="0"/>
+            </composite>
+            <enum name="Side" encodingType="uint8">
+              <validValue name="Buy">1</validValue>
+              <validValue name="Sell">2</validValue>
+            </enum>
+            <set name="Flags" encodingType="uint8">
+              <choice name="Firm">0</choice>
+            </set>
+          </types>
+          <message name="Order" id="1">
+            <field name="side" id="1" type="Side"/>
+            <group name="fills" id="2" dimensionType="groupSizeEncoding">
+              <field name="quantity" id="3" type="uint32"/>
+              <data name="venue" id="4" type="varStringEncoding"/>
+            </group>
+            <data name="account" id="5" type="varStringEncoding"/>
+          </message>
+        </messageSchema>"#;
+
+        validate_against_sbe_xsd(xml)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_malformed_missing_attributes_and_unknown_type_shapes() {
+        type ValidationCase<'a> = (&'a str, &'a str, fn(&XsdValidationError) -> bool);
+        let cases: [ValidationCase<'_>; 4] = [
+            (
+                "<messageSchema",
+                "malformed XML",
+                |error: &XsdValidationError| matches!(error, XsdValidationError::MalformedXml(_)),
+            ),
+            (
+                r#"<messageSchema package="t" version="0"/>"#,
+                "missing schema id",
+                |error: &XsdValidationError| {
+                    matches!(error, XsdValidationError::MissingAttribute { attr: "id" })
+                },
+            ),
+            (
+                r#"<messageSchema package="t" id="1" version="0" surprise="yes"/>"#,
+                "unknown root attribute",
+                |error: &XsdValidationError| {
+                    matches!(error, XsdValidationError::UnexpectedAttribute { .. })
+                },
+            ),
+            (
+                r#"<messageSchema package="t" id="1" version="0"><types><unknown/></types></messageSchema>"#,
+                "unknown type element",
+                |error: &XsdValidationError| {
+                    matches!(error, XsdValidationError::UnexpectedElement { .. })
+                },
+            ),
+        ];
+
+        for (xml, context, predicate) in cases {
+            let result = validate_against_sbe_xsd(xml);
+            assert!(
+                result.as_ref().is_err_and(predicate),
+                "{context}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn embedded_xsd_is_present() {
         assert!(SBE_XSD.contains("messageSchema"));
         assert!(SBE_XSD.contains("xs:schema"));

@@ -1,5 +1,9 @@
 # ergo-aeron-cluster
 
+[![Crates.io](https://img.shields.io/crates/v/ergo-aeron-cluster)](https://crates.io/crates/ergo-aeron-cluster)
+[![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
+[![API Docs](https://docs.rs/ergo-aeron-cluster/badge.svg)](https://docs.rs/ergo-aeron-cluster/)
+
 `ergo-aeron-cluster` is an experimental Rust client for Aeron Cluster. It uses
 rusteron for transport and ergo-sbe-generated codecs for Aeron's Cluster
 protocol.
@@ -64,6 +68,50 @@ fields declared by the protocol are validated before being exposed as `&str`.
 The high-level client, configuration, listener, state, error, offer, and claim
 types are the consumer-facing surface. Generated codec re-exports and Java
 harness support exist for repository tests and are not stable application APIs.
+
+## Decoding chained session messages
+
+A `SessionMessageHeader` is followed by application payload bytes (another SBE
+message). Use the decoder's `remaining()` to get the payload, then
+`AnyMessage::decode` to parse the next message:
+
+```rust,no_run
+
+// Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes)
+let total = SessionMessageHeaderEncoder::ENCODED_LENGTH
+    + SessionKeepAliveEncoder::ENCODED_LENGTH;
+let mut buf = vec![0u8; total];
+
+let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
+enc.leadership_term_id(7)
+    .cluster_session_id(99)
+    .timestamp(42);
+
+// remaining_mut() returns the unwritten region after this message
+SessionKeepAliveEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)
+    .leadership_term_id(7)
+    .cluster_session_id(99);
+
+// Decode the first message
+let smh = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+
+// remaining() returns the bytes after the header (the SessionKeepAlive)
+let tail = smh.remaining();
+assert_eq!(tail.len(), SessionKeepAliveEncoder::ENCODED_LENGTH);
+
+// Decode the next message via AnyMessage
+let msg = AnyMessage::decode(tail, 0)?;
+match msg {
+    AnyMessage::SessionKeepAlive(dec) => {
+        assert_eq!(dec.cluster_session_id(), 99);
+        // Fully decoded — nothing left
+        assert!(dec.remaining().is_empty());
+    }
+    _ => panic!("unexpected message type"),
+}
+```
+
+`whole_buffer()` returns the entire original buffer (header + payload).
 
 ## Features and harness
 

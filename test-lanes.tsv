@@ -1,0 +1,20 @@
+# Tracked test-source ownership. Exactly one row must match every Rust source
+# containing tests, doctests, Criterion groups, proptest, or fuzz targets.
+# pattern<TAB>lane<TAB>command
+sbe/src/*.rs	pr	cargo test -p ergo-sbe --lib --all-features && cargo test -p ergo-sbe --doc --all-features
+sbe/tests/*.rs	pr	cargo test -p ergo-sbe --all-features
+sbe/benchmarks/tests/*.rs	pr	cargo test -p ergo-sbe-benchmarks
+sbe/benchmarks/benches/*.rs	benchmark	cargo bench -p ergo-sbe-benchmarks --no-run
+sbe/fuzz/fuzz_targets/*.rs	nightly-fuzz	cd sbe/fuzz && cargo +nightly fuzz run TARGET
+sbe/miri-fixtures/src/*.rs	nightly-miri	cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
+cluster/src/*.rs	pr	cargo test -p ergo-aeron-cluster --lib && cargo test -p ergo-aeron-cluster --doc
+cluster/tests/*.rs	java-harness	cargo test -p ergo-aeron-cluster --features test-harness
+cluster/benches/*.rs	benchmark	cargo bench -p ergo-aeron-cluster --no-run
+samples/exchange-example/src/*.rs	samples	cd samples/exchange-example && cargo test
+samples/exchange-example/tests/*.rs	samples	cd samples/exchange-example && cargo test
+samples/cluster-ha-orderbook/src/*.rs	samples	cd samples/cluster-ha-orderbook && cargo test --features test-harness
+samples/cluster-ha-orderbook/tests/*.rs	samples	cd samples/cluster-ha-orderbook && cargo test --features test-harness
+samples/l3-book/tests/*.rs	samples	cd samples/l3-book && cargo test
+samples/l3-book/benches/*.rs	benchmark	cd samples/l3-book && cargo bench --no-run
+samples/sbe-feature-tour/src/*.rs	samples	cd samples/sbe-feature-tour && cargo test
+samples/sbe-feature-tour/tests/*.rs	samples	cd samples/sbe-feature-tour && cargo test

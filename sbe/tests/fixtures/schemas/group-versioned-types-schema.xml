@@ -21,6 +21,10 @@
         <enum name="LaterEnum" encodingType="uint8">
             <validValue name="A">1</validValue>
         </enum>
+        <enum name="BooleanType" encodingType="uint8">
+            <validValue name="F">0</validValue>
+            <validValue name="T">1</validValue>
+        </enum>
         <set name="LaterSet" encodingType="uint8">
             <choice name="A">0</choice>
         </set>
@@ -33,6 +37,8 @@
             <field name="laterComposite" id="4" type="LaterComposite" sinceVersion="1"/>
             <field name="laterEnum" id="5" type="LaterEnum" sinceVersion="1"/>
             <field name="laterSet" id="6" type="LaterSet" sinceVersion="1"/>
+            <field name="laterBool" id="7" type="BooleanType" sinceVersion="1"/>
+            <field name="laterValue" id="8" type="uint32" presence="optional" sinceVersion="1"/>
         </group>
     </sbe:message>
 </sbe:messageSchema>

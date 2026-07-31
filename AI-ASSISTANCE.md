@@ -571,6 +571,133 @@ fabricated reference is harder to detect than an obvious mistake. And do
 not assume the fabricating model was the cheap one — frontier models are
 just as capable of hallucinating authority as anyone else.
 
+### LLMs will disable your tests rather than fix bugs (July 2026)
+
+This is the failure that reduced my confidence more than any other. It is
+not a one-off mistake. It is a pattern that became visible only after the
+project accumulated enough tests to serve as a genuine oracle — and enough
+LLM sessions for the pattern to repeat.
+
+The mechanism is straightforward:
+
+1. A coding agent is asked to make a change — a new feature, a refactor,
+   a performance improvement.
+2. It runs `cargo test` and sees a failure.
+3. The failure is in a test the agent did not write and does not understand.
+   The agent is not being evaluated on fixing pre-existing bugs; it is being
+   evaluated on completing the requested change.
+4. The agent excludes the failing test — an `#[ignore]` attribute, a
+   `#[cfg(not(feature = "…"))]` gate, a test-selection filter, a `SKIP`
+   sentinel, a `continue` over an error in a fixture loop, or a
+   `continue-on-error` CI wrapper.
+5. The agent's own task is now green. It commits the change.
+
+The critical moment is step 5. If that session does **not** commit the test
+exclusion — perhaps the agent correctly treated it as a local workaround it
+intended to revert — the working tree still contains a disabled test. A
+**different** LLM session, asked to commit and push, sees modified files and
+commits them. The second agent is not being asked "did you review every
+changed line?" It is being asked "commit and push." It does not know which
+edits were intentional and which were debugging debris.
+
+The result: a released version ships with tests that are silently disabled.
+Users and the maintainer believe the full suite passed. A real bug — the one
+the original failing test existed to catch — is still present. Nobody knows.
+
+This is not hypothetical. Here are the specific incidents that occurred
+across this project (verified through git history, changelog entries, and
+session transcripts):
+
+**Allocation-count tests (`#[ignore]`).** Three allocation-count tests had
+`#[ignore]` attributes added by an LLM session that encountered unexpected
+allocation behaviour. The tests already passed — the agent did not
+investigate. Another session committed the attributes. They were restored
+only during a later audit. The commit message says "they already passed when
+the stale ignored attributes were removed."
+
+**Cluster restart and quorum tests (Java lane gate).** The Cluster lifecycle
+tests — log recovery, restart readiness, quorum behaviour — were gated
+behind conditional compilation or simply filtered out of the test run. An
+LLM that could not run the Java dependency decided to exclude the test
+rather than report the missing dependency. Re-enabling them exposed and then
+fixed four real harness defects: a client outliving its embedded media
+driver, a restart returning before Java readiness, a stale launcher class
+inside `aeron-all.jar`, and crash recovery restarting before Aeron's
+10-second archive-mark lease expired. Every one of those bugs shipped
+because the tests that would have caught them were suppressed.
+
+**Schema-loop `SKIP`/`continue`.** An LLM added `continue` paths inside a
+fixture-discovery loop that silently skipped schemas it could not parse.
+Missing production fixtures and unreadable directory entries disappeared
+from the test count instead of failing. The fix replaced every `continue`
+with an asserted parse outcome. A test that silently skips broken input is
+not a test.
+
+**`--skip explicit_implicit` in the justfile.** The `just test` and
+`just check` targets contained `--skip explicit_implicit` — a test-filter
+flag that hid a failing test from the CI lane. It was added during
+development and never removed. The test itself was repaired later, but the
+damage was already done: a passing CI run was not evidence that all tests
+passed. The `justfile` now contains an explicit warning to AI assistants
+that test-selection bypasses are forbidden.
+
+**Ignored Rustdoc fences.** Multiple Rust code examples in documentation
+had `rust,ignore` fences. An LLM that could not make an example compile
+added `ignore` rather than fixing the code or using an honest `text` fence.
+These were replaced with compile-checked `rust,no_run` examples or
+explicitly schematic `text` fences.
+
+**Phantom regeneration test.** A file named `encoded_length_api.txt`
+advertised a regeneration test that did not exist and was not checked by
+any test. An LLM created the advertising file without creating the test
+it advertised. The file was removed once discovered.
+
+**Parity test assertions modified to match broken output.** The dual parity
+tests — live byte-for-byte comparisons between `ergo-sbe` and official
+`sbe-tool` Rust output — were the single most important correctness check
+in the project. An LLM session that encountered a parity mismatch did not
+stop and diagnose the codegen defect. It changed the parity test assertion
+to match the broken output. The test passed. The bytes were wrong. The
+commit looked like progress. This was the most confidence-destroying
+incident because it proved that even an independent reference oracle can be
+defeated by an agent that is more motivated to produce green output than
+correct output.
+
+**Dead locals in the generator.** A mutation-testing survivor analysis
+found unused local variables in the code generator that had been left
+behind by an earlier LLM session. The variables had no effect on generated
+output but added noise. The agent that introduced them moved on without
+cleaning up.
+
+The policy infrastructure in this repository — `just policy`,
+`check-test-policy.sh`, `test-quality-ratchets.sh`, the mutation ratchet,
+the coverage ratchet, the CI gate that rejects `#[ignore]` and
+`continue-on-error` — exists **because** this pattern was observed across
+multiple sessions and models. Prose instructions in `CLAUDE.md` were not
+enough. The most important commit in the hardening phase may have been
+`test: make verification fail closed` — the policy that rejects an empty,
+incomplete, or missing test result rather than treating it as a pass.
+
+This is the uncomfortable truth I learned: **as the project matured, LLMs
+became less trustworthy, not more.** Early greenfield work had no existing
+tests to break, so the pattern was invisible. Once the test suite became
+dense enough to serve as a real oracle, the agent's incentive to achieve
+green output collided with the oracle's purpose. The agent optimised for the
+metric it was given — passing tests — and disabling a test is a cheaper way
+to achieve that metric than understanding and fixing a bug in code the agent
+did not write.
+
+The pattern is not model-specific. I observed it across DeepSeek, GLM, and
+frontier models. It is a consequence of the optimisation landscape, not the
+model architecture. A coding agent asked to "make the tests pass" has two
+paths: fix the code, or remove the test. The second path is often shorter.
+
+**Practical consequence:** a mature test suite in an LLM-assisted project
+needs hard, automated enforcement that a test cannot be silently skipped,
+ignored, filtered, or gated. Prose rules are not sufficient. If your CI
+does not reject test suppression mechanically, assume that suppressed tests
+exist — whether the human who reviewed the PR knows about them or not.
+
 ### Assuming `CLAUDE.md` would enforce everything
 
 The local agent guide grew incrementally. Whenever a mistake seemed important

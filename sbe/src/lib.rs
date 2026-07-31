@@ -1,6 +1,6 @@
 #![warn(missing_docs)]
-#![allow(unused)] // pre-existing in 5600-line codegen.rs
-#![allow(clippy::pedantic)] // pre-existing in codegen (3000+ line file)
+#![allow(unused)] // legacy codegen module still contains unused helpers
+#![allow(clippy::pedantic)] // legacy codegen is being tightened incrementally
 #![allow(clippy::nursery)] // experimental lints on stable code
 #![allow(clippy::panic)] // codegen uses panic/expect for irrecoverable states
 #![allow(clippy::too_many_arguments)] // codegen functions need many params
@@ -10,8 +10,8 @@
 #![allow(clippy::useless_format)] // codegen generates format strings
 #![allow(clippy::items_after_statements)] // codegen structure
 #![allow(clippy::explicit_counter_loop)] // codegen uses counter loops
-#![allow(clippy::uninlined_format_args)] // pre-existing in old string template code
-#![allow(clippy::unwrap_used)] // pre-existing in test helpers and config
+#![allow(clippy::uninlined_format_args)] // legacy string-template code
+#![allow(clippy::unwrap_used)] // legacy test helpers and config
 #![allow(clippy::collapsible_if)] // intentional readability in codegen
 #![allow(clippy::unreadable_literal)] // schema constants with specific bit patterns
 #![allow(clippy::match_same_arms)] // SBE signal dispatch with matching bodies
@@ -22,8 +22,8 @@
 #![allow(clippy::similar_names)] // codegen variable naming
 #![allow(clippy::redundant_clone)] // intentional clarity in codegen
 #![allow(clippy::doc_markdown)] // SBE terms like blockLength are schema identifiers
-#![allow(clippy::ref_option)] // pre-existing in IR model
-#![allow(clippy::map_unwrap_or)] // pre-existing pattern
+#![allow(clippy::ref_option)] // legacy IR model API
+#![allow(clippy::map_unwrap_or)] // legacy resolver pattern
 #![allow(clippy::expect_used)] // expect() is intentional in codegen
 #![allow(clippy::redundant_closure_for_method_calls)] // generated code
 #![allow(clippy::unnecessary_unwrap)] // codegen uses unwrap_or pattern
@@ -35,7 +35,7 @@
 #![allow(clippy::should_panic_without_expect)] // test patterns
 #![allow(clippy::too_many_lines)] // codegen.rs is inherently large
 #![allow(clippy::module_name_repetitions)] // codegen uses descriptive names
-#![allow(clippy::option_if_let_else)] // pre-existing patterns
+#![allow(clippy::option_if_let_else)] // legacy control-flow patterns
 #![allow(clippy::match_wildcard_for_single_variants)] // exhaustive match
 #![allow(clippy::single_match_else)] // semantic intent
 #![allow(clippy::fn_params_excessive_bools)] // codegen parameter style
@@ -48,6 +48,20 @@
 //! [Simple Binary Encoding][sbe-spec] describes messages in XML; ergo-sbe
 //! parses those schemas and emits safe, version-aware Rust codecs for
 //! low-latency trading.
+//!
+//! ## In a few words
+//!
+//! - **Compile-time wire order** — calling `asks` before `bids` is a type error
+//! - **Closure-based groups** — nested shape mirrors the schema, no `.parent()` hopscotch
+//! - **Exact buffer sizing** — no oversize scratch buffers; works directly with
+//!   Aeron `try_claim`
+//! - **Checked entry points** — `try_from` / `try_wrap` for untrusted input;
+//!   `wrap` for trusted — explicit in the type system
+//! - **Zero heap allocation** on generated hot paths; zero runtime dependencies
+//! - **Domain types** — map wire `Decimal` to `rust_decimal::Decimal` with one
+//!   line of config
+//!
+//! Full feature walkthrough: [crate README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md).
 //!
 //! # Architecture
 //!
@@ -164,8 +178,8 @@
 //!     );
 //! ```
 //!
-//! See [`sbe/converter`](https://github.com/mimran1980/ergon/blob/main/sbe/src/converter.rs)
-//! and [`sbe/tests/conversion_selector_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/conversion_selector_test.rs)
+//! See [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
+//! (conversion and domain-object coverage).
 //!
 //! ## Domain objects
 //!
@@ -177,11 +191,11 @@
 //!
 //! ## Multi-message dispatch
 //!
-//! See [`sbe/tests/frame_cursor_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/frame_cursor_test.rs)
+//! See [`sbe/fuzz/fuzz_targets/any_message_frame_cursor.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/fuzz/fuzz_targets/any_message_frame_cursor.rs)
 //!
 //! ## Fixed arrays / char fields
 //!
-//! See [`sbe/tests/fixed_array_helpers_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/fixed_array_helpers_test.rs)
+//! See [`sbe/tests/java_parity_features_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs)
 //!
 //! ## Keywords in schema names
 //!
@@ -205,6 +219,11 @@
 //! Benchmarks: [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/first_cut/sbe/BENCHMARKS.md).
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
+
+/// Re-exported so `build.rs` can return [`miette::Result`] without an extra
+/// dependency. Enable the crate's `fancy` feature for graphical rendering
+/// (source snippet + span) instead of the plain fallback.
+pub use miette;
 
 /// Cargo `build.rs` helpers ([`generate_to_out_dir`], [`sbe_mod!`]).
 pub mod build;
@@ -230,9 +249,15 @@ pub use build::{
     out_dir,
 };
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
-pub use config::{ConversionSelector, DomainVarData, GenerationConfig};
+pub use config::{
+    ConversionSelector, DomainVarData, EnumVariantInfo, FieldInfo, GenerationConfig, ItemContext,
+    ItemKind, SetChoiceInfo,
+};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;
-pub use xml::{ParseError, parse, parse_file, parse_with_xsd_validation};
+pub use xml::{
+    ParseError, parse, parse_file, parse_file_with_shared, parse_with_shared,
+    parse_with_xsd_validation,
+};
 pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};

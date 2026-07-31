@@ -827,23 +827,26 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         };
         let bit_index: u8 = val.parse().unwrap_or(0);
         let snake = to_snake_case(&t.name);
-        let bit_name = syn::Ident::new(&snake, proc_macro2::Span::call_site());
-        let set_bit_name = quote::format_ident!("set_{}", snake);
+        let is_bit_name = quote::format_ident!("is_{}", snake);
+        let set_bit_name = syn::Ident::new(&snake, proc_macro2::Span::call_site());
         let bit_lit = syn::LitInt::new(&bit_index.to_string(), proc_macro2::Span::call_site());
-        choice_getters.push(bit_name.clone());
+        choice_getters.push(is_bit_name.clone());
         choice_setters.push(set_bit_name.clone());
         choice_name_strs.push(syn::LitStr::new(&t.name, proc_macro2::Span::call_site()));
         bits.push(quote::quote! {
-            pub const fn #bit_name(self) -> bool {
+            #[inline]
+            pub const fn #is_bit_name(self) -> bool {
                 (self.0 & (1 << #bit_lit)) != 0
             }
 
-            pub fn #set_bit_name(&mut self, val: bool) {
+            #[inline]
+            pub fn #set_bit_name(&mut self, val: bool) -> &mut Self {
                 if val {
                     self.0 |= 1 << #bit_lit;
                 } else {
                     self.0 &= !(1 << #bit_lit);
                 }
+                self
             }
         });
     }
@@ -859,10 +862,12 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         pub struct #name_ident(pub #r_type_ty);
 
         impl #name_ident {
+            #[inline]
             pub const fn raw(self) -> #r_type_ty {
                 self.0
             }
 
+            #[inline]
             pub const fn default() -> Self {
                 Self(0)
             }
@@ -1307,7 +1312,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                                 while idx < #len_lit {
                                     let offset = self.pos + #offset_lit + idx * #prim_size_lit;
                                     res[idx] = #r_type_ty::#from_method(
-                                        read_bytes::<#prim_size_lit>(self.buf, offset)
+                                        read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
                                     );
                                     idx += 1;
                                 }
@@ -1329,7 +1334,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
                             let offset = self.pos + #offset_lit;
-                            #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset))
+                            #r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))
                         }
                     });
                 }
@@ -1347,7 +1352,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(read_bytes::<#comp_size_lit>(self.buf, offset))
+                        #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
                     }
                 });
             }
@@ -1367,7 +1372,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident::from_raw(#r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
             }
@@ -1387,7 +1392,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#from_method(read_bytes::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident(#r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                     }
                 });
             }
@@ -1398,8 +1403,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     let decoder_ts = quote::quote! {
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
-            buf: &'a [u8],
-            pos: usize,
+            pub(crate) buf: &'a [u8],
+            pub(crate) pos: usize,
         }
 
         impl<'a> #decoder_name<'a> {
@@ -1786,9 +1791,10 @@ pub(crate) fn generate_any_message(
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
-            let id = syn::LitInt::new(&m.id.to_string(), span);
             decode_arms.extend(quote::quote! {
-                #id => Ok(Self::#name(#decoder::wrap(buf, body_pos, block_length, version))),
+                #decoder::TEMPLATE_ID => {
+                    Ok(Self::#name(#decoder::wrap(buf, body_pos, block_length, version)))
+                }
             });
         }
 
@@ -1839,10 +1845,9 @@ pub(crate) fn generate_any_message(
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
-            let id = syn::LitInt::new(&m.id.to_string(), span);
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
-                #id => {
+                #decoder::TEMPLATE_ID => {
                     let decoder = #decoder::wrap(buf, body_pos, block_length, version);
                     let total_len = decoder.encoded_length_with_header()?;
                     if total_len > frame_len {

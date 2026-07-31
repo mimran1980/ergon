@@ -119,6 +119,7 @@ fn warm_up_all() {
     // Frame cursor — actually unwrap and inspect to settle lazy-inits
     let msg = AnyMessage::decode_frame(BASELINE, 0, BASELINE.len()).unwrap();
     let _ = black_box(msg);
+    let _ = black_box((CarDecoder::SCHEMA_ID, CarDecoder::TEMPLATE_ID));
 
     let mut buf = [0u8; 512];
     let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0);
@@ -222,6 +223,26 @@ fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 #[serial(alloc_count)]
+fn domain_encode_flat_nested_group_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    let dto = CarDomain::try_from_decoder(CarDecoder::try_from(BASELINE)?)?;
+    let len = dto.encoded_length_with_header()?;
+    let mut storage = [0u8; 512];
+    assert!(len <= storage.len());
+    dto.encode(&mut storage[..len])?;
+
+    let mut outcome = Ok(0);
+    measure("domain encode with flat nested group", || {
+        outcome = dto.encode(black_box(&mut storage[..len]));
+        if let Ok(written) = &outcome {
+            black_box(&storage[..*written]);
+        }
+    });
+    outcome?;
+    Ok(())
+}
+
+#[test]
+#[serial(alloc_count)]
 fn uniform_length_builder_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     measure("uniform length builder", || {
         let len = CarEncodedLength::new()
@@ -261,6 +282,19 @@ fn vardata_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap();
         let (model, _done) = a1.into_model().unwrap();
         black_box((mfr, model));
+    });
+    Ok(())
+}
+
+#[test]
+#[serial(alloc_count)]
+fn static_metadata_lookup_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    measure("static metadata lookup", || {
+        let descriptor = (
+            black_box(CarDecoder::SCHEMA_ID),
+            black_box(CarDecoder::TEMPLATE_ID),
+        );
+        black_box(descriptor);
     });
     Ok(())
 }

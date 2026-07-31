@@ -1,0 +1,54 @@
+name: Bug report
+description: A generated codec, parser, or Cluster client behavior is wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Per [CONTRIBUTING.md](../../CONTRIBUTING.md), the most valuable bug
+        report is a failing test, not a description. If you can, include one.
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Affected crate
+      options:
+        - ergo-sbe
+        - ergo-aeron-cluster
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Crate version
+      placeholder: "0.1.4"
+    validations:
+      required: true
+  - type: textarea
+    id: schema
+    attributes:
+      label: Minimal schema or message shape
+      description: >
+        The smallest SBE schema fragment (or Cluster message type) that
+        reproduces the issue. Attach the full XML if it's easier.
+      render: xml
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        Generated code, input bytes, or a failing test. Wire bytes as a hex
+        dump are ideal for parity/decode issues.
+      render: rust
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What you expected the generated codec to do, and what it did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Rust version, target platform, byte order, anything else relevant.

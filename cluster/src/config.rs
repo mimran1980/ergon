@@ -23,12 +23,15 @@ use crate::{ClusterError, CredentialsSupplier};
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use ergo_aeron_cluster::SessionBuilder;
-/// let client = SessionBuilder::builder()
-///     .ingress_channel("aeron:udp?endpoint=localhost:9002")
-///     .egress_channel("aeron:udp?endpoint=localhost:19002")
-///     .connect(aeron_dir)?;
+/// ```rust,no_run
+/// use ergo_aeron_cluster::{AeronCluster, ClusterError, SessionBuilder};
+///
+/// fn connect(aeron_dir: &str) -> Result<AeronCluster, ClusterError> {
+///     let builder = SessionBuilder::default()
+///         .ingress_channel("aeron:udp?endpoint=localhost:9002")
+///         .egress_channel("aeron:udp?endpoint=localhost:19002");
+///     AeronCluster::connect(&builder, aeron_dir)
+/// }
 /// ```
 #[derive(Clone)]
 pub struct SessionBuilder {

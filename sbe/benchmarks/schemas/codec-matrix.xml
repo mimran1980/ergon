@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<messageSchema package="bench.matrix" id="710" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length" primitiveType="uint16" maxValue="8192"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <type name="Bytes8" primitiveType="uint8" length="8"/>
+    <type name="Bytes56" primitiveType="uint8" length="56"/>
+    <type name="Bytes248" primitiveType="uint8" length="248"/>
+  </types>
+
+  <message name="Fixed16" id="1" blockLength="16">
+    <field name="value" id="1" type="uint64" offset="0"/>
+    <field name="payload" id="2" type="Bytes8" offset="8"/>
+  </message>
+  <message name="Fixed64" id="2" blockLength="64">
+    <field name="value" id="1" type="uint64" offset="0"/>
+    <field name="payload" id="2" type="Bytes56" offset="8"/>
+  </message>
+  <message name="Fixed256" id="3" blockLength="256">
+    <field name="value" id="1" type="uint64" offset="0"/>
+    <field name="payload" id="2" type="Bytes248" offset="8"/>
+  </message>
+  <message name="Grouped" id="4">
+    <field name="sequence" id="1" type="uint64"/>
+    <group name="rows" id="2" dimensionType="groupSizeEncoding">
+      <field name="value" id="3" type="uint64"/>
+    </group>
+  </message>
+  <message name="WithData" id="5">
+    <field name="sequence" id="1" type="uint64"/>
+    <data name="payload" id="2" type="varDataEncoding"/>
+  </message>
+  <message name="Nested" id="6">
+    <field name="sequence" id="1" type="uint64"/>
+    <group name="outer" id="2" dimensionType="groupSizeEncoding">
+      <field name="value" id="3" type="uint64"/>
+      <group name="inner" id="4" dimensionType="groupSizeEncoding">
+        <field name="value" id="5" type="uint64"/>
+        <data name="payload" id="6" type="varDataEncoding"/>
+      </group>
+    </group>
+  </message>
+  <message name="Versioned" id="7">
+    <field name="oldValue" id="1" type="uint64"/>
+    <field name="newValue" id="2" type="uint64" sinceVersion="1"/>
+  </message>
+</messageSchema>

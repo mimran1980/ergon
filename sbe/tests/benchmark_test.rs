@@ -45,8 +45,8 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
             car.some_numbers([1u32, 2, 3, 4]);
             car.vehicle_code([97, 98, 99, 100, 101, 102]);
             let mut extras = OptionalExtras::default();
-            extras.set_cruise_control(true);
-            extras.set_sports_pack(true);
+            extras.cruise_control(true);
+            extras.sports_pack(true);
             car.extras(extras);
             car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
 

@@ -60,7 +60,7 @@ fn connect_own_driver(
     egress_port: u16,
     aeron_dir: &str,
 ) -> Result<AeronCluster, ergo_aeron_cluster::ClusterError> {
-    let builder = SessionBuilder::builder()
+    let builder = SessionBuilder::default()
         .ingress_channel(cluster_ingress.to_string())
         .egress_channel(format!("aeron:udp?endpoint=localhost:{egress_port}"))
         .ingress_stream_id(101)

@@ -60,12 +60,59 @@ pub(crate) fn partition_tokens(tokens: &[Token]) -> SchemaElements {
 }
 
 /// Shared bool detection: name convention OR semanticType="Boolean".
-/// Must match the predicate in generate_enum.
+/// Used by codegen to emit `_bool()` accessors. Must match the predicate
+/// in generate_enum. Does NOT use value-based heuristics — those are
+/// reserved for [`is_bool_value_enum`] which powers `enable_bool_domain_type`.
 pub(crate) fn is_bool_enum(elements: &SchemaElements, enum_name: &str) -> bool {
     enum_name == "BooleanType"
         || elements.enums.iter().any(|e| {
             e[0].name == enum_name && e[0].encoding.semantic_type.as_deref() == Some("Boolean")
         })
+}
+
+/// Extended detection: name, semanticType, OR exactly two valid values
+/// forming a recognisable true/false pair. Used by
+/// `enable_bool_domain_type()` to auto-register `bool` converters for
+/// schemas that don't use the canonical `BooleanType` naming.
+pub(crate) fn is_bool_value_enum(elements: &SchemaElements, enum_name: &str) -> bool {
+    if is_bool_enum(elements, enum_name) {
+        return true;
+    }
+    elements.enums.iter().any(|e| {
+        if e[0].name != enum_name {
+            return false;
+        }
+        let vals: Vec<&str> = e
+            .iter()
+            .filter(|t| t.signal == crate::ir::Signal::Encoding)
+            .map(|t| t.name.as_str())
+            .collect();
+        vals.len() == 2 && is_boolean_value_pair(vals[0], vals[1])
+    })
+}
+
+/// Heuristic: do the two enum value names form a true/false pair?
+fn is_boolean_value_pair(a: &str, b: &str) -> bool {
+    let (lower, upper) = if a.eq_ignore_ascii_case("true")
+        || a.eq_ignore_ascii_case("yes")
+        || a.eq_ignore_ascii_case("y")
+        || a.eq_ignore_ascii_case("t")
+    {
+        (a, b)
+    } else if b.eq_ignore_ascii_case("true")
+        || b.eq_ignore_ascii_case("yes")
+        || b.eq_ignore_ascii_case("y")
+        || b.eq_ignore_ascii_case("t")
+    {
+        (b, a)
+    } else {
+        return false;
+    };
+    // Now `lower` is the truthy name; `upper` must be the falsy counterpart.
+    upper.eq_ignore_ascii_case("false")
+        || upper.eq_ignore_ascii_case("no")
+        || upper.eq_ignore_ascii_case("n")
+        || upper.eq_ignore_ascii_case("f")
 }
 
 pub(crate) struct MessageStructure {
@@ -130,6 +177,22 @@ impl FieldType {
             Self::Composite { size, .. } => *size,
             Self::Enum { encoding_type, .. } | Self::Set { encoding_type, .. } => {
                 encoding_type.size()
+            }
+        }
+    }
+
+    pub(crate) fn rust_type_name(&self) -> String {
+        match self {
+            Self::Primitive(p, length) => {
+                let base = rust_type(*p);
+                if let Some(len) = length {
+                    format!("[{}; {}]", base, len)
+                } else {
+                    base.to_string()
+                }
+            }
+            Self::Composite { name, .. } | Self::Enum { name, .. } | Self::Set { name, .. } => {
+                to_pascal_case(name)
             }
         }
     }
@@ -644,6 +707,39 @@ pub(crate) fn get_dim_num_layout(
     (offset, size, prim)
 }
 
+/// Returns (offset, size, primitive) of the blockLength field within a
+/// dimension composite. Dimension members may be reordered, padded, and use
+/// any unsigned integer width supported by SBE.
+pub(crate) fn get_dim_block_layout(
+    elements: &SchemaElements,
+    dim_type: &str,
+) -> (usize, usize, PrimitiveType) {
+    let mut offset = 0;
+    let mut size = 2;
+    let mut prim = PrimitiveType::UInt16;
+    if let Some(comp) = elements
+        .composites
+        .iter()
+        .find(|composite| composite[0].name == dim_type)
+    {
+        for member in parse_composite_members(comp) {
+            if member.name.to_lowercase().contains("blocklength") {
+                offset = member.offset;
+                if let MemberType::Primitive {
+                    prim: primitive,
+                    length,
+                    ..
+                } = member.member_type
+                {
+                    prim = primitive;
+                    size = primitive.size() * length.unwrap_or(1);
+                }
+            }
+        }
+    }
+    (offset, size, prim)
+}
+
 pub(crate) fn get_vardata_info(
     elements: &SchemaElements,
     type_name: &str,
@@ -707,4 +803,91 @@ pub(crate) struct OwnerTailVarData {
     pub(crate) max_length: Option<usize>,
     pub(crate) name: String,
     pub(crate) character_encoding: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Encoding;
+
+    fn token(name: &str, signal: Signal, encoding: Encoding) -> Token {
+        Token {
+            id: None,
+            name: name.to_string(),
+            signal,
+            encoding,
+            span: None,
+        }
+    }
+
+    #[test]
+    fn unresolved_nested_composite_size_falls_back_to_member_scan() {
+        let primitive = Encoding {
+            primitive_type: Some(PrimitiveType::UInt16),
+            length: Some(2),
+            ..Encoding::default()
+        };
+        let tokens = vec![
+            token("Outer", Signal::BeginComposite, Encoding::default()),
+            token("nested", Signal::BeginField, Encoding::default()),
+            token("Inner", Signal::BeginComposite, Encoding::default()),
+            token("values", Signal::BeginField, primitive),
+            token("values", Signal::Encoding, Encoding::default()),
+            token("values", Signal::EndField, Encoding::default()),
+            token("Inner", Signal::EndComposite, Encoding::default()),
+            token("nested", Signal::EndField, Encoding::default()),
+            token("Outer", Signal::EndComposite, Encoding::default()),
+        ];
+
+        let members = parse_composite_members(&tokens);
+
+        assert_eq!(members.len(), 1);
+        assert!(matches!(
+            members[0].member_type,
+            MemberType::Composite { size: 4, .. }
+        ));
+    }
+
+    fn enum_elements(name: &str, semantic_type: Option<&str>, values: &[&str]) -> SchemaElements {
+        let mut enum_tokens = vec![token(
+            name,
+            Signal::BeginEnum,
+            Encoding {
+                semantic_type: semantic_type.map(str::to_string),
+                ..Encoding::default()
+            },
+        )];
+        enum_tokens.extend(
+            values
+                .iter()
+                .map(|value| token(value, Signal::Encoding, Encoding::default())),
+        );
+        enum_tokens.push(token(name, Signal::EndEnum, Encoding::default()));
+        SchemaElements {
+            composites: Vec::new(),
+            enums: vec![enum_tokens],
+            sets: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bool_enum_detection_covers_names_semantics_and_value_pairs() {
+        let ordinary = enum_elements("Enabled", None, &["Yes", "No"]);
+        assert!(is_bool_value_enum(&ordinary, "Enabled"));
+        assert!(!is_bool_value_enum(&ordinary, "Other"));
+
+        let reversed = enum_elements("Active", None, &["false", "TRUE"]);
+        assert!(is_bool_value_enum(&reversed, "Active"));
+
+        let non_boolean = enum_elements("Side", None, &["Buy", "Sell"]);
+        assert!(!is_bool_value_enum(&non_boolean, "Side"));
+
+        let semantic = enum_elements("Flag", Some("Boolean"), &["Off", "On"]);
+        assert!(is_bool_enum(&semantic, "Flag"));
+        assert!(is_bool_value_enum(&semantic, "Flag"));
+
+        let canonical = enum_elements("BooleanType", None, &["Zero", "One"]);
+        assert!(is_bool_enum(&canonical, "BooleanType"));
+    }
 }
