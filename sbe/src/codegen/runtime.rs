@@ -1852,7 +1852,7 @@ pub(crate) fn generate_any_message(
                 #decoder::TEMPLATE_ID => {
                     let mut decoder = #decoder::wrap(buf, pos, block_length, version);
                     decoder.header_present = true;
-                    let total_len = decoder.encoded_length_with_header()?.expect("header present");
+                    let total_len = decoder.encoded_length_with_header()?;
                     if total_len > frame_len {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,
