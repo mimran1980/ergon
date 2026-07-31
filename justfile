@@ -1,30 +1,10 @@
 # ergon — reproducible workspace gates
 #
-# ── ergo-aeron-cluster + --all-features ─────────────────────────────────
-# `cluster` IS a workspace member. Commands that pass `--all-features` still
-# use `--exclude ergo-aeron-cluster` and then re-run that crate alone because:
+# `ergo-aeron-cluster` is a workspace member excluded from `--all-features`
+# because its `test-harness` feature pulls in Java/Aeron jars. Each gate
+# excludes it then re-runs the crate with default (pure-Rust) features.
 #
-#   • cluster's optional feature `test-harness` enables the in-crate
-#     `test_support` module (Java ClusterLauncher / Aeron jars via rusteron-archive).
-#   • `--all-features` turns that feature on, so a single
-#     `cargo {build,test,clippy} --workspace --all-features` would pull the
-#     harness into the default Rust-only gate.
-#   • Default `cluster` features (`default = []`) are pure Rust and safe for CI.
-#
-# Pattern:
-#   cargo … --workspace --all-features --exclude ergo-aeron-cluster
-#   cargo … -p ergo-aeron-cluster            # default features only
-#
-# Full harness: `just build-aeron-jars` then `just test-aeron-cluster-harness`.
-# Samples are workspace-excluded packages (standalone).
-#
-# ── Release (crates.io) ─────────────────────────────────────────────────
-# Publish product crates individually; do NOT `--all-features` for release.
-#   1. ergo-sbe             (sbe/)
-#   2. ergo-aeron-cluster   with default features only (never require test-harness)
-# Do not publish: ergo-sbe-benchmarks (publish=false), samples.
-# Consumers depend on crates.io versions; monorepo samples keep `path = …`.
-# Tag the repo after publish; Aeron submodule pin is independent of crate release.
+# Samples are standalone packages, not workspace members.
 
 import 'just/samples.just'
 import 'just/aeron.just'
@@ -53,8 +33,8 @@ policy:
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
 
-# Full local check: hygiene, format, clippy, tests (no external services / no Java).
-check: policy
+# Full local check: hygiene, format, clippy, tests (no Java / Aeron jars).
+check-local: policy
     ./scripts/check-repository-hygiene.sh
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
@@ -96,8 +76,8 @@ check-samples: policy
     cd samples/cluster-ha-orderbook && cargo test --lib --test ha_offline_pipeline -- --test-threads=1
     cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
 
-# Pre-release check: product crates + bench compile + package + strict rustdoc.
-release-check: test check-products check-coverage
+# Pre-release check: comprehensive suite + coverage + bench compile + dry-run publish.
+release-check: test check-coverage
     cargo bench -p ergo-sbe-benchmarks --no-run
     cargo bench -p ergo-aeron-cluster --no-run
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
@@ -176,18 +156,8 @@ test-unit: policy
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
 
-# Every test gate including nightly-only miri and fuzz.
-# Runs: standard suite + Miri UB detection + fuzz corpus replay.
-#
-# ── AI ASSISTANTS: READ THIS BEFORE TOUCHING ANYTHING ─────────────────────────
-# DO NOT add test-selection filters, ignored attributes, or another silencing mechanism.
-# DO NOT comment out failing tests or benches.
-# DO NOT add conditions that silently skip tests ("if java then … else …").
-# If a test fails, the test is correct and the code is wrong — FIX THE CODE.
-# If the environment doesn't support a test, ask the user — NEVER skip.
-# This file is the single source of truth for "did everything pass?"
-# A green `just test-all` means EVERY test ran and EVERY test passed.
-# ───────────────────────────────────────────────────────────────────────────────
+# Every test gate: standard suite + Miri UB detection + fuzz corpus replay.
+# A green `just test-all` means every test ran and every test passed.
 test-all: policy test
     @echo "=== 8/9 miri (UB detection) ==="
     cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml

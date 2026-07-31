@@ -51,8 +51,7 @@ use rust_decimal::Decimal as Rd;
 /// Heartbeat is fixed-block only: size with `HeartbeatEncoder::compute_length_with_header()`,
 /// no staged length builder.
 ///
-/// Note: wire setters take `u64` nanos; decoder domain conversion exposes
-/// `timestamp() -> DateTime<Utc>` when `UTCTimestamp` is configured in build.rs.
+// ANCHOR: demo_fixed_heartbeat
 pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Const length → stack array (no heap).
     let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
@@ -70,6 +69,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     assert_eq!(decoded_ts.timestamp_nanos_opt(), Some(nanos));
     Ok(buf[..written].to_vec())
 }
+// ANCHOR_END: demo_fixed_heartbeat
 
 // ─── 2. EncodedLength + encode ─────────────────────────────────────────────
 
@@ -350,6 +350,7 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
 // ─── 7. Display / Debug ────────────────────────────────────────────────────
 
 /// Diagnostic formatting — not a stable serialization format.
+// ANCHOR: demo_display_debug
 pub fn demo_display_debug(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(valid_car)?;
     let display = format!("{car}");
@@ -362,6 +363,7 @@ pub fn demo_display_debug(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Er
     assert!(!debug.is_empty());
     Ok(())
 }
+// ANCHOR_END: demo_display_debug
 
 // ─── 8. with_conversion only: generic price_as / price_from ────────────────
 
@@ -429,6 +431,7 @@ impl TryToSbe<Decimal> for FixedPrice {
 /// | `price_from` / `price_as::<T>` | yes |
 /// | `price() -> rust_decimal::Decimal` | **no** (that needs `with_domain_type`) |
 /// | `price_value()` wire composite | yes |
+// ANCHOR: demo_conversion_only
 pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
 
@@ -466,6 +469,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     assert_eq!(&re[..n], &buf[..len]);
     Ok(buf[..len].to_vec())
 }
+// ANCHOR_END: demo_conversion_only
 
 // ─── Orchestrator ──────────────────────────────────────────────────────────
 
