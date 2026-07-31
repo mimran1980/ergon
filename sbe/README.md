@@ -913,6 +913,15 @@ So:
    transparent wire image is the portable form that already optimizes to the
    packed load on LE.
 
+#### What about the `zerocopy` crate?
+
+We evaluated using the [`zerocopy`](https://docs.rs/zerocopy) crate to derive
+`FromBytes`/`IntoBytes` on generated message structs for zero-copy buffer
+overlay. It was not faster
+
+The flyweight decoder already hits the same `mov` instructions without the
+extra dependency.
+
 | You need… | Use |
 |-----------|-----|
 | One or a few fields on the hot path | **Flyweight** — no composite copy |
@@ -980,6 +989,64 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **XSD-shaped validation** | Structural check before parse | `validate_against_sbe_xsd` / `parse_with_xsd_validation` · [xsd.rs](https://github.com/mimran1980/ergon/blob/main/sbe/src/xsd.rs) |
 | **Zero-alloc hot path** | Flyweights + caller buffers | [allocation_count_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/allocation_count_test.rs) · [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md) |
 | **Property round-trip** | Random messages encode→decode | `cargo test -p ergo-sbe --test proptest_roundtrip` · [proptest_roundtrip](https://github.com/mimran1980/ergon/blob/main/sbe/tests/proptest_roundtrip.rs) |
+
+---
+
+## Design notes
+
+### Why enums have a `NullVal` variant instead of `Option<EventCode>`
+
+Every SBE enum must declare a `nullValue` in the schema — an explicit wire sentinel
+that means "not present" / "not set". When the schema doesn't specify one, SBE
+defaults to the encoding type's maximum value (e.g. `255` for `uint8`, `-1` for
+`int8`).
+
+An early design tried wrapping every enum field in `Option<EventCode>` at the
+field site:
+
+```rust,no_run
+// Option approach — REJECTED
+pub fn event_code(&self) -> Option<EventCode> { … }
+pub fn set_event_code(&mut self, val: Option<EventCode>) { … }
+```
+
+This was rejected for three reasons:
+
+1. **Wire incompatibility.** `Option` adds a Rust discriminant outside the SBE
+   encoding. There is no extra byte on the wire for `Some` vs `None` — the null
+   sentinel lives *inside* the enum's own value range. Encoding `None` as the
+   null sentinel and `Some(v)` as `v` is possible, but it breaks symmetry with
+   sbe-tool (which uses the raw value directly) and complicates the generated
+   code with value↔Option mapping on every access.
+
+2. **Size bloat at scale.** A message with 8 enum fields would carry 8 `Option`
+   discriminants in the generated Rust struct (16 bytes on the stack for the
+   tags, plus padding). The wire has none of that — the null sentinel is just
+   another integer in the same 1/2/4-byte field.
+
+3. **API friction.** `Option<EventCode>` forces every consumer to `.unwrap()` or
+   match, even when the field is known to be populated. The `NullVal` approach
+   gives you a plain `EventCode` type — if you care about null, check
+   `code == EventCode::NullVal`; if you don't, just use it.
+
+The chosen design adds a `NullVal` variant to every generated enum. It is the
+same size as any other variant, wire-compatible with sbe-tool, and bears no
+runtime cost:
+
+```rust,no_run
+// ergo-sbe generated (conceptual)
+#[non_exhaustive]
+pub enum EventCode {
+    NullVal = 255,  // or schema-declared nullValue
+    Ok = 200,
+    Error = 400,
+    Timeout = 408,
+}
+```
+
+For an `Optional` field (schema `presence="optional"`), the generated accessor
+returns `Option<EventCode>` — but the null check compares against the `NullVal`
+discriminant on the wire, never allocates, and is transparent to the caller.
 
 ---
 
@@ -1100,41 +1167,61 @@ On the audited Apple M4 1,000-entry fixture, automatic DTO bulk encode measured
 509 ns versus 1.998 µs without LTO. This is a DTO-to-DTO diagnostic, not an
 ergon/sbe-tool fairness ratio.
 
+```rust,no_run
+// build.rs — DomainVarData picks the DTO field type for var-data:
+// .enable_domain_objects(DomainVarData::LossyStrings) // String (invalid UTF-8 → "")
+// .enable_domain_objects(DomainVarData::Bytes)        // Vec<u8> (byte-exact)
+```
+
+**Generated shape** (illustrative — your names follow your schema):
+
 ```text
-// build.rs — DomainVarData is a big deal (DTO var-data type):
-.enable_domain_objects(DomainVarData::LossyStrings) // manufacturer: String (invalid UTF-8 → "")
-// .enable_domain_objects(DomainVarData::Bytes)      // manufacturer: Vec<u8> (byte-exact)
+pub struct QuoteDomain {
+    pub seq: u32,
+    pub some_numbers: [u32; 4],
+    pub vehicle_code: [u8; 6],
+    pub qty: u32,
+    pub legs: Vec<QuoteLegsEntryDomain>,
+    pub note: Vec<u8>,              // Bytes|String per DomainVarData
+}
+impl QuoteDomain {
+    pub fn try_from_decoder(dec: QuoteDecoder<'_>) -> Result<Self, DecodeError>;
+    pub fn encode(&self, buf: &mut [u8]) -> Result<usize, EncodeError>;
+    pub fn encoded_length_with_header(&self) -> Result<usize, EncodeError>;
+}
+```
 
-// --- generated shape with DomainVarData::LossyStrings ---
-// pub struct CarDomain {
-//     pub serial_number: u64,
-//     pub model_year: u16,
-//     pub fuel_figures: Vec<CarFuelFiguresEntryDomain>,
-//     pub manufacturer: String,
-//     // …
-// }
-// impl CarDomain {
-//     pub fn try_from_decoder(dec: CarDecoder<'_>) -> Result<Self, DecodeError>;
-//     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, EncodeError>;
-//     pub fn encoded_length_with_header(&self) -> Result<usize, EncodeError>;
-// }
+**Wire → DTO → wire round-trip** (the docs fixture uses `DomainVarData::Bytes`):
 
-// Wire → DTO (prefer try_from_decoder; From can panic on bad tails)
-let dto = CarDomain::try_from_decoder(CarDecoder::try_from(buf)?)?;
-assert_eq!(dto.manufacturer, "Honda");
+```rust
+// Encode a message first (the usual flyweight path)
+let mut buf = [0u8; QuoteEncoder::compute_length_with_header(1, 2)];
+let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&QuoteFixedFields {
+        seq: 1,
+        some_numbers: [1, 2, 3, 4],
+        vehicle_code: *b"ABCDEF",
+        qty: 10,
+    })
+    .legs(1, |legs| {
+        legs.add(|leg| { leg.value(99); Ok(()) })?;
+        Ok(())
+    })?
+    .note(b"hi")?
+    .encoded_length_with_header();
+
+// Decode → owned DTO (allocates — not for the hot path)
+let dec = QuoteDecoder::try_from(&buf[..len])?;
+let mut dto = QuoteDomain::try_from_decoder(dec)?;
+assert_eq!(dto.seq, 1);
+assert_eq!(&dto.note, b"hi");
 
 // Edit / build like normal Rust
-dto.model_year = 2014;
-dto.manufacturer = "Toyota".into();
+dto.qty = 500;
 
-// DTO → wire (re-encodes; integer min/max checked).
-// Prefer stack when the message is fixed-size; otherwise size then write into
-// a claim / slot of that exact length (avoid oversize scratch Vecs).
-let len = dto.encoded_length_with_header()?;
-// e.g. let mut out = [0u8; CarEncoder::compute_length_with_header()];  // fixed
-// or encode into a transport claim of `len` bytes
-let n = dto.encode(&mut out[..len])?;
-println!("re-encoded {n} bytes");
+// Re-encode (integer min/max checked; eligible groups use bulk write)
+let n = dto.encode(&mut buf)?;
+assert_eq!(n, len);
 ```
 
 #### `enable_domain_objects(DomainVarData)`

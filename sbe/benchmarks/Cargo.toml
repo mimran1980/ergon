@@ -78,5 +78,9 @@ harness = false
 [features]
 default = []
 
+[profile.release]
+lto = true
+codegen-units = 1
+
 [lints]
 workspace = true

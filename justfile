@@ -119,10 +119,10 @@ release:
     just bench-cluster
     @echo "=== Gate: SBE benchmarks ==="
     just bench
+    @echo "=== Release check ==="
+    just release-check
     @echo "=== publish ergo-sbe ==="
     cargo publish -p ergo-sbe
-    @echo "=== Release check (cluster) ==="
-    just release-check
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
     @echo "=== tag ==="

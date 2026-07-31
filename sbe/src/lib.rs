@@ -249,7 +249,10 @@ pub use build::{
     out_dir,
 };
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
-pub use config::{ConversionSelector, DomainVarData, GenerationConfig};
+pub use config::{
+    ConversionSelector, DomainVarData, EnumVariantInfo, FieldInfo, GenerationConfig, ItemContext,
+    ItemKind, SetChoiceInfo,
+};
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;

@@ -246,9 +246,56 @@ impl GenerationContext {
 ///     .unwrap();
 /// assert_eq!(modules.modules().len(), 1);
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Generator {
     config: GenerationConfig,
+}
+
+/// Extract [`crate::FieldInfo`] entries from message fields (constant fields
+/// excluded). Used by context builders and hook dispatch.
+fn message_field_infos(fields: &[MessageField]) -> Vec<crate::FieldInfo> {
+    fields
+        .iter()
+        .filter(|f| f.presence != Presence::Constant)
+        .map(|f| crate::FieldInfo {
+            name: to_snake_case(&f.name),
+            rust_type: f.field_type.rust_type_name(),
+            offset: f.offset,
+            since_version: f.since_version,
+            semantic_type: f.semantic_type.clone(),
+            presence: presence_str(f.presence),
+            null_value: f.null_value,
+            deprecated: f.deprecated,
+            description: f.description.clone(),
+        })
+        .collect()
+}
+
+fn presence_str(p: Presence) -> &'static str {
+    match p {
+        Presence::Required => "required",
+        Presence::Optional => "optional",
+        Presence::Constant => "constant",
+    }
+}
+
+/// Resolve a field accessor name, appending `_field` when it clashes
+/// with a reserved method name on the decoder/encoder.
+fn resolve_field_ident(
+    snake_name: &str,
+    wire_name: &Option<String>,
+    reserved: &[&str],
+) -> syn::Ident {
+    let method_name = wire_name.as_deref().unwrap_or(snake_name);
+    let resolved: &str = match () {
+        _ if wire_name.is_some() => method_name,
+        _ if reserved.contains(&snake_name) => {
+            // ponytail: allocate only on collision (rare, build-time only).
+            Box::leak(format!("{snake_name}_field").into_boxed_str())
+        }
+        _ => snake_name,
+    };
+    syn::Ident::new(resolved, proc_macro2::Span::call_site())
 }
 
 /// Warn if a shared type has version-gated members (`sinceVersion > 0`).
@@ -587,7 +634,160 @@ impl Generator {
         Ok(modules)
     }
 
-    /// Inner generation — single schema with dedup flags. `shared` contains
+    /// Build an [`ItemContext::Enum`] from IR tokens.
+    fn build_enum_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
+        let name = to_pascal_case(&tokens[0].name);
+        let encoding_type = tokens[0]
+            .encoding
+            .primitive_type
+            .unwrap_or(PrimitiveType::UInt8);
+        let et_str = rust_type(encoding_type).to_string();
+        let variants: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.signal == crate::ir::Signal::Encoding)
+            .filter_map(|t| {
+                let val = t.encoding.constant_value.as_ref()?;
+                let value: i64 = if encoding_type == PrimitiveType::Char {
+                    val.as_bytes().first().copied().unwrap_or(0) as i64
+                } else {
+                    val.parse::<i64>().ok()?
+                };
+                Some(crate::EnumVariantInfo {
+                    name: to_pascal_case(&t.name),
+                    snake_name: to_snake_case(&t.name),
+                    label: t.name.clone(),
+                    value,
+                    description: t.encoding.description.clone(),
+                })
+            })
+            .collect();
+        crate::ItemContext::Enum {
+            schema,
+            name,
+            encoding_type: et_str,
+            variants,
+        }
+    }
+
+    /// Build a message decoder/encoder context from a [`MessageStructure`].
+    fn build_message_ctx<'s>(
+        msg: &MessageStructure,
+        kind: crate::ItemKind,
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
+        let name = to_pascal_case(&msg.name);
+        let name_with = |suffix: &str| format!("{name}{suffix}");
+        let fields = message_field_infos(&msg.fields);
+        let name = match kind {
+            crate::ItemKind::MessageDecoder => name_with("Decoder"),
+            crate::ItemKind::MessageEncoder => name_with("Encoder"),
+            _ => name,
+        };
+        match kind {
+            crate::ItemKind::MessageDecoder => crate::ItemContext::MessageDecoder {
+                schema,
+                name,
+                template_id: msg.id,
+                block_length: msg.block_length,
+                fields,
+            },
+            crate::ItemKind::MessageEncoder => crate::ItemContext::MessageEncoder {
+                schema,
+                name,
+                template_id: msg.id,
+                block_length: msg.block_length,
+                fields,
+            },
+            _ => unreachable!("build_message_ctx only for MessageDecoder/MessageEncoder"),
+        }
+    }
+
+    /// Build an [`ItemContext::Composite`] from IR tokens.
+    fn build_composite_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
+        let name = to_pascal_case(&tokens[0].name);
+        let fields: Vec<_> = tokens
+            .iter()
+            .filter(|t| {
+                t.signal == crate::ir::Signal::Encoding
+                    || t.signal == crate::ir::Signal::BeginComposite
+            })
+            .filter(|t| !t.name.is_empty())
+            .map(|t| crate::FieldInfo {
+                name: to_snake_case(&t.name),
+                rust_type: crate::structured_ir::rust_type(
+                    t.encoding
+                        .primitive_type
+                        .unwrap_or(crate::PrimitiveType::UInt8),
+                )
+                .to_string(),
+                offset: t.encoding.offset.unwrap_or(0),
+                since_version: t.encoding.since_version,
+                semantic_type: t.encoding.semantic_type.clone(),
+                presence: if t.encoding.null_value.is_some() {
+                    "optional"
+                } else {
+                    "required"
+                },
+                null_value: t.encoding.null_value,
+                deprecated: t.encoding.deprecated,
+                description: t.encoding.description.clone(),
+            })
+            .collect();
+        crate::ItemContext::Composite {
+            schema,
+            name,
+            fields,
+        }
+    }
+
+    /// Build an [`ItemContext::Set`] from IR tokens.
+    fn build_set_ctx<'s>(
+        tokens: &[crate::ir::Token],
+        schema: &'s crate::Schema,
+    ) -> crate::ItemContext<'s> {
+        let name = to_pascal_case(&tokens[0].name);
+        let encoding_type = tokens[0]
+            .encoding
+            .primitive_type
+            .unwrap_or(PrimitiveType::UInt8);
+        let et_str = rust_type(encoding_type).to_string();
+        let choices: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.signal == crate::ir::Signal::Encoding)
+            .map(|t| crate::SetChoiceInfo {
+                name: to_pascal_case(&t.name),
+                snake_name: to_snake_case(&t.name),
+                label: t.name.clone(),
+                bit_position: t
+                    .encoding
+                    .constant_value
+                    .as_ref()
+                    .and_then(|v| v.parse::<u8>().ok())
+                    .unwrap_or(0),
+                description: t.encoding.description.clone(),
+            })
+            .collect();
+        crate::ItemContext::Set {
+            schema,
+            name,
+            encoding_type: et_str,
+            choices,
+        }
+    }
+
+    /// Run registered hooks and append returned tokens to `src`.
+    fn run_hooks(&self, ctx: &crate::ItemContext, src: &mut String) {
+        if !self.config.has_hooks() {
+            return;
+        }
+        self.config.run_hooks(ctx, src);
+    }
     /// type names already generated by earlier schemas; those types are skipped
     /// in this call (the caller arranges `pub use super::*;`).
     fn gen_schema(
@@ -655,6 +855,10 @@ impl Generator {
                 continue;
             }
             generate_enum(&mut src, enum_tokens);
+            if self.config.has_hooks() {
+                let ctx = Self::build_enum_ctx(enum_tokens, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
         }
 
         for set_tokens in &elements.sets {
@@ -663,6 +867,10 @@ impl Generator {
                 continue;
             }
             generate_set(&mut src, set_tokens);
+            if self.config.has_hooks() {
+                let ctx = Self::build_set_ctx(set_tokens, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
         }
 
         for composite_tokens in &elements.composites {
@@ -672,6 +880,10 @@ impl Generator {
             }
             let comp_byte_order = ir.byte_order;
             generate_composite(&mut src, composite_tokens, comp_byte_order);
+            if self.config.has_hooks() {
+                let ctx = Self::build_composite_ctx(composite_tokens, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
         }
 
         let header_pascal = to_pascal_case(&ir.header_type);
@@ -701,9 +913,16 @@ impl Generator {
                 &self.config.conversions,
                 &self.config.domain_types,
                 self.config.unchecked_companions,
+                &self.config.hooks,
+                schema,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
+            // Hooks for the message decoder
+            if self.config.has_hooks() {
+                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
             let encoder_ts = generate_message_encoder(
                 msg,
                 &elements,
@@ -717,6 +936,11 @@ impl Generator {
                 self.config.unchecked_companions,
             );
             src.push_str(&encoder_ts.to_string());
+            // Hooks for the message encoder
+            if self.config.has_hooks() {
+                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageEncoder, schema);
+                self.run_hooks(&ctx, &mut src);
+            }
 
             // Decimal converter seam: for each field backed by a registered
             // Decimal composite, emit raw *_wire aliases and generic converted
@@ -1362,6 +1586,8 @@ fn generate_message_decoder(
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     _unchecked_companions: bool,
+    hooks: &crate::config::Hooks,
+    schema: &crate::Schema,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -1510,6 +1736,34 @@ fn generate_message_decoder(
                 }
                 Some(&frame[Self::ENCODED_LENGTH..])
             }
+
+            /// Offset of the message header within [`Self::whole_buffer`].
+            /// `whole_buffer()[message_offset()..]` is the full SBE frame
+            /// (header + body) for this message.
+            #[inline]
+            pub const fn message_offset(&self) -> usize {
+                self.pos - Self::HEADER_LENGTH
+            }
+
+            /// The complete original buffer that this decoder wraps
+            /// (may include data before this message if `try_wrap_and_apply_header`
+            /// was called with a non-zero `pos`).
+            /// Use [`Self::message_offset`] to locate where this message starts.
+            #[inline]
+            pub fn whole_buffer(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            /// Bytes after this message in the original buffer
+            /// (e.g. the application payload following a SessionMessageHeader).
+            /// Returns the slice starting after header + block body.
+            /// Clamps to `buf.len()` so truncated/invalid data returns
+            /// an empty slice rather than panicking.
+            #[inline]
+            pub fn remaining(&self) -> &'a [u8] {
+                let end = (self.pos + self.acting_block_length).min(self.buf.len());
+                &self.buf[end..]
+            }
         });
     } else {
         const STACK_LIMIT: usize = 65536;
@@ -1645,7 +1899,23 @@ fn generate_message_decoder(
         let wire_name =
             field_has_conversion_free(f, conversions).then(|| format!("{fname_snake}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
-        let fname_ident = syn::Ident::new(method_name, proc_macro2::Span::call_site());
+        const DECODER_RESERVED: &[&str] = &[
+            "remaining",
+            "whole_buffer",
+            "message_offset",
+            "after_this_message",
+            "wrap",
+            "try_wrap_and_apply_header",
+            "header",
+            "encoded_length",
+            "encoded_length_with_header",
+            "as_bytes",
+            "as_ref_opt",
+            "verify",
+            "acting_version",
+            "acting_block_length",
+        ];
+        let fname_ident = resolve_field_ident(&fname_snake, &wire_name, DECODER_RESERVED);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -2601,7 +2871,7 @@ fn generate_message_decoder(
     // So the impl is properly closed.
 
     if domain_objects {
-        ts.extend(generate_domain_objects(
+        let domain_ts = generate_domain_objects(
             msg,
             elements,
             &name,
@@ -2611,7 +2881,23 @@ fn generate_message_decoder(
             conversions,
             domain_types,
             domain_var_data,
-        ));
+        );
+        ts.extend(domain_ts);
+        // Run hooks for domain structs
+        if !hooks.is_empty() {
+            let domain_name = format!("{name}Domain");
+            let fields = message_field_infos(&msg.fields);
+            let ctx = crate::ItemContext::DomainStruct {
+                schema: &schema,
+                name: domain_name,
+                fields,
+            };
+            for hook in hooks.iter() {
+                for token_stream in hook(&ctx) {
+                    ts.extend(token_stream);
+                }
+            }
+        }
     }
 
     ts
@@ -3421,8 +3707,24 @@ fn generate_decoder_display(
     });
     let mut out_idx = 0usize;
     for f in &msg.fields {
+        const DECODER_RESERVED: &[&str] = &[
+            "remaining",
+            "whole_buffer",
+            "message_offset",
+            "after_this_message",
+            "wrap",
+            "try_wrap_and_apply_header",
+            "header",
+            "encoded_length",
+            "encoded_length_with_header",
+            "as_bytes",
+            "as_ref_opt",
+            "verify",
+            "acting_version",
+            "acting_block_length",
+        ];
         let snake = to_snake_case(&f.name);
-        let f_ident = syn::Ident::new(&snake, proc_macro2::Span::call_site());
+        let f_ident = resolve_field_ident(&snake, &None, DECODER_RESERVED);
         let sep = if out_idx == 0 { "" } else { ", " };
         let end_off = f.offset + f.field_type.size();
         let end_off_lit = syn::LitInt::new(&end_off.to_string(), proc_macro2::Span::call_site());
@@ -6198,6 +6500,26 @@ fn generate_message_encoder(
                 }
                 Some(&frame[Self::ENCODED_LENGTH..])
             }
+
+            /// Offset of this message within the sub-slice this encoder
+            /// was wrapped on. For `wrap_and_apply_header` this is always 0.
+            #[inline]
+            pub const fn message_offset(&self) -> usize {
+                self.message_start
+            }
+
+            /// Unwritten region after this message. Chain the next encoder:
+            /// `NextEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)`.
+            #[inline]
+            pub fn remaining(&self) -> &[u8] {
+                &self.buf[self.pos..]
+            }
+
+            /// Mutable unwritten region after this message.
+            #[inline]
+            pub fn remaining_mut(&mut self) -> &mut [u8] {
+                &mut self.buf[self.pos..]
+            }
         });
     } else {
         let max_doc_attr = if is_capped {
@@ -6350,6 +6672,20 @@ fn generate_message_encoder(
         }
     }
 
+    const ENCODER_RESERVED: &[&str] = &[
+        "remaining",
+        "remaining_mut",
+        "whole_buffer",
+        "message_offset",
+        "after_this_message",
+        "wrap",
+        "try_wrap",
+        "try_wrap_and_apply_header",
+        "wrap_into_claim",
+        "compute_length_with_header",
+        "as_ref",
+    ];
+
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
         let body_offset = header_size + f.offset;
@@ -6359,7 +6695,7 @@ fn generate_message_encoder(
         // converted setter takes the original name.
         let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{f_name}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&f_name);
-        let f_ident = syn::Ident::new(method_name, span);
+        let f_ident = resolve_field_ident(&f_name, &wire_name, ENCODER_RESERVED);
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -6589,10 +6925,13 @@ fn generate_message_encoder(
             }
             let fname_snake = to_snake_case(&f.name);
             let is_converted = field_has_conversion_free(f, conversions);
-            let setter_ident = if is_converted {
-                syn::Ident::new(&format!("{fname_snake}_wire"), span)
-            } else {
-                syn::Ident::new(&fname_snake, span)
+            let setter_ident = {
+                let base = resolve_field_ident(&fname_snake, &None, ENCODER_RESERVED);
+                if is_converted {
+                    syn::Ident::new(&format!("{}_wire", base), span)
+                } else {
+                    base
+                }
             };
             let field_ident = syn::Ident::new(&fname_snake, span);
             if f.presence == crate::Presence::Optional {
@@ -8150,5 +8489,175 @@ mod tests {
                 "expected {field} error, got: {error}"
             );
         }
+    }
+
+    /// When a flat message has a field whose name clashes with a reserved
+    /// decoder method (e.g. "remaining"), the generated accessor must be
+    /// renamed to `{name}_field` so it doesn't collide with
+    /// `pub fn remaining(&self) -> &[u8]`.
+    #[test]
+    fn field_named_remaining_is_renamed_to_remaining_field()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<messageSchema package="test" id="1" version="1" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+          </types>
+          <message name="Msg" id="1" blockLength="8">
+            <field name="remaining" id="1" type="int64"/>
+          </message>
+        </messageSchema>"#;
+
+        let ir = crate::parse(xml).expect("schema should parse");
+        let schema = crate::Schema::from_ir(ir);
+        let modules =
+            crate::Generator::new(crate::GenerationConfig::new("test")).generate(&schema)?;
+        let src = modules.modules().next().expect("one module").source.clone();
+
+        let remaining_count = src.matches("fn remaining(&self)").count();
+        // The decoder and encoder each have a generated `remaining()` method
+        // (in separate impl blocks). The field accessor is renamed to
+        // `remaining_field` and must not appear as `fn remaining(&self)`.
+        assert_eq!(
+            remaining_count, 2,
+            "expected exactly 2 'remaining' methods (one decoder + one encoder), found {remaining_count}"
+        );
+        // The field accessor must be renamed.
+        assert!(
+            src.contains("fn remaining_field"),
+            "field accessor 'remaining' must be renamed to 'remaining_field'. src:\n{src}"
+        );
+
+        Ok(())
+    }
+
+    /// A hook that adds serde `Serialize` for every SBE enum (variants as
+    /// strings) and every SBE set (variants as `Vec<String>`), plus
+    /// `Deserialize` for the enum.
+    #[test]
+    fn hook_adds_serde_impls_for_enum_and_set() -> Result<(), Box<dyn std::error::Error>> {
+        let xml = r#"<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <enum name="EventCode" encodingType="uint32">
+              <validValue name="Ok" description="Success">200</validValue>
+              <validValue name="Error" description="Failure">400</validValue>
+              <validValue name="Timeout">408</validValue>
+            </enum>
+            <set name="OptionalFields" encodingType="uint8">
+              <choice name="hasPrice">0</choice>
+              <choice name="hasQty">1</choice>
+              <choice name="hasVenue">2</choice>
+            </set>
+          </types>
+          <message name="Msg" id="1" blockLength="0"/>
+        </messageSchema>"#;
+
+        use crate::{EnumVariantInfo, ItemContext, ItemKind, SetChoiceInfo};
+        use quote::format_ident;
+
+        let config = crate::GenerationConfig::new("test")
+            .with_hook(|ctx: &ItemContext| -> Vec<proc_macro2::TokenStream> {
+                match ctx {
+                    ItemContext::Enum { name, variants, .. } => {
+                        let ident = format_ident!("{name}");
+                        let var_names: Vec<_> = variants.iter().map(|v| format_ident!("{}", v.name)).collect();
+                        let var_labels: Vec<_> = variants.iter().map(|v| v.name.clone()).collect();
+                        vec![quote::quote! {
+                            impl serde::Serialize for #ident {
+                                fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                                    let label = match self {
+                                        #(Self::#var_names => #var_labels,)*
+                                    };
+                                    s.serialize_str(label)
+                                }
+                            }
+
+                            impl<'de> serde::Deserialize<'de> for #ident {
+                                fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                                    let s = <&str>::deserialize(d)?;
+                                    match s {
+                                        #(#var_labels => Ok(Self::#var_names),)*
+                                        _ => Err(serde::de::Error::unknown_variant(s, &[#(#var_labels),*])),
+                                    }
+                                }
+                            }
+                        }]
+                    }
+                    ItemContext::Set { name, choices, .. } => {
+                        let ident = format_ident!("{name}");
+                        let c_names: Vec<_> = choices.iter().map(|c| format_ident!("{}", c.name)).collect();
+                        let c_labels: Vec<_> = choices.iter().map(|c| c.name.clone()).collect();
+                        vec![quote::quote! {
+                            impl serde::Serialize for #ident {
+                                fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                                    let mut names = Vec::new();
+                                    #(if self.#c_names() { names.push(#c_labels); })*
+                                    names.serialize(s)
+                                }
+                            }
+
+                            impl<'de> serde::Deserialize<'de> for #ident {
+                                fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                                    let names: Vec<String> = Vec::deserialize(d)?;
+                                    let mut value = 0u8;
+                                    for name in &names {
+                                        match name.as_str() {
+                                            #(#c_labels => value |= Self::#c_names.0,)*
+                                            other => return Err(serde::de::Error::unknown_variant(
+                                                other, &[#(#c_labels),*])),
+                                        }
+                                    }
+                                    Ok(Self(value))
+                                }
+                            }
+                        }]
+                    }
+                    _ => vec![],
+                }
+            });
+
+        let ir = crate::parse(xml).expect("schema should parse");
+        let schema = crate::Schema::from_ir(ir);
+        let modules = crate::Generator::new(config).generate(&schema)?;
+        let src = modules.modules().next().expect("one module").source.clone();
+
+        // Enum: Serialize impl must exist with variant labels.
+        assert!(
+            src.contains("impl serde::Serialize for EventCode"),
+            "missing Serialize for enum"
+        );
+        assert!(src.contains("\"Ok\""), "missing Ok label");
+        assert!(src.contains("\"Error\""), "missing Error label");
+        assert!(
+            src.contains("impl<'de> serde::Deserialize<'de> for EventCode"),
+            "missing Deserialize for enum"
+        );
+        assert!(
+            src.contains("unknown_variant"),
+            "missing error handling in Deserialize"
+        );
+
+        // Set: Serialize impl must exist.
+        assert!(
+            src.contains("impl serde::Serialize for OptionalFields"),
+            "missing Serialize for set"
+        );
+        assert!(src.contains("\"hasPrice\""), "missing hasPrice label");
+        assert!(
+            src.contains("impl<'de> serde::Deserialize<'de> for OptionalFields"),
+            "missing Deserialize for set"
+        );
+
+        Ok(())
     }
 }
