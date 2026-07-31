@@ -1821,13 +1821,12 @@ fn generate_message_decoder(
     };
     ts.extend(quote::quote! {
         #derive_attr
-        pub struct #decoder_ident<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+        pub struct #decoder_ident<'a> {
             pub(crate) buf: &'a [u8],
             pub(crate) pos: usize,
             pub(crate) msg_offset: usize,
             pub(crate) acting_version: u16,
             pub(crate) acting_block_length: usize,
-            pub(crate) _header: core::marker::PhantomData<H>,
         }
     });
 
@@ -1924,7 +1923,6 @@ fn generate_message_decoder(
                 msg_offset: message_offset,
                 acting_block_length,
                 acting_version,
-                _header: core::marker::PhantomData,
             }
         }
     });
@@ -2004,15 +2002,8 @@ fn generate_message_decoder(
                     "version",
                     header.#hvr() as u64,
                 )?;
-                let dec = Self::wrap(buf, pos, acting_block_length, acting_version);
-                Ok(#decoder_ident {
-                    buf: dec.buf,
-                    pos: dec.pos,
-                    msg_offset: dec.msg_offset,
-                    acting_block_length: dec.acting_block_length,
-                    acting_version: dec.acting_version,
-                    _header: core::marker::PhantomData,
-                })
+                let mut dec = Self::wrap(buf, pos, acting_block_length, acting_version);
+                Ok(dec)
             }
         });
     }
@@ -2933,7 +2924,7 @@ fn generate_message_decoder(
     });
 
     ts.extend(quote::quote! {
-        impl<'a, H: sbe_rt::HeaderState> #decoder_ident<'a, H> {
+        impl<'a> #decoder_ident<'a> {
             #impl_body
         }
     });
@@ -2961,7 +2952,7 @@ fn generate_message_decoder(
             const SCHEMA_VERSION: u16 = #schema_version_lit;
         }
 
-        impl<'a, H: sbe_rt::HeaderState> #decoder_ident<'a, H> {
+        impl<'a> #decoder_ident<'a> {
             /// Fallible byte view of the message. Returns `None` if the
             /// buffer is malformed or truncated. Prefer [`Self::as_bytes`]
             /// for explicit error handling.
