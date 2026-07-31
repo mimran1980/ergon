@@ -176,12 +176,8 @@ fn readme_rust_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
         "README.md must not contain ignored Rust fences"
     );
     let fences = extract_rust_fences(&md);
-    assert!(
-        fences.len() >= 8,
-        "expected at least eight compile-checked ```rust fences in README.md, found {}",
-        fences.len()
-    );
-
+    // README code examples moved to the Ergon Book — no inline ```rust fences
+    // remain. The loop is kept as a compilation guard for any future examples.
     let docs_codec = docs_codec_source()?;
     let tmp = tempfile::tempdir()?;
     for (i, (line, body)) in fences.iter().enumerate() {
