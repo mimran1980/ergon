@@ -708,35 +708,56 @@ impl Generator {
     }
 
     /// Build an [`ItemContext::Composite`] from IR tokens.
+    ///
+    /// Uses the canonical [`parse_composite_members`] so every member is
+    /// reported exactly once with its real Rust type: primitives keep their
+    /// element type (`[T; N]` for arrays), nested composites/enums/sets report
+    /// their type name. Container/ref tokens are never miscounted as fields.
     fn build_composite_ctx<'s>(
         tokens: &[crate::ir::Token],
         schema: &'s crate::Schema,
     ) -> crate::ItemContext<'s> {
+        use crate::structured_ir::MemberType;
         let name = to_pascal_case(&tokens[0].name);
-        let fields: Vec<_> = tokens
-            .iter()
-            .filter(|t| {
-                // Only include primitive fields — skip composite containers,
-                // enum refs, and set refs (which use BeginComposite/Enum/Set signals).
-                t.signal == crate::ir::Signal::Encoding && t.encoding.primitive_type.is_some()
-            })
-            .filter(|t| !t.name.is_empty())
-            .map(|t| crate::FieldInfo {
-                name: to_snake_case(&t.name),
-                // SAFETY: guarded by the primitive_type.is_some() filter above
-                rust_type: crate::structured_ir::rust_type(t.encoding.primitive_type.unwrap())
-                    .to_string(),
-                offset: t.encoding.offset.unwrap_or(0),
-                since_version: t.encoding.since_version,
-                semantic_type: t.encoding.semantic_type.clone(),
-                presence: if t.encoding.null_value.is_some() {
-                    "optional"
-                } else {
-                    "required"
-                },
-                null_value: t.encoding.null_value,
-                deprecated: t.encoding.deprecated,
-                description: t.encoding.description.clone(),
+        let fields: Vec<_> = crate::structured_ir::parse_composite_members(tokens)
+            .into_iter()
+            .map(|m| {
+                let (rust_type, presence, null_value, semantic_type) = match &m.member_type {
+                    MemberType::Primitive {
+                        prim,
+                        length,
+                        presence,
+                        ..
+                    } => {
+                        let base = crate::structured_ir::rust_type(*prim);
+                        let rt = match length {
+                            Some(len) => format!("[{base}; {len}]"),
+                            None => base.to_string(),
+                        };
+                        let presence_str = match presence {
+                            crate::ir::Presence::Optional => "optional",
+                            crate::ir::Presence::Constant => "constant",
+                            crate::ir::Presence::Required => "required",
+                        };
+                        (rt, presence_str, None, None)
+                    }
+                    MemberType::Composite { name, .. } => {
+                        (to_pascal_case(name), "required", None, None)
+                    }
+                    MemberType::Enum { name, .. } => (to_pascal_case(name), "required", None, None),
+                    MemberType::Set { name, .. } => (to_pascal_case(name), "required", None, None),
+                };
+                crate::FieldInfo {
+                    name: to_snake_case(&m.name),
+                    rust_type,
+                    offset: m.offset,
+                    since_version: m.since_version,
+                    semantic_type,
+                    presence,
+                    null_value,
+                    deprecated: false,
+                    description: None,
+                }
             })
             .collect();
         crate::ItemContext::Composite {
