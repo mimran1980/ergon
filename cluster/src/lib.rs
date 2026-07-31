@@ -144,8 +144,6 @@ pub mod test_support;
 
 #[cfg(feature = "test-harness")]
 pub use test_support::{EmbeddedArchiveDriver, TestCluster};
-#[cfg(feature = "test-harness")]
-pub use uri::{channel_cstr, udp_endpoint_cstr};
 
 #[cfg(test)]
 mod tests {

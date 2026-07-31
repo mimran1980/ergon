@@ -256,6 +256,7 @@ pub struct Generator {
 fn message_field_infos(
     fields: &[MessageField],
     domain_types: &[(crate::ConversionSelector, String)],
+    elements: Option<&SchemaElements>,
 ) -> Vec<crate::FieldInfo> {
     fields
         .iter()
@@ -263,12 +264,10 @@ fn message_field_infos(
         .map(|f| {
             // Domain types apply to the DTO field only when the DTO
             // generation actually uses them: required scalar primitives
-            // and boolean enums (the latter via auto_bool_domain). Optional
-            // fields, arrays, composites/enums/sets without a domain config
-            // all keep the wire type.
-            // DTO generation only applies domain types to required scalar
-            // primitives (not arrays, not optional) and to boolean enums.
-            // Match that logic exactly so hook metadata stays truthful.
+            // and boolean enums (the latter detected via is_bool_enum,
+            // matching the unconditional bool emission in DTO generation).
+            // Optional fields, arrays, composites/enums/sets without a
+            // domain config all keep the wire type.
             let domain_ty = match &f.field_type {
                 FieldType::Primitive(_, length) => {
                     if length.is_none() && f.presence == Presence::Required {
@@ -277,7 +276,13 @@ fn message_field_infos(
                         None
                     }
                 }
-                FieldType::Enum { .. } => find_domain_type(f, domain_types),
+                FieldType::Enum { name: enum_name, .. } => {
+                    if elements.is_some_and(|el| crate::structured_ir::is_bool_enum(el, enum_name)) {
+                        Some("bool")
+                    } else {
+                        find_domain_type(f, domain_types)
+                    }
+                }
                 _ => None,
             };
             let rust_type = match domain_ty {
@@ -287,7 +292,7 @@ fn message_field_infos(
             crate::FieldInfo {
                 name: to_snake_case(&f.name),
                 rust_type,
-                offset: f.offset,
+                offset: Some(f.offset),
                 since_version: f.since_version,
                 semantic_type: f.semantic_type.clone(),
                 presence: presence_str(f.presence),
@@ -582,24 +587,21 @@ impl Generator {
     /// # Errors
     ///
     /// [`GenerateError`] if conversion selectors match nothing or collide.
-    pub fn generate(&mut self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
+    pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
         let effective = self.effective_domain_types(&[(schema, "")]);
-        let saved = std::mem::replace(&mut self.config.domain_types, effective);
-        let result = with_keyword_append(&self.config.keyword_append_token, || {
+        with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.validate_header_values(schema)?;
                 self.validate_conversions(schema)?;
                 let mut modules = GeneratedModuleSet::default();
-                let src = self.gen_schema(schema, &HashSet::new(), false, true);
+                let src = self.gen_schema(schema, &HashSet::new(), false, true, &effective);
                 modules.push(GeneratedModule {
                     path: format!("{}.rs", self.config.module_name),
                     source: src,
                 });
                 Ok(modules)
             })
-        });
-        self.config.domain_types = saved;
-        result
+        })
     }
 
     /// Generate modules for several schemas, optionally deduplicating shared types.
@@ -614,23 +616,21 @@ impl Generator {
     ///
     /// Same conversion validation as [`Self::generate`].
     pub fn generate_multi(
-        &mut self,
+        &self,
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
         let effective = self.effective_domain_types(schemas);
-        let saved = std::mem::replace(&mut self.config.domain_types, effective);
-        let result = with_keyword_append(&self.config.keyword_append_token, || {
+        with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
-                self.generate_multi_inner(schemas)
+                self.generate_multi_inner(schemas, &effective)
             })
-        });
-        self.config.domain_types = saved;
-        result
+        })
     }
 
     fn generate_multi_inner(
         &self,
         schemas: &[(&Schema, &str)],
+        domain_types: &[(crate::ConversionSelector, String)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
         let mut modules = GeneratedModuleSet::default();
         let mut shared_types: HashSet<String> = HashSet::new();
@@ -670,7 +670,7 @@ impl Generator {
             } else {
                 &empty_set
             };
-            let src = self.gen_schema(schema, skip_set, is_importing, emit_sbe_rt);
+            let src = self.gen_schema(schema, skip_set, is_importing, emit_sbe_rt, domain_types);
             modules.push(GeneratedModule {
                 path: format!("{}.rs", module_name),
                 source: src,
@@ -727,7 +727,7 @@ impl Generator {
     ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&msg.name);
         let name_with = |suffix: &str| format!("{name}{suffix}");
-        let fields = message_field_infos(&msg.fields, &[]);
+        let fields = message_field_infos(&msg.fields, &[], None);
         let name = match kind {
             crate::ItemKind::MessageDecoder => name_with("Decoder"),
             crate::ItemKind::MessageEncoder => name_with("Encoder"),
@@ -831,7 +831,7 @@ impl Generator {
                 crate::FieldInfo {
                     name: to_snake_case(&m.name),
                     rust_type,
-                    offset: m.offset,
+                    offset: Some(m.offset),
                     since_version: m.since_version,
                     semantic_type: enc.and_then(|e| e.semantic_type.clone()),
                     presence,
@@ -898,6 +898,7 @@ impl Generator {
         shared: &HashSet<String>,
         is_importing: bool,
         emit_sbe_rt: bool,
+        domain_types: &[(crate::ConversionSelector, String)],
     ) -> String {
         let ir = &schema.ir;
 
@@ -1013,7 +1014,7 @@ impl Generator {
                 self.config.domain_objects,
                 self.config.domain_var_data,
                 &self.config.conversions,
-                &self.config.domain_types,
+                domain_types,
                 self.config.unchecked_companions,
                 &self.config.hooks,
                 schema,
@@ -1034,7 +1035,7 @@ impl Generator {
                 &ir.header_type,
                 multi,
                 &self.config.conversions,
-                &self.config.domain_types,
+                domain_types,
                 self.config.unchecked_companions,
             );
             src.push_str(&encoder_ts.to_string());
@@ -1051,7 +1052,7 @@ impl Generator {
                 let converter_ts = generate_converter_impls(
                     msg,
                     &self.config.conversions,
-                    &self.config.domain_types,
+                    domain_types,
                     multi,
                 );
                 src.push_str(&converter_ts);
@@ -1065,7 +1066,7 @@ impl Generator {
             let impl_blocks = generate_conversion_impl_blocks(
                 &elements,
                 &self.config.conversions,
-                &self.config.domain_types,
+                domain_types,
             );
             src.push_str(&impl_blocks);
         }
@@ -3621,7 +3622,7 @@ fn generate_domain_recursive(
     // Fire hooks for this domain struct (message DTO or entry DTO).
     // Build context including group and var-data field info.
     if !hooks.is_empty() {
-        let mut ctx_fields = message_field_infos(fields, domain_types);
+        let mut ctx_fields = message_field_infos(fields, domain_types, Some(elements));
         // Append synthetic field entries for groups (Vec<EntryDomain>).
         // The generated entry-DTO struct is `{struct_prefix}{Group}EntryDomain`
         // (see the recursion below), so the reported type must carry the same
@@ -3631,7 +3632,7 @@ fn generate_domain_recursive(
             ctx_fields.push(crate::FieldInfo {
                 name: to_snake_case(&g.name),
                 rust_type: format!("Vec<{struct_prefix}{}EntryDomain>", to_pascal_case(&g.name)),
-                offset: 0,
+                offset: None,
                 since_version: g.since_version,
                 semantic_type: None,
                 presence: "required",
@@ -3649,7 +3650,7 @@ fn generate_domain_recursive(
             ctx_fields.push(crate::FieldInfo {
                 name: to_snake_case(&vd.name),
                 rust_type: vd_ty.to_string(),
-                offset: 0,
+                offset: None,
                 since_version: vd.since_version,
                 semantic_type: None,
                 presence: "required",
@@ -5441,7 +5442,10 @@ fn generate_nullification(
         if f.presence == Presence::Optional {
             if let Some(null_val) = f.null_value {
                 let size = f.field_type.size();
-
+                // The null value is stored as a u64 in the IR (matching the
+                // XML unsigned-integer attribute). Always render as _u64 and
+                // slice to the field's wire size — smaller fields take the
+                // low-order bytes, which is correct for little-endian.
                 let null_val_expr: syn::Expr = syn::parse_str(&format!("{null_val}_u64")).unwrap();
                 let to_method = syn::Ident::new(
                     &format!("to_{order_suffix}_bytes"),
@@ -5455,7 +5459,8 @@ fn generate_nullification(
                 stmts.extend(quote::quote! {
                     let null_bytes = #null_val_expr.#to_method();
                     let offset = #offset_base_expr + #f_offset;
-                    #buf_expr_ts[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+                    #buf_expr_ts[offset..offset + #size_lit]
+                        .copy_from_slice(&null_bytes[..#size_lit]);
                 });
             }
         }
@@ -6852,8 +6857,9 @@ fn generate_message_encoder(
                 /// (matching sbe-tool). Call this if you want unset optional fields to
                 /// carry their null value rather than stale buffer contents.
                 #[inline]
-                pub fn apply_nulls(&mut self) {
+                pub fn apply_nulls(&mut self) -> &mut Self {
                     #null_ts
+                    self
                 }
             };
             impl_contents.extend(apply_nulls_fn);

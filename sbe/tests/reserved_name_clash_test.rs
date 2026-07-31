@@ -57,11 +57,11 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
     );
     // The reserved decoder methods still exist and are not shadowed.
     assert!(
-        src.contains("fn remaining(&self) -> &'a [u8]"),
+        src.contains("fn remaining(&self)"),
         "reserved decoder method remaining() must remain"
     );
     assert!(
-        src.contains("fn whole_buffer(&self) -> &'a [u8]"),
+        src.contains("fn whole_buffer(&self)"),
         "reserved decoder method whole_buffer() must remain"
     );
 
@@ -111,12 +111,15 @@ const ENCODER_CLASH_SCHEMA: &str = r#"<messageSchema package="eclash" id="1" ver
       <type name="version" primitiveType="uint16"/>
     </composite>
   </types>
-  <message name="Msg" id="1" blockLength="12">
+  <message name="Msg" id="1" blockLength="18">
     <field name="encodedLength" id="1" type="uint32" offset="0"/>
     <field name="encodedLengthWithHeader" id="2" type="uint16" offset="4"/>
     <field name="asBytes" id="3" type="uint16" offset="6"/>
     <field name="asBytesWithHeader" id="4" type="uint16" offset="8"/>
     <field name="wrapAndApplyHeader" id="5" type="uint16" offset="10"/>
+    <field name="fixed" id="6" type="uint16" offset="12"/>
+    <field name="rawFixed" id="7" type="uint16" offset="14"/>
+    <field name="bufferTooShort" id="8" type="uint16" offset="16"/>
   </message>
 </messageSchema>"#;
 
@@ -131,17 +134,23 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         .source
         .clone();
 
-    // All five setters are renamed to _field on the encoder side.
-    // On the decoder side, only the three names shared with DECODER_RESERVED
-    // are renamed; `wrap_and_apply_header` and `as_bytes_with_header` are
-    // encoder-only inherent methods, so their decoder accessors keep the
-    // raw snake_case name (the decoder struct doesn't have those methods).
+    // All eight setters are renamed to _field on the encoder side.
+    // On the decoder side, only names shared with DECODER_RESERVED are
+    // renamed; `wrap_and_apply_header`, `as_bytes_with_header`,
+    // `buffer_too_short`, `fixed`, and `raw_fixed` are encoder-only
+    // inherent methods, so their decoder accessors keep the raw snake_case
+    // name (the decoder struct doesn't have those methods).
+    // `apply_nulls` is only emitted when the message has optional fields,
+    // tested separately in `optional_fixed_field_runtime`.
     for renamed in [
         "encoded_length_field",
         "encoded_length_with_header_field",
         "as_bytes_field",
         "as_bytes_with_header_field",
         "wrap_and_apply_header_field",
+        "fixed_field",
+        "raw_fixed_field",
+        "buffer_too_short_field",
     ] {
         assert!(
             src.contains(&format!("fn {renamed}")),
@@ -156,6 +165,9 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         "fn as_bytes(",
         "fn as_bytes_with_header(",
         "fn wrap_and_apply_header(",
+        "fn fixed(",
+        "fn raw_fixed(",
+        "fn buffer_too_short(",
     ] {
         assert!(
             src.contains(inherent),
@@ -168,25 +180,148 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let enc = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
             .fixed(&MsgFixedFields {
                 encoded_length: 11,
                 encoded_length_with_header: 22,
                 as_bytes: 33,
                 as_bytes_with_header: 44,
                 wrap_and_apply_header: 55,
-            });
-        // Inherent encoder methods reachable unshadowed.
-        let n = enc.encoded_length_with_header();
-        let _body: &[u8] = enc.as_bytes();
+                fixed: 66,
+                raw_fixed: 77,
+                buffer_too_short: 88,
+            })
+            .encoded_length_with_header();
         let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
         assert_eq!(dec.encoded_length_field(), 11);
         assert_eq!(dec.encoded_length_with_header_field(), 22);
         assert_eq!(dec.as_bytes_field(), 33);
-        // as_bytes_with_header and wrap_and_apply_header are encoder-only
-        // reserved names; on the decoder side they keep the raw snake_case.
+        // as_bytes_with_header, wrap_and_apply_header, buffer_too_short,
+        // fixed, and raw_fixed are encoder-only reserved names; on the
+        // decoder side they keep the raw snake_case.
         assert_eq!(dec.as_bytes_with_header(), 44);
         assert_eq!(dec.wrap_and_apply_header(), 55);
+        assert_eq!(dec.fixed(), 66);
+        assert_eq!(dec.raw_fixed(), 77);
+        assert_eq!(dec.buffer_too_short(), 88);
+        "#,
+    );
+
+    Ok(())
+}
+
+/// Decoder `rewind` is only emitted when the message has groups or var-data.
+/// A field named `rewind` in such a message must be renamed to `rewind_field`.
+const REWIND_CLASH_SCHEMA: &str = r#"<messageSchema package="rewclash" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="Msg" id="1" blockLength="8">
+    <field name="rewind" id="1" type="uint32" offset="0"/>
+    <field name="normal" id="2" type="uint32" offset="4"/>
+    <data name="payload" id="3" type="varDataEncoding"/>
+  </message>
+</messageSchema>"#;
+
+#[test]
+fn rewind_field_vs_consuming_method() -> Result<(), Box<dyn std::error::Error>> {
+    let schema = Schema::from_ir(parse(REWIND_CLASH_SCHEMA)?);
+    let src = Generator::new(GenerationConfig::new("rewclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+
+    assert!(
+        src.contains("fn rewind_field(&self) -> u32"),
+        "field 'rewind' must be renamed to rewind_field on the decoder"
+    );
+    assert!(
+        src.contains("fn rewind("),
+        "reserved decoder method rewind() must remain"
+    );
+
+    compile_and_run(
+        "rewclash",
+        &src,
+        r#"
+        let payload = b"hello";
+        let len = MsgEncoder::compute_length_with_header(payload.len());
+        let mut buf = vec![0u8; len];
+        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { rewind: 42, normal: 99 })
+            .payload(payload)?
+            .encoded_length_with_header();
+
+        let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
+        assert_eq!(dec.rewind_field(), 42);
+        assert_eq!(dec.payload(), Ok(payload.as_slice()));
+        // rewind() consumes self → returns fresh initial decoder.
+        let rewound = dec.rewind();
+        assert_eq!(rewound.rewind_field(), 42);
+        "#,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
+    // Minimal repro: fixed() with an optional field must not panic.
+    let xml = r#"<messageSchema package="optfix" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="Msg" id="1" blockLength="4">
+    <field name="x" id="1" type="uint16" offset="0"/>
+    <field name="maybe" id="2" type="uint16" presence="optional" offset="2"/>
+  </message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(xml)?);
+    let src = Generator::new(GenerationConfig::new("optfix"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+
+    compile_and_run(
+        "optfix",
+        &src,
+        r#"
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
+        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { x: 1, maybe: Some(2) })
+            .encoded_length_with_header();
+        let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
+        assert_eq!(dec.x(), 1);
+        assert_eq!(dec.maybe(), Some(2));
+
+        // apply_nulls() nullifies ALL optional fields (by design).
+        let n2 = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { x: 99, maybe: None })
+            .apply_nulls()
+            .encoded_length_with_header();
+        let dec2 = MsgDecoder::try_from(&buf[..n2]).expect("decode");
+        assert_eq!(dec2.x(), 99);
+        assert_eq!(dec2.maybe(), None);
         "#,
     );
 

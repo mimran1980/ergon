@@ -165,8 +165,10 @@ pub struct FieldInfo {
     pub name: String,
     /// Rust type (e.g. "i64", "u8", "EventCode").
     pub rust_type: String,
-    /// Byte offset from the message body start.
-    pub offset: usize,
+    /// Byte offset from the message body start, when this is a fixed
+    /// scalar/array/composite/enum/set field. `None` for groups and
+    /// var-data fields, which have no single wire offset.
+    pub offset: Option<usize>,
     /// Schema version this field was introduced in (0 = always present).
     pub since_version: u16,
     /// SBE `semanticType` attribute, if set.

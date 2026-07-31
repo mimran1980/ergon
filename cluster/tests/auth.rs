@@ -15,8 +15,8 @@ fn connect_and_send(
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
-    let egr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
+    let ing = ergo_aeron_cluster::test_support::channel_cstr(&cluster.ingress_channel)?;
+    let egr = ergo_aeron_cluster::test_support::channel_cstr(&cluster.egress_channel)?;
 
     let egress = a.add_subscription(
         &egr,
