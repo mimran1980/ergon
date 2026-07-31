@@ -703,12 +703,6 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
         });
     });
 
-    // The legacy `&self` random-access full-decode bench used to live here to
-    // show consuming < legacy. It was removed: those `&self` group/var-data
-    // accessors are the rejected out-of-order surface (DECISIONS.md §10) and are
-    // no longer public. Recorded result (commit a989a97, 2026-07-10): consuming
-    // ~13.06 ns vs legacy ~26.55 ns (legacy rescanned preceding groups per call).
-
     group.bench_function("sbe-tool", |b| {
         b.iter(|| {
             let mut car = sbe_tool_car_body_decoder(black_box(BASELINE), 0, bl, ver);

@@ -2965,7 +2965,6 @@ fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Err
 #[test]
 fn composite_value_and_flyweight_symmetry_exists() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "composite_sym_done");
-    // Task 4: engine_value() is the renamed _as_struct accessor.
     assert!(
         src.contains("fn engine_value("),
         "engine_value() must be generated"
