@@ -1798,6 +1798,19 @@ fn generate_message_decoder(
     if let Some(ref desc) = msg.description {
         ts.extend(doc_attr_tokens(desc));
     }
+    // Schema constants struct — no turbofish, shared by encoder and decoder.
+    let schema_ident = quote::format_ident!("{}Schema", name);
+    ts.extend(quote::quote! {
+        pub struct #schema_ident;
+        impl #schema_ident {
+            pub const SCHEMA_ID: u16 = #schema_id_lit;
+            pub const SCHEMA_VERSION: u16 = #schema_version_lit;
+            pub const TEMPLATE_ID: u16 = #msg_id_lit;
+            pub const BLOCK_LENGTH: usize = #bl_lit;
+            pub const HEADER_LENGTH: usize = #hdr_size_lit;
+        }
+    });
+
     // Fixed-block-only decoders (no groups/var-data) are Copy: they have no
     // tail cursor, so copying cannot weaken an ordering invariant. Tailed
     // decoders are NOT Copy/Clone — consumption enforces wire order.

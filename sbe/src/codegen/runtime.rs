@@ -1791,8 +1791,9 @@ pub(crate) fn generate_any_message(
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
+            let schema = quote::format_ident!("{}Schema", to_pascal_case(&m.name));
             decode_arms.extend(quote::quote! {
-                #decoder::TEMPLATE_ID => {
+                #schema::TEMPLATE_ID => {
                     Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)))
                 }
             });
@@ -1845,9 +1846,10 @@ pub(crate) fn generate_any_message(
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
+            let schema = quote::format_ident!("{}Schema", to_pascal_case(&m.name));
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
-                #decoder::TEMPLATE_ID => {
+                #schema::TEMPLATE_ID => {
                     let decoder = #decoder::wrap(buf, pos, block_length, version);
                     let total_len = decoder.encoded_length_with_header()?;
                     if total_len > frame_len {
