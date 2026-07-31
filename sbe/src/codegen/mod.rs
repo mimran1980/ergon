@@ -253,20 +253,32 @@ pub struct Generator {
 
 /// Extract [`crate::FieldInfo`] entries from message fields (constant fields
 /// excluded). Used by context builders and hook dispatch.
-fn message_field_infos(fields: &[MessageField]) -> Vec<crate::FieldInfo> {
+fn message_field_infos(
+    fields: &[MessageField],
+    domain_types: &[(crate::ConversionSelector, String)],
+) -> Vec<crate::FieldInfo> {
     fields
         .iter()
         .filter(|f| f.presence != Presence::Constant)
-        .map(|f| crate::FieldInfo {
-            name: to_snake_case(&f.name),
-            rust_type: f.field_type.rust_type_name(),
-            offset: f.offset,
-            since_version: f.since_version,
-            semantic_type: f.semantic_type.clone(),
-            presence: presence_str(f.presence),
-            null_value: f.null_value,
-            deprecated: f.deprecated,
-            description: f.description.clone(),
+        .map(|f| {
+            // If a domain type is configured for this field, report the
+            // domain type (e.g. `bool`) rather than the wire type (e.g.
+            // `BooleanType`) — the generated DTO field uses the former.
+            let rust_type = match find_domain_type(f, domain_types) {
+                Some(dt) => dt.to_string(),
+                None => f.field_type.rust_type_name(),
+            };
+            crate::FieldInfo {
+                name: to_snake_case(&f.name),
+                rust_type,
+                offset: f.offset,
+                since_version: f.since_version,
+                semantic_type: f.semantic_type.clone(),
+                presence: presence_str(f.presence),
+                null_value: f.null_value,
+                deprecated: f.deprecated,
+                description: f.description.clone(),
+            }
         })
         .collect()
 }
@@ -689,7 +701,7 @@ impl Generator {
     ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&msg.name);
         let name_with = |suffix: &str| format!("{name}{suffix}");
-        let fields = message_field_infos(&msg.fields);
+        let fields = message_field_infos(&msg.fields, &[]);
         let name = match kind {
             crate::ItemKind::MessageDecoder => name_with("Decoder"),
             crate::ItemKind::MessageEncoder => name_with("Encoder"),
@@ -1801,20 +1813,13 @@ fn generate_message_decoder(
                 Some(&frame[Self::ENCODED_LENGTH..])
             }
 
-            /// Offset of the message header within [`Self::whole_buffer`].
-            /// `whole_buffer()[offset..]` is the full SBE frame
-            /// (header + body) for this message.
-            ///
-            /// Returns `None` when the decoder was constructed from a
-            /// body-slice that does not include the header region
-            /// (i.e. when the wrapped `pos` is less than `HEADER_LENGTH`).
+            /// Offset of the message header within [`Self::whole_buffer`]
+            /// (i.e. `self.pos - Self::HEADER_LENGTH`). Returns `None` when
+            /// the decoder wraps a body-only slice whose `pos` is less than
+            /// the header length.
             #[inline]
-            pub const fn message_offset(&self) -> Option<usize> {
-                if self.pos >= Self::HEADER_LENGTH {
-                    Some(self.pos - Self::HEADER_LENGTH)
-                } else {
-                    None
-                }
+            pub fn message_offset(&self) -> Option<usize> {
+                self.pos.checked_sub(Self::HEADER_LENGTH)
             }
 
             /// The complete original buffer that this decoder wraps
@@ -1986,6 +1991,8 @@ fn generate_message_decoder(
             "verify",
             "acting_version",
             "acting_block_length",
+            // Consuming stage transition (self → Self).
+            "rewind",
         ];
         let fname_ident = resolve_field_ident(&fname_snake, &wire_name, DECODER_RESERVED);
 
@@ -3584,7 +3591,7 @@ fn generate_domain_recursive(
     // Fire hooks for this domain struct (message DTO or entry DTO).
     // Build context including group and var-data field info.
     if !hooks.is_empty() {
-        let mut ctx_fields = message_field_infos(fields);
+        let mut ctx_fields = message_field_infos(fields, domain_types);
         // Append synthetic field entries for groups (Vec<EntryDomain>).
         // The generated entry-DTO struct is `{struct_prefix}{Group}EntryDomain`
         // (see the recursion below), so the reported type must carry the same
@@ -3871,6 +3878,8 @@ fn generate_decoder_display(
             "verify",
             "acting_version",
             "acting_block_length",
+            // Consuming stage transition (self → Self).
+            "rewind",
         ];
         let snake = to_snake_case(&f.name);
         let f_ident = resolve_field_ident(&snake, &None, DECODER_RESERVED);
@@ -6841,8 +6850,16 @@ fn generate_message_encoder(
         "as_bytes_with_header",
         "encoded_length",
         "encoded_length_with_header",
-        // Emitted when the message has optional fields (line ~6787).
+        // Emitted when the message has optional fields.
         "apply_nulls",
+        // Stage transitions taking `self` (encoded-length struct wraps into
+        // a stage, so they always exist on the main encoder struct).
+        "fixed",
+        "raw_fixed",
+        // Associated fn (no receiver) — a field-named setter with `&mut self`
+        // collides with this because Rust does not separate associated fns from
+        // methods in the inherent namespace.
+        "buffer_too_short",
     ];
 
     for f in &msg.fields {

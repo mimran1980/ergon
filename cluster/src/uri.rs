@@ -44,7 +44,7 @@ pub fn channel_cstr(uri: &str) -> Result<CString, ClusterError> {
 /// Build `aeron:udp?endpoint={endpoint}` as `CString` for rusteron.
 ///
 /// `endpoint` is `host:port` (no `aeron:` prefix).
-pub(crate) fn udp_endpoint_cstr(endpoint: &str) -> Result<CString, ClusterError> {
+pub fn udp_endpoint_cstr(endpoint: &str) -> Result<CString, ClusterError> {
     let s = AeronUriStringBuilder::udp(endpoint)
         .and_then(|b| b.build(256))
         .map_err(map_uri)?;

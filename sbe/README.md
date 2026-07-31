@@ -1542,7 +1542,7 @@ composite, message decoder/encoder, domain struct). The closure receives an
 with structured field/variant/choice metadata, plus a `schema` reference for
 full IR access.
 
-**Example — add serde Serialize + Deserialize to every enum, set, and DTO:**
+**Example — add serde Serialize + Deserialize to every enum and set:**
 
 ```rust,no_run
 // build.rs
