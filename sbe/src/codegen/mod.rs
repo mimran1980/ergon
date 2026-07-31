@@ -261,10 +261,26 @@ fn message_field_infos(
         .iter()
         .filter(|f| f.presence != Presence::Constant)
         .map(|f| {
-            // If a domain type is configured for this field, report the
-            // domain type (e.g. `bool`) rather than the wire type (e.g.
-            // `BooleanType`) — the generated DTO field uses the former.
-            let rust_type = match find_domain_type(f, domain_types) {
+            // Domain types apply to the DTO field only when the DTO
+            // generation actually uses them: required scalar primitives
+            // and boolean enums (the latter via auto_bool_domain). Optional
+            // fields, arrays, composites/enums/sets without a domain config
+            // all keep the wire type.
+            // DTO generation only applies domain types to required scalar
+            // primitives (not arrays, not optional) and to boolean enums.
+            // Match that logic exactly so hook metadata stays truthful.
+            let domain_ty = match &f.field_type {
+                FieldType::Primitive(_, length) => {
+                    if length.is_none() && f.presence == Presence::Required {
+                        find_domain_type(f, domain_types)
+                    } else {
+                        None
+                    }
+                }
+                FieldType::Enum { .. } => find_domain_type(f, domain_types),
+                _ => None,
+            };
+            let rust_type = match domain_ty {
                 Some(dt) => dt.to_string(),
                 None => f.field_type.rust_type_name(),
             };
@@ -539,20 +555,26 @@ impl Generator {
     }
 
     #[allow(missing_docs)]
-    fn auto_register_bool_enums(&mut self, schema: &Schema) {
-        if !self.config.auto_bool_domain {
-            return;
-        }
-        let elements = partition_tokens(&schema.ir.tokens);
-        for e in &elements.enums {
-            let name = &e[0].name;
-            if crate::structured_ir::is_bool_value_enum(&elements, name) {
-                let sel = crate::ConversionSelector::named_type(name);
-                if !self.config.domain_types.iter().any(|(s, _)| s == &sel) {
-                    self.config.domain_types.push((sel, "bool".into()));
+    fn effective_domain_types(
+        &self,
+        schemas: &[(&Schema, &str)],
+    ) -> Vec<(crate::ConversionSelector, String)> {
+        let mut types = self.config.domain_types.clone();
+        if self.config.auto_bool_domain {
+            for (schema, _) in schemas {
+                let elements = partition_tokens(&schema.ir.tokens);
+                for e in &elements.enums {
+                    let name = &e[0].name;
+                    if crate::structured_ir::is_bool_value_enum(&elements, name) {
+                        let sel = crate::ConversionSelector::named_type(name);
+                        if !types.iter().any(|(s, _)| s == &sel) {
+                            types.push((sel, "bool".into()));
+                        }
+                    }
                 }
             }
         }
+        types
     }
 
     /// Generate one Rust module for `schema` (file name from config module name).
@@ -561,8 +583,9 @@ impl Generator {
     ///
     /// [`GenerateError`] if conversion selectors match nothing or collide.
     pub fn generate(&mut self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
-        self.auto_register_bool_enums(schema);
-        with_keyword_append(&self.config.keyword_append_token, || {
+        let effective = self.effective_domain_types(&[(schema, "")]);
+        let saved = std::mem::replace(&mut self.config.domain_types, effective);
+        let result = with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.validate_header_values(schema)?;
                 self.validate_conversions(schema)?;
@@ -574,7 +597,9 @@ impl Generator {
                 });
                 Ok(modules)
             })
-        })
+        });
+        self.config.domain_types = saved;
+        result
     }
 
     /// Generate modules for several schemas, optionally deduplicating shared types.
@@ -592,14 +617,15 @@ impl Generator {
         &mut self,
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
-        for (schema, _) in schemas {
-            self.auto_register_bool_enums(schema);
-        }
-        with_keyword_append(&self.config.keyword_append_token, || {
+        let effective = self.effective_domain_types(schemas);
+        let saved = std::mem::replace(&mut self.config.domain_types, effective);
+        let result = with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.generate_multi_inner(schemas)
             })
-        })
+        });
+        self.config.domain_types = saved;
+        result
     }
 
     fn generate_multi_inner(
@@ -1818,8 +1844,12 @@ fn generate_message_decoder(
             /// the decoder wraps a body-only slice whose `pos` is less than
             /// the header length.
             #[inline]
-            pub fn message_offset(&self) -> Option<usize> {
-                self.pos.checked_sub(Self::HEADER_LENGTH)
+            pub const fn message_offset(&self) -> Option<usize> {
+                // checked_sub is const since Rust 1.73; our MSRV is 1.88.
+                match self.pos.checked_sub(Self::HEADER_LENGTH) {
+                    Some(off) => Some(off),
+                    None => None,
+                }
             }
 
             /// The complete original buffer that this decoder wraps

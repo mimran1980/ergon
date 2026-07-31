@@ -121,7 +121,7 @@ pub mod poller;
 /// [`SessionState`] machine for connected / new-leader / closed.
 pub mod state;
 /// Aeron channel URI helpers (`AeronUriStringBuilder`).
-pub mod uri;
+mod uri;
 
 pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim};
 pub use config::SessionBuilder;
@@ -144,6 +144,8 @@ pub mod test_support;
 
 #[cfg(feature = "test-harness")]
 pub use test_support::{EmbeddedArchiveDriver, TestCluster};
+#[cfg(feature = "test-harness")]
+pub use uri::{channel_cstr, udp_endpoint_cstr};
 
 #[cfg(test)]
 mod tests {
