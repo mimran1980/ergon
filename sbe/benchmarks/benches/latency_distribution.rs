@@ -22,9 +22,7 @@ fn decode_batch() -> u64 {
     let mut sum = 0u64;
     for _ in 0..BATCH {
         sum = sum.wrapping_add(
-            CarDecoder::wrap(
-                black_box(BASELINE),
-                CarDecoder::HEADER_LENGTH,
+            CarDecoder::wrap(black_box(BASELINE), 0,
                 header.block_length() as usize,
                 header.version(),
             )

@@ -6964,8 +6964,11 @@ fn generate_message_encoder(
 
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
+        // Offset of this field from the message header start (header + body offset).
         let body_offset = header_size + f.offset;
         let body_offset_lit = syn::LitInt::new(&body_offset.to_string(), span);
+        // Absolute buffer index under the truthful coordinate system.
+        let abs_offset = quote::quote! { self.msg_offset + #body_offset_lit };
         // In converter mode, raw setters are suffixed _wire when a domain
         // Raw setters become *_wire when a conversion is configured so the
         // converted setter takes the original name.
@@ -6989,8 +6992,9 @@ fn generate_message_encoder(
                         impl_contents.extend(quote::quote! {
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
+                                let offset = #abs_offset;
                                 unsafe {
-                                    let dst = self.buf.get_unchecked_mut(#body_offset_lit..#body_offset_lit + #len_lit);
+                                    let dst = self.buf.get_unchecked_mut(offset..offset + #len_lit);
                                     let src = core::slice::from_raw_parts(
                                         val.as_ptr() as *const u8,
                                         #len_lit,
@@ -7027,7 +7031,7 @@ fn generate_message_encoder(
                         impl_contents.extend(quote::quote! {
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
-                                let offset = #body_offset_lit;
+                                let offset = #abs_offset;
                                 let mut idx = 0usize;
                                 while idx < #len_lit {
                                     unsafe {
@@ -7058,7 +7062,7 @@ fn generate_message_encoder(
                     impl_contents.extend(quote::quote! {
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
-                            *unsafe { self.buf.get_unchecked_mut(#body_offset_lit) } = val as u8;
+                            *unsafe { self.buf.get_unchecked_mut(#abs_offset) } = val as u8;
                             self
                         }
                     });
@@ -7066,9 +7070,9 @@ fn generate_message_encoder(
                     impl_contents.extend(quote::quote! {
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
-                            let offset = #body_offset_lit;
-                            // SAFETY: wrap/try_wrap validates buf.len() >= BLOCK_LENGTH,
-                            // and offset + prim_size <= BLOCK_LENGTH by construction.
+                            let offset = #abs_offset;
+                            // SAFETY: wrap/try_wrap validates buf.len() >= msg_offset + HEADER + BLOCK,
+                            // and field extent is within BLOCK_LENGTH by construction.
                             unsafe {
                                 self.buf.get_unchecked_mut(offset..offset + #prim_size_lit)
                                     .copy_from_slice(&val.#to_endian());
@@ -7087,7 +7091,7 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = #body_offset_lit;
+                        let offset = #abs_offset;
                         self.buf[offset..offset + #comp_size_lit]
                             .copy_from_slice(&val.0);
                         self
@@ -7108,7 +7112,7 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = #body_offset_lit;
+                        let offset = #abs_offset;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
                         self
                     }
@@ -7119,7 +7123,7 @@ fn generate_message_encoder(
                     impl_contents.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
-                            self.buf[#body_offset_lit] = val as u8;
+                            self.buf[#abs_offset] = val as u8;
                             self
                         }
                     });
@@ -7135,7 +7139,7 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = #body_offset_lit;
+                        let offset = #abs_offset;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
                         self
                     }

@@ -72,9 +72,10 @@ fn bench_fixed_blocks(c: &mut Criterion) {
     }
     group.bench_function("trusted_entry_64", |b| {
         b.iter(|| {
+            // wrap takes message_offset (absolute header start), not body offset.
             black_box(Fixed64Decoder::wrap(
                 black_box(&fixed64),
-                Fixed64Encoder::HEADER_LENGTH,
+                0,
                 Fixed64Encoder::BLOCK_LENGTH,
                 Fixed64Encoder::SCHEMA_VERSION,
             ))
@@ -381,7 +382,7 @@ fn bench_endian_header_and_version(c: &mut Criterion) {
             black_box(
                 VersionedDecoder::wrap(
                     black_box(&versioned),
-                    VersionedEncoder::HEADER_LENGTH,
+                    0, // message_offset (absolute coords)
                     8,
                     0,
                 )
@@ -394,7 +395,7 @@ fn bench_endian_header_and_version(c: &mut Criterion) {
             black_box(
                 VersionedDecoder::wrap(
                     black_box(&versioned),
-                    VersionedEncoder::HEADER_LENGTH,
+                    0, // message_offset (absolute coords)
                     VersionedEncoder::BLOCK_LENGTH,
                     VersionedEncoder::SCHEMA_VERSION,
                 )

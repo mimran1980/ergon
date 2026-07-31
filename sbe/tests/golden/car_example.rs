@@ -4824,7 +4824,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
-        let offset = 8;
+        let offset = self.msg_offset + 8;
         unsafe {
             self.buf
                 .get_unchecked_mut(offset..offset + 8)
@@ -4834,7 +4834,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
     #[inline]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
-        let offset = 16;
+        let offset = self.msg_offset + 16;
         unsafe {
             self.buf
                 .get_unchecked_mut(offset..offset + 2)
@@ -4844,24 +4844,24 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
     #[inline]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
-        let offset = 18;
+        let offset = self.msg_offset + 18;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
     #[inline]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
-        self.buf[18] = val as u8;
+        self.buf[self.msg_offset + 18] = val as u8;
         self
     }
     #[inline]
     pub fn code(&mut self, val: Model) -> &mut Self {
-        let offset = 19;
+        let offset = self.msg_offset + 19;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
     #[inline]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
-        let offset = 20;
+        let offset = self.msg_offset + 20;
         let mut idx = 0usize;
         while idx < 4 {
             unsafe {
@@ -4879,8 +4879,9 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
     #[inline]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
+        let offset = self.msg_offset + 36;
         unsafe {
-            let dst = self.buf.get_unchecked_mut(36..36 + 6);
+            let dst = self.buf.get_unchecked_mut(offset..offset + 6);
             let src = core::slice::from_raw_parts(val.as_ptr() as *const u8, 6);
             dst.copy_from_slice(src);
         }
@@ -4921,13 +4922,13 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
     #[inline]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
-        let offset = 42;
+        let offset = self.msg_offset + 42;
         self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
         self
     }
     #[inline]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
-        let offset = 43;
+        let offset = self.msg_offset + 43;
         self.buf[offset..offset + 10].copy_from_slice(&val.0);
         self
     }

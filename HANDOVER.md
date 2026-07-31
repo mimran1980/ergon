@@ -204,20 +204,28 @@ let enc = CarEncoder::wrap(&mut buf, 0);  // HeaderAbsent
 // enc.as_bytes_with_header();  // ← must NOT compile
 ```
 
-### Known pre-existing issues (not caused by these changes)
+### Diagnostic benches (fixed in follow-up)
 
-- `alignment_bench`: WrongSchema — fails at `e75b34a5` baseline too
-- `codec_matrix_bench`: schema mismatch — fails at baseline too
-- `layout_access_bench`: assertion failure — fails at baseline too
-- These 3 benches compile but panic at runtime. Not regressions.
+Absolute coordinates require field setters to write at `msg_offset + HEADER + field_offset`.
+An early incomplete migration left message-relative field writes, which only worked at
+`msg_offset == 0` and broke `alignment_bench` / non-zero-offset encode. Decoder
+`wrap` also takes **message_offset** (not body offset); benches that still passed
+`HEADER_LENGTH` as the second argument were migrated to `0` (or the true message start).
+
+- `alignment_bench` — green (`--test` all offsets 0..=63)
+- `layout_access_bench` — green (`wrap(..., 0, BLOCK, VERSION)`)
+- `codec_matrix_bench` — green
+- Durable probe: `sbe/benchmarks/tests/align_offset_probe.rs`
 
 ### Before merging
 
 - [x] Run HANDOVER test ladder — lib 194, baseline 100, wire 23+52, cluster 51, feature-tour 3; clippy `-D warnings` clean
 - [x] Run SBE bench gate LTO + no-LTO — all maintained ratios ≤ 1.00; cluster gate green after re-run (first 1.02 was noise)
 - [x] Clippy clean for ergo-sbe + ergo-aeron-cluster
+- [x] Diagnostic benches green: alignment / layout_access / codec_matrix (`--test`); align_offset_probe
+- [x] Absolute coords: field writers use `msg_offset + header + field` (non-zero offset encode)
 - [ ] Regenerate sbe-tool reference crates: `scripts/regenerate-sbe-tool-reference.sh` (only if sbe-tool API surface changed; wire parity green without regen)
 - [x] Verify golden file is byte-identical to regeneration
-- [x] Commit remaining working-tree changes (baseline/golden/H propagation/consumers)
+- [x] Commit remaining working-tree changes (baseline/golden/H propagation/consumers + abs-offset fix)
 - [x] No leftover scripts: `apply_*.py` and `process_files.py` absent
 - [x] `book/` and `.github/workflows/pages.yml` stay untracked (not part of this PR)
