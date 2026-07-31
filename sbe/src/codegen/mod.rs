@@ -8743,17 +8743,19 @@ mod tests {
                             }
                         }]
                     }
-                    ItemContext::Set { name, choices, .. } => {
+                    ItemContext::Set { name, encoding_type, choices, .. } => {
                         let ident = format_ident!("{name}");
                         // Getters are `is_{snake_name}()`; the wire mask is
-                        // `1 << bit_position` — this mirrors the real generated
-                        // set API (there is no per-choice PascalCase method/const).
+                        // `1 << bit_position`. Use u64 as the accumulator so
+                        // bit positions 0-63 work regardless of the schema's
+                        // encodingType (u8/u16/u32/u64).
                         let c_getters: Vec<_> = choices
                             .iter()
                             .map(|c| format_ident!("is_{}", c.snake_name))
                             .collect();
                         let c_labels: Vec<_> = choices.iter().map(|c| c.label.clone()).collect();
                         let c_bits: Vec<_> = choices.iter().map(|c| c.bit_position).collect();
+                        let acc_ty: syn::Type = syn::parse_str(encoding_type).unwrap();
                         vec![quote::quote! {
                             impl serde::Serialize for #ident {
                                 fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -8766,15 +8768,15 @@ mod tests {
                             impl<'de> serde::Deserialize<'de> for #ident {
                                 fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
                                     let names: Vec<String> = Vec::deserialize(d)?;
-                                    let mut value = 0u8;
+                                    let mut value: u64 = 0;
                                     for name in &names {
                                         match name.as_str() {
-                                            #(#c_labels => value |= 1u8 << #c_bits,)*
+                                            #(#c_labels => value |= 1u64 << #c_bits,)*
                                             other => return Err(serde::de::Error::unknown_variant(
                                                 other, &[#(#c_labels),*])),
                                         }
                                     }
-                                    Ok(Self(value))
+                                    Ok(Self(value as #acc_ty))
                                 }
                             }
                         }]
@@ -8815,6 +8817,73 @@ mod tests {
             "missing Deserialize for set"
         );
 
+        Ok(())
+    }
+
+    /// `enable_bool_domain_type()` must work for multi-schema generation, not
+    /// just single-schema. Each schema's boolean enums are auto-registered, and
+    /// the generated output includes the domain-typed getter.
+    #[test]
+    fn enable_bool_domain_type_works_with_generate_multi() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let xml_a = r#"<?xml version="1.0"?>
+        <messageSchema package="a" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <enum name="BooleanType" encodingType="uint8">
+              <validValue name="F">0</validValue>
+              <validValue name="T">1</validValue>
+            </enum>
+          </types>
+          <message name="MsgA" id="1" blockLength="1">
+            <field name="flag" id="1" type="BooleanType" offset="0"/>
+          </message>
+        </messageSchema>"#;
+        let xml_b = r#"<?xml version="1.0"?>
+        <messageSchema package="b" id="2" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <enum name="BooleanType" encodingType="uint8">
+              <validValue name="F">0</validValue>
+              <validValue name="T">1</validValue>
+            </enum>
+          </types>
+          <message name="MsgB" id="1" blockLength="1">
+            <field name="enabled" id="1" type="BooleanType" offset="0"/>
+          </message>
+        </messageSchema>"#;
+
+        let schema_a = Schema::from_ir(crate::parse(xml_a)?);
+        let schema_b = Schema::from_ir(crate::parse(xml_b)?);
+        let mut generator = Generator::new(
+            crate::GenerationConfig::new("common_types")
+                .with_shared_module("common_types")
+                .enable_bool_domain_type(),
+        );
+        let modules =
+            generator.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "consumer")])?;
+        let collected: Vec<_> = modules.modules().collect();
+        assert_eq!(collected.len(), 2);
+
+        // The consumer module should have a bool-typed getter on the field
+        // whose type is BooleanType (auto-registered as bool domain type).
+        // The domain getter is `{field}_bool`, not the bare name — the bare
+        // name stays as the wire-type accessor.
+        let consumer_src = &collected[1].source;
+        assert!(
+            consumer_src.contains("fn enabled_bool(&self) -> bool"),
+            "enable_bool_domain_type must produce bool getter in multi-schema; got:\n{consumer_src}",
+        );
         Ok(())
     }
 }

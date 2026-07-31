@@ -780,8 +780,7 @@ fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::
 }
 
 #[test]
-fn xiinclude_warnings_dedup_per_message_not_per_consumer() -> Result<(), Box<dyn std::error::Error>>
-{
+fn xiinclude_shared_type_warning_path_does_not_panic() -> Result<(), Box<dyn std::error::Error>> {
     // A composite with nullValue on a non-optional field triggers the warn_once
     // path. The warning must be emitted when that composite is type-checked —
     // this test proves the path is exercised without panicking. (Dedup is

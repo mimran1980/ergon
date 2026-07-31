@@ -98,10 +98,10 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
 }
 
 /// The encoder side has its own reserved list. A fixed message with fields
-/// named after inherent *encoder* methods (`encodedLength`, `asBytes`) must
-/// rename the setters, otherwise they collide with the generated
-/// `encoded_length()` / `as_bytes()` inherent methods and the crate fails to
-/// compile. This guards the four names added to `ENCODER_RESERVED`.
+/// named after inherent *encoder* methods must rename the setters, otherwise
+/// they collide and the generated crate fails to compile. This covers every
+/// name in `ENCODER_RESERVED` that is emitted as an inherent method on the
+/// fixed-message encoder struct.
 const ENCODER_CLASH_SCHEMA: &str = r#"<messageSchema package="eclash" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -111,9 +111,12 @@ const ENCODER_CLASH_SCHEMA: &str = r#"<messageSchema package="eclash" id="1" ver
       <type name="version" primitiveType="uint16"/>
     </composite>
   </types>
-  <message name="Msg" id="1" blockLength="8">
+  <message name="Msg" id="1" blockLength="12">
     <field name="encodedLength" id="1" type="uint32" offset="0"/>
-    <field name="asBytes" id="2" type="uint32" offset="4"/>
+    <field name="encodedLengthWithHeader" id="2" type="uint16" offset="4"/>
+    <field name="asBytes" id="3" type="uint16" offset="6"/>
+    <field name="asBytesWithHeader" id="4" type="uint16" offset="8"/>
+    <field name="wrapAndApplyHeader" id="5" type="uint16" offset="10"/>
   </message>
 </messageSchema>"#;
 
@@ -128,15 +131,37 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         .source
         .clone();
 
-    // Setters renamed away from the inherent encoder/decoder methods.
-    assert!(
-        src.contains("fn encoded_length_field"),
-        "field 'encodedLength' must be renamed to encoded_length_field"
-    );
-    assert!(
-        src.contains("fn as_bytes_field"),
-        "field 'asBytes' must be renamed to as_bytes_field"
-    );
+    // All five setters are renamed to _field on the encoder side.
+    // On the decoder side, only the three names shared with DECODER_RESERVED
+    // are renamed; `wrap_and_apply_header` and `as_bytes_with_header` are
+    // encoder-only inherent methods, so their decoder accessors keep the
+    // raw snake_case name (the decoder struct doesn't have those methods).
+    for renamed in [
+        "encoded_length_field",
+        "encoded_length_with_header_field",
+        "as_bytes_field",
+        "as_bytes_with_header_field",
+        "wrap_and_apply_header_field",
+    ] {
+        assert!(
+            src.contains(&format!("fn {renamed}")),
+            "expected renamed accessor fn {renamed}"
+        );
+    }
+
+    // The inherent encoder methods still exist and are distinct.
+    for inherent in [
+        "fn encoded_length(",
+        "fn encoded_length_with_header(",
+        "fn as_bytes(",
+        "fn as_bytes_with_header(",
+        "fn wrap_and_apply_header(",
+    ] {
+        assert!(
+            src.contains(inherent),
+            "inherent encoder method {inherent} must not be shadowed"
+        );
+    }
 
     compile_and_run(
         "eclash",
@@ -144,13 +169,24 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
         let enc = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
-            .fixed(&MsgFixedFields { encoded_length: 11, as_bytes: 22 });
-        // Inherent encoder methods are reachable and distinct from the fields.
+            .fixed(&MsgFixedFields {
+                encoded_length: 11,
+                encoded_length_with_header: 22,
+                as_bytes: 33,
+                as_bytes_with_header: 44,
+                wrap_and_apply_header: 55,
+            });
+        // Inherent encoder methods reachable unshadowed.
         let n = enc.encoded_length_with_header();
         let _body: &[u8] = enc.as_bytes();
         let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
         assert_eq!(dec.encoded_length_field(), 11);
-        assert_eq!(dec.as_bytes_field(), 22);
+        assert_eq!(dec.encoded_length_with_header_field(), 22);
+        assert_eq!(dec.as_bytes_field(), 33);
+        // as_bytes_with_header and wrap_and_apply_header are encoder-only
+        // reserved names; on the decoder side they keep the raw snake_case.
+        assert_eq!(dec.as_bytes_with_header(), 44);
+        assert_eq!(dec.wrap_and_apply_header(), 55);
         "#,
     );
 
