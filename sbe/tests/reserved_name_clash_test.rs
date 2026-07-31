@@ -96,3 +96,63 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
 
     Ok(())
 }
+
+/// The encoder side has its own reserved list. A fixed message with fields
+/// named after inherent *encoder* methods (`encodedLength`, `asBytes`) must
+/// rename the setters, otherwise they collide with the generated
+/// `encoded_length()` / `as_bytes()` inherent methods and the crate fails to
+/// compile. This guards the four names added to `ENCODER_RESERVED`.
+const ENCODER_CLASH_SCHEMA: &str = r#"<messageSchema package="eclash" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="Msg" id="1" blockLength="8">
+    <field name="encodedLength" id="1" type="uint32" offset="0"/>
+    <field name="asBytes" id="2" type="uint32" offset="4"/>
+  </message>
+</messageSchema>"#;
+
+#[test]
+fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error::Error>> {
+    let schema = Schema::from_ir(parse(ENCODER_CLASH_SCHEMA)?);
+    let src = Generator::new(GenerationConfig::new("eclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+
+    // Setters renamed away from the inherent encoder/decoder methods.
+    assert!(
+        src.contains("fn encoded_length_field"),
+        "field 'encodedLength' must be renamed to encoded_length_field"
+    );
+    assert!(
+        src.contains("fn as_bytes_field"),
+        "field 'asBytes' must be renamed to as_bytes_field"
+    );
+
+    compile_and_run(
+        "eclash",
+        &src,
+        r#"
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
+        let enc = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { encoded_length: 11, as_bytes: 22 });
+        // Inherent encoder methods are reachable and distinct from the fields.
+        let n = enc.encoded_length_with_header();
+        let _body: &[u8] = enc.as_bytes();
+        let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
+        assert_eq!(dec.encoded_length_field(), 11);
+        assert_eq!(dec.as_bytes_field(), 22);
+        "#,
+    );
+
+    Ok(())
+}

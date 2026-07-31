@@ -917,7 +917,7 @@ So:
 
 We evaluated using the [`zerocopy`](https://docs.rs/zerocopy) crate to derive
 `FromBytes`/`IntoBytes` on generated message structs for zero-copy buffer
-overlay. It was not faster
+overlay. It was not faster.
 
 The flyweight decoder already hits the same `mov` instructions without the
 extra dependency.
@@ -996,10 +996,11 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 
 ### Why enums have a `NullVal` variant instead of `Option<EventCode>`
 
-Every SBE enum must declare a `nullValue` in the schema — an explicit wire sentinel
+An SBE enum may declare a `nullValue` in the schema — an explicit wire sentinel
 that means "not present" / "not set". When the schema doesn't specify one, SBE
-defaults to the encoding type's maximum value (e.g. `255` for `uint8`, `-1` for
-`int8`).
+defaults to the encoding type's null sentinel: the maximum value for unsigned
+types (e.g. `255` for `uint8`) and the minimum value for signed types (e.g.
+`-128` for `int8`).
 
 An early design tried wrapping every enum field in `Option<EventCode>` at the
 field site:
@@ -1060,7 +1061,7 @@ See its `src/lib.rs` for the full API map.
 | Sized encode with `EncodedLength` builder | [`demo_car_size_and_encode`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | Known vs unknown group counts | [`demo_car_size_and_encode`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | `Display` / `Debug` diagnostic output | [`demo_display_debug`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
-| Domain objects (DTOs) | [`demo_domain_dto`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
+| Domain objects (DTOs) | [`demo_car_domain_dto`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | Multi-template `AnyMessage` dispatch | [`demo_any_message`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | `with_conversion` generic adapters | [`demo_conversion_only`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | Trust boundary (`try_` vs `wrap`) | [`demo_try_vs_trusted`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
@@ -1525,10 +1526,15 @@ to maintain a 2021 path if there is real demand. Say what toolchain you need
 
 ### Code-generation hooks
 
-> **Niche feature.** Hooks are aimed at users who need to inject custom derives or
-> impls into generated code — serde, custom validation, company-internal traits.
+> **Niche feature.** Hooks are aimed at users who need to attach extra `impl`
+> blocks to generated code — serde, custom validation, company-internal traits.
 > Most workflows don't need them; skip this section unless you recognise your
 > use case.
+>
+> Hooks **append tokens after** each generated item; they cannot add a
+> `#[derive(...)]` to the item itself (that attribute would have to precede the
+> `struct`/`enum`). Emit the trait `impl` directly instead — that is what a
+> derive would expand to anyway.
 
 Hooks let you append arbitrary Rust tokens after each generated item (enum, set,
 composite, message decoder/encoder, domain struct). The closure receives an
@@ -1581,9 +1587,9 @@ let config = GenerationConfig::new("msgs").with_hook(serde_hook);
 ```
 
 Each `ItemContext` variant carries the fields, variants, or choices defined in
-the schema — use them to build `#[derive(...)]` annotations, custom `impl`
-blocks, or trait implementations. Hooks fire in registration order; the returned
-tokens are appended after the generated item.
+the schema — use them to build custom `impl` blocks or trait implementations.
+Hooks fire in registration order; the returned tokens are appended **after** the
+generated item (so they extend it with `impl`s, not with derives).
 
 Full runnable example with serde + serde_json round-trip:
 [`hook_serde_test`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/hook_serde_test.rs).

@@ -5,12 +5,15 @@
 ### Added
 - `try_from_slice_with_header` on domain DTOs — decode bytes straight to an owned DTO in one call
 
+### Changed
+- `EnumVariantInfo.value` (hook metadata) widened from `i64` to `i128` so `uint64` discriminants above `i64::MAX` are represented faithfully
+
 ### Fixed
 - Hook closures now require `Send + Sync`, keeping `GenerationConfig` thread-safe
-- Field-name clash renaming now covers array and optional accessors, not just scalars
+- Field-name clash renaming now covers array and optional decoder accessors, and the encoder side reserves `as_bytes`/`encoded_length`/`encoded_length_with_header`/`as_bytes_with_header` — a field named after any of these no longer breaks compilation
 - Enum discriminants above `i64::MAX` reach hooks instead of being silently dropped
-- Composite hook metadata reports real member types (primitives, nested composites, enum/set refs) instead of omitting primitives and mislabelling containers as `u8`
-- Hooks fire for every group entry DTO, and the message DTO hook context now includes group and var-data fields
+- Composite hook metadata reports real member types (primitives, nested composites, enum/set refs) with their schema `semanticType`/`nullValue`/`description`/`deprecated`, instead of omitting primitives and mislabelling containers as `u8`
+- Hooks fire for every group entry DTO; the message DTO hook context includes group and var-data fields, and a group field's reported type is the fully-qualified `Vec<{Msg}{Group}EntryDomain>`
 - `message_offset()` returns `Option<usize>` instead of panicking on a body-slice decoder
 
 ## [0.1.7] — 2026-07-30

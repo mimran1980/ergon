@@ -650,12 +650,12 @@ impl Generator {
             .filter(|t| t.signal == crate::ir::Signal::Encoding)
             .filter_map(|t| {
                 let val = t.encoding.constant_value.as_ref()?;
-                let value: i64 = if encoding_type == PrimitiveType::Char {
-                    val.as_bytes().first().copied().unwrap_or(0) as i64
+                let value: i128 = if encoding_type == PrimitiveType::Char {
+                    i128::from(val.as_bytes().first().copied().unwrap_or(0))
                 } else {
-                    // Parse as i128 first to cover uint64 discriminants
-                    // above i64::MAX (rare but schema-legal).
-                    val.parse::<i128>().ok()? as i64
+                    // i128 covers uint64 discriminants above i64::MAX
+                    // (rare but schema-legal) without wrapping negative.
+                    val.parse::<i128>().ok()?
                 };
                 Some(crate::EnumVariantInfo {
                     name: to_pascal_case(&t.name),
@@ -719,10 +719,20 @@ impl Generator {
     ) -> crate::ItemContext<'s> {
         use crate::structured_ir::MemberType;
         let name = to_pascal_case(&tokens[0].name);
+        // Look up the member's own `BeginField` token to recover schema-level
+        // metadata (`semanticType`, `nullValue`, `description`, `deprecated`)
+        // that `CompositeMember` does not carry — `FieldInfo` documents these
+        // as populated from the schema.
+        let member_token = |member_name: &str| {
+            tokens
+                .iter()
+                .find(|t| t.signal == crate::ir::Signal::BeginField && t.name == member_name)
+        };
         let fields: Vec<_> = crate::structured_ir::parse_composite_members(tokens)
             .into_iter()
             .map(|m| {
-                let (rust_type, presence, null_value, semantic_type) = match &m.member_type {
+                let tok = member_token(&m.name);
+                let (rust_type, presence) = match &m.member_type {
                     MemberType::Primitive {
                         prim,
                         length,
@@ -739,24 +749,22 @@ impl Generator {
                             crate::ir::Presence::Constant => "constant",
                             crate::ir::Presence::Required => "required",
                         };
-                        (rt, presence_str, None, None)
+                        (rt, presence_str)
                     }
-                    MemberType::Composite { name, .. } => {
-                        (to_pascal_case(name), "required", None, None)
-                    }
-                    MemberType::Enum { name, .. } => (to_pascal_case(name), "required", None, None),
-                    MemberType::Set { name, .. } => (to_pascal_case(name), "required", None, None),
+                    MemberType::Composite { name, .. } => (to_pascal_case(name), "required"),
+                    MemberType::Enum { name, .. } => (to_pascal_case(name), "required"),
+                    MemberType::Set { name, .. } => (to_pascal_case(name), "required"),
                 };
                 crate::FieldInfo {
                     name: to_snake_case(&m.name),
                     rust_type,
                     offset: m.offset,
                     since_version: m.since_version,
-                    semantic_type,
+                    semantic_type: tok.and_then(|t| t.encoding.semantic_type.clone()),
                     presence,
-                    null_value,
-                    deprecated: false,
-                    description: None,
+                    null_value: tok.and_then(|t| t.encoding.null_value),
+                    deprecated: tok.is_some_and(|t| t.encoding.deprecated),
+                    description: tok.and_then(|t| t.encoding.description.clone()),
                 }
             })
             .collect();
@@ -3533,11 +3541,15 @@ fn generate_domain_recursive(
     // Build context including group and var-data field info.
     if !hooks.is_empty() {
         let mut ctx_fields = message_field_infos(fields);
-        // Append synthetic field entries for groups (Vec<EntryDomain>)
+        // Append synthetic field entries for groups (Vec<EntryDomain>).
+        // The generated entry-DTO struct is `{struct_prefix}{Group}EntryDomain`
+        // (see the recursion below), so the reported type must carry the same
+        // prefix — a bare `Vec<{Group}EntryDomain>` names a type that does not
+        // exist.
         for g in groups {
             ctx_fields.push(crate::FieldInfo {
                 name: to_snake_case(&g.name),
-                rust_type: format!("Vec<{}EntryDomain>", to_pascal_case(&g.name)),
+                rust_type: format!("Vec<{struct_prefix}{}EntryDomain>", to_pascal_case(&g.name)),
                 offset: 0,
                 since_version: g.since_version,
                 semantic_type: None,
@@ -6777,6 +6789,13 @@ fn generate_message_encoder(
         "wrap_into_claim",
         "compute_length_with_header",
         "as_ref",
+        // Complete-stage inherent methods emitted on the encoder struct — a
+        // field named after any of these would otherwise collide (matches the
+        // corresponding names in DECODER_RESERVED).
+        "as_bytes",
+        "as_bytes_with_header",
+        "encoded_length",
+        "encoded_length_with_header",
     ];
 
     for f in &msg.fields {
@@ -8688,13 +8707,20 @@ mod tests {
                     }
                     ItemContext::Set { name, choices, .. } => {
                         let ident = format_ident!("{name}");
-                        let c_names: Vec<_> = choices.iter().map(|c| format_ident!("{}", c.name)).collect();
-                        let c_labels: Vec<_> = choices.iter().map(|c| c.name.clone()).collect();
+                        // Getters are `is_{snake_name}()`; the wire mask is
+                        // `1 << bit_position` — this mirrors the real generated
+                        // set API (there is no per-choice PascalCase method/const).
+                        let c_getters: Vec<_> = choices
+                            .iter()
+                            .map(|c| format_ident!("is_{}", c.snake_name))
+                            .collect();
+                        let c_labels: Vec<_> = choices.iter().map(|c| c.label.clone()).collect();
+                        let c_bits: Vec<_> = choices.iter().map(|c| c.bit_position).collect();
                         vec![quote::quote! {
                             impl serde::Serialize for #ident {
                                 fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
                                     let mut names = Vec::new();
-                                    #(if self.#c_names() { names.push(#c_labels); })*
+                                    #(if self.#c_getters() { names.push(#c_labels); })*
                                     names.serialize(s)
                                 }
                             }
@@ -8705,7 +8731,7 @@ mod tests {
                                     let mut value = 0u8;
                                     for name in &names {
                                         match name.as_str() {
-                                            #(#c_labels => value |= Self::#c_names.0,)*
+                                            #(#c_labels => value |= 1u8 << #c_bits,)*
                                             other => return Err(serde::de::Error::unknown_variant(
                                                 other, &[#(#c_labels),*])),
                                         }

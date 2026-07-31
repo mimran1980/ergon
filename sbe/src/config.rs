@@ -136,8 +136,9 @@ pub struct EnumVariantInfo {
     pub snake_name: String,
     /// Raw name from the schema (e.g. "Ok", "hasPrice"). Use for serde labels.
     pub label: String,
-    /// Wire discriminant value.
-    pub value: i64,
+    /// Wire discriminant value. Widened to `i128` so `uint64` discriminants
+    /// above `i64::MAX` are represented faithfully rather than wrapping negative.
+    pub value: i128,
     /// Schema description, if present.
     pub description: Option<String>,
 }

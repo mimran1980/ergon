@@ -24,7 +24,7 @@ use ergo_sbe::{DomainVarData, GenerationConfig, Generator, ItemContext, Schema, 
 enum Captured {
     Enum {
         name: String,
-        variants: Vec<(String, i64)>,
+        variants: Vec<(String, i128)>,
     },
     Composite {
         name: String,
@@ -142,10 +142,13 @@ fn enum_discriminant_above_i64_max_reaches_hook() -> Result<(), Box<dyn std::err
         names.contains(&"Low") && names.contains(&"High"),
         "both variants must survive; the >i64::MAX one must not be dropped. got: {names:?}"
     );
-    // 9223372036854775808 (u64) is i64::MIN when reinterpreted as i64 — the
-    // point is that it round-tripped through i128 rather than being discarded.
+    // 9223372036854775808 = 2^63 is above i64::MAX; as i128 it is preserved
+    // faithfully (rather than wrapping to i64::MIN or being dropped entirely).
     let high = big.iter().find(|(n, _)| n == "High").expect("High present");
-    assert_eq!(high.1, i64::MIN, "High = 2^63 reinterpreted as i64");
+    assert_eq!(
+        high.1, 9_223_372_036_854_775_808_i128,
+        "High = 2^63 preserved"
+    );
     Ok(())
 }
 
@@ -212,11 +215,13 @@ fn domain_hook_covers_message_group_and_vardata() -> Result<(), Box<dyn std::err
         .find(|(n, _)| *n == "MsgDomain")
         .map(|(_, f)| *f)
         .expect("top-level MsgDomain hook must fire");
-    // Group field is present as a Vec of the entry DTO.
+    // Group field is present, and its Rust type names the ACTUAL generated
+    // entry-DTO struct (prefixed with the message name) — a bare
+    // `Vec<LevelsEntryDomain>` would name a type that does not exist.
     assert!(
         msg.iter()
-            .any(|(n, ty)| n == "levels" && ty.contains("EntryDomain")),
-        "group field must appear in the message DTO context, got: {msg:?}"
+            .any(|(n, ty)| n == "levels" && ty == "Vec<MsgLevelsEntryDomain>"),
+        "group field type must be the fully-qualified entry DTO, got: {msg:?}"
     );
     // Var-data field is present.
     assert!(
