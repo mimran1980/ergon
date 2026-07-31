@@ -210,17 +210,6 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 pub trait Sealed {}
             }
 
-            /// Zero-sized compile-time marker for header-aware vs raw wrappers.
-            pub trait HeaderState: private::Sealed {}
-            /// Header was validated or written. Infallible header-inclusive methods.
-            pub struct HeaderPresent;
-            impl private::Sealed for HeaderPresent {}
-            impl HeaderState for HeaderPresent {}
-            /// Raw wrap — header reserved but not validated. No header-inclusive methods.
-            pub struct HeaderAbsent;
-            impl private::Sealed for HeaderAbsent {}
-            impl HeaderState for HeaderAbsent {}
-
             /// Return type for group closures (`add`, `bids`, …).
             /// Closures return `Result<(), EncodeError>`; `?` just works.
             pub type GroupResult = Result<(), EncodeError>;
