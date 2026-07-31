@@ -1980,7 +1980,7 @@ pub(crate) fn generate_any_message(
             encode_arms.extend(quote::quote! {
                 Self::#name(d) => {
                     let len = d.encoded_length()? + #header_size_lit;
-                    let bytes = d.as_bytes_with_header()?.expect("header present");
+                    let bytes = d.as_bytes_with_header()?;
                     buf[..len].copy_from_slice(bytes);
                     Ok(len)
                 }
