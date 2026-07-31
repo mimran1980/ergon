@@ -210,6 +210,9 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 pub trait Sealed {}
             }
 
+            // Re-export from crate root — single definition shared across all modules
+            pub use ergo_sbe::header_state::{HeaderState, HeaderPresent, HeaderAbsent};
+
             /// Return type for group closures (`add`, `bids`, …).
             /// Closures return `Result<(), EncodeError>`; `?` just works.
             pub type GroupResult = Result<(), EncodeError>;

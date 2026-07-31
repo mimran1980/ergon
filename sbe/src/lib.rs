@@ -261,3 +261,24 @@ pub use xml::{
     parse_with_xsd_validation,
 };
 pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};
+
+/// Zero-sized compile-time markers for header-aware vs raw wrappers.
+/// Used by generated codecs — `HeaderPresent` encoders/decoders have
+/// infallible `as_bytes_with_header()` and `encoded_length_with_header()`.
+pub mod header_state {
+    /// Sealed trait for header-state markers.
+    pub trait HeaderState: crate::sealed::Sealed {}
+    /// Header was validated or written. Infallible header-inclusive methods.
+    pub struct HeaderPresent;
+    impl crate::sealed::Sealed for HeaderPresent {}
+    impl HeaderState for HeaderPresent {}
+    /// Raw wrap — header reserved but not validated. No header-inclusive methods.
+    pub struct HeaderAbsent;
+    impl crate::sealed::Sealed for HeaderAbsent {}
+    impl HeaderState for HeaderAbsent {}
+}
+
+/// Sealed trait infrastructure for generated codecs.
+mod sealed {
+    pub trait Sealed {}
+}
