@@ -1793,9 +1793,7 @@ pub(crate) fn generate_any_message(
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
             decode_arms.extend(quote::quote! {
                 #decoder::TEMPLATE_ID => {
-                    let mut decoder = #decoder::wrap(buf, pos, block_length, version);
-                    decoder.header_present = true;
-                    Ok(Self::#name(decoder))
+                    Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)))
                 }
             });
         }
@@ -1850,8 +1848,7 @@ pub(crate) fn generate_any_message(
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #decoder::TEMPLATE_ID => {
-                    let mut decoder = #decoder::wrap(buf, pos, block_length, version);
-                    decoder.header_present = true;
+                    let decoder = #decoder::wrap(buf, pos, block_length, version);
                     let total_len = decoder.encoded_length_with_header()?;
                     if total_len > frame_len {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -1934,7 +1931,7 @@ pub(crate) fn generate_any_message(
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             encoded_arms.extend(quote::quote! {
-                Self::#name(d) => d.encoded_length_with_header()?,
+                Self::#name(d) => d.encoded_length_with_header(),
             });
         }
 
@@ -1963,7 +1960,7 @@ pub(crate) fn generate_any_message(
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
                 #[inline]
-                pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     match self {
                         #as_bytes_arms
                         Self::Unknown { payload, .. } => Ok(payload),
@@ -1979,9 +1976,8 @@ pub(crate) fn generate_any_message(
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             encode_arms.extend(quote::quote! {
                 Self::#name(d) => {
-                    let len = d.encoded_length()? + #header_size_lit;
-                    let bytes = d.as_bytes_with_header()?;
-                    buf[..len].copy_from_slice(bytes);
+                    let len = d.encoded_length_with_header()?;
+                    buf[..len].copy_from_slice(d.as_body_bytes()?);
                     Ok(len)
                 }
             });
