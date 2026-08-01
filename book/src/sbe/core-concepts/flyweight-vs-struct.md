@@ -28,8 +28,8 @@ When you always populate every fixed field, a struct is clearer **and** schema
 additions break at **compile time**:
 
 ```rust,no_run
-  // Generated struct — fill every field at once:
-  // pub struct HeartbeatFixedFields { pub seq: u32 }
+  // Fill every field at once — missing field → compile error.
+  let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
   let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
       .fixed(&HeartbeatFixedFields { seq: 7 })
       .encoded_length_with_header();
