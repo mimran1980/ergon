@@ -72,7 +72,7 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
             let car = car.manufacturer(b"Honda").unwrap();
             let car = car.model(b"Civic VTi").unwrap();
             let encoded = car.activation_code(b"abcdef").unwrap();
-            encoded.as_bytes().to_vec()
+            encoded.as_bytes_with_header().to_vec()
         }
 
         let encoded = encode_car_vec();

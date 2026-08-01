@@ -192,7 +192,6 @@ fn version_gap_renders_miette_diagnostic() -> Result<(), Box<dyn std::error::Err
 }
 
 // Upstream error-handler schemas (SBE-20 /) — each must fail parse.
-// Closed 2026-07-19: every listed fixture produces a clear ParseError.
 
 #[test]
 fn error_handler_schemas_all_rejected() -> Result<(), Box<dyn std::error::Error>> {

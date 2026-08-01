@@ -34,8 +34,10 @@ fn generate_pair() -> (Schema, Schema) {
 #[test]
 fn each_schema_bakes_its_own_schema_id() -> Result<(), Box<dyn std::error::Error>> {
     let (schema_a, schema_b) = generate_pair();
+    // ANCHOR: with_shared_module
     let mut config = GenerationConfig::new("multi");
     config = config.with_shared_module("common_types");
+    // ANCHOR_END: with_shared_module
     let mut g = Generator::new(config);
 
     let modules = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;

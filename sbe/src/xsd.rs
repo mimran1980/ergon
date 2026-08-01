@@ -72,6 +72,22 @@ fn local_name(tag: &str) -> &str {
 /// that the XSD would reject (wrong root, illegal children, unknown attrs on
 /// core elements). Semantic checks (duplicate ids, type resolution, …) remain
 /// in [`crate::parse`] / resolve.
+///
+/// # Example
+///
+/// ```rust
+/// use ergo_sbe::{validate_against_sbe_xsd, SBE_XSD};
+/// # let xml = r#"<?xml version="1.0"?><messageSchema package="t" id="1" version="0"
+/// # byteOrder="littleEndian"><types><composite name="messageHeader">
+/// # <type name="blockLength" primitiveType="uint16"/>
+/// # <type name="templateId" primitiveType="uint16"/>
+/// # <type name="schemaId" primitiveType="uint16"/>
+/// # <type name="version" primitiveType="uint16"/>
+/// # </composite></types></messageSchema>"#;
+/// // Also validates against the bundled SBE XSD:
+/// validate_against_sbe_xsd(xml)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn validate_against_sbe_xsd(xml: &str) -> Result<(), XsdValidationError> {
     let doc = roxmltree::Document::parse(xml)
         .map_err(|e| XsdValidationError::MalformedXml(e.to_string()))?;

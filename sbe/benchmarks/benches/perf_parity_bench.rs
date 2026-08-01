@@ -189,7 +189,7 @@ fn bench_decode_entry_point(c: &mut Criterion) {
     group.bench_function("ergo-sbe_wrap", |b| {
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = CarDecoder::wrap(black_box(BASELINE), 8, bl_e, ver_e);
+                let car = CarDecoder::wrap(black_box(BASELINE), 0, bl_e, ver_e);
                 black_box(car);
             }
         });
@@ -290,7 +290,7 @@ fn bench_decode_composite(c: &mut Criterion) {
     let ver = sbe_tool_version();
     let (bl_e, ver_e) = ergo_sbe_header_fields();
 
-    let ergo_car = CarDecoder::wrap(&buf, 8, bl_e, ver_e);
+    let ergo_car = CarDecoder::wrap(&buf, 0, bl_e, ver_e);
     let ergo_engine = ergo_car.engine();
     let tool_engine = sbe_tool_car_body_decoder(&buf, 0, bl, ver).engine_decoder();
     assert_eq!(ergo_engine.capacity(), tool_engine.capacity());
@@ -308,7 +308,7 @@ fn bench_decode_composite(c: &mut Criterion) {
             let mut total_cylinders = 0_u64;
             let mut off = 0;
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = CarDecoder::wrap(buf, off + 8, bl_e, ver_e);
+                let car = CarDecoder::wrap(buf, off, bl_e, ver_e);
                 let engine = car.engine();
                 total_capacity += u64::from(engine.capacity());
                 total_cylinders += u64::from(engine.num_cylinders());
@@ -365,7 +365,7 @@ fn bench_throughput_batch(c: &mut Criterion) {
             let mut total_year: u64 = 0;
             let mut off = 0;
             for _ in 0..BATCH_SIZE {
-                let car = CarDecoder::wrap(black_box(buf.as_slice()), off + 8, bl_e, ver_e);
+                let car = CarDecoder::wrap(black_box(buf.as_slice()), off, bl_e, ver_e);
                 total += car.serial_number();
                 total_year += car.model_year() as u64;
                 off += msg_len;
@@ -661,7 +661,7 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
 
     group.bench_function("ergo-sbe_consuming", |b| {
         b.iter(|| {
-            let car = CarDecoder::wrap(black_box(BASELINE), 8, bl_e, ver_e);
+            let car = CarDecoder::wrap(black_box(BASELINE), 0, bl_e, ver_e);
             black_box((
                 car.serial_number(),
                 car.model_year(),
@@ -702,12 +702,6 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
             black_box((mfr, model, code));
         });
     });
-
-    // The legacy `&self` random-access full-decode bench used to live here to
-    // show consuming < legacy. It was removed: those `&self` group/var-data
-    // accessors are the rejected out-of-order surface (DECISIONS.md §10) and are
-    // no longer public. Recorded result (commit a989a97, 2026-07-10): consuming
-    // ~13.06 ns vs legacy ~26.55 ns (legacy rescanned preceding groups per call).
 
     group.bench_function("sbe-tool", |b| {
         b.iter(|| {

@@ -24,7 +24,7 @@ fn decode_batch() -> u64 {
         sum = sum.wrapping_add(
             CarDecoder::wrap(
                 black_box(BASELINE),
-                CarDecoder::HEADER_LENGTH,
+                0,
                 header.block_length() as usize,
                 header.version(),
             )

@@ -72,12 +72,12 @@ fn composite_decode_streams_equal_fields_from_equal_message_offsets()
         "composite decode must traverse a prebuilt contiguous message stream"
     );
     assert!(
-        ergo.contains("CarDecoder::wrap(buf, off + 8, bl_e, ver_e)"),
-        "Ergo composite decode must wrap each message at its absolute body offset"
+        ergo.contains("CarDecoder::wrap(buf, off, bl_e, ver_e)"),
+        "Ergo composite decode must wrap each message at its absolute message_offset"
     );
     assert!(
         tool.contains("sbe_tool_car_body_decoder(buf, off, bl, ver)"),
-        "sbe-tool composite decode must wrap the same message at its equivalent body offset"
+        "sbe-tool composite decode must wrap the same message at its equivalent message_offset"
     );
 
     for (label, arm) in [("Ergo", ergo), ("sbe-tool", tool)] {

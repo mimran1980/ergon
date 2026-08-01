@@ -28,7 +28,7 @@ fn trusted_scalar() -> u64 {
     black_box(
         CarDecoder::wrap(
             black_box(BASELINE),
-            CarDecoder::HEADER_LENGTH,
+            0,
             header.block_length() as usize,
             header.version(),
         )
@@ -41,7 +41,7 @@ fn ergo_scalar_batch() {
     let header = MessageHeader(read_bytes::<8>(BASELINE, 0));
     let car = CarDecoder::wrap(
         black_box(BASELINE),
-        CarDecoder::HEADER_LENGTH,
+        0,
         header.block_length() as usize,
         header.version(),
     );
@@ -67,7 +67,7 @@ fn ergo_composite_batch() {
     let header = MessageHeader(read_bytes::<8>(BASELINE, 0));
     let car = CarDecoder::wrap(
         black_box(BASELINE),
-        CarDecoder::HEADER_LENGTH,
+        0,
         header.block_length() as usize,
         header.version(),
     );

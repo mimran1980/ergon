@@ -150,7 +150,7 @@ let mut buf = &mut buf_storage[..len];
         })?
         .description(desc)?;
         assert_eq!(len, complete.encoded_length_with_header());
-        assert_eq!(len, complete.as_bytes().len());
+        assert_eq!(len, complete.as_bytes_with_header().len());
         println!("PASS: direct_flatgroup_exact_length = {len}");
         "#,
     );
@@ -310,7 +310,7 @@ let mut buf = &mut buf_storage[..len];
         })?
         .asks(0, |_| Ok(()))?
         .description(b"")?;
-        assert_eq!(len, complete.as_bytes().len());
+        assert_eq!(len, complete.as_bytes_with_header().len());
 
         let mut tiny = [0u8; 4]; // header=8, block=8 — 4 is too short
         let result = FlatGroupEncoder::try_wrap_and_apply_header(&mut tiny, 0);

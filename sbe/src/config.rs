@@ -136,8 +136,9 @@ pub struct EnumVariantInfo {
     pub snake_name: String,
     /// Raw name from the schema (e.g. "Ok", "hasPrice"). Use for serde labels.
     pub label: String,
-    /// Wire discriminant value.
-    pub value: i64,
+    /// Wire discriminant value. Widened to `i128` so `uint64` discriminants
+    /// above `i64::MAX` are represented faithfully rather than wrapping negative.
+    pub value: i128,
     /// Schema description, if present.
     pub description: Option<String>,
 }
@@ -164,8 +165,10 @@ pub struct FieldInfo {
     pub name: String,
     /// Rust type (e.g. "i64", "u8", "EventCode").
     pub rust_type: String,
-    /// Byte offset from the message body start.
-    pub offset: usize,
+    /// Byte offset from the message body start, when this is a fixed
+    /// scalar/array/composite/enum/set field. `None` for groups and
+    /// var-data fields, which have no single wire offset.
+    pub offset: Option<usize>,
     /// Schema version this field was introduced in (0 = always present).
     pub since_version: u16,
     /// SBE `semanticType` attribute, if set.
@@ -248,7 +251,7 @@ impl std::fmt::Debug for ItemContext<'_> {
 }
 
 /// Token streams returned by hooks — appended after the generated item.
-pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream>;
+pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream> + Send + Sync;
 
 /// Wrapper so hooks can live in [`GenerationConfig`]. Not [`Clone`] or
 /// [`PartialEq`] — hook closures can't be cloned or compared.
@@ -381,7 +384,9 @@ impl GenerationConfig {
     }
 
     pub(crate) fn has_conversions(&self) -> bool {
-        !self.conversions.is_empty() || !self.domain_types.is_empty()
+        // `enable_bool_domain_type` is syntax sugar for `with_domain_type` on
+        // each boolean enum — it must also emit TryFromSbe/TryToSbe traits.
+        !self.conversions.is_empty() || !self.domain_types.is_empty() || self.auto_bool_domain
     }
 
     /// The external sbe_rt path, if set.
@@ -414,6 +419,15 @@ impl GenerationConfig {
     /// In build.rs: `.with_conversion(ConversionSelector::named_type("Decimal"))`.
     /// Application code: `enc.price_from(&my_price)?;` / `dec.price_as::<MyPrice>()?`.
     ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, ConversionSelector};
+    ///
+    /// let config = GenerationConfig::new("msgs")
+    ///     .with_conversion(ConversionSelector::named_type("Decimal"));
+    /// ```
+    ///
     /// → [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
     ///
     /// Prefer [`Self::with_domain_type`] when one concrete Rust type is enough.
@@ -437,6 +451,18 @@ impl GenerationConfig {
     ///
     /// In build.rs: `.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")`
     /// Application: `enc.price(rust_decimal::Decimal::new(12345, 2))` / `let p = dec.price()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, ConversionSelector};
+    ///
+    /// let config = GenerationConfig::new("msgs")
+    ///     .with_domain_type(
+    ///         ConversionSelector::named_type("Decimal"),
+    ///         "rust_decimal::Decimal",
+    ///     );
+    /// ```
     ///
     /// Do **not** also call [`Self::with_conversion`] for the same selector.
     #[must_use]
@@ -536,7 +562,13 @@ impl GenerationConfig {
     /// Auto-register `bool` converters for every boolean enum in the
     /// schema. Syntax sugar for calling
     /// `with_domain_type(named_type("BooleanType"), "bool")` for each —
-    /// detects by name, `semanticType="Boolean"`, or True/False value pairs.
+    /// detects by name, `semanticType="Boolean"`, or True/False value pairs
+    /// with discriminants `0` and `1`.
+    ///
+    /// Only the canonical `{0, 1}` discriminant representation is detected
+    /// automatically. Schemas with non-standard boolean encodings (e.g.
+    /// `Yes=5, No=3`) should use explicit [`ConversionSelector::named_type`]
+    /// with [`GenerationConfig::with_conversion`] instead.
     #[must_use]
     pub fn enable_bool_domain_type(mut self) -> Self {
         self.auto_bool_domain = true;
@@ -578,7 +610,7 @@ impl GenerationConfig {
     #[must_use]
     pub fn with_hook<F>(mut self, hook: F) -> Self
     where
-        F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + 'static,
+        F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + Send + Sync + 'static,
     {
         self.hooks.push(Box::new(hook));
         self

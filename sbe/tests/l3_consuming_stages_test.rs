@@ -60,7 +60,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
             }).unwrap();
             Ok(())
         }).unwrap();
-        let encoded = c.as_bytes();
+        let encoded = c.as_bytes_with_header();
         // DECISIONS.md §2: as_bytes_with_header() is the explicit header-inclusive view.
         assert_eq!(c.as_bytes_with_header(), encoded);
         let total_len = encoded.len();
@@ -104,7 +104,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
         let done = asks.finish().unwrap();
 
         assert_eq!(done.encoded_length_with_header(), total_len);
-        assert_eq!(done.as_bytes(), encoded);
+        assert_eq!(done.as_bytes_with_header(), encoded);
     "#,
     );
 
@@ -125,7 +125,7 @@ fn cf_decode_asks_before_bids() -> Result<(), Box<dyn std::error::Error>> {
         e.timestamp(1);
         e.sequence(1);
         let c = e.bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
-        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes(), 0).unwrap();
+        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes_with_header(), 0).unwrap();
         let _ = dec.into_asks(); // ILLEGAL: no `into_asks` on the initial decoder
     "#,
         &["no method named `into_asks`"],
@@ -148,7 +148,7 @@ fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> 
         e.timestamp(1);
         e.sequence(1);
         let c = e.bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
-        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes(), 0).unwrap();
+        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes_with_header(), 0).unwrap();
         let mut bids = dec.into_bids().unwrap();
         let _after = bids.finish().unwrap(); // bids moved here
         let _ = bids.next();                  // ILLEGAL: use of moved value `bids`
@@ -193,7 +193,7 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
             }).unwrap();
             Ok(())
         }).unwrap().asks(0, |_| Ok(())).unwrap();
-        let encoded = c.as_bytes();
+        let encoded = c.as_bytes_with_header();
         assert_eq!(c.as_bytes_with_header(), encoded);
 
         let dec = L3BookDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
@@ -226,7 +226,7 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         assert!(asks.is_empty());
         let done = asks.finish().unwrap();
         assert_eq!(done.encoded_length_with_header(), encoded.len());
-        assert_eq!(done.as_bytes(), encoded);
+        assert_eq!(done.as_bytes_with_header(), encoded);
     "#,
     );
 
@@ -250,7 +250,7 @@ fn cf_entry_consumed_by_into_orders() -> Result<(), Box<dyn std::error::Error>> 
             g.add(|lvl| { lvl.price(1); lvl.qty(1); lvl.orders(0, |_| Ok(())).unwrap(); Ok(()) }).unwrap();
             Ok(())
         }).unwrap().asks(0, |_| Ok(())).unwrap();
-        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes(), 0).unwrap();
+        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes_with_header(), 0).unwrap();
         let mut bids = dec.into_bids().unwrap();
         let lvl = bids.next().unwrap().unwrap();
         let _orders = lvl.into_orders().unwrap(); // lvl moved here

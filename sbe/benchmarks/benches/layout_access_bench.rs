@@ -140,7 +140,14 @@ fn bench_layout_access(c: &mut Criterion) {
     let preheld_value = BigBlock(block_bytes);
     let preheld_packed: PackedBigBlock =
         unsafe { core::ptr::read_unaligned(block_bytes.as_ptr().cast::<PackedBigBlock>()) };
-    let preheld_dec = WideDecoder::wrap(fixture.as_slice(), 8, WideDecoder::BLOCK_LENGTH, 0);
+    // Absolute coordinates: wrap takes message_offset (header start), not body offset.
+    // Message begins at 0; body is at HEADER_LENGTH inside wrap.
+    let preheld_dec = WideDecoder::wrap(
+        fixture.as_slice(),
+        0,
+        WideDecoder::BLOCK_LENGTH,
+        WideDecoder::SCHEMA_VERSION,
+    );
 
     let packed_f15 = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(preheld_packed.f15)) };
     assert_eq!(packed_f15, TARGET_FIELD_VALUE);
@@ -185,9 +192,9 @@ fn bench_layout_access(c: &mut Criterion) {
         b.iter(|| {
             let dec = WideDecoder::wrap(
                 black_box(fixture.as_slice()),
-                8,
-                WideDecoder::BLOCK_LENGTH,
                 0,
+                WideDecoder::BLOCK_LENGTH,
+                WideDecoder::SCHEMA_VERSION,
             );
             black_box(dec.block().f15())
         });

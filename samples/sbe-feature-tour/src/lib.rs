@@ -39,9 +39,11 @@
     clippy::all,
     warnings
 )]
+// ANCHOR: include_build_dep_only
 #[path = "generated/feature_tour.rs"]
 pub mod feature_tour;
 pub use feature_tour::*;
+// ANCHOR_END: include_build_dep_only
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal as Rd;
@@ -51,13 +53,13 @@ use rust_decimal::Decimal as Rd;
 /// Heartbeat is fixed-block only: size with `HeartbeatEncoder::compute_length_with_header()`,
 /// no staged length builder.
 ///
-/// Note: wire setters take `u64` nanos; decoder domain conversion exposes
-/// `timestamp() -> DateTime<Utc>` when `UTCTimestamp` is configured in build.rs.
+// ANCHOR: demo_fixed_heartbeat
 pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Const length → stack array (no heap).
     let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let nanos: i64 = 1_720_000_000_000_000_000;
-    let written = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    // Buffer is exact size from const compute_length_with_header — no bounds check needed.
+    let written = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&HeartbeatFixedFields {
             sequence: 7,
             timestamp: nanos as u64,
@@ -70,16 +72,18 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     assert_eq!(decoded_ts.timestamp_nanos_opt(), Some(nanos));
     Ok(buf[..written].to_vec())
 }
+// ANCHOR_END: demo_fixed_heartbeat
 
 // ─── 2. EncodedLength + encode ─────────────────────────────────────────────
 
 /// Compute exact wire length for a Car with known group shapes, allocate once,
 /// encode with `try_wrap_and_apply_header` + fixed phase + consuming tails.
+// ANCHOR: demo_car_size_and_encode
 pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Fuel: 2 entries with usage ASCII lengths 5 and 7.
     // Performance: 1 entry with 2 nested acceleration rows (fixed-only entries).
     // Message var-data: manufacturer / model / activationCode lengths.
-    let complete_len = CarEncodedLength::new()
+    let complete_len = CarEncoder::compute_length()
         .fuel_figures_ragged(2, |ff| {
             ff.add()?.usage_description(5)?; // "Urban"
             ff.add()?.usage_description(7)?; // "Highway"
@@ -97,7 +101,7 @@ pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>>
         .activation_code(6)? // "abcdef"
         .encoded_length_with_header();
 
-    // Exact size from EncodedLength → stack pad (this demo fits well under 512).
+    // Exact size from compute_length → stack pad (this demo fits well under 512).
     const CAR_PAD: usize = 512;
     assert!(
         complete_len <= CAR_PAD,
@@ -111,17 +115,18 @@ pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>>
     );
     Ok(storage[..written].to_vec())
 }
-
 /// Encode the canonical sample car into `buf` (must be pre-sized).
+// ANCHOR: encode_sample_car
 pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
     let mut extras = OptionalExtras::default();
     extras.cruise_control(true).sports_pack(true);
 
-    let len = CarEncoder::try_wrap_and_apply_header(buf, 0)?
+    // Buffer is pre-sized from compute_length — no bounds check needed.
+    let len = CarEncoder::wrap_and_apply_header(buf, 0)
         .fixed(&CarFixedFields {
             serial_number: 1234,
             model_year: 2013,
-            available: BooleanType::T,
+            available: true.into(),
             code: Model::A,
             some_numbers: [10, 20, 30, 40],
             vehicle_code: [b'A', b'B', b'C', b'D', b'E', b'F'],
@@ -131,7 +136,7 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
                 4,
                 [b'1', b'2', b'3'],
                 0i8,
-                BooleanType::F,
+                false.into(),
                 Booster::new(BoostType::TURBO, 210),
             ),
         })
@@ -148,18 +153,17 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         })?
         .performance_figures(1, |g| {
             g.add(|e| {
-                e.octane_rating(95)
-                    .acceleration(2, |a| {
-                        a.add(|x| {
-                            x.mph(30).seconds(4.0);
-                            Ok(())
-                        })?;
-                        a.add(|x| {
-                            x.mph(60).seconds(7.5);
-                            Ok(())
-                        })?;
+                e.octane_rating(95).acceleration(2, |a| {
+                    a.add(|x| {
+                        x.mph(30).seconds(4.0);
                         Ok(())
                     })?;
+                    a.add(|x| {
+                        x.mph(60).seconds(7.5);
+                        Ok(())
+                    })?;
+                    Ok(())
+                })?;
                 Ok(())
             })?;
             Ok(())
@@ -171,11 +175,15 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
 
     Ok(len)
 }
+// ANCHOR_END: encode_sample_car
+// ANCHOR_END: demo_car_size_and_encode
 
 // ─── 3. Decoder consuming stages ───────────────────────────────────────────
 
 /// Walk Car in wire order: fixed random-access fields, then groups, then var-data.
+// ANCHOR: demo_car_decode_stages
 pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    // ANCHOR: flyweight_access
     let car = CarDecoder::try_from(wire)?;
     assert_eq!(car.serial_number(), 1234);
     assert_eq!(car.model_year(), 2013);
@@ -185,6 +193,7 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(car.code(), Model::A);
     assert_eq!(car.discounted_model(), Model::C); // constant field
     assert_eq!(car.engine().capacity(), 2000);
+    // ANCHOR_END: flyweight_access
 
     // Consuming stages enforce fuelFigures → performanceFigures → strings.
     let mut fuel = car.into_fuel_figures()?;
@@ -221,10 +230,12 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(code, "abcdef");
     Ok(())
 }
+// ANCHOR_END: demo_car_decode_stages
 
 // ─── 4. Domain DTO ─────────────────────────────────────────────────────────
 
 /// Materialise owned `CarDomain`, re-encode, compare bytes.
+// ANCHOR: demo_car_domain_dto
 pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let dec = CarDecoder::try_from(wire)?;
     // Prefer try_from_decoder when you need fallible conversion; From panics on
@@ -243,20 +254,21 @@ pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>
     assert_eq!(&storage[..n], wire, "DTO re-encode must be byte-identical");
     Ok(())
 }
+// ANCHOR_END: demo_car_domain_dto
 
 // ─── 5. AnyMessage ─────────────────────────────────────────────────────────
 
 /// Encode Heartbeat + Note into one buffer and dispatch by template id.
+// ANCHOR: demo_any_message
 pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let mut hb = [0u8; HeartbeatEncoder::compute_length_with_header()];
+    let hb_len = HeartbeatEncoder::compute_length_with_header();
     let nanos: u64 = 1_700_000_000_000_000_000;
-    let _ = HeartbeatEncoder::try_wrap_and_apply_header(&mut hb, 0)?.fixed(
-        &HeartbeatFixedFields {
+    HeartbeatEncoder::wrap_and_apply_header(&mut hb, 0)
+        .fixed(&HeartbeatFixedFields {
             sequence: 1,
             timestamp: nanos,
-        },
-    );
-    let hb_len = HeartbeatEncoder::compute_length_with_header();
+        });
 
     let note_body = b"hello AnyMessage";
     let note_len = NoteEncoder::compute_length_with_header(note_body.len());
@@ -289,7 +301,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
                 assert_eq!(d.note_id(), 99);
                 let (body, complete) = d.into_body()?;
                 assert_eq!(body, note_body);
-                offset += complete.encoded_length_with_header();
+                offset += complete.encoded_length() + NoteDecoder::HEADER_LENGTH;
                 saw_note = true;
             }
             AnyMessage::Car(_) => return Err("unexpected Car in this demo stream".into()),
@@ -302,14 +314,20 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     assert!(saw_heartbeat && saw_note);
     Ok(())
 }
+// ANCHOR_END: demo_any_message
 
 // ─── 6. try_* vs trusted wrap ──────────────────────────────────────────────
 
 /// Trust-boundary constructors reject short / wrong-schema buffers.
+// ANCHOR: demo_try_vs_trusted
 pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    // Safe entry: validates header + block.
-    let _ = CarDecoder::try_from(valid_car)?;
-    let _ = CarDecoder::try_wrap_and_apply_header(valid_car, 0)?;
+    // `try_wrap_and_apply_header` validates template_id, schema_id, version,
+    // block_length, and buffer bounds at the given offset. The `_dec` binding
+    // holds the decoder alive until dropped (showing both paths).
+    let _dec = CarDecoder::try_wrap_and_apply_header(valid_car, 0)?;
+
+    // `verify` is a cheaper header-only check — no decoder constructed.
+    CarDecoder::verify(valid_car)?;
 
     // Truncated buffer must fail try_from / verify.
     assert!(
@@ -328,31 +346,70 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
     let mut hdr_bytes = [0u8; 8];
     hdr_bytes.copy_from_slice(&valid_car[..8]);
     let hdr = MessageHeader(hdr_bytes);
-    let trusted = CarDecoder::wrap(
-        valid_car,
-        8,
-        hdr.block_length() as usize,
-        hdr.version(),
-    );
+    let trusted = CarDecoder::wrap(valid_car, 0, hdr.block_length() as usize, hdr.version());
     assert_eq!(trusted.serial_number(), 1234);
     Ok(())
 }
+// ANCHOR_END: demo_try_vs_trusted
 
 // ─── 7. Display / Debug ────────────────────────────────────────────────────
 
 /// Diagnostic formatting — not a stable serialization format.
+// ANCHOR: demo_display_debug
 pub fn demo_display_debug(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(valid_car)?;
     let display = format!("{car}");
-    let debug = format!("{car:?}");
-    assert!(
-        display.contains("serial") || display.contains("1234") || display.contains("Car"),
-        "Display should mention car fields: {display}"
-    );
-    // Debug is content-oriented (not raw pointer dump).
-    assert!(!debug.is_empty());
+    let debug = format!("{car:#?}");
+
+    // Display is a compact one-liner; field names use the schema's camelCase.
+    assert!(display.contains("serialNumber: 1234"));
+    assert!(display.contains("modelYear: 2013"));
+    assert!(display.contains("available: true"));
+    assert!(display.contains(r#"code: A"#));
+    assert!(display.contains("manufacturer: \"Honda\""));
+    assert!(display.contains("model: \"Civic VTi\""));
+    assert!(display.contains("fuelFigures: ["));
+    assert!(display.contains("performanceFigures: ["));
+    assert!(display.contains(r#"activationCode: "abcdef""#));
+
+    // Pretty Debug ({:#?}) shows each field on its own line with indentation.
+    for expected in &[
+        "serialNumber: 1234",
+        "modelYear: 2013",
+        "available: true",
+        r#"manufacturer: "Honda""#,
+        r#"model: "Civic VTi""#,
+        r#"activationCode: "abcdef""#,
+        r#"usageDescription: Urban"#,
+        "speed: 30",
+        "mpg: 35.9",
+        "octaneRating: 95",
+    ] {
+        assert!(
+            debug.contains(expected),
+            "Debug missing: {expected}\n--- full debug ---\n{debug}"
+        );
+    }
+
+    // ── CarDomain DTO ───────────────────────────────────────────────────
+    // ANCHOR: car_domain_dto_struct
+    // Owned, heap-allocated, serialisable snapshot of the full message tree.
+    // Generated by `enable_domain_objects(DomainVarData::LossyStrings)`.
+    let dto = CarDomain::try_from_decoder(car)?;
+    let dto_dbg = format!("{dto:#?}");
+    // DTO field names use Rust snake_case (different from wire decoder camelCase).
+    assert!(dto_dbg.contains("serial_number: 1234"));
+    assert!(dto_dbg.contains("model_year: 2013"));
+    assert!(dto_dbg.contains("available: true"));
+    assert!(dto_dbg.contains("fuel_figures: ["));
+    assert!(dto_dbg.contains(r#"usage_description: "Urban""#));
+    assert!(dto_dbg.contains(r#"manufacturer: "Honda""#));
+    assert!(dto_dbg.contains(r#"activation_code: "abcdef""#));
+    // ANCHOR_END: car_domain_dto_struct
+
     Ok(())
 }
+// ANCHOR_END: demo_display_debug
 
 // ─── 8. with_conversion only: generic price_as / price_from ────────────────
 
@@ -420,6 +477,7 @@ impl TryToSbe<Decimal> for FixedPrice {
 /// | `price_from` / `price_as::<T>` | yes |
 /// | `price() -> rust_decimal::Decimal` | **no** (that needs `with_domain_type`) |
 /// | `price_value()` wire composite | yes |
+// ANCHOR: demo_conversion_only
 pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
 
@@ -457,6 +515,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     assert_eq!(&re[..n], &buf[..len]);
     Ok(buf[..len].to_vec())
 }
+// ANCHOR_END: demo_conversion_only
 
 // ─── Orchestrator ──────────────────────────────────────────────────────────
 
@@ -513,7 +572,8 @@ mod tests {
     }
 
     #[test]
-    fn conversion_only_roundtrip_rust_decimal_and_fixed() -> Result<(), Box<dyn std::error::Error>> {
+    fn conversion_only_roundtrip_rust_decimal_and_fixed() -> Result<(), Box<dyn std::error::Error>>
+    {
         let wire = demo_conversion_only()?;
         let dec = QuoteDecoder::try_from(wire.as_slice())?;
         let rd: Rd = dec.price_as()?;

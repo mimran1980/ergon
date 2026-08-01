@@ -45,7 +45,7 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let complete = encoder
         .symbol(symbol)
         .expect("symbol encoding should succeed");
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     // Decode
     let decoder =
@@ -95,7 +95,7 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
         .category(exchange_example::bitget_spot::InstCategory::Spot)
         .padding(exchange_example::bitget_spot::Padding5([0u8; 5]));
     let complete = encoder.symbol(symbol).unwrap();
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     assert!(BestBidAskDecoder::verify(encoded).is_ok());
 
@@ -173,7 +173,7 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let complete = after_bids
         .symbol(symbol)
         .expect("symbol encoding should succeed");
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     // Decode
     let decoder =
@@ -256,7 +256,7 @@ fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
     let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(expected_ts);
-    let encoded = encoder.as_ref();
+    let encoded = encoder.as_bytes_with_header();
 
     // Decode
     let decoder = ServerTimeResponseDecoder::try_from(encoded)
@@ -274,7 +274,7 @@ fn binance_server_time_verify_passes() -> Result<(), Box<dyn std::error::Error>>
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
     let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(42);
-    let encoded = encoder.as_ref();
+    let encoded = encoder.as_bytes_with_header();
 
     assert!(ServerTimeResponseDecoder::verify(encoded).is_ok());
 
@@ -346,7 +346,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let complete = after_trades
         .symbol(symbol)
         .expect("symbol encoding should succeed");
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     // Decode
     let decoder = TradeDecoder::try_from(encoded).expect("TradeDecoder::try_from should succeed");
@@ -430,7 +430,7 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
     let complete = after_trades
         .symbol(symbol)
         .expect("symbol encoding should succeed");
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     let decoder = TradeDecoder::try_from(encoded).expect("TradeDecoder::try_from should succeed");
 
@@ -479,7 +479,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     let complete = after_trades
         .symbol(symbol)
         .expect("symbol encoding should succeed");
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     let decoder = TradeDecoder::try_from(encoded).expect("TradeDecoder::try_from should succeed");
 
@@ -531,7 +531,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     let complete = encoder
         .logged_on_api_key(api_key)
         .expect("logged_on_api_key encoding should succeed");
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     // Decode
     let decoder = WebSocketSessionLogonResponseDecoder::try_from(encoded)
@@ -627,7 +627,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     let complete = after_id
         .result(result)
         .expect("result encoding should succeed");
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     // Decode
     let decoder = WebSocketResponseDecoder::try_from(encoded)
@@ -750,7 +750,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
     let complete = encoder
         .symbol(symbol)
         .expect("symbol encoding should succeed");
-    let encoded = complete.as_bytes();
+    let encoded = complete.as_bytes_with_header();
 
     // Try to decode as binance WebSocketResponse — should fail with WrongSchema
     let result = WebSocketResponseDecoder::try_from(encoded);
@@ -905,7 +905,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
     let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
     encoder.server_time(42);
-    let encoded = encoder.as_ref();
+    let encoded = encoder.as_bytes_with_header();
 
     // Try to decode as bitget BestBidAsk — should fail with WrongSchema
     let result = BestBidAskDecoder::try_from(encoded);
@@ -985,7 +985,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         })
         .unwrap();
-    assert_eq!(complete.as_bytes().len(), outer_len);
+    assert_eq!(complete.as_bytes_with_header().len(), outer_len);
 
     // Decode outer -> inner
     let outer_dec = AppMessageDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();

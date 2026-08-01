@@ -33,7 +33,7 @@ fn conformance_fixed_only_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         let mut buf = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
         let mut enc = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
         enc.id(42).price(10000).qty(10).side(Side::Buy);
-        let encoded = enc.as_ref();
+        let encoded = enc.as_bytes_with_header();
 
         let dec = FixedOnlyDecoder::try_from(encoded)?;
         assert_eq!(dec.id(), 42, "id");
@@ -76,7 +76,7 @@ let mut buf = &mut buf_storage[..body_len];
         })?
         .description(b"test exchange data")?;
         assert_eq!(complete.encoded_length_with_header(), body_len, "length match");
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let dec = FlatGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.symbol(), 42, "symbol");
@@ -127,7 +127,7 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
         .description(b"ku")?;
         assert!(complete.encoded_length_with_header() > 0, "length > 0");
 
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let dec = FlatGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.symbol(), 99, "symbol");
 
@@ -168,7 +168,7 @@ fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Er
         .description(b"uu")?;
         assert!(complete.encoded_length_with_header() > 0, "length > 0");
 
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let dec = FlatGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.symbol(), 7);
 
@@ -324,7 +324,7 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
         .comment(b"test nested group")?;
         assert!(complete.encoded_length_with_header() > 0, "length > 0");
 
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let dec = NestedGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.exchange_id(), 8888, "exchange_id");
@@ -405,7 +405,7 @@ let mut buf = &mut buf_storage[..body_len];
         .payload(b"binary payload data")?;
         assert_eq!(complete.encoded_length_with_header(), body_len, "length match");
 
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let dec = AllTypesDecoder::try_from(encoded)?;
         assert_eq!(dec.char_field(), b'A', "char_field");
@@ -477,7 +477,7 @@ fn conformance_pure_fixed_nested_roundtrip() -> Result<(), Box<dyn std::error::E
         })?;
         assert!(complete.encoded_length_with_header() > 0, "length > 0");
 
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let dec = PureFixedNestedDecoder::try_from(encoded)?;
         assert_eq!(dec.id(), 42, "id");
@@ -531,7 +531,7 @@ let mut buf = &mut buf_storage[..body_len];
             .description(b"")?;
         assert_eq!(complete.encoded_length_with_header(), body_len, "length match");
 
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
         let dec = FlatGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.symbol(), 0);
 
@@ -563,7 +563,7 @@ let mut buf1 = &mut buf1_storage[..body_len_0];
             .asks(0, |_| Ok(()))?
             .description(b"")?;
         assert_eq!(complete1.encoded_length_with_header(), body_len_0, "empty desc length match");
-        let encoded1 = complete1.as_bytes();
+        let encoded1 = complete1.as_bytes_with_header();
         let dec1 = FlatGroupDecoder::try_from(encoded1)?;
         let bids1 = dec1.into_bids()?;
         let after_bids1 = bids1.finish()?;
@@ -582,7 +582,7 @@ let mut buf2 = &mut buf2_storage[..body_len_2];
             .asks(0, |_| Ok(()))?
             .description("Hello, \u{4e16}\u{754c}!".as_bytes())?;
         assert_eq!(complete2.encoded_length_with_header(), body_len_2, "utf-8 desc length match");
-        let encoded2 = complete2.as_bytes();
+        let encoded2 = complete2.as_bytes_with_header();
         let dec2 = FlatGroupDecoder::try_from(encoded2)?;
         let bids2 = dec2.into_bids()?;
         let after_bids2 = bids2.finish()?;
@@ -616,12 +616,12 @@ fn conformance_fixed_raw_fixed_parity() -> Result<(), Box<dyn std::error::Error>
         let mut buf1 = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
         let mut enc1 = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf1, 0)?;
         enc1.id(42).price(10000).qty(10).side(Side::Buy);
-        let bytes1 = enc1.as_ref();
+        let bytes1 = enc1.as_bytes_with_header();
 
         let mut buf2 = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
         let mut enc2 = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf2, 0)?;
         enc2.id(42).price(10000).qty(10).side(Side::Buy);
-        let bytes2 = enc2.as_ref();
+        let bytes2 = enc2.as_bytes_with_header();
 
         assert_eq!(bytes1, bytes2, "raw_fixed and chaining produce same bytes");
 
@@ -763,7 +763,7 @@ fn conformance_error_wrong_schema() -> Result<(), Box<dyn std::error::Error>> {
         let complete = enc.bids(0, |_| Ok(())).unwrap()
             .asks(0, |_| Ok(())).unwrap()
             .description(b"").unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let result = FixedOnlyDecoder::try_from(encoded);
         match result {

@@ -4,7 +4,9 @@
 //! SessionMessageHeader into the first 32 bytes; the fill closure only encodes
 //! the application payload.
 
-use ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder;
+use ergo_aeron_cluster::cluster_codec_types::{
+    SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+};
 use ergo_aeron_cluster::{AeronCluster, ClusterError};
 
 use crate::market::Level;
@@ -205,7 +207,7 @@ pub fn session_header_template_id(frame: &[u8]) -> Option<u16> {
 /// Application payload after a full SessionMessageHeader (generated framing helper).
 #[must_use]
 pub fn app_payload(frame: &[u8]) -> Option<&[u8]> {
-    SessionMessageHeaderEncoder::after_this_message(frame)
+    SessionMessageHeaderDecoder::after_this_message(frame)
 }
 
 #[cfg(test)]

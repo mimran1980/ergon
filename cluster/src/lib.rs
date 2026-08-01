@@ -69,7 +69,7 @@
 //! }
 //! ```
 //!
-//! See the crate [README](https://github.com/mimran1980/ergon/blob/first_cut/cluster/README.md)
+//! See the crate [README](https://github.com/mimran1980/ergon/blob/main/cluster/README.md)
 //! for recipes, maintained benches, and the HA sample.
 
 // Verify rusteron-client types are accessible across the crate boundary
@@ -121,7 +121,7 @@ pub mod poller;
 /// [`SessionState`] machine for connected / new-leader / closed.
 pub mod state;
 /// Aeron channel URI helpers (`AeronUriStringBuilder`).
-pub mod uri;
+mod uri;
 
 pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim};
 pub use config::SessionBuilder;
@@ -133,7 +133,7 @@ pub use error::{ClusterError, PublicationFailure};
 pub use idle::{default_idle, poll_connect_until_done};
 pub use poller::{EgressEvent, parse_event};
 pub use state::SessionState;
-pub use uri::{AERON_IPC_STREAM, channel_cstr, udp_endpoint_cstr};
+pub use uri::AERON_IPC_STREAM;
 
 /// Java Aeron Cluster spawn harness (integration tests / examples only).
 ///

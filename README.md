@@ -26,9 +26,9 @@ deployments.
 | [`sbe/`](sbe/) | `ergo-sbe` | SBE schema parser and Rust codec generator |
 | [`sbe/benchmarks/`](sbe/benchmarks/) | `ergo-sbe-benchmarks` | Unpublished parity benchmarks |
 | [`cluster/`](cluster/) | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
-| [`samples/`](samples/) | five standalone crates | Unpublished integration playgrounds |
+| [`samples/`](samples/) | seven standalone crates | Unpublished integration playgrounds |
 
-The workspace requires Rust 1.95 or newer. The sample crates are intentionally
+The workspace requires Rust 1.88 or newer. The sample crates are intentionally
 excluded from the Cargo workspace and remain `publish = false`.
 
 ## Set up

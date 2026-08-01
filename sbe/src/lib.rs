@@ -215,8 +215,8 @@
 //! - Version-aware accessors (`sinceVersion` / acting version)
 //! - Unsafe only on explicit `_unchecked` / documented paths
 //!
-//! Full narrative docs: [crate README](https://github.com/mimran1980/ergon/blob/first_cut/sbe/README.md).
-//! Benchmarks: [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/first_cut/sbe/BENCHMARKS.md).
+//! Book: [ergon book](https://mimran1980.github.io/ergon/).
+//! Benchmarks: [benchmarks chapter](https://mimran1980.github.io/ergon/sbe/benchmarks.html).
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
 
@@ -261,3 +261,8 @@ pub use xml::{
     parse_with_xsd_validation,
 };
 pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};
+
+// Header-state markers (`HeaderPresent` / `HeaderAbsent`) live in each
+// generated module's `sbe_rt` (see `generate_sbe_rt_src`). They are not
+// re-exported here: generated codecs seal against their own `sbe_rt::HeaderState`,
+// so a shared `ergo_sbe::header_state` type would not unify with `H`.

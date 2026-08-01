@@ -1,0 +1,47 @@
+# Chained Message Decoding
+
+A `SessionMessageHeader` is followed by application payload bytes (another SBE
+message). Use the decoder's `remaining()` to get the payload, then
+`AnyMessage::decode` to parse the next message. This uses the non-stable
+`cluster_codec_types` seam described above:
+
+```text
+use ergo_aeron_cluster::cluster_codec_types::*;
+
+fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
+    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes).
+    // Both lengths are const, so size the frame on the stack.
+    let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
+        + SessionKeepAliveEncoder::ENCODED_LENGTH];
+
+    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
+    enc.leadership_term_id(7)
+        .cluster_session_id(99)
+        .timestamp(42);
+
+    // into_remaining_mut() returns the unwritten region after this message
+    SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
+        .leadership_term_id(7)
+        .cluster_session_id(99);
+
+    // Decode the first message
+    let smh = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+
+    // remaining() returns the bytes after the header (the SessionKeepAlive)
+    let tail = smh.remaining();
+    assert_eq!(tail.len(), SessionKeepAliveEncoder::ENCODED_LENGTH);
+
+    // Decode the next message via AnyMessage
+    match AnyMessage::decode(tail, 0)? {
+        AnyMessage::SessionKeepAlive(dec) => {
+            assert_eq!(dec.cluster_session_id(), 99);
+            // Fully decoded — nothing left
+            assert!(dec.remaining().is_empty());
+        }
+        _ => panic!("unexpected message type"),
+    }
+    Ok(())
+}
+```
+
+`buffer()` returns the entire original buffer (header + payload).
