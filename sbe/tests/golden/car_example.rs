@@ -63,8 +63,8 @@ pub mod sbe_rt {
                 }
                 Self::InvalidVarDataLength { field, length, max_length } => {
                     write!(
-                        f, "var data field '{}: length {} exceeds max {}", field, length,
-                        max_length
+                        f, "var data field '{}': length {} exceeds max {}", field,
+                        length, max_length
                     )
                 }
                 Self::FieldNotInVersion { field, wire_version, since_version } => {
