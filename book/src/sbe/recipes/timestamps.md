@@ -43,21 +43,10 @@ Now each wire type generates a distinct Rust newtype (`TimestampNanos`,
 `TimestampMicros`, `TimestampMillis` — all `#[repr(transparent)]` wrappers
 around `u64`). Implement the converters per-type, no blanket-clash:
 
-```text
-// Nanos — trivially delegates to the built-in logic
-impl TryFromSbe<TimestampNanos> for chrono::DateTime<chrono::Utc> {
-    type Error = &'static str;
-    fn try_from_sbe(wire: TimestampNanos) -> Result<Self, Self::Error> {
-        chrono::DateTime::from_timestamp(
-            (wire.0 / 1_000_000_000) as i64,
-            (wire.0 % 1_000_000_000) as u32,
-        )
-        .ok_or("timestamp out of range")
-    }
-}
-// … TryToSbe, etc.
-
-// Micros
+```rust,no_run
+{{#include ../../../examples/timestamp-conversions.rs:timestamp_adapter_nanos}}
+```
+*(From `book/examples/timestamp-conversions.rs` — compiles against tour_codec.)*
 impl TryFromSbe<TimestampMicros> for chrono::DateTime<chrono::Utc> {
     type Error = &'static str;
     fn try_from_sbe(wire: TimestampMicros) -> Result<Self, Self::Error> {
@@ -90,15 +79,10 @@ let config = GenerationConfig::new("msgs")
     .with_conversion(ConversionSelector::named_type("TimestampMillis"));
 ```
 
-```text
-// Encode — all use the same Rust type, with the wire precision implicit
-let now = chrono::Utc::now();
-enc.created_at_from(&now)?;      // → TimestampNanos  (wire: u64 nanos)
-enc.updated_at_from(&now)?;      // → TimestampMicros (wire: u64 micros)
-enc.received_at_from(&now)?;     // → TimestampMillis (wire: u64 millis)
-
-// Decode — all return chrono::DateTime<Utc>, precision transparent
-let created:  chrono::DateTime<chrono::Utc> = dec.created_at_as()?;
+```rust,no_run
+{{#include ../../../examples/timestamp-conversions.rs:timestamp_encode_decode}}
+```
+*(From `book/examples/timestamp-conversions.rs` — Heartbeat with UTCTimestamp domain type.)*
 let updated:  chrono::DateTime<chrono::Utc> = dec.updated_at_as()?;
 let received: chrono::DateTime<chrono::Utc> = dec.received_at_as()?;
 ```

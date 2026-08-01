@@ -249,6 +249,7 @@ fn wrap_snippet_with_imports(body: &str, module_name: &str, extra_imports: &str)
 }
 
 /// True when the fence is a top-level Rust item, not a main-body statement list.
+/// Statement-shaped anchors (often starting with `use` + `let`) stay in `main`.
 fn is_top_level_item_snippet(body: &str) -> bool {
     let first = body
         .lines()
@@ -259,10 +260,9 @@ fn is_top_level_item_snippet(body: &str) -> bool {
         || first.starts_with("fn ")
         || first.starts_with("pub mod ")
         || first.starts_with("mod ")
-        || first.starts_with("use ")
-        || first.starts_with("pub use ")
-        || first.starts_with("#[")
         || first.starts_with("impl ")
+        || first.starts_with("#[path")
+        || first.starts_with("#[allow")
 }
 
 fn compile_snippet_with_module(

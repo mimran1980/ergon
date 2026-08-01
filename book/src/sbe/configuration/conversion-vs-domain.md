@@ -19,33 +19,15 @@ Do **not** call both for the same selector — domain type already enables conve
 ```
 *(From `book/examples/conversion-config.rs` — a self-contained program that compiles against `ergo-sbe`.)*
 
-```text
-// app — YOU adapt wire Decimal ↔ Cents
-// `Decimal` below is the *generated SBE composite*, not rust_decimal.
-
-struct Cents(i64);
-
-impl TryFromSbe<Decimal> for Cents {
-    type Error = &'static str;
-    fn try_from_sbe(wire: Decimal) -> Result<Self, Self::Error> {
-        Ok(Cents(wire.mantissa()))
-    }
-}
-impl TryToSbe<Decimal> for Cents {
-    type Error = &'static str;
-    fn try_to_sbe(&self) -> Result<Decimal, Self::Error> {
-        Ok(Decimal::new(self.0, -2))
-    }
-}
-
-enc.price_from(&Cents(12345))?;
-let cents: Cents = dec.price_as()?;
-let wire = dec.price_value();
-println!("mantissa={} exponent={}", wire.mantissa(), wire.exponent());
-
-// Same buffer, another app type if you impl TryFromSbe for it too:
-// let also: rust_decimal::Decimal = dec.price_as()?;
+```rust,no_run
+{{#include ../../../examples/conversion-app-code.rs:adapter_impl}}
 ```
+*(From `book/examples/conversion-app-code.rs` — app adapter pattern, compiles against tour_codec.)*
+
+```rust,no_run
+{{#include ../../../examples/conversion-app-code.rs:conversion_encode_decode}}
+```
+*(Same file — generic `_from`/`_as` encode/decode with `with_conversion`.)*
 
 ### Option B — one fixed app type
 
@@ -54,9 +36,8 @@ println!("mantissa={} exponent={}", wire.mantissa(), wire.exponent());
 ```
 *(Same source file — `book/examples/conversion-config.rs`.)*
 
-```text
-enc.price(rust_decimal::Decimal::new(12345, 2));
-let p: rust_decimal::Decimal = dec.price();
+```rust,no_run
+{{#include ../../../examples/conversion-app-code.rs:conversion_encode_decode}}
 ```
 
 Both styles on different fields:
