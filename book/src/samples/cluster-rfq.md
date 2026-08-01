@@ -1,9 +1,16 @@
 # Cluster RFQ
 
-RFQ / auction protocol codecs + cluster examples.
+RFQ / auction protocol codecs with cluster-backed examples. Demonstrates
+e-sniping timer, auction state machine, and multi-participant message flows
+over Aeron Cluster.
 
-Java harness for live examples.
+- `rfq_client` — sends RFQ, receives quotes, places order.
+- `auction_client` — auction lifecycle with e-sniping.
+- `rfq_roundtrip` — encode/decode parity for all RFQ message types.
+
+Source: [`samples/cluster-rfq/`](https://github.com/mimran1980/ergon/tree/main/samples/cluster-rfq)
 
 ```sh
-cargo check --manifest-path samples/cluster-rfq/Cargo.toml --all-targets
+cargo build --manifest-path samples/cluster-rfq/Cargo.toml --examples
+cargo run --manifest-path samples/cluster-rfq/Cargo.toml --example rfq_roundtrip
 ```
