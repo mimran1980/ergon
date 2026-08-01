@@ -51,6 +51,8 @@ use crate::structured_ir::*;
 use crate::{GenerationConfig, Schema};
 
 pub(crate) mod encoded_length;
+pub(crate) mod field_type;
+pub(crate) use field_type::field_type_ident;
 pub(crate) mod runtime;
 use quote::format_ident;
 pub(crate) use runtime::*;
@@ -5896,41 +5898,10 @@ fn generate_converter_impls(
 }
 
 /// Map a [`FieldType`] to the corresponding Rust type as a `syn::Type`.
-fn field_type_ident(ft: &FieldType, span: proc_macro2::Span) -> syn::Type {
-    match ft {
-        FieldType::Primitive(pt, Some(len)) => {
-            // Fixed-length primitive arrays — always `[T; N]` (including i8/i16/f32).
-            let elem: syn::Type = field_type_ident(&FieldType::Primitive(*pt, None), span);
-            let n = syn::LitInt::new(&len.to_string(), span);
-            syn::parse_quote!([#elem; #n])
-        }
-        FieldType::Primitive(pt, None) => match pt {
-            PrimitiveType::Char | PrimitiveType::UInt8 => syn::parse_quote!(u8),
-            PrimitiveType::Int8 => syn::parse_quote!(i8),
-            PrimitiveType::Int16 => syn::parse_quote!(i16),
-            PrimitiveType::Int32 => syn::parse_quote!(i32),
-            PrimitiveType::Int64 => syn::parse_quote!(i64),
-            PrimitiveType::UInt16 => syn::parse_quote!(u16),
-            PrimitiveType::UInt32 => syn::parse_quote!(u32),
-            PrimitiveType::UInt64 => syn::parse_quote!(u64),
-            PrimitiveType::Float => syn::parse_quote!(f32),
-            PrimitiveType::Double => syn::parse_quote!(f64),
-        },
-        FieldType::Composite { name, .. } => {
-            let ident = syn::Ident::new(&to_pascal_case(name), span);
-            syn::parse_quote!(#ident)
-        }
-        FieldType::Enum { name, .. } => {
-            let ident = syn::Ident::new(&to_pascal_case(name), span);
-            syn::parse_quote!(#ident)
-        }
-        FieldType::Set { name, .. } => {
-            let ident = syn::Ident::new(&to_pascal_case(name), span);
-            syn::parse_quote!(#ident)
-        }
-    }
-}
-
+// field_type_ident moved to codegen/field_type.rs
+// has_nested_dynamic_tail (6014-6021), generate_encoded_length_builder (6029-6455).
+// If needed, recover from git history.
+#[allow(dead_code)]
 fn generate_raw_fixed_impls(
     msg: &MessageStructure,
     raw_name: &syn::Ident,
