@@ -39,9 +39,11 @@
     clippy::all,
     warnings
 )]
+// ANCHOR: include_build_dep_only
 #[path = "generated/feature_tour.rs"]
 pub mod feature_tour;
 pub use feature_tour::*;
+// ANCHOR_END: include_build_dep_only
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal as Rd;

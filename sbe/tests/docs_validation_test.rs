@@ -233,6 +233,10 @@ fn wrap_snippet_with_imports(body: &str, module_name: &str, extra_imports: &str)
     );
     if trimmed.contains("fn main") {
         format!("{prelude}{trimmed}\n")
+    } else if is_top_level_item_snippet(trimmed) {
+        // Sample anchors that are full items (`pub fn demo_…`, `mod …`) — typecheck
+        // them as module items with an empty main rather than stuffing into main().
+        format!("{prelude}{trimmed}\nfn main() {{}}\n")
     } else {
         format!(
             "{prelude}\
@@ -242,6 +246,23 @@ fn wrap_snippet_with_imports(body: &str, module_name: &str, extra_imports: &str)
              }}\n"
         )
     }
+}
+
+/// True when the fence is a top-level Rust item, not a main-body statement list.
+fn is_top_level_item_snippet(body: &str) -> bool {
+    let first = body
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with("//"))
+        .unwrap_or("");
+    first.starts_with("pub fn ")
+        || first.starts_with("fn ")
+        || first.starts_with("pub mod ")
+        || first.starts_with("mod ")
+        || first.starts_with("use ")
+        || first.starts_with("pub use ")
+        || first.starts_with("#[")
+        || first.starts_with("impl ")
 }
 
 fn compile_snippet_with_module(
@@ -598,11 +619,19 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
                     // Those are verified by the feature-tour crate's own tests.
                     // Introduction's "parent hopping" demo uses placeholder
                     // variable names to show API shape — not compilable.
+                    // Build-script / path-include anchors need OUT_DIR layout
+                    // that the fence harness does not provide.
                     if md_path.ends_with("introduction.md") {
                         deferred += 1;
                         continue;
                     }
-                    if resolved.contains("FixedPrice") || resolved.contains("impl TryFromSbe") {
+                    if resolved.contains("FixedPrice")
+                        || resolved.contains("impl TryFromSbe")
+                        || resolved.contains("generate_schema(")
+                        || resolved.contains("generate_to_out_dir")
+                        || resolved.contains("#[path = \"generated/")
+                        || resolved.contains("include!(concat!(env!(\"OUT_DIR\")")
+                    {
                         deferred += 1;
                         continue;
                     }
