@@ -35,7 +35,8 @@ mod messages {
 }
 
 fn main() {
-    std::hint::black_box(messages::MESSAGE_DESCRIPTORS);
+    let mut buf = [0u8; messages::CarEncoder::ENCODED_LENGTH];
+    std::hint::black_box(messages::CarEncoder::wrap_and_apply_header(&mut buf, 0));
 }
 EOF
 
