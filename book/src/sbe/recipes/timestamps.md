@@ -6,7 +6,7 @@ but **all mapping to `chrono::DateTime<Utc>`** in Rust. The generated
 micros need their own `TryFromSbe`/`TryToSbe` impls. Distinguish them with
 `FieldPath` selectors:
 
-```xml
+```text
 <!-- schema fragment — three uint64 fields, same wire type, three precisions -->
 <field name="created_at"  id="1" type="uint64" semanticType="UTCTimestamp"/>
 <field name="updated_at"  id="2" type="uint64" semanticType="UTCTimestampMicros"/>
@@ -26,7 +26,7 @@ converter — `TryFromSbe<u64>` can only exist once. Resolve this by naming
 the wire fields unique types — the idiomatic pattern when three `uint64`
 columns mean three different things:
 
-```xml
+```text
 <!-- Distinguish wire types by name — all are uint64 under the hood -->
 <composite name="TimestampNanos">  <type name="ts" primitiveType="uint64"/>  </composite>
 <composite name="TimestampMicros"> <type name="ts" primitiveType="uint64"/>  </composite>
