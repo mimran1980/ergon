@@ -1849,7 +1849,6 @@ fn generate_message_decoder(
         pub struct #decoder_ident<'a> {
             pub(crate) buf: &'a [u8],
             pub(crate) pos: usize,
-            pub(crate) msg_offset: usize,
             pub(crate) acting_version: u16,
             pub(crate) acting_block_length: usize,
         }
@@ -1884,7 +1883,7 @@ fn generate_message_decoder(
             /// (the `message_offset` argument passed to `wrap`).
             #[inline]
             pub const fn message_offset(&self) -> usize {
-                self.msg_offset
+                self.pos.saturating_sub(Self::HEADER_LENGTH)
             }
 
             /// Absolute current read cursor within the original buffer.
@@ -1945,7 +1944,6 @@ fn generate_message_decoder(
             Self {
                 buf,
                 pos: body_pos,
-                msg_offset: message_offset,
                 acting_block_length,
                 acting_version,
             }
@@ -2789,7 +2787,8 @@ fn generate_message_decoder(
         #[inline]
         pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
-            Ok(&self.buf[self.msg_offset..end])
+            let start = self.pos.saturating_sub(Self::HEADER_LENGTH);
+            Ok(&self.buf[start..end])
         }
     });
 

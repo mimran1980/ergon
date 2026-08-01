@@ -1056,7 +1056,6 @@ impl CarSchema {
 pub struct CarDecoder<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
-    pub(crate) msg_offset: usize,
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
@@ -1082,7 +1081,6 @@ impl<'a> CarDecoder<'a> {
         Self {
             buf,
             pos: body_pos,
-            msg_offset: message_offset,
             acting_block_length,
             acting_version,
         }
@@ -1677,7 +1675,8 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
-        Ok(&self.buf[self.msg_offset..end])
+        let start = self.pos.saturating_sub(Self::HEADER_LENGTH);
+        Ok(&self.buf[start..end])
     }
     #[inline]
     pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
