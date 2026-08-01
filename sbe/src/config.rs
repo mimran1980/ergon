@@ -545,13 +545,32 @@ impl GenerationConfig {
         self
     }
 
-    /// Emit `_unchecked` companion methods for micro-benchmarks.
+    /// Emit `_unchecked` companion methods. **Benchmarking only — not for
+    /// production code in normal operation.**
     ///
-    /// Hot path after you have already validated bounds:
-    /// `car.serial_number_unchecked()`.
+    /// Each field accessor `dec.serial_number()` gains a companion
+    /// `dec.serial_number_unchecked()` that skips the bounds check (the
+    /// decoder already validates the buffer on construction, so the
+    /// per-field check is redundant on a known-valid message).
+    ///
+    /// # Safety contract (caller's responsibility)
+    ///
+    /// - The buffer must have been validated by `try_from` / `try_wrap` /
+    ///   `verify` before any `_unchecked` accessor is called.
+    /// - After any stage transition (`into_fuel_figures()`, etc.), the
+    ///   decoder's position advances and the unchecked guard is lost —
+    ///   do not carry an unchecked reference across a stage boundary.
+    /// - On a truncated or malformed buffer, `_unchecked` accessors read
+    ///   whatever bytes are at the expected offset without trapping. This
+    ///   is **not** undefined behaviour (the buffer is still a valid
+    ///   `&[u8]` slice), but the values returned are garbage.
+    ///
+    /// The checked accessors are always available; `_unchecked` is an
+    /// opt-in for the narrow hot loop where you have independently proven
+    /// the buffer is valid and you cannot afford a redundant branch.
     #[must_use]
-    pub fn with_unchecked_companions(mut self) -> Self {
-        self.unchecked_companions = true;
+    pub fn with_unchecked_companions(mut self, enable: bool) -> Self {
+        self.unchecked_companions = enable;
         self
     }
 
@@ -582,15 +601,15 @@ impl GenerationConfig {
     /// `Yes=5, No=3`) should use explicit [`ConversionSelector::named_type`]
     /// with [`GenerationConfig::with_conversion`] instead.
     #[must_use]
-    pub fn with_bool_domain_type(mut self) -> Self {
-        self.auto_bool_domain = true;
+    pub fn with_bool_domain_type(mut self, enable: bool) -> Self {
+        self.auto_bool_domain = enable;
         self
     }
 
     /// Emit `#[deprecated]` on schema-deprecated fields/types/messages.
     #[must_use]
-    pub fn with_deprecated_attrs(mut self) -> Self {
-        self.deprecated_attrs = true;
+    pub fn with_deprecated_attrs(mut self, enable: bool) -> Self {
+        self.deprecated_attrs = enable;
         self
     }
 
@@ -778,10 +797,10 @@ mod tests {
         let config = GenerationConfig::new("m")
             .with_error_from_impls("crate::AppError")
             .with_shared_module("shared")
-            .with_unchecked_companions()
+            .with_unchecked_companions(true)
             .with_keyword_append_token("x")
-            .with_bool_domain_type()
-            .with_deprecated_attrs();
+            .with_bool_domain_type(true)
+            .with_deprecated_attrs(true);
 
         assert_eq!(config.error_from_path.as_deref(), Some("crate::AppError"));
         assert_eq!(config.shared_module.as_deref(), Some("shared"));

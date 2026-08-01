@@ -3514,7 +3514,7 @@ fn auto_bool_domain_works_with_arbitrary_bool_enum_name() -> Result<(), Box<dyn 
     </messageSchema>"#;
     let ir = ergo_sbe::parse(xml)?;
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let config = ergo_sbe::GenerationConfig::new("ab_codec").with_bool_domain_type();
+    let config = ergo_sbe::GenerationConfig::new("ab_codec").with_bool_domain_type(true);
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
     let src = &modules.modules().next().unwrap().source;
     assert!(

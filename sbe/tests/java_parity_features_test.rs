@@ -468,7 +468,7 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
     // `#[deprecated]` emission is opt-in (cascades to types/impls).
-    let out = Generator::new(GenerationConfig::new("m").with_deprecated_attrs())
+    let out = Generator::new(GenerationConfig::new("m").with_deprecated_attrs(true))
         .generate(&schema)?
         .modules()
         .next()

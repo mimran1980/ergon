@@ -1700,7 +1700,7 @@ mod tests {
         let mut generator = Generator::new(
             crate::GenerationConfig::new("common_types")
                 .with_shared_module("common_types")
-                .with_bool_domain_type(),
+                .with_bool_domain_type(true),
         );
         let modules =
             generator.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "consumer")])?;

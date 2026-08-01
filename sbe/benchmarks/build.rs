@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Enable unchecked companions for single-binary checked vs unchecked comparison.
     ergo_sbe::generate_to_out_dir(
         &car_schema,
-        ergo_sbe::GenerationConfig::new("car_bench").with_unchecked_companions(),
+        ergo_sbe::GenerationConfig::new("car_bench").with_unchecked_companions(true),
     )?;
 
     let large_schema = manifest.join("schemas/large-composite.xml");
