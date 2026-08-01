@@ -113,6 +113,7 @@ pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>>
     Ok(storage[..written].to_vec())
 }
 /// Encode the canonical sample car into `buf` (must be pre-sized).
+// ANCHOR: encode_sample_car
 pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
     let mut extras = OptionalExtras::default();
     extras.cruise_control(true).sports_pack(true);
@@ -171,6 +172,7 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
 
     Ok(len)
 }
+// ANCHOR_END: encode_sample_car
 // ANCHOR_END: demo_car_size_and_encode
 
 // ─── 3. Decoder consuming stages ───────────────────────────────────────────

@@ -276,8 +276,11 @@ fn message_field_infos(
                         None
                     }
                 }
-                FieldType::Enum { name: enum_name, .. } => {
-                    if elements.is_some_and(|el| crate::structured_ir::is_bool_enum(el, enum_name)) {
+                FieldType::Enum {
+                    name: enum_name, ..
+                } => {
+                    if elements.is_some_and(|el| crate::structured_ir::is_bool_enum(el, enum_name))
+                    {
                         Some("bool")
                     } else {
                         find_domain_type(f, domain_types)
@@ -1049,12 +1052,8 @@ impl Generator {
             // Decimal composite, emit raw *_wire aliases and generic converted
             // methods. Only emitted when converter mode is active.
             if !&self.config.conversions.is_empty() {
-                let converter_ts = generate_converter_impls(
-                    msg,
-                    &self.config.conversions,
-                    domain_types,
-                    multi,
-                );
+                let converter_ts =
+                    generate_converter_impls(msg, &self.config.conversions, domain_types, multi);
                 src.push_str(&converter_ts);
             }
             src.push('\n');
@@ -1063,11 +1062,8 @@ impl Generator {
 
         // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions.
         if self.config.has_conversions() {
-            let impl_blocks = generate_conversion_impl_blocks(
-                &elements,
-                &self.config.conversions,
-                domain_types,
-            );
+            let impl_blocks =
+                generate_conversion_impl_blocks(&elements, &self.config.conversions, domain_types);
             src.push_str(&impl_blocks);
         }
 
@@ -1805,7 +1801,9 @@ fn generate_message_decoder(
         ts.extend(doc_attr_tokens(desc));
     }
     // Schema constants struct — no turbofish, shared by encoder and decoder.
-    let schema_ident = quote::format_ident!("{}Schema", name);
+    // Disambiguate when a composite/enum/set already claims `{Name}Schema`.
+    let occupied = occupied_type_names(elements);
+    let schema_ident = schema_marker_ident(&name, &occupied);
     ts.extend(quote::quote! {
         pub struct #schema_ident;
         impl #schema_ident {
@@ -2959,11 +2957,11 @@ fn generate_message_decoder(
         }
 
         impl<'a> #decoder_ident<'a> {
-            /// Fallible byte view of the message. Returns `None` if the
-            /// buffer is malformed or truncated. Prefer [`Self::as_bytes`]
-            /// for explicit error handling.
+            /// Fallible byte view of the complete SBE frame (header + body).
+            /// Returns `None` if the buffer is malformed or truncated.
+            /// Prefer [`Self::as_bytes_with_header`] for explicit error handling.
             pub fn as_ref_opt(&self) -> Option<&[u8]> {
-                self.as_body_bytes().ok()
+                self.as_bytes_with_header().ok()
             }
         }
     });
@@ -5861,11 +5859,13 @@ fn generate_converter_impls(
     let mut out = if decoder_methods.is_empty() {
         String::new()
     } else {
+        // Generic over H so body-only wrap (`HeaderAbsent`) gets conversion
+        // setters, matching ordinary field setters on `impl<H> Encoder`.
         quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #decoder_methods
             }
-            impl<'a> #encoder_ident<'a> {
+            impl<'a, H: sbe_rt::HeaderState> #encoder_ident<'a, H> {
                 #encoder_methods
             }
         }

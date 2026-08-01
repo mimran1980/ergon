@@ -293,7 +293,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
             let e = entry.as_ref().unwrap();
             assert_eq!(e.order_qty(), 10, "bid order {} qty", i);
             let expected = format!("ORDER-{:02}", i);
-            assert_eq!(e.order_id().unwrap(), expected.as_bytes_with_header(), "bid order {} id", i);
+            assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "bid order {} id", i);
         }
         let asks = bids.finish().unwrap().into_asks().unwrap();
         let ask_levels: Vec<_> = asks.collect();
@@ -307,7 +307,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
             let e = entry.as_ref().unwrap();
             assert_eq!(e.order_qty(), 10, "ask order {} qty", i);
             let expected = format!("ASK-{:-3}", i);
-            assert_eq!(e.order_id().unwrap(), expected.as_bytes_with_header(), "ask order {} id", i);
+            assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "ask order {} id", i);
         }
         println!("12 orders per level (bids + asks): PASSED");
         "#,

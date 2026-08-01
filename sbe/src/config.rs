@@ -384,7 +384,9 @@ impl GenerationConfig {
     }
 
     pub(crate) fn has_conversions(&self) -> bool {
-        !self.conversions.is_empty() || !self.domain_types.is_empty()
+        // `enable_bool_domain_type` is syntax sugar for `with_domain_type` on
+        // each boolean enum — it must also emit TryFromSbe/TryToSbe traits.
+        !self.conversions.is_empty() || !self.domain_types.is_empty() || self.auto_bool_domain
     }
 
     /// The external sbe_rt path, if set.

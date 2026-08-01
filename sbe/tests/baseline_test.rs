@@ -2195,8 +2195,8 @@ fn generated_encoder_has_concrete_stage_structs() -> Result<(), Box<dyn std::err
 /// HANDOVER ergonomics acceptance: happy path needs zero turbofish / zero
 /// explicit `H`; Schema constants; body-only wrap cannot take header bytes.
 #[test]
-fn header_typestate_happy_path_and_body_only_ergonomics()
--> Result<(), Box<dyn std::error::Error>> {
+fn header_typestate_happy_path_and_body_only_ergonomics() -> Result<(), Box<dyn std::error::Error>>
+{
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
 
     // (a)(b)(c) — happy path encode, Complete helper, Schema constant access.

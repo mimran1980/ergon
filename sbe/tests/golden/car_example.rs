@@ -1851,11 +1851,11 @@ impl<'a> sbe_rt::SbeMessage for CarDecoder<'a> {
     const SCHEMA_VERSION: u16 = 0;
 }
 impl<'a> CarDecoder<'a> {
-    /// Fallible byte view of the message. Returns `None` if the
-    /// buffer is malformed or truncated. Prefer [`Self::as_bytes`]
-    /// for explicit error handling.
+    /// Fallible byte view of the complete SBE frame (header + body).
+    /// Returns `None` if the buffer is malformed or truncated.
+    /// Prefer [`Self::as_bytes_with_header`] for explicit error handling.
     pub fn as_ref_opt(&self) -> Option<&[u8]> {
-        self.as_body_bytes().ok()
+        self.as_bytes_with_header().ok()
     }
 }
 impl<'a> core::fmt::Display for CarDecoder<'a> {
@@ -7378,10 +7378,12 @@ impl<'a> AnyMessage<'a> {
     }
 }
 impl<'a> AnyMessage<'a> {
+    /// Complete SBE frame (message header + body) for known variants;
+    /// raw payload bytes for [`Self::Unknown`].
     #[inline]
     pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         match self {
-            Self::Car(d) => d.as_body_bytes(),
+            Self::Car(d) => d.as_bytes_with_header(),
             Self::Unknown { payload, .. } => Ok(payload),
         }
     }
@@ -7392,7 +7394,8 @@ impl<'a> AnyMessage<'a> {
         match self {
             Self::Car(d) => {
                 let len = d.encoded_length_with_header()?;
-                buf[..len].copy_from_slice(d.as_body_bytes()?);
+                let bytes = d.as_bytes_with_header()?;
+                buf[..len].copy_from_slice(bytes);
                 Ok(len)
             }
             Self::Unknown { payload, .. } => {

@@ -470,7 +470,7 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
                 level.orders(12, |orders| -> Result<(), sbe_rt::EncodeError> {
                     for i in 0..12u64 {
                         let id = format!("ORD-{:03}", i);
-                        orders.add(|o| { o.order_qty((i+1) as i64); o.order_id(id.as_bytes_with_header())?; Ok(()) })?;
+                        orders.add(|o| { o.order_qty((i+1) as i64); o.order_id(id.as_bytes())?; Ok(()) })?;
                     }
                     Ok(())
                 })?;
@@ -486,7 +486,7 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
         for i in 0..12usize {
             assert_eq!(d.bids[0].orders[i].order_qty, (i as i64) + 1);
             let expected = format!("ORD-{:03}", i);
-            assert_eq!(d.bids[0].orders[i].order_id, expected.as_bytes_with_header());
+            assert_eq!(d.bids[0].orders[i].order_id, expected.as_bytes());
         }
         assert!(d.asks.is_empty());
         println!("l3_domain_12_orders: PASSED");

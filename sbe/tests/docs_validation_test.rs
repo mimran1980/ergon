@@ -219,11 +219,7 @@ fn resolve_book_include(
                 md_path.display()
             )
         })?;
-    let extracted: Vec<&str> = file_content
-        .lines()
-        .skip(start + 1)
-        .take(end)
-        .collect();
+    let extracted: Vec<&str> = file_content.lines().skip(start + 1).take(end).collect();
     Ok(extracted.join("\n"))
 }
 
@@ -554,8 +550,7 @@ fn book_fences_no_ignored() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     const TOUR_DEPS: &str = "chrono = \"0.4\"\nrust_decimal = \"1\"\n";
-    const TOUR_IMPORTS: &str =
-        "use chrono::{DateTime, Utc};\nuse rust_decimal::Decimal as Rd;\n";
+    const TOUR_IMPORTS: &str = "use chrono::{DateTime, Utc};\nuse rust_decimal::Decimal as Rd;\n";
 
     let docs_codec = docs_codec_source()?;
     let tour_codec = feature_tour_codec_source()?;
@@ -588,7 +583,13 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
                 compiled
             );
             match compile_snippet_with_deps(
-                tmp.path(), &name, &resolved, module, codec, deps, imports,
+                tmp.path(),
+                &name,
+                &resolved,
+                module,
+                codec,
+                deps,
+                imports,
             ) {
                 Ok(()) => compiled += 1,
                 Err(e) => {
@@ -614,10 +615,11 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    eprintln!(
-        "book_fences_compile: {compiled} compiled, {skipped} skipped, {deferred} deferred"
+    eprintln!("book_fences_compile: {compiled} compiled, {skipped} skipped, {deferred} deferred");
+    assert!(
+        compiled > 0,
+        "expected at least one compilable fence in the book"
     );
-    assert!(compiled > 0, "expected at least one compilable fence in the book");
     Ok(())
 }
 

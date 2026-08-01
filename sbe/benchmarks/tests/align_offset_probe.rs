@@ -24,6 +24,10 @@ fn encode_decode_all_offsets_0_to_63() {
             0x0102_0304_0506_0708,
             "offset={offset} value mismatch"
         );
-        assert_eq!(dec.payload(), [0x5a; 56], "offset={offset} payload mismatch");
+        assert_eq!(
+            dec.payload(),
+            [0x5a; 56],
+            "offset={offset} payload mismatch"
+        );
     }
 }

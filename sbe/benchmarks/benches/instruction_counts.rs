@@ -26,7 +26,9 @@ fn checked_entry() -> u64 {
 fn trusted_scalar() -> u64 {
     let header = MessageHeader(read_bytes::<8>(BASELINE, 0));
     black_box(
-        CarDecoder::wrap(black_box(BASELINE), 0,
+        CarDecoder::wrap(
+            black_box(BASELINE),
+            0,
             header.block_length() as usize,
             header.version(),
         )
@@ -37,7 +39,9 @@ fn trusted_scalar() -> u64 {
 #[library_benchmark]
 fn ergo_scalar_batch() {
     let header = MessageHeader(read_bytes::<8>(BASELINE, 0));
-    let car = CarDecoder::wrap(black_box(BASELINE), 0,
+    let car = CarDecoder::wrap(
+        black_box(BASELINE),
+        0,
         header.block_length() as usize,
         header.version(),
     );
@@ -61,7 +65,9 @@ fn sbe_tool_scalar_batch() {
 #[library_benchmark]
 fn ergo_composite_batch() {
     let header = MessageHeader(read_bytes::<8>(BASELINE, 0));
-    let car = CarDecoder::wrap(black_box(BASELINE), 0,
+    let car = CarDecoder::wrap(
+        black_box(BASELINE),
+        0,
         header.block_length() as usize,
         header.version(),
     );

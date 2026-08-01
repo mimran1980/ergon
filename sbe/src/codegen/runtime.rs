@@ -385,6 +385,48 @@ pub(crate) fn to_pascal_case(s: &str) -> String {
     avoid_keyword(res)
 }
 
+/// Names already claimed by enums, sets, and composites in a schema module.
+/// Used to disambiguate `{Message}Schema` constant markers.
+pub(crate) fn occupied_type_names(elements: &SchemaElements) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for e in &elements.enums {
+        names.insert(to_pascal_case(&e[0].name));
+    }
+    for s in &elements.sets {
+        names.insert(to_pascal_case(&s[0].name));
+    }
+    for c in &elements.composites {
+        names.insert(to_pascal_case(&c[0].name));
+    }
+    names
+}
+
+/// Marker type holding schema constants for a message (`CarSchema::TEMPLATE_ID`).
+///
+/// When a composite/enum/set is already named `{Msg}Schema`, use
+/// `{Msg}MessageSchema` (then numbered suffixes) so the module still compiles.
+pub(crate) fn schema_marker_ident(
+    msg_pascal: &str,
+    occupied: &std::collections::HashSet<String>,
+) -> syn::Ident {
+    let primary = format!("{msg_pascal}Schema");
+    if !occupied.contains(&primary) {
+        return syn::Ident::new(&primary, proc_macro2::Span::call_site());
+    }
+    let alt = format!("{msg_pascal}MessageSchema");
+    if !occupied.contains(&alt) {
+        return syn::Ident::new(&alt, proc_macro2::Span::call_site());
+    }
+    let mut n = 2usize;
+    loop {
+        let name = format!("{msg_pascal}MessageSchema{n}");
+        if !occupied.contains(&name) {
+            return syn::Ident::new(&name, proc_macro2::Span::call_site());
+        }
+        n += 1;
+    }
+}
+
 pub(crate) fn to_snake_case(s: &str) -> String {
     let mut res = String::new();
     let mut prev_is_lower = false;
@@ -1797,11 +1839,12 @@ pub(crate) fn generate_any_message(
     });
 
     {
+        let occupied = occupied_type_names(elements);
         let mut decode_arms = proc_macro2::TokenStream::new();
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
-            let schema = quote::format_ident!("{}Schema", to_pascal_case(&m.name));
+            let schema = schema_marker_ident(&to_pascal_case(&m.name), &occupied);
             decode_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
                     Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)))
@@ -1852,11 +1895,12 @@ pub(crate) fn generate_any_message(
     }
 
     {
+        let occupied = occupied_type_names(elements);
         let mut decode_frame_arms = proc_macro2::TokenStream::new();
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
-            let schema = quote::format_ident!("{}Schema", to_pascal_case(&m.name));
+            let schema = schema_marker_ident(&to_pascal_case(&m.name), &occupied);
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
@@ -1964,13 +2008,17 @@ pub(crate) fn generate_any_message(
         let mut as_bytes_arms = proc_macro2::TokenStream::new();
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
+            // Header-inclusive view for known variants — matches Unknown's full frame
+            // and historical AnyMessage::as_bytes semantics.
             as_bytes_arms.extend(quote::quote! {
-                Self::#name(d) => d.as_body_bytes(),
+                Self::#name(d) => d.as_bytes_with_header(),
             });
         }
 
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
+                /// Complete SBE frame (message header + body) for known variants;
+                /// raw payload bytes for [`Self::Unknown`].
                 #[inline]
                 pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     match self {
@@ -1989,7 +2037,9 @@ pub(crate) fn generate_any_message(
             encode_arms.extend(quote::quote! {
                 Self::#name(d) => {
                     let len = d.encoded_length_with_header()?;
-                    buf[..len].copy_from_slice(d.as_body_bytes()?);
+                    // `len` is header-inclusive; copy the full frame, not body-only.
+                    let bytes = d.as_bytes_with_header()?;
+                    buf[..len].copy_from_slice(bytes);
                     Ok(len)
                 }
             });
