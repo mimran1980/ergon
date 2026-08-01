@@ -28,6 +28,26 @@ sbe-tool — not to claim it is faster. sbe-tool is the reference; the goal is
 parity. When ergo-sbe occasionally shows a lower ratio, that is a data point to
 investigate for unequal work, not a product claim.
 
+### Regression check: compare against your own previous release
+
+The sbe-tool ceiling catches regressions against the reference, but it does
+**not** catch regressions against your own prior work. If ergon was 0.73×
+sbe-tool in 0.1.7 and 0.89× in 0.1.8, both pass the 1.00 ceiling — but you
+just got 22% slower. That is a blocking defect.
+
+Every release must therefore compare **two** things:
+
+1. **Ratio vs sbe-tool** — must stay ≤ 1.00. This proves you haven't fallen
+   behind the reference implementation.
+2. **Absolute ergon time vs the previous release** — must not regress
+   meaningfully. Check out the prior tag in a worktree, run the same
+   benchmarks, and diff the Criterion point estimates. A shift larger than
+   the reported confidence interval requires investigation before publishing.
+
+The second check found the `msg_offset` regression in 0.1.8: `decode_entry_point`
+went from 0.73× to 0.89× because a new field was added to the decoder struct.
+The sbe-tool ratio still passed — only the self-comparison caught it.
+
 The real win is elsewhere: ergo-sbe pushes wire-order safety and buffer sizing
 into the **type system at compile time**. Swapping `bids` and `asks` is a type
 error. Using a partially-written encoder as a complete message is a type error.
