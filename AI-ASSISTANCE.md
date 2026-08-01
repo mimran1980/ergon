@@ -387,15 +387,16 @@ executing hundreds of lines of `syn` and `quote`.
 
 ### Phase 3: performance invalidated an elegant design
 
-The first type-state design used generics because I assumed the abstraction
-would be free after monomorphisation. It was elegant and enforced the ordering
-requirement, but the benchmark showed an encoding regression of roughly 17%.
-That was a useful humiliation: a design can be type-safe, idiomatic, tested,
-and still fail the product requirement.
+The first type-state design used generics (`Encoder<State>`) because I assumed
+the abstraction would be free after monomorphisation. It was elegant and enforced
+the ordering requirement, but the benchmark showed a meaningful encoding regression.
+A design can be type-safe, idiomatic, tested, and still fail the product requirement.
 
 The LLM helped explain why the generated machine code differed and proposed
-concrete named stage types. I accepted the concrete representation because the
-measured result mattered more than abstract neatness. From then on, benchmark
+concrete named stage types with a zero-sized `H: HeaderState` marker. I accepted
+the concrete representation because the measured result mattered more than abstract
+neatness. All 15 maintained parity comparisons now pass at or below the 1.00×
+ceiling (both LTO profiles, 0.1.8 release). From then on, benchmark
 parity became part of the definition of done for relevant changes.
 
 ### Phase 4: cheap implementation expanded the product
@@ -794,11 +795,13 @@ For this library, an ergonomic abstraction that makes a maintained hot path
 meaningfully slower than official generated code is a failed design.
 
 I learned that painfully. The first compile-time ordering design used generic
-type-state stages. I assumed it would be a zero-cost abstraction. Benchmarks
-showed some encode paths were roughly **17% slower**. The model helped explain
-that the generated generic chain was not being optimised as effectively as the
-plain monomorphic code. We replaced it with concrete named stage structs,
-retaining compile-time ordering without the measured generic tax.
+type-state stages (`Encoder<State>`). I assumed it would be a zero-cost
+abstraction. Benchmarks showed the generated generic chain was not being
+optimised as effectively as plain monomorphic code. The model helped explain
+why and proposed concrete named stage structs with a zero-sized `H: HeaderState`
+marker. The switch retained compile-time ordering without the measured generic
+tax. As of 0.1.8, all 15 maintained parity comparisons (10 SBE + 5 Cluster)
+pass at or below the 1.00× sbe-tool ceiling under both LTO profiles.
 
 After that, benchmark regression became part of the definition of done:
 

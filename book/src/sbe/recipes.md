@@ -17,7 +17,9 @@ Runnable, tested code for every pattern lives in [sbe-feature-tour](https://gith
 ```
 *(From `sbe-feature-tour` — known-count groups with chaining, tested in CI.)*
 
-// Unknown size: count back-patched after the closure (streaming producers).
+**Unknown size:** count back-patched after the closure (streaming producers).
+
+```rust,no_run
 let unknown_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&fields)
     .fuel_figures_unknown_size(|g| {
@@ -33,8 +35,7 @@ let unknown_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .manufacturer(b"Honda")?
     .model(b"Civic")?
     .activation_code(b"active")?
-    .encoded_length_with_header()
-        .expect("header present");
+    .encoded_length_with_header()?;
 
 println!("known={known_len} unknown={unknown_len}");
 ```

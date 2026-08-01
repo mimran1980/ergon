@@ -32,7 +32,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::WrongSchema { expected, actual, expected_name } => write!(f, "wrong schema: expected id {} ({}), got id {}", expected, expected_name, actual),
                         Self::UnknownTemplateLength { template_id } => write!(f, "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.", template_id),
                         Self::InvalidHeaderValue { field, value, maximum } => write!(f, "message header field '{}': value {} exceeds supported maximum {}", field, value, maximum),
-                        Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}: length {} exceeds max {}", field, length, max_length),
+                        Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}': length {} exceeds max {}", field, length, max_length),
                         Self::FieldNotInVersion { field, wire_version, since_version } => write!(f, "field '{}' not in wire version {} (added in version {})", field, wire_version, since_version),
                         Self::InvalidUtf8 { field, error } => write!(f, "field '{}': invalid UTF-8: {}", field, error),
                         Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
