@@ -1,20 +1,43 @@
 # Changelog
 
-## [Unreleased]
-
-### Added
-- Domain DTOs can decode directly from bytes with `try_from_slice_with_header`.
-
-### Changed
-- Hooks are now `Send + Sync`, preserve full-width enum values, and expose richer composite and DTO metadata.
-- Decoder `message_offset()` now returns `Option<usize>` for body-only buffers.
-- Cluster URI construction helpers are now internal.
+## [0.1.8] — 2026-08-01
 
 ### Fixed
-- Expanded field-name clash handling for optional, array, and encoder accessors.
-- `enable_bool_domain_type()` now works with multi-schema generation.
-- Parser warnings no longer leak deduplication state between parse calls.
-- Release, documentation, and test-discovery maintenance.
+- **AnyMessage dispatch marker collision.** Dispatch now uses the same
+  pre-allocated marker names as message generation; colliding template names
+  (e.g. `Msg` / `MsgMessage` with a `MsgSchema` composite) no longer route
+  template 2 through template 1's dispatch arm.
+- **AnyMessage::encode short-buffer panic.** Both known and unknown variant
+  arms now check destination capacity and return `BufferTooShort` instead of
+  slicing past the buffer end.
+- **Decoder struct regression (22% vs 0.1.7).** The `msg_offset: usize` field
+  added 8 bytes to every decoder and one extra store per `wrap()` call. It is
+  now computed lazily as `pos - HEADER_LENGTH`, valid on the initial decoder
+  before stage transitions. `decode_entry_point` returns to 0.73× sbe-tool
+  (beating 0.1.7).
+- **Auto-boolean discriminant validation.** Auto-detection now requires
+  discriminants 0 and 1. Arbitrary encodings (e.g. `Yes=5, No=3`) must use
+  explicit `with_conversion`.
+- **Documentation gate bypass.** `docs_validation_test` had deferred success
+  paths for five compilation failures; all are now hard errors. `pages.yml`
+  uses `just book-ci` directly. Stray Rust and unmatched fences in
+  `timestamps.md` removed. Broken book links, stale sample counts, and MSRV
+  mismatches fixed.
+- **Release workflow.** Version extraction uses `cargo metadata` instead of
+  `grep` on `Cargo.toml` (which contains `version.workspace = true`). The
+  crates.io wait loop now fails on timeout. `release-check` dry-runs only
+  `ergo-sbe`; cluster dry-run is deferred until `ergo-sbe` is published.
+
+### Changed
+- **Benchmark methodology** now requires comparing against both sbe-tool
+  (ceiling 1.00) and the previous release's absolute times (self-comparison).
+- **Policy checker** allows `rust,ignore` fences in `.md` files when the
+  fence body starts with `{{#include` — code verified by the project's own
+  build.
+- **Code style sweep** across samples, examples, and book:
+  `EncodedLength::new()` → `Encoder::compute_length()`,
+  `BooleanType::True`/`False` → `true.into()`/`false.into()`,
+  `try_wrap_and_apply_header` → `wrap_and_apply_header` on known-size buffers.
 
 ## [0.1.7] — 2026-07-30
 
