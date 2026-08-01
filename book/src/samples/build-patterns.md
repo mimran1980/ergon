@@ -30,13 +30,13 @@ samples/<name>/src/generated/*.rs   # created on cargo build, gitignored
 Root `.gitignore` has `**/src/generated/`. Do **not** commit those trees
 (Binance alone is multi‑MB). Rebuild after a clean clone.
 
-```text
-// build.rs
-let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
-ergo_sbe::generate_to_dir("schemas/messages.xml", config, &out)?;
+```rust,no_run
+  // build.rs
+  let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+  ergo_sbe::generate_to_dir("schemas/messages.xml", config, &out)?;
 
-// src/lib.rs — real path → IDE go-to-definition works
-#[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all, warnings)]
-#[path = "generated/messages.rs"]
-mod messages;
+  // src/lib.rs — real path → IDE go-to-definition works
+  #[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all, warnings)]
+  #[path = "generated/messages.rs"]
+  mod messages;
 ```

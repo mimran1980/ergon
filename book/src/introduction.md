@@ -93,8 +93,8 @@ and a maintained benchmark gate versus sbe-tool-generated codecs (see
 |---|---|---|
 | [`sbe/`](sbe/getting-started.md) | `ergo-sbe` | SBE schema parser and Rust codec generator |
 | [`sbe/benchmarks/`](sbe/benchmarks.md) | `ergo-sbe-benchmarks` | Unpublished parity benchmarks |
-| [`cluster/`](cluster/README.md) | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
-| [`samples/`](samples/README.md) | five standalone crates | Unpublished integration playgrounds |
+| [`cluster/`](../cluster/overview.md) | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
+| [`samples/`](../samples/overview.md) | five standalone crates | Unpublished integration playgrounds |
 
 The workspace requires Rust 1.95 or newer. The sample crates are intentionally
 excluded from the Cargo workspace and remain `publish = false`.
