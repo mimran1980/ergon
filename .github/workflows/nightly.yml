@@ -2,7 +2,7 @@ name: Nightly hostile-input verification
 
 on:
   schedule:
-    - cron: "23 17 * * *"  # daily at 17:23 UTC
+    - cron: "23 17 * * 0"  # weekly Sunday 17:23 UTC
   workflow_dispatch:
 
 env:
