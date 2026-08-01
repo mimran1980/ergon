@@ -194,8 +194,8 @@ Not a ≤1.00 gate. Compares **flyweight vs wire-image value vs
 **Conclusion:** single-field access is one load for flyweight, preheld
 `[u8; N]` wire image, and packed overlay alike. Packing does **not** beat the
 wire-image design. Materialising the whole composite just to read one field is
-the expensive path. See README
-[Composite layout & little-endian](../core-concepts/composite-layout.md).
+the expensive path. See
+[Composite layout & little-endian](core-concepts/composite-layout.md).
 
 ```sh
 cd sbe/benchmarks && cargo bench --bench layout_access_bench

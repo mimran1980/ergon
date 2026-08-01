@@ -3381,8 +3381,8 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn schema_marker_collision_avoided_with_composite_named_schema(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn schema_marker_collision_avoided_with_composite_named_schema()
+-> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
     <messageSchema package="col" id="1" version="0" byteOrder="littleEndian">
       <types>
@@ -3405,8 +3405,8 @@ fn schema_marker_collision_avoided_with_composite_named_schema(
     </messageSchema>"#;
     let ir = ergo_sbe::parse(xml)?;
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("col_codec"))
-        .generate(&schema)?;
+    let modules =
+        ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("col_codec")).generate(&schema)?;
     let src = &modules.modules().next().unwrap().source;
     assert!(
         src.contains("struct MsgMessageSchema"),
@@ -3421,13 +3421,79 @@ fn schema_marker_collision_avoided_with_composite_named_schema(
         src,
         r#"use col_codec::*;
         assert_ne!(MsgMessageSchema::TEMPLATE_ID, MsgMessageMessageSchema::TEMPLATE_ID);
+        // Verify both templates decode through AnyMessage (no collision at dispatch).
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
+        let len1 = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { f: 42u32 })
+            .encoded_length_with_header();
+        let msg1 = AnyMessage::decode(&buf[..len1], 0)?;
+        assert!(matches!(msg1, AnyMessage::Msg(_)), "template 1 should decode as Msg");
+
+        let mut buf2 = [0u8; MsgMessageEncoder::compute_length_with_header()];
+        let len2 = MsgMessageEncoder::wrap_and_apply_header(&mut buf2, 0)
+            .fixed(&MsgMessageFixedFields { f: 99u32 })
+            .encoded_length_with_header();
+        let msg2 = AnyMessage::decode(&buf2[..len2], 0)?;
+        assert!(matches!(msg2, AnyMessage::MsgMessage(_)), "template 2 should decode as MsgMessage");
         "#,
     );
     Ok(())
 }
 
 #[test]
-fn auto_bool_domain_works_with_arbitrary_bool_enum_name() -> Result<(), Box<dyn std::error::Error>> {
+fn any_message_encode_rejects_short_buffer() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+    <messageSchema package="eb" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1" blockLength="8">
+        <field name="a" id="1" type="uint32" offset="0"/>
+        <field name="b" id="2" type="uint32" offset="4"/>
+      </message>
+    </messageSchema>"#;
+    let ir = ergo_sbe::parse(xml)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let modules =
+        ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("eb_codec")).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+    compile_and_run(
+        "eb_codec",
+        src,
+        r#"use eb_codec::*;
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
+        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { a: 1u32, b: 2u32 })
+            .encoded_length_with_header();
+        let msg = AnyMessage::decode(&buf[..len], 0)?;
+
+        // Exact size: succeeds
+        let mut exact = [0u8; MsgEncoder::compute_length_with_header()];
+        let n = msg.encode(&mut exact)?;
+        assert_eq!(n, len);
+
+        // Oversized: succeeds
+        let mut big = [0u8; 256];
+        let n = msg.encode(&mut big)?;
+        assert_eq!(n, len);
+
+        // One byte short: must fail, not panic
+        let mut short = [0u8; MsgEncoder::compute_length_with_header() - 1];
+        let result = msg.encode(&mut short);
+        assert!(result.is_err(), "encode into short buffer must return Err, not panic");
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn auto_bool_domain_works_with_arbitrary_bool_enum_name() -> Result<(), Box<dyn std::error::Error>>
+{
     let xml = r#"<?xml version="1.0"?>
     <messageSchema package="ab" id="1" version="0" byteOrder="littleEndian">
       <types>
@@ -3448,8 +3514,7 @@ fn auto_bool_domain_works_with_arbitrary_bool_enum_name() -> Result<(), Box<dyn 
     </messageSchema>"#;
     let ir = ergo_sbe::parse(xml)?;
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let config = ergo_sbe::GenerationConfig::new("ab_codec")
-        .enable_bool_domain_type();
+    let config = ergo_sbe::GenerationConfig::new("ab_codec").enable_bool_domain_type();
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
     let src = &modules.modules().next().unwrap().source;
     assert!(

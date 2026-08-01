@@ -40,7 +40,7 @@ pub fn book_encoded_length(
     )],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let after_bids = L3BookEncodedLength::new().bids_ragged(bids.len() as u16, |g| {
+    let after_bids = L3BookEncoder::compute_length().bids_ragged(bids.len() as u16, |g| {
         for (_, _, orders) in bids {
             g.add()?.orders(|og| {
                 og.uniform(orders.len())?;
@@ -82,7 +82,7 @@ pub fn vardata_book_encoded_length(
     )],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let after_bids = L3BookVarDataEncodedLength::new().bids_ragged(bids.len() as u16, |g| {
+    let after_bids = L3BookVarDataEncoder::compute_length().bids_ragged(bids.len() as u16, |g| {
         for (_, _, orders) in bids {
             g.add()?.orders(|og| {
                 for (_, order_id) in *orders {
@@ -132,7 +132,7 @@ pub fn encode_book(
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
-            is_active: BooleanType::True,
+            is_active: true.into(),
         })
         .bids(bids.len() as u16, |g| {
             for (price, size, orders) in bids {
@@ -199,7 +199,7 @@ pub fn encode_vardata_book(
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
-            is_active: BooleanType::True,
+            is_active: true.into(),
         })
         .bids(bids.len() as u16, |g| {
             for (price, size, orders) in bids {
@@ -279,7 +279,7 @@ pub fn depth3_encoded_length(
     levels: &[(u32, &[(u64, &[u8])])],
     description: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let after_levels = Depth3TestEncodedLength::new().levels_ragged(levels.len() as u16, |g| {
+    let after_levels = Depth3TestEncoder::compute_length().levels_ragged(levels.len() as u16, |g| {
         for (_, items) in levels {
             g.add()?.items(|ig| {
                 for (_, tag) in *items {

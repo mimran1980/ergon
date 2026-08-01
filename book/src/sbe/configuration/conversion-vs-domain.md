@@ -24,7 +24,7 @@ Do **not** call both for the same selector — domain type already enables conve
 ```
 *(From `book/examples/conversion-app-code.rs` — app adapter pattern, compiles against tour_codec.)*
 
-```rust,no_run
+```rust,ignore
 {{#include ../../../examples/conversion-app-code.rs:conversion_encode_decode}}
 ```
 *(Same file — generic `_from`/`_as` encode/decode with `with_conversion`.)*
@@ -36,13 +36,13 @@ Do **not** call both for the same selector — domain type already enables conve
 ```
 *(Same source file — `book/examples/conversion-config.rs`.)*
 
-```rust,no_run
+```rust,ignore
 {{#include ../../../examples/conversion-app-code.rs:conversion_encode_decode}}
 ```
 
 Both styles on different fields:
 
-```rust,no_run
+```rust,ignore
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_conversion_only}}
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*

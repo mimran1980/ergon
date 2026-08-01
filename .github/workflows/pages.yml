@@ -33,15 +33,8 @@ jobs:
           curl -sSL https://github.com/rust-lang/mdBook/releases/latest/download/mdbook-v0.4.44-x86_64-unknown-linux-gnu.tar.gz \
             | tar xz -C "$HOME/.cargo/bin"
 
-      - name: Build workspace
-        run: cargo build --workspace
-
-      - name: Test book code blocks (via docs_validation_test)
-        run: cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=2
-
-      - name: Build book
-        working-directory: book
-        run: mdbook build
+      - name: Validate and build book (just book-ci)
+        run: just book-ci
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

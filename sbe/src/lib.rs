@@ -215,8 +215,8 @@
 //! - Version-aware accessors (`sinceVersion` / acting version)
 //! - Unsafe only on explicit `_unchecked` / documented paths
 //!
-//! Full narrative docs: [crate README](https://github.com/mimran1980/ergon/blob/first_cut/sbe/README.md).
-//! Benchmarks: [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/first_cut/sbe/BENCHMARKS.md).
+//! Book: [ergon book](https://mimran1980.github.io/ergon/).
+//! Benchmarks: [benchmarks chapter](https://mimran1980.github.io/ergon/sbe/benchmarks.html).
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
 

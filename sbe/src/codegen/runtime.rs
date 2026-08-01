@@ -722,7 +722,10 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     let is_bool = tokens[0].name == "BooleanType"
         || tokens[0].encoding.semantic_type.as_deref() == Some("Boolean")
         || (variants.len() == 2 && {
-            let names: Vec<String> = variants.iter().map(|v| v.variant_ident.to_string()).collect();
+            let names: Vec<String> = variants
+                .iter()
+                .map(|v| v.variant_ident.to_string())
+                .collect();
             crate::structured_ir::is_boolean_value_pair(&names[0], &names[1])
         });
 
@@ -1651,6 +1654,7 @@ pub(crate) fn generate_any_message(
     schema_id: u16,
     header_type: &str,
     schema_name: &str,
+    message_markers: &[(String, String)],
 ) -> proc_macro2::TokenStream {
     let header_size = elements
         .composites
@@ -1846,12 +1850,18 @@ pub(crate) fn generate_any_message(
     });
 
     {
-        let occupied = occupied_type_names(elements);
+        let marker_by_msg: std::collections::HashMap<&str, &str> = message_markers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
         let mut decode_arms = proc_macro2::TokenStream::new();
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
-            let schema = schema_marker_ident(&to_pascal_case(&m.name), &occupied);
+            let schema = syn::Ident::new(
+                marker_by_msg[to_pascal_case(&m.name).as_str()],
+                proc_macro2::Span::call_site(),
+            );
             decode_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
                     Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)))
@@ -1902,12 +1912,18 @@ pub(crate) fn generate_any_message(
     }
 
     {
-        let occupied = occupied_type_names(elements);
+        let marker_by_msg: std::collections::HashMap<&str, &str> = message_markers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
         let mut decode_frame_arms = proc_macro2::TokenStream::new();
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
-            let schema = schema_marker_ident(&to_pascal_case(&m.name), &occupied);
+            let schema = syn::Ident::new(
+                marker_by_msg[to_pascal_case(&m.name).as_str()],
+                proc_macro2::Span::call_site(),
+            );
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
@@ -2045,6 +2061,12 @@ pub(crate) fn generate_any_message(
                 Self::#name(d) => {
                     let len = d.encoded_length_with_header()?;
                     // `len` is header-inclusive; copy the full frame, not body-only.
+                    if len > buf.len() {
+                        return Err(sbe_rt::EncodeError::BufferTooShort {
+                            needed: len,
+                            available: buf.len(),
+                        });
+                    }
                     let bytes = d.as_bytes_with_header()?;
                     buf[..len].copy_from_slice(bytes);
                     Ok(len)
@@ -2059,6 +2081,12 @@ pub(crate) fn generate_any_message(
                     match self {
                         #encode_arms
                         Self::Unknown { payload, .. } => {
+                            if payload.len() > buf.len() {
+                                return Err(sbe_rt::EncodeError::BufferTooShort {
+                                    needed: payload.len(),
+                                    available: buf.len(),
+                                });
+                            }
                             buf[..payload.len()].copy_from_slice(payload);
                             Ok(payload.len())
                         }
@@ -2096,8 +2124,8 @@ pub(crate) fn generate_any_message(
                 #(#visitor_methods)*
 
                 /// Called for unknown template IDs (not in this schema).
-                /// `header` is the raw schema-declared MessageHeader; `payload` is
-                /// the bytes after the header. Default returns `unimplemented!()`.
+                /// `header` is the parsed schema-declared MessageHeader; `payload` is
+                /// the full frame (header + body). Default returns `unimplemented!()`.
                 fn visit_unknown(
                     &mut self,
                     header: &#header_type_ident,

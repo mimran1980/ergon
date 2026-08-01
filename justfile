@@ -84,8 +84,8 @@ release-check: test check-coverage
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
-    cargo publish -p ergo-aeron-cluster --dry-run --allow-dirty
-    @echo "release-check: product crates pass, benches compile, dry-run publish OK"
+    # ergo-aeron-cluster dry-run waits until ergo-sbe is on crates.io (publish step below).
+    @echo "release-check: product crates pass, benches compile, ergo-sbe dry-run publish OK"
 
 # Full release gate: test + bench → publish → tag → GitHub release → bump.
 # The LLM must bump the version + write changelog + write release notes before
@@ -105,11 +105,14 @@ release:
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
     @echo "=== tag ==="
-    git tag v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    git push origin v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    just _tag
     @echo "=== GitHub release ==="
-    gh release create v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') --title "ergon v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')" --notes-file /tmp/ergon-release-notes.md
-    @echo "=== release v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') complete ==="
+    gh release create v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') --title "ergon v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')" --notes-file /tmp/ergon-release-notes.md
+    @echo "=== release v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') complete ==="
+
+_tag:
+    git tag v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')
+    git push origin v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')
 
 # ── test ──────────────────────────────────────────────────────────────────
 

@@ -30,12 +30,15 @@ while you still have the schema in front of you, not a production incident.
 Order is enforced with the **same idea** as the classic type-state pattern
 (`Encoder<State>` / `PhantomData`), but **not** that implementation.
 
-**Implementation note:** an early design **did** use generic type-state stages.
-On some encode paths that was about **~17% slower** than comparable free-order
-flyweights. Profiling pointed at LLVM failing to optimise through the
-type-parameter stage chain the way it does for plain monomorphic code. The API
-was switched to **named stage structs** — same compile-time “you can only call
-the next legal method” behaviour, without the generic tax on the hot path.
+Each wire-order transition returns a **named concrete stage struct** (e.g.
+`CarAfterFuelFigures`). The `H: HeaderState` generic on every stage is a
+zero-sized orthogonal marker for header-present vs body-only mode — it tracks
+header capability, not wire-order progression. Duplicating the stage graph
+for `HeaderPresent` and `HeaderAbsent` would provide no latency advantage.
+
+All 10 maintained SBE parity comparisons pass at or below the `1.00×` ceiling
+under both LTO-on and LTO-off profiles. The closest case is non-LTO body-only
+encode at `0.9933×` sbe-tool.
 
 Generated code emits **separate types** for each stage, same fields, different
 methods:

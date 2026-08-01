@@ -14,4 +14,8 @@ book-test:
     cd book && mdbook test -L ../target/debug/deps
 
 # Build + test the book (CI equivalent).
-book-ci: book-test book-build
+# Uses the strict docs_validation_test harness, not the permissive mdbook test.
+book-ci: policy
+    cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=2
+    cd book && mdbook build
+    @echo "book-ci: docs validated, book built"

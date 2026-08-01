@@ -59,10 +59,6 @@ let config = GenerationConfig::new("msgs")
 ```rust,no_run
 {{#include ../../../examples/timestamp-conversions.rs:timestamp_encode_decode}}
 ```
-*(From `book/examples/timestamp-conversions.rs` — Heartbeat with UTCTimestamp domain type.)*
-let updated:  chrono::DateTime<chrono::Utc> = dec.updated_at_as()?;
-let received: chrono::DateTime<chrono::Utc> = dec.received_at_as()?;
-```
 
 The pattern generalises: **one Rust type, N wire representations** → one
 single-field composite per representation, each with its own `TryFromSbe` /

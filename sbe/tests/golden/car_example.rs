@@ -7412,11 +7412,23 @@ impl<'a> AnyMessage<'a> {
         match self {
             Self::Car(d) => {
                 let len = d.encoded_length_with_header()?;
+                if len > buf.len() {
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        needed: len,
+                        available: buf.len(),
+                    });
+                }
                 let bytes = d.as_bytes_with_header()?;
                 buf[..len].copy_from_slice(bytes);
                 Ok(len)
             }
             Self::Unknown { payload, .. } => {
+                if payload.len() > buf.len() {
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        needed: payload.len(),
+                        available: buf.len(),
+                    });
+                }
                 buf[..payload.len()].copy_from_slice(payload);
                 Ok(payload.len())
             }
@@ -7427,8 +7439,8 @@ pub trait MessageVisitor {
     type Output;
     fn visit_car(&mut self, decoder: &CarDecoder<'_>) -> Self::Output;
     /// Called for unknown template IDs (not in this schema).
-    /// `header` is the raw schema-declared MessageHeader; `payload` is
-    /// the bytes after the header. Default returns `unimplemented!()`.
+    /// `header` is the parsed schema-declared MessageHeader; `payload` is
+    /// the full frame (header + body). Default returns `unimplemented!()`.
     fn visit_unknown(&mut self, header: &MessageHeader, payload: &[u8]) -> Self::Output {
         unimplemented!(
             "unknown template id {} in schema {}", header.template_id(),

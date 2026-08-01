@@ -7,12 +7,12 @@ let mut buf = [0u8; 512];
 let fields = CarFixedFields {
     serial_number: 1234,
     model_year: 2013,
-    available: BooleanType::T,
+    available: true.into(),
     code: Model::A,
     some_numbers: [10, 20, 30, 40],
     vehicle_code: *b"ABCDEF",
     extras: OptionalExtras::default(),
-    engine: Engine::new(2000, 4, *b"123", 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 210)),
+    engine: Engine::new(2000, 4, *b"123", 0i8, false.into(), Booster::new(BoostType::TURBO, 210)),
 };
 let n = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .fixed(&fields)

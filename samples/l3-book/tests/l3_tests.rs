@@ -10,7 +10,7 @@ fn d(val: i64) -> Rd {
 
 #[test]
 fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookEncodedLength::new()
+    let len = L3BookEncoder::compute_length()
         .bids_ragged(1, |g| {
             g.add()?.orders(|og| {
                 og.add()?;
@@ -28,7 +28,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
-            is_active: BooleanType::True,
+            is_active: true.into(),
         })
         .bids(1, |g| {
             g.add(|e| {
@@ -57,7 +57,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookEncodedLength::new()
+    let len = L3BookEncoder::compute_length()
         .bids_ragged(0, |_g| Ok(()))?
         .asks_ragged(0, |_g| Ok(()))?
         .symbol(b"".len())?
@@ -69,7 +69,7 @@ fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 0,
             sequence: 0,
-            is_active: BooleanType::False,
+            is_active: false.into(),
         })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
@@ -101,7 +101,7 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
-            is_active: BooleanType::True,
+            is_active: true.into(),
         })
         .bids(bids.len() as u16, |g| {
             for (_, _, orders) in bids {
@@ -167,7 +167,7 @@ fn l3book_unknown_size_length_matches_encoded() -> Result<(), Box<dyn std::error
     let actual = l3_book::encode_book(&mut buf, bids, asks, symbol)?;
     assert_eq!(len, actual, "book_encoded_length must match encode_book");
 
-    let staged = L3BookEncodedLength::new()
+    let staged = L3BookEncoder::compute_length()
         .bids_unknown_size(|g| {
             for (_, _, orders) in bids {
                 g.add()?.orders(|og| {
@@ -222,7 +222,7 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(len, actual, "book_encoded_length must match encode_book");
 
     // Staged length builder (orders: dim=4, block=17 = u64 + Decimal).
-    let staged = L3BookEncodedLength::new()
+    let staged = L3BookEncoder::compute_length()
         .bids_ragged(bids.len() as u16, |g| {
             for (_, _, orders) in bids {
                 g.add()?.orders(|og| {
@@ -257,7 +257,7 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>> {
-    let len = L3BookVarDataEncodedLength::new()
+    let len = L3BookVarDataEncoder::compute_length()
         .bids_ragged(1, |g| {
             g.add()?.orders(|og| {
                 og.add()?.order_id(b"ORD-1".len())?;
@@ -276,7 +276,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
-            is_active: BooleanType::True,
+            is_active: true.into(),
         })
         .bids(1, |g| {
             g.add(|e| {
@@ -317,7 +317,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
     // Compute exact length via the staged builder — no magic buffers.
-    let len = L3BookVarDataEncodedLength::new()
+    let len = L3BookVarDataEncoder::compute_length()
         .bids_ragged(2, |g| {
             g.add()?.orders(|og| {
                 og.add()?.order_id(b"ABC".len())?;
@@ -341,7 +341,7 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 0,
             sequence: 0,
-            is_active: BooleanType::False,
+            is_active: false.into(),
         })
         .bids(2, |g| {
             g.add(|e| {
@@ -596,7 +596,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
 
     // ── Partially encoded (just fixed fields, no groups/var-data) ──
     {
-        let len = L3BookEncodedLength::new()
+        let len = L3BookEncoder::compute_length()
             .bids_ragged(0, |_| Ok(()))?
             .asks_ragged(0, |_| Ok(()))?
             .symbol(0)?
@@ -608,7 +608,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
             .fixed(&L3BookFixedFields {
                 exchange_timestamp: 0,
                 sequence: 0,
-                is_active: BooleanType::False,
+                is_active: false.into(),
             })
             .bids(0, |_| Ok(()))?
             .asks(0, |_| Ok(()))?
@@ -710,7 +710,7 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     let description = b"depth-3 test";
 
     // Encode into an exact-sized buffer.
-    let len = Depth3TestEncodedLength::new()
+    let len = Depth3TestEncoder::compute_length()
         .levels_ragged(levels.len() as u16, |g| {
             for (_, items) in levels {
                 g.add()?.items(|ig| {

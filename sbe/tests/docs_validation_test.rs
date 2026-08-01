@@ -103,7 +103,11 @@ fn feature_tour_codec_source() -> Result<String, Box<dyn std::error::Error>> {
                 ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
                 "chrono::DateTime<chrono::Utc>",
             )
-            .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal")),
+            .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"))
+            .with_domain_type(
+                ergo_sbe::ConversionSelector::named_type("Decimal"),
+                "rust_decimal::Decimal",
+            ),
     )
     .generate(&schema)?
     .modules()
@@ -550,18 +554,29 @@ fn book_md_files() -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
 fn book_fences_no_ignored() -> Result<(), Box<dyn std::error::Error>> {
     for md_path in book_md_files()? {
         let md = fs::read_to_string(&md_path)?;
-        let offenders: Vec<_> = md
-            .lines()
+        let lines: Vec<&str> = md.lines().collect();
+        let offenders: Vec<_> = lines
+            .iter()
             .enumerate()
-            .filter(|(_, line)| {
+            .filter(|(i, line)| {
                 let trimmed = line.trim();
-                trimmed.starts_with("```") && trimmed.contains("ignore")
+                if !(trimmed.starts_with("```") && trimmed.contains("ignore")) {
+                    return false;
+                }
+                // `rust,ignore` is allowed when the fence body starts with
+                // `{{#include` — the code is compiled by the project's own build.
+                if let Some(next) = lines.get(i + 1)
+                    && next.trim().starts_with("{{#include")
+                {
+                    return false;
+                }
+                true
             })
             .map(|(i, _)| i + 1)
             .collect();
         assert!(
             offenders.is_empty(),
-            "{} has ignored Rust fences at lines {offenders:?}",
+            "{} has ignored Rust fences without {{#include}} at lines {offenders:?}",
             md_path.display()
         );
     }
@@ -579,7 +594,6 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut compiled = 0usize;
     let mut skipped = 0usize;
-    let mut deferred = 0usize;
 
     let md_files = book_md_files()?;
     assert!(!md_files.is_empty(), "no book markdown files found");
@@ -614,27 +628,6 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
             ) {
                 Ok(()) => compiled += 1,
                 Err(e) => {
-                    // Some anchors reference adapter types (FixedPrice, impl
-                    // TryFromSbe, type aliases) defined outside the anchor.
-                    // Those are verified by the feature-tour crate's own tests.
-                    // Introduction's "parent hopping" demo uses placeholder
-                    // variable names to show API shape — not compilable.
-                    // Build-script / path-include anchors need OUT_DIR layout
-                    // that the fence harness does not provide.
-                    if md_path.ends_with("introduction.md") || md_path.ends_with("include.md") {
-                        deferred += 1;
-                        continue;
-                    }
-                    if resolved.contains("FixedPrice")
-                        || resolved.contains("impl TryFromSbe")
-                        || resolved.contains("generate_schema(")
-                        || resolved.contains("generate_to_out_dir")
-                        || resolved.contains("#[path = \"generated/")
-                        || resolved.contains("include!(concat!(env!(\"OUT_DIR\")")
-                    {
-                        deferred += 1;
-                        continue;
-                    }
                     let msg = format!(
                         "Book fence in {} failed to compile:\n{e}\n--- body ---\n{resolved}",
                         md_path.display()
@@ -644,7 +637,7 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    eprintln!("book_fences_compile: {compiled} compiled, {skipped} skipped, {deferred} deferred");
+    eprintln!("book_fences_compile: {compiled} compiled, {skipped} skipped");
     assert!(
         compiled > 0,
         "expected at least one compilable fence in the book"

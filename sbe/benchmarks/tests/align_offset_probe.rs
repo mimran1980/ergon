@@ -1,4 +1,5 @@
-//! Fixed64 encode/decode at non-zero absolute offsets (alignment_bench contract).
+//! Fixed64 encode/decode at non-zero absolute offsets (`alignment_bench` contract).
+#![allow(clippy::unwrap_used, clippy::panic)]
 use ergo_sbe_benchmarks::codec_matrix::{Fixed64Decoder, Fixed64Encoder, Fixed64FixedFields};
 
 fn encode_at(buffer: &mut [u8], offset: usize) -> usize {

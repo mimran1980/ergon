@@ -71,9 +71,13 @@ pub(crate) fn is_bool_enum(elements: &SchemaElements, enum_name: &str) -> bool {
 }
 
 /// Extended detection: name, semanticType, OR exactly two valid values
-/// forming a recognisable true/false pair. Used by
-/// `enable_bool_domain_type()` to auto-register `bool` converters for
-/// schemas that don't use the canonical `BooleanType` naming.
+/// forming a recognisable true/false pair with discriminants 0 and 1.
+/// Used by `enable_bool_domain_type()` to auto-register `bool` converters
+/// for schemas that don't use the canonical `BooleanType` naming.
+///
+/// Only the canonical `{0, 1}` representation is supported by auto-detection.
+/// Other boolean encodings (e.g. `Yes=5, No=3`) should use explicit
+/// `with_conversion` instead.
 pub(crate) fn is_bool_value_enum(elements: &SchemaElements, enum_name: &str) -> bool {
     if is_bool_enum(elements, enum_name) {
         return true;
@@ -82,12 +86,27 @@ pub(crate) fn is_bool_value_enum(elements: &SchemaElements, enum_name: &str) -> 
         if e[0].name != enum_name {
             return false;
         }
-        let vals: Vec<&str> = e
+        let value_tokens: Vec<&crate::ir::Token> = e
             .iter()
             .filter(|t| t.signal == crate::ir::Signal::Encoding)
-            .map(|t| t.name.as_str())
             .collect();
-        vals.len() == 2 && is_boolean_value_pair(vals[0], vals[1])
+        if value_tokens.len() != 2 {
+            return false;
+        }
+        let names: Vec<&str> = value_tokens.iter().map(|t| t.name.as_str()).collect();
+        if !is_boolean_value_pair(names[0], names[1]) {
+            return false;
+        }
+        // Only auto-detect when discriminants are exactly 0 and 1.
+        // Arbitrary values (e.g. Yes=5, No=3) require explicit with_conversion.
+        // Enum discriminant values are stored in encoding.constant_value (as strings).
+        let has_disc_0 = value_tokens
+            .iter()
+            .any(|t| t.encoding.constant_value.as_deref() == Some("0"));
+        let has_disc_1 = value_tokens
+            .iter()
+            .any(|t| t.encoding.constant_value.as_deref() == Some("1"));
+        has_disc_0 && has_disc_1
     })
 }
 
@@ -848,7 +867,11 @@ mod tests {
         ));
     }
 
-    fn enum_elements(name: &str, semantic_type: Option<&str>, values: &[&str]) -> SchemaElements {
+    fn enum_elements(
+        name: &str,
+        semantic_type: Option<&str>,
+        values: &[(&str, u16)],
+    ) -> SchemaElements {
         let mut enum_tokens = vec![token(
             name,
             Signal::BeginEnum,
@@ -857,11 +880,17 @@ mod tests {
                 ..Encoding::default()
             },
         )];
-        enum_tokens.extend(
-            values
-                .iter()
-                .map(|value| token(value, Signal::Encoding, Encoding::default())),
-        );
+        enum_tokens.extend(values.iter().map(|&(value, disc)| {
+            token(
+                value,
+                Signal::Encoding,
+                Encoding {
+                    presence: crate::ir::Presence::Constant,
+                    constant_value: Some(disc.to_string()),
+                    ..Encoding::default()
+                },
+            )
+        }));
         enum_tokens.push(token(name, Signal::EndEnum, Encoding::default()));
         SchemaElements {
             composites: Vec::new(),
@@ -873,21 +902,25 @@ mod tests {
 
     #[test]
     fn bool_enum_detection_covers_names_semantics_and_value_pairs() {
-        let ordinary = enum_elements("Enabled", None, &["Yes", "No"]);
+        let ordinary = enum_elements("Enabled", None, &[("Yes", 0), ("No", 1)]);
         assert!(is_bool_value_enum(&ordinary, "Enabled"));
         assert!(!is_bool_value_enum(&ordinary, "Other"));
 
-        let reversed = enum_elements("Active", None, &["false", "TRUE"]);
+        let reversed = enum_elements("Active", None, &[("false", 1), ("TRUE", 0)]);
         assert!(is_bool_value_enum(&reversed, "Active"));
 
-        let non_boolean = enum_elements("Side", None, &["Buy", "Sell"]);
+        let non_boolean = enum_elements("Side", None, &[("Buy", 0), ("Sell", 1)]);
         assert!(!is_bool_value_enum(&non_boolean, "Side"));
 
-        let semantic = enum_elements("Flag", Some("Boolean"), &["Off", "On"]);
+        // Auto-detection requires discriminants 0/1; arbitrary values are rejected.
+        let non_canonical_disc = enum_elements("Choice", None, &[("Yes", 5), ("No", 3)]);
+        assert!(!is_bool_value_enum(&non_canonical_disc, "Choice"));
+
+        let semantic = enum_elements("Flag", Some("Boolean"), &[("Off", 0), ("On", 1)]);
         assert!(is_bool_enum(&semantic, "Flag"));
         assert!(is_bool_value_enum(&semantic, "Flag"));
 
-        let canonical = enum_elements("BooleanType", None, &["Zero", "One"]);
+        let canonical = enum_elements("BooleanType", None, &[("Zero", 0), ("One", 1)]);
         assert!(is_bool_enum(&canonical, "BooleanType"));
     }
 }

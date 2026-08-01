@@ -56,7 +56,7 @@ thread of the code.
 ergo-sbe leans on **scoped closures** and **chaining** so nested schemas stay
 readable and you rarely pass encoder ownership field-to-field by hand:
 
-```rust,no_run
+```text
   // Nested shape mirrors the schema — no .parent() hopscotch.
   enc.fixed(&fields)
       .bids(n, |bids| {
@@ -93,10 +93,10 @@ and a maintained benchmark gate versus sbe-tool-generated codecs (see
 |---|---|---|
 | [`sbe/`](sbe/getting-started.md) | `ergo-sbe` | SBE schema parser and Rust codec generator |
 | [`sbe/benchmarks/`](sbe/benchmarks.md) | `ergo-sbe-benchmarks` | Unpublished parity benchmarks |
-| [`cluster/`](../cluster/overview.md) | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
-| [`samples/`](../samples/overview.md) | five standalone crates | Unpublished integration playgrounds |
+| [`cluster/`](https://github.com/mimran1980/ergon/tree/main/cluster) | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
+| [`samples/`](https://github.com/mimran1980/ergon/tree/main/samples) | seven standalone crates | Unpublished integration playgrounds |
 
-The workspace requires Rust 1.95 or newer. The sample crates are intentionally
+The workspace requires Rust 1.88 or newer. The sample crates are intentionally
 excluded from the Cargo workspace and remain `publish = false`.
 
 ## Set up
@@ -126,7 +126,7 @@ Pull-request CI also enforces the non-decreasing coverage baseline and executes
 target for ten minutes, Miri fixtures nightly, and critical-path mutation
 testing weekly. Missing or empty results fail closed.
 
-See [`samples/README.md`](samples/README.md) for standalone sample commands and
+See the [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md) for standalone sample commands and
 Java harness requirements. Run `just --list` for the repository's available
 build, test, interoperability, and benchmark recipes.
 

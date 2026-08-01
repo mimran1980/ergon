@@ -562,7 +562,13 @@ impl GenerationConfig {
     /// Auto-register `bool` converters for every boolean enum in the
     /// schema. Syntax sugar for calling
     /// `with_domain_type(named_type("BooleanType"), "bool")` for each —
-    /// detects by name, `semanticType="Boolean"`, or True/False value pairs.
+    /// detects by name, `semanticType="Boolean"`, or True/False value pairs
+    /// with discriminants `0` and `1`.
+    ///
+    /// Only the canonical `{0, 1}` discriminant representation is detected
+    /// automatically. Schemas with non-standard boolean encodings (e.g.
+    /// `Yes=5, No=3`) should use explicit [`ConversionSelector::named_type`]
+    /// with [`GenerationConfig::with_conversion`] instead.
     #[must_use]
     pub fn enable_bool_domain_type(mut self) -> Self {
         self.auto_bool_domain = true;

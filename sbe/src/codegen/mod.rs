@@ -1002,9 +1002,10 @@ impl Generator {
             .collect();
 
         let mut schema_markers = occupied_type_names(&elements);
+        let mut message_markers: Vec<(String, String)> = Vec::new();
         for msg in &messages {
             let multi = messages.len() > 1;
-            let (decoder_ts, _marker) = generate_message_decoder(
+            let (decoder_ts, marker) = generate_message_decoder(
                 msg,
                 &elements,
                 &mut schema_markers,
@@ -1024,6 +1025,7 @@ impl Generator {
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
+            message_markers.push((to_pascal_case(&msg.name), marker));
             // Hooks for the message decoder
             if self.config.has_hooks() {
                 let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder, schema);
@@ -1173,8 +1175,14 @@ impl Generator {
         src.push('\n');
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
-        let any_msg_ts =
-            generate_any_message(&messages, &elements, ir.id, &ir.header_type, &ir.package);
+        let any_msg_ts = generate_any_message(
+            &messages,
+            &elements,
+            ir.id,
+            &ir.header_type,
+            &ir.package,
+            &message_markers,
+        );
         src.push_str(&any_msg_ts.to_string());
         src.push('\n');
 
