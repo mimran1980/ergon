@@ -414,15 +414,14 @@ fn documented_generated_surface_strings() -> Result<(), Box<dyn std::error::Erro
 fn documented_encode_decode_smoke() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(&docs_schema_xml())?;
     let schema = Schema::from_ir(ir);
-    let src = Generator::new(
-        GenerationConfig::new("docs_run").with_domain_objects(DomainVarData::Bytes),
-    )
-    .generate(&schema)?
-    .modules()
-    .next()
-    .ok_or("no module")?
-    .source
-    .clone();
+    let src =
+        Generator::new(GenerationConfig::new("docs_run").with_domain_objects(DomainVarData::Bytes))
+            .generate(&schema)?
+            .modules()
+            .next()
+            .ok_or("no module")?
+            .source
+            .clone();
 
     let tmp = tempfile::tempdir()?;
     let crate_dir = tmp.path().join("docs_run");
