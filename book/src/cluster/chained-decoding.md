@@ -5,7 +5,7 @@ message). Use the decoder's `remaining()` to get the payload, then
 `AnyMessage::decode` to parse the next message. This uses the non-stable
 `cluster_codec_types` seam described above:
 
-```text
+```rust,ignore
 use ergo_aeron_cluster::cluster_codec_types::*;
 
 fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
