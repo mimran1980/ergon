@@ -5,7 +5,7 @@ no `with_domain_type`. `publish = false`.
 
 ## Conversion style
 
-```rust,no_run
+```text
   // build.rs — multi-schema via generate_to_dir
   let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
   let config = GenerationConfig::new(module_name)

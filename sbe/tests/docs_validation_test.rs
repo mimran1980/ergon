@@ -595,6 +595,12 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
                     // Some anchors reference adapter types (FixedPrice, impl
                     // TryFromSbe, type aliases) defined outside the anchor.
                     // Those are verified by the feature-tour crate's own tests.
+                    // Introduction's "parent hopping" demo uses placeholder
+                    // variable names to show API shape — not compilable.
+                    if md_path.ends_with("introduction.md") {
+                        deferred += 1;
+                        continue;
+                    }
                     if resolved.contains("FixedPrice") || resolved.contains("impl TryFromSbe") {
                         deferred += 1;
                         continue;

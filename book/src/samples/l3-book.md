@@ -4,7 +4,7 @@ Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
 
 ## Conversion style: `with_domain_type` only
 
-```rust,no_run
+```text
   // build.rs — one canonical Rust type per field
   let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
   ergo_sbe::generate_to_dir(

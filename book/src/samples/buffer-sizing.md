@@ -13,7 +13,7 @@ Never guess with `vec![0u8; 4096]`.
 then encode into a claim or slot of that exact length:
 
 ```rust,no_run
-{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_size_and_encode}}
+{{#include ../../../samples/sbe-feature-tour/src/lib.rs:demo_car_size_and_encode}}
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
 
