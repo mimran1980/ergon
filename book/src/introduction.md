@@ -56,21 +56,22 @@ thread of the code.
 ergo-sbe leans on **scoped closures** and **chaining** so nested schemas stay
 readable and you rarely pass encoder ownership field-to-field by hand:
 
-```text
-// Nested shape mirrors the schema — no .parent() hopscotch.
-enc.fixed(&fields)
-    .bids(n, |bids| {
-        bids.add(|level| {
-            level.price(p).size(s);
-            level.orders(m, |ords| {
-                ords.add(|o| { o.order_id(id); Ok(()) })?;
-                Ok(())
-            })?;
-            Ok(())
-        })?;
-        Ok(())
-    })?
-    .ask_var_data(bytes)?;
+```rust,no_run
+  // Nested shape mirrors the schema — no .parent() hopscotch.
+  enc.fixed(&fields)
+      .bids(n, |bids| {
+          bids.add(|level| {
+              level.price(p).size(s);
+              level.orders(m, |ords| {
+                  ords.add(|o| { o.order_id(id); Ok(()) })?;
+                  Ok(())
+              })?;
+              Ok(())
+          })?;
+          Ok(())
+      })?
+      .asks(0, |_| Ok(()))?
+      .symbol(b"EURUSD")?;
 ```
 
 Wire parity is exercised three ways: official Java `.sbe` fixtures, **live
@@ -81,28 +82,10 @@ checked-in sbe-tool reference crates under `sbe/tests/sbe_tool_reference/`),
 and a maintained benchmark gate versus sbe-tool-generated codecs (see
 [BENCHMARKS.md](sbe/benchmarks.md)).
 
-> **Early release (0.x).** This is the first published line of the crate. The
-> **experimental banner stays** until the project has been battle-tested in
-> enough real production environments — not merely until unit tests pass.
->
-> Binary compatibility is covered by a large automated suite (golden bytes,
-> schema edge cases, parity benches). That is necessary, not sufficient, for
-> removing this warning.
->
-> **If you use `ergo-sbe` in production**, please say so (GitHub issue or
-> discussion). Hearing from heavy production users is how this banner goes
-> away. Until then, expect possible API and generated-surface churn on the
-> `0.x` series, and pin versions deliberately.
->
-> **What we most want reports on** (open an issue titled e.g.
-> `production-use: <your domain>`):
->
-> 1. Live multi-schema / multi-template streams (not only unit fixtures)
-> 2. Domain DTOs (`enable_domain_objects`) in a real app path — especially
->    `DomainVarData::LossyStrings` re-encode behaviour
-> 3. Exact buffer sizing + Aeron/IPC **try_claim** (no oversize scratch buffers)
-> 4. Nested/ragged books or similar twin groups (bids/asks order safety)
-> 5. Schema evolution (`sinceVersion`) under mixed acting versions
+> **Early release (0.x).** Experimental APIs may change. Binary wire
+> compatibility is covered by an automated suite (golden bytes, schema edge
+> cases, parity benches). Pin versions and report production use — real-world
+> feedback is how the experimental banner goes away.
 
 ## Workspace
 
