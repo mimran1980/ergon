@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-08-01
+
+### Changed
+- **Codegen split:** mod.rs 9,075 → 1,723 lines (-81%), 14 responsibility modules extracted
+- **Config API unified:** `enable_*` renamed to `with_*`; all boolean toggles take `(bool)`
+- **Config knobs:** `with_display_debug(bool)`, `with_meta_attributes(bool)`, `with_dispatch(bool)` — enabled by default; disable to shrink generated output
+- **Benchmark methodology** requires self-comparison against previous release (not just sbe-tool)
+- **No-LTO bench gate is canonical** hard gate; LTO moved to soft warning (thermal variance on shared hardware)
+- Nightly CI → weekly schedule
+- `rust,ignore` fences allowed unconditionally in `.md` files for syntax highlighting
+
+### Added
+- `with_unchecked_companions` safety contract documented in rustdoc
+- `cargo-deny` + `cargo-audit` in CI and justfile (`deny.toml`)
+- Aeron `try_claim` integration recipe page in book
+- bench-cold diagnostic wired into `just release-check`
+
+### Fixed
+- Outdated 17% performance claims replaced with current benchmark evidence
+- Book introduction redesigned with runnable code above the fold
+- Book landing pages filled with orientation prose
+- AI-ASSISTANCE.md book page converted to `{{#include}}`
+- Recipes page broken markdown fence fixed
+- Missing `libbsd-dev` across CI jobs; `just` in pages workflow
+- Release notes existence checked before publish, not after
+
+### Internal
+- Public facade tightened: `ir`, `resolve`, `xml` modules doc-hidden
+- Dead code removed: `generate_raw_fixed_impls`, `has_nested_dynamic_tail`, `generate_encoded_length_builder`
+- Cluster lockstep mechanized: `version.workspace = true`
+- `Cargo.lock` tracked; per-sample READMEs deleted; stale directories cleaned
+- Semver checks extended to cluster crate
+
 ## [0.1.8] — 2026-08-01
 
 ### Fixed
