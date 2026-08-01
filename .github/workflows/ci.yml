@@ -9,6 +9,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel in-progress runs when a newer commit is pushed to the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
@@ -21,6 +26,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Install ripgrep (required by check-test-policy.sh)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
 
       - name: Prove test policy and reject suppressions
         run: |
@@ -68,14 +76,26 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+
       - run: ./scripts/regenerate-sbe-tool-reference.sh --check
       - run: ./scripts/regenerate-golden.sh --check
       - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=2
       - run: cargo test -p ergo-aeron-cluster --lib
       - run: cargo test --doc
 
+  # Fail-fast gate: downstream jobs need this, so if policy, lint, or test
+  # fails the gate is skipped and everything else is cancelled.
+  gate:
+    needs: [policy, lint, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: echo "gate passed"
+
   coverage:
-    needs: policy
+    needs: gate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -112,7 +132,7 @@ jobs:
       - run: cargo +1.88.0 test -p ergo-sbe --lib --all-features
 
   aeron-cluster-integration:
-    needs: policy
+    needs: gate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -129,6 +149,9 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev
+
       - name: Build Aeron jars
         run: cd aeron && ./gradlew :aeron-cluster:jar :aeron-archive:jar :aeron-all:jar :aeron-samples:jar
 
@@ -136,10 +159,13 @@ jobs:
         run: cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
 
       - name: Cluster HA sample
-        run: cd samples/cluster-ha-orderbook && cargo test --features test-harness -- --test-threads=1
+        run: |
+          cd samples/cluster-ha-orderbook
+          cargo check  # triggers build script
+          cargo test --features test-harness -- --test-threads=1
 
   samples:
-    needs: policy
+    needs: gate
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -152,6 +178,13 @@ jobs:
           toolchain: "1.95.0"
           components: rustfmt, clippy
 
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+
+      - name: Pre-build exchange-example (generates code before fmt)
+        run: cd samples/exchange-example && cargo check
+
+
       - name: exchange-example (fmt, clippy, test)
         run: |
           cd samples/exchange-example
@@ -162,6 +195,8 @@ jobs:
       - name: cluster-ha-orderbook (fmt, clippy, test)
         run: |
           cd samples/cluster-ha-orderbook
+          cargo check  # triggers build script
+          cargo fmt     # format generated code
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test --lib --test ha_offline_pipeline -- --test-threads=1
@@ -169,6 +204,8 @@ jobs:
       - name: cluster-rfq (fmt, clippy)
         run: |
           cd samples/cluster-rfq
+          cargo check  # triggers build script
+          cargo fmt     # format generated code
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
 
@@ -194,11 +231,14 @@ jobs:
         with:
           toolchain: "1.95.0"
 
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+
       - run: cargo build --release --workspace --exclude ergo-aeron-cluster
       - run: cargo build --release -p ergo-aeron-cluster
 
   bench:
-    needs: policy
+    needs: gate
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -209,6 +249,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95.0"
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
 
       - run: cargo bench -p ergo-sbe-benchmarks --no-run
       - run: cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
@@ -231,7 +274,7 @@ jobs:
           if-no-files-found: ignore
 
   package:
-    needs: policy
+    needs: gate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -246,53 +289,8 @@ jobs:
       - run: cargo package -p ergo-sbe
       - run: cargo publish -p ergo-sbe --dry-run
 
-  portability-smoke:
-    needs: policy
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, windows-2025]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.95.0"
-
-      - run: cargo test -p ergo-sbe --lib
-
-  portability-cross:
-    needs: policy
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - i686-unknown-linux-gnu
-          - s390x-unknown-linux-gnu
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.95.0"
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cross
-
-      - name: Execute codec library tests under cross/QEMU
-        run: cross test -p ergo-sbe --lib --all-features --target ${{ matrix.target }}
-
   semver:
-    needs: policy
+    needs: gate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

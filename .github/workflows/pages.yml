@@ -27,10 +27,15 @@ jobs:
         with:
           toolchain: "1.95.0"
 
+      - uses: extractions/setup-just@v2
+
+      - name: Install system dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+
       - name: Install mdBook
         run: |
           mkdir -p "$HOME/.cargo/bin"
-          curl -sSL https://github.com/rust-lang/mdBook/releases/latest/download/mdbook-v0.4.44-x86_64-unknown-linux-gnu.tar.gz \
+          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.44/mdbook-v0.4.44-x86_64-unknown-linux-gnu.tar.gz \
             | tar xz -C "$HOME/.cargo/bin"
 
       - name: Validate and build book (just book-ci)
