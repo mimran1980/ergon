@@ -3379,3 +3379,102 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
     );
     Ok(())
 }
+
+#[test]
+fn schema_marker_collision_avoided_with_composite_named_schema(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+    <messageSchema package="col" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="MsgSchema">
+          <type name="field" primitiveType="uint32"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1" blockLength="4">
+        <field name="f" id="1" type="uint32" offset="0"/>
+      </message>
+      <message name="MsgMessage" id="2" blockLength="4">
+        <field name="f" id="1" type="uint32" offset="0"/>
+      </message>
+    </messageSchema>"#;
+    let ir = ergo_sbe::parse(xml)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("col_codec"))
+        .generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+    assert!(
+        src.contains("struct MsgMessageSchema"),
+        "Msg marker: missing MsgMessageSchema"
+    );
+    assert!(
+        src.contains("struct MsgMessageMessageSchema"),
+        "MsgMessage marker: missing MsgMessageMessageSchema"
+    );
+    compile_and_run(
+        "col_codec",
+        src,
+        r#"use col_codec::*;
+        assert_ne!(MsgMessageSchema::TEMPLATE_ID, MsgMessageMessageSchema::TEMPLATE_ID);
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn auto_bool_domain_works_with_arbitrary_bool_enum_name() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+    <messageSchema package="ab" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+        <enum name="YesNo" encodingType="uint8">
+          <validValue name="No">0</validValue>
+          <validValue name="Yes">1</validValue>
+        </enum>
+      </types>
+      <message name="Vote" id="1" blockLength="1">
+        <field name="approved" id="1" type="YesNo" offset="0"/>
+      </message>
+    </messageSchema>"#;
+    let ir = ergo_sbe::parse(xml)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("ab_codec")
+        .enable_bool_domain_type();
+    let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+    assert!(
+        src.contains("impl TryFromSbe<YesNo> for bool"),
+        "auto_bool must emit TryFromSbe<YesNo> for bool"
+    );
+    assert!(
+        src.contains("impl TryToSbe<YesNo> for bool"),
+        "auto_bool must emit TryToSbe<YesNo> for bool"
+    );
+    compile_and_run(
+        "ab_codec",
+        src,
+        r#"use ab_codec::*;
+        let mut buf = [0u8; VoteEncoder::compute_length_with_header()];
+        let len = VoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&VoteFixedFields { approved: YesNo::Yes })
+            .encoded_length_with_header();
+        let dec = VoteDecoder::try_from(&buf[..len])?;
+        // Wire type accessor returns the enum:
+        assert_eq!(dec.approved(), YesNo::Yes);
+        // auto_bool_domain generates _bool accessor returning bool:
+        let approved: bool = dec.approved_bool();
+        assert!(approved);
+        "#,
+    );
+    Ok(())
+}

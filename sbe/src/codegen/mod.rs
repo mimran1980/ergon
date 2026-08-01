@@ -1001,11 +1001,13 @@ impl Generator {
             .map(|toks| parse_message_structure(toks, &elements))
             .collect();
 
+        let mut schema_markers = occupied_type_names(&elements);
         for msg in &messages {
             let multi = messages.len() > 1;
-            let decoder_ts = generate_message_decoder(
+            let (decoder_ts, _marker) = generate_message_decoder(
                 msg,
                 &elements,
+                &mut schema_markers,
                 ir.byte_order,
                 ir.id,
                 ir.version,
@@ -1688,6 +1690,7 @@ fn generate_entry_consuming_stages(
 fn generate_message_decoder(
     msg: &MessageStructure,
     elements: &SchemaElements,
+    schema_markers: &mut std::collections::HashSet<String>,
     byte_order: ByteOrder,
     schema_id: u16,
     schema_version: u16,
@@ -1701,7 +1704,7 @@ fn generate_message_decoder(
     _unchecked_companions: bool,
     hooks: &crate::config::Hooks,
     schema: &crate::Schema,
-) -> proc_macro2::TokenStream {
+) -> (proc_macro2::TokenStream, String) {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
     let order_suffix = match byte_order {
@@ -1808,8 +1811,9 @@ fn generate_message_decoder(
     // Disambiguate when a composite/enum/set already claims `{Name}Schema`.
     // Emitted *before* the decoder so message `description` rustdoc attaches
     // to the decoder/encoder types, not this marker.
-    let occupied = occupied_type_names(elements);
-    let schema_ident = schema_marker_ident(&name, &occupied);
+    let schema_ident = schema_marker_ident(&name, schema_markers);
+    let marker_name = schema_ident.to_string();
+    schema_markers.insert(marker_name.clone());
     ts.extend(quote::quote! {
         pub struct #schema_ident;
         impl #schema_ident {
@@ -2394,7 +2398,7 @@ fn generate_message_decoder(
                             Some(#target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))))
                         }
                     });
-                    if is_bool_enum(elements, enum_name) {
+                    if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
                         let fname_bool = quote::format_ident!("{}_bool", fname_snake);
                         impl_body.extend(quote::quote! {
                             #[inline]
@@ -2411,7 +2415,7 @@ fn generate_message_decoder(
                             #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                         }
                     });
-                    if is_bool_enum(elements, enum_name) {
+                    if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
                         let fname_bool = quote::format_ident!("{}_bool", fname_snake);
                         impl_body.extend(quote::quote! {
                             #[inline]
@@ -3030,7 +3034,7 @@ fn generate_message_decoder(
         ts.extend(domain_ts);
     }
 
-    ts
+    (ts, marker_name)
 }
 
 /// Generate owned domain structs + From<Decoder> impls for a message and all
@@ -3092,7 +3096,7 @@ fn domain_entry_can_bulk_encode(
                     && find_domain_type(f, domain_types).is_none()
                     && !matches!(
                         &f.field_type,
-                        FieldType::Enum { name, .. } if is_bool_enum(elements, name)
+                        FieldType::Enum { name, .. } if crate::structured_ir::is_bool_enum(elements, name)
                     ))
         })
 }
@@ -3389,7 +3393,7 @@ fn generate_domain_recursive(
             FieldType::Enum {
                 name: enum_name, ..
             } => {
-                if is_bool_enum(elements, enum_name) {
+                if crate::structured_ir::is_bool_enum(elements, enum_name) {
                     // bool enums → plain bool in DTO
                     let bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
                     if f.since_version > 0 {
@@ -4929,7 +4933,7 @@ fn generate_group_decoder(
                     });
                 }
 
-                if is_bool_enum(elements, enum_name) {
+                if crate::structured_ir::is_bool_enum(elements, enum_name) {
                     let bool_ident = quote::format_ident!("{}_bool", f_name);
                     if f.since_version > 0 {
                         entry_body.extend(quote::quote! {
@@ -5539,23 +5543,16 @@ fn generate_conversion_impl_blocks(
     let span = proc_macro2::Span::call_site();
 
     // Built-ins require an explicit domain-type mapping (not conversion-only).
-    let has_bool_conv = domain_types.iter().any(|(sel, ty)| {
-        ty == "bool" && matches!(sel, crate::ConversionSelector::NamedType(n) if n == "BooleanType")
-    });
-    let has_decimal_conv = domain_types
-        .iter()
-        .any(|(sel, _)| matches!(sel, crate::ConversionSelector::NamedType(n) if n == "Decimal"));
-    let has_chrono_conv = domain_types.iter().any(|(sel, _)| {
-        matches!(sel, crate::ConversionSelector::SemanticType(st) if st == "UTCTimestamp")
-    });
-
-    if has_bool_conv {
-        let bt_name = elements
-            .enums
-            .iter()
-            .find(|e| e[0].name == "BooleanType")
-            .map(|e| to_pascal_case(&e[0].name))
-            .unwrap_or_else(|| "BooleanType".to_string());
+    // Emit TryFromSbe / TryToSbe for EVERY boolean enum mapped to "bool",
+    // not just the one literally named BooleanType.
+    for (sel, ty) in domain_types {
+        if ty != "bool" {
+            continue;
+        }
+        let bt_name = match sel {
+            crate::ConversionSelector::NamedType(n) => to_pascal_case(n),
+            _ => continue,
+        };
         let bt_ident = syn::Ident::new(&bt_name, span);
         let ts = quote::quote! {
             impl TryFromSbe<#bt_ident> for bool {
@@ -5575,6 +5572,13 @@ fn generate_conversion_impl_blocks(
         };
         out.push_str(&ts.to_string());
     }
+
+    let has_decimal_conv = domain_types
+        .iter()
+        .any(|(sel, _)| matches!(sel, crate::ConversionSelector::NamedType(n) if n == "Decimal"));
+    let has_chrono_conv = domain_types.iter().any(|(sel, _)| {
+        matches!(sel, crate::ConversionSelector::SemanticType(st) if st == "UTCTimestamp")
+    });
 
     if has_decimal_conv {
         let dec_composite = elements.composites.iter().find(|c| c[0].name == "Decimal");
@@ -7127,7 +7131,7 @@ fn generate_message_encoder(
                     }
                 });
                 // Boolean fields get an additional setter that accepts bool directly
-                if is_bool_enum(elements, enum_name) {
+                if crate::structured_ir::is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
                     impl_contents.extend(quote::quote! {
                         #[inline]
@@ -8203,7 +8207,7 @@ fn generate_group_encoder(
                         self
                     }
                 });
-                if is_bool_enum(elements, enum_name) {
+                if crate::structured_ir::is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_snake), span);
                     entry_methods.extend(quote::quote! {
                         #[inline]

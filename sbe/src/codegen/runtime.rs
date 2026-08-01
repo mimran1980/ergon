@@ -715,9 +715,16 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         })
         .collect();
 
-    // Detect boolean enum type (name convention or semanticType="Boolean")
+    // Detect boolean enum type: name convention, semanticType attribute, or
+    // exactly two variants that form a true/false pair (same heuristic as
+    // structured_ir::is_bool_value_enum so that auto_bool_domain and trait
+    // emission agree).
     let is_bool = tokens[0].name == "BooleanType"
-        || tokens[0].encoding.semantic_type.as_deref() == Some("Boolean");
+        || tokens[0].encoding.semantic_type.as_deref() == Some("Boolean")
+        || (variants.len() == 2 && {
+            let names: Vec<String> = variants.iter().map(|v| v.variant_ident.to_string()).collect();
+            crate::structured_ir::is_boolean_value_pair(&names[0], &names[1])
+        });
 
     let (false_ident, true_ident) = if is_bool {
         let f = variants

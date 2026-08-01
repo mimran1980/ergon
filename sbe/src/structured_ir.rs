@@ -92,7 +92,7 @@ pub(crate) fn is_bool_value_enum(elements: &SchemaElements, enum_name: &str) -> 
 }
 
 /// Heuristic: do the two enum value names form a true/false pair?
-fn is_boolean_value_pair(a: &str, b: &str) -> bool {
+pub(crate) fn is_boolean_value_pair(a: &str, b: &str) -> bool {
     let (lower, upper) = if a.eq_ignore_ascii_case("true")
         || a.eq_ignore_ascii_case("yes")
         || a.eq_ignore_ascii_case("y")
