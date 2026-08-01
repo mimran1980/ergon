@@ -1,7 +1,7 @@
 //! `TryFromSbe` / `TryToSbe` trait emission and built-in domain-type impls.
 
-use crate::structured_ir::SchemaElements;
 use super::runtime::to_pascal_case;
+use crate::structured_ir::SchemaElements;
 
 /// Emit `TryFromSbe` / `TryToSbe` traits into the generated sbe_rt module.
 pub(crate) fn emit_conversion_traits(src: &mut String) {

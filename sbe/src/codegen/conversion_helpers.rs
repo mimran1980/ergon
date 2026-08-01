@@ -1,9 +1,9 @@
 //! Conversion and DTO helper functions shared by codegen paths.
 
+use super::runtime::to_snake_case;
 use crate::ir::{Presence, PrimitiveType};
 use crate::structured_ir::{FieldType, MessageField, SchemaElements, rust_type};
 use crate::{GenerationConfig, Schema};
-use super::runtime::to_snake_case;
 
 /// Extract [`crate::FieldInfo`] entries from message fields (constant fields
 /// excluded). Used by context builders and hook dispatch.
