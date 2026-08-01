@@ -299,8 +299,26 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Check ergo-sbe public API compatibility
+      - name: Check ergo-sbe semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           manifest-path: Cargo.toml
           package: ergo-sbe
+
+      - name: Check ergo-aeron-cluster semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: Cargo.toml
+          package: ergo-aeron-cluster
+
+  audit:
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - run: cargo deny check
+      - run: cargo audit
