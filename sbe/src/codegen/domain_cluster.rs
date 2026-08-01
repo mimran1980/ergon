@@ -10,8 +10,8 @@ use super::conversion_helpers::{
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::{
-    get_dim_num_layout, get_dimension_info, get_vardata_info, rust_type, FieldType, MessageField,
-    MessageGroup, MessageStructure, MessageVarData, SchemaElements,
+    FieldType, MessageField, MessageGroup, MessageStructure, MessageVarData, SchemaElements,
+    get_dim_num_layout, get_dimension_info, get_vardata_info, rust_type,
 };
 /// Generate owned domain structs + From<Decoder> impls for a message and all
 /// its group entries. Groups are `Vec<…EntryDomain>`; var-data follows

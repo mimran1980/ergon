@@ -1041,7 +1041,6 @@ impl Generator {
     }
 }
 
-
 /// Generate a `pub mod prelude` that re-exports the common API surface so users
 /// can write `use my_schema::prelude::*;`.
 #[cfg(test)]
