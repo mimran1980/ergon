@@ -2,6 +2,7 @@
 
 Runnable, tested code for every pattern lives in [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour). See its `src/lib.rs` for the full API map.
 
+- [Aeron try_claim](recipes/aeron-try-claim.md)
 - [Display / Debug](recipes/display-debug.md)
 - [Schema Descriptions → Rustdoc](recipes/schema-rustdoc.md)
 - [Domain DTOs](recipes/domain-dtos.md)

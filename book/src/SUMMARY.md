@@ -29,6 +29,7 @@
   - [GenerationConfig Options](./sbe/configuration/generation-config.md)
   - [Code-Generation Hooks](./sbe/configuration/hooks.md)
 - [Recipes](./sbe/recipes.md)
+  - [Aeron try_claim](./sbe/recipes/aeron-try-claim.md)
   - [Display / Debug](./sbe/recipes/display-debug.md)
   - [Schema Descriptions → Rustdoc](./sbe/recipes/schema-rustdoc.md)
   - [Domain DTOs](./sbe/recipes/domain-dtos.md)

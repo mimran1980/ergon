@@ -85,6 +85,8 @@ release-check: test check-coverage
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     # ergo-aeron-cluster dry-run waits until ergo-sbe is on crates.io (publish step below).
+    @echo "=== bench-cold (generated-size + compile-time diagnostic) ==="
+    bash scripts/measure-codegen-cold-path.sh
     @echo "release-check: product crates pass, benches compile, ergo-sbe dry-run publish OK"
 
 # Full release gate: test + bench → publish → tag → GitHub release → bump.
