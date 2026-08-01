@@ -1,6 +1,6 @@
 # Design Notes
 
-This section covers technical rationale and design decisions behind ergo-sbe.
+Rationale and trade-off analysis behind specific ergo-sbe decisions.
 
-- [Why NullVal Instead of Option](design-notes/nullval.md)
-- [Feature Matrix](design-notes/feature-matrix.md)
+- [Why NullVal Instead of Option](design-notes/nullval.md) — how missing fields work on the wire
+- [Feature Matrix](design-notes/feature-matrix.md) — capability comparison across SBE generators
