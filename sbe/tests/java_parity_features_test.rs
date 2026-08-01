@@ -404,7 +404,8 @@ fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn s
 
         // Older-version decode (acting_version 0): the sinceVersion=1 field
         // must be cleanly omitted, not panic, not print garbage.
-        let old_dec = MDecoder::wrap(&buf[..len], 8, 2, 0);
+        // wrap takes message start (absolute coordinates), not body offset.
+        let old_dec = MDecoder::wrap(&buf[..len], 0, 2, 0);
         let old_text = format!("{old_dec:?}");
         assert!(old_text.contains("topFlags"), "{old_text}");
         assert!(!old_text.contains("verFlags"), "{old_text}");

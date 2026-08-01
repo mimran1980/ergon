@@ -59,8 +59,6 @@ use sha2::{Digest, Sha256};
 /// One generated Rust source file.
 ///
 /// Write `source` to `OUT_DIR.join(path)` from `build.rs`, then:
-///
-/// Write `source` to `OUT_DIR.join(path)` from `build.rs`, then:
 /// `mod msgs { include!(concat!(env!("OUT_DIR"), "/msgs.rs")); }`
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedModule {
@@ -72,7 +70,7 @@ pub struct GeneratedModule {
 
 /// Set of modules from [`Generator::generate`] or [`Generator::generate_multi`].
 ///
-/// ```
+/// ```rust
 /// # use std::path::Path;
 /// # fn example(generator: &mut ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
 /// let set = generator.generate(schema)?;

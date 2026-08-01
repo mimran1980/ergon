@@ -419,6 +419,15 @@ impl GenerationConfig {
     /// In build.rs: `.with_conversion(ConversionSelector::named_type("Decimal"))`.
     /// Application code: `enc.price_from(&my_price)?;` / `dec.price_as::<MyPrice>()?`.
     ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, ConversionSelector};
+    ///
+    /// let config = GenerationConfig::new("msgs")
+    ///     .with_conversion(ConversionSelector::named_type("Decimal"));
+    /// ```
+    ///
     /// → [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
     ///
     /// Prefer [`Self::with_domain_type`] when one concrete Rust type is enough.
@@ -442,6 +451,18 @@ impl GenerationConfig {
     ///
     /// In build.rs: `.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")`
     /// Application: `enc.price(rust_decimal::Decimal::new(12345, 2))` / `let p = dec.price()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, ConversionSelector};
+    ///
+    /// let config = GenerationConfig::new("msgs")
+    ///     .with_domain_type(
+    ///         ConversionSelector::named_type("Decimal"),
+    ///         "rust_decimal::Decimal",
+    ///     );
+    /// ```
     ///
     /// Do **not** also call [`Self::with_conversion`] for the same selector.
     #[must_use]
