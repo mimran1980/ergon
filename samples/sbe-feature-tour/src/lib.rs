@@ -180,6 +180,7 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
 /// Walk Car in wire order: fixed random-access fields, then groups, then var-data.
 // ANCHOR: demo_car_decode_stages
 pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    // ANCHOR: flyweight_access
     let car = CarDecoder::try_from(wire)?;
     assert_eq!(car.serial_number(), 1234);
     assert_eq!(car.model_year(), 2013);
@@ -189,6 +190,7 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(car.code(), Model::A);
     assert_eq!(car.discounted_model(), Model::C); // constant field
     assert_eq!(car.engine().capacity(), 2000);
+    // ANCHOR_END: flyweight_access
 
     // Consuming stages enforce fuelFigures → performanceFigures → strings.
     let mut fuel = car.into_fuel_figures()?;

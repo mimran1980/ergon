@@ -16,23 +16,10 @@ block + Σ(groups) + Σ(var-data).
 | Fixed only | `{Msg}Encoder::compute_length_with_header()` (**const**) | stack / claim of that length |
 | Groups / nested / ragged | `{Msg}EncodedLength` staged builder | `len` then encode into a claim/slot of `len` |
 
-```text
-// Exact size first (Car example), then encode into a slot of that length —
-// e.g. Aeron try_claim, or any &mut [u8] with len == claim.
-let len = CarEncodedLength::new()
-    .fuel_figures(2)
-    .usage_description(5)?
-    .performance_figures(1)
-    .acceleration(2)?
-    .manufacturer(5)?
-    .model(9)?
-    .activation_code(6)?
-    .encoded_length_with_header()
-        .expect("header present");
-
-// claim_or_slot.len() == len — no oversize guess buffer.
-let actual_len = CarEncoder::try_wrap_and_apply_header(&mut claim_or_slot, 0)?
-    .fixed(&fields)
+```rust,no_run
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_size_and_encode}}
+```
+*(From `sbe-feature-tour` — EncodedLength + exact buffer encode, tested in CI.)*
     .fuel_figures(2, |g| { /* … */ Ok(()) })?
     .performance_figures(1, |g| { /* … */ Ok(()) })?
     .manufacturer(b"Honda")?

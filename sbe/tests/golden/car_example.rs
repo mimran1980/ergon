@@ -1044,7 +1044,6 @@ impl<'a> EngineDecoder<'a> {
         Booster(read_bytes_unchecked::<2>(self.buf, offset))
     }
 }
-///Description of a basic Car
 pub struct CarSchema;
 impl CarSchema {
     pub const SCHEMA_ID: u16 = 1;
@@ -1053,6 +1052,7 @@ impl CarSchema {
     pub const BLOCK_LENGTH: usize = 45;
     pub const HEADER_LENGTH: usize = 8;
 }
+///Description of a basic Car
 pub struct CarDecoder<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,

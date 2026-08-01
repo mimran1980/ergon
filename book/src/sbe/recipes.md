@@ -12,21 +12,10 @@ Runnable, tested code for every pattern lives in [sbe-feature-tour](https://gith
 
 **Known vs unknown group count:**
 
-```text
-// Known count (must add() exactly `count` times):
-let known_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .fixed(&fields)
-    .fuel_figures(2, |g| {
-        g.add(|e| { e.speed(30).mpg(35.5); Ok(()) })?;
-        g.add(|e| { e.speed(55).mpg(49.0); Ok(()) })?;
-        Ok(())
-    })?
-    .performance_figures(0, |_| Ok(()))?
-    .manufacturer(b"Honda")?
-    .model(b"Civic")?
-    .activation_code(b"active")?
-    .encoded_length_with_header()
-        .expect("header present");
+```rust,no_run
+{{#include ../../../samples/sbe-feature-tour/src/lib.rs:encode_sample_car}}
+```
+*(From `sbe-feature-tour` — known-count groups with chaining, tested in CI.)*
 
 // Unknown size: count back-patched after the closure (streaming producers).
 let unknown_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?

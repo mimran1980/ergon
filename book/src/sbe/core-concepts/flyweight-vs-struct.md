@@ -39,11 +39,10 @@ additions break at **compile time**:
 
 #### Decode — flyweight (prefer for single-field reads)
 
-```text
-let car = CarDecoder::try_from(buf)?;
-// Only touch what you need — no allocation, no materialising the rest of the car.
-let year = car.model_year();
+```rust,no_run
+{{#include ../../../examples/flyweight-access.rs:flyweight_access}}
 ```
+*(From `sbe-feature-tour` — per-field zero-copy access, tested in CI.)*
 
 #### Decode — whole message as a DTO
 
