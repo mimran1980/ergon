@@ -37,11 +37,11 @@ cargo test --manifest-path samples/exchange-example/Cargo.toml
 Rule: **one style per selector**. `with_domain_type` already enables conversion;
 do not stack `with_conversion` on the same selector.
 
-```text
-// A — pluggable
-.with_conversion(ConversionSelector::named_type("Decimal"))
-// B — concrete (implies conversion)
-.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
+```rust,no_run
+{{#include ../../examples/conversion-config.rs:with_conversion}}
+```
+```rust,no_run
+{{#include ../../examples/conversion-config.rs:with_domain_type}}
 ```
 
 ## Rules

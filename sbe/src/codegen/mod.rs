@@ -1804,11 +1804,10 @@ fn generate_message_decoder(
     let encoded_len_lit =
         syn::LitInt::new(&encoded_length.to_string(), proc_macro2::Span::call_site());
 
-    if let Some(ref desc) = msg.description {
-        ts.extend(doc_attr_tokens(desc));
-    }
     // Schema constants struct — no turbofish, shared by encoder and decoder.
     // Disambiguate when a composite/enum/set already claims `{Name}Schema`.
+    // Emitted *before* the decoder so message `description` rustdoc attaches
+    // to the decoder/encoder types, not this marker.
     let occupied = occupied_type_names(elements);
     let schema_ident = schema_marker_ident(&name, &occupied);
     ts.extend(quote::quote! {
@@ -1830,6 +1829,9 @@ fn generate_message_decoder(
     } else {
         quote::quote! {}
     };
+    if let Some(ref desc) = msg.description {
+        ts.extend(doc_attr_tokens(desc));
+    }
     ts.extend(quote::quote! {
         #derive_attr
         pub struct #decoder_ident<'a> {

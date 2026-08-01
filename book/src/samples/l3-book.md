@@ -4,24 +4,10 @@ Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
 
 ## Conversion style: `with_domain_type` only
 
-```text
-  // build.rs — one canonical Rust type per field
-  let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
-  ergo_sbe::generate_to_dir(
-      "schemas/l3-book.xml",
-      GenerationConfig::new("l3_codec")
-          .enable_domain_objects(DomainVarData::Bytes)
-          .with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
-          .with_domain_type(
-              ConversionSelector::semantic_type("UTCTimestamp"),
-              "chrono::DateTime<chrono::Utc>",
-          ),
-      &out,
-  )?;
-  // lib.rs — build-dep only; no runtime ergo-sbe:
-  // #[path = "generated/l3_codec.rs"]
-  // mod l3_codec;
+```rust,no_run
+{{#include ../../examples/conversion-config.rs:with_domain_type}}
 ```
+*(From `book/examples/conversion-config.rs`. Full L3 `build.rs`: [l3-book](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/build.rs).)*
 
 **Generated API (concrete):**
 
