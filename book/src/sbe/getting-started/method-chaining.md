@@ -8,18 +8,13 @@ intermediate encoder variables.
 
 **Prefer (one chain, one `let`):**
 
-```text
-let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
-let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .fixed(&QuoteFixedFields {
-        seq: 1,
-        symbol: *b"AAPL  ",
-    })
-    .encoded_length_with_header()
-        .expect("header present");
-
-let dec = QuoteDecoder::try_from(&buf[..len])?;
-assert_eq!(dec.seq(), 1);
+```rust,no_run
+  let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
+  let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+      .fixed(&HeartbeatFixedFields { seq: 7 })
+      .encoded_length_with_header();
+  let dec = HeartbeatDecoder::try_from(&buf[..len])?;
+  assert_eq!(dec.seq(), 7);
 ```
 
 ### Staged chaining vs fixed-only
