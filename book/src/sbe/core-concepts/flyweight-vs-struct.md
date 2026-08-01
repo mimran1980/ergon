@@ -12,7 +12,11 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 #### Decode — individual fields (flyweight)
 
 ```rust,no_run
-  // Only read what you need; no owned DTO or whole-message materialisation.
+  // Per-field zero-copy access — no DTO allocation.
+  let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
+  let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+      .fixed(&HeartbeatFixedFields { seq: 7 })
+      .encoded_length_with_header();
   let dec = HeartbeatDecoder::try_from(&buf[..len])?;
   let seq = dec.seq();
   assert_eq!(seq, 7);
