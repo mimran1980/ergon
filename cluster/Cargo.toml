@@ -56,8 +56,8 @@ required-features = ["test-harness"]
 [dev-dependencies]
 proptest = "1.11"
 rusteron-media-driver = { workspace = true }
-serial_test = { version = "3", features = ["file_locks"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+serial_test = { version = "4", features = ["file_locks"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [build-dependencies]
 ergo-sbe = { version = "0.1.9", path = "../sbe" }
