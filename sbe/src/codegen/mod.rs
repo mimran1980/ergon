@@ -1537,6 +1537,9 @@ fn generate_owner_consuming_stages(
     }
 
     let complete_ident = stage_after_ident(total_tail - 1);
+    // Message complete stages: `pos` is body start; header is `header_size`
+    // bytes before. Entry complete stages pass `header_size == 0`, so the
+    // header-inclusive view equals the body view.
     ts.extend(quote::quote! {
         impl<'a> #complete_ident<'a> {
             /// Body bytes (excluding the message header; for entries this is the
@@ -1544,6 +1547,12 @@ fn generate_owner_consuming_stages(
             #[inline]
             pub fn as_body_bytes(&self) -> &'a [u8] {
                 &self.buf[self.pos..self.tail_start]
+            }
+            /// Complete SBE frame (header + body) for message stages.
+            /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+            #[inline]
+            pub fn as_bytes_with_header(&self) -> &'a [u8] {
+                &self.buf[self.pos - #header_size_lit..self.tail_start]
             }
             /// Body length (excluding header).
             #[inline]

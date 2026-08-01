@@ -2480,6 +2480,12 @@ impl<'a> FuelFiguresEntryDecoderComplete<'a> {
     pub fn as_body_bytes(&self) -> &'a [u8] {
         &self.buf[self.pos..self.tail_start]
     }
+    /// Complete SBE frame (header + body) for message stages.
+    /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+    #[inline]
+    pub fn as_bytes_with_header(&self) -> &'a [u8] {
+        &self.buf[self.pos - 0..self.tail_start]
+    }
     /// Body length (excluding header).
     #[inline]
     pub fn encoded_length(&self) -> usize {
@@ -3268,6 +3274,12 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
     pub fn as_body_bytes(&self) -> &'a [u8] {
         &self.buf[self.pos..self.tail_start]
     }
+    /// Complete SBE frame (header + body) for message stages.
+    /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+    #[inline]
+    pub fn as_bytes_with_header(&self) -> &'a [u8] {
+        &self.buf[self.pos - 0..self.tail_start]
+    }
     /// Body length (excluding header).
     #[inline]
     pub fn encoded_length(&self) -> usize {
@@ -3951,6 +3963,12 @@ impl<'a> CarDecoderComplete<'a> {
     #[inline]
     pub fn as_body_bytes(&self) -> &'a [u8] {
         &self.buf[self.pos..self.tail_start]
+    }
+    /// Complete SBE frame (header + body) for message stages.
+    /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+    #[inline]
+    pub fn as_bytes_with_header(&self) -> &'a [u8] {
+        &self.buf[self.pos - 8..self.tail_start]
     }
     /// Body length (excluding header).
     #[inline]

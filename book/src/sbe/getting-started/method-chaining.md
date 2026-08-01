@@ -22,11 +22,10 @@ intermediate encoder variables.
 For a fixed-only message like `Quote`, `try_wrap_and_apply_header` returns
 the encoder. `.fixed(...)` completes the write and returns `&Self`:
 
-```text
-let enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?.fixed(&fields);
-let len = enc.encoded_length_with_header()
-        .expect("header present");
+```rust,no_run
+{{#include ../../../examples/heartbeat-encode.rs:staged_chaining}}
 ```
+*(From `book/examples/heartbeat-encode.rs` — compiles against the book test codec.)*
 
 **Avoid (interrupted chain, rebinding):**
 
