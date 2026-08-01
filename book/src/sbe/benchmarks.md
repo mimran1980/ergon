@@ -12,18 +12,6 @@ ergon's maintained benchmarks compare generated codecs with official
 toolchain-specific, so this repository documents the method and gate rather
 than retaining dated point estimates as release guarantees.
 
-## Latest run
-
-| | |
-|---|---|
-| **Date** | 2026-07-30 |
-| **Release tree** | `feat/0.1.5` cluster fairness correction |
-| **Host** | Apple M4 (macOS Darwin, arm64) |
-| **Toolchain** | rustc 1.95.0 |
-| **Benchmark profiles** | LTO on and LTO off; codegen-units=1 |
-| **SBE gate** | **10/10 at or below 1.00 in both profiles** |
-| **Cluster gate** | **5/5 PASS** (body-only fairness fix validated) |
-
 ## What the numbers actually measure
 
 Most of the measured difference between ergo-sbe and sbe-tool comes down to

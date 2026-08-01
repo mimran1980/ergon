@@ -621,9 +621,7 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
                     // variable names to show API shape — not compilable.
                     // Build-script / path-include anchors need OUT_DIR layout
                     // that the fence harness does not provide.
-                    if md_path.ends_with("introduction.md")
-                        || md_path.ends_with("include.md")
-                    {
+                    if md_path.ends_with("introduction.md") || md_path.ends_with("include.md") {
                         deferred += 1;
                         continue;
                     }

@@ -36,9 +36,8 @@ jobs:
       - name: Build workspace
         run: cargo build --workspace
 
-      - name: Test book code blocks
-        working-directory: book
-        run: mdbook test -L ../target/debug/deps
+      - name: Test book code blocks (via docs_validation_test)
+        run: cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=2
 
       - name: Build book
         working-directory: book
