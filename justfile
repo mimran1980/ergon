@@ -9,6 +9,7 @@
 import 'just/samples.just'
 import 'just/aeron.just'
 import 'just/housekeeping.just'
+import 'just/book.just'
 
 # Default: list available commands.
 default:
