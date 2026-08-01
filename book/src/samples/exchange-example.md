@@ -5,12 +5,13 @@ no `with_domain_type`. `publish = false`.
 
 ## Conversion style
 
-```text
-// build.rs — multi-schema via generate_to_out_dir
-let config = GenerationConfig::new(module_name)
-    .with_conversion(ConversionSelector::named_type("Decimal"));
-ergo_sbe::generate_to_out_dir("schemas/normalized-app.xml", config)?;
-// lib.rs: ergo_sbe::sbe_mod!(pub normalized_app);
+```rust,no_run
+  // build.rs — multi-schema via generate_to_dir
+  let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+  let config = GenerationConfig::new(module_name)
+      .with_conversion(ConversionSelector::named_type("Decimal"));
+  ergo_sbe::generate_to_dir("schemas/normalized-app.xml", config, &out)?;
+  // lib.rs: #[path = "generated/normalized_app.rs"] mod normalized_app;
 ```
 
 That emits **generic** methods. The app supplies `TryFromSbe` / `TryToSbe`:

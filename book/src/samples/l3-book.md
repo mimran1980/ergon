@@ -4,21 +4,23 @@ Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
 
 ## Conversion style: `with_domain_type` only
 
-```text
-// build.rs — one canonical Rust type per field
-ergo_sbe::generate_to_out_dir(
-    "schemas/l3-book.xml",
-    GenerationConfig::new("l3_codec")
-        .enable_domain_objects(DomainVarData::Bytes) // or LossyStrings for String var-data
-        .with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
-        .enable_bool_domain_type()
-        .with_domain_type(
-            ConversionSelector::semantic_type("UTCTimestamp"),
-            "chrono::DateTime<chrono::Utc>",
-        ),
-)?;
-// lib.rs — plain include (build-dep only; no runtime ergo-sbe):
-// mod l3_codec { include!(concat!(env!("OUT_DIR"), "/l3_codec.rs")); }
+```rust,no_run
+  // build.rs — one canonical Rust type per field
+  let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+  ergo_sbe::generate_to_dir(
+      "schemas/l3-book.xml",
+      GenerationConfig::new("l3_codec")
+          .enable_domain_objects(DomainVarData::Bytes)
+          .with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
+          .with_domain_type(
+              ConversionSelector::semantic_type("UTCTimestamp"),
+              "chrono::DateTime<chrono::Utc>",
+          ),
+      &out,
+  )?;
+  // lib.rs — build-dep only; no runtime ergo-sbe:
+  // #[path = "generated/l3_codec.rs"]
+  // mod l3_codec;
 ```
 
 **Generated API (concrete):**
@@ -43,8 +45,8 @@ call `with_conversion(Decimal)` here — it would not change the surface.
 | Path | Role |
 |------|------|
 | `schemas/l3-book.xml` | Nested bids/asks, orders, var-data tails |
-| `build.rs` | `generate_to_out_dir` + domain objects / `with_domain_type` (**build-dep only**) |
-| `src/lib.rs` | plain `include!` of `$OUT_DIR` + EncodedLength helpers |
+| `build.rs` | `generate_to_dir` into `src/generated/` + domain objects / `with_domain_type` (**build-dep only**) |
+| `src/lib.rs` | `#[path = "generated/l3_codec.rs"]` + EncodedLength helpers |
 | `src/main.rs` | Runnable demos |
 | `tests/l3_tests.rs` | Round-trips |
 

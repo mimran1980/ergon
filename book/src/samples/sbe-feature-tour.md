@@ -7,23 +7,13 @@ crates.io / docs.rs teaching entry.
 
 `build.rs` uses **different APIs for different selectors**:
 
-```text
-// build.rs
-ergo_sbe::generate_to_out_dir(
-    "schemas/feature-tour.xml",
-    GenerationConfig::new("feature_tour")
-        .enable_domain_objects(DomainVarData::LossyStrings) // String var-data (invalid UTF-8 → "")
-        // Concrete methods: available() -> bool, timestamp() -> DateTime<Utc>
-        .enable_bool_domain_type()
-        .with_domain_type(
-            ConversionSelector::semantic_type("UTCTimestamp"),
-            "chrono::DateTime<chrono::Utc>",
-        )
-        // Generic only on Quote.price / size — you implement TryFromSbe
-        .with_conversion(ConversionSelector::named_type("Decimal")),
-)?;
-// lib.rs: ergo_sbe::sbe_mod!(pub feature_tour);
+```rust,no_run
+{{#include ../../../../samples/sbe-feature-tour/build.rs:build_rs_example}}
 ```
+*(The real `build.rs` — this code is compiled and tested in CI.)*
+
+The generated code is included via `#[path = "generated/feature_tour.rs"]` —
+no `sbe_mod!` needed. See [Build Patterns](../build-patterns.md).
 
 | Selector | Config | Decode API | Encode API |
 |----------|--------|------------|------------|
