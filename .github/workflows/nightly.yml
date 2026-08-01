@@ -1,7 +1,8 @@
 name: Nightly hostile-input verification
 
 on:
-  # schedule disabled — manual trigger only via workflow_dispatch
+  schedule:
+    - cron: "23 17 * * *"  # daily at 17:23 UTC
   workflow_dispatch:
 
 env:
