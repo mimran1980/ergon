@@ -11,11 +11,11 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 
 #### Decode — individual fields (flyweight)
 
-```text
-// Only read what you need; no owned DTO or whole-message materialisation.
-let car = CarDecoder::try_from(buf)?;
-let serial_number = car.serial_number();
-let model_year = car.model_year();
+```rust,no_run
+  // Only read what you need; no owned DTO or whole-message materialisation.
+  let dec = HeartbeatDecoder::try_from(&buf[..len])?;
+  let seq = dec.seq();
+  assert_eq!(seq, 7);
 ```
 
 #### Encode — whole fixed block as a struct
@@ -23,41 +23,14 @@ let model_year = car.model_year();
 When you always populate every fixed field, a struct is clearer **and** schema
 additions break at **compile time**:
 
-```text
-// Generated (simplified):
-// pub struct CarFixedFields {
-//     pub serial_number: u64,
-//     pub model_year: u16,
-//     pub available: BooleanType,
-//     pub code: Model,
-//     pub some_numbers: [u32; 4],
-//     pub vehicle_code: [u8; 6],
-//     pub extras: OptionalExtras,
-//     pub engine: Engine,
-// }
-
-let len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .fixed(&CarFixedFields {
-        serial_number: 1234,
-        model_year: 2013,
-        available: true.into(),
-        code: Model::A,
-        some_numbers: [10, 20, 30, 40],
-        vehicle_code: *b"ABCDEF",
-        extras,
-        engine,
-    })
-    .fuel_figures(0, |_| Ok(()))?
-    .performance_figures(0, |_| Ok(()))?
-    .manufacturer(b"Honda")?
-    .model(b"Civic")?
-    .activation_code(b"active")?
-    .encoded_length_with_header()
-        .expect("header present");
-let frame = &buf[..len];
-
-// If the schema later adds `paint_code` to the fixed block, this stops compiling
-// until you add `paint_code: …` to the struct literal — you cannot silently omit it.
+```rust,no_run
+  // Generated struct — fill every field at once:
+  // pub struct HeartbeatFixedFields { pub seq: u32 }
+  let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+      .fixed(&HeartbeatFixedFields { seq: 7 })
+      .encoded_length_with_header();
+// If the schema later adds a field to the fixed block, this stops compiling
+// until you add it to the struct literal — you cannot silently omit it.
 ```
 
 #### Decode — flyweight (prefer for single-field reads)
