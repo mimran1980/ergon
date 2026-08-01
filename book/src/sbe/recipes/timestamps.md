@@ -6,14 +6,14 @@ but **all mapping to `chrono::DateTime<Utc>`** in Rust. The generated
 micros need their own `TryFromSbe`/`TryToSbe` impls. Distinguish them with
 `FieldPath` selectors:
 
-```text
+```rust,no_run
 <!-- schema fragment — three uint64 fields, same wire type, three precisions -->
 <field name="created_at"  id="1" type="uint64" semanticType="UTCTimestamp"/>
 <field name="updated_at"  id="2" type="uint64" semanticType="UTCTimestampMicros"/>
 <field name="received_at" id="3" type="uint64" semanticType="UTCTimestampMillis"/>
 ```
 
-```text
+```rust,no_run
 // build.rs — register converters for all three
 let config = GenerationConfig::new("msgs")
     .with_conversion(ConversionSelector::field_path("Event.created_at"))   // nanos, built-in
@@ -26,7 +26,7 @@ converter — `TryFromSbe<u64>` can only exist once. Resolve this by naming
 the wire fields unique types — the idiomatic pattern when three `uint64`
 columns mean three different things:
 
-```text
+```rust,no_run
 <!-- Distinguish wire types by name — all are uint64 under the hood -->
 <composite name="TimestampNanos">  <type name="ts" primitiveType="uint64"/>  </composite>
 <composite name="TimestampMicros"> <type name="ts" primitiveType="uint64"/>  </composite>
@@ -46,32 +46,9 @@ around `u64`). Implement the converters per-type, no blanket-clash:
 ```rust,no_run
 {{#include ../../../examples/timestamp-conversions.rs:timestamp_adapter_nanos}}
 ```
-*(From `book/examples/timestamp-conversions.rs` — compiles against tour_codec.)*
-impl TryFromSbe<TimestampMicros> for chrono::DateTime<chrono::Utc> {
-    type Error = &'static str;
-    fn try_from_sbe(wire: TimestampMicros) -> Result<Self, Self::Error> {
-        chrono::DateTime::from_timestamp(
-            (wire.0 / 1_000_000) as i64,
-            ((wire.0 % 1_000_000) * 1_000) as u32,
-        )
-        .ok_or("timestamp out of range")
-    }
-}
+*(From `book/examples/timestamp-conversions.rs` — compiles against tour_codec. Micros and millis converters follow the same pattern with different scaling.)*
 
-// Millis
-impl TryFromSbe<TimestampMillis> for chrono::DateTime<chrono::Utc> {
-    type Error = &'static str;
-    fn try_from_sbe(wire: TimestampMillis) -> Result<Self, Self::Error> {
-        chrono::DateTime::from_timestamp(
-            (wire.0 / 1_000) as i64,
-            ((wire.0 % 1_000) * 1_000_000) as u32,
-        )
-        .ok_or("timestamp out of range")
-    }
-}
-```
-
-```text
+```rust,no_run
 // build.rs — three selectors, each naming a distinct named type
 let config = GenerationConfig::new("msgs")
     .with_conversion(ConversionSelector::named_type("TimestampNanos"))
