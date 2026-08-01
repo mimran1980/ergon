@@ -29,10 +29,10 @@
 //!
 //! | Builder | What generated code looks like |
 //! |---------|--------------------------------|
-//! | [`enable_domain_objects`](GenerationConfig::enable_domain_objects) | `CarDomain` DTOs; pass [`DomainVarData`] for var-data shape |
+//! | [`with_domain_objects`](GenerationConfig::with_domain_objects) | `CarDomain` DTOs; pass [`DomainVarData`] for var-data shape |
 //! | [`with_shared_module`](GenerationConfig::with_shared_module) | Multi-schema: shared types in one module, `pub use super::common::*` |
 //! | [`with_external_sbe_rt`](GenerationConfig::with_external_sbe_rt) | `pub use path::sbe_rt as sbe_rt` instead of inlining runtime |
-//! | [`enable_error_from_impls`](GenerationConfig::enable_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
+//! | [`with_error_from_impls`](GenerationConfig::with_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
 //! | [`with_unchecked_companions`](GenerationConfig::with_unchecked_companions) | `serial_number_unchecked` style fast paths for benches |
 //! | [`with_keyword_append_token`](GenerationConfig::with_keyword_append_token) | Schema field `type` → `type_` (default `"_"`) |
 //! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated]` on schema-deprecated items |
@@ -85,7 +85,7 @@ impl ConversionSelector {
 
 /// How owned domain DTO `<data>` / var-data fields are typed.
 ///
-/// Passed to [`GenerationConfig::enable_domain_objects`]. Wire is always
+/// Passed to [`GenerationConfig::with_domain_objects`]. Wire is always
 /// length-prefixed **bytes**; this only chooses the **owned** DTO field type.
 ///
 /// | Variant | DTO field | Invalid UTF-8 on materialise |
@@ -286,7 +286,7 @@ impl Hooks {
 /// use ergo_sbe::{DomainVarData, GenerationConfig, ConversionSelector};
 ///
 /// let config = GenerationConfig::new("market_data")
-///     .enable_domain_objects(DomainVarData::LossyStrings)
+///     .with_domain_objects(DomainVarData::LossyStrings)
 ///     .with_domain_type(
 ///         ConversionSelector::named_type("Decimal"),
 ///         "rust_decimal::Decimal",
@@ -321,6 +321,12 @@ pub struct GenerationConfig {
     pub(crate) keyword_append_token: String,
     /// Emit `#[deprecated]` on schema-deprecated items (opt-in).
     pub(crate) deprecated_attrs: bool,
+    /// Emit `Debug`/`Display` impls (default off to reduce output size).
+    pub(crate) enable_display_debug: bool,
+    /// Emit meta-attribute constants (default off).
+    pub(crate) enable_meta_attributes: bool,
+    /// Emit `AnyMessage`/`FrameCursor`/`MessageVisitor` dispatch (default off).
+    pub(crate) enable_dispatch: bool,
     /// Hooks fired after each generated item (enum, set, composite, message).
     /// Returned tokens are appended after the item's definition.
     pub(crate) hooks: Hooks,
@@ -341,6 +347,9 @@ impl std::fmt::Debug for GenerationConfig {
             .field("unchecked_companions", &self.unchecked_companions)
             .field("keyword_append_token", &self.keyword_append_token)
             .field("deprecated_attrs", &self.deprecated_attrs)
+            .field("enable_display_debug", &self.enable_display_debug)
+            .field("enable_meta_attributes", &self.enable_meta_attributes)
+            .field("enable_dispatch", &self.enable_dispatch)
             .field("hooks", &self.hooks)
             .finish()
     }
@@ -368,6 +377,9 @@ impl GenerationConfig {
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
             auto_bool_domain: false,
+            enable_display_debug: true,
+            enable_meta_attributes: true,
+            enable_dispatch: true,
             hooks: Hooks::default(),
         }
     }
@@ -384,7 +396,7 @@ impl GenerationConfig {
     }
 
     pub(crate) fn has_conversions(&self) -> bool {
-        // `enable_bool_domain_type` is syntax sugar for `with_domain_type` on
+        // `with_bool_domain_type` is syntax sugar for `with_domain_type` on
         // each boolean enum — it must also emit TryFromSbe/TryToSbe traits.
         !self.conversions.is_empty() || !self.domain_types.is_empty() || self.auto_bool_domain
     }
@@ -484,10 +496,10 @@ impl GenerationConfig {
 
     /// Emit `From<sbe_rt::EncodeError>` / `From<sbe_rt::DecodeError>` for your error type.
     ///
-    /// In build.rs: `.enable_error_from_impls("crate::AppError")`.
+    /// In build.rs: `.with_error_from_impls("crate::AppError")`.
     /// Application code: `enc.group(...)?;` — `EncodeError` auto-converts via `From`.
     #[must_use]
-    pub fn enable_error_from_impls(mut self, path: impl Into<String>) -> Self {
+    pub fn with_error_from_impls(mut self, path: impl Into<String>) -> Self {
         self.error_from_path = Some(path.into());
         self
     }
@@ -504,9 +516,9 @@ impl GenerationConfig {
     /// ```rust
     /// use ergo_sbe::{DomainVarData, GenerationConfig};
     /// let text = GenerationConfig::new("msgs")
-    ///     .enable_domain_objects(DomainVarData::LossyStrings);
+    ///     .with_domain_objects(DomainVarData::LossyStrings);
     /// let bytes = GenerationConfig::new("msgs")
-    ///     .enable_domain_objects(DomainVarData::Bytes);
+    ///     .with_domain_objects(DomainVarData::Bytes);
     /// let _ = (text, bytes);
     /// ```
     ///
@@ -517,7 +529,7 @@ impl GenerationConfig {
     ///
     /// → [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
     #[must_use]
-    pub fn enable_domain_objects(mut self, var_data: DomainVarData) -> Self {
+    pub fn with_domain_objects(mut self, var_data: DomainVarData) -> Self {
         self.domain_objects = true;
         self.domain_var_data = var_data;
         self
@@ -570,7 +582,7 @@ impl GenerationConfig {
     /// `Yes=5, No=3`) should use explicit [`ConversionSelector::named_type`]
     /// with [`GenerationConfig::with_conversion`] instead.
     #[must_use]
-    pub fn enable_bool_domain_type(mut self) -> Self {
+    pub fn with_bool_domain_type(mut self) -> Self {
         self.auto_bool_domain = true;
         self
     }
@@ -579,6 +591,33 @@ impl GenerationConfig {
     #[must_use]
     pub fn with_deprecated_attrs(mut self) -> Self {
         self.deprecated_attrs = true;
+        self
+    }
+
+    /// Control generated `Debug` and `Display` impls (disabled by default
+    /// to reduce output size). Pass `true` to opt back in — generated types
+    /// get `fmt::Debug` and `fmt::Display`.
+    #[must_use]
+    pub fn with_display_debug(mut self, enable: bool) -> Self {
+        self.enable_display_debug = enable;
+        self
+    }
+
+    /// Control meta-attribute constants (enabled by default). Pass `false`
+    /// to omit — removes `*_META_ATTRIBUTE`, `*_ENCODING_OFFSET`,
+    /// `*_ENCODING_LENGTH`, `*_ID`, `*_SINCE_VERSION` per field.
+    #[must_use]
+    pub fn with_meta_attributes(mut self, enable: bool) -> Self {
+        self.enable_meta_attributes = enable;
+        self
+    }
+
+    /// Control `AnyMessage` / `FrameCursor` / `MessageVisitor` dispatch code
+    /// (enabled by default). Pass `false` to omit — saves ~300 lines;
+    /// only meaningful for single-message schemas.
+    #[must_use]
+    pub fn with_dispatch(mut self, enable: bool) -> Self {
+        self.enable_dispatch = enable;
         self
     }
 
@@ -717,11 +756,11 @@ mod tests {
     }
 
     #[test]
-    fn enable_domain_objects_var_data_modes() -> Result<(), Box<dyn std::error::Error>> {
-        let text = GenerationConfig::new("m").enable_domain_objects(DomainVarData::LossyStrings);
+    fn with_domain_objects_var_data_modes() -> Result<(), Box<dyn std::error::Error>> {
+        let text = GenerationConfig::new("m").with_domain_objects(DomainVarData::LossyStrings);
         assert!(text.domain_objects_enabled());
         assert_eq!(text.domain_var_data, DomainVarData::LossyStrings);
-        let bytes = GenerationConfig::new("m").enable_domain_objects(DomainVarData::Bytes);
+        let bytes = GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes);
         assert!(bytes.domain_objects_enabled());
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);
         Ok(())
@@ -737,11 +776,11 @@ mod tests {
         );
 
         let config = GenerationConfig::new("m")
-            .enable_error_from_impls("crate::AppError")
+            .with_error_from_impls("crate::AppError")
             .with_shared_module("shared")
             .with_unchecked_companions()
             .with_keyword_append_token("x")
-            .enable_bool_domain_type()
+            .with_bool_domain_type()
             .with_deprecated_attrs();
 
         assert_eq!(config.error_from_path.as_deref(), Some("crate::AppError"));

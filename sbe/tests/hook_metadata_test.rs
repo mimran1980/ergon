@@ -115,7 +115,7 @@ const SCHEMA_XML: &str = r#"<messageSchema package="hookmeta" id="7" version="0"
 fn capture_all() -> Result<Vec<Captured>, Box<dyn std::error::Error>> {
     let sink = Arc::new(Mutex::new(Vec::new()));
     let config = GenerationConfig::new("hookmeta")
-        .enable_domain_objects(DomainVarData::Bytes)
+        .with_domain_objects(DomainVarData::Bytes)
         .with_hook(capture_hook(Arc::clone(&sink)));
     let schema = Schema::from_ir(parse(SCHEMA_XML)?);
     let _ = Generator::new(config).generate(&schema)?;
@@ -247,7 +247,7 @@ fn domain_hook_covers_message_group_and_vardata() -> Result<(), Box<dyn std::err
 fn hook_extends_message_and_entry_domain_and_compiles() {
     let sink = Arc::new(Mutex::new(Vec::new()));
     let config = GenerationConfig::new("hookext")
-        .enable_domain_objects(DomainVarData::Bytes)
+        .with_domain_objects(DomainVarData::Bytes)
         .with_hook({
             let sink = Arc::clone(&sink);
             move |ctx: &ItemContext| {

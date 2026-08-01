@@ -40,7 +40,7 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let schema = ergo_sbe::Schema::from_ir(ir);
 
     let config = ergo_sbe::GenerationConfig::new("hook_serde")
-        .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
+        .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_hook(serde_hook);
 
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;

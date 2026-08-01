@@ -2839,7 +2839,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
     let ir = ergo_sbe::parse_file(&path).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("conv_domain")
-        .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
+        .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
     let mut g = ergo_sbe::Generator::new(config);
     let modules = g.generate(&schema).unwrap();
@@ -2847,7 +2847,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
 
     assert!(
         src.contains("struct OrderDomain"),
-        "OrderDomain missing with enable_domain_objects"
+        "OrderDomain missing with with_domain_objects"
     );
     // Encode must use renamed wire setters.
     assert!(
@@ -3514,7 +3514,7 @@ fn auto_bool_domain_works_with_arbitrary_bool_enum_name() -> Result<(), Box<dyn 
     </messageSchema>"#;
     let ir = ergo_sbe::parse(xml)?;
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let config = ergo_sbe::GenerationConfig::new("ab_codec").enable_bool_domain_type();
+    let config = ergo_sbe::GenerationConfig::new("ab_codec").with_bool_domain_type();
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
     let src = &modules.modules().next().unwrap().source;
     assert!(

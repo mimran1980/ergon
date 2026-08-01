@@ -1653,12 +1653,11 @@ mod tests {
         Ok(())
     }
 
-    /// `enable_bool_domain_type()` must work for multi-schema generation, not
+    /// `with_bool_domain_type()` must work for multi-schema generation, not
     /// just single-schema. Each schema's boolean enums are auto-registered, and
     /// the generated output includes the domain-typed getter.
     #[test]
-    fn enable_bool_domain_type_works_with_generate_multi() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn with_bool_domain_type_works_with_generate_multi() -> Result<(), Box<dyn std::error::Error>> {
         let xml_a = r#"<?xml version="1.0"?>
         <messageSchema package="a" id="1" version="0" byteOrder="littleEndian">
           <types>
@@ -1701,7 +1700,7 @@ mod tests {
         let mut generator = Generator::new(
             crate::GenerationConfig::new("common_types")
                 .with_shared_module("common_types")
-                .enable_bool_domain_type(),
+                .with_bool_domain_type(),
         );
         let modules =
             generator.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "consumer")])?;
@@ -1715,7 +1714,7 @@ mod tests {
         let consumer_src = &collected[1].source;
         assert!(
             consumer_src.contains("fn enabled_bool(&self) -> bool"),
-            "enable_bool_domain_type must produce bool getter in multi-schema; got:\n{consumer_src}",
+            "with_bool_domain_type must produce bool getter in multi-schema; got:\n{consumer_src}",
         );
         Ok(())
     }

@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ergo_sbe::generate_to_out_dir(
         &matrix_schema,
         ergo_sbe::GenerationConfig::new("codec_matrix_bench")
-            .enable_domain_objects(ergo_sbe::DomainVarData::Bytes),
+            .with_domain_objects(ergo_sbe::DomainVarData::Bytes),
     )?;
 
     let matrix_be_schema = manifest.join("schemas/codec-matrix-be.xml");
@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ergo_sbe::generate_to_out_dir(
         &orderbook_schema,
         ergo_sbe::GenerationConfig::new("orderbook_bench")
-            .enable_domain_objects(ergo_sbe::DomainVarData::Bytes),
+            .with_domain_objects(ergo_sbe::DomainVarData::Bytes),
     )?;
 
     let ob_decimal_schema = manifest.join("schemas/orderbook-decimal.xml");

@@ -544,7 +544,7 @@ pub(crate) fn generate_domain_recursive(
         }
     }
 
-    // Var-data shape from DomainVarData (enable_domain_objects argument).
+    // Var-data shape from DomainVarData (with_domain_objects argument).
     for vd in var_data {
         let vd_snake = to_snake_case(&vd.name);
         let vd_ident = syn::Ident::new(&vd_snake, span);

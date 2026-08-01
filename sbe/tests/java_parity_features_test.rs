@@ -216,14 +216,13 @@ fn domain_dto_range_validation_emitted() -> Result<(), Box<dyn std::error::Error
         </messageSchema>"#;
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
-    let out =
-        Generator::new(GenerationConfig::new("m").enable_domain_objects(DomainVarData::Bytes))
-            .generate(&schema)?
-            .modules()
-            .next()
-            .unwrap()
-            .source
-            .clone();
+    let out = Generator::new(GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
 
     assert!(out.contains("ValueOutOfRange"), "{out}");
     assert!(out.contains("OrderDomain"), "{out}");
@@ -616,7 +615,7 @@ fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(all_field_types_schema())?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(
-        GenerationConfig::new("dbg_dto").enable_domain_objects(DomainVarData::LossyStrings),
+        GenerationConfig::new("dbg_dto").with_domain_objects(DomainVarData::LossyStrings),
     )
     .generate(&schema)?
     .modules()

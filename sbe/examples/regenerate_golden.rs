@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let schema_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schemas/example-schema.xml");
     let schema = Schema::from_ir(parse_file(&schema_path)?);
-    let config = GenerationConfig::new("car_example").enable_domain_objects(DomainVarData::Bytes);
+    let config = GenerationConfig::new("car_example").with_domain_objects(DomainVarData::Bytes);
     let generator = Generator::new(config);
     let modules = generator.generate(&schema)?;
     let source = modules

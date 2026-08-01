@@ -18,8 +18,8 @@ ergon/sbe-tool fairness ratio.
 
 ```rust,no_run
 // build.rs — DomainVarData picks the DTO field type for var-data:
-// .enable_domain_objects(DomainVarData::LossyStrings) // String (invalid UTF-8 → "")
-// .enable_domain_objects(DomainVarData::Bytes)        // Vec<u8> (byte-exact)
+// .with_domain_objects(DomainVarData::LossyStrings) // String (invalid UTF-8 → "")
+// .with_domain_objects(DomainVarData::Bytes)        // Vec<u8> (byte-exact)
 ```
 
 **Generated shape** (illustrative — your names follow your schema):
@@ -69,14 +69,14 @@ impl QuoteDomain {
   assert_eq!(n, len);
 ```
 
-### `enable_domain_objects(DomainVarData)`
+### `with_domain_objects(DomainVarData)`
 
 SBE `<data>` is length-prefixed **bytes**. The enum picks the DTO field type:
 
 | Call | Field type | Invalid UTF-8 | When to use |
 |------|------------|---------------|-------------|
-| `.enable_domain_objects(DomainVarData::LossyStrings)` | `String` | **silent empty `""`** (not U+FFFD, not an error) | Text schemas; **easiest** app API |
-| `.enable_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
+| `.with_domain_objects(DomainVarData::LossyStrings)` | `String` | **silent empty `""`** (not U+FFFD, not an error) | Text schemas; **easiest** app API |
+| `.with_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
 
 **`LossyStrings` is not lossless on re-encode.** Materialise clears invalid
 UTF-8 to `""`; `dto.encode` then writes empty var-data, so the bad bytes are

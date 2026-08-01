@@ -7,7 +7,7 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
 |-------|-----------|------|------------------|
 | **Flyweight (per-field)** | You only **read** one or a few fields; hot path | Zero-copy; no heap | New fields are optional at call sites (you simply don’t read them) |
 | **`*FixedFields` + `.fixed(...)`** | You always write the **entire fixed block** | One struct write, still flyweight buffer | Adding a **required fixed field** to the schema → **compile error** until you set it in the struct |
-| **`*Domain` DTO** (`.enable_domain_objects(DomainVarData::…)`) | Whole message as owned data; enum picks `String` vs `Vec<u8>` var-data | **Allocates — never use on the hot path.** Easier app code for tooling, logging, offline processing | Same idea: regenerating after a schema change forces you to fill new struct fields |
+| **`*Domain` DTO** (`.with_domain_objects(DomainVarData::…)`) | Whole message as owned data; enum picks `String` vs `Vec<u8>` var-data | **Allocates — never use on the hot path.** Easier app code for tooling, logging, offline processing | Same idea: regenerating after a schema change forces you to fill new struct fields |
 
 #### Decode — individual fields (flyweight)
 

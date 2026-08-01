@@ -94,8 +94,8 @@ section and feature-tour `demo_car_size_and_encode`.
 ## Domain DTOs & var-data
 
 ```rust
-.enable_domain_objects(DomainVarData::LossyStrings) // String; bad UTF-8 → ""
-.enable_domain_objects(DomainVarData::Bytes)        // Vec<u8>; byte-exact
+.with_domain_objects(DomainVarData::LossyStrings) // String; bad UTF-8 → ""
+.with_domain_objects(DomainVarData::Bytes)        // Vec<u8>; byte-exact
 ```
 
 `LossyStrings` is **not** lossless on re-encode of invalid UTF-8 (field becomes

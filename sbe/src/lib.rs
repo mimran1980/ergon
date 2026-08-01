@@ -183,7 +183,7 @@
 //!
 //! ## Domain objects
 //!
-//! [`GenerationConfig::enable_domain_objects`]`(`[`DomainVarData`]`)` emits
+//! [`GenerationConfig::with_domain_objects`]`(`[`DomainVarData`]`)` emits
 //! owned structs. Use [`DomainVarData::LossyStrings`] for text (`String`;
 //! invalid UTF-8 → `""`) or [`DomainVarData::Bytes`] for `Vec<u8>`.
 //!
@@ -232,14 +232,17 @@ pub mod codegen;
 /// [`GenerationConfig`] — conversions, domain objects, keywords, etc.
 pub mod config;
 /// Token [`Ir`] (usually via [`Schema`]).
+#[doc(hidden)]
 pub mod ir;
 /// Offset resolution ([`resolve_schema`]; called by parse).
+#[doc(hidden)]
 pub mod resolve;
 /// [`Schema`] handle for codegen.
 pub mod schema;
 /// Structured IR for codegen (internal).
 pub(crate) mod structured_ir;
 /// XML parse ([`parse`], [`parse_file`]).
+#[doc(hidden)]
 pub mod xml;
 /// Optional XSD-shaped validation ([`validate_against_sbe_xsd`], [`SBE_XSD`]).
 pub mod xsd;

@@ -71,7 +71,7 @@ fn docs_codec_source() -> Result<String, Box<dyn std::error::Error>> {
     let ir = parse(&docs_schema_xml())?;
     let schema = Schema::from_ir(ir);
     Ok(Generator::new(
-        GenerationConfig::new("docs_codec").enable_domain_objects(DomainVarData::Bytes),
+        GenerationConfig::new("docs_codec").with_domain_objects(DomainVarData::Bytes),
     )
     .generate(&schema)?
     .modules()
@@ -94,7 +94,7 @@ fn feature_tour_codec_source() -> Result<String, Box<dyn std::error::Error>> {
     let schema = Schema::from_ir(ir);
     Ok(Generator::new(
         GenerationConfig::new("tour_codec")
-            .enable_domain_objects(DomainVarData::LossyStrings)
+            .with_domain_objects(DomainVarData::LossyStrings)
             .with_domain_type(
                 ergo_sbe::ConversionSelector::named_type("BooleanType"),
                 "bool",
@@ -371,7 +371,7 @@ fn documented_generated_surface_strings() -> Result<(), Box<dyn std::error::Erro
     let ir = parse(&docs_schema_xml())?;
     let schema = Schema::from_ir(ir);
     let cfg = GenerationConfig::new("docs_codec")
-        .enable_domain_objects(DomainVarData::Bytes)
+        .with_domain_objects(DomainVarData::Bytes)
         .with_keyword_append_token("_");
     let src = Generator::new(cfg)
         .generate(&schema)?
@@ -415,7 +415,7 @@ fn documented_encode_decode_smoke() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(&docs_schema_xml())?;
     let schema = Schema::from_ir(ir);
     let src = Generator::new(
-        GenerationConfig::new("docs_run").enable_domain_objects(DomainVarData::Bytes),
+        GenerationConfig::new("docs_run").with_domain_objects(DomainVarData::Bytes),
     )
     .generate(&schema)?
     .modules()
