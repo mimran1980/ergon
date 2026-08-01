@@ -553,12 +553,13 @@ fn book_fences_no_ignored() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
-    let docs_codec = docs_codec_source()?;
-    let tour_codec = feature_tour_codec_source()?;
-    let tmp = tempfile::tempdir()?;
     const TOUR_DEPS: &str = "chrono = \"0.4\"\nrust_decimal = \"1\"\n";
     const TOUR_IMPORTS: &str =
         "use chrono::{DateTime, Utc};\nuse rust_decimal::Decimal as Rd;\n";
+
+    let docs_codec = docs_codec_source()?;
+    let tour_codec = feature_tour_codec_source()?;
+    let tmp = tempfile::tempdir()?;
 
     let mut compiled = 0usize;
     let mut skipped = 0usize;
