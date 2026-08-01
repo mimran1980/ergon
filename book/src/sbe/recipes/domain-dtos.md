@@ -42,36 +42,31 @@ impl QuoteDomain {
 
 **Wire → DTO → wire round-trip** (the docs fixture uses `DomainVarData::Bytes`):
 
-```text
-// Encode a message first (the usual flyweight path)
-let mut buf = [0u8; QuoteEncoder::compute_length_with_header(1, 2)];
-let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-    .fixed(&QuoteFixedFields {
-        seq: 1,
-        some_numbers: [1, 2, 3, 4],
-        vehicle_code: *b"ABCDEF",
-        qty: 10,
-    })
-    .legs(1, |legs| {
-        legs.add(|leg| { leg.value(99); Ok(()) })?;
-        Ok(())
-    })?
-    .note(b"hi")?
-    .encoded_length_with_header()
-        .expect("header present");
-
-// Decode → owned DTO (allocates — not for the hot path)
-let dec = QuoteDecoder::try_from(&buf[..len])?;
-let mut dto = QuoteDomain::try_from_decoder(dec)?;
-assert_eq!(dto.seq, 1);
-assert_eq!(&dto.note, b"hi");
-
-// Edit / build like normal Rust
-dto.qty = 500;
-
-// Re-encode (integer min/max checked; eligible groups use bulk write)
-let n = dto.encode(&mut buf)?;
-assert_eq!(n, len);
+```rust,no_run
+  // Encode a message first (the usual flyweight path)
+  let mut buf = [0u8; QuoteEncoder::compute_length_with_header(1, 2)];
+  let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+      .fixed(&QuoteFixedFields {
+          seq: 1,
+          some_numbers: [1, 2, 3, 4],
+          vehicle_code: *b"ABCDEF",
+          qty: 10,
+      })
+      .legs(1, |legs| {
+          legs.add(|leg| { leg.value(99); Ok(()) })?;
+          Ok(())
+      })?
+      .note(b"hi")?
+      .encoded_length_with_header();
+  // Decode → owned DTO (allocates — not for the hot path)
+  let dec = QuoteDecoder::try_from(&buf[..len])?;
+  let mut dto = QuoteDomain::try_from_decoder(dec)?;
+  assert_eq!(dto.seq, 1);
+  assert_eq!(&dto.note, b"hi");
+  dto.qty = 500;
+  // Re-encode (integer min/max checked; eligible groups use bulk write)
+  let n = dto.encode(&mut buf)?;
+  assert_eq!(n, len);
 ```
 
 ### `enable_domain_objects(DomainVarData)`
