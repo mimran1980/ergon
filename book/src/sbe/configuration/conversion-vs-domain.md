@@ -14,14 +14,10 @@ Do **not** call both for the same selector — domain type already enables conve
 
 ### Option A — you choose the app type (`Cents`)
 
-```text
-use ergo_sbe::{ConversionSelector, GenerationConfig};
-
-// build.rs — names the *wire* schema type only
-let config = GenerationConfig::new("msgs")
-    .with_conversion(ConversionSelector::named_type("Decimal"));
-let _ = config;
+```rust,no_run
+{{#include ../../../examples/conversion-config.rs:with_conversion}}
 ```
+*(From `book/examples/conversion-config.rs` — a self-contained program that compiles against `ergo-sbe`.)*
 
 ```text
 // app — YOU adapt wire Decimal ↔ Cents
@@ -53,16 +49,10 @@ println!("mantissa={} exponent={}", wire.mantissa(), wire.exponent());
 
 ### Option B — one fixed app type
 
-```text
-use ergo_sbe::{ConversionSelector, GenerationConfig};
-
-let config = GenerationConfig::new("msgs")
-    .with_domain_type(
-        ConversionSelector::named_type("Decimal"),
-        "rust_decimal::Decimal",
-    );
-let _ = config;
+```rust,no_run
+{{#include ../../../examples/conversion-config.rs:with_domain_type}}
 ```
+*(Same source file — `book/examples/conversion-config.rs`.)*
 
 ```text
 enc.price(rust_decimal::Decimal::new(12345, 2));
