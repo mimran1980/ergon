@@ -533,7 +533,7 @@ pub fn compile_and_run_two_modules(
 
 pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
     generate_domain_with(xml_path, module_name, |c| {
-        c.enable_domain_objects(DomainVarData::Bytes)
+        c.with_domain_objects(DomainVarData::Bytes)
     })
 }
 
