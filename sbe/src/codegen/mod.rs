@@ -50,9 +50,17 @@ use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use crate::structured_ir::*;
 use crate::{GenerationConfig, Schema};
 
+pub(crate) mod conversion_helpers;
+pub(crate) use conversion_helpers::*;
+pub(crate) mod conversion_traits;
+pub(crate) use conversion_traits::*;
 pub(crate) mod encoded_length;
 pub(crate) mod field_type;
 pub(crate) use field_type::field_type_ident;
+pub(crate) mod message_header_template;
+pub(crate) use message_header_template::*;
+pub(crate) mod nullification;
+pub(crate) use nullification::*;
 pub(crate) mod runtime;
 use quote::format_ident;
 pub(crate) use runtime::*;
@@ -249,183 +257,6 @@ impl GenerationContext {
 #[derive(Debug)]
 pub struct Generator {
     config: GenerationConfig,
-}
-
-/// Extract [`crate::FieldInfo`] entries from message fields (constant fields
-/// excluded). Used by context builders and hook dispatch.
-fn message_field_infos(
-    fields: &[MessageField],
-    domain_types: &[(crate::ConversionSelector, String)],
-    elements: Option<&SchemaElements>,
-) -> Vec<crate::FieldInfo> {
-    fields
-        .iter()
-        .filter(|f| f.presence != Presence::Constant)
-        .map(|f| {
-            // Domain types apply to the DTO field only when the DTO
-            // generation actually uses them: required scalar primitives
-            // and boolean enums (the latter detected via is_bool_enum,
-            // matching the unconditional bool emission in DTO generation).
-            // Optional fields, arrays, composites/enums/sets without a
-            // domain config all keep the wire type.
-            let domain_ty = match &f.field_type {
-                FieldType::Primitive(_, length) => {
-                    if length.is_none() && f.presence == Presence::Required {
-                        find_domain_type(f, domain_types)
-                    } else {
-                        None
-                    }
-                }
-                FieldType::Enum {
-                    name: enum_name, ..
-                } => {
-                    if elements.is_some_and(|el| crate::structured_ir::is_bool_enum(el, enum_name))
-                    {
-                        Some("bool")
-                    } else {
-                        find_domain_type(f, domain_types)
-                    }
-                }
-                _ => None,
-            };
-            let rust_type = match domain_ty {
-                Some(dt) => dt.to_string(),
-                None => f.field_type.rust_type_name(),
-            };
-            crate::FieldInfo {
-                name: to_snake_case(&f.name),
-                rust_type,
-                offset: Some(f.offset),
-                since_version: f.since_version,
-                semantic_type: f.semantic_type.clone(),
-                presence: presence_str(f.presence),
-                null_value: f.null_value,
-                deprecated: f.deprecated,
-                description: f.description.clone(),
-            }
-        })
-        .collect()
-}
-
-fn presence_str(p: Presence) -> &'static str {
-    match p {
-        Presence::Required => "required",
-        Presence::Optional => "optional",
-        Presence::Constant => "constant",
-    }
-}
-
-/// Resolve a field accessor name, appending `_field` when it clashes
-/// with a reserved method name on the decoder/encoder.
-fn resolve_field_ident(
-    snake_name: &str,
-    wire_name: &Option<String>,
-    reserved: &[&str],
-) -> syn::Ident {
-    let method_name = wire_name.as_deref().unwrap_or(snake_name);
-    let resolved: &str = match () {
-        _ if wire_name.is_some() => method_name,
-        _ if reserved.contains(&snake_name) => {
-            // ponytail: allocate only on collision (rare, build-time only).
-            Box::leak(format!("{snake_name}_field").into_boxed_str())
-        }
-        _ => snake_name,
-    };
-    syn::Ident::new(resolved, proc_macro2::Span::call_site())
-}
-
-/// Warn if a shared type has version-gated members (`sinceVersion > 0`).
-///
-/// Version numbers are per-schema. A shared type with members added in a later
-/// version is ambiguous when imported by a schema at a different version — the
-/// importer's `acting_version` may not match the type's evolution timeline.
-/// Returns `Some(warning_string)` if the type carries version-gated members.
-fn warn_version_gated(
-    type_name: &str,
-    tokens: &[crate::ir::Token],
-    schema: &Schema,
-) -> Option<String> {
-    let max_since = tokens
-        .iter()
-        .filter_map(|t| {
-            if t.signal == crate::ir::Signal::Encoding || t.signal == crate::ir::Signal::BeginField
-            {
-                if t.encoding.since_version > 0 {
-                    Some(t.encoding.since_version)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .max()?;
-    Some(format!(
-        "warning: shared type `{}` (schema {} id {}) has members at sinceVersion={max_since}. \
-         Version numbers are per-schema — importing schemas at different versions may decode \
-         these members incorrectly. Consider keeping shared types at version 0.",
-        type_name, schema.package, schema.id
-    ))
-}
-
-fn field_has_conversion_free(
-    field: &MessageField,
-    conversions: &[crate::ConversionSelector],
-) -> bool {
-    let type_name = match &field.field_type {
-        FieldType::Composite { name, .. } => name.clone(),
-        FieldType::Enum { name, .. } => name.clone(),
-        FieldType::Set { name, .. } => name.clone(),
-        FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
-    };
-    conversions.iter().any(|sel| match sel {
-        crate::ConversionSelector::NamedType(n) => n == &type_name,
-        crate::ConversionSelector::SemanticType(st) => {
-            field.semantic_type.as_deref() == Some(st.as_str())
-        }
-        _ => false,
-    })
-}
-
-fn find_domain_type<'a>(
-    field: &MessageField,
-    domain_types: &'a [(crate::ConversionSelector, String)],
-) -> Option<&'a str> {
-    let type_name = match &field.field_type {
-        FieldType::Composite { name, .. } => name.clone(),
-        FieldType::Enum { name, .. } => name.clone(),
-        FieldType::Set { name, .. } => name.clone(),
-        FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
-    };
-    domain_types.iter().find_map(|(sel, ty)| match sel {
-        crate::ConversionSelector::NamedType(n) if n == &type_name => Some(ty.as_str()),
-        crate::ConversionSelector::SemanticType(st)
-            if field.semantic_type.as_deref() == Some(st.as_str()) =>
-        {
-            Some(ty.as_str())
-        }
-        _ => None,
-    })
-}
-
-/// Encoder setter name used by domain DTOs.
-///
-/// When a conversion is configured without a domain type, flyweight setters
-/// are renamed to `*_wire` (concrete domain methods take the bare name).
-/// Domain-object encode must call the same name.
-fn domain_encode_setter_name(
-    field: &MessageField,
-    conversions: &[crate::ConversionSelector],
-    domain_types: &[(crate::ConversionSelector, String)],
-    field_snake: &str,
-) -> String {
-    if field_has_conversion_free(field, conversions)
-        && find_domain_type(field, domain_types).is_none()
-    {
-        format!("{field_snake}_wire")
-    } else {
-        field_snake.to_string()
-    }
 }
 
 impl Generator {
@@ -5474,51 +5305,6 @@ fn generate_group_decoder(
     ts
 }
 
-fn generate_nullification(
-    src: &mut String,
-    fields: &[MessageField],
-    offset_base: &str,
-    buf_expr: &str,
-    byte_order: ByteOrder,
-) {
-    let order_suffix = match byte_order {
-        ByteOrder::LittleEndian => "le",
-        ByteOrder::BigEndian => "be",
-    };
-    let mut stmts = proc_macro2::TokenStream::new();
-    for f in fields {
-        if f.presence == Presence::Optional {
-            if let Some(null_val) = f.null_value {
-                let size = f.field_type.size();
-                // The null value is stored as a u64 in the IR (matching the
-                // XML unsigned-integer attribute). Always render as _u64 and
-                // slice to the field's wire size — smaller fields take the
-                // low-order bytes, which is correct for little-endian.
-                let null_val_expr: syn::Expr = syn::parse_str(&format!("{null_val}_u64")).unwrap();
-                let to_method = syn::Ident::new(
-                    &format!("to_{order_suffix}_bytes"),
-                    proc_macro2::Span::call_site(),
-                );
-                let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
-                let buf_expr_ts: syn::Expr = syn::parse_str(buf_expr).unwrap();
-                let f_offset = syn::Index::from(f.offset);
-                let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
-
-                stmts.extend(quote::quote! {
-                    let null_bytes = #null_val_expr.#to_method();
-                    let offset = #offset_base_expr + #f_offset;
-                    #buf_expr_ts[offset..offset + #size_lit]
-                        .copy_from_slice(&null_bytes[..#size_lit]);
-                });
-            }
-        }
-    }
-    if !stmts.is_empty() {
-        src.push_str(&stmts.to_string());
-        src.push('\n');
-    }
-}
-
 /// Emit `TryFromSbe` / `TryToSbe` traits into the generated sbe_rt module.
 fn emit_conversion_traits(src: &mut String) {
     src.push_str(
@@ -5895,98 +5681,6 @@ fn generate_converter_impls(
     };
     out.push_str(&entry_impls);
     out
-}
-
-fn message_header_template(
-    elements: &SchemaElements,
-    header_type: &str,
-    header_size: usize,
-    byte_order: ByteOrder,
-    block_length: usize,
-    template_id: u16,
-    schema_id: u16,
-    schema_version: u16,
-) -> Vec<u8> {
-    let header = elements
-        .composites
-        .iter()
-        .find(|composite| composite[0].name == header_type)
-        .unwrap_or_else(|| panic!("resolved message header composite '{header_type}' is missing"));
-    let members = parse_composite_members(header);
-    let mut bytes = vec![0u8; header_size];
-
-    for (field_name, value) in [
-        ("blockLength", block_length as u64),
-        ("templateId", u64::from(template_id)),
-        ("schemaId", u64::from(schema_id)),
-        ("version", u64::from(schema_version)),
-    ] {
-        let member = members
-            .iter()
-            .find(|member| member.name == field_name)
-            .unwrap_or_else(|| panic!("message header is missing required field '{field_name}'"));
-        let MemberType::Primitive {
-            prim,
-            length,
-            presence,
-            ..
-        } = member.member_type
-        else {
-            panic!("message header field '{field_name}' is not a primitive integer");
-        };
-        assert_eq!(
-            length.unwrap_or(1),
-            1,
-            "message header field '{field_name}' must be scalar"
-        );
-        if presence == Presence::Constant {
-            continue;
-        }
-        assert_eq!(
-            presence,
-            Presence::Required,
-            "message header field '{field_name}' must be required or constant"
-        );
-
-        let offset = member.offset;
-        match prim {
-            PrimitiveType::UInt8 => {
-                bytes[offset] = u8::try_from(value).unwrap_or_else(|_| {
-                    panic!("message header field '{field_name}' value {value} exceeds uint8")
-                });
-            }
-            PrimitiveType::UInt16 => {
-                let encoded = u16::try_from(value).unwrap_or_else(|_| {
-                    panic!("message header field '{field_name}' value {value} exceeds uint16")
-                });
-                let encoded = match byte_order {
-                    ByteOrder::LittleEndian => encoded.to_le_bytes(),
-                    ByteOrder::BigEndian => encoded.to_be_bytes(),
-                };
-                bytes[offset..offset + 2].copy_from_slice(&encoded);
-            }
-            PrimitiveType::UInt32 => {
-                let encoded = u32::try_from(value).unwrap_or_else(|_| {
-                    panic!("message header field '{field_name}' value {value} exceeds uint32")
-                });
-                let encoded = match byte_order {
-                    ByteOrder::LittleEndian => encoded.to_le_bytes(),
-                    ByteOrder::BigEndian => encoded.to_be_bytes(),
-                };
-                bytes[offset..offset + 4].copy_from_slice(&encoded);
-            }
-            PrimitiveType::UInt64 => {
-                let encoded = match byte_order {
-                    ByteOrder::LittleEndian => value.to_le_bytes(),
-                    ByteOrder::BigEndian => value.to_be_bytes(),
-                };
-                bytes[offset..offset + 8].copy_from_slice(&encoded);
-            }
-            _ => panic!("message header field '{field_name}' must be an unsigned integer"),
-        }
-    }
-
-    bytes
 }
 
 fn generate_message_encoder(
