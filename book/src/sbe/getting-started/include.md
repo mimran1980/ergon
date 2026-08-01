@@ -3,12 +3,10 @@
 **Prefer build-dep only for product crates** (no runtime `ergo-sbe` link).
 Generated codecs embed `sbe_rt`; plain `include!` is enough:
 
-```text
-// Module name must match GenerationConfig::new("messages") → messages.rs
-#[path = "generated/messages.rs"]
-mod messages;
-use messages::*;
+```rust,no_run
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:include_build_dep_only}}
 ```
+*(From `sbe-feature-tour/src/lib.rs` — the `#[path]` pattern used by every sample crate. The feature-tour's `cargo build` verifies this compiles; `#[path]` needs a real file on disk so the book-fence test skips it.)*
 
 or via `include!`:
 
