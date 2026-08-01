@@ -7,7 +7,7 @@ buffer, no copy.
 
 ## Pattern
 
-```text
+```rust,ignore
 use ergo_sbe::HeartbeatEncoder;
 
 // 1. Exact size before claiming — const, no allocation.
@@ -29,7 +29,7 @@ claim.commit()?;
 
 For variable-length messages, size first with the staged `EncodedLength` builder:
 
-```text
+```rust,ignore
 let len = CarEncoder::compute_length()
     .fuel_figures_ragged(2, |ff| {
         ff.add()?.usage_description(5)?;  // "Urban"

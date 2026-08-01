@@ -5,7 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let generated_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
     // ANCHOR: with_domain_type_config
     let config = ergo_sbe::GenerationConfig::new("l3_codec")
-        .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
+        .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_unchecked_companions(true)
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
