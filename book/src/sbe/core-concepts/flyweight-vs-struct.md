@@ -53,12 +53,8 @@ let year = car.model_year();
 When you always need (almost) everything, or want to pass a value across threads
 / into non-SBE code:
 
-```text
-// build.rs: .enable_domain_objects(DomainVarData::LossyStrings)
-let dto = CarDomain::try_from_decoder(CarDecoder::try_from(buf)?)?;
-// dto is a plain Rust struct: Vecs for groups/strings, owned fields.
-process_order(&dto);
-let n = dto.encode(&mut out)?; // round-trip back to wire when needed
+```rust,no_run
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_domain_dto}}
 ```
 
 **Rule of thumb:** one field on the hot path → **flyweight**. Always fill or
